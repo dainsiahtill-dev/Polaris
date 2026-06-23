@@ -1,82 +1,97 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-06-23T16:56:46+08:00",
+  "updated_at": "2026-06-23T18:29:21+08:00",
   "objective": "Factory Bench L1-L12 generated projects must truly run with code on disk, environment/dependency readiness, at least one real build/test/lint gate, at least one real CLI/Web/API entry execution, evidence-backed failure attribution, and repeated batches with no new general root causes.",
   "current_position": {
     "level": "L1",
     "project": "L1-01",
-    "status": "director_only_resume_fail_closed_verified_pending_positive_resume_workspace",
+    "status": "director_only_resume_real_bench_failed_at_director_dispatch",
     "ordering_rule": "Run one project at a time in order L1-01..L12; do not proceed to L1-02 until L1-01 is runnable."
   },
   "latest_real_bench": {
-    "run_id": "codex-l1-01-minimax-m3-director-resume-20260623165500",
+    "run_id": "codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230",
+    "factory_run_id": "factory_5ced2775ee44",
+    "director_run_id": "director-9cf16c939272",
     "work_dir": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229",
     "project": "L1-01",
     "result": "FAIL",
-    "wall_clock_seconds": 0.0,
+    "wall_clock_seconds": 859.3,
     "step_success_rate": "0/1",
     "runnable_rate": "0/1",
-    "files": 1,
-    "source_files": 0,
+    "files": 9,
+    "source_files": 6,
     "chain": "partial",
     "qa_ran": false,
     "qa_passed": false,
-    "real_run_gate": "FAIL(chain_terminal)",
-    "primary_failure_category": "runtime_environment",
-    "root_cause_signature": "runtime_environment:real_run_gate.chain_terminal",
-    "terminal_status": "non_terminal_fail_closed",
-    "last_successful_stage": "preflight_evidence_check",
-    "ce_review_result": "trusted CE blueprints present from prior run; PM/CE not rerun",
-    "director_primary_error": "Director-only resume missing evidence: runtime/tasks/plan.json, runtime/tasks/task_*.json",
-    "audit_path": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json"
+    "llm_route_audit": "PASS",
+    "static_artifact_checks": "PASS",
+    "real_run_gate": "FAIL: npm run build failed; npm start not attempted because build output missing",
+    "primary_failure_category": "director_tool_execution",
+    "root_cause_signature": "director_tool_execution:director_run_status_non_success",
+    "director_primary_error": "Director dispatch failed after task-1 materialization repair; task-2 failed before execution with: Director must claim TaskBoard task before execution.",
+    "real_run_build_error_summary": [
+      "src/index.ts imports GardenSnapshot and GardenStepOptions from ./main but they are not exported.",
+      "src/main.ts imports Garden, MoonPhase, createGarden, defaultMoonPhaseFor from ./index but they are not exported.",
+      "src/main.ts object shapes do not match Moon, Humidity, FlowerSpecies, and Firefly types."
+    ],
+    "positive_progress": [
+      "Director-only resume did not rerun PM or Chief Engineer.",
+      "LLM route audit required only Director and passed with MiniMax-M3.",
+      "PM plan and CE blueprints were preserved and observed.",
+      "Repair prompt now pins materialize mode and write tools executed.",
+      "Generated artifacts reached 9 code/config files and 6 TypeScript source files.",
+      "TypeScript syntax parser passed for all 6 TypeScript files.",
+      "package_scripts gate passed after repair."
+    ]
   },
   "completed_platform_fixes_this_loop": [
-    "MiniMax Director runtime support accepts full tool/execution profile.",
-    "MiniMax streaming tool_calls are preserved when visible content is empty.",
-    "JS/TS bracket fallback ignores comments and strings.",
-    "TypeScript write-path syntax gate uses TypeScript compiler parseDiagnostics.",
-    "Named forced-write retry attempts remove verification-only execute_command from the exposed schema.",
-    "execute_command with explicit stdout redirection to an authoritative workspace path counts as materializing write; plain verification commands do not.",
-    "forced_write_command_normalizer accepts Mapping-shaped decisions.",
-    "Factory Chief Engineer review now carries a 240s scoped LLM timeout via command/context/metadata to avoid 60s partial-blueprint aborts.",
-    "LLMInvoker reasoning-truncation fallback now recognizes MiniMax reasoning_exhausted/finish_reason=length empty-visible errors and triggers the minimal-reasoning native-tool re-ask.",
-    "Factory start_from=director now runs only director_dispatch + quality_gate when PM/CE evidence and pre-Director snapshot are present.",
-    "Factory/bench Director-only resume now fail-closes when PM plan, TaskBoard, CE blueprint, or pre-Director snapshot evidence is missing.",
-    "Bench runner --start-from director preserves existing workspaces, rejects empty/repository-root work_dir values, and avoids recreating target project directories."
+    "Bench LLM route audit is now stage-aware for --start-from director and no longer falsely requires PM/Chief Engineer calls in Director-only resume.",
+    "Factory bench chain records factory_bench_start_from so terminal audit can distinguish full-chain partial runs from Director-only resume runs.",
+    "Materialization quality repair now pins delivery_mode=materialize_changes in both repair context metadata and the repair message SESSION_PATCH.",
+    "Regression tests cover Director-only required-role audit and repair delivery-mode pinning."
   ],
   "verification_summary": {
-    "ruff": "PASS: python -m ruff check on 7 Director-only resume touched Python files -> All checks passed; python -m ruff format -> 7 files left unchanged",
-    "mypy": "PASS: PYTHONPATH=src/backend python -m mypy factory.py factory_stage_executor.py run_factory_bench.py --ignore-missing-imports -> Success",
-    "pytest": "PASS: PYTHONPATH=src/backend pytest -q test_factory_v2.py test_factory_run_service.py test_factory_bench_runner.py test_backend_client.py -> 243 passed, 2 warnings in 195.40s",
-    "real_bench": "EXPECTED FAIL-CLOSED: --start-from director against prior L1-01 work_dir did not rerun PM/CE and stopped before Director because runtime/tasks plan/task evidence was missing"
+    "ruff": [
+      "python -m ruff check src/backend/scripts/factory_bench/run_factory_bench.py src/backend/scripts/factory_bench/test_bench_to_backend_integration.py --fix -> All checks passed",
+      "python -m ruff check src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py src/backend/polaris/cells/roles/adapters/tests/test_pin_materialize_delivery_mode.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py --fix -> All checks passed"
+    ],
+    "format": [
+      "python -m ruff format on touched bench files -> unchanged",
+      "python -m ruff format on touched Director quality repair files -> unchanged"
+    ],
+    "mypy": [
+      "PYTHONPATH=src/backend python -m mypy src/backend/scripts/factory_bench/run_factory_bench.py --ignore-missing-imports -> Success",
+      "PYTHONPATH=src/backend python -m mypy src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py src/backend/scripts/factory_bench/run_factory_bench.py --ignore-missing-imports -> Success"
+    ],
+    "pytest": [
+      "PYTHONPATH=src/backend python -m pytest -q src/backend/scripts/factory_bench/test_bench_to_backend_integration.py::TestFactoryRunsIntegration::test_required_llm_roles_are_stage_aware -> 1 passed",
+      "PYTHONPATH=src/backend python -m pytest -q src/backend/scripts/factory_bench/test_bench_to_backend_integration.py src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py -> 132 passed in 124.18s",
+      "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/adapters/tests/test_pin_materialize_delivery_mode.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -k 'pin_materialize or quality_repair_second_attempt_rotates_to_typescript_source_after_package_target' -> 11 passed",
+      "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/adapters/tests/test_pin_materialize_delivery_mode.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -> 266 passed, 2 warnings in 41.21s"
+    ],
+    "real_bench": "FAIL with evidence: L1-01 0/1 passed, wall clock 859.3s, llm_route_audit ok, real_run_gate failed on npm run build, QA not reached."
   },
   "open_risks": [
-    "Positive Director-only resume path is still pending: need a workspace with complete PM plan, TaskBoard runtime/tasks, CE blueprints, and pre-Director snapshot evidence.",
-    "The existing L1-01 ce-timeout workspace has PM/CE evidence but lacks runtime/tasks plan/task files, so the new guard correctly blocks Director-only resume before dispatch.",
-    "OpenCode external audit for the latest role-tool failure did not produce a machine-readable report; request/evidence bundle exists but status remains running_background_with_failures.",
-    "MiniMax provider still logs /models reachability probe as unreachable while chatcompletion works; currently non-blocking but should be tracked if pool selection degrades.",
-    "Deterministic fallback still refuses multi-target business tests, intentionally; if CE keeps bundling multiple tests into one task, task fission may need hardening rather than synthesizing fake tests."
+    "L1-01 is still not runnable: build/test/start real gate failed after Director dispatch ended partial.",
+    "Director materialization repair can now write missing files, but multi-error repair does not reliably converge before timeout/cancellation.",
+    "Quality repair target selection still over-focuses on single files while package script, cross-file exports, and type shape errors remain coupled.",
+    "TaskBoard handoff remains broken after task-1 partial repair: task-2 fails with 'Director must claim TaskBoard task before execution'.",
+    "ContextOS audit can turn false during repair because raw tool-result metadata such as director_policy/package_diff appears in the data plane.",
+    "OpenCode external audit request/evidence bundle is generated, but the serial audit did not produce a completed machine-readable report in the blocking window.",
+    "MiniMax-M3 calls show reasoning_truncation_retry and call_cancelled around 180s, so timeout/retry policy still affects convergence."
   ],
   "next_deterministic_entrypoint": {
-    "action": "find_or_create_valid_pre_director_snapshot_then_run_l1_01_director_only_resume",
+    "action": "repair Director quality-repair convergence and TaskBoard claim failure, then rerun L1-01 Director-only resume on the same trusted PM/CE workspace",
     "backend_command": "PYTHONPATH=src/backend python src/backend/server.py --host 127.0.0.1 --port 49977",
-    "bench_command_template": "FACTORY_BENCH_BACKEND_URL=http://127.0.0.1:49977 FACTORY_BENCH_BACKEND_TOKEN=polaris-local-dev FACTORY_BENCH_RUN_ID=<run-id> PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-01 --work-dir <work-dir-with-runtime-tasks-and-pre-director-snapshot> --start-from director --timeout 5400 --real-run-timeout 120 --max-failed 1"
+    "bench_command_template": "FACTORY_BENCH_BACKEND_URL=http://127.0.0.1:49977 FACTORY_BENCH_BACKEND_TOKEN=polaris-local-dev FACTORY_BENCH_RUN_ID=<run-id> PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-01 --work-dir /home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229 --start-from director --timeout 5400 --real-run-timeout 120 --max-failed 1"
   },
   "evidence_paths": {
     "defect_manifest": ".polaris_runtime/defect_manifest.json",
-    "verification_cards": [
-      "src/backend/docs/governance/templates/verification-cards/vc-20260623-minimax-director-runtime-support.yaml",
-      "src/backend/docs/governance/templates/verification-cards/vc-20260623-minimax-stream-tool-calls.yaml",
-      "src/backend/docs/governance/templates/verification-cards/vc-20260623-l1-01-director-materialization-hardening.yaml",
-      "src/backend/docs/governance/templates/verification-cards/vc-20260623-chief-engineer-factory-timeout.yaml",
-      "src/backend/docs/governance/templates/verification-cards/vc-20260623-minimax-reasoning-exhaustion-fallback.yaml",
-      "src/backend/docs/governance/templates/verification-cards/vc-20260623-director-only-resume.yaml"
-    ],
     "latest_factory_audit": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json",
-    "latest_director_resume_fix": "DEFECT-20260623-director-only-resume-missing-stage-snapshot",
-    "latest_director_resume_chain_log": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01.chain.log",
-    "latest_opencode_request": ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/request.json",
-    "latest_project_audit": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-hardening-20260623153330/audits/codex-l1-01-minimax-m3-hardening-20260623153330/L1-01.audit.json",
-    "latest_director_result": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-fe3ac22d8b38/results/director.result.json"
+    "latest_director_journal": "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/runs/director-9cf16c939272/logs/journal.enriched.jsonl",
+    "latest_director_result": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-9cf16c939272/results/director.result.json",
+    "latest_opencode_request": ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230/L1-01/request.json",
+    "latest_opencode_evidence_bundle": ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230/L1-01/evidence_bundle.json",
+    "latest_opencode_agent_log": ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230/L1-01/agent_01.log"
   }
 }

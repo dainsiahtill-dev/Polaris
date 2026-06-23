@@ -13,7 +13,11 @@ from __future__ import annotations
 
 from polaris.cells.roles.adapters.internal.director import execute_method as director_execute_method
 from polaris.cells.roles.adapters.internal.director.execute_method import (
+    _build_materialization_quality_repair_message,
     _pin_materialize_delivery_mode,
+)
+from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
+    extract_continuation_prompt_metadata,
 )
 from polaris.cells.roles.kernel.public import DeliveryMode
 from polaris.cells.roles.kernel.public.transaction_contracts import resolve_delivery_mode
@@ -69,6 +73,20 @@ class TestPinMaterializeDeliveryMode:
         # the pin is still correct. The load-bearing assertion is the pinned one.
         pinned = _pin_materialize_delivery_mode(terse_goal, True)
         assert resolve_delivery_mode(pinned).mode == DeliveryMode.MATERIALIZE_CHANGES
+
+    def test_quality_repair_message_pins_initial_and_continuation_delivery_mode(self) -> None:
+        message = _build_materialization_quality_repair_message(
+            original_message="Create TypeScript files.",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: declared target file missing 'src/domain/humidity.ts'"
+            ],
+            changed_files=["package.json", "src/index.ts"],
+            missing_target_files=["src/domain/humidity.ts"],
+        )
+
+        assert message.startswith("[mode:materialize]\n")
+        assert resolve_delivery_mode(message).mode == DeliveryMode.MATERIALIZE_CHANGES
+        assert extract_continuation_prompt_metadata(message)["delivery_mode"] == "materialize_changes"
 
     def test_non_fresh_terse_goal_not_forced(self) -> None:
         # Without the pin, a pure-analysis phrasing stays out of MATERIALIZE.

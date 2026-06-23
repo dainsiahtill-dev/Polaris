@@ -966,6 +966,7 @@ async def _run_materialization_quality_repair_retry(
         repair_target_candidates,
         repair_attempt=repair_attempt,
         rotate_after_first_attempt=rotate_repair_targets,
+        preserve_batch_after_first_attempt=_should_preserve_materialization_quality_repair_batch(repair_quality_errors),
     )
     missing_target_set = set(missing_target_files)
     missing_repair_target_files = [path for path in repair_target_files if path in missing_target_set]
@@ -983,6 +984,7 @@ async def _run_materialization_quality_repair_retry(
     repair_context = {
         **dict(context or {}),
         "run_id": run_id,
+        "delivery_mode": "materialize_changes",
         "director_quality_repair": {
             "artifact_quality_errors": prompt_safe_artifact_quality_errors,
             "changed_files": changed_files[:40],
@@ -993,6 +995,11 @@ async def _run_materialization_quality_repair_retry(
             "repair_target_files": repair_target_files[:12],
         },
     }
+    repair_metadata = repair_context.get("metadata")
+    if not isinstance(repair_metadata, dict):
+        repair_metadata = {}
+        repair_context["metadata"] = repair_metadata
+    repair_metadata["delivery_mode"] = "materialize_changes"
     # Force tool_choice=write_file whenever repair can be tied to exact target
     # files. Missing files need creation; Python runtime-smoke failures need a
     # complete rewrite of the already-written failing script. Leaving either
@@ -1121,9 +1128,12 @@ def _select_materialization_quality_repair_target_batch(
     *,
     repair_attempt: int = 1,
     rotate_after_first_attempt: bool = False,
+    preserve_batch_after_first_attempt: bool = False,
 ) -> list[str]:
     """Select the missing targets to repair in a single LLM attempt."""
 
+    if preserve_batch_after_first_attempt:
+        return list(missing_target_files[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT])
     if repair_attempt > 1 and missing_target_files:
         if rotate_after_first_attempt:
             target_index = (repair_attempt - 1) % len(missing_target_files)
@@ -1144,6 +1154,17 @@ def _should_rotate_materialization_quality_repair_targets(artifact_quality_error
     )
 
 
+def _should_preserve_materialization_quality_repair_batch(artifact_quality_errors: list[str]) -> bool:
+    joined_errors = "\n".join(str(item or "").lower() for item in artifact_quality_errors)
+    coupled_hints = (
+        "unresolved import symbol",
+        "typescript project typecheck failed",
+        "npm package manifest script",
+        "npm package manifest has test runner script",
+    )
+    return sum(1 for hint in coupled_hints if hint in joined_errors) >= 2
+
+
 _PYTHON_RUNTIME_SMOKE_TARGET_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"python runtime smoke (?:crashed|timed out|was killed) for (?P<target>['\"`][^'\"`]+['\"`]|[^:\s;]+)",
@@ -1158,6 +1179,11 @@ _PYTHON_RUNTIME_SMOKE_TARGET_PATTERNS: tuple[re.Pattern[str], ...] = (
 _PYTHON_TRACEBACK_FILE_RE = re.compile(r'File "(?P<path>[^"]+)", line \d+', re.IGNORECASE)
 _SEMANTIC_QUALITY_EXPLICIT_PATH_RE = re.compile(
     r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:c|cc|cpp|cxx|go|h|hpp|html|java|js|jsx|json|md|py|rs|ts|tsx|css))(?=[:\s(]|$)",
+    re.IGNORECASE,
+)
+_TS_NO_EXPORTED_MEMBER_QUALITY_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.tsx?)\(\d+,\d+\):\s*"
+    r"error\s+TS2305:\s*Module\s+['\"](?P<module>.+?)['\"]\s+has no exported member",
     re.IGNORECASE,
 )
 
@@ -1460,6 +1486,82 @@ def _resolve_javascript_relative_import_target(
     return None
 
 
+def _semantic_quality_exporting_module_targets(
+    artifact_quality_errors: list[str],
+    workspace_root: Path,
+) -> tuple[list[str], set[str]]:
+    """Return exporter files named by unresolved-symbol quality errors.
+
+    The failing path in these errors is usually the importing file. Repairing
+    that file can make the next typecheck worse; the useful target is the
+    module referenced by ``from ...``.
+    """
+
+    targets: list[str] = []
+    importing_files: set[str] = set()
+    for item in artifact_quality_errors:
+        text = str(item or "")
+        symbol_match = _em._UNRESOLVED_IMPORT_SYMBOL_ERROR_RE.search(text)
+        if symbol_match:
+            importer_rel = _normalize_declared_task_path(symbol_match.group("path"))
+            module_ref = str(symbol_match.group("module") or "").strip().strip("\"'")
+            if importer_rel:
+                importing_files.add(importer_rel)
+            target = _resolve_quality_error_module_target(
+                importer_rel=importer_rel,
+                module_ref=module_ref,
+                workspace_root=workspace_root,
+            )
+            if target:
+                targets.append(target)
+        for ts_match in _TS_NO_EXPORTED_MEMBER_QUALITY_RE.finditer(text):
+            importer_rel = _normalize_declared_task_path(ts_match.group("path"))
+            module_ref = str(ts_match.group("module") or "").strip().strip("\"'")
+            if importer_rel:
+                importing_files.add(importer_rel)
+            target = _resolve_quality_error_module_target(
+                importer_rel=importer_rel,
+                module_ref=module_ref,
+                workspace_root=workspace_root,
+            )
+            if target:
+                targets.append(target)
+    return _dedupe_preserve_order(targets), importing_files
+
+
+def _resolve_quality_error_module_target(
+    *,
+    importer_rel: str,
+    module_ref: str,
+    workspace_root: Path,
+) -> str:
+    importer = _normalize_declared_task_path(importer_rel)
+    module = str(module_ref or "").strip().strip("\"'")
+    if not importer or not module:
+        return ""
+    try:
+        root = workspace_root.resolve()
+        importer_path = (root / importer).resolve()
+        importer_path.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return ""
+    if module.startswith(("./", "../")):
+        target = _resolve_javascript_relative_import_target(importer_path.parent, module, root)
+        if target is None:
+            return ""
+        target_rel = target.relative_to(root).as_posix()
+        if Path(target_rel).suffix.lower() in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES:
+            return target_rel
+        return ""
+
+    module_path = module.replace(".", "/")
+    for candidate in (f"{module_path}.py", f"{module_path}/__init__.py"):
+        normalized = _normalize_declared_task_path(candidate)
+        if _workspace_path_exists_case_insensitive(root, normalized):
+            return normalized
+    return ""
+
+
 def _semantic_quality_repair_target_files(
     *,
     artifact_quality_errors: list[str],
@@ -1483,6 +1585,10 @@ def _semantic_quality_repair_target_files(
     if workspace_root is None or not workspace_root.is_dir():
         return []
 
+    exporting_targets, importing_files = _semantic_quality_exporting_module_targets(
+        artifact_quality_errors,
+        workspace_root,
+    )
     candidates: list[str] = []
     for item in changed_files:
         rel = _normalize_declared_task_path(str(item or ""))
@@ -1505,6 +1611,9 @@ def _semantic_quality_repair_target_files(
             ):
                 explicit_candidates.append(rel)
     explicit_unique = _dedupe_preserve_order(explicit_candidates)
+    if exporting_targets:
+        filtered_explicit = [rel for rel in explicit_unique if rel not in importing_files]
+        return _dedupe_preserve_order([*exporting_targets, *filtered_explicit])
     if explicit_unique:
         return explicit_unique
 
@@ -1720,6 +1829,8 @@ def _build_materialization_quality_repair_message(
                 "rewrite only the failing changed artifact(s), not unrelated files."
             )
     return (
+        "[mode:materialize]\n"
+        '<SESSION_PATCH>{"delivery_mode":"materialize_changes","task_progress":"implementing"}</SESSION_PATCH>\n'
         f"{original_message}\n\n"
         "MATERIALIZATION QUALITY REPAIR MODE:\n"
         "The previous write reached the workspace but failed Polaris artifact quality gates.\n"

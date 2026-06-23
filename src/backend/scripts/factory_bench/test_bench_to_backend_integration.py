@@ -390,6 +390,13 @@ class TestFactoryRunsIntegration(unittest.TestCase):
             required_llm_roles_for_factory_record(chain=director_chain, record={}),
             ("pm", "chief_engineer", "director"),
         )
+        self.assertEqual(
+            required_llm_roles_for_factory_record(
+                chain=director_chain,
+                record={"factory_bench_start_from": "director"},
+            ),
+            ("director",),
+        )
 
         chief_chain = {
             "chain_results": {
@@ -407,6 +414,28 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         self.assertEqual(
             required_llm_roles_for_factory_record(chain=clean_chain, record={}),
             ("pm", "chief_engineer", "director", "qa"),
+        )
+        self.assertEqual(
+            required_llm_roles_for_factory_record(
+                chain=clean_chain,
+                record={"factory_bench_start_from": "director"},
+            ),
+            ("director", "qa"),
+        )
+
+        resume_evidence_chain = {
+            "chain_results": {
+                "exit_class": "hard_failed",
+                "factory_stage_hint": "resume_evidence_gate",
+                "qa_ran": False,
+            }
+        }
+        self.assertEqual(
+            required_llm_roles_for_factory_record(
+                chain=resume_evidence_chain,
+                record={"factory_bench_start_from": "director"},
+            ),
+            (),
         )
 
     def test_map_factory_run_to_chain_results_hard_failed(self) -> None:

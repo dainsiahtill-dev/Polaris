@@ -111,6 +111,66 @@ async def test_query_run_status_includes_failed_task_details(
 
 
 @pytest.mark.asyncio
+async def test_query_run_status_prioritizes_failed_cause_over_later_blocked_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(timezone.utc)
+    snapshot = OrchestrationSnapshot(
+        run_id="director-run-001",
+        workspace="/tmp/demo",
+        mode="workflow",
+        status=RunStatus.FAILED,
+        current_phase=TaskPhase.EXECUTING,
+        overall_progress=50.0,
+    )
+
+    failed_director_task = TaskSnapshot(
+        task_id="task-1-director",
+        status=RunStatus.FAILED,
+        phase=TaskPhase.EXECUTING,
+        role_id="director",
+    )
+    failed_director_task.error_category = "runtime"
+    failed_director_task.error_message = "director_materialization_quality_failed"
+    failed_director_task.updated_at = now - timedelta(seconds=10)
+
+    blocked_director_task = TaskSnapshot(
+        task_id="task-2-director",
+        status=RunStatus.BLOCKED,
+        phase=TaskPhase.EXECUTING,
+        role_id="director",
+    )
+    blocked_director_task.error_category = "runtime"
+    blocked_director_task.error_message = "Director must claim TaskBoard task before execution"
+    blocked_director_task.updated_at = now
+
+    snapshot.tasks = {
+        failed_director_task.task_id: failed_director_task,
+        blocked_director_task.task_id: blocked_director_task,
+    }
+
+    stub = _StubOrchestrationService(snapshot)
+
+    async def _get_service() -> _StubOrchestrationService:
+        return stub
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service.get_orchestration_service",
+        _get_service,
+    )
+
+    service = OrchestrationCommandService(settings={})
+    result = await service.query_run_status("director-run-001")
+
+    assert result.status == "failed"
+    assert "failed_task=task-1-director (director)" in str(result.message)
+    assert "director_materialization_quality_failed" in str(result.message)
+    failed_tasks = result.metadata["failed_tasks"]
+    assert failed_tasks[0]["task_id"] == "task-1-director"
+    assert failed_tasks[1]["task_id"] == "task-2-director"
+
+
+@pytest.mark.asyncio
 async def test_query_run_status_returns_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     stub = _StubOrchestrationService(None)
 

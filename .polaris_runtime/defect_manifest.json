@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-06-23T16:56:46+08:00",
+  "updated_at": "2026-06-23T18:29:21+08:00",
   "defects": [
     {
       "id": "DEFECT-director-idle-unresolved-taskboard-prevents-quality-handoff",
@@ -562,20 +562,52 @@
         "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01.chain.log"
       ],
       "next_action": "Use a workspace that contains PM plan, TaskBoard runtime/tasks evidence, CE blueprints, and a pre-Director snapshot to verify the positive Director/QA-only path; do not rerun PM->CE for Director defects when those evidence gates are satisfied."
+    },
+    {
+      "id": "DEFECT-20260623-l1-01-director-repair-partial-and-taskboard-claim",
+      "status": "open",
+      "symptom": "L1-01 Director-only resume with trusted PM contract and CE blueprints reached real Director execution but did not produce a runnable project or QA verdict.",
+      "physical_error": "Factory bench run codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230 ended 0/1 passed after 859.3s. Static artifact checks passed, LLM route audit passed, and 6 TypeScript source files were generated, but chain_state=partial, qa_ran=false, npm run build failed, npm start was not executed, and Director dispatch failed with task-2 error: Director must claim TaskBoard task before execution.",
+      "root_cause_category": "Director Execution",
+      "platform_gap": "Director materialization repair now reaches write tools, but multi-error repair does not reliably converge across package scripts, cross-file exports, type-shape consistency, and subsequent TaskBoard task claiming. ContextOS also reports raw tool-result metadata in the projected data plane during repair.",
+      "fix_strategy": "Harden materialization repair batching so coupled package/index/main/type errors are repaired as one coherent source-level batch or deterministically transformed without another slow LLM turn; fix TaskBoard claim state after partial repair; keep Director-only resume from PM/CE frozen evidence; ensure ContextOS repair projection uses prompt-safe summaries instead of raw director_policy/package_diff receipts; rerun L1-01 Director-only resume on the same workspace.",
+      "fix_files": [
+        "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py",
+        "src/backend/polaris/cells/roles/adapters/internal/director/execution.py",
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+        "src/backend/scripts/factory_bench/run_factory_bench.py"
+      ],
+      "verification": [
+        "FACTORY_BENCH_RUN_ID=codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230 PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-01 --work-dir /home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229 --start-from director --timeout 5400 --real-run-timeout 120 --max-failed 1 -> FAIL: 0/1 passed, wall clock 859.3s",
+        "factory_audits.json: llm_route_audit ok; real_run_gate failed because npm run build returned code 2; QA verdict missing; integration_qa_passed failed",
+        "Runtime journal director-9cf16c939272: write_file materialized package.json, tsconfig.json, src/index.ts, src/main.ts, firefly.ts, flower.ts, moon.ts, humidity.ts; later repair call 52b45655 ended call_cancelled after 179957 ms",
+        "OpenCode evidence bundle recorded 9 role tool failure events including write_file syntax failures, call_cancelled, and director_materialization_quality_failed"
+      ],
+      "evidence_paths": [
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json",
+        "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/runs/director-9cf16c939272/logs/journal.enriched.jsonl",
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-9cf16c939272/results/director.result.json",
+        ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230/L1-01/evidence_bundle.json",
+        ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230/L1-01/agent_01.log"
+      ],
+      "next_action": "Use CodeGraph to inspect the Director repair target selection, tool-result projection hygiene, and TaskBoard claim path; patch only Polaris platform code; run ruff, mypy, focused pytest, then rerun L1-01 with --start-from director against the same PM/CE evidence workspace."
     }
   ],
   "latest_evidence": {
-    "latest_bench_root": "/home/dains/Temp/factory-bench-l1-01-route-audit-taxonomy-verify-20260623131652",
-    "latest_bench_workspace": "/home/dains/Temp/factory-bench-l1-01-route-audit-taxonomy-verify-20260623131652/L1-01",
-    "bench_session_id": "bench-1782191812-route-audit-taxonomy-verify",
-    "factory_run_id": "factory_9126161802c9",
-    "platform_fix_result": "Latest real L1-01 evidence correctly fails before Director execution because both Q6 bindings are runtime-unreachable; route audit/taxonomy now classify this as Runtime Environment and /v2/llm/status shows runtime_dispatch blocked/skipped instead of stale ready.",
+    "latest_bench_root": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229",
+    "latest_bench_workspace": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01",
+    "bench_session_id": "bench-1782209562-8640ba",
+    "factory_run_id": "factory_5ced2775ee44",
+    "platform_fix_result": "Latest real L1-01 Director-only resume no longer reruns PM/CE and passes LLM route audit with MiniMax-M3, but still fails Director dispatch after partial materialization repair; real_run_gate fails because npm run build fails, QA is not reached, and task-2 cannot be claimed.",
     "last_real_bench_session_id": "bench-1782189319-a7f673",
     "last_real_bench_workspace": "/home/dains/Temp/factory-bench-l1-01-post-fanout-partition-20260623123500/L1-01",
     "last_real_bench_audit": "/home/dains/Temp/factory-bench-l1-01-post-fanout-partition-20260623123500/factory_audits.json",
     "last_real_bench_result": "L1-01 PASS in 799.4s; real_run_gate ok; npm run build/test/start passed; LLM route audit observed both Q6 Director bindings.",
     "last_context_snapshot_with_control_leak": "/home/dains/.cache/polaris/.polaris/projects/l1-01-dd081ca0afa0/runtime/contexts/2b/2bdf025d509eeb687b747376",
     "last_updated_by": "codex",
+    "latest_director_run_id": "director-9cf16c939272",
+    "latest_director_journal": "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/runs/director-9cf16c939272/logs/journal.enriched.jsonl",
+    "latest_opencode_evidence_bundle": ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230/L1-01/evidence_bundle.json",
     "latest_provider_probe": {
       "checked_at": "2026-06-23T13:50:48+08:00",
       "gpu0": {
@@ -599,5 +631,5 @@
       "result": "runtime_dispatch skipped Director bindings preserve binding_id in role bindings and skipped_bindings projections"
     }
   },
-  "last_updated_at": "2026-06-23T08:56:46+00:00"
+  "last_updated_at": "2026-06-23T10:29:21+00:00"
 }

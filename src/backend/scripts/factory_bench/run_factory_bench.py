@@ -2253,10 +2253,20 @@ def required_llm_roles_for_factory_record(
     chain: dict[str, Any],
     record: dict[str, Any],
 ) -> tuple[str, ...]:
-    del record
     chain_results_raw = chain.get("chain_results")
     chain_results: dict[str, Any] = (
         cast(dict[str, Any], chain_results_raw) if isinstance(chain_results_raw, dict) else {}
+    )
+    start_from = (
+        str(
+            record.get("factory_bench_start_from")
+            or record.get("start_from")
+            or chain.get("start_from")
+            or chain_results.get("factory_bench_start_from")
+            or ""
+        )
+        .strip()
+        .lower()
     )
     stage_hint = str(chain_results.get("factory_stage_hint") or "").strip().lower()
     terminal_status = chain.get("factory_terminal_status")
@@ -2278,6 +2288,23 @@ def required_llm_roles_for_factory_record(
             .lower()
         )
     exit_class = str(chain_results.get("exit_class") or "").strip().lower()
+    director_result = chain_results.get("director")
+    director_evidence = False
+    if isinstance(director_result, dict):
+        director_evidence = any(value not in (None, "", 0) for value in director_result.values())
+    if start_from == "director":
+        resume_roles = []
+        if "director" in stage_hint or exit_class in {"director_partial", "qa_failed", "clean"} or director_evidence:
+            resume_roles.append("director")
+        if (
+            bool(chain_results.get("qa_ran"))
+            or "qa" in stage_hint
+            or "quality" in stage_hint
+            or exit_class in {"qa_failed", "clean"}
+        ):
+            resume_roles.append("qa")
+        return tuple(role for role in FACTORY_BENCH_REQUIRED_LLM_ROLES if role in set(resume_roles))
+
     roles: list[str] = ["pm"]
     pm_only_stage = "pm" in stage_hint and "chief" not in stage_hint and "director" not in stage_hint
     if exit_class == "pm_failed" or pm_only_stage:
@@ -2285,10 +2312,6 @@ def required_llm_roles_for_factory_record(
     roles.append("chief_engineer")
     if exit_class == "chief_engineer_failed" or "chief" in stage_hint or "engineer" in stage_hint:
         return tuple(dict.fromkeys(roles))
-    director_result = chain_results.get("director")
-    director_evidence = False
-    if isinstance(director_result, dict):
-        director_evidence = any(value not in (None, "", 0) for value in director_result.values())
     if "director" in stage_hint or exit_class in {"director_partial", "qa_failed", "clean"} or director_evidence:
         roles.append("director")
     if (
@@ -2924,6 +2947,7 @@ def run_factory_chain(
         )
         audit_bundle = _fallback_audit_bundle_from_workspace(workspace)
     chain_results = map_factory_run_to_chain_results(terminal_status, audit_bundle)
+    chain_results["factory_bench_start_from"] = normalized_start_from
 
     # Read contract_goal from workspace tasks/plan.json if available
     plan_path = workspace / ".polaris" / "docs" / "product" / "plan.json"
@@ -2938,6 +2962,7 @@ def run_factory_chain(
         "exit_code": 0 if str(terminal_status.get("status") or "").lower() == "completed" else 1,
         "duration_s": round(time.time() - started, 1),
         "run_id": run_id,
+        "start_from": normalized_start_from,
         "factory_terminal_status": terminal_status,
         "chain_results": chain_results,
         "audit_bundle": audit_bundle,

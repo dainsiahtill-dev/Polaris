@@ -7236,9 +7236,7 @@ class TestQualityRepairMissingTargetContract:
         assert summary["repair_target_files"] == ["package.json"]
 
     @pytest.mark.asyncio
-    async def test_quality_repair_second_attempt_rotates_to_typescript_source_after_package_target(
-        self, tmp_path
-    ) -> None:
+    async def test_quality_repair_second_attempt_preserves_package_and_typescript_batch(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -7311,11 +7309,10 @@ class TestQualityRepairMissingTargetContract:
         )
 
         assert summary["semantic_quality_target_files"] == ["package.json", "src/index.ts"]
-        assert summary["repair_target_files"] == ["src/index.ts"]
-        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
-            "tool": "write_file",
-            "target_file": "src/index.ts",
-        }
+        assert summary["repair_target_files"] == ["package.json", "src/index.ts"]
+        assert "write_only_single_target" not in adapter.repair_context["director_quality_repair"]
+        assert adapter.repair_context["delivery_mode"] == "materialize_changes"
+        assert adapter.repair_context["metadata"]["delivery_mode"] == "materialize_changes"
 
     def test_repair_targets_existing_import_case_variant_is_not_missing(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
@@ -7927,6 +7924,32 @@ class TestQualityRepairMissingTargetContract:
 
         assert targets == ["tests/test_product.py"]
 
+    def test_semantic_quality_repair_targets_exporter_for_typescript_symbol_errors(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _semantic_quality_repair_target_files,
+        )
+
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (tmp_path / "package.json").write_text('{"scripts":{"test":"node dist/simulator.test.js"}}\n', encoding="utf-8")
+        (src_dir / "index.ts").write_text("export const version = '0.1.0';\n", encoding="utf-8")
+        (src_dir / "main.ts").write_text("import { Garden } from './index';\nvoid Garden;\n", encoding="utf-8")
+
+        targets = _semantic_quality_repair_target_files(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: npm package manifest script 'test' references missing local "
+                "entrypoint 'dist/simulator.test.js' in package.json",
+                "Artifact quality scan failed: unresolved import symbol 'Garden' from './index' in src/main.ts "
+                "(sibling module does not define it)",
+                "Artifact quality scan failed: TypeScript project typecheck failed: src/index.ts(12,8): "
+                "error TS2305: Module '\"./main\"' has no exported member 'GardenSnapshot'.",
+            ],
+            changed_files=["package.json", "src/index.ts", "src/main.ts"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/index.ts", "src/main.ts", "package.json"]
+
     def test_explicit_quality_repair_targets_vitest_source_and_test_files(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _explicit_artifact_quality_repair_target_files,
@@ -8190,6 +8213,27 @@ class TestQualityRepairMissingTargetContract:
         assert _select_materialization_quality_repair_target_batch(missing_targets, repair_attempt=1) == missing_targets
         assert _select_materialization_quality_repair_target_batch(missing_targets, repair_attempt=2) == ["src/main.ts"]
 
+    def test_materialization_quality_repair_preserves_coupled_batch_after_first_attempt(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _select_materialization_quality_repair_target_batch,
+        )
+
+        repair_targets = [
+            "package.json",
+            "src/index.ts",
+            "src/main.ts",
+        ]
+
+        assert (
+            _select_materialization_quality_repair_target_batch(
+                repair_targets,
+                repair_attempt=3,
+                rotate_after_first_attempt=True,
+                preserve_batch_after_first_attempt=True,
+            )
+            == repair_targets
+        )
+
     def test_materialization_quality_repair_retry_can_rotate_single_target_after_first_attempt(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _select_materialization_quality_repair_target_batch,
@@ -8284,7 +8328,7 @@ class TestQualityRepairMissingTargetContract:
         assert "make the exporting module define or export exactly the missing symbol" in message
         assert "Do not read files first" in message
         assert "Do not list directories" in message
-        assert "Emit exactly one write_file or edit_file" in message
+        assert "If this repair prompt also names package or typecheck targets" in message
 
     def test_unresolved_relative_import_repair_prompt_omits_parent_traversal_specifier(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

@@ -925,6 +925,13 @@ class OrchestrationCommandService:
             key=lambda item: str(item.get("updated_at") or ""),
             reverse=True,
         )
+        causality_priority = {
+            "failed": 0,
+            "cancelled": 0,
+            "timeout": 0,
+            "blocked": 1,
+        }
+        rows.sort(key=lambda item: causality_priority.get(str(item.get("status") or ""), 99))
         return rows
 
     @staticmethod
