@@ -92,4 +92,5 @@ jobs:
             src/backend/polaris/cells/roles/adapters/tests/test_go_repairs.py
           git diff --cached --quiet && { echo "No generated changes to commit"; exit 1; }
           git commit -m "refactor: enforce defensive runtime gates [skip ci]"
+          git pull --rebase origin codex/defensive-runtime-refactor-20260624
           git push origin HEAD:codex/defensive-runtime-refactor-20260624
