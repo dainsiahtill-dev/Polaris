@@ -1,486 +1,557 @@
-"""Go-specific deterministic repairs for module/import consistency."""
+"""Pure, evidence-driven Go repair planning for Director execution.
+
+The functions in this module never mutate a workspace and never spawn a
+process. They convert authoritative quality-gate diagnostics plus UTF-8 source
+content into deterministic write plans. The Director adapter remains the only
+component allowed to execute those plans through its governed tool chain.
+"""
 
 from __future__ import annotations
 
-import logging
 import re
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from .go_syntax import (
+    GoDeclaration,
+    iter_go_import_literals,
+    iter_go_top_level_declarations,
+)
 
-_GO_MOD_MODULE_RE = re.compile(r"^module\s+(\S+)", re.MULTILINE)
-_GO_IMPORT_RE = re.compile(r'"([^"]+)"')
-_GO_STANDARD_PREFIXES = frozenset(
+_GO_MOD_MODULE_RE = re.compile(r"(?m)^\s*module\s+(?P<module>\S+)\s*(?://.*)?$")
+_GO_VERSION_RE = re.compile(r"^v\d+(?:\.\d+){0,2}(?:[-+].*)?$")
+_GO_IMPORT_DIAGNOSTIC_PATTERNS = (
+    re.compile(
+        r"\bno required module provides package\s+"
+        r"(?P<path>[A-Za-z0-9._~+@/-]+/[A-Za-z0-9._~+@/-]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bcannot find module providing package\s+"
+        r"(?P<path>[A-Za-z0-9._~+@/-]+/[A-Za-z0-9._~+@/-]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bpackage\s+(?P<path>[A-Za-z0-9._~+@/-]+/[A-Za-z0-9._~+@/-]+)"
+        r"\s+is not in std\b",
+        re.IGNORECASE,
+    ),
+)
+_GO_DUPLICATE_NAME_PATTERNS = (
+    re.compile(r"\b(?P<name>[A-Za-z_]\w*)\s+redeclared\b", re.IGNORECASE),
+    re.compile(r"\b(?P<name>[A-Za-z_]\w*)\s+already declared\b", re.IGNORECASE),
+    re.compile(
+        r"\bmethod\s+(?:\([^)]*\)|[A-Za-z_]\w*)\.(?P<name>[A-Za-z_]\w*)"
+        r"\s+already declared\b",
+        re.IGNORECASE,
+    ),
+)
+_IGNORED_DIRECTORY_NAMES = frozenset(
     {
-        "bufio",
-        "bytes",
-        "compress",
-        "context",
-        "crypto",
-        "database",
-        "embed",
-        "encoding",
-        "errors",
-        "expvar",
-        "flag",
-        "fmt",
-        "go",
-        "hash",
-        "html",
-        "image",
-        "index",
-        "io",
-        "log",
-        "math",
-        "mime",
-        "net",
-        "os",
-        "path",
-        "plugin",
-        "reflect",
-        "regexp",
+        ".git",
+        ".polaris",
+        "node_modules",
+        "playwright-report",
         "runtime",
-        "sort",
-        "strconv",
-        "strings",
-        "sync",
-        "syscall",
-        "testing",
-        "text",
-        "time",
-        "unicode",
-        "unsafe",
-        "internal",
-        "cmd",
+        "test-results",
+        "vendor",
     }
 )
 
 
-def _parse_go_mod_module(workspace: Path) -> str:
-    go_mod = workspace / "go.mod"
-    if not go_mod.is_file():
-        return ""
-    try:
-        text = go_mod.read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    match = _GO_MOD_MODULE_RE.search(text)
-    return match.group(1).strip() if match else ""
+@dataclass(frozen=True, slots=True)
+class GoImportReplacement:
+    """One exact import literal replacement supported by compiler evidence."""
+
+    before: str
+    after: str
+    reason: str
 
 
-def _collect_go_import_prefixes(workspace: Path) -> set[str]:
-    prefixes: set[str] = set()
-    for go_file in workspace.rglob("*.go"):
-        try:
-            text = go_file.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        for match in _GO_IMPORT_RE.finditer(text):
-            imp = match.group(1).strip()
-            if imp and "/" in imp and not imp.startswith((".", "..")):
-                prefixes.add(imp.split("/")[0])
-    return prefixes
+@dataclass(frozen=True, slots=True)
+class GoFileRepairPlan:
+    """Complete UTF-8 file content plus audit evidence for a governed write."""
+
+    file: str
+    content: str
+    repair_kinds: tuple[str, ...]
+    evidence: tuple[str, ...]
 
 
-def _is_local_import(imp: str, module: str) -> bool:
-    if not module:
-        return False
-    return imp == module or imp.startswith(f"{module}/")
+@dataclass(frozen=True, slots=True)
+class GoRepairBlocker:
+    """A quality defect that the deterministic planner refused to mutate."""
+
+    code: str
+    message: str
+    evidence: tuple[str, ...]
+    files: tuple[str, ...] = ()
 
 
-def _looks_like_standard_library(prefix: str) -> bool:
-    return prefix in _GO_STANDARD_PREFIXES or "." not in prefix
+@dataclass(frozen=True, slots=True)
+class GoRepairPlan:
+    """All safe writes and explicit blockers found in one planning pass."""
+
+    writes: tuple[GoFileRepairPlan, ...]
+    blockers: tuple[GoRepairBlocker, ...]
 
 
-def detect_go_module_import_drift(workspace: Path) -> dict[str, str]:
-    """Detect the mismatched module prefix used in Go import paths.
-
-    Returns a mapping ``{wrong_prefix: module_name}`` when the workspace
-    contains a ``go.mod`` whose module name differs from the prefix used
-    in ``import`` statements.
-    """
-    module = _parse_go_mod_module(workspace)
-    if not module:
-        return {}
-    module_prefix = module.split("/")[-1]
-    prefixes = _collect_go_import_prefixes(workspace)
-    drift: dict[str, str] = {}
-    for prefix in prefixes:
-        if _is_local_import(prefix, module) or _looks_like_standard_library(prefix):
-            continue
-        if prefix == module_prefix:
-            continue
-        # Check if this prefix's full imports look like they should belong to
-        # the module — they reference local subdirectories like `prefix/src/...`
-        for go_file in workspace.rglob("*.go"):
-            try:
-                text = go_file.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            for match in _GO_IMPORT_RE.finditer(text):
-                imp = match.group(1).strip()
-                if imp.startswith(f"{prefix}/"):
-                    suffix = imp[len(prefix) :]
-                    local_path = workspace / suffix.lstrip("/")
-                    if local_path.exists():
-                        drift[prefix] = module
-                        return drift
-    return drift
+@dataclass(frozen=True, slots=True)
+class _TextEdit:
+    start: int
+    end: int
+    replacement: str
+    repair_kind: str
+    evidence: str
 
 
-def repair_go_module_imports(workspace: Path) -> list[dict[str, str]]:
-    """Repair Go import paths that use the wrong module prefix.
+def extract_go_import_paths_from_errors(errors: Sequence[str]) -> frozenset[str]:
+    """Extract exact missing package paths from supported Go diagnostics."""
 
-    Returns a list of repair records: ``[{file, before, after}]``.
-    """
-    drift = detect_go_module_import_drift(workspace)
-    if not drift:
-        return []
-    repairs: list[dict[str, str]] = []
-    for wrong_prefix, module in drift.items():
-        for go_file in workspace.rglob("*.go"):
-            try:
-                original = go_file.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            repaired = original.replace(f'"{wrong_prefix}/', f'"{module}/')
-            repaired = repaired.replace(f"'{wrong_prefix}/", f"'{module}/")
-            if repaired != original:
-                go_file.write_text(repaired, encoding="utf-8")
-                repairs.append(
-                    {
-                        "file": str(go_file.relative_to(workspace)),
-                        "before": wrong_prefix,
-                        "after": module,
-                    }
-                )
-    # Also fix go.mod if it references the wrong prefix in a require block
-    go_mod = workspace / "go.mod"
-    if go_mod.is_file():
-        for wrong_prefix, module in drift.items():
-            try:
-                original = go_mod.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            repaired = original.replace(f"{wrong_prefix}/", f"{module}/")
-            if repaired != original:
-                go_mod.write_text(repaired, encoding="utf-8")
-    logger.info("Go module import repair: %d file(s) fixed, drift=%s", len(repairs), drift)
-    return repairs
+    paths: set[str] = set()
+    for error in errors:
+        text = str(error or "")
+        for pattern in _GO_IMPORT_DIAGNOSTIC_PATTERNS:
+            for match in pattern.finditer(text):
+                paths.add(match.group("path").rstrip(".,:;"))
+    return frozenset(paths)
 
 
-# ---------------------------------------------------------------------------
-# Sub-path hallucination repair
-# ---------------------------------------------------------------------------
+def extract_go_duplicate_names_from_errors(errors: Sequence[str]) -> frozenset[str]:
+    """Extract declaration names from Go redeclaration diagnostics."""
+
+    names: set[str] = set()
+    for error in errors:
+        text = str(error or "")
+        for pattern in _GO_DUPLICATE_NAME_PATTERNS:
+            names.update(match.group("name") for match in pattern.finditer(text))
+    return frozenset(names)
 
 
-def _discover_go_package_dirs(workspace: Path) -> set[str]:
-    """Return relative directory paths that contain ``.go`` files."""
-    dirs: set[str] = set()
-    try:
-        for go_file in workspace.rglob("*.go"):
-            rel_dir = str(go_file.parent.relative_to(workspace))
-            if rel_dir == "." or "/." in rel_dir or rel_dir.startswith(".") or "/vendor/" in rel_dir:
-                continue
-            dirs.add(rel_dir)
-    except OSError:
-        pass
-    return dirs
-
-
-def repair_go_import_subpaths(workspace: Path) -> list[dict[str, str]]:
-    """Repair hallucinated sub-paths in Go import statements.
-
-    When the Director generates ``module/example/pet-ascii/src/engine`` but
-    the actual package directory is ``src/engine``, rewrite to
-    ``module/src/engine``.
-
-    Returns a list of repair records: ``[{file, before, after}]``.
-    """
-    module = _parse_go_mod_module(workspace)
-    if not module:
-        return []
-    pkg_dirs = _discover_go_package_dirs(workspace)
-    if not pkg_dirs:
-        return []
-
-    prefix = f"{module}/"
-    repairs: list[dict[str, str]] = []
-
-    for go_file in workspace.rglob("*.go"):
-        try:
-            original = go_file.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        repaired = original
-        for match in _GO_IMPORT_RE.finditer(original):
-            imp = match.group(1).strip()
-            if not imp.startswith(prefix):
-                continue
-            subpath = imp[len(prefix) :]
-            if subpath in pkg_dirs:
-                continue  # Already valid.
-            # Suffix-match: find the longest actual dir that is a suffix of the subpath.
-            best = ""
-            for d in pkg_dirs:
-                if (subpath.endswith("/" + d) or subpath.endswith(d)) and len(d) > len(best):
-                    best = d
-            if best:
-                new_imp = f"{module}/{best}"
-                repaired = repaired.replace(f'"{imp}"', f'"{new_imp}"')
-        if repaired != original:
-            go_file.write_text(repaired, encoding="utf-8")
-            repairs.append(
-                {
-                    "file": str(go_file.relative_to(workspace)),
-                    "before": "hallucinated_subpath",
-                    "after": "corrected_subpath",
-                }
-            )
-    if repairs:
-        logger.info("Go sub-path repair: %d file(s) fixed", len(repairs))
-    return repairs
-
-
-# ---------------------------------------------------------------------------
-# Duplicate declaration repair (merge files in the same package)
-# ---------------------------------------------------------------------------
-
-
-def _dedup_within_single_file(go_file: Path) -> bool:
-    """Remove duplicate type/func declarations within a single Go file.
-
-    When the Director generates two copies of ``type Mood int`` in the same
-    file, keep only the first occurrence and comment out subsequent ones.
-    Returns True if the file was modified.
-    """
-    try:
-        text = go_file.read_text(encoding="utf-8")
-    except OSError:
-        return False
-
-    _decl_start_re = re.compile(
-        r"^(type\s+\w+[\s{(]|func\s+(?:\([^)]+\)\s+)?\w+\s*[\[(])",
-        re.MULTILINE,
+def _has_duplicate_diagnostic(errors: Sequence[str]) -> bool:
+    return any(
+        "redeclared" in str(error or "").lower()
+        or "already declared" in str(error or "").lower()
+        for error in errors
     )
 
-    seen: dict[str, int] = {}  # declaration prefix → first occurrence line
-    lines = text.split("\n")
-    modified = False
-    skip_until_close = False
-    brace_depth = 0
 
-    for i, line in enumerate(lines):
-        if skip_until_close:
-            brace_depth += line.count("{") - line.count("}")
-            if brace_depth <= 0:
-                skip_until_close = False
-                lines[i] = f"// [dedup-intra] {line.strip()}"
-            else:
-                lines[i] = f"// [dedup-intra] {line.strip()}"
-            modified = True
+def _parse_go_module_path(go_mod_text: str) -> str:
+    match = _GO_MOD_MODULE_RE.search(go_mod_text)
+    return match.group("module").strip() if match else ""
+
+
+def _is_module_path_token(token: str) -> bool:
+    return (
+        "/" in token
+        and not token.startswith(("./", "../"))
+        and not _GO_VERSION_RE.fullmatch(token)
+    )
+
+
+def _declared_module_paths(go_mod_text: str) -> frozenset[str]:
+    """Return remote module paths explicitly named by go.mod directives."""
+
+    declared: set[str] = set()
+    block_directive = ""
+    for raw_line in go_mod_text.splitlines():
+        line = raw_line.split("//", 1)[0].strip()
+        if not line:
+            continue
+        if line == ")":
+            block_directive = ""
+            continue
+        block_match = re.fullmatch(r"(require|replace|exclude)\s*\(", line)
+        if block_match:
+            block_directive = block_match.group(1)
             continue
 
-        m = _decl_start_re.match(line)
-        if m:
-            prefix = m.group(0).strip()
-            # Extract the name from the prefix.
-            name_m = re.search(r"(type|func)\s+(?:\([^)]+\)\s+)?(\w+)", prefix)
-            if name_m:
-                name = name_m.group(2)
-                key = f"{name_m.group(1)}_{name}"
-                if key in seen:
-                    # Duplicate! Comment out this declaration.
-                    if "{" in line:
-                        skip_until_close = True
-                        brace_depth = line.count("{") - line.count("}")
-                        if brace_depth <= 0:
-                            skip_until_close = False
-                    lines[i] = f"// [dedup-intra] {line.strip()}"
-                    modified = True
-                else:
-                    seen[key] = i
-
-    if modified:
-        go_file.write_text("\n".join(lines), encoding="utf-8")
-    return modified
+        tokens = line.replace("=>", " ").split()
+        if not tokens:
+            continue
+        directive = block_directive
+        if tokens[0] in {"exclude", "module", "replace", "require", "retract"}:
+            directive = tokens.pop(0)
+        if directive == "module" or not directive:
+            continue
+        declared.update(token for token in tokens if _is_module_path_token(token))
+    return frozenset(declared)
 
 
-def repair_go_duplicate_declarations(workspace: Path) -> list[dict[str, str]]:
-    """Merge Go files when ``go vet`` reports redeclaration errors.
-
-    When the Director generates overlapping type/func/const declarations
-    across multiple files in the same package, merge non-test ``.go`` files
-    in the offending package into the largest file.
-
-    Returns a list of repair records: ``[{file, action}]``.
-    """
-    import subprocess
-
-    go_binary = _resolve_go_binary()
-    if not go_binary:
-        return []
-
+def _is_ignored_go_file(workspace: Path, path: Path) -> bool:
     try:
-        result = subprocess.run(
-            [go_binary, "vet", "./..."],
-            cwd=str(workspace),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        return []
+        relative = path.relative_to(workspace)
+    except ValueError:
+        return True
+    return any(part in _IGNORED_DIRECTORY_NAMES for part in relative.parts[:-1])
 
-    stderr = result.stderr or ""
-    if "redeclared" not in stderr and "already declared" not in stderr:
-        return []
 
-    repairs: list[dict[str, str]] = []
+def _iter_go_files(workspace: Path) -> tuple[Path, ...]:
+    return tuple(
+        path
+        for path in sorted(workspace.rglob("*.go"), key=lambda item: item.as_posix())
+        if path.is_file() and not _is_ignored_go_file(workspace, path)
+    )
 
-    # Pass 1: Intra-file dedup (same declaration twice in one file).
-    for go_file in workspace.rglob("*.go"):
+
+def _read_utf8(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+
+
+def _local_package_dirs(workspace: Path) -> frozenset[str]:
+    dirs: set[str] = set()
+    for go_file in _iter_go_files(workspace):
         if go_file.name.endswith("_test.go"):
             continue
-        if _dedup_within_single_file(go_file):
-            repairs.append({"file": str(go_file.relative_to(workspace)), "action": "intra_file_dedup"})
+        relative = go_file.parent.relative_to(workspace).as_posix()
+        if relative != ".":
+            dirs.add(relative)
+    return frozenset(dirs)
 
-    # Re-run vet after intra-file dedup to see if cross-file issues remain.
-    if repairs:
-        try:
-            result = subprocess.run(
-                [go_binary, "vet", "./..."],
-                cwd=str(workspace),
-                capture_output=True,
-                text=True,
-                timeout=30,
+
+def _is_declared_dependency(import_path: str, declared_modules: Iterable[str]) -> bool:
+    return any(
+        import_path == module or import_path.startswith(f"{module}/")
+        for module in declared_modules
+    )
+
+
+def _unique_longest_suffix(path: str, package_dirs: Iterable[str]) -> str | None:
+    matches = {
+        package_dir
+        for package_dir in package_dirs
+        if path == package_dir or path.endswith(f"/{package_dir}")
+    }
+    if not matches:
+        return None
+    longest_length = max(len(match) for match in matches)
+    longest = sorted(match for match in matches if len(match) == longest_length)
+    return longest[0] if len(longest) == 1 else None
+
+
+def _replacement_for_import(
+    *,
+    module: str,
+    import_path: str,
+    declared_modules: frozenset[str],
+    package_dirs: frozenset[str],
+) -> GoImportReplacement | None:
+    if _is_declared_dependency(import_path, declared_modules) or import_path == module:
+        return None
+    if import_path.startswith(f"{module}/"):
+        current_suffix = import_path[len(module) + 1 :]
+        if current_suffix in package_dirs:
+            return None
+        corrected_suffix = _unique_longest_suffix(current_suffix, package_dirs)
+        if corrected_suffix and corrected_suffix != current_suffix:
+            return GoImportReplacement(
+                before=import_path,
+                after=f"{module}/{corrected_suffix}",
+                reason="compiler_diagnostic_unique_local_subpath",
             )
-            stderr = result.stderr or ""
-            if "redeclared" not in stderr and "already declared" not in stderr:
-                logger.info("Go intra-file dedup resolved all redeclarations: %d file(s)", len(repairs))
-                return repairs
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            pass
+        return None
 
-    # Pass 2: Cross-file merge (same declaration in different files).
-    module = _parse_go_mod_module(workspace)
-    pkg_error_re = re.compile(r"^#\s+(\S+)", re.MULTILINE)
+    parts = tuple(part for part in import_path.split("/") if part)
+    module_leaf = module.rsplit("/", 1)[-1]
+    candidates: set[str] = set()
+    for index in range(1, len(parts)):
+        wrong_prefix = "/".join(parts[:index])
+        suffix = "/".join(parts[index:])
+        if wrong_prefix.rsplit("/", 1)[-1] == module_leaf and suffix in package_dirs:
+            candidates.add(f"{module}/{suffix}")
+    if len(candidates) != 1:
+        return None
+    return GoImportReplacement(
+        before=import_path,
+        after=next(iter(candidates)),
+        reason="compiler_diagnostic_module_leaf_and_local_package_match",
+    )
 
-    # Parse which packages have redeclaration errors.
-    error_pkgs: set[str] = set()
-    lines = stderr.split("\n")
-    current_pkg = ""
-    for line in lines:
-        pkg_match = pkg_error_re.match(line)
-        if pkg_match:
-            current_pkg = pkg_match.group(1)
-        if ("redeclared" in line or "already declared" in line) and current_pkg:
-            error_pkgs.add(current_pkg)
 
-    if not error_pkgs:
-        return repairs
+def _comment_duplicate_declaration(
+    source: str,
+    declaration: GoDeclaration,
+) -> str | None:
+    line_end = source.find("\n", declaration.end)
+    trailing = source[declaration.end : None if line_end < 0 else line_end]
+    if trailing.strip():
+        return None
+    original = source[declaration.start : declaration.end]
+    marker = (
+        f"// [polaris deterministic repair] exact duplicate "
+        f"{declaration.kind} {declaration.name}: "
+    )
+    return "".join(f"{marker}{line}" for line in original.splitlines(keepends=True))
 
-    for pkg_path in error_pkgs:
-        # Convert module path to directory.
-        if module and pkg_path.startswith(f"{module}/"):
-            rel_dir = pkg_path[len(module) + 1 :]
-        elif "/" in pkg_path:
-            rel_dir = "/".join(pkg_path.split("/")[1:])
+
+def _duplicate_edits(
+    *,
+    sources: dict[str, str],
+    duplicate_names: frozenset[str],
+    has_duplicate_diagnostic: bool,
+) -> tuple[dict[str, list[_TextEdit]], list[GoRepairBlocker]]:
+    edits: dict[str, list[_TextEdit]] = {}
+    blockers: list[GoRepairBlocker] = []
+    if not has_duplicate_diagnostic:
+        return edits, blockers
+    if not duplicate_names:
+        blockers.append(
+            GoRepairBlocker(
+                code="go_duplicate_diagnostic_unparsed",
+                message=(
+                    "Go reported a redeclaration, but the deterministic planner "
+                    "could not extract an exact declaration name."
+                ),
+                evidence=("artifact_quality_errors:duplicate_without_name",),
+            )
+        )
+        return edits, blockers
+
+    declarations_by_name: dict[str, list[GoDeclaration]] = {}
+    for file, source in sources.items():
+        for declaration in iter_go_top_level_declarations(file, source):
+            if declaration.name in duplicate_names:
+                declarations_by_name.setdefault(declaration.name, []).append(
+                    declaration
+                )
+
+    for name in sorted(duplicate_names):
+        declarations = sorted(
+            declarations_by_name.get(name, []),
+            key=lambda declaration: (declaration.file, declaration.start),
+        )
+        if len(declarations) < 2:
+            blockers.append(
+                GoRepairBlocker(
+                    code="go_duplicate_declaration_not_located",
+                    message=(
+                        f"Go reported duplicate declaration {name!r}, but fewer "
+                        "than two safely parseable top-level declarations were found."
+                    ),
+                    evidence=(f"duplicate_name:{name}",),
+                    files=tuple(declaration.file for declaration in declarations),
+                )
+            )
+            continue
+
+        signatures = {declaration.signature for declaration in declarations}
+        if len(signatures) != 1:
+            blockers.append(
+                GoRepairBlocker(
+                    code="go_duplicate_declarations_differ",
+                    message=(
+                        f"Duplicate declaration {name!r} is not token-identical; "
+                        "automatic merge or deletion is intentionally blocked."
+                    ),
+                    evidence=tuple(
+                        f"{declaration.file}:{declaration.line}"
+                        for declaration in declarations
+                    ),
+                    files=tuple(
+                        dict.fromkeys(declaration.file for declaration in declarations)
+                    ),
+                )
+            )
+            continue
+
+        canonical = declarations[0]
+        for duplicate in declarations[1:]:
+            replacement = _comment_duplicate_declaration(
+                sources[duplicate.file], duplicate
+            )
+            if replacement is None:
+                blockers.append(
+                    GoRepairBlocker(
+                        code="go_duplicate_declaration_shared_line",
+                        message=(
+                            f"Duplicate declaration {name!r} shares a source line "
+                            "with other code; line-comment repair was blocked."
+                        ),
+                        evidence=(f"{duplicate.file}:{duplicate.line}",),
+                        files=(duplicate.file,),
+                    )
+                )
+                continue
+            edits.setdefault(duplicate.file, []).append(
+                _TextEdit(
+                    start=duplicate.start,
+                    end=duplicate.end,
+                    replacement=replacement,
+                    repair_kind="exact_duplicate_declaration",
+                    evidence=(
+                        f"duplicate:{duplicate.file}:{duplicate.line};"
+                        f"canonical:{canonical.file}:{canonical.line};name:{name}"
+                    ),
+                )
+            )
+    return edits, blockers
+
+
+def _apply_edits(
+    *,
+    file: str,
+    source: str,
+    edits: Sequence[_TextEdit],
+) -> GoFileRepairPlan | GoRepairBlocker:
+    ordered = sorted(edits, key=lambda edit: (edit.start, edit.end))
+    previous_end = -1
+    for edit in ordered:
+        if edit.start < 0 or edit.end > len(source) or edit.start >= edit.end:
+            return GoRepairBlocker(
+                code="go_repair_edit_out_of_bounds",
+                message=f"Planned Go repair for {file} had an invalid source span.",
+                evidence=(f"span:{edit.start}:{edit.end};length:{len(source)}",),
+                files=(file,),
+            )
+        if edit.start < previous_end:
+            return GoRepairBlocker(
+                code="go_repair_edit_overlap",
+                message=f"Planned Go repairs for {file} overlap; mutation was blocked.",
+                evidence=tuple(item.evidence for item in ordered),
+                files=(file,),
+            )
+        previous_end = edit.end
+
+    updated = source
+    for edit in reversed(ordered):
+        updated = updated[: edit.start] + edit.replacement + updated[edit.end :]
+    return GoFileRepairPlan(
+        file=file,
+        content=updated,
+        repair_kinds=tuple(dict.fromkeys(edit.repair_kind for edit in ordered)),
+        evidence=tuple(edit.evidence for edit in ordered),
+    )
+
+
+def plan_go_repairs(
+    workspace: Path,
+    *,
+    artifact_quality_errors: Sequence[str],
+) -> GoRepairPlan:
+    """Plan safe Go repairs from authoritative quality-gate diagnostics.
+
+    No mutation is planned merely because source text looks suspicious. An
+    import edit requires an exact missing-package diagnostic and a unique local
+    package match. A duplicate declaration edit requires an explicit
+    redeclaration diagnostic and token-identical declarations. Every ambiguous
+    or destructive case becomes a blocker instead of a silent fallback.
+    """
+
+    workspace_root = workspace.resolve()
+    go_files = _iter_go_files(workspace_root)
+    if not go_files:
+        return GoRepairPlan(writes=(), blockers=())
+
+    sources: dict[str, str] = {}
+    unreadable: list[str] = []
+    for path in go_files:
+        relative = path.relative_to(workspace_root).as_posix()
+        source = _read_utf8(path)
+        if source is None:
+            unreadable.append(relative)
         else:
-            rel_dir = "."
-        pkg_dir = workspace / rel_dir
-        if not pkg_dir.is_dir():
-            continue
+            sources[relative] = source
 
-        src_files = sorted(
-            (p for p in pkg_dir.glob("*.go") if not p.name.endswith("_test.go")),
-            key=lambda p: p.stat().st_size,
-            reverse=True,
+    blockers: list[GoRepairBlocker] = []
+    if unreadable:
+        blockers.append(
+            GoRepairBlocker(
+                code="go_source_not_utf8_readable",
+                message="One or more Go source files could not be read as UTF-8.",
+                evidence=tuple(f"unreadable:{file}" for file in unreadable),
+                files=tuple(unreadable),
+            )
         )
-        if len(src_files) < 2:
-            continue
 
-        owner = src_files[0]
-        owner_text = owner.read_text(encoding="utf-8", errors="replace")
-        owner_imports: set[str] = set()
-        for m in re.finditer(r'^import\s*\((.*?)\)|^import\s+"[^"]+"\s*$', owner_text, re.MULTILINE | re.DOTALL):
-            if m.group(1):
-                for line in m.group(1).split("\n"):
-                    stripped = line.strip()
-                    if stripped and not stripped.startswith("//"):
-                        owner_imports.add(stripped)
-            else:
-                owner_imports.add(m.group(0))
+    edits_by_file: dict[str, list[_TextEdit]] = {}
+    import_suspects = extract_go_import_paths_from_errors(artifact_quality_errors)
+    if import_suspects:
+        go_mod_text = _read_utf8(workspace_root / "go.mod")
+        module = _parse_go_module_path(go_mod_text or "")
+        if not module:
+            blockers.append(
+                GoRepairBlocker(
+                    code="go_module_path_unavailable",
+                    message=(
+                        "Missing-package diagnostics were present, but go.mod did "
+                        "not provide a readable canonical module path."
+                    ),
+                    evidence=tuple(
+                        f"missing_package:{path}" for path in sorted(import_suspects)
+                    ),
+                    files=("go.mod",),
+                )
+            )
+        else:
+            declared_modules = _declared_module_paths(go_mod_text or "") - {module}
+            package_dirs = _local_package_dirs(workspace_root)
+            observed_suspects: set[str] = set()
+            safely_repaired_originals: set[str] = set()
+            for file, source in sources.items():
+                for literal in iter_go_import_literals(source):
+                    if literal.path not in import_suspects:
+                        continue
+                    observed_suspects.add(literal.path)
+                    replacement = _replacement_for_import(
+                        module=module,
+                        import_path=literal.path,
+                        declared_modules=declared_modules,
+                        package_dirs=package_dirs,
+                    )
+                    if replacement is None:
+                        continue
+                    safely_repaired_originals.add(literal.path)
+                    edits_by_file.setdefault(file, []).append(
+                        _TextEdit(
+                            start=literal.start,
+                            end=literal.end,
+                            replacement=replacement.after,
+                            repair_kind="go_import_path",
+                            evidence=(
+                                f"{replacement.reason}:{replacement.before}"
+                                f"->{replacement.after}"
+                            ),
+                        )
+                    )
 
-        merged_sections: list[str] = []
-        extra_imports: set[str] = set()
-        files_to_remove: list[Path] = []
+            for import_path in sorted(observed_suspects - safely_repaired_originals):
+                reason = (
+                    "declared dependency"
+                    if _is_declared_dependency(import_path, declared_modules)
+                    else "no unique local package mapping"
+                )
+                blockers.append(
+                    GoRepairBlocker(
+                        code="go_import_repair_not_safe",
+                        message=(
+                            f"Import {import_path!r} matched a compiler diagnostic, "
+                            f"but deterministic repair was blocked: {reason}."
+                        ),
+                        evidence=(f"missing_package:{import_path}", f"reason:{reason}"),
+                    )
+                )
 
-        for src in src_files[1:]:
-            text = src.read_text(encoding="utf-8", errors="replace")
-            for m in re.finditer(r'^import\s*\((.*?)\)|^import\s+"[^"]+"\s*$', text, re.MULTILINE | re.DOTALL):
-                if m.group(1):
-                    for line in m.group(1).split("\n"):
-                        stripped = line.strip()
-                        if stripped and not stripped.startswith("//") and stripped not in owner_imports:
-                            extra_imports.add(stripped)
-                else:
-                    imp_line = m.group(0).strip()
-                    if imp_line not in owner_imports:
-                        extra_imports.add(imp_line)
-            section = re.sub(r"^package\s+\w+\s*$", "", text, flags=re.MULTILINE)
-            section = re.sub(r'^import\s*\((.*?)\)|^import\s+"[^"]+"\s*$', "", section, flags=re.MULTILINE | re.DOTALL)
-            section = re.sub(r"\n{3,}", "\n\n", section).strip()
-            if section:
-                merged_sections.append(f"// --- merged from {src.name} ---\n{section}")
-            files_to_remove.append(src)
+    duplicate_edits, duplicate_blockers = _duplicate_edits(
+        sources=sources,
+        duplicate_names=extract_go_duplicate_names_from_errors(artifact_quality_errors),
+        has_duplicate_diagnostic=_has_duplicate_diagnostic(artifact_quality_errors),
+    )
+    for file, edits in duplicate_edits.items():
+        edits_by_file.setdefault(file, []).extend(edits)
+    blockers.extend(duplicate_blockers)
 
-        if not merged_sections:
-            continue
-
-        owner_body = re.sub(
-            r'^import\s*\((.*?)\)|^import\s+"[^"]+"\s*$', "", owner_text, flags=re.MULTILINE | re.DOTALL
+    writes: list[GoFileRepairPlan] = []
+    for file in sorted(edits_by_file):
+        planned = _apply_edits(
+            file=file, source=sources[file], edits=edits_by_file[file]
         )
-        owner_body = re.sub(r"^package\s+\w+\s*$", "", owner_body, flags=re.MULTILINE)
-        owner_body = re.sub(r"\n{3,}", "\n\n", owner_body).strip()
+        if isinstance(planned, GoRepairBlocker):
+            blockers.append(planned)
+        elif planned.content != sources[file]:
+            writes.append(planned)
 
-        pkg_match = re.search(r"^package\s+(\w+)", owner_text, re.MULTILINE)
-        pkg_decl = pkg_match.group(0) if pkg_match else "package main"
-
-        all_imports = sorted(owner_imports | extra_imports)
-        import_block = ""
-        if all_imports:
-            import_lines = "\n".join(f"\t{imp}" for imp in all_imports)
-            import_block = f"\nimport (\n{import_lines}\n)\n"
-
-        new_text = f"{pkg_decl}\n{import_block}\n{owner_body}\n\n"
-        new_text += "\n\n".join(merged_sections) + "\n"
-
-        owner.write_text(new_text, encoding="utf-8")
-        for src in files_to_remove:
-            src.unlink()
-            repairs.append({"file": str(src.relative_to(workspace)), "action": "merged_into_owner"})
-
-    if repairs:
-        logger.info("Go duplicate declaration repair: %d file(s) merged", len(repairs))
-    return repairs
-
-
-def _resolve_go_binary() -> str | None:
-    """Locate the ``go`` binary, preferring >= 1.23."""
-    import os
-    import shutil
-
-    found = shutil.which("go")
-    if found:
-        return found
-    home = Path(os.path.expanduser("~"))
-    for candidate in (
-        home / ".local" / "go123" / "bin" / "go",
-        home / ".local" / "go124" / "bin" / "go",
-        home / ".local" / "go" / "bin" / "go",
-        home / "go" / "bin" / "go",
-    ):
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
-    return None
+    return GoRepairPlan(writes=tuple(writes), blockers=tuple(blockers))

@@ -1,0 +1,141 @@
+name: Temporary Defensive Runtime Refactor V2
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  focused-audit:
+    if: github.event.pull_request.head.ref == 'codex/defensive-runtime-refactor-v2-20260624'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout proposed branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install repository development dependencies
+        run: |
+          set -o pipefail
+          python -m pip install --upgrade pip setuptools wheel 2>&1 | tee /tmp/install.log
+          python -m pip install -e ".[dev]" 2>&1 | tee -a /tmp/install.log
+          python -m pip check 2>&1 | tee -a /tmp/install.log
+
+      - name: Apply exact UTF-8 integration patch
+        run: |
+          set -o pipefail
+          python infrastructure/scripts/apply_defensive_runtime_refactor_v2.py 2>&1 | tee /tmp/patch.log
+
+      - name: Ruff fix, format, and clean recheck
+        run: |
+          set -o pipefail
+          FILES=(
+            infrastructure/scripts/apply_defensive_runtime_refactor_v2.py
+            src/backend/polaris/kernelone/env_flags.py
+            src/backend/polaris/kernelone/tests/test_env_flags.py
+            src/backend/polaris/delivery/http/routers/_shared.py
+            src/backend/polaris/delivery/http/v2/context.py
+            src/backend/polaris/delivery/tests/test_context_admin_endpoints.py
+            src/backend/polaris/tests/integration/delivery/routers/test_factory_bench_router.py
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_syntax.py
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_repairs.py
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/generic_repairs.py
+            src/backend/polaris/cells/roles/adapters/tests/test_go_repairs.py
+          )
+          python -m ruff check "${FILES[@]}" --fix 2>&1 | tee /tmp/ruff.log
+          python -m ruff format "${FILES[@]}" 2>&1 | tee -a /tmp/ruff.log
+          python -m ruff check "${FILES[@]}" 2>&1 | tee -a /tmp/ruff.log
+
+      - name: Strict type check of new foundations
+        run: |
+          set -o pipefail
+          PYTHONPATH=src/backend python -m mypy \
+            src/backend/polaris/kernelone/env_flags.py \
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_syntax.py \
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_repairs.py \
+            --strict --ignore-missing-imports 2>&1 | tee /tmp/mypy.log
+
+      - name: Focused regression tests
+        run: |
+          set -o pipefail
+          PYTHONPATH=src/backend python -m pytest -q \
+            src/backend/polaris/kernelone/tests/test_env_flags.py \
+            src/backend/polaris/cells/roles/adapters/tests/test_go_repairs.py \
+            src/backend/polaris/delivery/tests/test_context_admin_endpoints.py \
+            src/backend/polaris/tests/integration/delivery/routers/test_factory_bench_router.py \
+            2>&1 | tee /tmp/pytest.log
+
+      - name: Validate launcher and defensive invariants
+        run: |
+          set -o pipefail
+          node --check infrastructure/scripts/run-dev.js 2>&1 | tee /tmp/invariants.log
+          ! grep -nE 'write_text\(|\.unlink\(|subprocess|os\.remove' \
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_syntax.py \
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_repairs.py \
+            2>&1 | tee -a /tmp/invariants.log
+          ! grep -nE 'repair_go_(module_imports|import_subpaths|duplicate_declarations)' \
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/generic_repairs.py \
+            2>&1 | tee -a /tmp/invariants.log
+          git diff --check 2>&1 | tee -a /tmp/invariants.log
+
+      - name: Assemble auditable patch artifact
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p artifact/repo artifact/logs
+          FILES=(
+            infrastructure/scripts/run-dev.js
+            src/backend/polaris/kernelone/env_flags.py
+            src/backend/polaris/kernelone/tests/test_env_flags.py
+            src/backend/polaris/delivery/http/routers/_shared.py
+            src/backend/polaris/delivery/http/v2/context.py
+            src/backend/polaris/delivery/tests/test_context_admin_endpoints.py
+            src/backend/polaris/tests/integration/delivery/routers/test_factory_bench_router.py
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_syntax.py
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_repairs.py
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/generic_repairs.py
+            src/backend/polaris/cells/roles/adapters/tests/test_go_repairs.py
+          )
+          for file in "${FILES[@]}"; do
+            mkdir -p "artifact/repo/$(dirname "$file")"
+            cp "$file" "artifact/repo/$file"
+          done
+          git diff --binary > artifact/refactor.diff
+          git status --short > artifact/git-status.txt
+          for log in /tmp/install.log /tmp/patch.log /tmp/ruff.log /tmp/mypy.log /tmp/pytest.log /tmp/invariants.log; do
+            if [ -f "$log" ]; then cp "$log" artifact/logs/; fi
+          done
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = {
+              "schema_version": "1.0",
+              "branch": "codex/defensive-runtime-refactor-v2-20260624",
+              "utf8_io": True,
+              "artifact_purpose": "reviewed files after exact patch and focused gates",
+          }
+          Path("artifact/evidence.json").write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload patch and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: defensive-runtime-refactor-v2-${{ github.event.pull_request.head.sha }}
+          path: artifact
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,109 @@
+card_id: "vc-20260624-defensive-runtime-refactor-v2"
+classification: "pattern"
+status: "pending_repository_ci"
+
+bug_summary: >
+  Internal Bench and Context Admin HTTP surfaces used fail-open defaults, and
+  Go deterministic repair helpers directly mutated target workspaces with
+  pathlib/subprocess before generic_repairs synthesized successful write_file
+  evidence. The refactor centralizes strict feature-flag resolution, separates
+  Go analysis from effects, and requires DirectorToolExecutor evidence for every
+  mutation.
+
+scope:
+  repository: "dainsiahtill-dev/Polaris"
+  base_commit: "f973ca88b8af10538ac814884ec30f059d4964a8"
+  branch: "codex/defensive-runtime-refactor-v2-20260624"
+  target_project_code_modified: false
+
+root_causes:
+  - id: "RC-01"
+    category: "configuration"
+    finding: >
+      Privileged/internal HTTP gates treated an unset environment variable as
+      enabled and accepted the first configured alias without checking alias
+      conflicts.
+    before:
+      bench_default: "enabled"
+      context_admin_default: "enabled"
+    after:
+      default: "disabled"
+      invalid_value: "disabled"
+      conflicting_aliases: "disabled"
+      raw_value_in_audit: false
+  - id: "RC-02"
+    category: "tool_authority"
+    finding: >
+      Go repair helpers called Path.write_text, Path.unlink, and subprocess.run
+      outside DirectorToolExecutor, then the adapter reported synthetic success.
+    after: >
+      go_repairs and go_syntax are pure planners; generic_repairs executes each
+      full-file plan through DirectorToolExecutor and preserves the real result.
+  - id: "RC-03"
+    category: "unsafe_heuristic"
+    finding: >
+      Broad import and duplicate-declaration heuristics could rewrite comments,
+      legitimate dependencies, or non-identical declarations.
+    after: >
+      Import edits require an exact compiler diagnostic plus a unique local
+      package mapping. Duplicate edits require an explicit redeclaration and
+      token-identical declarations; every ambiguous/destructive case is blocked.
+
+architecture_constraints:
+  - "Cell reuse first and KernelOne foundation first."
+  - "No Polaris product/runtime dependency on OpenCode or external audit agents."
+  - "No target-project or business code is added to Polaris."
+  - "All introduced text reads and writes explicitly use UTF-8."
+  - "Bench remains internal-test-only and requires explicit opt-in outside the development launcher."
+  - "Every Go workspace mutation must cross DirectorToolExecutor and retain authoritative effect evidence."
+  - "No automatic file deletion or direct subprocess execution in Go repair planning."
+
+files:
+  production:
+    - "src/backend/polaris/kernelone/env_flags.py"
+    - "src/backend/polaris/delivery/http/routers/_shared.py"
+    - "src/backend/polaris/delivery/http/v2/context.py"
+    - "infrastructure/scripts/run-dev.js"
+    - "src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_syntax.py"
+    - "src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_repairs.py"
+    - "src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/generic_repairs.py"
+  tests:
+    - "src/backend/polaris/kernelone/tests/test_env_flags.py"
+    - "src/backend/polaris/cells/roles/adapters/tests/test_go_repairs.py"
+    - "src/backend/polaris/delivery/tests/test_context_admin_endpoints.py"
+    - "src/backend/polaris/tests/integration/delivery/routers/test_factory_bench_router.py"
+
+verification:
+  local_pure_modules:
+    status: "passed"
+    commands:
+      - "python -m ruff check <focused-files> --fix"
+      - "python -m ruff format <focused-files>"
+      - "python -m ruff check <focused-files>"
+      - "python -m mypy polaris/kernelone/env_flags.py polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_syntax.py polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_repairs.py --strict --ignore-missing-imports"
+      - "PYTHONPATH=. python -m pytest -q test_env_flags.py test_go_repairs_pure.py"
+    result: "22 passed; Ruff clean; strict Mypy success"
+  repository_focused_ci:
+    status: "pending"
+    workflow: ".github/workflows/tmp-defensive-runtime-refactor-v2.yml"
+    required_commands:
+      - "ruff check --fix + ruff format + clean ruff recheck"
+      - "strict mypy for env_flags, go_syntax, and go_repairs"
+      - "focused pytest for environment gates, Go planning/execution, Context Admin, and Factory Bench"
+      - "node --check infrastructure/scripts/run-dev.js"
+      - "invariant grep for direct writes/deletes/subprocess and removed legacy Go repair entry points"
+
+rollback:
+  strategy: >
+    Revert the single pull-request change set. Feature gates are additive and
+    the development launcher explicitly opts into Bench, so rollback does not
+    require data migration.
+  data_migration_required: false
+
+remaining_risks:
+  - "Repository-focused CI has not yet produced the final artifact."
+  - "Full repository workflows must be reviewed after the integrated files are committed."
+
+sign_off:
+  prepared_by: "gpt-5.5-pro"
+  prepared_at: "2026-06-24"
