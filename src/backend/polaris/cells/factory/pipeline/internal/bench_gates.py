@@ -8,13 +8,12 @@ the ``factory.pipeline`` cell boundary.
 from __future__ import annotations
 
 import json
+import os as _os
 import re
 import shlex
 import shutil
 import struct
 import subprocess
-import os as _os
-from pathlib import Path as _Path
 import sys
 import tempfile
 import threading
@@ -28,7 +27,7 @@ from collections.abc import Iterable
 from contextlib import suppress
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, Path as _Path
 from typing import Any
 
 from polaris.cells.control_plane.verifier_execution.public import (
@@ -926,8 +925,7 @@ def _required_user_verifier_requirement(verifier_patch: dict[str, Any]) -> dict[
     failed = [item for item in required if not bool(item.get("ok") or item.get("passed"))]
     if failed:
         names = [
-            str(item.get("name") or item.get("id") or item.get("script") or "custom verifier")
-            for item in failed[:5]
+            str(item.get("name") or item.get("id") or item.get("script") or "custom verifier") for item in failed[:5]
         ]
         return {
             "ok": False,
@@ -2650,6 +2648,8 @@ __all__ = [
     "collect_llm_events",
     "resolve_expected_llm_bindings",
 ]
+
+
 def _resolve_go_binary() -> str | None:
     """Locate the ``go`` binary, checking the PATH first and common fallbacks."""
     found = shutil.which("go")

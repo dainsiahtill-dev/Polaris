@@ -10,14 +10,50 @@ logger = logging.getLogger(__name__)
 
 _GO_MOD_MODULE_RE = re.compile(r"^module\s+(\S+)", re.MULTILINE)
 _GO_IMPORT_RE = re.compile(r'"([^"]+)"')
-_GO_STANDARD_PREFIXES = frozenset({
-    "bufio", "bytes", "compress", "context", "crypto", "database",
-    "embed", "encoding", "errors", "expvar", "flag", "fmt", "go",
-    "hash", "html", "image", "index", "io", "log", "math", "mime",
-    "net", "os", "path", "plugin", "reflect", "regexp", "runtime",
-    "sort", "strconv", "strings", "sync", "syscall", "testing",
-    "text", "time", "unicode", "unsafe", "internal", "cmd",
-})
+_GO_STANDARD_PREFIXES = frozenset(
+    {
+        "bufio",
+        "bytes",
+        "compress",
+        "context",
+        "crypto",
+        "database",
+        "embed",
+        "encoding",
+        "errors",
+        "expvar",
+        "flag",
+        "fmt",
+        "go",
+        "hash",
+        "html",
+        "image",
+        "index",
+        "io",
+        "log",
+        "math",
+        "mime",
+        "net",
+        "os",
+        "path",
+        "plugin",
+        "reflect",
+        "regexp",
+        "runtime",
+        "sort",
+        "strconv",
+        "strings",
+        "sync",
+        "syscall",
+        "testing",
+        "text",
+        "time",
+        "unicode",
+        "unsafe",
+        "internal",
+        "cmd",
+    }
+)
 
 
 def _parse_go_mod_module(workspace: Path) -> str:
@@ -84,8 +120,7 @@ def detect_go_module_import_drift(workspace: Path) -> dict[str, str]:
             for match in _GO_IMPORT_RE.finditer(text):
                 imp = match.group(1).strip()
                 if imp.startswith(f"{prefix}/"):
-                    suffix = imp[len(prefix):]
-                    candidate = f"{module}{suffix}"
+                    suffix = imp[len(prefix) :]
                     local_path = workspace / suffix.lstrip("/")
                     if local_path.exists():
                         drift[prefix] = module
@@ -112,11 +147,13 @@ def repair_go_module_imports(workspace: Path) -> list[dict[str, str]]:
             repaired = repaired.replace(f"'{wrong_prefix}/", f"'{module}/")
             if repaired != original:
                 go_file.write_text(repaired, encoding="utf-8")
-                repairs.append({
-                    "file": str(go_file.relative_to(workspace)),
-                    "before": wrong_prefix,
-                    "after": module,
-                })
+                repairs.append(
+                    {
+                        "file": str(go_file.relative_to(workspace)),
+                        "before": wrong_prefix,
+                        "after": module,
+                    }
+                )
     # Also fix go.mod if it references the wrong prefix in a require block
     go_mod = workspace / "go.mod"
     if go_mod.is_file():

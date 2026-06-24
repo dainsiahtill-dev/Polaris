@@ -33,6 +33,7 @@ from ._common import (
     _find_nearby_declared_target_source,
     _parse_missing_declared_target_files,
 )
+from .go_repairs import repair_go_module_imports
 from .javascript_repairs import (
     _apply_deterministic_javascript_esm_commonjs_entrypoint_repair,
     _apply_deterministic_javascript_missing_export_repair,
@@ -345,6 +346,40 @@ def _apply_deterministic_patch_residue_cleanup(
     return results
 
 
+def _apply_deterministic_go_module_import_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+) -> list[dict[str, Any]]:
+    """Repair Go import paths that reference a wrong module prefix."""
+    workspace = Path(getattr(adapter, "workspace", "") or "")
+    if not workspace.is_dir():
+        return []
+    go_files = list(workspace.rglob("*.go"))
+    if not (workspace / "go.mod").is_file() or not go_files:
+        return []
+    repairs = repair_go_module_imports(workspace)
+    if not repairs:
+        return []
+    results: list[dict[str, Any]] = []
+    for record in repairs:
+        results.append(
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_go_module_import_repair",
+                    "file": record["file"],
+                    "before": record["before"],
+                    "after": record["after"],
+                },
+            }
+        )
+    return results
+
+
 def _apply_deterministic_materialization_quality_repairs(
     adapter: Any,
     *,
@@ -602,6 +637,8 @@ def _apply_deterministic_materialization_quality_repairs(
             artifact_quality_errors=artifact_quality_errors,
         )
     )
+    go_import_repairs = _apply_deterministic_go_module_import_repair(adapter, task_id=task_id)
+    results.extend(go_import_repairs)
     source_tools: list[str] = []
     for item in results:
         result = item.get("result")
