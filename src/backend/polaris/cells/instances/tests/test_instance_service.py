@@ -186,9 +186,9 @@ def test_start_instance_restarts_alive_record_when_workspace_changes(tmp_path: P
         return FakeProcess(65000 + len(calls))
 
     def fake_allocate_port(start: int) -> int:
-        if start == instance_service.DEFAULT_BACKEND_PORT:
+        if start == instance_service.DEFAULT_BACKEND_PORT + 1:
             return 60101 + len(calls)
-        if start == instance_service.DEFAULT_FRONTEND_PORT:
+        if start == instance_service.DEFAULT_FRONTEND_PORT + 1:
             return 60201 + len(calls)
         raise AssertionError(f"unexpected allocation start: {start}")
 
@@ -198,6 +198,11 @@ def test_start_instance_restarts_alive_record_when_workspace_changes(tmp_path: P
     monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
     monkeypatch.setattr(
         InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: terminated.append(int(pid or 0)))
+    )
+    monkeypatch.setattr(
+        InstanceSupervisor,
+        "_pid_looks_like_instance_process",
+        staticmethod(lambda _record, pid, process_kind: bool(pid and process_kind in {"backend", "frontend"})),
     )
 
     registry = InstanceRegistry(tmp_path / "instances", publish_events=False)

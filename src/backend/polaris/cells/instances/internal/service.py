@@ -106,6 +106,18 @@ def tail_text(path: Path, lines: int) -> str:
     return "".join(content[-line_count:])
 
 
+def _read_linux_process_text(pid: int) -> str:
+    chunks: list[str] = []
+    for name in ("cmdline", "environ"):
+        path = Path("/proc") / str(pid) / name
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        chunks.append(raw.replace(b"\x00", b" ").decode("utf-8", errors="replace"))
+    return " ".join(chunks)
+
+
 @dataclass(slots=True)
 class InstanceRecord:
     instance_id: str
@@ -277,8 +289,7 @@ class InstanceSupervisor:
         if existing and is_process_alive(existing.backend_pid):
             if self._record_matches_start_request(existing, record):
                 return self._with_health(existing).to_dict()
-            self._terminate_pid(existing.frontend_pid)
-            self._terminate_pid(existing.backend_pid)
+            self._terminate_record_processes_for_replacement(existing)
             existing.frontend_pid = None
             existing.backend_pid = None
             existing.status = "stopped"
@@ -307,6 +318,40 @@ class InstanceSupervisor:
             and Path(existing.runtime_root).resolve() == Path(requested.runtime_root).resolve()
             and existing_binding == requested_binding
         )
+
+    def _terminate_record_processes_for_replacement(self, record: InstanceRecord) -> None:
+        if self._pid_looks_like_instance_process(record, record.frontend_pid, process_kind="frontend"):
+            self._terminate_pid(record.frontend_pid)
+        if self._pid_looks_like_instance_process(record, record.backend_pid, process_kind="backend"):
+            self._terminate_pid(record.backend_pid)
+
+    @staticmethod
+    def _pid_looks_like_instance_process(
+        record: InstanceRecord,
+        pid: int | None,
+        *,
+        process_kind: str,
+    ) -> bool:
+        if not pid or pid <= 0:
+            return False
+        if os.name != "posix":
+            return True
+        process_text = _read_linux_process_text(pid)
+        if not process_text:
+            return False
+        if process_kind == "backend":
+            return (
+                "polaris.delivery.cli.backend" in process_text
+                and record.workspace in process_text
+                and str(record.backend_port) in process_text
+            )
+        if process_kind == "frontend":
+            return (
+                record.instance_id in process_text
+                and record.workspace in process_text
+                and str(record.frontend_port) in process_text
+            )
+        return False
 
     def stop_instance(self, instance_id: str) -> dict[str, Any]:
         record = self._require_record(instance_id)
@@ -352,24 +397,30 @@ class InstanceSupervisor:
         instance_id = sanitize_instance_id(raw_id)
         instance_dir = self._instance_dir(instance_id)
         runtime_root = ensure_absolute_dir(Path(str(request.get("runtime_root") or instance_dir / "runtime")))
+        kind = str(request.get("kind") or "project")
+        metadata = request.get("metadata")
+        metadata_payload: dict[str, Any] = metadata if isinstance(metadata, dict) else {}
         requested_backend_port = request.get("backend_port")
         requested_frontend_port = request.get("frontend_port")
-        backend_port = int(requested_backend_port or allocate_port(DEFAULT_BACKEND_PORT))
-        frontend_port = int(requested_frontend_port or allocate_port(DEFAULT_FRONTEND_PORT))
+        is_isolated_bench = (
+            kind == "bench_project" and str(metadata_payload.get("backend_binding") or "") == "isolated_backend_instance"
+        )
+        backend_port_start = DEFAULT_BACKEND_PORT + 1 if is_isolated_bench else DEFAULT_BACKEND_PORT
+        frontend_port_start = DEFAULT_FRONTEND_PORT + 1 if is_isolated_bench else DEFAULT_FRONTEND_PORT
+        backend_port = int(requested_backend_port or allocate_port(backend_port_start))
+        frontend_port = int(requested_frontend_port or allocate_port(frontend_port_start))
         if requested_backend_port and not is_port_free(backend_port):
             raise RuntimeError(f"backend port is already in use: {backend_port}")
         if request.get("start_frontend", True) and requested_frontend_port and not is_port_free(frontend_port):
             raise RuntimeError(f"frontend port is already in use: {frontend_port}")
         token = str(request.get("token") or f"polaris-{secrets.token_urlsafe(18)}")
         bench = request.get("bench")
-        metadata = request.get("metadata")
         bench_payload: dict[str, Any] = bench if isinstance(bench, dict) else {}
-        metadata_payload: dict[str, Any] = metadata if isinstance(metadata, dict) else {}
 
         return InstanceRecord(
             instance_id=instance_id,
             name=str(request.get("name") or workspace.name or instance_id),
-            kind=str(request.get("kind") or "project"),
+            kind=kind,
             polaris_root=str(polaris_root),
             workspace=str(workspace),
             runtime_root=str(runtime_root),
