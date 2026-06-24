@@ -1,2801 +1,2801 @@
 {
- "schema_version": "factory-bench/2",
- "comment": "Polaris 全链路创意实战评估矩阵 v2 — 独立默认题库,不继承 v1。共 120 个 L1-L12 项目,全部要求有趣、新颖、有明确 creative_hook,覆盖 TypeScript/JavaScript、Go、Rust、C++、Java、Python,并覆盖多人在线游戏、3A 游戏原型、音乐/声音、创造工具、创意平台、专业软件的奇思妙想版本、科幻/奇幻/沉浸式行业软件等。projects_v1.json 保留为历史基线,可通过 --projects-file 显式运行。",
- "projects": [
-  {
-   "id": "L1-01",
-   "level": 1,
-   "domain": "science_creative",
-   "project_type": "simulation_toy",
-   "primary_language": "typescript",
-   "title": "发光昆虫花园模拟器",
-   "creative_hook": "萤火虫根据花朵情绪和月相组成实时灯光舞蹈",
-   "novelty_tags": [
-    "simulation-toy",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「发光昆虫花园模拟器」。创意钩子: 萤火虫根据花朵情绪和月相组成实时灯光舞蹈。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "萤火虫根据花朵情绪和月相组成实时灯光舞蹈; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:3",
-    "content_any:firefly|flower|moon|humidity",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "id": "L1-02",
-   "level": 1,
-   "domain": "creative",
-   "project_type": "creative_tool",
-   "primary_language": "javascript",
-   "title": "梦境便签炼金炉",
-   "creative_hook": "普通便签被合成为荒诞梦境卡片和提醒仪式",
-   "novelty_tags": [
-    "creative-tool",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「梦境便签炼金炉」。创意钩子: 普通便签被合成为荒诞梦境卡片和提醒仪式。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "普通便签被合成为荒诞梦境卡片和提醒仪式; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:3",
-    "content_any:dream|alchemy|note|recipe",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "id": "L1-03",
-   "level": 1,
-   "domain": "creative",
-   "project_type": "interactive_visual",
-   "primary_language": "python",
-   "title": "迷你行星天气球",
-   "creative_hook": "口袋行星会随云层、风向和昼夜循环改变地表",
-   "novelty_tags": [
-    "interactive-visual",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「迷你行星天气球」。创意钩子: 口袋行星会随云层、风向和昼夜循环改变地表。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "口袋行星会随云层、风向和昼夜循环改变地表; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:3",
-    "content_any:planet|weather|cloud|wind",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "id": "L1-04",
-   "level": 1,
-   "domain": "game",
-   "project_type": "cli_game",
-   "primary_language": "go",
-   "title": "ASCII 魔法宠物终端",
-   "creative_hook": "终端宠物学习咒语并用文本动画反馈情绪",
-   "novelty_tags": [
-    "cli-game",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「ASCII 魔法宠物终端」。创意钩子: 终端宠物学习咒语并用文本动画反馈情绪。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "终端宠物学习咒语并用文本动画反馈情绪; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:3",
-    "content_any:pet|spell|mood|ascii",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "id": "L1-05",
-   "level": 1,
-   "domain": "creative",
-   "project_type": "creative_tool",
-   "primary_language": "rust",
-   "title": "厨房味觉配色器",
-   "creative_hook": "把味觉映射成菜谱色板和摆盘规则",
-   "novelty_tags": [
-    "creative-tool",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「厨房味觉配色器」。创意钩子: 把味觉映射成菜谱色板和摆盘规则。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "把味觉映射成菜谱色板和摆盘规则; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:3",
-    "content_any:flavor|palette|ingredient|recipe",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "id": "L1-06",
-   "level": 1,
-   "domain": "creative",
-   "project_type": "web_art",
-   "primary_language": "cpp",
-   "title": "月球邮局明信片生成器",
-   "creative_hook": "每张明信片都有星尘邮戳和短诗",
-   "novelty_tags": [
-    "web-art",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「月球邮局明信片生成器」。创意钩子: 每张明信片都有星尘邮戳和短诗。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "每张明信片都有星尘邮戳和短诗; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:3",
-    "content_any:moon|postcard|stamp|poem",
-    "source_target_coverage:src/**/*.cpp"
-   ]
-  },
-  {
-   "id": "L1-07",
-   "level": 1,
-   "domain": "game",
-   "project_type": "music_game",
-   "primary_language": "java",
-   "title": "口袋节奏怪兽",
-   "creative_hook": "节奏正确性会塑造怪兽性格和鼓机 pattern",
-   "novelty_tags": [
-    "music-game",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「口袋节奏怪兽」。创意钩子: 节奏正确性会塑造怪兽性格和鼓机 pattern。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "节奏正确性会塑造怪兽性格和鼓机 pattern; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:3",
-    "content_any:rhythm|monster|beat|pattern",
-    "source_target_coverage:src/main/java/**/*.java"
-   ]
-  },
-  {
-   "id": "L1-08",
-   "level": 1,
-   "domain": "science_creative",
-   "project_type": "science_toy",
-   "primary_language": "typescript",
-   "title": "纸飞机航线实验室",
-   "creative_hook": "把纸飞机变成可调参的微型空气动力实验",
-   "novelty_tags": [
-    "science-toy",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「纸飞机航线实验室」。创意钩子: 把纸飞机变成可调参的微型空气动力实验。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "把纸飞机变成可调参的微型空气动力实验; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:3",
-    "content_any:plane|wind|angle|flight",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "level": 1,
-   "domain": "science_creative",
-   "project_type": "simulation_toy",
-   "primary_language": "rust",
-   "title": "星尘炼金配方生成器",
-   "creative_hook": "元素碎片通过星座排列和温度梯度合成未知药剂",
-   "novelty_tags": [
-    "simulation-toy",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「星尘炼金配方生成器」。创意钩子: 元素碎片通过星座排列和温度梯度合成未知药剂。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "元素碎片通过星座排列和温度梯度合成未知药剂; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:3",
-    "content_any:alchemy|stardust|element|recipe",
-    "source_target_coverage:src/**/*.rs"
-   ],
-   "id": "L1-09"
-  },
-  {
-   "level": 1,
-   "domain": "creative",
-   "project_type": "interactive_visual",
-   "primary_language": "go",
-   "title": "情绪涂鸦色轮",
-   "creative_hook": "涂鸦笔触随情绪词和BGM节拍变色并生成色轮报告",
-   "novelty_tags": [
-    "interactive-visual",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「情绪涂鸦色轮」。创意钩子: 涂鸦笔触随情绪词和BGM节拍变色并生成色轮报告。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "涂鸦笔触随情绪词和BGM节拍变色并生成色轮报告; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:3",
-    "content_any:mood|color|wheel|doodle",
-    "source_target_coverage:**/*.go"
-   ],
-   "id": "L1-10"
-  },
-  {
-   "id": "L2-11",
-   "level": 2,
-   "domain": "creative",
-   "project_type": "story_tool",
-   "primary_language": "javascript",
-   "title": "星际失物招领站",
-   "creative_hook": "跨星系遗失物按能量读数和线索匹配主人",
-   "novelty_tags": [
-    "story-tool",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「星际失物招领站」。创意钩子: 跨星系遗失物按能量读数和线索匹配主人。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "跨星系遗失物按能量读数和线索匹配主人; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:4",
-    "content_any:lost|alien|galaxy|clue",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "id": "L2-12",
-   "level": 2,
-   "domain": "creative",
-   "project_type": "wellbeing_tool",
-   "primary_language": "python",
-   "title": "情绪天气电台",
-   "creative_hook": "心情日志以天气和私人广播形式回放",
-   "novelty_tags": [
-    "wellbeing-tool",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「情绪天气电台」。创意钩子: 心情日志以天气和私人广播形式回放。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "心情日志以天气和私人广播形式回放; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:4",
-    "content_any:mood|weather|radio|forecast",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "id": "L2-13",
-   "level": 2,
-   "domain": "creative",
-   "project_type": "memory_app",
-   "primary_language": "go",
-   "title": "时间胶囊博物馆",
-   "creative_hook": "未来才可打开的记忆展品有谜语和展厅布局",
-   "novelty_tags": [
-    "memory-app",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「时间胶囊博物馆」。创意钩子: 未来才可打开的记忆展品有谜语和展厅布局。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "未来才可打开的记忆展品有谜语和展厅布局; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:4",
-    "content_any:capsule|museum|riddle|unlock",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "id": "L2-14",
-   "level": 2,
-   "domain": "game",
-   "project_type": "finance_game",
-   "primary_language": "rust",
-   "title": "海盗藏宝图预算器",
-   "creative_hook": "财务预算被呈现为港口、暗礁和宝箱地图",
-   "novelty_tags": [
-    "finance-game",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「海盗藏宝图预算器」。创意钩子: 财务预算被呈现为港口、暗礁和宝箱地图。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "财务预算被呈现为港口、暗礁和宝箱地图; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:4",
-    "content_any:treasure|budget|port|reef",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "id": "L2-15",
-   "level": 2,
-   "domain": "game",
-   "project_type": "puzzle_game",
-   "primary_language": "cpp",
-   "title": "微型机器人巡逻棋",
-   "creative_hook": "指令队列驱动机器人避开巡逻灯收集能量",
-   "novelty_tags": [
-    "puzzle-game",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「微型机器人巡逻棋」。创意钩子: 指令队列驱动机器人避开巡逻灯收集能量。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "指令队列驱动机器人避开巡逻灯收集能量; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:4",
-    "content_any:robot|patrol|queue|energy",
-    "source_target_coverage:src/**/*.cpp"
-   ]
-  },
-  {
-   "id": "L2-16",
-   "level": 2,
-   "domain": "music",
-   "project_type": "music_tool",
-   "primary_language": "java",
-   "title": "会唱歌的植物图鉴",
-   "creative_hook": "植物状态被声音乐句和成长日志表达",
-   "novelty_tags": [
-    "music-tool",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「会唱歌的植物图鉴」。创意钩子: 植物状态被声音乐句和成长日志表达。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "植物状态被声音乐句和成长日志表达; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:4",
-    "content_any:plant|melody|season|growth",
-    "source_target_coverage:src/main/java/**/*.java"
-   ]
-  },
-  {
-   "id": "L2-17",
-   "level": 2,
-   "domain": "game",
-   "project_type": "management_game",
-   "primary_language": "typescript",
-   "title": "街角妖精市集摊位管理",
-   "creative_hook": "库存、讨价还价和声望构成奇幻小经济体",
-   "novelty_tags": [
-    "management-game",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「街角妖精市集摊位管理」。创意钩子: 库存、讨价还价和声望构成奇幻小经济体。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "库存、讨价还价和声望构成奇幻小经济体; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:4",
-    "content_any:market|fairy|inventory|reputation",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "id": "L2-18",
-   "level": 2,
-   "domain": "internet_platform",
-   "project_type": "collaboration_toy",
-   "primary_language": "javascript",
-   "title": "流星愿望队列",
-   "creative_hook": "任务队列用流星雨窗口和夜空轨迹表达",
-   "novelty_tags": [
-    "collaboration-toy",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「流星愿望队列」。创意钩子: 任务队列用流星雨窗口和夜空轨迹表达。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "任务队列用流星雨窗口和夜空轨迹表达; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:4",
-    "content_any:meteor|wish|queue|priority",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "level": 2,
-   "domain": "game",
-   "project_type": "rhythm_game",
-   "primary_language": "python",
-   "title": "水滴节奏打击垫",
-   "creative_hook": "水滴落点和频率生成节奏型并解锁涟漪动效",
-   "novelty_tags": [
-    "rhythm-game",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「水滴节奏打击垫」。创意钩子: 水滴落点和频率生成节奏型并解锁涟漪动效。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "水滴落点和频率生成节奏型并解锁涟漪动效; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:4",
-    "content_any:water|drop|ripple|rhythm",
-    "source_target_coverage:src/**/*.py"
-   ],
-   "id": "L2-19"
-  },
-  {
-   "level": 2,
-   "domain": "creative",
-   "project_type": "sound_tool",
-   "primary_language": "cpp",
-   "title": "风铃代码翻译器",
-   "creative_hook": "代码缩进和符号频率映射为风铃音色和节奏",
-   "novelty_tags": [
-    "sound-tool",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「风铃代码翻译器」。创意钩子: 代码缩进和符号频率映射为风铃音色和节奏。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "代码缩进和符号频率映射为风铃音色和节奏; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:4",
-    "content_any:wind chime|indent|tone|frequency",
-    "source_target_coverage:src/**/*.cpp"
-   ],
-   "id": "L2-20"
-  },
-  {
-   "id": "L3-21",
-   "level": 3,
-   "domain": "creative",
-   "project_type": "creative_map",
-   "primary_language": "python",
-   "title": "梦境地铁线路编辑器",
-   "creative_hook": "站点代表记忆,换乘代表联想,可寻找最短梦路",
-   "novelty_tags": [
-    "creative-map",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「梦境地铁线路编辑器」。创意钩子: 站点代表记忆,换乘代表联想,可寻找最短梦路。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "站点代表记忆,换乘代表联想,可寻找最短梦路; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:5",
-    "content_any:subway|dream|station|memory",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "id": "L3-22",
-   "level": 3,
-   "domain": "music",
-   "project_type": "music_sandbox",
-   "primary_language": "go",
-   "title": "音乐泡泡物理沙盒",
-   "creative_hook": "泡泡碰撞触发音符并生成循环乐句",
-   "novelty_tags": [
-    "music-sandbox",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「音乐泡泡物理沙盒」。创意钩子: 泡泡碰撞触发音符并生成循环乐句。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "泡泡碰撞触发音符并生成循环乐句; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:5",
-    "content_any:bubble|physics|note|gravity",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "id": "L3-23",
-   "level": 3,
-   "domain": "game",
-   "project_type": "simulation_game",
-   "primary_language": "rust",
-   "title": "奇幻餐厅排队 AI",
-   "creative_hook": "客人种族、耐心和菜单偏好影响满意度",
-   "novelty_tags": [
-    "simulation-game",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「奇幻餐厅排队 AI」。创意钩子: 客人种族、耐心和菜单偏好影响满意度。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "客人种族、耐心和菜单偏好影响满意度; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:5",
-    "content_any:restaurant|queue|menu|patience",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "id": "L3-24",
-   "level": 3,
-   "domain": "creative",
-   "project_type": "privacy_tool",
-   "primary_language": "cpp",
-   "title": "隐形墨水日记",
-   "creative_hook": "日记按钥匙词和月相显隐并支持谜题搜索",
-   "novelty_tags": [
-    "privacy-tool",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「隐形墨水日记」。创意钩子: 日记按钥匙词和月相显隐并支持谜题搜索。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "日记按钥匙词和月相显隐并支持谜题搜索; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:5",
-    "content_any:invisible|diary|cipher|moon",
-    "source_target_coverage:src/**/*.cpp"
-   ]
-  },
-  {
-   "id": "L3-25",
-   "level": 3,
-   "domain": "creative",
-   "project_type": "space_tool",
-   "primary_language": "java",
-   "title": "太空垃圾回收调度器",
-   "creative_hook": "轨道清洁船计算燃料、窗口期和碰撞风险",
-   "novelty_tags": [
-    "space-tool",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「太空垃圾回收调度器」。创意钩子: 轨道清洁船计算燃料、窗口期和碰撞风险。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "轨道清洁船计算燃料、窗口期和碰撞风险; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:5",
-    "content_any:debris|orbit|fuel|collision",
-    "source_target_coverage:src/main/java/**/*.java"
-   ]
-  },
-  {
-   "id": "L3-26",
-   "level": 3,
-   "domain": "game",
-   "project_type": "eco_game",
-   "primary_language": "typescript",
-   "title": "像素怪兽生态链",
-   "creative_hook": "像素怪兽种群受食物链、变异和栖息地影响",
-   "novelty_tags": [
-    "eco-game",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「像素怪兽生态链」。创意钩子: 像素怪兽种群受食物链、变异和栖息地影响。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "像素怪兽种群受食物链、变异和栖息地影响; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:5",
-    "content_any:monster|habitat|mutation|food",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "id": "L3-27",
-   "level": 3,
-   "domain": "creative",
-   "project_type": "creative_writing",
-   "primary_language": "javascript",
-   "title": "诗歌编织机",
-   "creative_hook": "关键词被编织成押韵诗和织物纹样",
-   "novelty_tags": [
-    "creative-writing",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「诗歌编织机」。创意钩子: 关键词被编织成押韵诗和织物纹样。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "关键词被编织成押韵诗和织物纹样; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:5",
-    "content_any:poem|weave|rhyme|image",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "id": "L3-28",
-   "level": 3,
-   "domain": "game",
-   "project_type": "routing_game",
-   "primary_language": "python",
-   "title": "迷宫咖啡配送员",
-   "creative_hook": "动态迷宫里订单会冷却且顾客会移动",
-   "novelty_tags": [
-    "routing-game",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「迷宫咖啡配送员」。创意钩子: 动态迷宫里订单会冷却且顾客会移动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "动态迷宫里订单会冷却且顾客会移动; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:5",
-    "content_any:maze|coffee|route|order",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "level": 3,
-   "domain": "game",
-   "project_type": "puzzle_game",
-   "primary_language": "java",
-   "title": "符文电路拼图",
-   "creative_hook": "符文块按颜色和方向连接电路以点亮古代机器",
-   "novelty_tags": [
-    "puzzle-game",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「符文电路拼图」。创意钩子: 符文块按颜色和方向连接电路以点亮古代机器。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "符文块按颜色和方向连接电路以点亮古代机器; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:5",
-    "content_any:rune|circuit|puzzle|glyph",
-    "source_target_coverage:src/main/java/**/*.java"
-   ],
-   "id": "L3-29"
-  },
-  {
-   "level": 3,
-   "domain": "creative",
-   "project_type": "creative_tool",
-   "primary_language": "typescript",
-   "title": "微型世界种子编辑器",
-   "creative_hook": "编辑物理参数和生物特征并观察微型世界演化",
-   "novelty_tags": [
-    "creative-tool",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「微型世界种子编辑器」。创意钩子: 编辑物理参数和生物特征并观察微型世界演化。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "编辑物理参数和生物特征并观察微型世界演化; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:5",
-    "content_any:world|seed|evolve|biome",
-    "source_target_coverage:src/**/*.ts"
-   ],
-   "id": "L3-30"
-  },
-  {
-   "id": "L4-31",
-   "level": 4,
-   "domain": "internet_platform",
-   "project_type": "online_creative",
-   "primary_language": "go",
-   "title": "多人幽灵涂鸦墙",
-   "creative_hook": "实时笔迹像幽灵一样淡出并保留表情轨迹",
-   "novelty_tags": [
-    "online-creative",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「多人幽灵涂鸦墙」。创意钩子: 实时笔迹像幽灵一样淡出并保留表情轨迹。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "实时笔迹像幽灵一样淡出并保留表情轨迹; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:7",
-    "content_any:WebSocket|ghost|graffiti|fade",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "id": "L4-32",
-   "level": 4,
-   "domain": "game",
-   "project_type": "logistics_game",
-   "primary_language": "rust",
-   "title": "异世界邮差路线规划",
-   "creative_hook": "浮岛、风向、龙群和邮件保鲜期影响路线",
-   "novelty_tags": [
-    "logistics-game",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「异世界邮差路线规划」。创意钩子: 浮岛、风向、龙群和邮件保鲜期影响路线。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "浮岛、风向、龙群和邮件保鲜期影响路线; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:7",
-    "content_any:mail|island|dragon|route",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "id": "L4-33",
-   "level": 4,
-   "domain": "music",
-   "project_type": "music_performance",
-   "primary_language": "cpp",
-   "title": "手势乐团指挥台",
-   "creative_hook": "手势强弱控制多声部乐团进入与退场",
-   "novelty_tags": [
-    "music-performance",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「手势乐团指挥台」。创意钩子: 手势强弱控制多声部乐团进入与退场。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "手势强弱控制多声部乐团进入与退场; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:7",
-    "content_any:gesture|orchestra|section|tempo",
-    "source_target_coverage:src/**/*.cpp"
-   ]
-  },
-  {
-   "id": "L4-34",
-   "level": 4,
-   "domain": "game",
-   "project_type": "productivity_game",
-   "primary_language": "java",
-   "title": "会进化的桌宠工作台",
-   "creative_hook": "任务完成节奏让桌宠进化技能和提醒方式",
-   "novelty_tags": [
-    "productivity-game",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「会进化的桌宠工作台」。创意钩子: 任务完成节奏让桌宠进化技能和提醒方式。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "任务完成节奏让桌宠进化技能和提醒方式; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:7",
-    "content_any:pet|evolve|task|reminder",
-    "source_target_coverage:src/main/java/**/*.java"
-   ]
-  },
-  {
-   "id": "L4-35",
-   "level": 4,
-   "domain": "science_creative",
-   "project_type": "science_art",
-   "primary_language": "typescript",
-   "title": "星云材料实验室",
-   "creative_hook": "材料配方生成星云纹理和稳定性评分",
-   "novelty_tags": [
-    "science-art",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「星云材料实验室」。创意钩子: 材料配方生成星云纹理和稳定性评分。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "材料配方生成星云纹理和稳定性评分; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:7",
-    "content_any:nebula|material|stability|spectrum",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "id": "L4-36",
-   "level": 4,
-   "domain": "game",
-   "project_type": "legal_game",
-   "primary_language": "javascript",
-   "title": "地下城合同生成器",
-   "creative_hook": "冒险合同包含风险条款、分账和验收清单",
-   "novelty_tags": [
-    "legal-game",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「地下城合同生成器」。创意钩子: 冒险合同包含风险条款、分账和验收清单。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "冒险合同包含风险条款、分账和验收清单; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:7",
-    "content_any:contract|dungeon|risk|reward",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "id": "L4-37",
-   "level": 4,
-   "domain": "creative",
-   "project_type": "learning_tool",
-   "primary_language": "python",
-   "title": "鲸歌翻译训练器",
-   "creative_hook": "鲸歌片段按声谱标签和假设翻译训练",
-   "novelty_tags": [
-    "learning-tool",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「鲸歌翻译训练器」。创意钩子: 鲸歌片段按声谱标签和假设翻译训练。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "鲸歌片段按声谱标签和假设翻译训练; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:7",
-    "content_any:whale|song|spectrum|translation",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "id": "L4-38",
-   "level": 4,
-   "domain": "creative",
-   "project_type": "design_tool",
-   "primary_language": "go",
-   "title": "星座家具摆放器",
-   "creative_hook": "家具摆放形成星座并计算动线与视觉重心",
-   "novelty_tags": [
-    "design-tool",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「星座家具摆放器」。创意钩子: 家具摆放形成星座并计算动线与视觉重心。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "家具摆放形成星座并计算动线与视觉重心; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:7",
-    "content_any:furniture|constellation|layout|room",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "level": 4,
-   "domain": "game",
-   "project_type": "rhythm_adventure",
-   "primary_language": "python",
-   "title": "地牢节奏战斗引擎",
-   "creative_hook": "攻击节拍、防御和弦与BOSS音乐状态机联动",
-   "novelty_tags": [
-    "rhythm-adventure",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「地牢节奏战斗引擎」。创意钩子: 攻击节拍、防御和弦与BOSS音乐状态机联动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "攻击节拍、防御和弦与BOSS音乐状态机联动; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:7",
-    "content_any:dungeon|rhythm|beat|boss",
-    "source_target_coverage:src/**/*.py"
-   ],
-   "id": "L4-39"
-  },
-  {
-   "level": 4,
-   "domain": "science_creative",
-   "project_type": "science_tool",
-   "primary_language": "rust",
-   "title": "微型粒子碰撞模拟器",
-   "creative_hook": "粒子种类、能量和角度决定衰变产物和新粒子发现",
-   "novelty_tags": [
-    "science-tool",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「微型粒子碰撞模拟器」。创意钩子: 粒子种类、能量和角度决定衰变产物和新粒子发现。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "粒子种类、能量和角度决定衰变产物和新粒子发现; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:7",
-    "content_any:particle|collision|energy|decay",
-    "source_target_coverage:src/**/*.rs"
-   ],
-   "id": "L4-40"
-  },
-  {
-   "id": "L5-41",
-   "level": 5,
-   "domain": "game",
-   "project_type": "economy_game",
-   "primary_language": "rust",
-   "title": "云端怪兽牧场经济系统",
-   "creative_hook": "怪兽繁育、交易和天气事件共同影响市场",
-   "novelty_tags": [
-    "economy-game",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「云端怪兽牧场经济系统」。创意钩子: 怪兽繁育、交易和天气事件共同影响市场。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "怪兽繁育、交易和天气事件共同影响市场; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:8",
-    "content_any:monster|breed|market|weather",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "id": "L5-42",
-   "level": 5,
-   "domain": "game",
-   "project_type": "collaboration_game",
-   "primary_language": "cpp",
-   "title": "合作式时间旅行看板",
-   "creative_hook": "任务可发送到过去或未来并产生因果冲突",
-   "novelty_tags": [
-    "collaboration-game",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「合作式时间旅行看板」。创意钩子: 任务可发送到过去或未来并产生因果冲突。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "任务可发送到过去或未来并产生因果冲突; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:8",
-    "content_any:timeline|kanban|causal|task",
-    "source_target_coverage:src/**/*.cpp"
-   ]
-  },
-  {
-   "id": "L5-43",
-   "level": 5,
-   "domain": "creative",
-   "project_type": "production_tool",
-   "primary_language": "java",
-   "title": "梦境剧院排练管理",
-   "creative_hook": "角色、场景、台词和梦境观众反馈影响排练",
-   "novelty_tags": [
-    "production-tool",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「梦境剧院排练管理」。创意钩子: 角色、场景、台词和梦境观众反馈影响排练。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "角色、场景、台词和梦境观众反馈影响排练; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:8",
-    "content_any:theater|rehearsal|scene|feedback",
-    "source_target_coverage:src/main/java/**/*.java"
-   ]
-  },
-  {
-   "id": "L5-44",
-   "level": 5,
-   "domain": "creative",
-   "project_type": "city_builder",
-   "primary_language": "typescript",
-   "title": "微缩星球城市建造器",
-   "creative_hook": "在球形小星球上规划资源、道路和幸福度",
-   "novelty_tags": [
-    "city-builder",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「微缩星球城市建造器」。创意钩子: 在球形小星球上规划资源、道路和幸福度。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "在球形小星球上规划资源、道路和幸福度; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:8",
-    "content_any:planet|city|resource|happiness",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "id": "L5-45",
-   "level": 5,
-   "domain": "game",
-   "project_type": "recommendation_game",
-   "primary_language": "javascript",
-   "title": "魔法图书馆推荐引擎",
-   "creative_hook": "书籍会移动书架并按心情和咒语标签推荐",
-   "novelty_tags": [
-    "recommendation-game",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「魔法图书馆推荐引擎」。创意钩子: 书籍会移动书架并按心情和咒语标签推荐。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "书籍会移动书架并按心情和咒语标签推荐; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:8",
-    "content_any:library|recommend|spell|mood",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "id": "L5-46",
-   "level": 5,
-   "domain": "creative",
-   "project_type": "maker_tool",
-   "primary_language": "python",
-   "title": "手作玩具工坊排程器",
-   "creative_hook": "玩具订单、零件、工序和故事卡一起排产",
-   "novelty_tags": [
-    "maker-tool",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「手作玩具工坊排程器」。创意钩子: 玩具订单、零件、工序和故事卡一起排产。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "玩具订单、零件、工序和故事卡一起排产; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:8",
-    "content_any:toy|workshop|order|quality",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "id": "L5-47",
-   "level": 5,
-   "domain": "game",
-   "project_type": "interactive_stream_game",
-   "primary_language": "go",
-   "title": "实时观众弹幕冒险",
-   "creative_hook": "观众投票实时改变剧情、怪物和地图事件",
-   "novelty_tags": [
-    "interactive-stream-game",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「实时观众弹幕冒险」。创意钩子: 观众投票实时改变剧情、怪物和地图事件。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "观众投票实时改变剧情、怪物和地图事件; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:8",
-    "content_any:chat|vote|adventure|event",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "id": "L5-48",
-   "level": 5,
-   "domain": "music",
-   "project_type": "audio_creative",
-   "primary_language": "rust",
-   "title": "声音植物园采样器",
-   "creative_hook": "声音种子会长成音色植物并组成可播放地图",
-   "novelty_tags": [
-    "audio-creative",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「声音植物园采样器」。创意钩子: 声音种子会长成音色植物并组成可播放地图。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "声音种子会长成音色植物并组成可播放地图; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:8",
-    "content_any:sample|garden|sound|plant",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "level": 5,
-   "domain": "internet_platform",
-   "project_type": "social_platform",
-   "primary_language": "javascript",
-   "title": "幽灵信件社交网络",
-   "creative_hook": "匿名信件漂流、笔迹指纹匹配和幽灵信箱寻宝",
-   "novelty_tags": [
-    "social-platform",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「幽灵信件社交网络」。创意钩子: 匿名信件漂流、笔迹指纹匹配和幽灵信箱寻宝。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "匿名信件漂流、笔迹指纹匹配和幽灵信箱寻宝; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:8",
-    "content_any:ghost|letter|drift|mailbox",
-    "source_target_coverage:src/**/*.js"
-   ],
-   "id": "L5-49"
-  },
-  {
-   "level": 5,
-   "domain": "game",
-   "project_type": "tower_defense",
-   "primary_language": "typescript",
-   "title": "声波塔防构造器",
-   "creative_hook": "不同音频频率和波形构成防御塔并共振消灭入侵者",
-   "novelty_tags": [
-    "tower-defense",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「声波塔防构造器」。创意钩子: 不同音频频率和波形构成防御塔并共振消灭入侵者。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "不同音频频率和波形构成防御塔并共振消灭入侵者; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:8",
-    "content_any:wave|frequency|tower|resonance",
-    "source_target_coverage:src/**/*.ts"
-   ],
-   "id": "L5-50"
-  },
-  {
-   "id": "L6-51",
-   "level": 6,
-   "domain": "game",
-   "project_type": "simulation_game",
-   "primary_language": "cpp",
-   "title": "AI NPC 小镇社会模拟",
-   "creative_hook": "NPC 有记忆、职业、关系和传闻传播网络",
-   "novelty_tags": [
-    "simulation-game",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「AI NPC 小镇社会模拟」。创意钩子: NPC 有记忆、职业、关系和传闻传播网络。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "NPC 有记忆、职业、关系和传闻传播网络; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:10",
-    "content_any:NPC|memory|rumor|relationship",
-    "source_target_coverage:src/**/*.cpp"
-   ]
-  },
-  {
-   "id": "L6-52",
-   "level": 6,
-   "domain": "music",
-   "project_type": "online_music_platform",
-   "primary_language": "java",
-   "title": "多人太空电台运营台",
-   "creative_hook": "团队排节目、接收信号并处理干扰和听众反馈",
-   "novelty_tags": [
-    "online-music-platform",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「多人太空电台运营台」。创意钩子: 团队排节目、接收信号并处理干扰和听众反馈。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "团队排节目、接收信号并处理干扰和听众反馈; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:10",
-    "content_any:radio|signal|schedule|interference",
-    "source_target_coverage:src/main/java/**/*.java"
-   ]
-  },
-  {
-   "id": "L6-53",
-   "level": 6,
-   "domain": "creative",
-   "project_type": "creative_director_tool",
-   "primary_language": "typescript",
-   "title": "生成式漫画分镜导演",
-   "creative_hook": "角色、镜头、对白和节奏组成可导出的分镜",
-   "novelty_tags": [
-    "creative-director-tool",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「生成式漫画分镜导演」。创意钩子: 角色、镜头、对白和节奏组成可导出的分镜。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "角色、镜头、对白和节奏组成可导出的分镜; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:10",
-    "content_any:comic|storyboard|dialogue|panel",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "id": "L6-54",
-   "level": 6,
-   "domain": "internet_platform",
-   "project_type": "routing_platform",
-   "primary_language": "javascript",
-   "title": "魔法物流无人机群",
-   "creative_hook": "无人机路线受禁飞区、天气和包裹脾气影响",
-   "novelty_tags": [
-    "routing-platform",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「魔法物流无人机群」。创意钩子: 无人机路线受禁飞区、天气和包裹脾气影响。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "无人机路线受禁飞区、天气和包裹脾气影响; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:10",
-    "content_any:drone|package|no-fly|weather",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "id": "L6-55",
-   "level": 6,
-   "domain": "game",
-   "project_type": "online_game",
-   "primary_language": "python",
-   "title": "实时像素 MMO 露营地",
-   "creative_hook": "玩家采集、烹饪、建造、聊天并共享营地状态",
-   "novelty_tags": [
-    "online-game",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「实时像素 MMO 露营地」。创意钩子: 玩家采集、烹饪、建造、聊天并共享营地状态。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "玩家采集、烹饪、建造、聊天并共享营地状态; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:10",
-    "content_any:camp|craft|chat|shared",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "id": "L6-56",
-   "level": 6,
-   "domain": "game",
-   "project_type": "security_game",
-   "primary_language": "go",
-   "title": "博物馆夜间安保解谜系统",
-   "creative_hook": "展品夜间移动,巡逻路径形成异常推理报告",
-   "novelty_tags": [
-    "security-game",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「博物馆夜间安保解谜系统」。创意钩子: 展品夜间移动,巡逻路径形成异常推理报告。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "展品夜间移动,巡逻路径形成异常推理报告; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:10",
-    "content_any:museum|patrol|artifact|anomaly",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "id": "L6-57",
-   "level": 6,
-   "domain": "music",
-   "project_type": "music_collaboration",
-   "primary_language": "rust",
-   "title": "情绪作曲协作云盘",
-   "creative_hook": "团队上传情绪片段并版本化音乐工程",
-   "novelty_tags": [
-    "music-collaboration",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「情绪作曲协作云盘」。创意钩子: 团队上传情绪片段并版本化音乐工程。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "团队上传情绪片段并版本化音乐工程; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:10",
-    "content_any:emotion|track|version|compose",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "id": "L6-58",
-   "level": 6,
-   "domain": "science_creative",
-   "project_type": "climate_sandbox",
-   "primary_language": "cpp",
-   "title": "生态修复沙盒控制台",
-   "creative_hook": "河流、森林、物种和预算反馈修复策略",
-   "novelty_tags": [
-    "climate-sandbox",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「生态修复沙盒控制台」。创意钩子: 河流、森林、物种和预算反馈修复策略。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "河流、森林、物种和预算反馈修复策略; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:10",
-    "content_any:river|species|budget|restoration",
-    "source_target_coverage:src/**/*.cpp"
-   ]
-  },
-  {
-   "level": 6,
-   "domain": "creative",
-   "project_type": "world_builder",
-   "primary_language": "go",
-   "title": "多人在线魔法学院注册处",
-   "creative_hook": "学生选课、咒语树、学院杯和魔法事故实时同步",
-   "novelty_tags": [
-    "world-builder",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「多人在线魔法学院注册处」。创意钩子: 学生选课、咒语树、学院杯和魔法事故实时同步。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "学生选课、咒语树、学院杯和魔法事故实时同步; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:10",
-    "content_any:magic|academy|spell|enrollment",
-    "source_target_coverage:**/*.go"
-   ],
-   "id": "L6-59"
-  },
-  {
-   "level": 6,
-   "domain": "game",
-   "project_type": "simulation_game",
-   "primary_language": "cpp",
-   "title": "太空站生态闭环模拟",
-   "creative_hook": "氧气、食物、水、废物和宇航员心理健康构成闭环",
-   "novelty_tags": [
-    "simulation-game",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「太空站生态闭环模拟」。创意钩子: 氧气、食物、水、废物和宇航员心理健康构成闭环。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "氧气、食物、水、废物和宇航员心理健康构成闭环; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:10",
-    "content_any:oxygen|food|waste|astronaut",
-    "source_target_coverage:src/**/*.cpp"
-   ],
-   "id": "L6-60"
-  },
-  {
-   "id": "L7-61",
-   "level": 7,
-   "domain": "game",
-   "project_type": "game_engine_tool",
-   "primary_language": "java",
-   "title": "开放世界任务织网器",
-   "creative_hook": "生态、NPC 日程和声望会动态改写任务可达性",
-   "novelty_tags": [
-    "game-engine-tool",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「开放世界任务织网器」。创意钩子: 生态、NPC 日程和声望会动态改写任务可达性。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "生态、NPC 日程和声望会动态改写任务可达性; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:11",
-    "content_any:quest|NPC|reputation|dependency",
-    "source_target_coverage:src/main/java/**/*.java"
-   ]
-  },
-  {
-   "id": "L7-62",
-   "level": 7,
-   "domain": "creative",
-   "project_type": "support_simulator",
-   "primary_language": "typescript",
-   "title": "跨维度客服剧场",
-   "creative_hook": "客服工单成为有 SLA、情绪和结局评分的舞台剧",
-   "novelty_tags": [
-    "support-simulator",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「跨维度客服剧场」。创意钩子: 客服工单成为有 SLA、情绪和结局评分的舞台剧。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "客服工单成为有 SLA、情绪和结局评分的舞台剧; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:11",
-    "content_any:ticket|SLA|emotion|escalation",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "id": "L7-63",
-   "level": 7,
-   "domain": "creative",
-   "project_type": "industrial_fantasy",
-   "primary_language": "javascript",
-   "title": "数字孪生龙巢工厂",
-   "creative_hook": "传感器、产能和龙情绪共同驱动工厂热源",
-   "novelty_tags": [
-    "industrial-fantasy",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「数字孪生龙巢工厂」。创意钩子: 传感器、产能和龙情绪共同驱动工厂热源。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "传感器、产能和龙情绪共同驱动工厂热源; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:11",
-    "content_any:sensor|factory|dragon|capacity",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "id": "L7-64",
-   "level": 7,
-   "domain": "creative",
-   "project_type": "film_production_tool",
-   "primary_language": "python",
-   "title": "协作式虚拟电影片场",
-   "creative_hook": "多人管理镜头、演员、道具、天气和预算",
-   "novelty_tags": [
-    "film-production-tool",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「协作式虚拟电影片场」。创意钩子: 多人管理镜头、演员、道具、天气和预算。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "多人管理镜头、演员、道具、天气和预算; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:11",
-    "content_any:shot|actor|prop|budget",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "id": "L7-65",
-   "level": 7,
-   "domain": "science_creative",
-   "project_type": "civic_simulation",
-   "primary_language": "go",
-   "title": "太空港移民排队模拟",
-   "creative_hook": "签证、健康、航班延误和公平性指标共同排队",
-   "novelty_tags": [
-    "civic-simulation",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「太空港移民排队模拟」。创意钩子: 签证、健康、航班延误和公平性指标共同排队。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "签证、健康、航班延误和公平性指标共同排队; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:11",
-    "content_any:visa|spaceport|queue|fairness",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "id": "L7-66",
-   "level": 7,
-   "domain": "music",
-   "project_type": "audio_archive",
-   "primary_language": "rust",
-   "title": "声音考古档案馆",
-   "creative_hook": "修复声音碎片并推断年代、地点和仪式",
-   "novelty_tags": [
-    "audio-archive",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「声音考古档案馆」。创意钩子: 修复声音碎片并推断年代、地点和仪式。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "修复声音碎片并推断年代、地点和仪式; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:11",
-    "content_any:archive|sound|restore|ritual",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "id": "L7-67",
-   "level": 7,
-   "domain": "internet_platform",
-   "project_type": "spectator_platform",
-   "primary_language": "cpp",
-   "title": "实时魔法棋局观战平台",
-   "creative_hook": "观战弹幕、技能冷却、回放和热力图共存",
-   "novelty_tags": [
-    "spectator-platform",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「实时魔法棋局观战平台」。创意钩子: 观战弹幕、技能冷却、回放和热力图共存。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "观战弹幕、技能冷却、回放和热力图共存; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:11",
-    "content_any:chess|spectator|cooldown|replay",
-    "source_target_coverage:src/**/*.cpp"
-   ]
-  },
-  {
-   "id": "L7-68",
-   "level": 7,
-   "domain": "game",
-   "project_type": "supply_chain_game",
-   "primary_language": "java",
-   "title": "星际农场供应链",
-   "creative_hook": "多星球农场共享水、种子、冷链和节庆需求",
-   "novelty_tags": [
-    "supply-chain-game",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「星际农场供应链」。创意钩子: 多星球农场共享水、种子、冷链和节庆需求。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "多星球农场共享水、种子、冷链和节庆需求; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:11",
-    "content_any:farm|planet|cold chain|festival",
-    "source_target_coverage:src/main/java/**/*.java"
-   ]
-  },
-  {
-   "level": 7,
-   "domain": "internet_platform",
-   "project_type": "auction_platform",
-   "primary_language": "javascript",
-   "title": "奇幻文物拍卖行引擎",
-   "creative_hook": "文物来源、鉴定师信誉和竞拍者心理战影响成交价",
-   "novelty_tags": [
-    "auction-platform",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「奇幻文物拍卖行引擎」。创意钩子: 文物来源、鉴定师信誉和竞拍者心理战影响成交价。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "文物来源、鉴定师信誉和竞拍者心理战影响成交价; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:11",
-    "content_any:auction|artifact|bid|appraisal",
-    "source_target_coverage:src/**/*.js"
-   ],
-   "id": "L7-69"
-  },
-  {
-   "level": 7,
-   "domain": "music",
-   "project_type": "music_game",
-   "primary_language": "python",
-   "title": "合唱团声部调度指挥",
-   "creative_hook": "声部进退、音准偏差和情感表达影响整体演出评分",
-   "novelty_tags": [
-    "music-game",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「合唱团声部调度指挥」。创意钩子: 声部进退、音准偏差和情感表达影响整体演出评分。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "声部进退、音准偏差和情感表达影响整体演出评分; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:11",
-    "content_any:choir|voice|pitch|ensemble",
-    "source_target_coverage:src/**/*.py"
-   ],
-   "id": "L7-70"
-  },
-  {
-   "id": "L8-71",
-   "level": 8,
-   "domain": "game",
-   "project_type": "3a_game_prototype",
-   "primary_language": "typescript",
-   "title": "3A 记忆宫殿潜行原型",
-   "creative_hook": "记忆碎片改变房间拓扑、守卫路线和谜题",
-   "novelty_tags": [
-    "3a-game-prototype",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「3A 记忆宫殿潜行原型」。创意钩子: 记忆碎片改变房间拓扑、守卫路线和谜题。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "记忆碎片改变房间拓扑、守卫路线和谜题; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:12",
-    "content_any:memory|stealth|guard|puzzle",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "id": "L8-72",
-   "level": 8,
-   "domain": "creative",
-   "project_type": "systems_art_tool",
-   "primary_language": "javascript",
-   "title": "梦境操作系统任务管理器",
-   "creative_hook": "进程是梦境角色,CPU 是注意力,崩溃变噩梦",
-   "novelty_tags": [
-    "systems-art-tool",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「梦境操作系统任务管理器」。创意钩子: 进程是梦境角色,CPU 是注意力,崩溃变噩梦。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "进程是梦境角色,CPU 是注意力,崩溃变噩梦; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:12",
-    "content_any:process|dream|attention|nightmare",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "id": "L8-73",
-   "level": 8,
-   "domain": "game",
-   "project_type": "online_party_game",
-   "primary_language": "python",
-   "title": "多人宇宙料理竞赛",
-   "creative_hook": "异星食材物理、顾客种族和时间压力影响评分",
-   "novelty_tags": [
-    "online-party-game",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「多人宇宙料理竞赛」。创意钩子: 异星食材物理、顾客种族和时间压力影响评分。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "异星食材物理、顾客种族和时间压力影响评分; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:12",
-    "content_any:cook|ingredient|alien|score",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "id": "L8-74",
-   "level": 8,
-   "domain": "creative",
-   "project_type": "mystery_tool",
-   "primary_language": "go",
-   "title": "城市传说知识图谱侦探",
-   "creative_hook": "线索实体图用于推理矛盾和可信度",
-   "novelty_tags": [
-    "mystery-tool",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「城市传说知识图谱侦探」。创意钩子: 线索实体图用于推理矛盾和可信度。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "线索实体图用于推理矛盾和可信度; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:12",
-    "content_any:legend|graph|clue|credibility",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "id": "L8-75",
-   "level": 8,
-   "domain": "music",
-   "project_type": "concert_platform",
-   "primary_language": "rust",
-   "title": "情绪驱动灯光演唱会",
-   "creative_hook": "观众情绪流改变灯光、和弦、镜头和舞台特效",
-   "novelty_tags": [
-    "concert-platform",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「情绪驱动灯光演唱会」。创意钩子: 观众情绪流改变灯光、和弦、镜头和舞台特效。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "观众情绪流改变灯光、和弦、镜头和舞台特效; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:12",
-    "content_any:emotion|lighting|chord|stage",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "id": "L8-76",
-   "level": 8,
-   "domain": "science_creative",
-   "project_type": "city_simulation",
-   "primary_language": "cpp",
-   "title": "地下生态城资源 AI",
-   "creative_hook": "氧气、菌类、热量和居民文化构成地下城市闭环",
-   "novelty_tags": [
-    "city-simulation",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「地下生态城资源 AI」。创意钩子: 氧气、菌类、热量和居民文化构成地下城市闭环。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "氧气、菌类、热量和居民文化构成地下城市闭环; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:12",
-    "content_any:oxygen|fungi|heat|culture",
-    "source_target_coverage:src/**/*.cpp"
-   ]
-  },
-  {
-   "id": "L8-77",
-   "level": 8,
-   "domain": "internet_platform",
-   "project_type": "writing_platform",
-   "primary_language": "java",
-   "title": "协作怪谈编辑宇宙",
-   "creative_hook": "多人共写怪谈并检测伏笔和世界观矛盾",
-   "novelty_tags": [
-    "writing-platform",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「协作怪谈编辑宇宙」。创意钩子: 多人共写怪谈并检测伏笔和世界观矛盾。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "多人共写怪谈并检测伏笔和世界观矛盾; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:12",
-    "content_any:lore|foreshadow|contradiction|canon",
-    "source_target_coverage:src/main/java/**/*.java"
-   ]
-  },
-  {
-   "id": "L8-78",
-   "level": 8,
-   "domain": "game",
-   "project_type": "design_system_game",
-   "primary_language": "typescript",
-   "title": "可演化 UI 主题生命体",
-   "creative_hook": "UI 主题根据行为进化颜色、密度、动效和性格",
-   "novelty_tags": [
-    "design-system-game",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「可演化 UI 主题生命体」。创意钩子: UI 主题根据行为进化颜色、密度、动效和性格。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "UI 主题根据行为进化颜色、密度、动效和性格; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:12",
-    "content_any:theme|evolve|motion|behavior",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "level": 8,
-   "domain": "game",
-   "project_type": "3a_game_prototype",
-   "primary_language": "go",
-   "title": "3A 废土拾荒者经济模拟",
-   "creative_hook": "废料品质、辐射区、商队路线和派系战争驱动经济",
-   "novelty_tags": [
-    "3a-game-prototype",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「3A 废土拾荒者经济模拟」。创意钩子: 废料品质、辐射区、商队路线和派系战争驱动经济。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "废料品质、辐射区、商队路线和派系战争驱动经济; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:12",
-    "content_any:scavenge|radiation|caravan|faction",
-    "source_target_coverage:**/*.go"
-   ],
-   "id": "L8-79"
-  },
-  {
-   "level": 8,
-   "domain": "science_creative",
-   "project_type": "bio_simulation",
-   "primary_language": "java",
-   "title": "深海热泉生命起源模拟",
-   "creative_hook": "化学梯度、温度和矿物催化原始生命自组织",
-   "novelty_tags": [
-    "bio-simulation",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「深海热泉生命起源模拟」。创意钩子: 化学梯度、温度和矿物催化原始生命自组织。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "化学梯度、温度和矿物催化原始生命自组织; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:12",
-    "content_any:hydrothermal|mineral|emergence|gradient",
-    "source_target_coverage:src/main/java/**/*.java"
-   ],
-   "id": "L8-80"
-  },
-  {
-   "id": "L9-81",
-   "level": 9,
-   "domain": "science_creative",
-   "project_type": "governance_simulation",
-   "primary_language": "javascript",
-   "title": "星际议会模拟治理平台",
-   "creative_hook": "星球派系提交法案、联盟、制裁和资源交换",
-   "novelty_tags": [
-    "governance-simulation",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「星际议会模拟治理平台」。创意钩子: 星球派系提交法案、联盟、制裁和资源交换。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "星球派系提交法案、联盟、制裁和资源交换; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:13",
-    "content_any:council|faction|bill|sanction",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "id": "L9-82",
-   "level": 9,
-   "domain": "game",
-   "project_type": "3a_game_prototype",
-   "primary_language": "python",
-   "title": "3A 巨兽生态狩猎导演",
-   "creative_hook": "巨兽迁徙、伤痕、猎人痕迹和动态任务联动",
-   "novelty_tags": [
-    "3a-game-prototype",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「3A 巨兽生态狩猎导演」。创意钩子: 巨兽迁徙、伤痕、猎人痕迹和动态任务联动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "巨兽迁徙、伤痕、猎人痕迹和动态任务联动; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:13",
-    "content_any:beast|migration|hunt|ecosystem",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "id": "L9-83",
-   "level": 9,
-   "domain": "internet_platform",
-   "project_type": "realtime_creative_platform",
-   "primary_language": "go",
-   "title": "实时梦境协作白板协议",
-   "creative_hook": "白板对象可融化、分裂、合并并保留操作日志",
-   "novelty_tags": [
-    "realtime-creative-platform",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「实时梦境协作白板协议」。创意钩子: 白板对象可融化、分裂、合并并保留操作日志。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "白板对象可融化、分裂、合并并保留操作日志; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:13",
-    "content_any:whiteboard|morph|operation|merge",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "id": "L9-84",
-   "level": 9,
-   "domain": "music",
-   "project_type": "music_navigation",
-   "primary_language": "rust",
-   "title": "音乐星图导航仪",
-   "creative_hook": "音乐片段变成可按和弦、速度和情绪导航的星图",
-   "novelty_tags": [
-    "music-navigation",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「音乐星图导航仪」。创意钩子: 音乐片段变成可按和弦、速度和情绪导航的星图。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "音乐片段变成可按和弦、速度和情绪导航的星图; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:13",
-    "content_any:music|starmap|chord|tempo",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "id": "L9-85",
-   "level": 9,
-   "domain": "game",
-   "project_type": "risk_game",
-   "primary_language": "cpp",
-   "title": "炼金供应链风控引擎",
-   "creative_hook": "材料不稳定性、来源伦理和爆炸风险进入风控",
-   "novelty_tags": [
-    "risk-game",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「炼金供应链风控引擎」。创意钩子: 材料不稳定性、来源伦理和爆炸风险进入风控。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "材料不稳定性、来源伦理和爆炸风险进入风控; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:13",
-    "content_any:alchemy|supply|risk|volatility",
-    "source_target_coverage:src/**/*.cpp"
-   ]
-  },
-  {
-   "id": "L9-86",
-   "level": 9,
-   "domain": "creative",
-   "project_type": "research_tool",
-   "primary_language": "java",
-   "title": "古文明语言复原实验室",
-   "creative_hook": "从符号碎片推断语法、词根和译文置信度",
-   "novelty_tags": [
-    "research-tool",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「古文明语言复原实验室」。创意钩子: 从符号碎片推断语法、词根和译文置信度。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "从符号碎片推断语法、词根和译文置信度; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:13",
-    "content_any:glyph|grammar|root|confidence",
-    "source_target_coverage:src/main/java/**/*.java"
-   ]
-  },
-  {
-   "id": "L9-87",
-   "level": 9,
-   "domain": "science_creative",
-   "project_type": "emergency_simulation",
-   "primary_language": "typescript",
-   "title": "海底城市灾害指挥中心",
-   "creative_hook": "压力、氧气、疏散、舱门和救援路线联动",
-   "novelty_tags": [
-    "emergency-simulation",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「海底城市灾害指挥中心」。创意钩子: 压力、氧气、疏散、舱门和救援路线联动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "压力、氧气、疏散、舱门和救援路线联动; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:13",
-    "content_any:undersea|pressure|evacuation|oxygen",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "id": "L9-88",
-   "level": 9,
-   "domain": "creative",
-   "project_type": "runtime_creative",
-   "primary_language": "javascript",
-   "title": "可编程玩具剧场运行时",
-   "creative_hook": "玩具演员有脚本、传感器、道具和回放日志",
-   "novelty_tags": [
-    "runtime-creative",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「可编程玩具剧场运行时」。创意钩子: 玩具演员有脚本、传感器、道具和回放日志。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "玩具演员有脚本、传感器、道具和回放日志; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:13",
-    "content_any:toy|script|sensor|replay",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "level": 9,
-   "domain": "game",
-   "project_type": "grand_strategy",
-   "primary_language": "typescript",
-   "title": "文明演化沙盒观察者",
-   "creative_hook": "文化基因、气候和随机事件驱动多文明兴衰模拟",
-   "novelty_tags": [
-    "grand-strategy",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「文明演化沙盒观察者」。创意钩子: 文化基因、气候和随机事件驱动多文明兴衰模拟。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "文化基因、气候和随机事件驱动多文明兴衰模拟; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:13",
-    "content_any:civilization|meme|climate|collapse",
-    "source_target_coverage:src/**/*.ts"
-   ],
-   "id": "L9-89"
-  },
-  {
-   "level": 9,
-   "domain": "creative",
-   "project_type": "knowledge_tool",
-   "primary_language": "rust",
-   "title": "跨维度图书馆编目引擎",
-   "creative_hook": "书籍按主题、情感色彩、年代和读者梦境关联编目",
-   "novelty_tags": [
-    "knowledge-tool",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「跨维度图书馆编目引擎」。创意钩子: 书籍按主题、情感色彩、年代和读者梦境关联编目。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "书籍按主题、情感色彩、年代和读者梦境关联编目; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:13",
-    "content_any:catalog|dimension|emotion|dream",
-    "source_target_coverage:src/**/*.rs"
-   ],
-   "id": "L9-90"
-  },
-  {
-   "id": "L10-91",
-   "level": 10,
-   "domain": "internet_platform",
-   "project_type": "operating_platform",
-   "primary_language": "python",
-   "title": "宇宙级主题公园运营系统",
-   "creative_hook": "跨星球游乐设施、游客情绪、事故和剧情活动联动",
-   "novelty_tags": [
-    "operating-platform",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「宇宙级主题公园运营系统」。创意钩子: 跨星球游乐设施、游客情绪、事故和剧情活动联动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "跨星球游乐设施、游客情绪、事故和剧情活动联动; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:14",
-    "content_any:theme park|visitor|queue|incident",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "id": "L10-92",
-   "level": 10,
-   "domain": "game",
-   "project_type": "game_audio_engine",
-   "primary_language": "go",
-   "title": "3A 动态配乐战斗总线",
-   "creative_hook": "战斗事件驱动分层音乐、紧张度和乐器进出",
-   "novelty_tags": [
-    "game-audio-engine",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「3A 动态配乐战斗总线」。创意钩子: 战斗事件驱动分层音乐、紧张度和乐器进出。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "战斗事件驱动分层音乐、紧张度和乐器进出; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:14",
-    "content_any:combat|music layer|tension|transition",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "id": "L10-93",
-   "level": 10,
-   "domain": "science_creative",
-   "project_type": "agent_simulation",
-   "primary_language": "rust",
-   "title": "多智能体童话经济体",
-   "creative_hook": "童话角色经营店铺、交换资源并传播谣言",
-   "novelty_tags": [
-    "agent-simulation",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「多智能体童话经济体」。创意钩子: 童话角色经营店铺、交换资源并传播谣言。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "童话角色经营店铺、交换资源并传播谣言; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:14",
-    "content_any:agent|fairy tale|economy|rumor",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "id": "L10-94",
-   "level": 10,
-   "domain": "creative",
-   "project_type": "cloud_fantasy",
-   "primary_language": "cpp",
-   "title": "梦境云原生控制面",
-   "creative_hook": "声明式资源 reconcile 噩梦、愿望和记忆卷",
-   "novelty_tags": [
-    "cloud-fantasy",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「梦境云原生控制面」。创意钩子: 声明式资源 reconcile 噩梦、愿望和记忆卷。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "声明式资源 reconcile 噩梦、愿望和记忆卷; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:14",
-    "content_any:reconcile|dream|resource|controller",
-    "source_target_coverage:src/**/*.cpp"
-   ]
-  },
-  {
-   "id": "L10-95",
-   "level": 10,
-   "domain": "internet_platform",
-   "project_type": "creator_platform",
-   "primary_language": "java",
-   "title": "创作者宇宙资产图谱",
-   "creative_hook": "管理角色、场景、音乐、版权、版本和跨作品引用",
-   "novelty_tags": [
-    "creator-platform",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「创作者宇宙资产图谱」。创意钩子: 管理角色、场景、音乐、版权、版本和跨作品引用。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "管理角色、场景、音乐、版权、版本和跨作品引用; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:14",
-    "content_any:asset|universe|rights|version",
-    "source_target_coverage:src/main/java/**/*.java"
-   ]
-  },
-  {
-   "id": "L10-96",
-   "level": 10,
-   "domain": "creative",
-   "project_type": "entertainment_ops",
-   "primary_language": "typescript",
-   "title": "虚拟偶像巡演调度器",
-   "creative_hook": "场馆、曲目、服装、粉丝热度和直播故障联动",
-   "novelty_tags": [
-    "entertainment-ops",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「虚拟偶像巡演调度器」。创意钩子: 场馆、曲目、服装、粉丝热度和直播故障联动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "场馆、曲目、服装、粉丝热度和直播故障联动; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:14",
-    "content_any:idol|tour|venue|fan",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "id": "L10-97",
-   "level": 10,
-   "domain": "creative",
-   "project_type": "medical_fantasy",
-   "primary_language": "javascript",
-   "title": "奇幻医院诊疗沙盒",
-   "creative_hook": "魔法病理、药剂、伦理和预算共同约束治疗",
-   "novelty_tags": [
-    "medical-fantasy",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「奇幻医院诊疗沙盒」。创意钩子: 魔法病理、药剂、伦理和预算共同约束治疗。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "魔法病理、药剂、伦理和预算共同约束治疗; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:14",
-    "content_any:hospital|diagnosis|potion|ethics",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "id": "L10-98",
-   "level": 10,
-   "domain": "creative",
-   "project_type": "collaborative_video",
-   "primary_language": "python",
-   "title": "时间线电影剪辑协作服务器",
-   "creative_hook": "多人编辑电影时间线并处理锁、分支、合并和审阅",
-   "novelty_tags": [
-    "collaborative-video",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「时间线电影剪辑协作服务器」。创意钩子: 多人编辑电影时间线并处理锁、分支、合并和审阅。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "多人编辑电影时间线并处理锁、分支、合并和审阅; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:14",
-    "content_any:timeline|branch|merge|review",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "level": 10,
-   "domain": "game",
-   "project_type": "online_rts",
-   "primary_language": "python",
-   "title": "实时多人太空站紧急指挥",
-   "creative_hook": "多个玩家同时指挥不同舱段应对连锁灾难事件",
-   "novelty_tags": [
-    "online-rts",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「实时多人太空站紧急指挥」。创意钩子: 多个玩家同时指挥不同舱段应对连锁灾难事件。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "多个玩家同时指挥不同舱段应对连锁灾难事件; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:14",
-    "content_any:station|emergency|module|cascade",
-    "source_target_coverage:src/**/*.py"
-   ],
-   "id": "L10-99"
-  },
-  {
-   "level": 10,
-   "domain": "internet_platform",
-   "project_type": "tabletop_platform",
-   "primary_language": "cpp",
-   "title": "奇幻世界多人桌游模拟器",
-   "creative_hook": "自定义骰子、卡牌、地图和角色状态通过网络同步",
-   "novelty_tags": [
-    "tabletop-platform",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「奇幻世界多人桌游模拟器」。创意钩子: 自定义骰子、卡牌、地图和角色状态通过网络同步。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "自定义骰子、卡牌、地图和角色状态通过网络同步; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:14",
-    "content_any:dice|card|board|tabletop",
-    "source_target_coverage:src/**/*.cpp"
-   ],
-   "id": "L10-100"
-  },
-  {
-   "id": "L11-101",
-   "level": 11,
-   "domain": "creative",
-   "project_type": "space_logistics",
-   "primary_language": "go",
-   "title": "银河物流数字孪生",
-   "creative_hook": "星门容量、燃料、海盗风险、冷链和 SLA 构成物流孪生",
-   "novelty_tags": [
-    "space-logistics",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「银河物流数字孪生」。创意钩子: 星门容量、燃料、海盗风险、冷链和 SLA 构成物流孪生。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "星门容量、燃料、海盗风险、冷链和 SLA 构成物流孪生; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:15",
-    "content_any:stargate|fuel|SLA|pirate",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "id": "L11-102",
-   "level": 11,
-   "domain": "creative",
-   "project_type": "narrative_engine",
-   "primary_language": "rust",
-   "title": "开放世界生态叙事引擎",
-   "creative_hook": "生态变化自动生成任务、传闻、NPC 迁徙和派系反应",
-   "novelty_tags": [
-    "narrative-engine",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「开放世界生态叙事引擎」。创意钩子: 生态变化自动生成任务、传闻、NPC 迁徙和派系反应。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "生态变化自动生成任务、传闻、NPC 迁徙和派系反应; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:15",
-    "content_any:ecosystem|quest|faction|rumor",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "id": "L11-103",
-   "level": 11,
-   "domain": "creative",
-   "project_type": "ip_continuity_tool",
-   "primary_language": "cpp",
-   "title": "跨媒体 IP 连续性审计器",
-   "creative_hook": "审计小说、漫画、游戏和音乐设定的时间线一致性",
-   "novelty_tags": [
-    "ip-continuity-tool",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「跨媒体 IP 连续性审计器」。创意钩子: 审计小说、漫画、游戏和音乐设定的时间线一致性。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "审计小说、漫画、游戏和音乐设定的时间线一致性; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:15",
-    "content_any:canon|timeline|character|continuity",
-    "source_target_coverage:src/**/*.cpp"
-   ]
-  },
-  {
-   "id": "L11-104",
-   "level": 11,
-   "domain": "internet_platform",
-   "project_type": "energy_art_platform",
-   "primary_language": "java",
-   "title": "情绪能源微电网",
-   "creative_hook": "居民情绪影响能源产出、储能和公共艺术装置",
-   "novelty_tags": [
-    "energy-art-platform",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「情绪能源微电网」。创意钩子: 居民情绪影响能源产出、储能和公共艺术装置。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "居民情绪影响能源产出、储能和公共艺术装置; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:15",
-    "content_any:microgrid|emotion|storage|demand",
-    "source_target_coverage:src/main/java/**/*.java"
-   ]
-  },
-  {
-   "id": "L11-105",
-   "level": 11,
-   "domain": "creative",
-   "project_type": "security_fantasy",
-   "primary_language": "typescript",
-   "title": "梦境安全扫描器",
-   "creative_hook": "扫描恐惧模式、泄漏记忆和噩梦入口",
-   "novelty_tags": [
-    "security-fantasy",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「梦境安全扫描器」。创意钩子: 扫描恐惧模式、泄漏记忆和噩梦入口。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "扫描恐惧模式、泄漏记忆和噩梦入口; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:15",
-    "content_any:scan|fear|memory leak|nightmare",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "id": "L11-106",
-   "level": 11,
-   "domain": "game",
-   "project_type": "online_builder_game",
-   "primary_language": "javascript",
-   "title": "实时协作乐园建造 MMO",
-   "creative_hook": "玩家共同建设游乐园并同步经济、游客和活动",
-   "novelty_tags": [
-    "online-builder-game",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「实时协作乐园建造 MMO」。创意钩子: 玩家共同建设游乐园并同步经济、游客和活动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "玩家共同建设游乐园并同步经济、游客和活动; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:15",
-    "content_any:park|build|visitor|sync",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "id": "L11-107",
-   "level": 11,
-   "domain": "creative",
-   "project_type": "robot_theater_system",
-   "primary_language": "python",
-   "title": "机器人剧团排演调度内核",
-   "creative_hook": "机器人演员有电量、情绪模块、脚本和安全约束",
-   "novelty_tags": [
-    "robot-theater-system",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「机器人剧团排演调度内核」。创意钩子: 机器人演员有电量、情绪模块、脚本和安全约束。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "机器人演员有电量、情绪模块、脚本和安全约束; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:15",
-    "content_any:robot|battery|script|stage",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "id": "L11-108",
-   "level": 11,
-   "domain": "creative",
-   "project_type": "myth_research_tool",
-   "primary_language": "go",
-   "title": "古籍幻兽知识库",
-   "creative_hook": "整理幻兽分类、能力、栖息地、版本和证据链",
-   "novelty_tags": [
-    "myth-research-tool",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「古籍幻兽知识库」。创意钩子: 整理幻兽分类、能力、栖息地、版本和证据链。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "整理幻兽分类、能力、栖息地、版本和证据链; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:15",
-    "content_any:bestiary|evidence|habitat|version",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "level": 11,
-   "domain": "game",
-   "project_type": "immersive_sim",
-   "primary_language": "typescript",
-   "title": "3A 沉浸式谍报沙盒原型",
-   "creative_hook": "NPC记忆、社交网络、伪装和物理证据链联动",
-   "novelty_tags": [
-    "immersive-sim",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「3A 沉浸式谍报沙盒原型」。创意钩子: NPC记忆、社交网络、伪装和物理证据链联动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "NPC记忆、社交网络、伪装和物理证据链联动; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:15",
-    "content_any:espionage|disguise|evidence|memory",
-    "source_target_coverage:src/**/*.ts"
-   ],
-   "id": "L11-109"
-  },
-  {
-   "level": 11,
-   "domain": "science_creative",
-   "project_type": "climate_sim",
-   "primary_language": "javascript",
-   "title": "行星气候工程决策模拟器",
-   "creative_hook": "太阳辐射、洋流、碳循环和政策博弈共同影响气候",
-   "novelty_tags": [
-    "climate-sim",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「行星气候工程决策模拟器」。创意钩子: 太阳辐射、洋流、碳循环和政策博弈共同影响气候。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "太阳辐射、洋流、碳循环和政策博弈共同影响气候; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:15",
-    "content_any:climate|radiation|carbon|policy",
-    "source_target_coverage:src/**/*.js"
-   ],
-   "id": "L11-110"
-  },
-  {
-   "id": "L12-111",
-   "level": 12,
-   "domain": "game",
-   "project_type": "3a_game_engine",
-   "primary_language": "rust",
-   "title": "3A 星球级开放世界模拟内核",
-   "creative_hook": "星球生态、派系、天气、任务和经济互相扰动",
-   "novelty_tags": [
-    "3a-game-engine",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「3A 星球级开放世界模拟内核」。创意钩子: 星球生态、派系、天气、任务和经济互相扰动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "星球生态、派系、天气、任务和经济互相扰动; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:16",
-    "content_any:planet|faction|weather|economy",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "id": "L12-112",
-   "level": 12,
-   "domain": "creative",
-   "project_type": "creator_os",
-   "primary_language": "cpp",
-   "title": "宇宙创作者操作系统",
-   "creative_hook": "统一世界观、角色、音乐、资产、版本、发布和粉丝反馈",
-   "novelty_tags": [
-    "creator-os",
-    "playful",
-    "novel",
-    "cpp"
-   ],
-   "brief": "用 C++17 实现「宇宙创作者操作系统」。创意钩子: 统一世界观、角色、音乐、资产、版本、发布和粉丝反馈。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "统一世界观、角色、音乐、资产、版本、发布和粉丝反馈; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "cpp_compile",
-    "min_files:16",
-    "content_any:worldbuilding|asset|release|fan",
-    "source_target_coverage:src/**/*.cpp"
-   ]
-  },
-  {
-   "id": "L12-113",
-   "level": 12,
-   "domain": "internet_platform",
-   "project_type": "disaster_ai_platform",
-   "primary_language": "java",
-   "title": "星际灾害响应多智能体平台",
-   "creative_hook": "多星球灾害、救援舰队、资源和通信延迟协同",
-   "novelty_tags": [
-    "disaster-ai-platform",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「星际灾害响应多智能体平台」。创意钩子: 多星球灾害、救援舰队、资源和通信延迟协同。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "多星球灾害、救援舰队、资源和通信延迟协同; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:16",
-    "content_any:disaster|fleet|resource|latency",
-    "source_target_coverage:src/main/java/**/*.java"
-   ]
-  },
-  {
-   "id": "L12-114",
-   "level": 12,
-   "domain": "creative",
-   "project_type": "database_fantasy",
-   "primary_language": "typescript",
-   "title": "梦境数据库事务引擎",
-   "creative_hook": "记忆片段支持隔离级别、冲突、回滚和一致性检查",
-   "novelty_tags": [
-    "database-fantasy",
-    "playful",
-    "novel",
-    "typescript"
-   ],
-   "brief": "用 TypeScript 实现「梦境数据库事务引擎」。创意钩子: 记忆片段支持隔离级别、冲突、回滚和一致性检查。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "记忆片段支持隔离级别、冲突、回滚和一致性检查; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "ts_syntax",
-    "package_scripts",
-    "min_files:16",
-    "content_any:transaction|memory|rollback|isolation",
-    "source_target_coverage:src/**/*.ts"
-   ]
-  },
-  {
-   "id": "L12-115",
-   "level": 12,
-   "domain": "music",
-   "project_type": "climate_music_platform",
-   "primary_language": "javascript",
-   "title": "全球音乐气候仪表盘",
-   "creative_hook": "气候数据映射为音乐、灯光、行动建议和社区演出",
-   "novelty_tags": [
-    "climate-music-platform",
-    "playful",
-    "novel",
-    "javascript"
-   ],
-   "brief": "用 JavaScript 实现「全球音乐气候仪表盘」。创意钩子: 气候数据映射为音乐、灯光、行动建议和社区演出。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "气候数据映射为音乐、灯光、行动建议和社区演出; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "js_syntax",
-    "package_scripts",
-    "min_files:16",
-    "content_any:climate|music|dashboard|action",
-    "source_target_coverage:src/**/*.js"
-   ]
-  },
-  {
-   "id": "L12-116",
-   "level": 12,
-   "domain": "science_creative",
-   "project_type": "org_simulation",
-   "primary_language": "python",
-   "title": "可进化企业组织沙盒",
-   "creative_hook": "组织结构像生态系统一样随文化、冲突和绩效进化",
-   "novelty_tags": [
-    "org-simulation",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「可进化企业组织沙盒」。创意钩子: 组织结构像生态系统一样随文化、冲突和绩效进化。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "组织结构像生态系统一样随文化、冲突和绩效进化; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:16",
-    "content_any:organization|culture|conflict|performance",
-    "source_target_coverage:src/**/*.py"
-   ]
-  },
-  {
-   "id": "L12-117",
-   "level": 12,
-   "domain": "game",
-   "project_type": "myth_mmo_backend",
-   "primary_language": "go",
-   "title": "多人神话世界服务器",
-   "creative_hook": "神祇、信仰、奇迹、地域和玩家城邦驱动世界规则",
-   "novelty_tags": [
-    "myth-mmo-backend",
-    "playful",
-    "novel",
-    "go"
-   ],
-   "brief": "用 Go 实现「多人神话世界服务器」。创意钩子: 神祇、信仰、奇迹、地域和玩家城邦驱动世界规则。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "神祇、信仰、奇迹、地域和玩家城邦驱动世界规则; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "go_compile",
-    "min_files:16",
-    "content_any:deity|faith|miracle|city-state",
-    "source_target_coverage:**/*.go"
-   ]
-  },
-  {
-   "id": "L12-118",
-   "level": 12,
-   "domain": "creative",
-   "project_type": "immersive_art_ops",
-   "primary_language": "rust",
-   "title": "跨现实艺术展演控制塔",
-   "creative_hook": "协调线下装置、在线观众、声音、灯光和实时反馈",
-   "novelty_tags": [
-    "immersive-art-ops",
-    "playful",
-    "novel",
-    "rust"
-   ],
-   "brief": "用 Rust 实现「跨现实艺术展演控制塔」。创意钩子: 协调线下装置、在线观众、声音、灯光和实时反馈。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "协调线下装置、在线观众、声音、灯光和实时反馈; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "rust_compile",
-    "min_files:16",
-    "content_any:installation|audience|lighting|feedback",
-    "source_target_coverage:src/**/*.rs"
-   ]
-  },
-  {
-   "level": 12,
-   "domain": "game",
-   "project_type": "metaverse_engine",
-   "primary_language": "java",
-   "title": "多人跨维度元宇宙传送门引擎",
-   "creative_hook": "物理规则、材质、NPC行为和经济系统在维度间可变",
-   "novelty_tags": [
-    "metaverse-engine",
-    "playful",
-    "novel",
-    "java"
-   ],
-   "brief": "用 Java 实现「多人跨维度元宇宙传送门引擎」。创意钩子: 物理规则、材质、NPC行为和经济系统在维度间可变。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "物理规则、材质、NPC行为和经济系统在维度间可变; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "java_compile",
-    "min_files:16",
-    "content_any:portal|dimension|physics|metaverse",
-    "source_target_coverage:src/main/java/**/*.java"
-   ],
-   "id": "L12-119"
-  },
-  {
-   "level": 12,
-   "domain": "creative",
-   "project_type": "ai_director_os",
-   "primary_language": "python",
-   "title": "AI 叙事导演操作系统",
-   "creative_hook": "统一管理剧情弧、角色情感、玩家行为和动态难度",
-   "novelty_tags": [
-    "ai-director-os",
-    "playful",
-    "novel",
-    "python"
-   ],
-   "brief": "用 Python 实现「AI 叙事导演操作系统」。创意钩子: 统一管理剧情弧、角色情感、玩家行为和动态难度。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
-   "test_focus": "统一管理剧情弧、角色情感、玩家行为和动态难度; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
-   "checks": [
-    "py_compile",
-    "min_files:16",
-    "content_any:narrative|arc|emotion|difficulty",
-    "source_target_coverage:src/**/*.py"
-   ],
-   "id": "L12-120"
-  }
- ]
+  "schema_version": "factory-bench/2",
+  "comment": "Polaris 全链路创意实战评估矩阵 v2 — 独立默认题库,不继承 v1。共 120 个 L1-L12 项目,全部要求有趣、新颖、有明确 creative_hook,覆盖 TypeScript/JavaScript、Go、Rust、C++、Java、Python,并覆盖多人在线游戏、3A 游戏原型、音乐/声音、创造工具、创意平台、专业软件的奇思妙想版本、科幻/奇幻/沉浸式行业软件等。projects_v1.json 保留为历史基线,可通过 --projects-file 显式运行。",
+  "projects": [
+    {
+      "id": "L1-01",
+      "level": 1,
+      "domain": "science_creative",
+      "project_type": "simulation_toy",
+      "primary_language": "typescript",
+      "title": "发光昆虫花园模拟器",
+      "creative_hook": "萤火虫根据花朵情绪和月相组成实时灯光舞蹈",
+      "novelty_tags": [
+        "simulation-toy",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「发光昆虫花园模拟器」。创意钩子: 萤火虫根据花朵情绪和月相组成实时灯光舞蹈。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "萤火虫根据花朵情绪和月相组成实时灯光舞蹈; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:3",
+        "content_any:firefly|flower|moon|humidity",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "id": "L1-02",
+      "level": 1,
+      "domain": "creative",
+      "project_type": "creative_tool",
+      "primary_language": "javascript",
+      "title": "梦境便签炼金炉",
+      "creative_hook": "普通便签被合成为荒诞梦境卡片和提醒仪式",
+      "novelty_tags": [
+        "creative-tool",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「梦境便签炼金炉」。创意钩子: 普通便签被合成为荒诞梦境卡片和提醒仪式。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "普通便签被合成为荒诞梦境卡片和提醒仪式; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:3",
+        "content_any:dream|alchemy|note|recipe",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "id": "L1-03",
+      "level": 1,
+      "domain": "creative",
+      "project_type": "interactive_visual",
+      "primary_language": "python",
+      "title": "迷你行星天气球",
+      "creative_hook": "口袋行星会随云层、风向和昼夜循环改变地表",
+      "novelty_tags": [
+        "interactive-visual",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「迷你行星天气球」。创意钩子: 口袋行星会随云层、风向和昼夜循环改变地表。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "口袋行星会随云层、风向和昼夜循环改变地表; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:3",
+        "content_any:planet|weather|cloud|wind",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "id": "L1-04",
+      "level": 1,
+      "domain": "game",
+      "project_type": "cli_game",
+      "primary_language": "go",
+      "title": "ASCII 魔法宠物终端",
+      "creative_hook": "终端宠物学习咒语并用文本动画反馈情绪",
+      "novelty_tags": [
+        "cli-game",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「ASCII 魔法宠物终端」。创意钩子: 终端宠物学习咒语并用文本动画反馈情绪。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "终端宠物学习咒语并用文本动画反馈情绪; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:3",
+        "content_any:pet|spell|mood|ascii",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "id": "L1-05",
+      "level": 1,
+      "domain": "creative",
+      "project_type": "creative_tool",
+      "primary_language": "rust",
+      "title": "厨房味觉配色器",
+      "creative_hook": "把味觉映射成菜谱色板和摆盘规则",
+      "novelty_tags": [
+        "creative-tool",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「厨房味觉配色器」。创意钩子: 把味觉映射成菜谱色板和摆盘规则。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "把味觉映射成菜谱色板和摆盘规则; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:3",
+        "content_any:flavor|palette|ingredient|recipe",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "id": "L1-06",
+      "level": 1,
+      "domain": "creative",
+      "project_type": "cli_tool",
+      "primary_language": "cpp",
+      "title": "月球邮局明信片生成器",
+      "creative_hook": "每张明信片都有星尘邮戳和短诗",
+      "novelty_tags": [
+        "web-art",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「月球邮局明信片生成器」。创意钩子: 每张明信片都有星尘邮戳和短诗。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "每张明信片都有星尘邮戳和短诗; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:3",
+        "content_any:moon|postcard|stamp|poem",
+        "source_target_coverage:src/**/*.cpp"
+      ]
+    },
+    {
+      "id": "L1-07",
+      "level": 1,
+      "domain": "game",
+      "project_type": "music_game",
+      "primary_language": "java",
+      "title": "口袋节奏怪兽",
+      "creative_hook": "节奏正确性会塑造怪兽性格和鼓机 pattern",
+      "novelty_tags": [
+        "music-game",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「口袋节奏怪兽」。创意钩子: 节奏正确性会塑造怪兽性格和鼓机 pattern。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "节奏正确性会塑造怪兽性格和鼓机 pattern; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:3",
+        "content_any:rhythm|monster|beat|pattern",
+        "source_target_coverage:src/main/java/**/*.java"
+      ]
+    },
+    {
+      "id": "L1-08",
+      "level": 1,
+      "domain": "science_creative",
+      "project_type": "science_toy",
+      "primary_language": "typescript",
+      "title": "纸飞机航线实验室",
+      "creative_hook": "把纸飞机变成可调参的微型空气动力实验",
+      "novelty_tags": [
+        "science-toy",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「纸飞机航线实验室」。创意钩子: 把纸飞机变成可调参的微型空气动力实验。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "把纸飞机变成可调参的微型空气动力实验; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:3",
+        "content_any:plane|wind|angle|flight",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "level": 1,
+      "domain": "science_creative",
+      "project_type": "simulation_toy",
+      "primary_language": "rust",
+      "title": "星尘炼金配方生成器",
+      "creative_hook": "元素碎片通过星座排列和温度梯度合成未知药剂",
+      "novelty_tags": [
+        "simulation-toy",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「星尘炼金配方生成器」。创意钩子: 元素碎片通过星座排列和温度梯度合成未知药剂。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "元素碎片通过星座排列和温度梯度合成未知药剂; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:3",
+        "content_any:alchemy|stardust|element|recipe",
+        "source_target_coverage:src/**/*.rs"
+      ],
+      "id": "L1-09"
+    },
+    {
+      "level": 1,
+      "domain": "creative",
+      "project_type": "interactive_visual",
+      "primary_language": "go",
+      "title": "情绪涂鸦色轮",
+      "creative_hook": "涂鸦笔触随情绪词和BGM节拍变色并生成色轮报告",
+      "novelty_tags": [
+        "interactive-visual",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「情绪涂鸦色轮」。创意钩子: 涂鸦笔触随情绪词和BGM节拍变色并生成色轮报告。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "涂鸦笔触随情绪词和BGM节拍变色并生成色轮报告; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:3",
+        "content_any:mood|color|wheel|doodle",
+        "source_target_coverage:**/*.go"
+      ],
+      "id": "L1-10"
+    },
+    {
+      "id": "L2-11",
+      "level": 2,
+      "domain": "creative",
+      "project_type": "story_tool",
+      "primary_language": "javascript",
+      "title": "星际失物招领站",
+      "creative_hook": "跨星系遗失物按能量读数和线索匹配主人",
+      "novelty_tags": [
+        "story-tool",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「星际失物招领站」。创意钩子: 跨星系遗失物按能量读数和线索匹配主人。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "跨星系遗失物按能量读数和线索匹配主人; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:4",
+        "content_any:lost|alien|galaxy|clue",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "id": "L2-12",
+      "level": 2,
+      "domain": "creative",
+      "project_type": "wellbeing_tool",
+      "primary_language": "python",
+      "title": "情绪天气电台",
+      "creative_hook": "心情日志以天气和私人广播形式回放",
+      "novelty_tags": [
+        "wellbeing-tool",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「情绪天气电台」。创意钩子: 心情日志以天气和私人广播形式回放。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "心情日志以天气和私人广播形式回放; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:4",
+        "content_any:mood|weather|radio|forecast",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "id": "L2-13",
+      "level": 2,
+      "domain": "creative",
+      "project_type": "memory_app",
+      "primary_language": "go",
+      "title": "时间胶囊博物馆",
+      "creative_hook": "未来才可打开的记忆展品有谜语和展厅布局",
+      "novelty_tags": [
+        "memory-app",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「时间胶囊博物馆」。创意钩子: 未来才可打开的记忆展品有谜语和展厅布局。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "未来才可打开的记忆展品有谜语和展厅布局; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:4",
+        "content_any:capsule|museum|riddle|unlock",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "id": "L2-14",
+      "level": 2,
+      "domain": "game",
+      "project_type": "finance_game",
+      "primary_language": "rust",
+      "title": "海盗藏宝图预算器",
+      "creative_hook": "财务预算被呈现为港口、暗礁和宝箱地图",
+      "novelty_tags": [
+        "finance-game",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「海盗藏宝图预算器」。创意钩子: 财务预算被呈现为港口、暗礁和宝箱地图。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "财务预算被呈现为港口、暗礁和宝箱地图; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:4",
+        "content_any:treasure|budget|port|reef",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "id": "L2-15",
+      "level": 2,
+      "domain": "game",
+      "project_type": "puzzle_game",
+      "primary_language": "cpp",
+      "title": "微型机器人巡逻棋",
+      "creative_hook": "指令队列驱动机器人避开巡逻灯收集能量",
+      "novelty_tags": [
+        "puzzle-game",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「微型机器人巡逻棋」。创意钩子: 指令队列驱动机器人避开巡逻灯收集能量。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "指令队列驱动机器人避开巡逻灯收集能量; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:4",
+        "content_any:robot|patrol|queue|energy",
+        "source_target_coverage:src/**/*.cpp"
+      ]
+    },
+    {
+      "id": "L2-16",
+      "level": 2,
+      "domain": "music",
+      "project_type": "music_tool",
+      "primary_language": "java",
+      "title": "会唱歌的植物图鉴",
+      "creative_hook": "植物状态被声音乐句和成长日志表达",
+      "novelty_tags": [
+        "music-tool",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「会唱歌的植物图鉴」。创意钩子: 植物状态被声音乐句和成长日志表达。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "植物状态被声音乐句和成长日志表达; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:4",
+        "content_any:plant|melody|season|growth",
+        "source_target_coverage:src/main/java/**/*.java"
+      ]
+    },
+    {
+      "id": "L2-17",
+      "level": 2,
+      "domain": "game",
+      "project_type": "management_game",
+      "primary_language": "typescript",
+      "title": "街角妖精市集摊位管理",
+      "creative_hook": "库存、讨价还价和声望构成奇幻小经济体",
+      "novelty_tags": [
+        "management-game",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「街角妖精市集摊位管理」。创意钩子: 库存、讨价还价和声望构成奇幻小经济体。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "库存、讨价还价和声望构成奇幻小经济体; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:4",
+        "content_any:market|fairy|inventory|reputation",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "id": "L2-18",
+      "level": 2,
+      "domain": "internet_platform",
+      "project_type": "collaboration_toy",
+      "primary_language": "javascript",
+      "title": "流星愿望队列",
+      "creative_hook": "任务队列用流星雨窗口和夜空轨迹表达",
+      "novelty_tags": [
+        "collaboration-toy",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「流星愿望队列」。创意钩子: 任务队列用流星雨窗口和夜空轨迹表达。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "任务队列用流星雨窗口和夜空轨迹表达; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:4",
+        "content_any:meteor|wish|queue|priority",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "level": 2,
+      "domain": "game",
+      "project_type": "rhythm_game",
+      "primary_language": "python",
+      "title": "水滴节奏打击垫",
+      "creative_hook": "水滴落点和频率生成节奏型并解锁涟漪动效",
+      "novelty_tags": [
+        "rhythm-game",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「水滴节奏打击垫」。创意钩子: 水滴落点和频率生成节奏型并解锁涟漪动效。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "水滴落点和频率生成节奏型并解锁涟漪动效; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:4",
+        "content_any:water|drop|ripple|rhythm",
+        "source_target_coverage:src/**/*.py"
+      ],
+      "id": "L2-19"
+    },
+    {
+      "level": 2,
+      "domain": "creative",
+      "project_type": "sound_tool",
+      "primary_language": "cpp",
+      "title": "风铃代码翻译器",
+      "creative_hook": "代码缩进和符号频率映射为风铃音色和节奏",
+      "novelty_tags": [
+        "sound-tool",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「风铃代码翻译器」。创意钩子: 代码缩进和符号频率映射为风铃音色和节奏。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "代码缩进和符号频率映射为风铃音色和节奏; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:4",
+        "content_any:wind chime|indent|tone|frequency",
+        "source_target_coverage:src/**/*.cpp"
+      ],
+      "id": "L2-20"
+    },
+    {
+      "id": "L3-21",
+      "level": 3,
+      "domain": "creative",
+      "project_type": "creative_map",
+      "primary_language": "python",
+      "title": "梦境地铁线路编辑器",
+      "creative_hook": "站点代表记忆,换乘代表联想,可寻找最短梦路",
+      "novelty_tags": [
+        "creative-map",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「梦境地铁线路编辑器」。创意钩子: 站点代表记忆,换乘代表联想,可寻找最短梦路。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "站点代表记忆,换乘代表联想,可寻找最短梦路; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:5",
+        "content_any:subway|dream|station|memory",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "id": "L3-22",
+      "level": 3,
+      "domain": "music",
+      "project_type": "music_sandbox",
+      "primary_language": "go",
+      "title": "音乐泡泡物理沙盒",
+      "creative_hook": "泡泡碰撞触发音符并生成循环乐句",
+      "novelty_tags": [
+        "music-sandbox",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「音乐泡泡物理沙盒」。创意钩子: 泡泡碰撞触发音符并生成循环乐句。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "泡泡碰撞触发音符并生成循环乐句; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:5",
+        "content_any:bubble|physics|note|gravity",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "id": "L3-23",
+      "level": 3,
+      "domain": "game",
+      "project_type": "simulation_game",
+      "primary_language": "rust",
+      "title": "奇幻餐厅排队 AI",
+      "creative_hook": "客人种族、耐心和菜单偏好影响满意度",
+      "novelty_tags": [
+        "simulation-game",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「奇幻餐厅排队 AI」。创意钩子: 客人种族、耐心和菜单偏好影响满意度。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "客人种族、耐心和菜单偏好影响满意度; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:5",
+        "content_any:restaurant|queue|menu|patience",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "id": "L3-24",
+      "level": 3,
+      "domain": "creative",
+      "project_type": "privacy_tool",
+      "primary_language": "cpp",
+      "title": "隐形墨水日记",
+      "creative_hook": "日记按钥匙词和月相显隐并支持谜题搜索",
+      "novelty_tags": [
+        "privacy-tool",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「隐形墨水日记」。创意钩子: 日记按钥匙词和月相显隐并支持谜题搜索。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "日记按钥匙词和月相显隐并支持谜题搜索; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:5",
+        "content_any:invisible|diary|cipher|moon",
+        "source_target_coverage:src/**/*.cpp"
+      ]
+    },
+    {
+      "id": "L3-25",
+      "level": 3,
+      "domain": "creative",
+      "project_type": "space_tool",
+      "primary_language": "java",
+      "title": "太空垃圾回收调度器",
+      "creative_hook": "轨道清洁船计算燃料、窗口期和碰撞风险",
+      "novelty_tags": [
+        "space-tool",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「太空垃圾回收调度器」。创意钩子: 轨道清洁船计算燃料、窗口期和碰撞风险。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "轨道清洁船计算燃料、窗口期和碰撞风险; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:5",
+        "content_any:debris|orbit|fuel|collision",
+        "source_target_coverage:src/main/java/**/*.java"
+      ]
+    },
+    {
+      "id": "L3-26",
+      "level": 3,
+      "domain": "game",
+      "project_type": "eco_game",
+      "primary_language": "typescript",
+      "title": "像素怪兽生态链",
+      "creative_hook": "像素怪兽种群受食物链、变异和栖息地影响",
+      "novelty_tags": [
+        "eco-game",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「像素怪兽生态链」。创意钩子: 像素怪兽种群受食物链、变异和栖息地影响。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "像素怪兽种群受食物链、变异和栖息地影响; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:5",
+        "content_any:monster|habitat|mutation|food",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "id": "L3-27",
+      "level": 3,
+      "domain": "creative",
+      "project_type": "creative_writing",
+      "primary_language": "javascript",
+      "title": "诗歌编织机",
+      "creative_hook": "关键词被编织成押韵诗和织物纹样",
+      "novelty_tags": [
+        "creative-writing",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「诗歌编织机」。创意钩子: 关键词被编织成押韵诗和织物纹样。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "关键词被编织成押韵诗和织物纹样; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:5",
+        "content_any:poem|weave|rhyme|image",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "id": "L3-28",
+      "level": 3,
+      "domain": "game",
+      "project_type": "routing_game",
+      "primary_language": "python",
+      "title": "迷宫咖啡配送员",
+      "creative_hook": "动态迷宫里订单会冷却且顾客会移动",
+      "novelty_tags": [
+        "routing-game",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「迷宫咖啡配送员」。创意钩子: 动态迷宫里订单会冷却且顾客会移动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "动态迷宫里订单会冷却且顾客会移动; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:5",
+        "content_any:maze|coffee|route|order",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "level": 3,
+      "domain": "game",
+      "project_type": "puzzle_game",
+      "primary_language": "java",
+      "title": "符文电路拼图",
+      "creative_hook": "符文块按颜色和方向连接电路以点亮古代机器",
+      "novelty_tags": [
+        "puzzle-game",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「符文电路拼图」。创意钩子: 符文块按颜色和方向连接电路以点亮古代机器。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "符文块按颜色和方向连接电路以点亮古代机器; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:5",
+        "content_any:rune|circuit|puzzle|glyph",
+        "source_target_coverage:src/main/java/**/*.java"
+      ],
+      "id": "L3-29"
+    },
+    {
+      "level": 3,
+      "domain": "creative",
+      "project_type": "creative_tool",
+      "primary_language": "typescript",
+      "title": "微型世界种子编辑器",
+      "creative_hook": "编辑物理参数和生物特征并观察微型世界演化",
+      "novelty_tags": [
+        "creative-tool",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「微型世界种子编辑器」。创意钩子: 编辑物理参数和生物特征并观察微型世界演化。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "编辑物理参数和生物特征并观察微型世界演化; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:5",
+        "content_any:world|seed|evolve|biome",
+        "source_target_coverage:src/**/*.ts"
+      ],
+      "id": "L3-30"
+    },
+    {
+      "id": "L4-31",
+      "level": 4,
+      "domain": "internet_platform",
+      "project_type": "online_creative",
+      "primary_language": "go",
+      "title": "多人幽灵涂鸦墙",
+      "creative_hook": "实时笔迹像幽灵一样淡出并保留表情轨迹",
+      "novelty_tags": [
+        "online-creative",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「多人幽灵涂鸦墙」。创意钩子: 实时笔迹像幽灵一样淡出并保留表情轨迹。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "实时笔迹像幽灵一样淡出并保留表情轨迹; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:7",
+        "content_any:WebSocket|ghost|graffiti|fade",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "id": "L4-32",
+      "level": 4,
+      "domain": "game",
+      "project_type": "logistics_game",
+      "primary_language": "rust",
+      "title": "异世界邮差路线规划",
+      "creative_hook": "浮岛、风向、龙群和邮件保鲜期影响路线",
+      "novelty_tags": [
+        "logistics-game",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「异世界邮差路线规划」。创意钩子: 浮岛、风向、龙群和邮件保鲜期影响路线。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "浮岛、风向、龙群和邮件保鲜期影响路线; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:7",
+        "content_any:mail|island|dragon|route",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "id": "L4-33",
+      "level": 4,
+      "domain": "music",
+      "project_type": "music_performance",
+      "primary_language": "cpp",
+      "title": "手势乐团指挥台",
+      "creative_hook": "手势强弱控制多声部乐团进入与退场",
+      "novelty_tags": [
+        "music-performance",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「手势乐团指挥台」。创意钩子: 手势强弱控制多声部乐团进入与退场。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "手势强弱控制多声部乐团进入与退场; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:7",
+        "content_any:gesture|orchestra|section|tempo",
+        "source_target_coverage:src/**/*.cpp"
+      ]
+    },
+    {
+      "id": "L4-34",
+      "level": 4,
+      "domain": "game",
+      "project_type": "productivity_game",
+      "primary_language": "java",
+      "title": "会进化的桌宠工作台",
+      "creative_hook": "任务完成节奏让桌宠进化技能和提醒方式",
+      "novelty_tags": [
+        "productivity-game",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「会进化的桌宠工作台」。创意钩子: 任务完成节奏让桌宠进化技能和提醒方式。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "任务完成节奏让桌宠进化技能和提醒方式; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:7",
+        "content_any:pet|evolve|task|reminder",
+        "source_target_coverage:src/main/java/**/*.java"
+      ]
+    },
+    {
+      "id": "L4-35",
+      "level": 4,
+      "domain": "science_creative",
+      "project_type": "science_art",
+      "primary_language": "typescript",
+      "title": "星云材料实验室",
+      "creative_hook": "材料配方生成星云纹理和稳定性评分",
+      "novelty_tags": [
+        "science-art",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「星云材料实验室」。创意钩子: 材料配方生成星云纹理和稳定性评分。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "材料配方生成星云纹理和稳定性评分; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:7",
+        "content_any:nebula|material|stability|spectrum",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "id": "L4-36",
+      "level": 4,
+      "domain": "game",
+      "project_type": "legal_game",
+      "primary_language": "javascript",
+      "title": "地下城合同生成器",
+      "creative_hook": "冒险合同包含风险条款、分账和验收清单",
+      "novelty_tags": [
+        "legal-game",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「地下城合同生成器」。创意钩子: 冒险合同包含风险条款、分账和验收清单。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "冒险合同包含风险条款、分账和验收清单; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:7",
+        "content_any:contract|dungeon|risk|reward",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "id": "L4-37",
+      "level": 4,
+      "domain": "creative",
+      "project_type": "learning_tool",
+      "primary_language": "python",
+      "title": "鲸歌翻译训练器",
+      "creative_hook": "鲸歌片段按声谱标签和假设翻译训练",
+      "novelty_tags": [
+        "learning-tool",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「鲸歌翻译训练器」。创意钩子: 鲸歌片段按声谱标签和假设翻译训练。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "鲸歌片段按声谱标签和假设翻译训练; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:7",
+        "content_any:whale|song|spectrum|translation",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "id": "L4-38",
+      "level": 4,
+      "domain": "creative",
+      "project_type": "design_tool",
+      "primary_language": "go",
+      "title": "星座家具摆放器",
+      "creative_hook": "家具摆放形成星座并计算动线与视觉重心",
+      "novelty_tags": [
+        "design-tool",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「星座家具摆放器」。创意钩子: 家具摆放形成星座并计算动线与视觉重心。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "家具摆放形成星座并计算动线与视觉重心; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:7",
+        "content_any:furniture|constellation|layout|room",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "level": 4,
+      "domain": "game",
+      "project_type": "rhythm_adventure",
+      "primary_language": "python",
+      "title": "地牢节奏战斗引擎",
+      "creative_hook": "攻击节拍、防御和弦与BOSS音乐状态机联动",
+      "novelty_tags": [
+        "rhythm-adventure",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「地牢节奏战斗引擎」。创意钩子: 攻击节拍、防御和弦与BOSS音乐状态机联动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "攻击节拍、防御和弦与BOSS音乐状态机联动; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:7",
+        "content_any:dungeon|rhythm|beat|boss",
+        "source_target_coverage:src/**/*.py"
+      ],
+      "id": "L4-39"
+    },
+    {
+      "level": 4,
+      "domain": "science_creative",
+      "project_type": "science_tool",
+      "primary_language": "rust",
+      "title": "微型粒子碰撞模拟器",
+      "creative_hook": "粒子种类、能量和角度决定衰变产物和新粒子发现",
+      "novelty_tags": [
+        "science-tool",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「微型粒子碰撞模拟器」。创意钩子: 粒子种类、能量和角度决定衰变产物和新粒子发现。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "粒子种类、能量和角度决定衰变产物和新粒子发现; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:7",
+        "content_any:particle|collision|energy|decay",
+        "source_target_coverage:src/**/*.rs"
+      ],
+      "id": "L4-40"
+    },
+    {
+      "id": "L5-41",
+      "level": 5,
+      "domain": "game",
+      "project_type": "economy_game",
+      "primary_language": "rust",
+      "title": "云端怪兽牧场经济系统",
+      "creative_hook": "怪兽繁育、交易和天气事件共同影响市场",
+      "novelty_tags": [
+        "economy-game",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「云端怪兽牧场经济系统」。创意钩子: 怪兽繁育、交易和天气事件共同影响市场。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "怪兽繁育、交易和天气事件共同影响市场; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:8",
+        "content_any:monster|breed|market|weather",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "id": "L5-42",
+      "level": 5,
+      "domain": "game",
+      "project_type": "collaboration_game",
+      "primary_language": "cpp",
+      "title": "合作式时间旅行看板",
+      "creative_hook": "任务可发送到过去或未来并产生因果冲突",
+      "novelty_tags": [
+        "collaboration-game",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「合作式时间旅行看板」。创意钩子: 任务可发送到过去或未来并产生因果冲突。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "任务可发送到过去或未来并产生因果冲突; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:8",
+        "content_any:timeline|kanban|causal|task",
+        "source_target_coverage:src/**/*.cpp"
+      ]
+    },
+    {
+      "id": "L5-43",
+      "level": 5,
+      "domain": "creative",
+      "project_type": "production_tool",
+      "primary_language": "java",
+      "title": "梦境剧院排练管理",
+      "creative_hook": "角色、场景、台词和梦境观众反馈影响排练",
+      "novelty_tags": [
+        "production-tool",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「梦境剧院排练管理」。创意钩子: 角色、场景、台词和梦境观众反馈影响排练。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "角色、场景、台词和梦境观众反馈影响排练; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:8",
+        "content_any:theater|rehearsal|scene|feedback",
+        "source_target_coverage:src/main/java/**/*.java"
+      ]
+    },
+    {
+      "id": "L5-44",
+      "level": 5,
+      "domain": "creative",
+      "project_type": "city_builder",
+      "primary_language": "typescript",
+      "title": "微缩星球城市建造器",
+      "creative_hook": "在球形小星球上规划资源、道路和幸福度",
+      "novelty_tags": [
+        "city-builder",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「微缩星球城市建造器」。创意钩子: 在球形小星球上规划资源、道路和幸福度。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "在球形小星球上规划资源、道路和幸福度; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:8",
+        "content_any:planet|city|resource|happiness",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "id": "L5-45",
+      "level": 5,
+      "domain": "game",
+      "project_type": "recommendation_game",
+      "primary_language": "javascript",
+      "title": "魔法图书馆推荐引擎",
+      "creative_hook": "书籍会移动书架并按心情和咒语标签推荐",
+      "novelty_tags": [
+        "recommendation-game",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「魔法图书馆推荐引擎」。创意钩子: 书籍会移动书架并按心情和咒语标签推荐。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "书籍会移动书架并按心情和咒语标签推荐; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:8",
+        "content_any:library|recommend|spell|mood",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "id": "L5-46",
+      "level": 5,
+      "domain": "creative",
+      "project_type": "maker_tool",
+      "primary_language": "python",
+      "title": "手作玩具工坊排程器",
+      "creative_hook": "玩具订单、零件、工序和故事卡一起排产",
+      "novelty_tags": [
+        "maker-tool",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「手作玩具工坊排程器」。创意钩子: 玩具订单、零件、工序和故事卡一起排产。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "玩具订单、零件、工序和故事卡一起排产; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:8",
+        "content_any:toy|workshop|order|quality",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "id": "L5-47",
+      "level": 5,
+      "domain": "game",
+      "project_type": "interactive_stream_game",
+      "primary_language": "go",
+      "title": "实时观众弹幕冒险",
+      "creative_hook": "观众投票实时改变剧情、怪物和地图事件",
+      "novelty_tags": [
+        "interactive-stream-game",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「实时观众弹幕冒险」。创意钩子: 观众投票实时改变剧情、怪物和地图事件。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "观众投票实时改变剧情、怪物和地图事件; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:8",
+        "content_any:chat|vote|adventure|event",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "id": "L5-48",
+      "level": 5,
+      "domain": "music",
+      "project_type": "audio_creative",
+      "primary_language": "rust",
+      "title": "声音植物园采样器",
+      "creative_hook": "声音种子会长成音色植物并组成可播放地图",
+      "novelty_tags": [
+        "audio-creative",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「声音植物园采样器」。创意钩子: 声音种子会长成音色植物并组成可播放地图。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "声音种子会长成音色植物并组成可播放地图; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:8",
+        "content_any:sample|garden|sound|plant",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "level": 5,
+      "domain": "internet_platform",
+      "project_type": "social_platform",
+      "primary_language": "javascript",
+      "title": "幽灵信件社交网络",
+      "creative_hook": "匿名信件漂流、笔迹指纹匹配和幽灵信箱寻宝",
+      "novelty_tags": [
+        "social-platform",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「幽灵信件社交网络」。创意钩子: 匿名信件漂流、笔迹指纹匹配和幽灵信箱寻宝。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "匿名信件漂流、笔迹指纹匹配和幽灵信箱寻宝; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:8",
+        "content_any:ghost|letter|drift|mailbox",
+        "source_target_coverage:src/**/*.js"
+      ],
+      "id": "L5-49"
+    },
+    {
+      "level": 5,
+      "domain": "game",
+      "project_type": "tower_defense",
+      "primary_language": "typescript",
+      "title": "声波塔防构造器",
+      "creative_hook": "不同音频频率和波形构成防御塔并共振消灭入侵者",
+      "novelty_tags": [
+        "tower-defense",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「声波塔防构造器」。创意钩子: 不同音频频率和波形构成防御塔并共振消灭入侵者。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "不同音频频率和波形构成防御塔并共振消灭入侵者; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:8",
+        "content_any:wave|frequency|tower|resonance",
+        "source_target_coverage:src/**/*.ts"
+      ],
+      "id": "L5-50"
+    },
+    {
+      "id": "L6-51",
+      "level": 6,
+      "domain": "game",
+      "project_type": "simulation_game",
+      "primary_language": "cpp",
+      "title": "AI NPC 小镇社会模拟",
+      "creative_hook": "NPC 有记忆、职业、关系和传闻传播网络",
+      "novelty_tags": [
+        "simulation-game",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「AI NPC 小镇社会模拟」。创意钩子: NPC 有记忆、职业、关系和传闻传播网络。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "NPC 有记忆、职业、关系和传闻传播网络; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:10",
+        "content_any:NPC|memory|rumor|relationship",
+        "source_target_coverage:src/**/*.cpp"
+      ]
+    },
+    {
+      "id": "L6-52",
+      "level": 6,
+      "domain": "music",
+      "project_type": "online_music_platform",
+      "primary_language": "java",
+      "title": "多人太空电台运营台",
+      "creative_hook": "团队排节目、接收信号并处理干扰和听众反馈",
+      "novelty_tags": [
+        "online-music-platform",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「多人太空电台运营台」。创意钩子: 团队排节目、接收信号并处理干扰和听众反馈。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "团队排节目、接收信号并处理干扰和听众反馈; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:10",
+        "content_any:radio|signal|schedule|interference",
+        "source_target_coverage:src/main/java/**/*.java"
+      ]
+    },
+    {
+      "id": "L6-53",
+      "level": 6,
+      "domain": "creative",
+      "project_type": "creative_director_tool",
+      "primary_language": "typescript",
+      "title": "生成式漫画分镜导演",
+      "creative_hook": "角色、镜头、对白和节奏组成可导出的分镜",
+      "novelty_tags": [
+        "creative-director-tool",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「生成式漫画分镜导演」。创意钩子: 角色、镜头、对白和节奏组成可导出的分镜。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "角色、镜头、对白和节奏组成可导出的分镜; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:10",
+        "content_any:comic|storyboard|dialogue|panel",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "id": "L6-54",
+      "level": 6,
+      "domain": "internet_platform",
+      "project_type": "routing_platform",
+      "primary_language": "javascript",
+      "title": "魔法物流无人机群",
+      "creative_hook": "无人机路线受禁飞区、天气和包裹脾气影响",
+      "novelty_tags": [
+        "routing-platform",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「魔法物流无人机群」。创意钩子: 无人机路线受禁飞区、天气和包裹脾气影响。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "无人机路线受禁飞区、天气和包裹脾气影响; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:10",
+        "content_any:drone|package|no-fly|weather",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "id": "L6-55",
+      "level": 6,
+      "domain": "game",
+      "project_type": "online_game",
+      "primary_language": "python",
+      "title": "实时像素 MMO 露营地",
+      "creative_hook": "玩家采集、烹饪、建造、聊天并共享营地状态",
+      "novelty_tags": [
+        "online-game",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「实时像素 MMO 露营地」。创意钩子: 玩家采集、烹饪、建造、聊天并共享营地状态。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "玩家采集、烹饪、建造、聊天并共享营地状态; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:10",
+        "content_any:camp|craft|chat|shared",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "id": "L6-56",
+      "level": 6,
+      "domain": "game",
+      "project_type": "security_game",
+      "primary_language": "go",
+      "title": "博物馆夜间安保解谜系统",
+      "creative_hook": "展品夜间移动,巡逻路径形成异常推理报告",
+      "novelty_tags": [
+        "security-game",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「博物馆夜间安保解谜系统」。创意钩子: 展品夜间移动,巡逻路径形成异常推理报告。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "展品夜间移动,巡逻路径形成异常推理报告; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:10",
+        "content_any:museum|patrol|artifact|anomaly",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "id": "L6-57",
+      "level": 6,
+      "domain": "music",
+      "project_type": "music_collaboration",
+      "primary_language": "rust",
+      "title": "情绪作曲协作云盘",
+      "creative_hook": "团队上传情绪片段并版本化音乐工程",
+      "novelty_tags": [
+        "music-collaboration",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「情绪作曲协作云盘」。创意钩子: 团队上传情绪片段并版本化音乐工程。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "团队上传情绪片段并版本化音乐工程; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:10",
+        "content_any:emotion|track|version|compose",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "id": "L6-58",
+      "level": 6,
+      "domain": "science_creative",
+      "project_type": "climate_sandbox",
+      "primary_language": "cpp",
+      "title": "生态修复沙盒控制台",
+      "creative_hook": "河流、森林、物种和预算反馈修复策略",
+      "novelty_tags": [
+        "climate-sandbox",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「生态修复沙盒控制台」。创意钩子: 河流、森林、物种和预算反馈修复策略。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "河流、森林、物种和预算反馈修复策略; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:10",
+        "content_any:river|species|budget|restoration",
+        "source_target_coverage:src/**/*.cpp"
+      ]
+    },
+    {
+      "level": 6,
+      "domain": "creative",
+      "project_type": "world_builder",
+      "primary_language": "go",
+      "title": "多人在线魔法学院注册处",
+      "creative_hook": "学生选课、咒语树、学院杯和魔法事故实时同步",
+      "novelty_tags": [
+        "world-builder",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「多人在线魔法学院注册处」。创意钩子: 学生选课、咒语树、学院杯和魔法事故实时同步。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "学生选课、咒语树、学院杯和魔法事故实时同步; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:10",
+        "content_any:magic|academy|spell|enrollment",
+        "source_target_coverage:**/*.go"
+      ],
+      "id": "L6-59"
+    },
+    {
+      "level": 6,
+      "domain": "game",
+      "project_type": "simulation_game",
+      "primary_language": "cpp",
+      "title": "太空站生态闭环模拟",
+      "creative_hook": "氧气、食物、水、废物和宇航员心理健康构成闭环",
+      "novelty_tags": [
+        "simulation-game",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「太空站生态闭环模拟」。创意钩子: 氧气、食物、水、废物和宇航员心理健康构成闭环。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "氧气、食物、水、废物和宇航员心理健康构成闭环; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:10",
+        "content_any:oxygen|food|waste|astronaut",
+        "source_target_coverage:src/**/*.cpp"
+      ],
+      "id": "L6-60"
+    },
+    {
+      "id": "L7-61",
+      "level": 7,
+      "domain": "game",
+      "project_type": "game_engine_tool",
+      "primary_language": "java",
+      "title": "开放世界任务织网器",
+      "creative_hook": "生态、NPC 日程和声望会动态改写任务可达性",
+      "novelty_tags": [
+        "game-engine-tool",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「开放世界任务织网器」。创意钩子: 生态、NPC 日程和声望会动态改写任务可达性。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "生态、NPC 日程和声望会动态改写任务可达性; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:11",
+        "content_any:quest|NPC|reputation|dependency",
+        "source_target_coverage:src/main/java/**/*.java"
+      ]
+    },
+    {
+      "id": "L7-62",
+      "level": 7,
+      "domain": "creative",
+      "project_type": "support_simulator",
+      "primary_language": "typescript",
+      "title": "跨维度客服剧场",
+      "creative_hook": "客服工单成为有 SLA、情绪和结局评分的舞台剧",
+      "novelty_tags": [
+        "support-simulator",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「跨维度客服剧场」。创意钩子: 客服工单成为有 SLA、情绪和结局评分的舞台剧。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "客服工单成为有 SLA、情绪和结局评分的舞台剧; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:11",
+        "content_any:ticket|SLA|emotion|escalation",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "id": "L7-63",
+      "level": 7,
+      "domain": "creative",
+      "project_type": "industrial_fantasy",
+      "primary_language": "javascript",
+      "title": "数字孪生龙巢工厂",
+      "creative_hook": "传感器、产能和龙情绪共同驱动工厂热源",
+      "novelty_tags": [
+        "industrial-fantasy",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「数字孪生龙巢工厂」。创意钩子: 传感器、产能和龙情绪共同驱动工厂热源。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "传感器、产能和龙情绪共同驱动工厂热源; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:11",
+        "content_any:sensor|factory|dragon|capacity",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "id": "L7-64",
+      "level": 7,
+      "domain": "creative",
+      "project_type": "film_production_tool",
+      "primary_language": "python",
+      "title": "协作式虚拟电影片场",
+      "creative_hook": "多人管理镜头、演员、道具、天气和预算",
+      "novelty_tags": [
+        "film-production-tool",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「协作式虚拟电影片场」。创意钩子: 多人管理镜头、演员、道具、天气和预算。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "多人管理镜头、演员、道具、天气和预算; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:11",
+        "content_any:shot|actor|prop|budget",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "id": "L7-65",
+      "level": 7,
+      "domain": "science_creative",
+      "project_type": "civic_simulation",
+      "primary_language": "go",
+      "title": "太空港移民排队模拟",
+      "creative_hook": "签证、健康、航班延误和公平性指标共同排队",
+      "novelty_tags": [
+        "civic-simulation",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「太空港移民排队模拟」。创意钩子: 签证、健康、航班延误和公平性指标共同排队。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "签证、健康、航班延误和公平性指标共同排队; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:11",
+        "content_any:visa|spaceport|queue|fairness",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "id": "L7-66",
+      "level": 7,
+      "domain": "music",
+      "project_type": "audio_archive",
+      "primary_language": "rust",
+      "title": "声音考古档案馆",
+      "creative_hook": "修复声音碎片并推断年代、地点和仪式",
+      "novelty_tags": [
+        "audio-archive",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「声音考古档案馆」。创意钩子: 修复声音碎片并推断年代、地点和仪式。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "修复声音碎片并推断年代、地点和仪式; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:11",
+        "content_any:archive|sound|restore|ritual",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "id": "L7-67",
+      "level": 7,
+      "domain": "internet_platform",
+      "project_type": "spectator_platform",
+      "primary_language": "cpp",
+      "title": "实时魔法棋局观战平台",
+      "creative_hook": "观战弹幕、技能冷却、回放和热力图共存",
+      "novelty_tags": [
+        "spectator-platform",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「实时魔法棋局观战平台」。创意钩子: 观战弹幕、技能冷却、回放和热力图共存。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "观战弹幕、技能冷却、回放和热力图共存; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:11",
+        "content_any:chess|spectator|cooldown|replay",
+        "source_target_coverage:src/**/*.cpp"
+      ]
+    },
+    {
+      "id": "L7-68",
+      "level": 7,
+      "domain": "game",
+      "project_type": "supply_chain_game",
+      "primary_language": "java",
+      "title": "星际农场供应链",
+      "creative_hook": "多星球农场共享水、种子、冷链和节庆需求",
+      "novelty_tags": [
+        "supply-chain-game",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「星际农场供应链」。创意钩子: 多星球农场共享水、种子、冷链和节庆需求。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "多星球农场共享水、种子、冷链和节庆需求; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:11",
+        "content_any:farm|planet|cold chain|festival",
+        "source_target_coverage:src/main/java/**/*.java"
+      ]
+    },
+    {
+      "level": 7,
+      "domain": "internet_platform",
+      "project_type": "auction_platform",
+      "primary_language": "javascript",
+      "title": "奇幻文物拍卖行引擎",
+      "creative_hook": "文物来源、鉴定师信誉和竞拍者心理战影响成交价",
+      "novelty_tags": [
+        "auction-platform",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「奇幻文物拍卖行引擎」。创意钩子: 文物来源、鉴定师信誉和竞拍者心理战影响成交价。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "文物来源、鉴定师信誉和竞拍者心理战影响成交价; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:11",
+        "content_any:auction|artifact|bid|appraisal",
+        "source_target_coverage:src/**/*.js"
+      ],
+      "id": "L7-69"
+    },
+    {
+      "level": 7,
+      "domain": "music",
+      "project_type": "music_game",
+      "primary_language": "python",
+      "title": "合唱团声部调度指挥",
+      "creative_hook": "声部进退、音准偏差和情感表达影响整体演出评分",
+      "novelty_tags": [
+        "music-game",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「合唱团声部调度指挥」。创意钩子: 声部进退、音准偏差和情感表达影响整体演出评分。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "声部进退、音准偏差和情感表达影响整体演出评分; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:11",
+        "content_any:choir|voice|pitch|ensemble",
+        "source_target_coverage:src/**/*.py"
+      ],
+      "id": "L7-70"
+    },
+    {
+      "id": "L8-71",
+      "level": 8,
+      "domain": "game",
+      "project_type": "3a_game_prototype",
+      "primary_language": "typescript",
+      "title": "3A 记忆宫殿潜行原型",
+      "creative_hook": "记忆碎片改变房间拓扑、守卫路线和谜题",
+      "novelty_tags": [
+        "3a-game-prototype",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「3A 记忆宫殿潜行原型」。创意钩子: 记忆碎片改变房间拓扑、守卫路线和谜题。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "记忆碎片改变房间拓扑、守卫路线和谜题; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:12",
+        "content_any:memory|stealth|guard|puzzle",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "id": "L8-72",
+      "level": 8,
+      "domain": "creative",
+      "project_type": "systems_art_tool",
+      "primary_language": "javascript",
+      "title": "梦境操作系统任务管理器",
+      "creative_hook": "进程是梦境角色,CPU 是注意力,崩溃变噩梦",
+      "novelty_tags": [
+        "systems-art-tool",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「梦境操作系统任务管理器」。创意钩子: 进程是梦境角色,CPU 是注意力,崩溃变噩梦。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "进程是梦境角色,CPU 是注意力,崩溃变噩梦; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:12",
+        "content_any:process|dream|attention|nightmare",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "id": "L8-73",
+      "level": 8,
+      "domain": "game",
+      "project_type": "online_party_game",
+      "primary_language": "python",
+      "title": "多人宇宙料理竞赛",
+      "creative_hook": "异星食材物理、顾客种族和时间压力影响评分",
+      "novelty_tags": [
+        "online-party-game",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「多人宇宙料理竞赛」。创意钩子: 异星食材物理、顾客种族和时间压力影响评分。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "异星食材物理、顾客种族和时间压力影响评分; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:12",
+        "content_any:cook|ingredient|alien|score",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "id": "L8-74",
+      "level": 8,
+      "domain": "creative",
+      "project_type": "mystery_tool",
+      "primary_language": "go",
+      "title": "城市传说知识图谱侦探",
+      "creative_hook": "线索实体图用于推理矛盾和可信度",
+      "novelty_tags": [
+        "mystery-tool",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「城市传说知识图谱侦探」。创意钩子: 线索实体图用于推理矛盾和可信度。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "线索实体图用于推理矛盾和可信度; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:12",
+        "content_any:legend|graph|clue|credibility",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "id": "L8-75",
+      "level": 8,
+      "domain": "music",
+      "project_type": "concert_platform",
+      "primary_language": "rust",
+      "title": "情绪驱动灯光演唱会",
+      "creative_hook": "观众情绪流改变灯光、和弦、镜头和舞台特效",
+      "novelty_tags": [
+        "concert-platform",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「情绪驱动灯光演唱会」。创意钩子: 观众情绪流改变灯光、和弦、镜头和舞台特效。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "观众情绪流改变灯光、和弦、镜头和舞台特效; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:12",
+        "content_any:emotion|lighting|chord|stage",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "id": "L8-76",
+      "level": 8,
+      "domain": "science_creative",
+      "project_type": "city_simulation",
+      "primary_language": "cpp",
+      "title": "地下生态城资源 AI",
+      "creative_hook": "氧气、菌类、热量和居民文化构成地下城市闭环",
+      "novelty_tags": [
+        "city-simulation",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「地下生态城资源 AI」。创意钩子: 氧气、菌类、热量和居民文化构成地下城市闭环。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "氧气、菌类、热量和居民文化构成地下城市闭环; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:12",
+        "content_any:oxygen|fungi|heat|culture",
+        "source_target_coverage:src/**/*.cpp"
+      ]
+    },
+    {
+      "id": "L8-77",
+      "level": 8,
+      "domain": "internet_platform",
+      "project_type": "writing_platform",
+      "primary_language": "java",
+      "title": "协作怪谈编辑宇宙",
+      "creative_hook": "多人共写怪谈并检测伏笔和世界观矛盾",
+      "novelty_tags": [
+        "writing-platform",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「协作怪谈编辑宇宙」。创意钩子: 多人共写怪谈并检测伏笔和世界观矛盾。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "多人共写怪谈并检测伏笔和世界观矛盾; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:12",
+        "content_any:lore|foreshadow|contradiction|canon",
+        "source_target_coverage:src/main/java/**/*.java"
+      ]
+    },
+    {
+      "id": "L8-78",
+      "level": 8,
+      "domain": "game",
+      "project_type": "design_system_game",
+      "primary_language": "typescript",
+      "title": "可演化 UI 主题生命体",
+      "creative_hook": "UI 主题根据行为进化颜色、密度、动效和性格",
+      "novelty_tags": [
+        "design-system-game",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「可演化 UI 主题生命体」。创意钩子: UI 主题根据行为进化颜色、密度、动效和性格。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "UI 主题根据行为进化颜色、密度、动效和性格; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:12",
+        "content_any:theme|evolve|motion|behavior",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "level": 8,
+      "domain": "game",
+      "project_type": "3a_game_prototype",
+      "primary_language": "go",
+      "title": "3A 废土拾荒者经济模拟",
+      "creative_hook": "废料品质、辐射区、商队路线和派系战争驱动经济",
+      "novelty_tags": [
+        "3a-game-prototype",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「3A 废土拾荒者经济模拟」。创意钩子: 废料品质、辐射区、商队路线和派系战争驱动经济。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "废料品质、辐射区、商队路线和派系战争驱动经济; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:12",
+        "content_any:scavenge|radiation|caravan|faction",
+        "source_target_coverage:**/*.go"
+      ],
+      "id": "L8-79"
+    },
+    {
+      "level": 8,
+      "domain": "science_creative",
+      "project_type": "bio_simulation",
+      "primary_language": "java",
+      "title": "深海热泉生命起源模拟",
+      "creative_hook": "化学梯度、温度和矿物催化原始生命自组织",
+      "novelty_tags": [
+        "bio-simulation",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「深海热泉生命起源模拟」。创意钩子: 化学梯度、温度和矿物催化原始生命自组织。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "化学梯度、温度和矿物催化原始生命自组织; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:12",
+        "content_any:hydrothermal|mineral|emergence|gradient",
+        "source_target_coverage:src/main/java/**/*.java"
+      ],
+      "id": "L8-80"
+    },
+    {
+      "id": "L9-81",
+      "level": 9,
+      "domain": "science_creative",
+      "project_type": "governance_simulation",
+      "primary_language": "javascript",
+      "title": "星际议会模拟治理平台",
+      "creative_hook": "星球派系提交法案、联盟、制裁和资源交换",
+      "novelty_tags": [
+        "governance-simulation",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「星际议会模拟治理平台」。创意钩子: 星球派系提交法案、联盟、制裁和资源交换。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "星球派系提交法案、联盟、制裁和资源交换; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:13",
+        "content_any:council|faction|bill|sanction",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "id": "L9-82",
+      "level": 9,
+      "domain": "game",
+      "project_type": "3a_game_prototype",
+      "primary_language": "python",
+      "title": "3A 巨兽生态狩猎导演",
+      "creative_hook": "巨兽迁徙、伤痕、猎人痕迹和动态任务联动",
+      "novelty_tags": [
+        "3a-game-prototype",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「3A 巨兽生态狩猎导演」。创意钩子: 巨兽迁徙、伤痕、猎人痕迹和动态任务联动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "巨兽迁徙、伤痕、猎人痕迹和动态任务联动; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:13",
+        "content_any:beast|migration|hunt|ecosystem",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "id": "L9-83",
+      "level": 9,
+      "domain": "internet_platform",
+      "project_type": "realtime_creative_platform",
+      "primary_language": "go",
+      "title": "实时梦境协作白板协议",
+      "creative_hook": "白板对象可融化、分裂、合并并保留操作日志",
+      "novelty_tags": [
+        "realtime-creative-platform",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「实时梦境协作白板协议」。创意钩子: 白板对象可融化、分裂、合并并保留操作日志。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "白板对象可融化、分裂、合并并保留操作日志; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:13",
+        "content_any:whiteboard|morph|operation|merge",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "id": "L9-84",
+      "level": 9,
+      "domain": "music",
+      "project_type": "music_navigation",
+      "primary_language": "rust",
+      "title": "音乐星图导航仪",
+      "creative_hook": "音乐片段变成可按和弦、速度和情绪导航的星图",
+      "novelty_tags": [
+        "music-navigation",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「音乐星图导航仪」。创意钩子: 音乐片段变成可按和弦、速度和情绪导航的星图。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "音乐片段变成可按和弦、速度和情绪导航的星图; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:13",
+        "content_any:music|starmap|chord|tempo",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "id": "L9-85",
+      "level": 9,
+      "domain": "game",
+      "project_type": "risk_game",
+      "primary_language": "cpp",
+      "title": "炼金供应链风控引擎",
+      "creative_hook": "材料不稳定性、来源伦理和爆炸风险进入风控",
+      "novelty_tags": [
+        "risk-game",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「炼金供应链风控引擎」。创意钩子: 材料不稳定性、来源伦理和爆炸风险进入风控。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "材料不稳定性、来源伦理和爆炸风险进入风控; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:13",
+        "content_any:alchemy|supply|risk|volatility",
+        "source_target_coverage:src/**/*.cpp"
+      ]
+    },
+    {
+      "id": "L9-86",
+      "level": 9,
+      "domain": "creative",
+      "project_type": "research_tool",
+      "primary_language": "java",
+      "title": "古文明语言复原实验室",
+      "creative_hook": "从符号碎片推断语法、词根和译文置信度",
+      "novelty_tags": [
+        "research-tool",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「古文明语言复原实验室」。创意钩子: 从符号碎片推断语法、词根和译文置信度。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "从符号碎片推断语法、词根和译文置信度; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:13",
+        "content_any:glyph|grammar|root|confidence",
+        "source_target_coverage:src/main/java/**/*.java"
+      ]
+    },
+    {
+      "id": "L9-87",
+      "level": 9,
+      "domain": "science_creative",
+      "project_type": "emergency_simulation",
+      "primary_language": "typescript",
+      "title": "海底城市灾害指挥中心",
+      "creative_hook": "压力、氧气、疏散、舱门和救援路线联动",
+      "novelty_tags": [
+        "emergency-simulation",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「海底城市灾害指挥中心」。创意钩子: 压力、氧气、疏散、舱门和救援路线联动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "压力、氧气、疏散、舱门和救援路线联动; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:13",
+        "content_any:undersea|pressure|evacuation|oxygen",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "id": "L9-88",
+      "level": 9,
+      "domain": "creative",
+      "project_type": "runtime_creative",
+      "primary_language": "javascript",
+      "title": "可编程玩具剧场运行时",
+      "creative_hook": "玩具演员有脚本、传感器、道具和回放日志",
+      "novelty_tags": [
+        "runtime-creative",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「可编程玩具剧场运行时」。创意钩子: 玩具演员有脚本、传感器、道具和回放日志。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "玩具演员有脚本、传感器、道具和回放日志; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:13",
+        "content_any:toy|script|sensor|replay",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "level": 9,
+      "domain": "game",
+      "project_type": "grand_strategy",
+      "primary_language": "typescript",
+      "title": "文明演化沙盒观察者",
+      "creative_hook": "文化基因、气候和随机事件驱动多文明兴衰模拟",
+      "novelty_tags": [
+        "grand-strategy",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「文明演化沙盒观察者」。创意钩子: 文化基因、气候和随机事件驱动多文明兴衰模拟。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "文化基因、气候和随机事件驱动多文明兴衰模拟; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:13",
+        "content_any:civilization|meme|climate|collapse",
+        "source_target_coverage:src/**/*.ts"
+      ],
+      "id": "L9-89"
+    },
+    {
+      "level": 9,
+      "domain": "creative",
+      "project_type": "knowledge_tool",
+      "primary_language": "rust",
+      "title": "跨维度图书馆编目引擎",
+      "creative_hook": "书籍按主题、情感色彩、年代和读者梦境关联编目",
+      "novelty_tags": [
+        "knowledge-tool",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「跨维度图书馆编目引擎」。创意钩子: 书籍按主题、情感色彩、年代和读者梦境关联编目。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "书籍按主题、情感色彩、年代和读者梦境关联编目; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:13",
+        "content_any:catalog|dimension|emotion|dream",
+        "source_target_coverage:src/**/*.rs"
+      ],
+      "id": "L9-90"
+    },
+    {
+      "id": "L10-91",
+      "level": 10,
+      "domain": "internet_platform",
+      "project_type": "operating_platform",
+      "primary_language": "python",
+      "title": "宇宙级主题公园运营系统",
+      "creative_hook": "跨星球游乐设施、游客情绪、事故和剧情活动联动",
+      "novelty_tags": [
+        "operating-platform",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「宇宙级主题公园运营系统」。创意钩子: 跨星球游乐设施、游客情绪、事故和剧情活动联动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "跨星球游乐设施、游客情绪、事故和剧情活动联动; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:14",
+        "content_any:theme park|visitor|queue|incident",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "id": "L10-92",
+      "level": 10,
+      "domain": "game",
+      "project_type": "game_audio_engine",
+      "primary_language": "go",
+      "title": "3A 动态配乐战斗总线",
+      "creative_hook": "战斗事件驱动分层音乐、紧张度和乐器进出",
+      "novelty_tags": [
+        "game-audio-engine",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「3A 动态配乐战斗总线」。创意钩子: 战斗事件驱动分层音乐、紧张度和乐器进出。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "战斗事件驱动分层音乐、紧张度和乐器进出; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:14",
+        "content_any:combat|music layer|tension|transition",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "id": "L10-93",
+      "level": 10,
+      "domain": "science_creative",
+      "project_type": "agent_simulation",
+      "primary_language": "rust",
+      "title": "多智能体童话经济体",
+      "creative_hook": "童话角色经营店铺、交换资源并传播谣言",
+      "novelty_tags": [
+        "agent-simulation",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「多智能体童话经济体」。创意钩子: 童话角色经营店铺、交换资源并传播谣言。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "童话角色经营店铺、交换资源并传播谣言; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:14",
+        "content_any:agent|fairy tale|economy|rumor",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "id": "L10-94",
+      "level": 10,
+      "domain": "creative",
+      "project_type": "cloud_fantasy",
+      "primary_language": "cpp",
+      "title": "梦境云原生控制面",
+      "creative_hook": "声明式资源 reconcile 噩梦、愿望和记忆卷",
+      "novelty_tags": [
+        "cloud-fantasy",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「梦境云原生控制面」。创意钩子: 声明式资源 reconcile 噩梦、愿望和记忆卷。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "声明式资源 reconcile 噩梦、愿望和记忆卷; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:14",
+        "content_any:reconcile|dream|resource|controller",
+        "source_target_coverage:src/**/*.cpp"
+      ]
+    },
+    {
+      "id": "L10-95",
+      "level": 10,
+      "domain": "internet_platform",
+      "project_type": "creator_platform",
+      "primary_language": "java",
+      "title": "创作者宇宙资产图谱",
+      "creative_hook": "管理角色、场景、音乐、版权、版本和跨作品引用",
+      "novelty_tags": [
+        "creator-platform",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「创作者宇宙资产图谱」。创意钩子: 管理角色、场景、音乐、版权、版本和跨作品引用。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "管理角色、场景、音乐、版权、版本和跨作品引用; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:14",
+        "content_any:asset|universe|rights|version",
+        "source_target_coverage:src/main/java/**/*.java"
+      ]
+    },
+    {
+      "id": "L10-96",
+      "level": 10,
+      "domain": "creative",
+      "project_type": "entertainment_ops",
+      "primary_language": "typescript",
+      "title": "虚拟偶像巡演调度器",
+      "creative_hook": "场馆、曲目、服装、粉丝热度和直播故障联动",
+      "novelty_tags": [
+        "entertainment-ops",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「虚拟偶像巡演调度器」。创意钩子: 场馆、曲目、服装、粉丝热度和直播故障联动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "场馆、曲目、服装、粉丝热度和直播故障联动; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:14",
+        "content_any:idol|tour|venue|fan",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "id": "L10-97",
+      "level": 10,
+      "domain": "creative",
+      "project_type": "medical_fantasy",
+      "primary_language": "javascript",
+      "title": "奇幻医院诊疗沙盒",
+      "creative_hook": "魔法病理、药剂、伦理和预算共同约束治疗",
+      "novelty_tags": [
+        "medical-fantasy",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「奇幻医院诊疗沙盒」。创意钩子: 魔法病理、药剂、伦理和预算共同约束治疗。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "魔法病理、药剂、伦理和预算共同约束治疗; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:14",
+        "content_any:hospital|diagnosis|potion|ethics",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "id": "L10-98",
+      "level": 10,
+      "domain": "creative",
+      "project_type": "collaborative_video",
+      "primary_language": "python",
+      "title": "时间线电影剪辑协作服务器",
+      "creative_hook": "多人编辑电影时间线并处理锁、分支、合并和审阅",
+      "novelty_tags": [
+        "collaborative-video",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「时间线电影剪辑协作服务器」。创意钩子: 多人编辑电影时间线并处理锁、分支、合并和审阅。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "多人编辑电影时间线并处理锁、分支、合并和审阅; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:14",
+        "content_any:timeline|branch|merge|review",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "level": 10,
+      "domain": "game",
+      "project_type": "online_rts",
+      "primary_language": "python",
+      "title": "实时多人太空站紧急指挥",
+      "creative_hook": "多个玩家同时指挥不同舱段应对连锁灾难事件",
+      "novelty_tags": [
+        "online-rts",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「实时多人太空站紧急指挥」。创意钩子: 多个玩家同时指挥不同舱段应对连锁灾难事件。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "多个玩家同时指挥不同舱段应对连锁灾难事件; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:14",
+        "content_any:station|emergency|module|cascade",
+        "source_target_coverage:src/**/*.py"
+      ],
+      "id": "L10-99"
+    },
+    {
+      "level": 10,
+      "domain": "internet_platform",
+      "project_type": "tabletop_platform",
+      "primary_language": "cpp",
+      "title": "奇幻世界多人桌游模拟器",
+      "creative_hook": "自定义骰子、卡牌、地图和角色状态通过网络同步",
+      "novelty_tags": [
+        "tabletop-platform",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「奇幻世界多人桌游模拟器」。创意钩子: 自定义骰子、卡牌、地图和角色状态通过网络同步。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "自定义骰子、卡牌、地图和角色状态通过网络同步; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:14",
+        "content_any:dice|card|board|tabletop",
+        "source_target_coverage:src/**/*.cpp"
+      ],
+      "id": "L10-100"
+    },
+    {
+      "id": "L11-101",
+      "level": 11,
+      "domain": "creative",
+      "project_type": "space_logistics",
+      "primary_language": "go",
+      "title": "银河物流数字孪生",
+      "creative_hook": "星门容量、燃料、海盗风险、冷链和 SLA 构成物流孪生",
+      "novelty_tags": [
+        "space-logistics",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「银河物流数字孪生」。创意钩子: 星门容量、燃料、海盗风险、冷链和 SLA 构成物流孪生。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "星门容量、燃料、海盗风险、冷链和 SLA 构成物流孪生; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:15",
+        "content_any:stargate|fuel|SLA|pirate",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "id": "L11-102",
+      "level": 11,
+      "domain": "creative",
+      "project_type": "narrative_engine",
+      "primary_language": "rust",
+      "title": "开放世界生态叙事引擎",
+      "creative_hook": "生态变化自动生成任务、传闻、NPC 迁徙和派系反应",
+      "novelty_tags": [
+        "narrative-engine",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「开放世界生态叙事引擎」。创意钩子: 生态变化自动生成任务、传闻、NPC 迁徙和派系反应。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "生态变化自动生成任务、传闻、NPC 迁徙和派系反应; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:15",
+        "content_any:ecosystem|quest|faction|rumor",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "id": "L11-103",
+      "level": 11,
+      "domain": "creative",
+      "project_type": "ip_continuity_tool",
+      "primary_language": "cpp",
+      "title": "跨媒体 IP 连续性审计器",
+      "creative_hook": "审计小说、漫画、游戏和音乐设定的时间线一致性",
+      "novelty_tags": [
+        "ip-continuity-tool",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「跨媒体 IP 连续性审计器」。创意钩子: 审计小说、漫画、游戏和音乐设定的时间线一致性。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "审计小说、漫画、游戏和音乐设定的时间线一致性; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:15",
+        "content_any:canon|timeline|character|continuity",
+        "source_target_coverage:src/**/*.cpp"
+      ]
+    },
+    {
+      "id": "L11-104",
+      "level": 11,
+      "domain": "internet_platform",
+      "project_type": "energy_art_platform",
+      "primary_language": "java",
+      "title": "情绪能源微电网",
+      "creative_hook": "居民情绪影响能源产出、储能和公共艺术装置",
+      "novelty_tags": [
+        "energy-art-platform",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「情绪能源微电网」。创意钩子: 居民情绪影响能源产出、储能和公共艺术装置。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "居民情绪影响能源产出、储能和公共艺术装置; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:15",
+        "content_any:microgrid|emotion|storage|demand",
+        "source_target_coverage:src/main/java/**/*.java"
+      ]
+    },
+    {
+      "id": "L11-105",
+      "level": 11,
+      "domain": "creative",
+      "project_type": "security_fantasy",
+      "primary_language": "typescript",
+      "title": "梦境安全扫描器",
+      "creative_hook": "扫描恐惧模式、泄漏记忆和噩梦入口",
+      "novelty_tags": [
+        "security-fantasy",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「梦境安全扫描器」。创意钩子: 扫描恐惧模式、泄漏记忆和噩梦入口。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "扫描恐惧模式、泄漏记忆和噩梦入口; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:15",
+        "content_any:scan|fear|memory leak|nightmare",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "id": "L11-106",
+      "level": 11,
+      "domain": "game",
+      "project_type": "online_builder_game",
+      "primary_language": "javascript",
+      "title": "实时协作乐园建造 MMO",
+      "creative_hook": "玩家共同建设游乐园并同步经济、游客和活动",
+      "novelty_tags": [
+        "online-builder-game",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「实时协作乐园建造 MMO」。创意钩子: 玩家共同建设游乐园并同步经济、游客和活动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "玩家共同建设游乐园并同步经济、游客和活动; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:15",
+        "content_any:park|build|visitor|sync",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "id": "L11-107",
+      "level": 11,
+      "domain": "creative",
+      "project_type": "robot_theater_system",
+      "primary_language": "python",
+      "title": "机器人剧团排演调度内核",
+      "creative_hook": "机器人演员有电量、情绪模块、脚本和安全约束",
+      "novelty_tags": [
+        "robot-theater-system",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「机器人剧团排演调度内核」。创意钩子: 机器人演员有电量、情绪模块、脚本和安全约束。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "机器人演员有电量、情绪模块、脚本和安全约束; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:15",
+        "content_any:robot|battery|script|stage",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "id": "L11-108",
+      "level": 11,
+      "domain": "creative",
+      "project_type": "myth_research_tool",
+      "primary_language": "go",
+      "title": "古籍幻兽知识库",
+      "creative_hook": "整理幻兽分类、能力、栖息地、版本和证据链",
+      "novelty_tags": [
+        "myth-research-tool",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「古籍幻兽知识库」。创意钩子: 整理幻兽分类、能力、栖息地、版本和证据链。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "整理幻兽分类、能力、栖息地、版本和证据链; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:15",
+        "content_any:bestiary|evidence|habitat|version",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "level": 11,
+      "domain": "game",
+      "project_type": "immersive_sim",
+      "primary_language": "typescript",
+      "title": "3A 沉浸式谍报沙盒原型",
+      "creative_hook": "NPC记忆、社交网络、伪装和物理证据链联动",
+      "novelty_tags": [
+        "immersive-sim",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「3A 沉浸式谍报沙盒原型」。创意钩子: NPC记忆、社交网络、伪装和物理证据链联动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "NPC记忆、社交网络、伪装和物理证据链联动; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:15",
+        "content_any:espionage|disguise|evidence|memory",
+        "source_target_coverage:src/**/*.ts"
+      ],
+      "id": "L11-109"
+    },
+    {
+      "level": 11,
+      "domain": "science_creative",
+      "project_type": "climate_sim",
+      "primary_language": "javascript",
+      "title": "行星气候工程决策模拟器",
+      "creative_hook": "太阳辐射、洋流、碳循环和政策博弈共同影响气候",
+      "novelty_tags": [
+        "climate-sim",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「行星气候工程决策模拟器」。创意钩子: 太阳辐射、洋流、碳循环和政策博弈共同影响气候。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "太阳辐射、洋流、碳循环和政策博弈共同影响气候; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:15",
+        "content_any:climate|radiation|carbon|policy",
+        "source_target_coverage:src/**/*.js"
+      ],
+      "id": "L11-110"
+    },
+    {
+      "id": "L12-111",
+      "level": 12,
+      "domain": "game",
+      "project_type": "3a_game_engine",
+      "primary_language": "rust",
+      "title": "3A 星球级开放世界模拟内核",
+      "creative_hook": "星球生态、派系、天气、任务和经济互相扰动",
+      "novelty_tags": [
+        "3a-game-engine",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「3A 星球级开放世界模拟内核」。创意钩子: 星球生态、派系、天气、任务和经济互相扰动。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "星球生态、派系、天气、任务和经济互相扰动; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:16",
+        "content_any:planet|faction|weather|economy",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "id": "L12-112",
+      "level": 12,
+      "domain": "creative",
+      "project_type": "creator_os",
+      "primary_language": "cpp",
+      "title": "宇宙创作者操作系统",
+      "creative_hook": "统一世界观、角色、音乐、资产、版本、发布和粉丝反馈",
+      "novelty_tags": [
+        "creator-os",
+        "playful",
+        "novel",
+        "cpp"
+      ],
+      "brief": "用 C++17 实现「宇宙创作者操作系统」。创意钩子: 统一世界观、角色、音乐、资产、版本、发布和粉丝反馈。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "统一世界观、角色、音乐、资产、版本、发布和粉丝反馈; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "cpp_compile",
+        "min_files:16",
+        "content_any:worldbuilding|asset|release|fan",
+        "source_target_coverage:src/**/*.cpp"
+      ]
+    },
+    {
+      "id": "L12-113",
+      "level": 12,
+      "domain": "internet_platform",
+      "project_type": "disaster_ai_platform",
+      "primary_language": "java",
+      "title": "星际灾害响应多智能体平台",
+      "creative_hook": "多星球灾害、救援舰队、资源和通信延迟协同",
+      "novelty_tags": [
+        "disaster-ai-platform",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「星际灾害响应多智能体平台」。创意钩子: 多星球灾害、救援舰队、资源和通信延迟协同。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "多星球灾害、救援舰队、资源和通信延迟协同; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:16",
+        "content_any:disaster|fleet|resource|latency",
+        "source_target_coverage:src/main/java/**/*.java"
+      ]
+    },
+    {
+      "id": "L12-114",
+      "level": 12,
+      "domain": "creative",
+      "project_type": "database_fantasy",
+      "primary_language": "typescript",
+      "title": "梦境数据库事务引擎",
+      "creative_hook": "记忆片段支持隔离级别、冲突、回滚和一致性检查",
+      "novelty_tags": [
+        "database-fantasy",
+        "playful",
+        "novel",
+        "typescript"
+      ],
+      "brief": "用 TypeScript 实现「梦境数据库事务引擎」。创意钩子: 记忆片段支持隔离级别、冲突、回滚和一致性检查。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "记忆片段支持隔离级别、冲突、回滚和一致性检查; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "ts_syntax",
+        "package_scripts",
+        "min_files:16",
+        "content_any:transaction|memory|rollback|isolation",
+        "source_target_coverage:src/**/*.ts"
+      ]
+    },
+    {
+      "id": "L12-115",
+      "level": 12,
+      "domain": "music",
+      "project_type": "climate_music_platform",
+      "primary_language": "javascript",
+      "title": "全球音乐气候仪表盘",
+      "creative_hook": "气候数据映射为音乐、灯光、行动建议和社区演出",
+      "novelty_tags": [
+        "climate-music-platform",
+        "playful",
+        "novel",
+        "javascript"
+      ],
+      "brief": "用 JavaScript 实现「全球音乐气候仪表盘」。创意钩子: 气候数据映射为音乐、灯光、行动建议和社区演出。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "气候数据映射为音乐、灯光、行动建议和社区演出; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "js_syntax",
+        "package_scripts",
+        "min_files:16",
+        "content_any:climate|music|dashboard|action",
+        "source_target_coverage:src/**/*.js"
+      ]
+    },
+    {
+      "id": "L12-116",
+      "level": 12,
+      "domain": "science_creative",
+      "project_type": "org_simulation",
+      "primary_language": "python",
+      "title": "可进化企业组织沙盒",
+      "creative_hook": "组织结构像生态系统一样随文化、冲突和绩效进化",
+      "novelty_tags": [
+        "org-simulation",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「可进化企业组织沙盒」。创意钩子: 组织结构像生态系统一样随文化、冲突和绩效进化。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "组织结构像生态系统一样随文化、冲突和绩效进化; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:16",
+        "content_any:organization|culture|conflict|performance",
+        "source_target_coverage:src/**/*.py"
+      ]
+    },
+    {
+      "id": "L12-117",
+      "level": 12,
+      "domain": "game",
+      "project_type": "myth_mmo_backend",
+      "primary_language": "go",
+      "title": "多人神话世界服务器",
+      "creative_hook": "神祇、信仰、奇迹、地域和玩家城邦驱动世界规则",
+      "novelty_tags": [
+        "myth-mmo-backend",
+        "playful",
+        "novel",
+        "go"
+      ],
+      "brief": "用 Go 实现「多人神话世界服务器」。创意钩子: 神祇、信仰、奇迹、地域和玩家城邦驱动世界规则。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "神祇、信仰、奇迹、地域和玩家城邦驱动世界规则; 同时验证 Go 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "go_compile",
+        "min_files:16",
+        "content_any:deity|faith|miracle|city-state",
+        "source_target_coverage:**/*.go"
+      ]
+    },
+    {
+      "id": "L12-118",
+      "level": 12,
+      "domain": "creative",
+      "project_type": "immersive_art_ops",
+      "primary_language": "rust",
+      "title": "跨现实艺术展演控制塔",
+      "creative_hook": "协调线下装置、在线观众、声音、灯光和实时反馈",
+      "novelty_tags": [
+        "immersive-art-ops",
+        "playful",
+        "novel",
+        "rust"
+      ],
+      "brief": "用 Rust 实现「跨现实艺术展演控制塔」。创意钩子: 协调线下装置、在线观众、声音、灯光和实时反馈。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "协调线下装置、在线观众、声音、灯光和实时反馈; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "rust_compile",
+        "min_files:16",
+        "content_any:installation|audience|lighting|feedback",
+        "source_target_coverage:src/**/*.rs"
+      ]
+    },
+    {
+      "level": 12,
+      "domain": "game",
+      "project_type": "metaverse_engine",
+      "primary_language": "java",
+      "title": "多人跨维度元宇宙传送门引擎",
+      "creative_hook": "物理规则、材质、NPC行为和经济系统在维度间可变",
+      "novelty_tags": [
+        "metaverse-engine",
+        "playful",
+        "novel",
+        "java"
+      ],
+      "brief": "用 Java 实现「多人跨维度元宇宙传送门引擎」。创意钩子: 物理规则、材质、NPC行为和经济系统在维度间可变。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "物理规则、材质、NPC行为和经济系统在维度间可变; 同时验证 Java 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "java_compile",
+        "min_files:16",
+        "content_any:portal|dimension|physics|metaverse",
+        "source_target_coverage:src/main/java/**/*.java"
+      ],
+      "id": "L12-119"
+    },
+    {
+      "level": 12,
+      "domain": "creative",
+      "project_type": "ai_director_os",
+      "primary_language": "python",
+      "title": "AI 叙事导演操作系统",
+      "creative_hook": "统一管理剧情弧、角色情感、玩家行为和动态难度",
+      "novelty_tags": [
+        "ai-director-os",
+        "playful",
+        "novel",
+        "python"
+      ],
+      "brief": "用 Python 实现「AI 叙事导演操作系统」。创意钩子: 统一管理剧情弧、角色情感、玩家行为和动态难度。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。",
+      "test_focus": "统一管理剧情弧、角色情感、玩家行为和动态难度; 同时验证 Python 产物结构、入口可运行性和核心领域规则。",
+      "checks": [
+        "py_compile",
+        "min_files:16",
+        "content_any:narrative|arc|emotion|difficulty",
+        "source_target_coverage:src/**/*.py"
+      ],
+      "id": "L12-120"
+    }
+  ]
 }
