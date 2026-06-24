@@ -93,6 +93,7 @@ class ContextGatewayConfig:
     # business asset lookup; runtime/adapters inject owner-cell public readers.
     blueprint_overview_provider: Callable[[str, str], Any | None] | None = None
     verdict_history_provider: Callable[[str, str], Any | None] | None = None
+    resident_agi_capability_provider: Callable[[str], Any | None] | None = None
 
 
 class DuplicateStateOwnerError(Exception):
@@ -926,6 +927,10 @@ class RoleContextGateway:
     def _get_file_ownership(self) -> str | None:
         """Backward-compatible delegate to SignalSourceProvider.get_file_ownership."""
         return self._signal_sources.get_file_ownership()
+
+    def _get_resident_agi_capabilities(self) -> str | None:
+        """Backward-compatible delegate to SignalSourceProvider.get_resident_agi_capabilities."""
+        return self._signal_sources.get_resident_agi_capabilities()
 
     def _get_task_history(self, task_id: str) -> str | None:
         """Backward-compatible delegate to SignalSourceProvider.get_task_history."""

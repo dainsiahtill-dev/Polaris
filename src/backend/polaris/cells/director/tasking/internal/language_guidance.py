@@ -320,6 +320,8 @@ _LANGUAGE_PROFILES: dict[str, LanguageProfile] = {
             "错误类型应可诊断，必要时用 thiserror/anyhow 区分库边界和应用边界。",
             "并发共享状态使用 Arc/Mutex/RwLock 或 channel，明确 Send/Sync 约束。",
             "测试覆盖 Result 错误分支、边界输入和所有权相关状态转换。",
+            "const fn 限制：const 函数内只能调用其他 const fn 和 const 操作；禁止调用 .to_string()、.collect()、format!() 等非 const 方法；如需字符串构造，使用 &str 字面量或 const 兼容方式。",
+            "Cargo 项目结构：必须有 Cargo.toml（含 [package] name/version/edition）和 src/main.rs 或 src/lib.rs；模块通过 mod 声明和 pub use 导出。",
         ),
     ),
     "ruby": LanguageProfile(

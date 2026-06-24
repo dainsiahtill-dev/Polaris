@@ -34,12 +34,16 @@ const mockResidentState = {
     {
       decision_id: 'decision-1',
       actor: 'pm',
-      stage: 'planning',
+      stage: 'goal_staging',
       summary: 'Selected bounded decomposition strategy',
       timestamp: '2026-03-07T00:00:00Z',
+      run_id: 'resident-run-001',
+      task_id: 'TASK-1',
+      goal_id: 'goal-approved',
       verdict: 'success',
-      strategy_tags: ['task_split'],
+      strategy_tags: ['task_split', 'pm_bridge'],
       confidence: 0.92,
+      context_refs: ['runtime/contexts/abc123'],
       options: [
         {
           option_id: 'opt-a',
@@ -50,6 +54,17 @@ const mockResidentState = {
       ],
       selected_option_id: 'opt-a',
       evidence_refs: ['runtime/contracts/plan.md'],
+      evidence_bundle_id: 'bundle-1',
+      affected_files: ['src/backend/polaris/cells/resident/autonomy/internal/resident_runtime_service.py'],
+      affected_symbols: ['record_decision'],
+      actual_outcome: {
+        decision_source: 'resident_agi_supervisor',
+        evidence_schema: 'resident.decision_event.v1',
+        execution_profile_schema: 'task.execution_profile.v1',
+        validator_result: 'validation_passed',
+        promoted_to_pm_runtime: true,
+        task_count: 2,
+      },
     },
   ],
   loading: false,
@@ -259,6 +274,27 @@ describe('ResidentWorkspace', () => {
     expect(mockResidentState.extractSkills).toHaveBeenCalledTimes(1);
     expect(mockResidentState.runExperiments).toHaveBeenCalledTimes(1);
     expect(mockResidentState.runImprovements).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces the AGI decision audit timeline', () => {
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+        initialTab="decisions"
+      />,
+    );
+
+    expect(screen.getByText('决策审计面')).toBeInTheDocument();
+    expect(screen.getByText('source of truth: decision_trace.jsonl')).toBeInTheDocument();
+    expect(screen.getByText('resident.decision_event.v1')).toBeInTheDocument();
+    expect(screen.getByText('PM -> CE -> Director')).toBeInTheDocument();
+    expect(screen.getByText('validation_passed')).toBeInTheDocument();
+    expect(screen.getByText('bounded decomposition')).toBeInTheDocument();
+    expect(screen.getByText('score 91%')).toBeInTheDocument();
+    expect(screen.getByText(/evidence refs: runtime\/contracts\/plan.md/)).toBeInTheDocument();
+    expect(screen.getByText(/symbols: record_decision/)).toBeInTheDocument();
   });
 
   it('rejects a pending goal', () => {

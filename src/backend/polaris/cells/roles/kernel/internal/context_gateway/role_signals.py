@@ -91,6 +91,9 @@ class SignalBuildContext:
     # 文件归属信号(D-11): 其他并行 Director 最近修改的文件列表。
     # 防止并发写覆盖。默认 None-accessor → 不注入。
     get_file_ownership: Callable[[], str | None] = _none_accessor
+    # Resident AGI 平台能力面: AGI 与 PM/CE/Director/QA 走同一 Role/ContextOS
+    # 底座,但拥有平台级审计/决策能力。默认 None-accessor → 不注入。
+    get_resident_agi_capabilities: Callable[[], str | None] = _none_accessor
 
 
 class RoleContextSignal(Protocol):
@@ -442,12 +445,47 @@ class FileOwnershipSignal:
         )
 
 
+class ResidentAgiCapabilitySurfaceSignal:
+    """Resident AGI 专属：平台能力面与治理边界。
+
+    role-bound（仅 resident_agi）+ default-ON + must-have。Resident AGI 不是旁路
+    agent，也不是第二套调度系统；它与 PM/CE/Director/QA 一样走 RoleRuntime /
+    ContextOS / TurnEngine，只是职责和权限更高，需要在每次决策 turn 中明确看到
+    可读审计面、可执行边界、证据契约和禁止绕过的主链。
+    """
+
+    id = "resident_agi_capability_surface"
+
+    def applies_to(self, ctx: SignalBuildContext) -> bool:
+        return ctx.role == "resident_agi" and bool(
+            ctx.policy_flags.get("include_resident_agi_capability_surface", True)
+        )
+
+    def priority(self, ctx: SignalBuildContext) -> int:
+        return 4
+
+    def build(self, ctx: SignalBuildContext) -> SignalBlock | None:
+        capabilities = ctx.get_resident_agi_capabilities()
+        if not capabilities:
+            return None
+        content = f"【Resident AGI 能力面】\n{capabilities}"
+        return SignalBlock(
+            id=self.id,
+            content=content,
+            priority=4,
+            level=_MUST_HAVE,
+            freshness_key=_freshness_of(capabilities),
+            max_chars=DEFAULT_PER_SIGNAL_CHAR_CAP,
+        )
+
+
 # 默认注册表：seed（全角色）+ 角色专属（role+flag 双门控，默认 flag 关 → 不影响 baseline）。
 DEFAULT_SIGNAL_PROVIDERS: tuple[RoleContextSignal, ...] = (
     ProjectStructureSignal(),
     TaskHistorySignal(),
     RepoIdentitySignal(),
     ScoutAnchorsSignal(),
+    ResidentAgiCapabilitySurfaceSignal(),
     BlueprintOverviewSignal(),
     BlueprintStepsSignal(),
     VerdictHistorySignal(),

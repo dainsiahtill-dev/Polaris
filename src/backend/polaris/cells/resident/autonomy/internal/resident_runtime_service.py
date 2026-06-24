@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict
 from pathlib import Path
@@ -43,6 +44,9 @@ from polaris.domain.models.resident import (
     SkillArtifact,
     utc_now_iso,
 )
+from polaris.kernelone.events.io_events import emit_event
+
+logger = logging.getLogger(__name__)
 
 
 class _ResidentServiceCache:
@@ -566,7 +570,66 @@ class ResidentService:
         }
         self.runtime_state.updated_at = utc_now_iso()
         self.storage.save_runtime_state(self.runtime_state)
+        self._emit_decision_recorded_event(recorded)
         return recorded
+
+    def _emit_decision_recorded_event(self, record: DecisionRecord) -> None:
+        """Project a durable decision trace entry into the runtime audit stream."""
+        event_path = self.storage.paths.decision_events_path
+        try:
+            Path(event_path).parent.mkdir(parents=True, exist_ok=True)
+            emit_event(
+                event_path,
+                kind="observation",
+                actor="ResidentAGI",
+                name="resident_decision_recorded",
+                refs={
+                    "workspace": self.workspace,
+                    "decision_id": record.decision_id,
+                    "run_id": record.run_id,
+                    "task_id": record.task_id,
+                    "goal_id": record.goal_id,
+                    "actor": record.actor,
+                    "stage": record.stage,
+                    "evidence_bundle_id": record.evidence_bundle_id or "",
+                },
+                summary=f"Resident decision recorded: {record.actor}/{record.stage} -> {record.verdict.value}",
+                meta={
+                    "schema_version": "resident.decision_event.v1",
+                    "source_of_truth": self.storage.paths.decision_trace_path,
+                    "runtime_projection": True,
+                    "role_id": "resident_agi",
+                    "decision_boundary": "hard_rules_then_resident_agi_supervisor",
+                },
+                output={
+                    "decision_id": record.decision_id,
+                    "workspace": record.workspace,
+                    "timestamp": record.timestamp,
+                    "actor": record.actor,
+                    "stage": record.stage,
+                    "run_id": record.run_id,
+                    "task_id": record.task_id,
+                    "goal_id": record.goal_id,
+                    "summary": record.summary,
+                    "verdict": record.verdict.value,
+                    "confidence": record.confidence,
+                    "selected_option_id": record.selected_option_id,
+                    "strategy_tags": list(record.strategy_tags),
+                    "context_refs": list(record.context_refs),
+                    "evidence_refs": list(record.evidence_refs),
+                    "evidence_bundle_id": record.evidence_bundle_id or "",
+                    "affected_files": list(record.affected_files),
+                    "affected_symbols": list(record.affected_symbols),
+                },
+                ok=True,
+            )
+        except (RuntimeError, ValueError, OSError) as exc:
+            logger.warning(
+                "Resident decision runtime projection failed: decision_id=%s error=%s",
+                record.decision_id,
+                exc,
+                exc_info=True,
+            )
 
     def _stage_goal_locked(
         self,

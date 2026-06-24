@@ -108,6 +108,10 @@ class ProjectionDictBuilder:
                 "include_blueprint_step": bool(getattr(gateway.policy, "include_blueprint_step", True)),
                 # 文件归属信号（D-11）：并行 Director 文件修改历史,默认开启。
                 "include_file_ownership": bool(getattr(gateway.policy, "include_file_ownership", True)),
+                # Resident AGI 能力面：平台级审计/决策能力,仅 resident_agi provider 会消费。
+                "include_resident_agi_capability_surface": bool(
+                    getattr(gateway.policy, "include_resident_agi_capability_surface", True)
+                ),
             },
             get_project_structure=gateway._get_project_structure,
             get_task_history=gateway._get_task_history,
@@ -121,6 +125,7 @@ class ProjectionDictBuilder:
             get_blueprint_step=lambda: gateway._get_blueprint_step(request),
             # file_ownership 读取 workspace 内的 file-edits/events.jsonl（D-11）。
             get_file_ownership=gateway._get_file_ownership,
+            get_resident_agi_capabilities=gateway._get_resident_agi_capabilities,
         )
         # 跨 turn freshness 记忆（按 task_id）：压力下断流"自上次注入未变化"的 nice-to-have，
         # 把窗口让给即时工具结果。无压力时 budget_pressure=False → 不断流 → 与旧实现逐字节一致。

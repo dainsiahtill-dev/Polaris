@@ -118,10 +118,14 @@ from .python_repairs import (
 from .rust_repairs import (
     _apply_deterministic_rust_crate_import_repair as _apply_deterministic_rust_crate_import_repair,
     _apply_deterministic_rust_dependency_repair as _apply_deterministic_rust_dependency_repair,
+    _apply_deterministic_rust_line_suggestion_repair as _apply_deterministic_rust_line_suggestion_repair,
+    _apply_deterministic_rust_missing_lib_target_repair as _apply_deterministic_rust_missing_lib_target_repair,
     _apply_deterministic_rust_trait_import_repair as _apply_deterministic_rust_trait_import_repair,
     _apply_deterministic_rust_unresolved_pub_use_repair as _apply_deterministic_rust_unresolved_pub_use_repair,
     repair_rust_crate_imports as repair_rust_crate_imports,
     repair_rust_dependencies as repair_rust_dependencies,
+    repair_rust_line_suggestions as repair_rust_line_suggestions,
+    repair_rust_missing_lib_targets as repair_rust_missing_lib_targets,
     repair_rust_trait_imports as repair_rust_trait_imports,
     repair_rust_unresolved_pub_uses as repair_rust_unresolved_pub_uses,
 )
@@ -215,6 +219,8 @@ __all__ = [
     "_apply_deterministic_runtime_dependency_repair",
     "_apply_deterministic_rust_crate_import_repair",
     "_apply_deterministic_rust_dependency_repair",
+    "_apply_deterministic_rust_line_suggestion_repair",
+    "_apply_deterministic_rust_missing_lib_target_repair",
     "_apply_deterministic_rust_trait_import_repair",
     "_apply_deterministic_rust_unresolved_pub_use_repair",
     "_apply_deterministic_scaffold_marker_cleanup",
@@ -290,6 +296,8 @@ __all__ = [
     "_typescript_relative_import_without_suffix",
     "repair_rust_crate_imports",
     "repair_rust_dependencies",
+    "repair_rust_line_suggestions",
+    "repair_rust_missing_lib_targets",
     "repair_rust_trait_imports",
     "repair_rust_unresolved_pub_uses",
 ]

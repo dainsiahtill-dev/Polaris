@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs.rust_repairs import (
     _apply_deterministic_rust_crate_import_repair,
     _apply_deterministic_rust_dependency_repair,
+    _apply_deterministic_rust_line_suggestion_repair,
+    _apply_deterministic_rust_missing_lib_target_repair,
     _apply_deterministic_rust_trait_import_repair,
     _apply_deterministic_rust_unresolved_pub_use_repair,
 )
@@ -64,6 +66,28 @@ def test_deterministic_rust_crate_import_repair_does_not_rewrite_declared_depend
     )
 
 
+def test_deterministic_rust_crate_import_repair_handles_unlinked_crate_wording(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "kitchen-flavor-palette"\n', encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.rs").write_text(
+        "use kitchen_flavor_colorizer::engine::palette_engine::palette_for_flavor;\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_rust_crate_import_repair(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task_id="factory-quality-gate:test",
+        artifact_quality_errors=[
+            "error[E0433]: failed to resolve: use of unresolved module or unlinked crate `kitchen_flavor_colorizer`"
+        ],
+    )
+
+    repaired = (tmp_path / "src" / "main.rs").read_text(encoding="utf-8")
+    assert results
+    assert "use kitchen_flavor_palette::engine::palette_engine::palette_for_flavor;" in repaired
+    assert "kitchen_flavor_colorizer::" not in repaired
+
+
 def test_deterministic_rust_dependency_repair_adds_serde_and_serde_json(tmp_path: Path) -> None:
     (tmp_path / "Cargo.toml").write_text(
         '[package]\nname = "kitchen-taste-palette"\n\n[dependencies]\n', encoding="utf-8"
@@ -84,6 +108,67 @@ def test_deterministic_rust_dependency_repair_adds_serde_and_serde_json(tmp_path
     assert results
     assert 'serde = { version = "1.0", features = ["derive"] }' in cargo
     assert 'serde_json = "1.0"' in cargo
+
+
+def test_deterministic_rust_missing_lib_target_repair_creates_module_facade(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "kitchen-flavor-palette"\n\n[lib]\nname = "kitchen_flavor_palette"\npath = "src/lib.rs"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "engine" / "mod.rs").write_text("pub fn run() {}\n", encoding="utf-8")
+    (tmp_path / "src" / "models" / "mod.rs").write_text("pub struct Recipe;\n", encoding="utf-8")
+    (tmp_path / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+
+    results = _apply_deterministic_rust_missing_lib_target_repair(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task_id="factory-quality-gate:test",
+        artifact_quality_errors=[
+            "cargo check failed: error: can't find lib `kitchen_flavor_palette` at path `src/lib.rs`"
+        ],
+    )
+
+    repaired = (tmp_path / "src" / "lib.rs").read_text(encoding="utf-8")
+    assert results
+    assert results[0]["result"]["source_tool"] == "deterministic_rust_missing_lib_target_repair"
+    assert "pub mod engine;\n" in repaired
+    assert "pub mod models;\n" in repaired
+    assert "pub mod main;" not in repaired
+
+
+def test_deterministic_rust_line_suggestion_repair_applies_rustc_field_hint(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "kitchen-flavor-palette"\n', encoding="utf-8")
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "engine" / "plating_rules.rs").write_text(
+        "use crate::models::Recipe;\n\n"
+        "fn has(recipe: &Recipe, needle: &str) -> bool {\n"
+        "    recipe\n"
+        "        .ingredients\n"
+        "        .iter()\n"
+        "        .any(|i| i.eq_ignore_ascii_case(needle))\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_rust_line_suggestion_repair(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task_id="factory-quality-gate:test",
+        artifact_quality_errors=[
+            "error[E0599]: no method named `eq_ignore_ascii_case` found for reference `&Ingredient` in the current scope\n"
+            "  --> src/engine/plating_rules.rs:7:20\n"
+            "   |\n"
+            "help: one of the expressions' fields has a method of the same name\n"
+            "   |\n"
+            "7 |         .any(|i| i.name.eq_ignore_ascii_case(needle))\n"
+            "   |                    +++++\n"
+        ],
+    )
+
+    repaired = (tmp_path / "src" / "engine" / "plating_rules.rs").read_text(encoding="utf-8")
+    assert results
+    assert "i.name.eq_ignore_ascii_case(needle)" in repaired
+    assert "i.eq_ignore_ascii_case(needle)" not in repaired
 
 
 def test_deterministic_rust_unresolved_pub_use_repair_removes_invalid_exports(tmp_path: Path) -> None:

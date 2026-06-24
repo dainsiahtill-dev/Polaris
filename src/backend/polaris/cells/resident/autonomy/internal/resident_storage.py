@@ -46,6 +46,7 @@ class ResidentPaths:
     experiments_path: str
     improvements_path: str
     decision_trace_path: str
+    decision_events_path: str
     runtime_state_path: str
     tick_history_path: str
 
@@ -73,6 +74,10 @@ class ResidentStorage:
             experiments_path=os.path.join(root_dir, "experiments.json"),
             improvements_path=os.path.join(root_dir, "improvements.json"),
             decision_trace_path=os.path.join(root_dir, "decision_trace.jsonl"),
+            decision_events_path=resolve_runtime_path(
+                resolved_workspace,
+                "runtime/events/resident.decisions.jsonl",
+            ),
             runtime_state_path=resolve_runtime_path(
                 resolved_workspace,
                 "runtime/state/resident.state.json",

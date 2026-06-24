@@ -20,7 +20,7 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -287,6 +287,90 @@ class SignalSourceProvider:
         except (OSError, RuntimeError, ValueError, TypeError) as e:
             logger.debug(f"文件归属信号构建失败: {e}")
             return None
+
+    def get_resident_agi_capabilities(self) -> str | None:
+        """读取 Resident AGI 平台能力面（Role/ContextOS 同底座的决策契约）。
+
+        优先使用 ``ContextGatewayConfig`` 注入的 provider，便于未来把能力面升级为
+        由 Registry/AGI 自身审计模块动态产出；未注入时回退到 resident.autonomy 的
+        canonical capability surface。任何失败/缺失 → None（不阻断非 AGI turn）。
+        """
+        try:
+            result: Any | None = None
+            provider = self._config.resident_agi_capability_provider
+            if provider is not None:
+                result = provider(str(self._workspace))
+            if result is None:
+                from polaris.cells.resident.autonomy.public.service import (
+                    resident_agi_capability_surface_payload,
+                )
+
+                result = resident_agi_capability_surface_payload()
+            if isinstance(result, str):
+                return result.strip() or None
+            if isinstance(result, Mapping):
+                return self._render_resident_agi_capabilities(result)
+            return None
+        except (RuntimeError, ValueError, OSError, TypeError) as e:
+            logger.debug(f"Resident AGI 能力面构建失败: {e}")
+            return None
+
+    @staticmethod
+    def _render_resident_agi_capabilities(payload: Mapping[str, Any]) -> str | None:
+        """Render the AGI capability surface into a compact role-signal card."""
+        items_obj = payload.get("items")
+        if not isinstance(items_obj, list):
+            return None
+
+        lines = [
+            f"schema_version: {payload.get('schema_version', '')}",
+            f"role_id: {payload.get('role_id', 'resident_agi')}",
+            f"runtime_foundation: {payload.get('runtime_foundation', '')}",
+            f"implementation_cell: {payload.get('implementation_cell', 'resident.autonomy')}",
+            f"product_role: {payload.get('product_role', 'embedded_agi_supervisor')}",
+            f"unattended_factory_role: {payload.get('unattended_factory_role', 'replace_human_supervision')}",
+            "decision_boundary: hard_rules_then_resident_agi_supervisor",
+            "",
+            "non_bypass_rules:",
+            "- Resident AGI is a RoleRuntime actor, not a sidecar or second orchestration system.",
+            "- It may inspect audit evidence, final provider requests, runtime events, task profiles, and blueprints.",
+            "- Execution-impacting actions must preserve PM -> Chief Engineer -> Director and canonical gates.",
+            "",
+            "capabilities:",
+        ]
+        for raw_item in items_obj[:20]:
+            if not isinstance(raw_item, Mapping):
+                continue
+            capability_id = str(raw_item.get("capability_id") or "").strip()
+            if not capability_id:
+                continue
+            category = str(raw_item.get("category") or "unknown").strip()
+            access = str(raw_item.get("access") or "unknown").strip()
+            risk = str(raw_item.get("risk_level") or "low").strip()
+            name = str(raw_item.get("name") or capability_id).strip()
+            purpose = str(raw_item.get("purpose") or "").strip()
+            contract_ref = str(raw_item.get("contract_ref") or "").strip()
+            endpoint = str(raw_item.get("endpoint") or "").strip()
+            lines.append(f"- {capability_id} | {name} | category={category} | access={access} | risk={risk}")
+            if purpose:
+                lines.append(f"  purpose: {purpose}")
+            if contract_ref:
+                lines.append(f"  contract: {contract_ref}")
+            if endpoint:
+                lines.append(f"  endpoint: {endpoint}")
+            guardrails = raw_item.get("guardrails") or ()
+            if isinstance(guardrails, (list, tuple)):
+                rendered_guardrails = [str(item).strip() for item in guardrails if str(item).strip()]
+                if rendered_guardrails:
+                    lines.append(f"  guardrails: {'; '.join(rendered_guardrails[:3])}")
+            evidence_refs = raw_item.get("evidence_refs") or ()
+            if isinstance(evidence_refs, (list, tuple)):
+                rendered_refs = [str(item).strip() for item in evidence_refs if str(item).strip()]
+                if rendered_refs:
+                    lines.append(f"  evidence_refs: {', '.join(rendered_refs[:3])}")
+
+        rendered = "\n".join(lines).strip()
+        return rendered or None
 
     def estimate_signal_budget_pressure(self, projection: Any, request: ContextRequest) -> bool:
         """保守预估"角色信号分配阶段是否已处于预算压力"。

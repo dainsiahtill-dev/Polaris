@@ -109,6 +109,25 @@ creating a second AGI path:
 This is intentionally a small landing point. It proves the boundary without
 making AGI a hidden runtime dependency for every path.
 
+## Decision Event Projection
+
+Resident decision trace remains the source of truth:
+`workspace/meta/resident/decision_trace.jsonl`.
+
+Each successfully recorded decision is now also projected as a best-effort
+runtime audit observation:
+
+- event name: `resident_decision_recorded`
+- schema: `resident.decision_event.v1`
+- actor: `ResidentAGI`
+- runtime path: `runtime/events/resident.decisions.jsonl`
+- source pointer: `meta.source_of_truth`
+
+This gives ContextOS dashboards, runtime subscribers, and audit tools a stable
+way to observe AGI decisions without treating the event stream as a second fact
+store. If event projection fails, the decision trace write remains authoritative
+and the failure is logged.
+
 ## AGI Capability Surface
 
 The Resident/AGI role needs platform facts, not just prompt prose. Polaris now
@@ -126,8 +145,16 @@ Capabilities are grouped by access class:
 - controlled execution: Resident goal bridge into PM -> Chief Engineer ->
   Director, never direct code mutation
 
-The capability surface is a whitelist and a UI contract. It does not bypass
-tool/path/security/output gates.
+The capability surface is a whitelist, a UI contract, and a role-context
+contract. `RoleSignalPlane` injects it as the must-have
+`resident_agi_capability_surface` signal only for `resident_agi`, so AGI sees
+its platform audit powers and non-bypass rules inside the same ContextOS/TurnEngine
+request path used by PM, Chief Engineer, Director, and QA. The signal is
+traceable through `context_sources`, budget-controlled through ReceiptStore, and
+can be replaced by a provider-injected dynamic capability catalog later without
+forking the role runtime.
+
+It does not bypass tool/path/security/output gates.
 
 ## UI Requirements
 
@@ -169,8 +196,7 @@ The UI must distinguish:
 1. Add a shared `AgiDecisionRecordV1` or promote `ArchitectureDecisionV1` into a
    role-neutral decision contract.
 2. Add CE architecture Resident/AGI supervisor invocation behind an opt-in runtime flag.
-3. Project AGI decisions into ContextOS and runtime.v2 events.
-4. Add frontend UI for decision timeline, evidence, validation status, and
+3. Add frontend UI for decision timeline, evidence, validation status, and
    accepted/rejected handoff impact.
-5. Add final-provider-request audit fields that show which structured AGI
+4. Add final-provider-request audit fields that show which structured AGI
    decisions were present in the request context.

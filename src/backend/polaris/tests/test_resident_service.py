@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from polaris.cells.resident.autonomy.internal.resident_runtime_service import (
@@ -128,7 +129,22 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
 
     assert Path(service.storage.paths.identity_path).is_file()
     assert Path(service.storage.paths.decision_trace_path).is_file()
+    assert Path(service.storage.paths.decision_events_path).is_file()
     assert Path(service.storage.paths.capability_graph_path).is_file()
+
+    event_rows = [
+        json.loads(line)
+        for line in Path(service.storage.paths.decision_events_path).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    decision_events = [row for row in event_rows if row.get("name") == "resident_decision_recorded"]
+    assert len(decision_events) >= 4
+    latest_event = decision_events[-1]
+    assert latest_event["actor"] == "ResidentAGI"
+    assert latest_event["meta"]["schema_version"] == "resident.decision_event.v1"
+    assert latest_event["meta"]["source_of_truth"] == service.storage.paths.decision_trace_path
+    assert latest_event["output"]["decision_id"]
+    assert latest_event["output"]["verdict"] in {"success", "failure"}
 
     detailed = service.get_status(include_details=True)
     capability_surface = detailed["agi_capability_surface"]

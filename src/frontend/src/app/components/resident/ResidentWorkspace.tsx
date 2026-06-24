@@ -109,6 +109,7 @@ export function ResidentWorkspace({
   const capabilities = resident.residentCapabilityGraph?.capabilities || [];
   const agiCapabilitySurface = resident.residentAgiCapabilitySurface;
   const agiCapabilities = agiCapabilitySurface?.items || [];
+  const decisionStats = useMemo(() => buildDecisionStats(resident.decisions), [resident.decisions]);
 
   const handleCreateGoal = async () => {
     if (!newGoalTitle.trim()) return;
@@ -532,14 +533,17 @@ export function ResidentWorkspace({
         )}
 
         {activeTab === 'decisions' && (
-          <div className="space-y-2">
-            {resident.decisions.map((decision) => (
-              <DecisionItem
-                key={decision.decision_id || decision.timestamp}
-                decision={decision}
-                workspace={workspace}
-              />
-            ))}
+          <div className="space-y-3">
+            <DecisionAuditSummary stats={decisionStats} />
+            <div className="space-y-2">
+              {resident.decisions.map((decision) => (
+                <DecisionItem
+                  key={decision.decision_id || decision.timestamp}
+                  decision={decision}
+                  workspace={workspace}
+                />
+              ))}
+            </div>
             {resident.decisions.length === 0 && (
               <div className="rounded-lg border border-dashed border-slate-700 p-8 text-center text-slate-500">
                 暂无决策记录
@@ -817,6 +821,133 @@ function decisionNumber(value: unknown): number | null {
   return null;
 }
 
+function decisionStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(decisionString).filter(Boolean);
+}
+
+function shortDecisionId(value?: string): string {
+  const token = String(value || '').trim();
+  if (!token) return '';
+  if (token.length <= 14) return token;
+  return `${token.slice(0, 10)}...${token.slice(-4)}`;
+}
+
+function formatConfidence(value?: number): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '暂无';
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
+
+function decisionHasEvidence(decision: ResidentDecisionPayload): boolean {
+  return Boolean(
+    decision.evidence_bundle_id ||
+    (decision.evidence_refs || []).length > 0 ||
+    (decision.context_refs || []).length > 0 ||
+    (decision.affected_files || []).length > 0 ||
+    (decision.affected_symbols || []).length > 0,
+  );
+}
+
+function decisionHasHandoffImpact(decision: ResidentDecisionPayload): boolean {
+  const haystack = [
+    decision.stage,
+    decision.goal_id,
+    decision.task_id,
+    ...(decision.strategy_tags || []),
+    ...(decision.evidence_refs || []),
+    decisionString(decision.actual_outcome?.pm_run_id),
+    decisionString(decision.actual_outcome?.pm_contract_path),
+    decisionString(decision.actual_outcome?.promoted_to_pm_runtime),
+  ]
+    .join(' ')
+    .toLowerCase();
+  return [
+    'handoff',
+    'goal_staging',
+    'pm_bridge',
+    'pm_runtime',
+    'pm_contract',
+    'chief_engineer',
+    'director',
+  ].some((token) => haystack.includes(token));
+}
+
+function buildDecisionStats(decisions: ResidentDecisionPayload[]) {
+  const total = decisions.length;
+  const evidenceBacked = decisions.filter(decisionHasEvidence).length;
+  const handoffImpact = decisions.filter(decisionHasHandoffImpact).length;
+  const blockedOrFailed = decisions.filter((decision) => {
+    const verdict = String(decision.verdict || '').toLowerCase();
+    const actual = decision.actual_outcome || {};
+    const blockers = decisionStringList(actual.hard_rule_blockers);
+    return verdict === 'failure' || verdict === 'blocked' || blockers.length > 0;
+  }).length;
+  return {
+    total,
+    evidenceBacked,
+    handoffImpact,
+    blockedOrFailed,
+  };
+}
+
+function DecisionAuditSummary({ stats }: { stats: ReturnType<typeof buildDecisionStats> }) {
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-medium text-slate-200">
+            <FileSearch className="size-4 text-cyan-400" />
+            决策审计面
+          </div>
+          <div className="mt-1 text-xs text-slate-500">source of truth: decision_trace.jsonl</div>
+        </div>
+        <Badge className="border-cyan-500/20 bg-cyan-500/10 text-cyan-200">resident.decision_event.v1</Badge>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        <DecisionMetric label="Decisions" value={String(stats.total)} tone="neutral" />
+        <DecisionMetric label="Evidence" value={String(stats.evidenceBacked)} tone="cyan" />
+        <DecisionMetric label="Handoff" value={String(stats.handoffImpact)} tone="emerald" />
+        <DecisionMetric label="Blocked" value={String(stats.blockedOrFailed)} tone={stats.blockedOrFailed ? 'amber' : 'neutral'} />
+      </div>
+    </div>
+  );
+}
+
+function DecisionMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: 'neutral' | 'cyan' | 'emerald' | 'amber';
+}) {
+  return (
+    <div
+      className={cn(
+        'rounded border bg-slate-950/70 px-3 py-2',
+        tone === 'neutral' && 'border-slate-800',
+        tone === 'cyan' && 'border-cyan-500/20',
+        tone === 'emerald' && 'border-emerald-500/20',
+        tone === 'amber' && 'border-amber-500/20',
+      )}
+    >
+      <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">{label}</div>
+      <div
+        className={cn(
+          'mt-1 text-lg font-semibold',
+          tone === 'neutral' && 'text-slate-200',
+          tone === 'cyan' && 'text-cyan-300',
+          tone === 'emerald' && 'text-emerald-300',
+          tone === 'amber' && 'text-amber-300',
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
 // Decision Item with Evidence support
 function DecisionItem({
   decision,
@@ -834,37 +965,70 @@ function DecisionItem({
   const decisionSource = decisionString(actual.decision_source) || decision.actor || '';
   const evidenceSchema = decisionString(actual.evidence_schema);
   const profileSchema = decisionString(actual.execution_profile_schema) || decisionString(actual.profile_schema);
+  const validatorResult = decisionString(actual.validator_result) || decisionString(actual.validation_status);
+  const selectedOption = (decision.options || []).find((option) => option.option_id === decision.selected_option_id);
   const taskCount = decisionNumber(actual.task_count);
+  const confidence = formatConfidence(decision.confidence);
+  const evidenceRefs = (decision.evidence_refs || []).filter(Boolean);
+  const affectedFiles = (decision.affected_files || []).filter(Boolean);
+  const affectedSymbols = (decision.affected_symbols || []).filter(Boolean);
+  const strategyTags = (decision.strategy_tags || []).filter(Boolean);
   const hardRuleBlockers = Array.isArray(actual.hard_rule_blockers)
     ? actual.hard_rule_blockers.map(decisionString).filter(Boolean)
     : [];
+  const handoffImpact = decisionHasHandoffImpact(decision);
 
   return (
-    <Card className="border-slate-800 bg-slate-900/50">
+    <Card className={cn('border-slate-800 bg-slate-900/50', handoffImpact && 'border-cyan-500/20')}>
       <div className="p-3">
         <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <FileText className="size-4 text-slate-500" />
-            <span className="text-sm text-slate-300">{decision.summary || '未命名决策'}</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <FileText className="size-4 shrink-0 text-slate-500" />
+              <span className="truncate text-sm text-slate-300" title={decision.summary || '未命名决策'}>
+                {decision.summary || '未命名决策'}
+              </span>
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+              {decision.actor && <span>{decision.actor}</span>}
+              {decision.stage && <span>{decision.stage}</span>}
+              {decision.decision_id && <span title={decision.decision_id}>#{shortDecisionId(decision.decision_id)}</span>}
+              <span>{formatTime(decision.timestamp)}</span>
+            </div>
           </div>
           <Badge className={cn(
             isSuccess && 'bg-emerald-500/10 text-emerald-400',
             isFailure && 'bg-red-500/10 text-red-400',
-            !isSuccess && !isFailure && 'bg-slate-500/10 text-slate-400'
+            !isSuccess && !isFailure && 'bg-slate-500/10 text-slate-400',
           )}>
             {verdict}
           </Badge>
         </div>
-        <div className="mt-2 flex items-center justify-between">
-          <div className="text-xs text-slate-500">
-            {decision.actor} · {formatTime(decision.timestamp)}
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <div className="rounded border border-slate-800 bg-slate-950/70 px-2 py-1.5">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Confidence</div>
+            <div className="mt-1 text-xs font-medium text-slate-200">{confidence}</div>
           </div>
+          <div className="rounded border border-slate-800 bg-slate-950/70 px-2 py-1.5">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Validation</div>
+            <div className="mt-1 truncate text-xs font-medium text-slate-200" title={validatorResult || 'unknown'}>
+              {validatorResult || 'unknown'}
+            </div>
+          </div>
+          <div className="rounded border border-slate-800 bg-slate-950/70 px-2 py-1.5">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Handoff</div>
+            <div className={cn('mt-1 text-xs font-medium', handoffImpact ? 'text-cyan-300' : 'text-slate-500')}>
+              {handoffImpact ? 'PM -> CE -> Director' : 'none'}
+            </div>
+          </div>
+        </div>
+        <div className="mt-2 flex items-center justify-end">
           {hasEvidence && (
             <button
               onClick={() => setShowEvidence(!showEvidence)}
               className={cn(
-                'flex items-center gap-1 text-xs transition-colors',
-                showEvidence ? 'text-cyan-400' : 'text-slate-400 hover:text-cyan-400'
+                'flex cursor-pointer items-center gap-1 text-xs transition-colors',
+                showEvidence ? 'text-cyan-400' : 'text-slate-400 hover:text-cyan-400',
               )}
             >
               <FileSearch className="size-3" />
@@ -898,15 +1062,63 @@ function DecisionItem({
               tasks: {taskCount}
             </span>
           )}
+          {decision.run_id && (
+            <span className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-300">
+              run: {shortDecisionId(decision.run_id)}
+            </span>
+          )}
+          {decision.task_id && (
+            <span className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-300">
+              task: {decision.task_id}
+            </span>
+          )}
+          {decision.goal_id && (
+            <span className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-300">
+              goal: {shortDecisionId(decision.goal_id)}
+            </span>
+          )}
+          {strategyTags.slice(0, 4).map((tag) => (
+            <span key={tag} className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-300">
+              tag: {tag}
+            </span>
+          ))}
           {hardRuleBlockers.map((blocker) => (
             <span key={blocker} className="rounded border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-amber-200">
               blocker: {blocker}
             </span>
           ))}
         </div>
+        {selectedOption && (
+          <div className="mt-3 rounded border border-slate-800 bg-slate-950/70 p-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="font-medium text-slate-200">{selectedOption.label || selectedOption.option_id || 'selected option'}</span>
+              {typeof selectedOption.estimated_score === 'number' && (
+                <span className="text-slate-500">score {Math.round(selectedOption.estimated_score * 100)}%</span>
+              )}
+            </div>
+            {selectedOption.rationale && (
+              <div className="mt-1 text-xs text-slate-500">{selectedOption.rationale}</div>
+            )}
+          </div>
+        )}
         {(decision.context_refs || []).length > 0 && (
           <div className="mt-2 truncate text-xs text-slate-500" title={(decision.context_refs || []).join(' · ')}>
             context: {(decision.context_refs || []).slice(0, 3).join(' · ')}
+          </div>
+        )}
+        {evidenceRefs.length > 0 && (
+          <div className="mt-2 truncate text-xs text-slate-500" title={evidenceRefs.join(' · ')}>
+            evidence refs: {evidenceRefs.slice(0, 3).join(' · ')}
+          </div>
+        )}
+        {affectedFiles.length > 0 && (
+          <div className="mt-2 truncate text-xs text-slate-500" title={affectedFiles.join(' · ')}>
+            files: {affectedFiles.slice(0, 3).join(' · ')}
+          </div>
+        )}
+        {affectedSymbols.length > 0 && (
+          <div className="mt-2 truncate text-xs text-slate-500" title={affectedSymbols.join(' · ')}>
+            symbols: {affectedSymbols.slice(0, 4).join(' · ')}
           </div>
         )}
       </div>

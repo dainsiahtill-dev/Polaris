@@ -9,7 +9,12 @@ from typing import Any
 import tomllib
 
 _RUST_UNRESOLVED_CRATE_RE = re.compile(
-    r"cannot find (?:module or )?crate [`'\"](?P<crate>[A-Za-z_][A-Za-z0-9_]*)[`'\"]",
+    r"(?:cannot find (?:module or )?crate|use of unresolved module or unlinked crate) "
+    r"[`'\"](?P<crate>[A-Za-z_][A-Za-z0-9_]*)[`'\"]",
+    re.IGNORECASE,
+)
+_RUST_MISSING_LIB_PATH_RE = re.compile(
+    r"can't find lib [`'\"][^`'\"]+[`'\"] at path [`'\"](?P<path>[^`'\"]+\.rs)[`'\"]",
     re.IGNORECASE,
 )
 _RUST_UNRESOLVED_IMPORT_RE = re.compile(
@@ -26,6 +31,12 @@ _RUST_TRAIT_IMPORT_SUGGESTION_RE = re.compile(
     r"help:\s+trait [`'\"][A-Za-z_][A-Za-z0-9_]*[`'\"].*?"
     r"perhaps you want to import it.*?"
     r"^\s*(?:\d+\s*)?\+\s*(?P<import>use\s+[^;\n]+;)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+_RUST_FIELD_METHOD_LINE_SUGGESTION_RE = re.compile(
+    r"^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):\d+.*?"
+    r"help:\s+one of the expressions' fields has a method of the same name.*?"
+    r"^\s*(?P=line)\s+\|\s(?P<code>[^\n]+)",
     re.IGNORECASE | re.MULTILINE | re.DOTALL,
 )
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -83,6 +94,56 @@ def _apply_deterministic_rust_dependency_repair(
                 "source_tool": "deterministic_rust_dependency_repair",
                 "file": "Cargo.toml",
                 "packages": record["packages"],
+            },
+        }
+        for record in repairs
+    ]
+
+
+def _apply_deterministic_rust_missing_lib_target_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    del task_id
+    workspace = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    repairs = repair_rust_missing_lib_targets(workspace, artifact_quality_errors)
+    return [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_rust_missing_lib_target_repair",
+                "file": record["file"],
+                "modules": record["modules"],
+            },
+        }
+        for record in repairs
+    ]
+
+
+def _apply_deterministic_rust_line_suggestion_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    del task_id
+    workspace = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    repairs = repair_rust_line_suggestions(workspace, artifact_quality_errors)
+    return [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_rust_line_suggestion_repair",
+                "file": record["file"],
+                "line": record["line"],
             },
         }
         for record in repairs
@@ -194,6 +255,30 @@ def repair_rust_dependencies(workspace: Path, artifact_quality_errors: list[str]
     return [{"packages": missing}]
 
 
+def repair_rust_missing_lib_targets(workspace: Path, artifact_quality_errors: list[str]) -> list[dict[str, Any]]:
+    if not workspace.is_dir():
+        return []
+    cargo_path = workspace / "Cargo.toml"
+    if not cargo_path.is_file():
+        return []
+    cargo = _read_cargo_manifest(cargo_path)
+    if not cargo:
+        return []
+    lib_targets = _missing_rust_lib_target_paths(workspace, cargo, artifact_quality_errors)
+    repairs: list[dict[str, Any]] = []
+    for target_path in lib_targets:
+        if target_path.exists() or target_path.suffix.lower() != ".rs":
+            continue
+        modules = _rust_lib_modules_for_directory(target_path.parent)
+        if not modules:
+            continue
+        content = "".join(f"pub mod {module};\n" for module in modules)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(content, encoding="utf-8")
+        repairs.append({"file": str(target_path.relative_to(workspace)), "modules": modules})
+    return repairs
+
+
 def repair_rust_unresolved_pub_uses(workspace: Path, artifact_quality_errors: list[str]) -> list[dict[str, Any]]:
     if not workspace.is_dir():
         return []
@@ -249,6 +334,34 @@ def repair_rust_trait_imports(workspace: Path, artifact_quality_errors: list[str
     return repairs
 
 
+def repair_rust_line_suggestions(workspace: Path, artifact_quality_errors: list[str]) -> list[dict[str, Any]]:
+    if not workspace.is_dir():
+        return []
+    suggestions = _parse_rust_line_suggestions(artifact_quality_errors)
+    if not suggestions:
+        return []
+    repairs: list[dict[str, Any]] = []
+    for relative_path, line_number, code in suggestions:
+        target_path = (workspace / relative_path).resolve()
+        if not _path_inside_workspace(target_path, workspace) or target_path.suffix.lower() != ".rs":
+            continue
+        try:
+            lines = target_path.read_text(encoding="utf-8").splitlines(keepends=True)
+        except OSError:
+            continue
+        line_index = line_number - 1
+        if line_index < 0 or line_index >= len(lines):
+            continue
+        newline = "\n" if lines[line_index].endswith("\n") else ""
+        replacement = f"{code.rstrip()}{newline}"
+        if lines[line_index] == replacement:
+            continue
+        lines[line_index] = replacement
+        target_path.write_text("".join(lines), encoding="utf-8")
+        repairs.append({"file": str(target_path.relative_to(workspace)), "line": line_number})
+    return repairs
+
+
 def _read_cargo_manifest(cargo_path: Path) -> dict[str, Any]:
     try:
         payload = tomllib.loads(cargo_path.read_text(encoding="utf-8"))
@@ -295,6 +408,69 @@ def _declared_rust_dependencies(cargo: dict[str, Any]) -> set[str]:
                     dependency_names.update(_rust_identifier_from_manifest_name(str(name)) for name in value)
     dependency_names.discard("")
     return dependency_names
+
+
+def _missing_rust_lib_target_paths(
+    workspace: Path,
+    cargo: dict[str, Any],
+    artifact_quality_errors: list[str],
+) -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for relative_path in _parse_missing_rust_lib_paths(artifact_quality_errors):
+        target = (workspace / relative_path).resolve()
+        if _path_inside_workspace(target, workspace) and target not in seen:
+            seen.add(target)
+            candidates.append(target)
+    lib = cargo.get("lib")
+    if isinstance(lib, dict):
+        configured = str(lib.get("path") or "").strip()
+        if configured:
+            target = (workspace / configured).resolve()
+            if _path_inside_workspace(target, workspace) and not target.exists() and target not in seen:
+                seen.add(target)
+                candidates.append(target)
+    return candidates
+
+
+def _parse_missing_rust_lib_paths(artifact_quality_errors: list[str]) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for error in artifact_quality_errors:
+        for match in _RUST_MISSING_LIB_PATH_RE.finditer(str(error or "")):
+            relative_path = str(match.group("path") or "").strip().replace("\\", "/")
+            if not relative_path or relative_path.startswith("/"):
+                continue
+            if relative_path not in seen:
+                seen.add(relative_path)
+                paths.append(relative_path)
+    return paths
+
+
+def _path_inside_workspace(path: Path, workspace: Path) -> bool:
+    try:
+        path.resolve().relative_to(workspace.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _rust_lib_modules_for_directory(directory: Path) -> list[str]:
+    modules: list[str] = []
+    seen: set[str] = set()
+    if not directory.is_dir():
+        return modules
+    for child in sorted(directory.iterdir(), key=lambda item: item.name):
+        module = ""
+        if child.is_file() and child.suffix == ".rs" and child.name not in {"lib.rs", "main.rs"}:
+            module = child.stem
+        elif child.is_dir() and (child / "mod.rs").is_file():
+            module = child.name
+        if not module or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", module) or module in seen:
+            continue
+        seen.add(module)
+        modules.append(module)
+    return modules
 
 
 def _parse_unresolved_rust_crates(artifact_quality_errors: list[str]) -> list[str]:
@@ -379,6 +555,27 @@ def _parse_rust_trait_import_suggestions(artifact_quality_errors: list[str]) -> 
     return suggestions
 
 
+def _parse_rust_line_suggestions(artifact_quality_errors: list[str]) -> list[tuple[str, int, str]]:
+    suggestions: list[tuple[str, int, str]] = []
+    seen: set[tuple[str, int, str]] = set()
+    text = _ANSI_ESCAPE_RE.sub("", "\n".join(str(error or "") for error in artifact_quality_errors))
+    for match in _RUST_FIELD_METHOD_LINE_SUGGESTION_RE.finditer(text):
+        relative_path = str(match.group("path") or "").strip().replace("\\", "/")
+        code = str(match.group("code") or "").rstrip()
+        try:
+            line_number = int(match.group("line"))
+        except (TypeError, ValueError):
+            continue
+        if not relative_path or relative_path.startswith("/") or not code.strip():
+            continue
+        key = (relative_path, line_number, code)
+        if key in seen:
+            continue
+        seen.add(key)
+        suggestions.append(key)
+    return suggestions
+
+
 def _insert_rust_use_import(text: str, import_line: str) -> str:
     if re.search(rf"(?m)^\s*{re.escape(import_line)}\s*$", text):
         return text
@@ -441,7 +638,8 @@ def _rust_crate_names_look_related(missing: str, canonical: str) -> bool:
     canonical_tokens = _crate_name_tokens(canonical)
     if len(missing_tokens) < 2 or not canonical_tokens:
         return False
-    return missing_tokens.issubset(canonical_tokens)
+    overlap = missing_tokens & canonical_tokens
+    return missing_tokens.issubset(canonical_tokens) or len(overlap) >= 2
 
 
 def _crate_name_tokens(name: str) -> set[str]:
