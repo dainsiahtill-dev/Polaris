@@ -1,4 +1,4 @@
-# Polaris Agent 角色规范 v4.0（Codex 专用）
+# Polaris Agent 角色规范 v4.0
 
 **目标**：把工程交付做成 **可重复、可审计、可回滚、可防御** 的流水线，同时验证 Polaris 在复杂场景下的稳定性。  
 **口号**：精准 > 速度；证据 > 声称；最小变更 > 顺手重构；多层防御 > 单点信任。  
@@ -551,3 +551,23 @@ OpenCode 并行派工必须满足：
 - 验收命令必须可执行。
 - 最终报告必须机器可读。
 - 所有结果必须由主 Agent 独立复核。
+
+## Factory Bench 架构约束（2026-06-25 沉淀）
+
+### 修复层级铁律
+
+**bench_gates.py 是量具，不做修复。** 所有确定性修复必须放在 Director 执行链路：
+`src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/`
+
+### Director 上下文强制审计
+
+bench 失败后，**先审计 Director 最终 LLM 请求**（context_snapshot_ref），再做修复。必查：
+1. CE Blueprint 是否注入（`BlueprintOverviewSignal` 对 director 角色必须 applies_to=True）
+2. context_window_utilization < 10% 是红旗
+3. task_id 映射是否断裂（PM 数字 ID ↔ CE TASK-N 前缀）
+4. Task 描述是否被截断
+
+### 跨文件一致性防御
+
+优先级：**预防**（CE 蓝图注入）> **检测**（质量门）> **修复**（deterministic repairs）。
+禁止只做修复层（打地鼠反模式）。

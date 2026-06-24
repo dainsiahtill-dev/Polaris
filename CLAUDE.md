@@ -202,6 +202,67 @@ board.create(subject="实现登录功能", priority="high")
 - ❌ 在 Polaris 代码库中硬编码目标项目的配置、路径、或文件名
 - ❌ 为解决特定项目问题而修改 Polaris 核心逻辑（应修复通用逻辑）
 
+## 9) Factory Bench 与 Director 上下文架构约束（2026-06-25 沉淀）
+
+### 9.1) 修复层级铁律：修系统，不修量具
+
+**禁止在 bench 测量层做 repair**。`bench_gates.py` 是审计/量具，只负责检测和归因。
+所有代码修复必须放在 Director 执行链路中（`deterministic_repairs/` + `quality_gate.py`），
+确保真实项目（非 bench）也能受益。
+
+```
+✅ 正确位置: deterministic_repairs/go_repairs.py  → Director 质量门调用
+❌ 错误位置: bench_gates.py                       → 仅 bench 测量时调用
+```
+
+### 9.2) Director 上下文强制审计清单
+
+每次 bench 失败或代码质量问题，**必须先审计 Director 最终 LLM 请求**再做下游修复：
+
+1. **context_snapshot_ref** → 读取完整 provider_request
+2. **context_window_utilization** → < 10% 是红旗（说明关键信息未注入）
+3. **CE Blueprint 注入** → Director 必须收到 CE 技术蓝图（target_files, acceptance_criteria, execution_checklist）
+4. **Task 描述完整性** → 不得截断
+5. **role identity** → system prompt 中 Director 身份是否正确
+6. **tools** → 是否包含 write_file, read_file, execute_command 等必要工具
+7. **tool_choice** → 是否正确（auto vs forced）
+
+审计位置：`~/.cache/polaris/.polaris/projects/<workspace-key>/runtime/contexts/<shard>/<hash>`
+
+### 9.3) CE Blueprint → Director 注入链路
+
+```
+CE 生成蓝图 → BlueprintPersistence 存储 → get_blueprint_status() 查询
+→ ContextGateway._get_blueprint_overview() → role_signals.BlueprintOverviewSignal
+→ Director system message
+```
+
+关键约束：
+- `BlueprintOverviewSignal.applies_to()` 必须包含 `director` 角色（不仅 chief_engineer）
+- `_latest_blueprint_for_task()` 必须支持 task_id 标准化匹配（`TASK-1` ↔ `1`）
+- `BlueprintPersistence` 查找路径必须与 CE 写入路径一致
+
+### 9.4) 跨文件一致性三层防御
+
+| 层级 | 职责 | 位置 | 杠杆 |
+|------|------|------|------|
+| **预防** | CE 蓝图注入 Director 上下文 | `role_signals.py` | 最高 |
+| **检测** | 质量门发现 coherence 错误 | `quality_gate.py` | 中等 |
+| **修复** | 确定性 repair 自动修正 | `deterministic_repairs/go_repairs.py` | 最低 |
+
+**禁止只做修复层** — 那是打地鼠。必须先确认预防层是否工作。
+
+### 9.5) Task ID 映射规范
+
+PM TaskBoard 和 CE Blueprint 使用不同 task_id 格式时，所有查询层必须做标准化：
+- PM 用数字 ID：`1, 2, 3, 4`
+- CE 用前缀 ID：`TASK-1, TASK-2`
+- Director 用 orchestration ID：`task-0-director, task-1-director`
+
+`_normalize_task_token()` 函数统一去前缀比较。所有跨角色的 task_id 查找必须使用此函数。
+
+---
+
 ## 🛠️ 核心开发规范与质量验收标准 (Core Quality Gates)
 
 作为资深 Python 研发专家，你产出的任何代码**必须（MUST）**在提交或宣告任务完成前，通过以下三道质量网关。绝对不允许提交未经这三个工具实际运行并验证通过的代码。
