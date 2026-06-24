@@ -1,0 +1,77 @@
+card_id: "vc-20260624-defensive-runtime-refactor"
+bug_summary: >
+  Internal Bench and Context Admin HTTP surfaces had regressed to fail-open
+  defaults, while the Go module repair mutated target workspaces directly and
+  synthesized successful write_file evidence. This refactor restores explicit
+  opt-in gates and makes every Go repair mutation pass through DirectorToolExecutor.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/delivery/http/routers/_shared.py"
+  method: "internal_bench_surface_enabled"
+  symptom: "unset, malformed, or conflicting feature flags could expose internal-only routes"
+
+assumptions:
+  - id: "A1"
+    statement: "Bench and Context Admin are privileged/internal surfaces and must fail closed."
+    status: verified_true
+    evidence: "AGENTS.md hard constraints, Context Admin module documentation, and .env.example all require explicit opt-in."
+  - id: "A2"
+    statement: "Deterministic repair writes must use the Director tool path rather than pathlib writes."
+    status: verified_true
+    evidence: "DirectorToolExecutor owns workspace policy, write authorization, broadcast, and mutation evidence."
+  - id: "A3"
+    statement: "Go import drift may be repaired only when compiler evidence and local package layout agree."
+    status: verified_true
+    evidence: "The planner requires an exact missing-package diagnostic, an undeclared stale prefix, and an existing local Go package."
+
+pre_mortem:
+  failure_point: >
+    A malformed alias could accidentally enable an internal route, or a broad
+    text replacement could corrupt a legitimate external dependency or comment.
+  risk_zone:
+    - "polaris/kernelone/env_flags.py"
+    - "polaris/delivery/http/routers/_shared.py"
+    - "polaris/delivery/http/v2/context.py"
+    - "polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_repairs.py"
+    - "polaris/cells/roles/adapters/internal/director/deterministic_repairs/generic_repairs.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/tests/test_env_flags.py"
+      description: "unset, malformed, and conflicting flags fail closed"
+      expected: "only explicit, consistent truthy values enable a surface"
+      status: pending_ci
+    - file: "polaris/cells/roles/adapters/tests/test_go_repairs.py"
+      description: "diagnostic-backed planning is pure and execution uses real tool evidence"
+      expected: "comments and dependencies are preserved; denied writes remain failed"
+      status: pending_ci
+    - file: "polaris/delivery/tests/test_context_admin_endpoints.py"
+      description: "Context Admin remains invisible until explicitly enabled"
+      expected: "unset, invalid, and false values return ADMIN_DISABLED"
+      status: pending_ci
+    - file: "polaris/tests/integration/delivery/routers/test_factory_bench_router.py"
+      description: "Bench aliases use fail-closed resolution"
+      expected: "unset, invalid, and conflicting aliases return INTERNAL_BENCH_SURFACE_DISABLED"
+      status: pending_ci
+  static_checks:
+    - description: "Ruff check and format for the new pure modules and tests"
+      status: passed_local
+      command: "python -m ruff check <focused-files> --fix && python -m ruff format <focused-files>"
+    - description: "Strict mypy for the new KernelOne and Go planner modules"
+      status: passed_local
+      command: "PYTHONPATH=src/backend python -m mypy src/backend/polaris/kernelone/env_flags.py src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_repairs.py --strict --ignore-missing-imports"
+
+manual_check:
+  - "No target-project or business code is added to Polaris."
+  - "The Go planner never writes files and never rewrites go.mod."
+  - "The executor preserves actual DirectorToolExecutor failures rather than synthesizing success."
+  - "All introduced text reads and writes explicitly use UTF-8."
+  - "Development launch explicitly opts into Bench only when the operator supplied no alias."
+
+related_adrs: []
+
+sign_off:
+  completed_by: "gpt-5.5-pro"
+  completed_at: "2026-06-24"
