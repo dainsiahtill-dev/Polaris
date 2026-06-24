@@ -33,7 +33,7 @@ from ._common import (
     _find_nearby_declared_target_source,
     _parse_missing_declared_target_files,
 )
-from .go_repairs import repair_go_module_imports
+from .go_repairs import repair_go_duplicate_declarations, repair_go_import_subpaths, repair_go_module_imports
 from .javascript_repairs import (
     _apply_deterministic_javascript_esm_commonjs_entrypoint_repair,
     _apply_deterministic_javascript_missing_export_repair,
@@ -351,18 +351,43 @@ def _apply_deterministic_go_module_import_repair(
     *,
     task_id: str,
 ) -> list[dict[str, Any]]:
-    """Repair Go import paths that reference a wrong module prefix."""
+    """Repair Go import paths and cross-file coherence issues.
+
+    Runs three repair passes in order:
+    1. Module prefix normalization (``wrong-prefix/src/x`` → ``module/src/x``)
+    2. Sub-path hallucination repair (``module/hallucinated/src/x`` → ``module/src/x``)
+    3. Duplicate declaration merge (when ``go vet`` reports redeclaration errors)
+    """
     workspace = Path(getattr(adapter, "workspace", "") or "")
     if not workspace.is_dir():
         return []
     go_files = list(workspace.rglob("*.go"))
-    if not (workspace / "go.mod").is_file() or not go_files:
-        return []
-    repairs = repair_go_module_imports(workspace)
-    if not repairs:
+    if not go_files:
         return []
     results: list[dict[str, Any]] = []
-    for record in repairs:
+
+    # Pass 1: Prefix normalization.
+    if (workspace / "go.mod").is_file():
+        prefix_repairs = repair_go_module_imports(workspace)
+        for record in prefix_repairs:
+            results.append(
+                {
+                    "tool": "write_file",
+                    "tool_name": "write_file",
+                    "success": True,
+                    "result": {
+                        "ok": True,
+                        "source_tool": "deterministic_go_module_import_repair",
+                        "file": record["file"],
+                        "before": record["before"],
+                        "after": record["after"],
+                    },
+                }
+            )
+
+    # Pass 2: Sub-path hallucination repair.
+    subpath_repairs = repair_go_import_subpaths(workspace)
+    for record in subpath_repairs:
         results.append(
             {
                 "tool": "write_file",
@@ -370,13 +395,31 @@ def _apply_deterministic_go_module_import_repair(
                 "success": True,
                 "result": {
                     "ok": True,
-                    "source_tool": "deterministic_go_module_import_repair",
+                    "source_tool": "deterministic_go_subpath_repair",
                     "file": record["file"],
                     "before": record["before"],
                     "after": record["after"],
                 },
             }
         )
+
+    # Pass 3: Duplicate declaration merge.
+    dedup_repairs = repair_go_duplicate_declarations(workspace)
+    for record in dedup_repairs:
+        results.append(
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_go_dedup_repair",
+                    "file": record["file"],
+                    "action": record["action"],
+                },
+            }
+        )
+
     return results
 
 
