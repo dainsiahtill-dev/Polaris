@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { UseFactoryBenchResult } from '@/hooks/useFactoryBench';
+import type { ControlPlaneProjection } from '@/services/controlPlane';
 import type { PmTask } from '@/types/task';
 import { FactoryWorkspace } from './FactoryWorkspace';
 
@@ -52,13 +53,126 @@ const baseProps = {
   onRetryCheckpoint: vi.fn(),
 };
 
+const completedRun = {
+  run_id: 'factory-complete',
+  phase: 'completed',
+  status: 'completed',
+  current_stage: 'qa_gate',
+  last_successful_stage: 'director_dispatch',
+  progress: 100,
+  roles: {},
+  gates: [],
+  created_at: '2026-06-24T00:00:00Z',
+};
+
+const pendingLedgerProjection: ControlPlaneProjection = {
+  schema_version: 1,
+  source: 'run_ledger_projection',
+  available: true,
+  ok: false,
+  status: 'pending',
+  audit_path: 'runtime/control_plane/ledger',
+  compat_ledgers_included: false,
+  total: 0,
+  projected: 0,
+  missing: 0,
+  failed: 0,
+  detail: 'run ledger projection is pending',
+  projects: [],
+};
+
+const passedLedgerProjection: ControlPlaneProjection = {
+  schema_version: 1,
+  source: 'run_ledger_projection',
+  available: true,
+  ok: true,
+  status: 'ready',
+  audit_path: 'runtime/control_plane/ledger',
+  compat_ledgers_included: false,
+  total: 1,
+  projected: 1,
+  missing: 0,
+  failed: 0,
+  detail: 'run ledger projection 1 project(s), 0 failed',
+  projects: [
+    {
+      project_id: 'factory-complete',
+      ok: true,
+      integrity_ok: true,
+      outcome_ok: true,
+      gate_count: 2,
+      failed_gate_count: 0,
+      latest_token_id: 'jt-pass',
+      detail: 'all gates passed',
+      missing: [],
+    },
+  ],
+};
+
 describe('FactoryWorkspace', () => {
   it('shows start button for idle state', () => {
     render(<FactoryWorkspace {...baseProps} currentRun={null} events={[]} />);
 
     expect(screen.getByRole('button', { name: '启动' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '取消' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('bench-status-strip')).not.toBeInTheDocument();
+  });
+
+  it('shows internal bench status only when internal bench mode is enabled', () => {
+    render(<FactoryWorkspace {...baseProps} currentRun={null} events={[]} internalBenchEnabled={true} />);
+
     expect(screen.getByTestId('bench-status-strip')).toHaveTextContent('Factory Bench probe');
+  });
+
+  it('does not show Factory completion before Run Ledger projection is available', () => {
+    const runWithStaleSuccessEvidence = {
+      ...completedRun,
+      gates: [
+        {
+          gate_name: 'legacy_quality_gate',
+          status: 'passed',
+          score: 100,
+          passed: true,
+          message: 'legacy gate pass before ledger projection',
+        },
+      ],
+      summary_md: 'PASS summary from stale run status',
+    };
+
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        currentRun={runWithStaleSuccessEvidence}
+        events={[]}
+        controlPlaneProjection={pendingLedgerProjection}
+      />,
+    );
+
+    expect(screen.getAllByText('验证中').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('ledger_pending').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('账本待验证').length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByTestId('factory-run-ledger-gate')).toHaveTextContent('ledger_pending');
+    expect(screen.queryByText('legacy_quality_gate')).not.toBeInTheDocument();
+    expect(screen.queryByText('legacy gate pass before ledger projection')).not.toBeInTheDocument();
+    expect(screen.queryByText('PASS summary from stale run status')).not.toBeInTheDocument();
+    expect(screen.queryByText('completed')).not.toBeInTheDocument();
+    expect(screen.getAllByText('99%').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('ledger_failed')).not.toBeInTheDocument();
+  });
+
+  it('allows Factory completion only after Run Ledger projection passes', () => {
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        currentRun={completedRun}
+        events={[]}
+        controlPlaneProjection={passedLedgerProjection}
+      />,
+    );
+
+    expect(screen.getAllByText('已完成').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('completed').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('100%').length).toBeGreaterThan(0);
   });
 
   it('shows compact workspace labels while preserving the full path as evidence', () => {
@@ -72,7 +186,7 @@ describe('FactoryWorkspace', () => {
     expect(screen.getByTestId('factory-pm-workspace-label')).not.toHaveTextContent('C:/Users/dains');
   });
 
-  it('uses live bench project workspace metadata as the active Factory workspace display', () => {
+  it('ignores live bench project workspace metadata outside internal bench mode', () => {
     const bench = {
       sessions: [],
       currentSession: null,
@@ -95,7 +209,54 @@ describe('FactoryWorkspace', () => {
       disconnect: vi.fn(),
     } satisfies UseFactoryBenchResult;
 
-    render(<FactoryWorkspace {...baseProps} workspace="/home/dains/Documents/polaris" bench={bench} currentRun={null} events={[]} />);
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        workspace="/home/dains/Documents/polaris"
+        bench={bench}
+        currentRun={null}
+        events={[]}
+      />,
+    );
+
+    expect(screen.getByTestId('factory-workspace-label')).toHaveTextContent('polaris');
+    expect(screen.getByTestId('factory-workspace-label')).toHaveAttribute('title', '/home/dains/Documents/polaris');
+    expect(screen.getByTestId('factory-pm-workspace-label')).toHaveTextContent('polaris');
+  });
+
+  it('uses live bench project workspace metadata only in internal bench mode', () => {
+    const bench = {
+      sessions: [],
+      currentSession: null,
+      events: [
+        {
+          type: 'factory_bench.project.phase',
+          session_id: 'bench-live',
+          summary: 'L1-01 director running',
+          meta: {
+            project_id: 'L1-01',
+            workspace: '/home/dains/Documents/polaris/runtime/factory-bench/bench-live/L1-01',
+          },
+        },
+      ],
+      isStreaming: true,
+      isLoading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+      select: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn(),
+    } satisfies UseFactoryBenchResult;
+
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        workspace="/home/dains/Documents/polaris"
+        bench={bench}
+        currentRun={null}
+        events={[]}
+        internalBenchEnabled={true}
+      />,
+    );
 
     expect(screen.getByTestId('factory-workspace-label')).toHaveTextContent('L1-01');
     expect(screen.getByTestId('factory-workspace-label')).toHaveAttribute(
@@ -135,6 +296,7 @@ describe('FactoryWorkspace', () => {
           },
         }}
         events={[]}
+        controlPlaneProjection={passedLedgerProjection}
       />
     );
 
@@ -297,6 +459,7 @@ describe('FactoryWorkspace', () => {
           created_at: '2026-05-23T00:00:00Z',
         }}
         events={[]}
+        controlPlaneProjection={passedLedgerProjection}
       />
     );
 
@@ -610,7 +773,7 @@ describe('FactoryWorkspace', () => {
     expect(screen.getByRole('button', { name: '暂停' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '取消' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '启动' })).not.toBeInTheDocument();
-    expect(screen.getByText('implementation')).toBeInTheDocument();
+    expect(screen.getByText('executing')).toBeInTheDocument();
     expect(screen.getAllByText('running').length).toBeGreaterThan(0);
     expect(screen.getByText('director_dispatch')).toBeInTheDocument();
   });
@@ -709,6 +872,7 @@ describe('FactoryWorkspace', () => {
           created_at: '2026-03-07T00:00:00Z',
         }}
         events={[]}
+        controlPlaneProjection={passedLedgerProjection}
       />
     );
 

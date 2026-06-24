@@ -120,6 +120,8 @@ class AgentAccelToolExecutor:
         session_memory_provider: Any | None = None,
         failure_budget: Any | None = None,
         allowed_tools: frozenset[str] | None = None,
+        capability_scope: list[str] | tuple[str, ...] | frozenset[str] | None = None,
+        capability_token: dict[str, Any] | None = None,
     ) -> None:
         self.workspace = str(Path(workspace).resolve())
         self._closed = False
@@ -134,6 +136,12 @@ class AgentAccelToolExecutor:
         # This is the executor-level hard gate — role policies (RoleToolGateway / PolicyLayer)
         # run upstream as well, but this prevents any bypass path.
         self._allowed_tools = allowed_tools
+        self._capability_scope = tuple(
+            str(item or "").replace("\\", "/").strip("/")
+            for item in (capability_scope or ())
+            if str(item or "").strip()
+        )
+        self._capability_token = dict(capability_token or {})
 
         # Line-cost budget limits for read_file downgrade
         self._READ_WARN_LINES = FILE_READ_WARN_LINES

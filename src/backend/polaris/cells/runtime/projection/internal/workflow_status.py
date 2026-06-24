@@ -267,9 +267,46 @@ def _result_artifacts_prove_terminal_success(payloads: list[dict[str, Any]]) -> 
     )
 
 
+def _run_ledger_terminal_status(*, workspace: str, run_id: str = "") -> str:
+    """Return terminal status proven by the platform Run Ledger projection.
+
+    The local result JSON files are compatibility artifacts. They may indicate
+    what a legacy path believed, but terminal success must come from the
+    append-only control-plane ledger.
+    """
+
+    workspace_value = str(workspace or "").strip()
+    if not workspace_value:
+        return ""
+    try:
+        from polaris.cells.control_plane.run_ledger.public import (
+            ReadRunLedgerProjectionQueryV1,
+            read_run_ledger_projection,
+        )
+
+        projection = read_run_ledger_projection(
+            ReadRunLedgerProjectionQueryV1(
+                workspace=workspace_value,
+                run_id=str(run_id or "").strip(),
+                max_runs=1,
+            )
+        ).projection
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("Run Ledger projection unavailable for terminal status: %s", exc)
+        return ""
+
+    if projection.get("available") is not True:
+        return ""
+    if projection.get("ok") is True:
+        return "completed"
+    return "failed"
+
+
 def _derive_terminal_failure_status(
     *,
+    workspace: str,
     cache_root: str,
+    run_id: str = "",
     statuses: tuple[str, ...],
     payloads: tuple[Any, ...],
 ) -> str:
@@ -282,7 +319,11 @@ def _derive_terminal_failure_status(
 
     result_artifacts = _load_workflow_result_artifacts(cache_root)
     if _result_artifacts_prove_terminal_success(result_artifacts):
-        return ""
+        return "" if _run_ledger_terminal_status(workspace=workspace, run_id=run_id) == "completed" else "failed"
+
+    ledger_terminal_status = _run_ledger_terminal_status(workspace=workspace, run_id=run_id)
+    if ledger_terminal_status == "failed":
+        return "failed"
 
     for payload in (*payloads, *result_artifacts):
         if _payload_has_failure_signal(payload):
@@ -290,9 +331,11 @@ def _derive_terminal_failure_status(
     return ""
 
 
-def _derive_terminal_success_status(*, cache_root: str) -> str:
-    if _result_artifacts_prove_terminal_success(_load_workflow_result_artifacts(cache_root)):
+def _derive_terminal_success_status(*, workspace: str, cache_root: str, run_id: str = "") -> str:
+    if _run_ledger_terminal_status(workspace=workspace, run_id=run_id) == "completed":
         return "completed"
+    if _result_artifacts_prove_terminal_success(_load_workflow_result_artifacts(cache_root)):
+        return ""
     return ""
 
 
@@ -502,13 +545,17 @@ def _workflow_task_result_path(cache_root: str, run_token: str, task_id: str) ->
     return path
 
 
-def _load_workflow_task_result(cache_root: str, run_tokens: list[str], task_id: str) -> tuple[dict[str, Any], str]:
+def _load_workflow_task_result(
+    cache_root: str,
+    run_tokens: list[str],
+    task_id: str,
+) -> tuple[dict[str, Any], str, str]:
     for run_token in run_tokens:
         result_path = _workflow_task_result_path(cache_root, run_token, task_id)
         payload = read_json(result_path) if result_path else None
         if isinstance(payload, dict):
-            return payload, result_path
-    return {}, ""
+            return payload, result_path, run_token
+    return {}, "", ""
 
 
 def _director_result_task_state(result_payload: dict[str, Any]) -> str:
@@ -545,9 +592,23 @@ def _director_result_task_state(result_payload: dict[str, Any]) -> str:
     return ""
 
 
-def _apply_workflow_task_result(item: dict[str, Any], result_payload: dict[str, Any], result_path: str) -> None:
+def _apply_workflow_task_result(
+    item: dict[str, Any],
+    result_payload: dict[str, Any],
+    result_path: str,
+    *,
+    completion_authorized: bool,
+) -> None:
     state = _director_result_task_state(result_payload)
     if not state:
+        return
+
+    if state == "completed" and not completion_authorized:
+        ignored_metadata_raw = item.get("metadata")
+        ignored_metadata: dict[str, Any] = ignored_metadata_raw if isinstance(ignored_metadata_raw, dict) else {}
+        ignored_metadata["director_result_path"] = result_path
+        ignored_metadata["director_result_completion_ignored"] = "missing_run_ledger_terminal_success"
+        item["metadata"] = ignored_metadata
         return
 
     current_state = canonicalize_workflow_task_state(item.get("status") or item.get("state"))
@@ -599,20 +660,40 @@ def _apply_workflow_task_results(
     tasks: list[dict[str, Any]],
     workflow_status: dict[str, Any] | None,
     *,
+    workspace: str,
     cache_root: str,
 ) -> None:
     run_tokens = _workflow_result_run_tokens(workflow_status)
     if not tasks or not run_tokens:
         return
+    completion_authorization_by_run: dict[str, bool] = {}
     for item in tasks:
         if not isinstance(item, dict):
             continue
         task_id = _workflow_task_id(item)
         if not task_id:
             continue
-        result_payload, result_path = _load_workflow_task_result(cache_root, run_tokens, task_id)
+        result_payload, result_path, run_token = _load_workflow_task_result(cache_root, run_tokens, task_id)
         if result_payload:
-            _apply_workflow_task_result(item, result_payload, result_path)
+            if run_token not in completion_authorization_by_run:
+                completion_authorization_by_run[run_token] = (
+                    _run_ledger_terminal_status(workspace=workspace, run_id=run_token) == "completed"
+                )
+            _apply_workflow_task_result(
+                item,
+                result_payload,
+                result_path,
+                completion_authorized=completion_authorization_by_run[run_token],
+            )
+
+
+def _workflow_completion_authorized(workspace: str, workflow_status: dict[str, Any] | None) -> bool:
+    if not str(workspace or "").strip():
+        return False
+    return any(
+        _run_ledger_terminal_status(workspace=workspace, run_id=run_token) == "completed"
+        for run_token in _workflow_result_run_tokens(workflow_status)
+    )
 
 
 def merge_workflow_tasks(
@@ -662,6 +743,7 @@ def merge_workflow_tasks(
         merged_by_id[task_id] = normalized
         order.append(task_id)
 
+    snapshot_completion_authorized = _workflow_completion_authorized(workspace, workflow_status)
     for task_id, raw in get_workflow_task_snapshot(workflow_status).items():
         if not isinstance(raw, dict):
             continue
@@ -683,17 +765,25 @@ def merge_workflow_tasks(
         summary = str(raw.get("summary") or metadata.get("summary") or "").strip()
         if summary:
             merged["summary"] = summary
+        completion_ignored = canonical_state == "completed" and not snapshot_completion_authorized
+        if completion_ignored:
+            fallback_state = canonicalize_workflow_task_state(existing.get("status") or existing.get("state"))
+            canonical_state = "pending" if fallback_state == "completed" else fallback_state
+            if "summary" not in existing:
+                merged.pop("summary", None)
         merged["status"] = canonical_state
         merged["state"] = canonical_state
         merged["done"] = canonical_state == "completed"
         merged["completed"] = canonical_state == "completed"
         if canonical_state in {"failed", "blocked"} and summary:
             merged["error"] = summary
-        if metadata:
+        if metadata or completion_ignored:
             merged_metadata_raw = merged.get("metadata")
             merged_metadata: dict[str, Any] = merged_metadata_raw if isinstance(merged_metadata_raw, dict) else {}
             merged_metadata.update(metadata)
             merged_metadata["workflow_state"] = str(raw.get("state") or "").strip().lower()
+            if completion_ignored:
+                merged_metadata["workflow_snapshot_completion_ignored"] = "missing_run_ledger_terminal_success"
             merged["metadata"] = merged_metadata
             retry_count = merged_metadata.get("retry_count")
             if retry_count is None:
@@ -732,7 +822,12 @@ def merge_workflow_tasks(
     if not merged_by_id:
         return []
     merged_tasks = [merged_by_id[task_id] for task_id in order if task_id in merged_by_id]
-    _apply_workflow_task_results(merged_tasks, workflow_status, cache_root=cache_root)
+    _apply_workflow_task_results(
+        merged_tasks,
+        workflow_status,
+        workspace=workspace,
+        cache_root=cache_root,
+    )
     return merged_tasks
 
 
@@ -1165,7 +1260,9 @@ def get_workflow_runtime_status(
     )
 
     derived_failure_status = _derive_terminal_failure_status(
+        workspace=workspace,
         cache_root=cache_root,
+        run_id=workflow_chain_run_id,
         statuses=(child_status, qa_child_status),
         payloads=(
             record,
@@ -1180,7 +1277,11 @@ def get_workflow_runtime_status(
     if derived_failure_status:
         runtime_status = derived_failure_status
     else:
-        derived_success_status = _derive_terminal_success_status(cache_root=cache_root)
+        derived_success_status = _derive_terminal_success_status(
+            workspace=workspace,
+            cache_root=cache_root,
+            run_id=workflow_chain_run_id,
+        )
         if derived_success_status:
             runtime_status = derived_success_status
 

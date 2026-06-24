@@ -33,6 +33,7 @@ from polaris.cells.orchestration.pm_planning.internal.quality_gate.domain_contra
     _covered_game_domains,
     _has_forbidden_game_dependency_policy,
     _has_fragile_game_acceptance,
+    _infer_primary_contract_language,
     _is_card3d_pm_contract,
     _is_game_pm_contract,
     _missing_card3d_required_test_targets,
@@ -42,6 +43,7 @@ from polaris.cells.orchestration.pm_planning.internal.quality_gate.domain_contra
     _repair_card3d_tests_task_contract,
     _sanitize_fragile_game_acceptance_in_place,
     _sanitize_game_dependency_policy_in_place,
+    _sanitize_language_contract_paths_in_place,
 )
 from polaris.cells.orchestration.pm_planning.internal.quality_gate.primitives import (
     _PM_ACTION_TOKENS,
@@ -483,6 +485,7 @@ def autofix_pm_contract_for_quality(
         "game_context_attached": 0,
         "game_dependency_policy_sanitized": 0,
         "game_policy_tasks_removed": 0,
+        "language_contract_paths_sanitized": 0,
         "paths_normalized": 0,
         "seed_residue_cleanup_tasks_added": 0,
         "vendored_targets_stripped": 0,
@@ -493,9 +496,15 @@ def autofix_pm_contract_for_quality(
 
     verify_command = detect_integration_verify_command(workspace_full)
     normalized_tasks = [task for task in tasks if isinstance(task, dict)]
+    primary_language = _infer_primary_contract_language(normalized, normalized_tasks)
     stats["paths_normalized"] += _sanitize_pm_task_paths_in_place(normalized_tasks, workspace_full)
+    stats["language_contract_paths_sanitized"] += _sanitize_language_contract_paths_in_place(
+        normalized,
+        normalized_tasks,
+    )
     stats["vendored_targets_stripped"] += _strip_unfulfillable_vendored_targets_in_place(normalized_tasks)
-    stats["single_file_ui_tasks_steered"] += _steer_single_file_ui_tasks_in_place(normalized_tasks)
+    if primary_language != "go":
+        stats["single_file_ui_tasks_steered"] += _steer_single_file_ui_tasks_in_place(normalized_tasks)
     if _attach_workspace_game_context_if_needed(normalized, normalized_tasks, workspace_full):
         stats["game_context_attached"] += 1
     is_card3d_contract = _is_card3d_pm_contract(normalized, normalized_tasks)
@@ -620,6 +629,10 @@ def autofix_pm_contract_for_quality(
                 task["id"] = f"TASK-{normalized_tasks.index(task) + 1}"
                 prev_task_id = task["id"]
 
+    stats["language_contract_paths_sanitized"] += _sanitize_language_contract_paths_in_place(
+        normalized,
+        normalized_tasks,
+    )
     stats["seed_residue_cleanup_tasks_added"] += _append_deterministic_scaffold_residue_cleanup_task(
         normalized,
         normalized_tasks,

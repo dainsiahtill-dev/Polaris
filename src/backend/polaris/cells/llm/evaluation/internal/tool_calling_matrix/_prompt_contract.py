@@ -298,7 +298,7 @@ def _compose_case_prompt(case: ToolCallingMatrixCase, *, mode: str) -> str:
         if not require_no_tool_calls:
             contract_lines.append("In your next assistant action, emit all required native tool calls in one batch.")
             contract_lines.append(
-                "Runtime constraint: this benchmark uses one decision + one tool-call batch, so include every step now."
+                "Runtime constraint: this matrix run uses one decision + one tool-call batch, so include every step now."
             )
         if ordered_groups:
             contract_lines.append("The batch call order must follow the ordered tool groups exactly.")
@@ -327,7 +327,7 @@ def _compose_case_prompt(case: ToolCallingMatrixCase, *, mode: str) -> str:
 
     appendix = "\n".join(
         (
-            "[Benchmark Tool Contract]",
+            "[Tool Calling Matrix Contract]",
             "This is a deterministic tool-calling matrix run. Follow the contract strictly.",
             *contract_lines,
             "Do not finish early before satisfying the full contract.",

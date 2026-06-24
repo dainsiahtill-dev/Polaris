@@ -160,6 +160,26 @@ def _resolve_executor(context: Mapping[str, Any] | None) -> RoleSessionMatrixExe
     raise TypeError("role_session_executor must provide stream_session(command)")
 
 
+def _build_platform_tool_contract(mode_spec: Mapping[str, Any]) -> dict[str, Any]:
+    """Translate matrix judge expectations into platform tool-contract metadata."""
+    required_tools = list(mode_spec.get("required_tools") or [])
+    ordered_tool_groups = list(mode_spec.get("ordered_tool_groups") or [])
+    required_any_tools = list(mode_spec.get("required_any_tools") or [])
+    contract: dict[str, Any] = {
+        "single_batch": True,
+        "execution_mode": "single_batch",
+        "require_no_tool_calls": bool(mode_spec.get("require_no_tool_calls")),
+        "min_tool_calls": _to_int(mode_spec.get("min_tool_calls"), 0),
+        "required_tools": required_tools,
+        "ordered_tool_groups": ordered_tool_groups,
+        "required_any_groups": required_any_tools,
+        "allow_mixed_read_write_batch": bool(ordered_tool_groups or required_any_tools),
+        "disable_phase_manager": True,
+        "source": "tool_calling_matrix",
+    }
+    return {key: value for key, value in contract.items() if value not in (None, [], "")}
+
+
 async def _collect_stream_observation(
     *,
     case: ToolCallingMatrixCase,
@@ -175,10 +195,12 @@ async def _collect_stream_observation(
     # workspace 是实际执行测试的目录(包含 fixture 文件)
     # benchmark_root 用于 journal 写入到正确的 runtime_root
     mode_spec = _mapping_dict(_mapping_dict(case.judge).get("stream"))
-    require_no_tool_calls = bool(mode_spec.get("require_no_tool_calls"))
-    min_tool_calls = _to_int(mode_spec.get("min_tool_calls"), 0)
-    ordered_tool_groups = list(mode_spec.get("ordered_tool_groups") or [])
-    required_any_tools = list(mode_spec.get("required_any_tools") or [])
+    tool_contract = _build_platform_tool_contract(mode_spec)
+    command_context = {**dict(case.context), "tool_contract": tool_contract}
+    require_no_tool_calls = bool(tool_contract.get("require_no_tool_calls"))
+    min_tool_calls = _to_int(tool_contract.get("min_tool_calls"), 0)
+    ordered_tool_groups = list(tool_contract.get("ordered_tool_groups") or [])
+    required_any_tools = list(tool_contract.get("required_any_groups") or [])
 
     base_prompt = _compose_case_prompt(case, mode="stream")
     user_message = base_prompt
@@ -193,16 +215,13 @@ async def _collect_stream_observation(
             user_message=user_message,
             run_id=run_id,
             history=case.history,
-            context=dict(case.context),
+            context=command_context,
             metadata={
                 **dict(case.metadata),
                 "tool_calling_matrix": True,
                 "matrix_case_id": case.case_id,
                 "matrix_run_id": run_id,
-                "benchmark_require_no_tool_calls": require_no_tool_calls,
-                "benchmark_min_tool_calls": min_tool_calls,
-                "benchmark_ordered_tool_groups": ordered_tool_groups,
-                "benchmark_required_any_tools": required_any_tools,
+                "tool_contract": tool_contract,
                 "benchmark_retry_attempt": attempt,
                 "provider_id": provider_id,
                 "model": model,
@@ -402,10 +421,8 @@ async def _collect_non_stream_observation(
     # workspace 是实际执行测试的目录(包含 fixture 文件)
     # benchmark_root 用于 journal 写入到正确的 runtime_root
     mode_spec = _mapping_dict(_mapping_dict(case.judge).get("non_stream"))
-    require_no_tool_calls = bool(mode_spec.get("require_no_tool_calls"))
-    min_tool_calls = _to_int(mode_spec.get("min_tool_calls"), 0)
-    ordered_tool_groups = list(mode_spec.get("ordered_tool_groups") or [])
-    required_any_tools = list(mode_spec.get("required_any_tools") or [])
+    tool_contract = _build_platform_tool_contract(mode_spec)
+    command_context = {**dict(case.context), "tool_contract": tool_contract}
 
     command = ExecuteRoleSessionCommandV1(
         role=case.role,
@@ -414,16 +431,13 @@ async def _collect_non_stream_observation(
         run_id=run_id,
         user_message=_compose_case_prompt(case, mode="non_stream"),
         history=case.history,
-        context=dict(case.context),
+        context=command_context,
         metadata={
             **dict(case.metadata),
             "tool_calling_matrix": True,
             "matrix_case_id": case.case_id,
             "matrix_run_id": run_id,
-            "benchmark_require_no_tool_calls": require_no_tool_calls,
-            "benchmark_min_tool_calls": min_tool_calls,
-            "benchmark_ordered_tool_groups": ordered_tool_groups,
-            "benchmark_required_any_tools": required_any_tools,
+            "tool_contract": tool_contract,
             "provider_id": provider_id,
             "model": model,
             "validate_output": False,  # 跳过质量验证以获取原始 tool_calls

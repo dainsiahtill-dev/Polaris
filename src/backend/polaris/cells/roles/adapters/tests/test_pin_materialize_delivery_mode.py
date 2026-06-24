@@ -16,11 +16,11 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _build_materialization_quality_repair_message,
     _pin_materialize_delivery_mode,
 )
-from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
-    extract_continuation_prompt_metadata,
-)
 from polaris.cells.roles.kernel.public import DeliveryMode
-from polaris.cells.roles.kernel.public.transaction_contracts import resolve_delivery_mode
+from polaris.cells.roles.kernel.public.transaction_contracts import (
+    extract_continuation_prompt_metadata,
+    resolve_delivery_mode,
+)
 
 
 class TestPinMaterializeDeliveryMode:

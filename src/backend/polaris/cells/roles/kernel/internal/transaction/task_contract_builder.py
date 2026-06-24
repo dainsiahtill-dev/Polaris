@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from polaris.cells.roles.kernel.internal.transaction.constants import (
+    FILE_TOKEN_EXTENSION_PATTERN,
     REQUIRED_TOOL_EQUIVALENTS,
     TOOL_ALIASES,
     VERIFICATION_TOOLS,
@@ -33,9 +34,6 @@ from polaris.cells.roles.kernel.internal.transaction.tool_sequence_templates imp
     extract_expected_read_count,
 )
 
-# Sentinel prefix that marks the start of injected Benchmark boilerplate.
-# Everything from this marker onwards is framework metadata, not user intent.
-_BENCHMARK_CONTRACT_MARKER: str = "[Benchmark Tool Contract]"
 _SESSION_PATCH_BLOCK_RE = re.compile(r"<SESSION_PATCH>\s*(.*?)\s*</SESSION_PATCH>", flags=re.DOTALL)
 _SUPER_READONLY_STAGE_MARKERS: tuple[str, ...] = (
     "[SUPER_MODE_READONLY_STAGE]",
@@ -52,22 +50,181 @@ _EXPLICIT_DELIVERY_MODE_MARKERS: tuple[str, ...] = (
 )
 
 
-def _strip_benchmark_boilerplate(text: str) -> str:
-    """Return only the real task instruction, stripping Benchmark Tool Contract boilerplate.
+def _mapping(value: object) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
 
-    The evaluator appends a ``[Benchmark Tool Contract]`` section to every
-    benchmark user message.  That section contains words like ``replace``,
-    ``edit``, ``emit``, ``build`` and Chinese config/devops terms that
-    mislead ``requires_mutation_intent`` into a false-positive classification
-    for purely read-only tasks.
 
-    Stripping the boilerplate before intent classification ensures the
-    classifier sees only the genuine task description.
-    """
-    idx = text.find(_BENCHMARK_CONTRACT_MARKER)
-    if idx == -1:
-        return text
-    return text[:idx].strip()
+def _normalize_tool_token(value: object) -> str:
+    normalized = str(value or "").strip().strip("`'\". ").lower()
+    return TOOL_ALIASES.get(normalized, normalized) if normalized else ""
+
+
+def _normalize_tool_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        raw_values: list[object] = [item for item in re.split(r"[,;\s]+", value) if item]
+    elif isinstance(value, list | tuple):
+        raw_values = list(value)
+    else:
+        return []
+    normalized_values: list[str] = []
+    for raw_item in raw_values:
+        normalized = _normalize_tool_token(raw_item)
+        if normalized and normalized not in normalized_values:
+            normalized_values.append(normalized)
+    return normalized_values
+
+
+def _normalize_tool_groups(value: object) -> list[list[str]]:
+    if not isinstance(value, list | tuple):
+        return []
+    groups: list[list[str]] = []
+    for raw_group in value:
+        group = _normalize_tool_list(raw_group)
+        if group:
+            groups.append(group)
+    return groups
+
+
+_NO_EXTENSION_FILE_NAMES: frozenset[str] = frozenset(
+    {
+        "dockerfile",
+        "makefile",
+        "readme",
+        "license",
+        "changelog",
+        "contributing",
+        ".env",
+        ".gitignore",
+        "go.mod",
+        "go.sum",
+    }
+)
+
+
+def _normalize_contract_path_values(value: object) -> list[str]:
+    if isinstance(value, str):
+        raw_values: list[object] = [item for item in re.split(r"[,;\n]+", value) if item.strip()]
+    elif isinstance(value, list | tuple):
+        raw_values = list(value)
+    else:
+        return []
+
+    normalized_values: list[str] = []
+    seen: set[str] = set()
+    for raw_item in raw_values:
+        token = str(raw_item or "").strip().strip("`'\"").replace("\\", "/")
+        while token.startswith("./"):
+            token = token[2:]
+        token = token.rstrip("/") if token != "/" else token
+        if not token or token.startswith(("/", "~")):
+            continue
+        parts = [part for part in token.split("/") if part]
+        if not parts or any(part == ".." for part in parts):
+            continue
+        if any(ch in token for ch in ("*", "?", "[", "]", "{", "}", "\t", "\r")):
+            continue
+        lowered = token.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized_values.append(token)
+    return normalized_values
+
+
+def _contract_path_looks_like_file_target(path: str) -> bool:
+    normalized = str(path or "").strip().replace("\\", "/").rstrip("/")
+    if not normalized:
+        return False
+    basename = normalized.rsplit("/", 1)[-1].lower()
+    if basename in _NO_EXTENSION_FILE_NAMES:
+        return True
+    return "." in basename
+
+
+def extract_platform_tool_contract(context: list[dict]) -> dict[str, Any]:
+    """Extract the platform tool contract from context metadata."""
+    contract: dict[str, Any] = {}
+    for message in context:
+        if not isinstance(message, Mapping):
+            continue
+        metadata = _mapping(message.get("metadata"))
+        for raw_candidate in (
+            message.get("tool_contract"),
+            message.get("platform_tool_contract"),
+            metadata.get("tool_contract"),
+            metadata.get("platform_tool_contract"),
+        ):
+            candidate = _mapping(raw_candidate)
+            if candidate:
+                contract.update(candidate)
+    return contract
+
+
+def extract_platform_tool_contract_target_files(context: list[dict]) -> tuple[str, ...]:
+    """Return explicit file targets carried by platform tool-contract metadata."""
+    contract = extract_platform_tool_contract(context)
+    targets: list[str] = []
+    for key in (
+        "target_files",
+        "targets",
+        "write_targets",
+        "required_artifacts",
+        "repair_target_files",
+        "missing_target_files",
+    ):
+        targets.extend(
+            path
+            for path in _normalize_contract_path_values(contract.get(key))
+            if _contract_path_looks_like_file_target(path)
+        )
+    for key in ("allowed_paths", "allowed_scope"):
+        targets.extend(
+            path
+            for path in _normalize_contract_path_values(contract.get(key))
+            if _contract_path_looks_like_file_target(path)
+        )
+    return tuple(dict.fromkeys(targets))
+
+
+def extract_platform_tool_contract_scope_paths(context: list[dict]) -> tuple[str, ...]:
+    """Return directory scopes carried by platform tool-contract metadata."""
+    contract = extract_platform_tool_contract(context)
+    scopes: list[str] = []
+    for key in ("scope_paths", "allowed_scope_paths", "write_scopes", "scope_dirs", "allowed_paths", "allowed_scope"):
+        scopes.extend(
+            path
+            for path in _normalize_contract_path_values(contract.get(key))
+            if not _contract_path_looks_like_file_target(path)
+        )
+    return tuple(dict.fromkeys(scopes))
+
+
+def platform_tool_contract_is_single_batch(context: list[dict]) -> bool:
+    """Return True when the context metadata pins single-batch execution."""
+    contract = extract_platform_tool_contract(context)
+    mode = str(contract.get("execution_mode") or "").strip().lower()
+    return bool(
+        contract.get("single_batch")
+        or contract.get("tool_contract_single_batch")
+        or contract.get("single_batch_execution")
+        or mode in {"single_batch", "single-batch"}
+    )
+
+
+def platform_tool_contract_bypasses_read_write_barrier(context: list[dict]) -> bool:
+    """Return True when a contract explicitly allows mixed read/write batches."""
+    contract = extract_platform_tool_contract(context)
+    return bool(
+        contract.get("allow_mixed_read_write_batch")
+        or contract.get("bypass_read_write_barrier")
+        or contract.get("external_batch_rules")
+    )
+
+
+def platform_tool_contract_disables_phase_manager(context: list[dict]) -> bool:
+    """Return True when an external contract owns phase progression for this batch."""
+    contract = extract_platform_tool_contract(context)
+    return bool(contract.get("disable_phase_manager") or contract.get("external_batch_rules"))
 
 
 def _outer_explicit_delivery_mode_marker(content: str) -> str | None:
@@ -204,29 +361,29 @@ def build_single_batch_task_contract_hint(
         return "", {}
     if any(marker in latest_user for marker in _SUPER_READONLY_STAGE_MARKERS):
         return "", {}
+    platform_tool_contract = extract_platform_tool_contract(context)
 
     target_file_tokens = [
         token.strip()
         for token in re.findall(
-            r"\b[\w./\\-]+\.(?:py|md|txt|json|ya?ml|js|ts|tsx|jsx|css|html)\b",
-            latest_user,
-            flags=re.IGNORECASE,
+            r"\b[\w./\\-]+\.(?:" + FILE_TOKEN_EXTENSION_PATTERN + r")\b", latest_user, flags=re.IGNORECASE
         )
         if token.strip()
     ]
     dedup_target_files: list[str] = []
     seen_targets: set[str] = set()
-    for token in target_file_tokens:
+    for token in [*target_file_tokens, *extract_platform_tool_contract_target_files(context)]:
         key = token.lower()
         if key in seen_targets:
             continue
         seen_targets.add(key)
         dedup_target_files.append(token)
 
-    # BUG-04 fix: classify intent on the *real* task instruction only.
-    # Benchmark boilerplate contains mutation-adjacent English tokens that
-    # trigger false-positive DEVOPS/STRONG_MUTATION classification.
-    _task_instruction = _strip_benchmark_boilerplate(latest_user)
+    # Classify intent on the real task instruction when the platform contract
+    # supplies one; tool-contract metadata must not pollute mutation detection.
+    _task_instruction = str(
+        platform_tool_contract.get("task_instruction") or platform_tool_contract.get("instruction") or latest_user
+    ).strip()
     _requires_write = requires_mutation_intent(_task_instruction)
     _requires_verify = requires_verification_intent(_task_instruction)
 
@@ -256,6 +413,15 @@ def build_single_batch_task_contract_hint(
     required_tools_from_contract: list[str] = []
     required_tools_present: list[str] = []
     required_tools_missing: list[str] = []
+    for normalized in _normalize_tool_list(platform_tool_contract.get("required_tools")):
+        if normalized not in required_tools_from_contract:
+            required_tools_from_contract.append(normalized)
+        mapped = available_tools_map.get(normalized)
+        if mapped:
+            if mapped not in required_tools_present:
+                required_tools_present.append(mapped)
+        elif normalized not in required_tools_missing:
+            required_tools_missing.append(normalized)
     required_tools_match = re.search(
         r"required\s+tools\s*\(at\s+least\s+once\)\s*:\s*([^\n\r]+)",
         latest_user,
@@ -279,6 +445,13 @@ def build_single_batch_task_contract_hint(
 
     # --- 解析必需工具组 ---
     required_any_groups_from_contract: list[list[str]] = []
+    required_any_groups_from_contract.extend(
+        _normalize_tool_groups(
+            platform_tool_contract.get("required_tool_groups")
+            or platform_tool_contract.get("required_any_groups")
+            or platform_tool_contract.get("ordered_tool_groups")
+        )
+    )
     required_any_groups_match = re.search(
         r"required\s+tool\s+groups\s*:\s*([^\n\r]+)",
         latest_user,
@@ -333,6 +506,11 @@ def build_single_batch_task_contract_hint(
 
     # --- 解析最小调用次数 ---
     min_calls_required = 0
+    with contextlib.suppress(TypeError, ValueError):
+        min_calls_required = max(
+            min_calls_required,
+            int(platform_tool_contract.get("min_tool_calls") or platform_tool_contract.get("minimum_tool_calls") or 0),
+        )
     min_calls_match = re.search(
         r"tool\s+call\s+count\s*must\s*be\s*>=\s*(\d+)",
         latest_user,
@@ -369,34 +547,34 @@ def build_single_batch_task_contract_hint(
     ]
     if required_tools_from_contract:
         lines.append(
-            "Benchmark-required tools are mandatory in this single batch: "
+            "Contract-required tools are mandatory in this single batch: "
             + ", ".join(required_tools_from_contract)
             + "."
         )
-        lines.append("Do not substitute optional read tools for benchmark-required tools.")
+        lines.append("Do not substitute optional read tools for contract-required tools.")
     for missing_tool in required_tools_missing:
         equivalents = [
             candidate for candidate in REQUIRED_TOOL_EQUIVALENTS.get(missing_tool, ()) if candidate in available_tools
         ]
         if equivalents:
             lines.append(
-                f"Required benchmark tool `{missing_tool}` is not exposed in this profile; satisfy it via equivalent tools in this batch: "
+                f"Required contract tool `{missing_tool}` is not exposed in this profile; satisfy it via equivalent tools in this batch: "
                 + ", ".join(equivalents)
                 + "."
             )
     if required_any_groups_from_contract:
         rendered_contract_groups = " -> ".join(f"[{', '.join(group)}]" for group in required_any_groups_from_contract)
         lines.append(
-            "Benchmark-required tool groups must all be satisfied in this single batch: "
+            "Contract-required tool groups must all be satisfied in this single batch: "
             + rendered_contract_groups
             + "."
         )
         if required_any_groups_resolved:
             rendered_resolved_groups = " -> ".join(f"[{', '.join(group)}]" for group in required_any_groups_resolved)
             lines.append("Use available tools to satisfy each group in order: " + rendered_resolved_groups + ".")
-        lines.append("A batch that only satisfies the first group is invalid for this benchmark case.")
+        lines.append("A batch that only satisfies the first group is invalid for this contract.")
     if min_calls_required > 0:
-        lines.append(f"Benchmark minimum tool-call count for this batch: >= {min_calls_required}.")
+        lines.append(f"Contract minimum tool-call count for this batch: >= {min_calls_required}.")
         if min_calls_required > 1:
             lines.append("A single read-only tool call is invalid; include all required calls before final text.")
     if _requires_write:
@@ -416,7 +594,7 @@ def build_single_batch_task_contract_hint(
             # "MULTI-TURN WORKFLOW: first turn read_file" paragraph.
             # That line told the model it may defer writes to a later turn,
             # directly contradicting the HARD GATE "no write = rejected" rule
-            # that immediately precedes it.  In single-batch benchmark mode
+            # that immediately precedes it.  In single-batch contract mode
             # there is no later turn, so the paragraph caused silent failures.
             lines.append(
                 "INVALID completion: plain-text code dump without any tool call (rejected as inline patch escape)."

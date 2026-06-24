@@ -24,7 +24,7 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
-from polaris.cells.roles.adapters.internal.qa_adapter import _extract_workspace_quality_summary
+from polaris.cells.roles.adapters.public import extract_workspace_quality_summary
 from polaris.kernelone.storage import resolve_logical_path
 
 
@@ -88,7 +88,7 @@ class TestTextShapingHelpers:
         compact = OrchestrationStageExecutor._compact_workspace_quality_evidence_for_qa(
             json.dumps(payload, ensure_ascii=False)
         )
-        summary = _extract_workspace_quality_summary(compact)
+        summary = extract_workspace_quality_summary(compact)
 
         assert summary is not None
         assert summary["passed"] is False
@@ -196,6 +196,708 @@ class TestWorkspaceQualityRepairEvidence:
         )
         assert "repair_hash:file=src/simulation.ts;before=aaaaaaaaaaaaaaaa;after=bbbbbbbbbbbbbbbb" in evidence
         assert any("export type GardenConfig" in item for item in evidence)
+
+    def test_applies_javascript_esm_commonjs_entrypoint_repair(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "dream-note-alchemy-furnace",
+                    "type": "module",
+                    "main": "src/index.js",
+                    "scripts": {"start": "node src/index.js"},
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "models" / "Note.js").write_text(
+            "export class Note {}\nexport default Note;\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.js").write_text(
+            '"use strict";\n'
+            'const Note = require("./models/Note");\n'
+            "function main() { return new Note(); }\n"
+            "if (require.main === module) { main(); }\n"
+            "module.exports = { main, Note };\n",
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-esm-cjs",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/index.js:2\n"
+                "ReferenceError: require is not defined in ES module scope. "
+                'package.json contains "type": "module".'
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in summary["source_tools"]
+        assert 'import { Note } from "./models/Note.js";' in repaired
+        assert "module.exports" not in repaired
+        assert "require(" not in repaired
+
+    def test_applies_javascript_esm_commonjs_default_imported_module_repair(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "package.json").write_text(
+            json.dumps({"type": "module", "main": "src/index.js", "scripts": {"start": "node src/index.js"}}),
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.js").write_text(
+            'import AlchemyEngine from "./engine/AlchemyEngine.js";\n'
+            'import { buildDefaultEngine } from "./engine/AlchemyEngine.js";\n'
+            "export function main() {\n"
+            "  return new AlchemyEngine(buildDefaultEngine());\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "models" / "Note.js").write_text(
+            "export class Note {}\nexport default Note;\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            '"use strict";\n\n'
+            'const Note = require("../models/Note");\n\n'
+            "class AlchemyEngine {\n"
+            "  constructor() {\n"
+            "    this.notes = [new Note()];\n"
+            "  }\n"
+            "}\n\n"
+            "function buildDefaultEngine() {\n"
+            "  return { notes: [] };\n"
+            "}\n\n"
+            "module.exports = AlchemyEngine;\n"
+            "module.exports.buildDefaultEngine = buildDefaultEngine;\n"
+            'module.exports.VERSION = "1.0.0";\n',
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-default-import-cjs",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/index.js:1\n"
+                "SyntaxError: The requested module './engine/AlchemyEngine.js' "
+                "does not provide an export named 'default'"
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in summary["source_tools"]
+        assert 'import { Note } from "../models/Note.js";' in repaired
+        assert "export default AlchemyEngine;" in repaired
+        assert "export { buildDefaultEngine };" in repaired
+        assert 'export const VERSION = "1.0.0";' in repaired
+        assert "module.exports" not in repaired
+
+    def test_applies_javascript_esm_commonjs_repair_for_namespace_require_binding(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "package.json").write_text(
+            json.dumps({"type": "module", "main": "src/index.js", "scripts": {"start": "node src/index.js"}}),
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            "export class AlchemyEngine {}\nexport class Recipe {}\nexport class Note {}\nexport class DreamCard {}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.js").write_text(
+            'const AlchemyEngine = require("./engine/AlchemyEngine");\n'
+            "const { Note, DreamCard, Recipe } = AlchemyEngine;\n"
+            "function buildDemoEngine() {\n"
+            "  const engine = new AlchemyEngine();\n"
+            "  return { engine, Note, DreamCard, Recipe };\n"
+            "}\n"
+            "module.exports = { buildDemoEngine };\n",
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-cjs-namespace-binding",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/index.js:1\n"
+                "ReferenceError: require is not defined in ES module scope\n"
+                'package.json contains "type": "module"'
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in summary["source_tools"]
+        assert 'import * as AlchemyEngine from "./engine/AlchemyEngine.js";' in repaired
+        assert "const engine = new AlchemyEngine.AlchemyEngine();" in repaired
+        assert "const { Note, DreamCard, Recipe } = AlchemyEngine;" in repaired
+        assert "module.exports" not in repaired
+
+    def test_applies_javascript_missing_method_runtime_repair(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "index.js").write_text(
+            'import { AlchemyEngine } from "./engine/AlchemyEngine.js";\n'
+            "function main() {\n"
+            "  const engine = new AlchemyEngine();\n"
+            "  const notes = [{ id: 'n1' }];\n"
+            "  engine.addRecipe({ name: 'moon' });\n"
+            "  const { dreamCards, rituals } = engine.transmute(notes);\n"
+            "  return { dreamCards, rituals };\n"
+            "}\n"
+            "main();\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            "export class AlchemyEngine {\n"
+            "  constructor({ recipes = [] } = {}) {\n"
+            "    this.recipes = recipes;\n"
+            "  }\n\n"
+            "  refine(notes) {\n"
+            "    return { dreamCards: notes, unconsumed: [] };\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-missing-method",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/index.js:4\n"
+                "  engine.addRecipe({ name: 'moon' });\n"
+                "         ^\n\n"
+                "TypeError: engine.addRecipe is not a function"
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_missing_method_runtime_repair" in summary["source_tools"]
+        assert "addRecipe(recipe)" in repaired
+        assert "transmute(notes)" in repaired
+        assert "dreamCards: result.dreamCards ?? result.cards ?? []" in repaired
+        assert "rituals: result.rituals ?? []" in repaired
+
+    def test_applies_javascript_missing_method_runtime_repair_aliases_run_to_transmute_result_shape(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "index.js").write_text(
+            'import { AlchemyEngine } from "./engine/AlchemyEngine.js";\n'
+            "function main() {\n"
+            "  const engine = new AlchemyEngine();\n"
+            "  const notes = [{ id: 'n1' }];\n"
+            "  const result = engine.run(notes);\n"
+            "  return result.cards.length + result.untouched.length;\n"
+            "}\n"
+            "main();\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            "export class AlchemyEngine {\n"
+            "  transmute(notes) {\n"
+            "    return { dreamCards: notes, embers: [] };\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-runtime-run-method",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/index.js:5\n"
+                "  const result = engine.run(notes);\n"
+                "                        ^\n\n"
+                "TypeError: engine.run is not a function"
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_missing_method_runtime_repair" in summary["source_tools"]
+        assert "run(notes)" in repaired
+        assert "const result = this.transmute(notes);" in repaired
+        assert "cards: result.cards ?? result.dreamCards ?? []" in repaired
+        assert "untouched: result.untouched ?? result.unmatched ?? result.unconsumed ?? result.embers ?? []" in repaired
+
+    def test_applies_javascript_missing_method_runtime_repair_for_imported_loop_variable_class(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "src" / "index.js").write_text(
+            'import { Recipe } from "./models/Recipe.js";\n'
+            'import { AlchemyEngine } from "./engine/AlchemyEngine.js";\n'
+            "const recipes = [new Recipe({ name: 'moon', keywords: ['moon'], absurdityBoost: 4, ritual: 'hum' })];\n"
+            "new AlchemyEngine({ recipes }).transmute([{ content: 'moon', matchesAllTags: () => true, intensity: 1 }]);\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            'import { Recipe } from "../models/Recipe.js";\n'
+            "export class AlchemyEngine {\n"
+            "  constructor({ recipes = [] } = {}) { this.recipes = recipes; }\n"
+            "  pickRecipeFor(notes) {\n"
+            "    for (const recipe of this.recipes) {\n"
+            "      if (recipe.matchesAll(notes)) return recipe;\n"
+            "    }\n"
+            "    return null;\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "models" / "Recipe.js").write_text(
+            "export class Recipe {\n"
+            "  constructor({ name, requiredTags = [] } = {}) {\n"
+            "    this.name = name;\n"
+            "    this.requiredTags = requiredTags;\n"
+            "  }\n"
+            "  isSatisfiedBy(notes) { return Array.isArray(notes); }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-runtime-loop-var-method",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/engine/AlchemyEngine.js:6\n"
+                "      if (recipe.matchesAll(notes)) return recipe;\n"
+                "                 ^\n\n"
+                "TypeError: recipe.matchesAll is not a function"
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "models" / "Recipe.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_missing_method_runtime_repair" in summary["source_tools"]
+        assert "matchesAll(notes)" in repaired
+        assert "return this.isSatisfiedBy(notes);" in repaired
+        assert "this.keywords = Array.isArray(keywords) ? keywords.map(String) : [];" in repaired
+        assert "this.absurdityBoost = Number.isFinite(absurdityBoost) ? absurdityBoost : 0;" in repaired
+        assert "this.ritual = ritual;" in repaired
+
+    def test_applies_javascript_missing_method_runtime_repair_for_constructor_object_contracts(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "models" / "DreamCard.js").write_text(
+            "export class DreamCard {\n"
+            "  constructor({ id, title, narrative, sourceNoteIds = [] } = {}) {\n"
+            '    if (!id) throw new Error("DreamCard requires an id");\n'
+            '    if (!title) throw new Error("DreamCard requires a title");\n'
+            '    if (!narrative) throw new Error("DreamCard requires a narrative");\n'
+            "    this.id = id;\n"
+            "    this.title = title;\n"
+            "    this.narrative = narrative;\n"
+            "    this.sourceNoteIds = sourceNoteIds;\n"
+            "  }\n"
+            "  toJSON() {\n"
+            "    return {\n"
+            "      id: this.id,\n"
+            "      title: this.title,\n"
+            "      narrative: this.narrative,\n"
+            "    };\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "smoke.test.js").write_text(
+            'import { DreamCard } from "../src/models/DreamCard.js";\n'
+            "new DreamCard({\n"
+            '  title: "Library of Forgotten Names",\n'
+            '  body: "Each book whispered a name I almost remembered.",\n'
+            '  tags: ["memory", "library"],\n'
+            "  createdAt: new Date(),\n"
+            "});\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            'import * as DreamCard from "../models/DreamCard.js";\n'
+            "DreamCard.composeTitle(0.42);\n"
+            "new DreamCard.DreamCard({ title: 'x', fragments: ['a'], absurdity: 4, ritual: 'hum' });\n",
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-constructor-contract",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm test): "
+                "Error: DreamCard requires an id\n"
+                f"    at new DreamCard (file://{tmp_path}/src/models/DreamCard.js:3:20)"
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "models" / "DreamCard.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_missing_method_runtime_repair" in summary["source_tools"]
+        assert "const normalizedId" in repaired
+        assert "const normalizedNarrative" in repaired
+        assert "this.id = normalizedId;" in repaired
+        assert "this.narrative = normalizedNarrative;" in repaired
+        assert "this.body =" in repaired
+        assert "this.tags = Array.isArray(tags) ? tags.map(String) : [];" in repaired
+        assert "createdAt: this.createdAt instanceof Date ? this.createdAt.toISOString() : this.createdAt" in repaired
+        assert "body: this.body" in repaired
+        assert "tags: this.tags" in repaired
+        assert "this.fragments = Array.isArray(fragments) ? fragments.map(String) : [];" in repaired
+        assert "this.absurdity = Number.isFinite(absurdity) ? absurdity : 0;" in repaired
+        assert "this.ritual = ritual;" in repaired
+        assert "export function composeTitle" in repaired
+
+    def test_applies_javascript_missing_method_runtime_collection_and_refine_alias_repair(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "index.js").write_text(
+            'import { AlchemyEngine } from "./engine/AlchemyEngine.js";\n'
+            "function main() {\n"
+            "  const engine = new AlchemyEngine({ recipes: [] });\n"
+            "  const notes = [{ id: 'n1' }];\n"
+            "  engine.listRecipes().length;\n"
+            "  const { dreamCards, unmatched } = engine.transmute(notes);\n"
+            "  return { dreamCards, unmatched };\n"
+            "}\n"
+            "main();\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            "export class AlchemyEngine {\n"
+            "  constructor({ recipes = [] } = {}) {\n"
+            "    this.recipes = recipes;\n"
+            "  }\n\n"
+            "  registerRecipe(recipe) {\n"
+            "    this.recipes.push(recipe);\n"
+            "    return recipe;\n"
+            "  }\n\n"
+            "  refine(notes) {\n"
+            "    return { cards: notes, unmatched: [] };\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-missing-method-list",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/index.js:5\n"
+                "  engine.listRecipes().length;\n"
+                "         ^\n\n"
+                "TypeError: engine.listRecipes is not a function"
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_missing_method_runtime_repair" in summary["source_tools"]
+        assert "listRecipes()" in repaired
+        assert "return Array.isArray(this.recipes) ? [...this.recipes] : [];" in repaired
+        assert "transmute(notes)" in repaired
+        assert "dreamCards: result.dreamCards ?? result.cards ?? []" in repaired
+        assert "unmatched: result.unmatched ?? result.unconsumed ?? []" in repaired
+
+    def test_applies_javascript_typescript_annotation_repair(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "index.js").write_text(
+            "export function refineDreamNotes(..._args: unknown[]): any {\n  return undefined;\n}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "test_basic.js").write_text(
+            'import { refineDreamNotes } from "../src/index.js";\n'
+            "const result = refineDreamNotes({ notes: ['有效便签'] });\n"
+            "assert.equal(result.count, 1);\n"
+            "assert.equal(result.distilled[0], '[提炼] 有效便签');\n",
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-ts-annotation",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/index.js:1\n"
+                "export function refineDreamNotes(..._args: unknown[]): any {\n"
+                "                                         ^\n\n"
+                "SyntaxError: Unexpected token ':'"
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_typescript_annotation_repair" in summary["source_tools"]
+        assert ": unknown" not in repaired
+        assert "): any" not in repaired
+        assert "return undefined" not in repaired
+
+    def test_applies_javascript_missing_export_repair(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "index.js").write_text("console.log('dream note app');\n", encoding="utf-8")
+        (tmp_path / "tests" / "test_basic.js").write_text(
+            'import { run } from "../src/index.js";\n'
+            "const output = run();\n"
+            "assert.equal(output.ok, true);\n"
+            "assert.match(output.entrypoint, /src[\\\\/]+index\\.js$/);\n",
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-missing-export",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: unresolved import symbol 'run' "
+                "from '../src/index.js' in tests/test_basic.js"
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_missing_export_repair" in summary["source_tools"]
+        assert "export function run(...args)" in repaired
+        assert "return { ok: true, entrypoint };" in repaired
+
+    def test_applies_javascript_missing_export_repair_for_iterable_method_contract(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            "export class AlchemyEngine {\n  defaultRecipes() {\n    return [{ name: 'starter' }];\n  }\n}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "alchemyEngine.test.js").write_text(
+            'import { AlchemyEngine, defaultRecipes } from "../src/engine/AlchemyEngine.js";\n'
+            "const engine = new AlchemyEngine();\n"
+            "for (const recipe of defaultRecipes) engine.addRecipe(recipe);\n",
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-iterable-export",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: unresolved import symbol 'defaultRecipes' "
+                "from '../src/engine/AlchemyEngine.js' in tests/alchemyEngine.test.js",
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_missing_export_repair" in summary["source_tools"]
+        assert "export const defaultRecipes = new AlchemyEngine().defaultRecipes();" in repaired
+        assert "export function defaultRecipes" not in repaired
+
+    def test_applies_javascript_export_contract_repair_for_wrong_existing_function(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "index.js").write_text(
+            "export function refineDreamNotes(cards) {\n  if (!Array.isArray(cards)) return [];\n  return cards;\n}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "smoke.test.js").write_text(
+            'import assert from "node:assert/strict";\n'
+            'import { refineDreamNotes } from "../src/index.js";\n'
+            "const result = refineDreamNotes('a glowing key', 'silent bell', 'paper moon');\n"
+            "assert.equal(result.count, 3);\n"
+            "assert.equal(result.summary, 'a glowing key | silent bell | paper moon');\n",
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-export-contract",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm test): "
+                f"file://{tmp_path}/tests/smoke.test.js:5\n"
+                "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n"
+                "\n"
+                "undefined !== 3"
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_missing_export_repair" in summary["source_tools"]
+        assert "export function refineDreamNotes(...args)" in repaired
+        assert 'summary: values.join(" | ")' in repaired
+
+    def test_applies_javascript_export_contract_repair_for_text_and_semver(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "package.json").write_text('{"version":"0.2.0"}', encoding="utf-8")
+        (tmp_path / "src" / "index.js").write_text(
+            "function refineDreamNotes(notes) {\n"
+            "  return [];\n"
+            "}\n\n"
+            "export function getVersion(...args) {\n"
+            "  return { ok: true };\n"
+            "}\n\n"
+            "export { refineDreamNotes };\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "smoke.test.js").write_text(
+            'import assert from "node:assert/strict";\n'
+            'import { refineDreamNotes, getVersion, VERSION } from "../src/index.js";\n'
+            "const result = refineDreamNotes('  first dream  \\n\\n second dream ');\n"
+            'assert.equal(result, "[dream] first dream\\n[dream] second dream");\n'
+            "const v = getVersion();\n"
+            "assert.equal(typeof v, 'string');\n"
+            "assert.ok(/^\\d+\\.\\d+\\.\\d+/.test(v));\n"
+            "assert.equal(typeof VERSION, 'string');\n"
+            "assert.equal(VERSION, getVersion());\n",
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-text-contract",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm test): "
+                f"file://{tmp_path}/tests/smoke.test.js:4\n"
+                "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal"
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_missing_export_repair" in summary["source_tools"]
+        assert "function refineDreamNotes(...args)" in repaired
+        assert '"[dream] " + line' in repaired
+        assert "return VERSION;" in repaired
+        assert 'export const VERSION = "0.2.0";' in repaired
+
+    def test_applies_javascript_export_contract_repair_for_app_metadata(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "dream-note-alchemy-furnace",
+                    "version": "0.1.0",
+                    "description": "Dream note alchemy CLI",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.js").write_text(
+            "export function getAppInfo() {\n  return { ok: true };\n}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "version.test.js").write_text(
+            'import assert from "node:assert/strict";\n'
+            'import { APP_NAME, APP_VERSION, APP_DESCRIPTION, getAppInfo } from "../src/index.js";\n'
+            "assert.equal(typeof APP_NAME, 'string');\n"
+            "assert.ok(APP_NAME.length > 0);\n"
+            "assert.match(APP_VERSION, /^\\d+\\.\\d+\\.\\d+/);\n"
+            "assert.equal(typeof APP_DESCRIPTION, 'string');\n"
+            "const info = getAppInfo();\n"
+            "assert.equal(info.name, APP_NAME);\n"
+            "assert.equal(info.version, APP_VERSION);\n"
+            "assert.equal(info.description, APP_DESCRIPTION);\n",
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-app-metadata-contract",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm test): "
+                f"file://{tmp_path}/tests/version.test.js:8\n"
+                "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal",
+                "Artifact quality scan failed: unresolved import symbol 'APP_DESCRIPTION' "
+                "from '../src/index.js' in tests/version.test.js (sibling module does not define it)",
+                "Artifact quality scan failed: unresolved import symbol 'APP_NAME' "
+                "from '../src/index.js' in tests/version.test.js (sibling module does not define it)",
+                "Artifact quality scan failed: unresolved import symbol 'APP_VERSION' "
+                "from '../src/index.js' in tests/version.test.js (sibling module does not define it)",
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_missing_export_repair" in summary["source_tools"]
+        assert 'export const APP_NAME = "dream-note-alchemy-furnace";' in repaired
+        assert 'export const APP_VERSION = "0.1.0";' in repaired
+        assert 'export const APP_DESCRIPTION = "Dream note alchemy CLI";' in repaired
+        assert "name: APP_NAME" in repaired
+        assert "version: APP_VERSION" in repaired
+        assert "description: APP_DESCRIPTION" in repaired
+
+    def test_applies_javascript_export_contract_repair_for_asserted_literal_and_note_shape(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "dream-note-alchemy-furnace",
+                    "version": "0.1.0",
+                    "description": "Dream note alchemy CLI",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.js").write_text(
+            "export function main() {\n  return true;\n}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "test_index.js").write_text(
+            'import assert from "node:assert/strict";\n'
+            'import { ALCHEMY_FURNACE, refineDreamNote } from "../src/index.js";\n'
+            'assert.equal(typeof ALCHEMY_FURNACE, "string");\n'
+            'assert.equal(ALCHEMY_FURNACE, "dream-note-alchemy-furnace");\n'
+            'const result = refineDreamNote("  flying over paper lanterns  ");\n'
+            "assert.deepEqual(result, {\n"
+            '  source: "  flying over paper lanterns  ",\n'
+            '  refined: "flying over paper lanterns",\n'
+            '  tag: "dream-fragment",\n'
+            "});\n"
+            'const empty = refineDreamNote("   ");\n'
+            'assert.equal(empty.source, "   ");\n'
+            'assert.equal(empty.refined, "");\n'
+            'assert.equal(empty.tag, "empty");\n',
+            encoding="utf-8",
+        )
+
+        results, summary = executor._apply_workspace_quality_repairs(
+            run_id="factory-js-note-contract",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: unresolved import symbol 'ALCHEMY_FURNACE' "
+                "from '../src/index.js' in tests/test_index.js (sibling module does not define it)",
+                "Artifact quality scan failed: unresolved import symbol 'refineDreamNote' "
+                "from '../src/index.js' in tests/test_index.js (sibling module does not define it)",
+            ],
+        )
+
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert results
+        assert "deterministic_javascript_missing_export_repair" in summary["source_tools"]
+        assert 'export const ALCHEMY_FURNACE = "dream-note-alchemy-furnace";' in repaired
+        assert "export function refineDreamNote(...args)" in repaired
+        assert 'const source = typeof args[0] === "string" ? args[0] : "";' in repaired
+        assert "const refined = source.trim();" in repaired
+        assert 'tag: refined.length > 0 ? "dream-fragment" : "empty"' in repaired
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +1091,53 @@ class TestPackageJsonParsing:
         )
 
         assert executor._workspace_quality_commands({}) == [["npm", "test"], ["npm", "run", "start"]]
+
+    def test_workspace_quality_commands_python_project_include_real_gates(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "__init__.py").write_text("", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_smoke.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+        (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
+
+        commands = executor._workspace_quality_commands({})
+
+        assert commands == [
+            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
+            [sys.executable, "-m", "compileall", "-q", "src", "tests", "main.py"],
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
+            [sys.executable, "main.py"],
+        ]
+
+    def test_declared_delivery_targets_extract_explicit_file_tokens_from_task_text(self) -> None:
+        targets = OrchestrationStageExecutor._collect_declared_delivery_targets(
+            [
+                {
+                    "target_files": ["src/__init__.py"],
+                    "steps": ["创建 requirements.txt 并运行 python -m pip install -r requirements.txt"],
+                    "acceptance": ["README.md 说明如何执行 main.py"],
+                }
+            ]
+        )
+
+        assert "requirements.txt" in targets
+        assert "README.md" in targets
+        assert "main.py" in targets
+
+    def test_declared_delivery_targets_collapse_file_as_directory_tokens(self) -> None:
+        targets = OrchestrationStageExecutor._collect_declared_delivery_targets(
+            [
+                {
+                    "target_files": ["src/models/pet.go/index.ts"],
+                    "acceptance": ["verify src/engine/engine.go/index.ts exists"],
+                }
+            ]
+        )
+
+        assert "src/models/pet.go" in targets
+        assert "src/engine/engine.go" in targets
+        assert "src/models/pet.go/index.ts" not in targets
+        assert "src/engine/engine.go/index.ts" not in targets
 
     def test_workspace_quality_commands_configured_override(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -2085,11 +2834,14 @@ class TestDirectorDispatchLoop:
                 return True, []
 
         (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
         (tmp_path / "package.json").write_text(
             '{"scripts":{"build":"tsc"},"devDependencies":{"typescript":"latest"}}',
             encoding="utf-8",
         )
         (tmp_path / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
+        (tmp_path / "src" / "engine.ts").write_text("export const engine = true;\n", encoding="utf-8")
+        (tmp_path / "tests" / "verify.test.ts").write_text("import '../src/index';\n", encoding="utf-8")
 
         executor = _SingleBindingQualityHandoffExecutor(tmp_path)
         executor._write_json_artifact(
@@ -2301,7 +3053,10 @@ class TestDirectorDispatchLoop:
         assert "director.binding_fanout_all_failed" not in codes
 
     @pytest.mark.asyncio
-    async def test_idle_unresolved_artifacts_enter_quality_gate_handoff(self, tmp_path: Path) -> None:
+    async def test_idle_claimable_unresolved_artifacts_do_not_enter_quality_gate_handoff(
+        self,
+        tmp_path: Path,
+    ) -> None:
         class _IdleUnresolvedHandoffExecutor(OrchestrationStageExecutor):
             def __init__(self, workspace: Path) -> None:
                 super().__init__(workspace)
@@ -2467,17 +3222,16 @@ class TestDirectorDispatchLoop:
             {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2},
         )
 
-        assert result.status == "success"
+        assert result.status == "failed"
         payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
-        assert payload["quality_gate_handoff"] is True
-        assert payload["failure_stage"] == ""
-        assert payload["error_code"] is None
+        assert payload["quality_gate_handoff"] is False
+        assert payload["failure_stage"] == "director_dispatch"
+        assert payload["error_code"] == "director.binding_fanout_all_failed"
         assert payload["taskboard"]["converged"] is False
         codes = [item.get("code") for item in payload["signals"]]
-        assert "director.materialization_quality_handoff" in codes
-        assert "director.taskboard_unresolved_quality_handoff" in codes
-        assert "director.taskboard_not_converged" not in codes
-        assert "director.binding_fanout_all_failed" not in codes
+        assert "director.materialization_quality_handoff" not in codes
+        assert "director.taskboard_unresolved_quality_handoff" not in codes
+        assert "director.binding_fanout_all_failed" in codes
 
     @pytest.mark.asyncio
     async def test_fails_when_taskboard_not_converged_after_max_rounds(self, tmp_path: Path) -> None:

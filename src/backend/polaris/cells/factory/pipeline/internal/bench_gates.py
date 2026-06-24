@@ -29,6 +29,15 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.control_plane.verifier_execution.public import (
+    RunVerifierPolicyCommandV1,
+    run_verifier_policy,
+)
+from polaris.cells.control_plane.verifier_policy.public import (
+    ReadVerifierPolicyQueryV1,
+    read_verifier_policy,
+)
+
 from .run_ledger import summarize_run_ledger_projection
 
 _REQUIRED_LLM_ROLES = ("pm", "chief_engineer", "qa", "director")
@@ -892,6 +901,42 @@ def _run_language_build_gate(
     return False, "no language build command was discovered", []
 
 
+def _run_platform_verifiers(workspace: Path, *, timeout_s: int) -> dict[str, Any]:
+    policy = read_verifier_policy(ReadVerifierPolicyQueryV1(workspace=str(workspace))).policy
+    result = run_verifier_policy(
+        RunVerifierPolicyCommandV1(
+            workspace=str(workspace),
+            policy=policy,
+            timeout_seconds=timeout_s,
+        )
+    )
+    return result.gate_patch
+
+
+def _required_user_verifier_requirement(verifier_patch: dict[str, Any]) -> dict[str, Any] | None:
+    raw_verifiers = verifier_patch.get("user_verifiers")
+    if not isinstance(raw_verifiers, list):
+        return None
+    verifiers = [item for item in raw_verifiers if isinstance(item, dict)]
+    required = [item for item in verifiers if bool(item.get("required"))]
+    if not required:
+        return None
+    failed = [item for item in required if not bool(item.get("ok") or item.get("passed"))]
+    if failed:
+        names = [
+            str(item.get("name") or item.get("id") or item.get("script") or "custom verifier")
+            for item in failed[:5]
+        ]
+        return {
+            "ok": False,
+            "detail": "required user verifier failed: " + ", ".join(names),
+        }
+    return {
+        "ok": True,
+        "detail": f"{len(required)} required user verifier(s) passed",
+    }
+
+
 def _smoke_go_cli(workspace: Path, code_files: list[str], *, timeout_s: int) -> dict[str, Any]:
     go_files = _files_with_suffix(code_files, (".go",))
     go = shutil.which("go")
@@ -1565,6 +1610,15 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
         "entrypoint": entrypoint,
         "summary": "real run gate passed" if ok else "real run gate failed: " + ", ".join(failing),
     }
+    verifier_patch = _run_platform_verifiers(workspace, timeout_s=timeout_s)
+    if verifier_patch:
+        verifier_requirement = _required_user_verifier_requirement(verifier_patch)
+        if verifier_requirement is not None:
+            requirements["user_verifiers"] = verifier_requirement
+            if not bool(verifier_requirement.get("ok")):
+                result["ok"] = False
+                result["summary"] = "real run gate failed: user_verifiers"
+        result.update(verifier_patch)
     if scaffold_only:
         result["missing_source_targets"] = {
             "code_file_count": len(code_files),

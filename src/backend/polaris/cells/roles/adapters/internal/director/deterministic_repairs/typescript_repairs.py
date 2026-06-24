@@ -399,6 +399,8 @@ def _apply_deterministic_typescript_missing_export_repair(
         )
         if exporter_path is None:
             continue
+        if exporter_path.suffix.lower() not in {".ts", ".tsx"}:
+            continue
 
         rel_exporter = exporter_path.relative_to(workspace_path).as_posix()
         repair_key = (rel_exporter, symbol)

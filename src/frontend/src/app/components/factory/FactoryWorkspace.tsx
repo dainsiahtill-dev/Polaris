@@ -28,6 +28,7 @@ import { cn } from '@/app/components/ui/utils';
 import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityPanel';
 import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
 import type { FileEditEvent } from '@/app/hooks/useRuntime';
+import type { ControlPlaneProjection } from '@/services/controlPlane';
 import type { FactoryAuditEvent, FactoryRunArtifact, FactoryRunStatus } from '@/hooks/useFactory';
 import type { UseFactoryBenchResult } from '@/hooks/useFactoryBench';
 import type { LogEntry } from '@/types/log';
@@ -57,17 +58,27 @@ interface FactoryWorkspaceProps {
   onRetryCheckpoint?: () => void;
   isLoading?: boolean;
   bench?: UseFactoryBenchResult;
+  internalBenchEnabled?: boolean;
   websocketLive?: boolean;
   websocketReconnecting?: boolean;
   websocketAttemptCount?: number;
+  controlPlaneProjection?: ControlPlaneProjection | null;
 }
 
 type FactoryPhase = 'idle' | 'planning' | 'executing' | 'verifying' | 'completed' | 'failed' | 'cancelled';
 type FactoryRoleLayer = 'pm' | 'chief_engineer' | 'director';
 type RunRoleStatus = FactoryRunStatus['roles'][string];
+type RunLedgerGuardedFactoryState = {
+  phase: FactoryPhase;
+  workspacePhase: string;
+  status: string;
+  progress: number;
+  detail: string;
+};
 const CANCELLED_RUN_STATUSES = new Set(['cancelled', 'canceled']);
 const FAILED_RUN_STATUSES = new Set(['failed', 'error', 'blocked', 'timeout']);
 const TERMINAL_RUN_STATUSES = new Set(['completed', ...CANCELLED_RUN_STATUSES, ...FAILED_RUN_STATUSES]);
+const RUN_LEDGER_GUARD_STATUSES = new Set(['ledger_pending', 'ledger_unavailable', 'ledger_failed']);
 
 interface RoleLayerView {
   id: FactoryRoleLayer;
@@ -194,6 +205,115 @@ function mapRunToWorkspacePhase(run?: FactoryRunStatus | null): string {
   if (phase === 'completed') return 'completed';
   if (phase === 'failed' || phase === 'cancelled') return 'error';
   return 'idle';
+}
+
+function hasCompletedRunClaim(run?: FactoryRunStatus | null): boolean {
+  const status = normalizeToken(run?.status);
+  const phase = normalizeToken(run?.phase);
+  return status === 'completed' || phase === 'completed';
+}
+
+function failedLedgerProjectDetail(projection: ControlPlaneProjection): string {
+  const failedProject = projection.projects.find((project) => !project.ok || project.failed_gate_count > 0);
+  return failedProject?.detail || projection.detail || 'Run Ledger gate failed';
+}
+
+function runLedgerGuardedFactoryState(
+  run: FactoryRunStatus | null | undefined,
+  projection: ControlPlaneProjection | null | undefined,
+): RunLedgerGuardedFactoryState {
+  const basePhase = mapRunToFactoryPhase(run);
+  const baseStatus = normalizeToken(run?.status) || 'idle';
+  const baseProgress = percent(Number(run?.progress || 0));
+
+  if (!hasCompletedRunClaim(run)) {
+    return {
+      phase: basePhase,
+      workspacePhase: mapRunToWorkspacePhase(run),
+      status: baseStatus,
+      progress: baseProgress,
+      detail: '',
+    };
+  }
+
+  if (!projection) {
+    return {
+      phase: 'verifying',
+      workspacePhase: 'verification',
+      status: 'ledger_pending',
+      progress: Math.min(baseProgress || 99, 99),
+      detail: 'Run Ledger projection is required before Factory completion',
+    };
+  }
+  if (!projection.available) {
+    return {
+      phase: 'failed',
+      workspacePhase: 'error',
+      status: 'ledger_unavailable',
+      progress: baseProgress,
+      detail: projection.detail || 'Run Ledger projection unavailable',
+    };
+  }
+  if (projection.total <= 0 && projection.projects.length === 0) {
+    return {
+      phase: 'verifying',
+      workspacePhase: 'verification',
+      status: 'ledger_pending',
+      progress: Math.min(baseProgress || 99, 99),
+      detail: projection.detail || 'Run Ledger projection has no projected projects yet',
+    };
+  }
+  if (!projection.ok || projection.failed > 0 || projection.projects.some((project) => !project.ok)) {
+    return {
+      phase: 'failed',
+      workspacePhase: 'error',
+      status: 'ledger_failed',
+      progress: baseProgress,
+      detail: failedLedgerProjectDetail(projection),
+    };
+  }
+
+  return {
+    phase: 'completed',
+    workspacePhase: 'completed',
+    status: baseStatus,
+    progress: baseProgress,
+    detail: projection.detail || `Run Ledger verified ${projection.projected}/${projection.total}`,
+  };
+}
+
+function hasRunLedgerGuard(state: RunLedgerGuardedFactoryState): boolean {
+  return RUN_LEDGER_GUARD_STATUSES.has(normalizeToken(state.status));
+}
+
+function guardRoleStatusForLedger(
+  role: RunRoleStatus | null,
+  roleName: string,
+  state: RunLedgerGuardedFactoryState,
+): RunRoleStatus | null {
+  if (!hasRunLedgerGuard(state)) return role;
+
+  return {
+    role: role?.role || roleName,
+    status: state.status,
+    detail: state.detail,
+    current_task: state.detail,
+    progress: Math.min(percent(Number(role?.progress ?? state.progress)), state.progress),
+  };
+}
+
+function guardRoleLayersForLedger(
+  layers: RoleLayerView[],
+  state: RunLedgerGuardedFactoryState,
+): RoleLayerView[] {
+  if (!hasRunLedgerGuard(state)) return layers;
+
+  return layers.map((layer) => ({
+    ...layer,
+    status: state.status,
+    progress: Math.min(layer.progress, state.progress),
+    detail: state.detail || layer.detail,
+  }));
 }
 
 function preferredRoleLayer(run?: FactoryRunStatus | null): FactoryRoleLayer {
@@ -362,6 +482,12 @@ function gateTone(gate: FactoryRunStatus['gates'][number]): string {
 
 function roleStatusTone(status: string): string {
   const token = normalizeToken(status);
+  if (token === 'ledger_pending') {
+    return 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200';
+  }
+  if (token === 'ledger_unavailable' || token === 'ledger_failed') {
+    return 'border-red-500/30 bg-red-500/10 text-red-200';
+  }
   if (['completed', 'ready', 'success', 'passed'].includes(token)) {
     return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
   }
@@ -379,6 +505,9 @@ function roleStatusTone(status: string): string {
 
 function roleStatusLabel(status: string): string {
   const token = normalizeToken(status);
+  if (token === 'ledger_pending') return '账本待验证';
+  if (token === 'ledger_unavailable') return '账本不可用';
+  if (token === 'ledger_failed') return '账本失败';
   if (['completed', 'complete', 'ready', 'success', 'passed'].includes(token)) return '已就绪';
   if (['running', 'active', 'in_progress'].includes(token)) return '运行中';
   if (['failed', 'error'].includes(token)) return '失败';
@@ -1136,14 +1265,17 @@ export function FactoryWorkspace({
   onRetryCheckpoint,
   isLoading = false,
   bench,
+  internalBenchEnabled = false,
   websocketLive,
   websocketReconnecting,
   websocketAttemptCount,
+  controlPlaneProjection,
 }: FactoryWorkspaceProps) {
-  const factoryPhase = mapRunToFactoryPhase(currentRun);
-  const workspacePhase = mapRunToWorkspacePhase(currentRun);
+  const guardedFactoryState = runLedgerGuardedFactoryState(currentRun, controlPlaneProjection);
+  const factoryPhase = guardedFactoryState.phase;
+  const workspacePhase = guardedFactoryState.workspacePhase;
   const phaseConfig = PHASE_CONFIG[factoryPhase];
-  const runStatus = normalizeToken(currentRun?.status);
+  const runStatus = guardedFactoryState.status;
   const isRunActive = runStatus === 'running' || runStatus === 'recovering';
   const isRunPaused = runStatus === 'paused';
   const canStart = !currentRun || TERMINAL_RUN_STATUSES.has(runStatus);
@@ -1192,18 +1324,38 @@ export function FactoryWorkspace({
     setActiveLayer(suggestedLayer);
   }, [suggestedLayer]);
 
+  const pmRoleStatus = guardRoleStatusForLedger(
+    getRunRole(currentRun?.roles, ['pm']),
+    'PM',
+    guardedFactoryState
+  );
+  const chiefEngineerRoleStatus = guardRoleStatusForLedger(
+    getRunRole(currentRun?.roles, ['chief_engineer', 'chiefengineer', 'architect']),
+    'Chief Engineer',
+    guardedFactoryState
+  );
+  const directorRoleStatus = guardRoleStatusForLedger(
+    getRunRole(currentRun?.roles, ['director']),
+    'Director',
+    guardedFactoryState
+  );
+
   const roleLayers = useMemo(
-    () => buildRoleLayers({
-      currentRun,
-      pmTasks: pmWorkflowTasks,
-      directorTasks: directorWorkflowTasks,
-      blueprintEvidenceCount: blueprintEvidence.length,
-      blueprintCoverage,
-    }),
-    [blueprintCoverage, blueprintEvidence.length, currentRun, directorWorkflowTasks, pmWorkflowTasks]
+    () => guardRoleLayersForLedger(
+      buildRoleLayers({
+        currentRun,
+        pmTasks: pmWorkflowTasks,
+        directorTasks: directorWorkflowTasks,
+        blueprintEvidenceCount: blueprintEvidence.length,
+        blueprintCoverage,
+      }),
+      guardedFactoryState
+    ),
+    [blueprintCoverage, blueprintEvidence.length, currentRun, directorWorkflowTasks, guardedFactoryState, pmWorkflowTasks]
   );
   const activeLayerView = roleLayers.find((layer) => layer.id === activeLayer) || roleLayers[0];
-  const effectiveWorkspace = latestBenchProjectWorkspace(bench) || workspace;
+  const effectiveBench = internalBenchEnabled ? bench : undefined;
+  const effectiveWorkspace = latestBenchProjectWorkspace(effectiveBench) || workspace;
   const workspaceDisplay = workspaceLabel(effectiveWorkspace);
 
   return (
@@ -1257,10 +1409,10 @@ export function FactoryWorkspace({
           </div>
 
           <div className="hidden min-w-0 items-center gap-2 lg:flex">
-            <StatusChip label="阶段" value={currentRun?.phase || 'pending'} />
-            <StatusChip label="状态" value={currentRun?.status || 'idle'} />
+            <StatusChip label="阶段" value={workspacePhase} />
+            <StatusChip label="状态" value={runStatus} />
             <StatusChip label="步骤" value={currentRun?.current_stage || 'n/a'} />
-            <StatusChip label="进度" value={`${Math.round(currentRun?.progress || 0)}%`} />
+            <StatusChip label="进度" value={`${guardedFactoryState.progress}%`} />
           </div>
 
           <div className="ml-1 flex items-center gap-2">
@@ -1328,12 +1480,15 @@ export function FactoryWorkspace({
         </div>
       </header>
 
-      <BenchStatusStrip
-        bench={bench}
-        websocketLive={websocketLive}
-        websocketReconnecting={websocketReconnecting}
-        websocketAttemptCount={websocketAttemptCount}
-      />
+      {internalBenchEnabled ? (
+        <BenchStatusStrip
+          enabled={internalBenchEnabled}
+          bench={effectiveBench}
+          websocketLive={websocketLive}
+          websocketReconnecting={websocketReconnecting}
+          websocketAttemptCount={websocketAttemptCount}
+        />
+      ) : null}
 
       <main
         data-testid="factory-layered-layout"
@@ -1358,8 +1513,8 @@ export function FactoryWorkspace({
                 tasks={pmWorkflowTasksWithRuntimeState}
                 workspace={effectiveWorkspace}
                 executionLogs={executionLogs}
-                roleStatus={getRunRole(currentRun?.roles, ['pm'])}
-                currentRun={currentRun}
+                roleStatus={pmRoleStatus}
+                factoryPhase={factoryPhase}
                 blueprintCoverage={blueprintCoverage}
               />
             )}
@@ -1369,7 +1524,7 @@ export function FactoryWorkspace({
                 blueprintEvidence={blueprintEvidence}
                 reviewArtifacts={chiefReviewArtifacts}
                 blueprintCoverage={blueprintCoverage}
-                roleStatus={getRunRole(currentRun?.roles, ['chief_engineer', 'chiefengineer', 'architect'])}
+                roleStatus={chiefEngineerRoleStatus}
                 currentRun={currentRun}
               />
             )}
@@ -1379,8 +1534,8 @@ export function FactoryWorkspace({
                 tasks={directorWorkflowTasks}
                 fileEditEvents={fileEditEvents}
                 executionLogs={executionLogs}
-                roleStatus={getRunRole(currentRun?.roles, ['director'])}
-                currentRun={currentRun}
+                roleStatus={directorRoleStatus}
+                factoryPhase={factoryPhase}
                 blueprintCoverage={blueprintCoverage}
               />
             )}
@@ -1388,6 +1543,7 @@ export function FactoryWorkspace({
 
           <FactoryOperationsRail
             currentRun={currentRun}
+            guardedFactoryState={guardedFactoryState}
             factoryPhase={factoryPhase}
             workspacePhase={workspacePhase}
             activeLayer={activeLayerView.id}
@@ -1512,14 +1668,14 @@ function FactoryPmLayer({
   tasks,
   executionLogs,
   roleStatus,
-  currentRun,
+  factoryPhase,
   blueprintCoverage,
 }: {
   workspace: string;
   tasks: PmTask[];
   executionLogs: LogEntry[];
   roleStatus: RunRoleStatus | null;
-  currentRun: FactoryRunStatus | null;
+  factoryPhase: FactoryPhase;
   blueprintCoverage: BlueprintCoverageSummary;
 }) {
   const stats = buildContractStats(tasks);
@@ -1657,7 +1813,7 @@ function FactoryPmLayer({
               <MetricRow label="待办任务" value={String(stats.pending)} tone="text-amber-200" />
               <MetricRow label="阻塞任务" value={String(stats.blocked)} tone={stats.blocked > 0 ? 'text-red-200' : 'text-emerald-200'} />
               <MetricRow label="CE 待蓝图" value={String(blueprintCoverage.missing.length)} tone={blueprintCoverage.missing.length > 0 ? 'text-amber-200' : 'text-emerald-200'} />
-              <MetricRow label="Factory 阶段" value={PHASE_CONFIG[mapRunToFactoryPhase(currentRun)].label} tone="text-slate-300" />
+              <MetricRow label="Factory 阶段" value={PHASE_CONFIG[factoryPhase].label} tone="text-slate-300" />
               <MetricRow label="可交接" value={handoffReady ? '就绪' : '待补齐'} tone={handoffReady ? 'text-emerald-200' : 'text-amber-200'} />
             </div>
           </section>
@@ -1717,7 +1873,7 @@ function FactoryDirectorLayer({
   fileEditEvents,
   executionLogs,
   roleStatus,
-  currentRun,
+  factoryPhase,
   blueprintCoverage,
 }: {
   workspace: string;
@@ -1725,7 +1881,7 @@ function FactoryDirectorLayer({
   fileEditEvents: FileEditEvent[];
   executionLogs: LogEntry[];
   roleStatus: RunRoleStatus | null;
-  currentRun: FactoryRunStatus | null;
+  factoryPhase: FactoryPhase;
   blueprintCoverage: BlueprintCoverageSummary;
 }) {
   const stats = buildDeliveryStats(tasks);
@@ -1916,7 +2072,7 @@ function FactoryDirectorLayer({
               <MetricRow label="执行中" value={String(stats.running)} tone="text-cyan-200" />
               <MetricRow label="阻塞" value={String(stats.blocked)} tone={stats.blocked > 0 ? 'text-red-200' : 'text-emerald-200'} />
               <MetricRow label="完成" value={String(stats.completed)} tone="text-emerald-200" />
-              <MetricRow label="Factory 阶段" value={PHASE_CONFIG[mapRunToFactoryPhase(currentRun)].label} tone="text-slate-300" />
+              <MetricRow label="Factory 阶段" value={PHASE_CONFIG[factoryPhase].label} tone="text-slate-300" />
             </div>
           </section>
 
@@ -2175,6 +2331,7 @@ function FactoryChiefEngineerLayer({
 
 function FactoryOperationsRail({
   currentRun,
+  guardedFactoryState,
   factoryPhase,
   workspacePhase,
   activeLayer,
@@ -2190,6 +2347,7 @@ function FactoryOperationsRail({
   isRunning,
 }: {
   currentRun: FactoryRunStatus | null;
+  guardedFactoryState: RunLedgerGuardedFactoryState;
   factoryPhase: FactoryPhase;
   workspacePhase: string;
   activeLayer: FactoryRoleLayer;
@@ -2218,15 +2376,15 @@ function FactoryOperationsRail({
             <Activity className="h-3.5 w-3.5 text-emerald-300" />
             运行观测
           </div>
-          <span className={cn('rounded-md border px-1.5 py-0.5 text-[10px] uppercase', roleStatusTone(currentRun?.status || 'idle'))}>
-            {roleStatusLabel(currentRun?.status || 'idle')}
+          <span className={cn('rounded-md border px-1.5 py-0.5 text-[10px] uppercase', roleStatusTone(guardedFactoryState.status))}>
+            {roleStatusLabel(guardedFactoryState.status)}
           </span>
         </div>
         <div className="grid grid-cols-2 gap-2">
           <MiniMetric label="角色层" value={roleLayerDisplayName(activeLayer)} />
           <MiniMetric label="阶段" value={PHASE_CONFIG[factoryPhase].label} />
           <MiniMetric label="运行ID" value={currentRun?.run_id || 'n/a'} />
-          <MiniMetric label="进度" value={`${Math.round(currentRun?.progress || 0)}%`} />
+          <MiniMetric label="进度" value={`${guardedFactoryState.progress}%`} />
         </div>
         {failureBrief ? <FactoryFailureBriefPanel brief={failureBrief} /> : null}
         {sourceEvidence.length > 0 ? (
@@ -2270,6 +2428,7 @@ function FactoryOperationsRail({
       <section className="min-h-0 flex-1 overflow-y-auto p-3">
         <FactoryAuditEvidencePanel
           gateResults={gateResults}
+          guardedFactoryState={guardedFactoryState}
           deliveryArtifacts={deliveryArtifacts}
           summaryMarkdown={summaryMarkdown}
           summaryRows={summaryRows}
@@ -2334,6 +2493,7 @@ function FactoryFailureBriefPanel({ brief }: { brief: FactoryFailureBrief }) {
 
 function FactoryAuditEvidencePanel({
   gateResults,
+  guardedFactoryState,
   deliveryArtifacts,
   summaryMarkdown,
   summaryRows,
@@ -2342,6 +2502,7 @@ function FactoryAuditEvidencePanel({
   failure,
 }: {
   gateResults: FactoryRunStatus['gates'];
+  guardedFactoryState: RunLedgerGuardedFactoryState;
   deliveryArtifacts: FactoryRunArtifact[];
   summaryMarkdown: string;
   summaryRows: Array<[string, string]>;
@@ -2349,6 +2510,8 @@ function FactoryAuditEvidencePanel({
   isArtifactsLoading: boolean;
   failure?: FactoryRunStatus['failure'];
 }) {
+  const ledgerGuarded = hasRunLedgerGuard(guardedFactoryState);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-emerald-300">
@@ -2362,7 +2525,25 @@ function FactoryAuditEvidencePanel({
           <span>质量门</span>
         </div>
         <div className="space-y-2">
-          {gateResults.length > 0 ? (
+          {ledgerGuarded ? (
+            <div
+              data-testid="factory-run-ledger-gate"
+              className={cn(
+                'rounded-lg border px-3 py-2 text-xs',
+                guardedFactoryState.status === 'ledger_pending'
+                  ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200'
+                  : 'border-red-500/30 bg-red-500/10 text-red-200'
+              )}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate font-medium">Run Ledger</span>
+                <span className="shrink-0 uppercase">{guardedFactoryState.status}</span>
+              </div>
+              <p className="mt-1 text-[10px] leading-relaxed opacity-80">
+                {guardedFactoryState.detail}
+              </p>
+            </div>
+          ) : gateResults.length > 0 ? (
             gateResults.map((gate) => (
               <div key={gate.gate_name} className={cn('rounded-lg border px-3 py-2 text-xs', gateTone(gate))}>
                 <div className="flex items-center justify-between gap-2">
@@ -2431,7 +2612,14 @@ function FactoryAuditEvidencePanel({
           <FileCode className="h-3.5 w-3.5 text-purple-300" />
           <span>交付摘要</span>
         </div>
-        {summaryMarkdown ? (
+        {ledgerGuarded ? (
+          <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-3 py-2">
+            <p className="text-xs text-cyan-100">Run Ledger 尚未确认终态摘要</p>
+            <p className="mt-1 text-[10px] leading-relaxed text-cyan-200/80">
+              {guardedFactoryState.detail}
+            </p>
+          </div>
+        ) : summaryMarkdown ? (
           <div className="max-h-28 overflow-y-auto rounded-lg border border-white/10 bg-white/5 px-3 py-2">
             <p className="whitespace-pre-line text-xs leading-relaxed text-slate-300">{summaryMarkdown}</p>
           </div>

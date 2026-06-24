@@ -346,6 +346,14 @@ def test_extract_target_files_includes_pyproject_toml() -> None:
     assert "infrastructure/config.py" in targets
 
 
+def test_extract_target_files_includes_go_module_manifests() -> None:
+    message = "目标文件: go.mod, go.sum, main.go"
+
+    targets = extract_target_files_from_message(message)
+
+    assert targets == ["go.mod", "go.sum", "main.go"]
+
+
 def test_extract_target_files_prefers_structured_scope_line_over_step_mentions() -> None:
     message = (
         "[mode:materialize]\n"

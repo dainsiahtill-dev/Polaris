@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { BenchStatusStrip } from './BenchStatusStrip';
+import { useFactoryBench } from '@/hooks/useFactoryBench';
 
 const mockHookValue = {
   sessions: [] as Array<Record<string, unknown>>,
@@ -21,7 +22,7 @@ const mockHookValue = {
 };
 
 vi.mock('@/hooks/useFactoryBench', () => ({
-  useFactoryBench: () => mockHookValue,
+  useFactoryBench: vi.fn(() => mockHookValue),
 }));
 
 describe('BenchStatusStrip', () => {
@@ -30,11 +31,19 @@ describe('BenchStatusStrip', () => {
     mockHookValue.currentSession = null;
     mockHookValue.events = [];
     mockHookValue.isStreaming = false;
+    vi.mocked(useFactoryBench).mockClear();
+  });
+
+  it('renders nothing and does not subscribe when internal bench mode is not enabled', () => {
+    const { container } = render(<BenchStatusStrip />);
+    expect(container.firstChild).toBeNull();
+    expect(useFactoryBench).not.toHaveBeenCalled();
   });
 
   it('renders nothing when no bench session is active', () => {
-    const { container } = render(<BenchStatusStrip />);
+    const { container } = render(<BenchStatusStrip enabled />);
     expect(container.firstChild).toBeNull();
+    expect(useFactoryBench).toHaveBeenCalledWith({ autoSelect: 'newest' });
   });
 
   it('shows a running session with progress and last event metadata', () => {
@@ -70,7 +79,7 @@ describe('BenchStatusStrip', () => {
       },
     ];
     mockHookValue.isStreaming = true;
-    render(<BenchStatusStrip />);
+    render(<BenchStatusStrip enabled />);
     const strip = screen.getByTestId('bench-status-strip');
     expect(strip.getAttribute('data-bench-session')).toBe('bench-running-1');
     expect(strip.getAttribute('data-bench-status')).toBe('running');
@@ -97,7 +106,7 @@ describe('BenchStatusStrip', () => {
       },
     ];
     mockHookValue.currentSession = mockHookValue.sessions[0];
-    render(<BenchStatusStrip />);
+    render(<BenchStatusStrip enabled />);
     const strip = screen.getByTestId('bench-status-strip');
     expect(strip.getAttribute('data-bench-status')).toBe('completed');
   });
@@ -124,7 +133,7 @@ describe('BenchStatusStrip', () => {
       status: 'running',
     };
 
-    render(<BenchStatusStrip />);
+    render(<BenchStatusStrip enabled />);
 
     const strip = screen.getByTestId('bench-status-strip');
     expect(strip.getAttribute('data-bench-status')).toBe('cancelled');
@@ -161,7 +170,7 @@ describe('BenchStatusStrip', () => {
     ];
     mockHookValue.currentSession = { ...mockHookValue.sessions[0] };
 
-    render(<BenchStatusStrip />);
+    render(<BenchStatusStrip enabled />);
 
     const strip = screen.getByTestId('bench-status-strip');
     expect(strip.getAttribute('data-bench-session')).toBe('bench-newest-failed');
@@ -185,7 +194,7 @@ describe('BenchStatusStrip', () => {
       },
     ];
     mockHookValue.currentSession = mockHookValue.sessions[0];
-    render(<BenchStatusStrip />);
+    render(<BenchStatusStrip enabled />);
     const progress = screen.getByTestId('bench-strip-progress');
     // (2 completed + 1 failed) / 4 total = 75%.
     expect(progress.getAttribute('data-progress')).toBe('75');
@@ -208,7 +217,7 @@ describe('BenchStatusStrip', () => {
       },
     ];
     mockHookValue.currentSession = mockHookValue.sessions[0];
-    render(<BenchStatusStrip />);
+    render(<BenchStatusStrip enabled />);
     const progress = screen.getByTestId('bench-strip-progress');
     expect(progress.getAttribute('data-progress')).toBe('50');
   });

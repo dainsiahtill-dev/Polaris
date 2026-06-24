@@ -14,6 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from polaris.cells.control_plane.run_ledger.public import JobToken
 from polaris.cells.roles.adapters.internal import runtime_dialogue
 from polaris.cells.roles.adapters.public.service import WorkflowRoleAdapter
 from polaris.cells.roles.kernel.internal.kernel.helpers import extract_structured_tool_calls
@@ -325,6 +326,215 @@ class TestRoleToolGateway:
 
         assert isinstance(gateway, RoleToolGateway)
         assert getattr(gateway, "_task_id", None) == "task-77"
+
+    def test_kernel_gateway_derives_capability_scope_from_job_token(
+        self,
+        kernel: RoleExecutionKernel,
+        registry: RoleProfileRegistry,
+        temp_workspace: str,
+    ) -> None:
+        """Per-request gateway must carry immutable job-token write scope."""
+        director_profile = registry.get_profile("director")
+        executor = KernelToolExecutor(kernel, temp_workspace)
+
+        gateway = executor.create_gateway(
+            director_profile,
+            RoleTurnRequest(
+                mode=RoleExecutionMode.CHAT,
+                message="run task",
+                run_id="run-scope",
+                task_id="task-scope",
+                metadata={
+                    "job_token": {
+                        "allowed_paths": [
+                            "./src/allowed.py",
+                            "../secret.py",
+                            "src/allowed.py",
+                            "/etc/passwd",
+                        ]
+                    }
+                },
+            ),
+        )
+
+        assert isinstance(gateway, RoleToolGateway)
+        assert getattr(gateway, "_capability_scope", None) == ("src/allowed.py",)
+
+    def test_kernel_gateway_accepts_platform_job_token_contract(
+        self,
+        kernel: RoleExecutionKernel,
+        registry: RoleProfileRegistry,
+        temp_workspace: str,
+    ) -> None:
+        """Per-request scope extraction must accept the platform JobToken contract."""
+        director_profile = registry.get_profile("director")
+        executor = KernelToolExecutor(kernel, temp_workspace)
+        job_token = JobToken(
+            schema_version=1,
+            token_id="jt-1",
+            run_id="run-platform-token",
+            factory_run_id="",
+            project_id="project-1",
+            stage="director_mutation",
+            target_files=["src/from-target.py"],
+            allowed_paths=["src/from-token.py"],
+        )
+
+        gateway = executor.create_gateway(
+            director_profile,
+            RoleTurnRequest(
+                mode=RoleExecutionMode.CHAT,
+                message="run task",
+                run_id="run-platform-token",
+                task_id="task-platform-token",
+                metadata={"job_token": job_token},
+            ),
+        )
+
+        assert isinstance(gateway, RoleToolGateway)
+        assert getattr(gateway, "_capability_scope", None) == ("src/from-token.py", "src/from-target.py")
+        capability_token = getattr(gateway, "_capability_token", {})
+        assert capability_token["token_id"] == "jt-1"
+        assert capability_token["run_id"] == "run-platform-token"
+        assert capability_token["project_id"] == "project-1"
+        assert capability_token["stage"] == "director_mutation"
+        assert capability_token["allowed_scope"] == ["src/from-token.py", "src/from-target.py"]
+
+    def test_gateway_passes_capability_token_to_executor_receipt(
+        self,
+        registry: RoleProfileRegistry,
+        temp_workspace: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """RoleToolGateway must preserve token-scoped effect receipts."""
+        captured_kwargs: dict[str, object] = {}
+        capability_token = {
+            "source": "control_plane.job_token",
+            "token_id": "jt-receipt",
+            "run_id": "run-receipt",
+            "project_id": "project-receipt",
+            "stage": "director_mutation",
+            "contract_hash": "contract-1",
+            "blueprint_hash": "blueprint-1",
+            "allowed_scope": ["src/app.py"],
+        }
+
+        class _FakeExecutor:
+            def __init__(self, workspace: str, **kwargs: object) -> None:
+                captured_kwargs.clear()
+                captured_kwargs.update(kwargs)
+                self.workspace = workspace
+
+            def execute(self, tool_name: str, tool_args: dict[str, object]) -> dict[str, object]:
+                return {
+                    "ok": True,
+                    "result": {"tool": tool_name, "args": tool_args},
+                    "effect_receipt": {
+                        "operation": tool_name,
+                        "file": str(tool_args.get("file") or ""),
+                        "capability_token": captured_kwargs.get("capability_token"),
+                    },
+                }
+
+        import polaris.kernelone.llm.toolkit as llm_toolkit_module
+
+        monkeypatch.setattr(llm_toolkit_module, "AgentAccelToolExecutor", _FakeExecutor)
+
+        director_profile = registry.get_profile("director")
+        gateway = RoleToolGateway(
+            director_profile,
+            temp_workspace,
+            capability_scope=["src/app.py"],
+            capability_token=capability_token,
+        )
+
+        result = gateway.execute_tool("write_file", {"file": "src/app.py", "content": "value = 1\n"})
+
+        assert captured_kwargs["capability_token"] == capability_token
+        assert result["success"] is True
+        assert result["effect_receipt"]["operation"] == "write_file"
+        assert result["effect_receipt"]["capability_token"] == capability_token
+
+    def test_kernel_gateway_capability_scope_blocks_tool_scope_expansion(
+        self,
+        kernel: RoleExecutionKernel,
+        registry: RoleProfileRegistry,
+        temp_workspace: str,
+    ) -> None:
+        """Tool arguments must not expand the per-turn runtime capability scope."""
+        workspace = Path(temp_workspace)
+        escaped = workspace / "src" / "escaped.py"
+        escaped.parent.mkdir(parents=True, exist_ok=True)
+        escaped.write_text("value = 'original'\n", encoding="utf-8")
+        director_profile = registry.get_profile("director")
+        executor = KernelToolExecutor(kernel, temp_workspace)
+        gateway = executor.create_gateway(
+            director_profile,
+            RoleTurnRequest(
+                mode=RoleExecutionMode.CHAT,
+                message="run task",
+                run_id="run-scope-block",
+                task_id="task-scope-block",
+                metadata={"job_token": {"allowed_paths": ["src/allowed.py"]}},
+            ),
+        )
+
+        result = gateway.execute_tool(
+            "write_file",
+            {
+                "file": "src/escaped.py",
+                "target_files": ["src/escaped.py"],
+                "content": "value = 'changed'\n",
+            },
+        )
+
+        assert result["success"] is False
+        assert result["error_type"] == "director_write_policy_denied"
+        policy = result["result"]["director_policy"]
+        assert policy["scope_source"] == "runtime_capability"
+        assert policy["allowed_scope"] == ["src/allowed.py"]
+        assert escaped.read_text(encoding="utf-8") == "value = 'original'\n"
+
+    @pytest.mark.asyncio
+    async def test_kernel_recreates_gateway_for_same_run_different_task_scope(
+        self,
+        kernel: RoleExecutionKernel,
+        registry: RoleProfileRegistry,
+        temp_workspace: str,
+    ) -> None:
+        """Same run_id but different task_id must not reuse stale capability scope."""
+        workspace = Path(temp_workspace)
+        director_profile = registry.get_profile("director")
+        request_a = RoleTurnRequest(
+            mode=RoleExecutionMode.CHAT,
+            message="run task A",
+            run_id="run-shared",
+            task_id="task-a",
+            metadata={"job_token": {"allowed_paths": ["src/task-a.py"]}},
+        )
+        request_b = RoleTurnRequest(
+            mode=RoleExecutionMode.CHAT,
+            message="run task B",
+            run_id="run-shared",
+            task_id="task-b",
+            metadata={"job_token": {"allowed_paths": ["src/task-b.py"]}},
+        )
+
+        result_a = await kernel._execute_single_tool(
+            "write_file",
+            {"file": "src/task-a.py", "content": "value = 'a'\n"},
+            {"profile": director_profile, "request": request_a},
+        )
+        result_b = await kernel._execute_single_tool(
+            "write_file",
+            {"file": "src/task-b.py", "content": "value = 'b'\n"},
+            {"profile": director_profile, "request": request_b},
+        )
+
+        assert result_a["success"] is True
+        assert result_b["success"] is True
+        assert (workspace / "src" / "task-a.py").read_text(encoding="utf-8") == 'value = "a"\n'
+        assert (workspace / "src" / "task-b.py").read_text(encoding="utf-8") == 'value = "b"\n'
 
     def test_tool_journal_events_include_task_id(
         self,

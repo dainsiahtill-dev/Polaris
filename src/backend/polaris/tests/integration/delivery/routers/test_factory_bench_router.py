@@ -34,10 +34,30 @@ def _build_client() -> TestClient:
     return TestClient(app)
 
 
+def test_factory_bench_sessions_disabled_without_internal_flag() -> None:
+    with patch.dict(
+        os.environ,
+        {
+            "POLARIS_INTERNAL_BENCH_ENABLED": "0",
+            "POLARIS_FACTORY_BENCH_INTERNAL_ENABLED": "0",
+            "VITE_POLARIS_INTERNAL_BENCH": "0",
+        },
+        clear=False,
+    ):
+        client = _build_client()
+        response = client.get("/v2/factory/bench/sessions")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "INTERNAL_BENCH_SURFACE_DISABLED"
+
+
 class TestFactoryBenchRouter:
     def setup_method(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self._env = {"FACTORY_BENCH_SESSIONS_ROOT": self._tmp.name}
+        self._env = {
+            "FACTORY_BENCH_SESSIONS_ROOT": self._tmp.name,
+            "POLARIS_INTERNAL_BENCH_ENABLED": "1",
+        }
         self._patcher = patch.dict(os.environ, self._env, clear=False)
         self._patcher.start()
         # Re-create the module-level service so it points at the temp root.
@@ -45,9 +65,15 @@ class TestFactoryBenchRouter:
 
         self._bench_patcher = patch.object(factory_router, "_bench_service", bench_service.FactoryBenchService())
         self._bench_patcher.start()
+        async def fake_publish_to_jetstream(_subject: str, _payload: object) -> bool:
+            return False
+
+        self._publish_patcher = patch.object(factory_router, "publish_to_jetstream", fake_publish_to_jetstream)
+        self._publish_patcher.start()
         self.client = _build_client()
 
     def teardown_method(self) -> None:
+        self._publish_patcher.stop()
         self._bench_patcher.stop()
         self._patcher.stop()
         self._tmp.cleanup()

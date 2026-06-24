@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from polaris.cells.control_plane.verifier_policy.public import (
+    UpdateVerifierPolicyCommandV1,
+    update_verifier_policy,
+)
 from polaris.cells.factory.pipeline.internal.bench_gates import build_real_run_gate
 from polaris.cells.factory.pipeline.internal.run_ledger import (
     RunLedger,
@@ -42,6 +47,7 @@ def test_job_token_is_stable_and_carries_canonical_paths() -> None:
     assert first.capability_audit["contract_sources"] == ["contract_goal", "target_files"]
     assert first.capability_audit["blueprint_sources"] == ["blueprint_id"]
     assert first.parent_token_id == "parent-token-1"
+    assert first.source == "control_plane.job_token"
     assert first.repair_lineage == [
         {
             "changed_files": ["src/index.ts"],
@@ -102,6 +108,7 @@ def test_run_ledger_appends_gate_evidence(tmp_path: Path) -> None:
     events = RunLedger(tmp_path, run_id="bench_1").read_events()
 
     assert Path(persisted["ledger_path"]).is_file()
+    assert Path(persisted["ledger_path"]).parent == tmp_path / "runtime" / "control_plane" / "ledger"
     assert len(events) == 1
     assert events[0]["event_type"] == "gate_evaluated"
     assert events[0]["content_id"] == event["content_id"]
@@ -347,6 +354,177 @@ def test_run_ledger_projection_fails_closed_when_required_verifier_evidence_is_m
     assert projection["evidence_policy"]["missing_required_modalities"] == ["physics"]
 
 
+def test_run_ledger_projection_fails_closed_when_required_tool_receipt_is_missing(tmp_path: Path) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "target_files": ["src/app.ts"],
+        "scope_paths": ["src/app.ts"],
+        "required_evidence_modalities": ["tool_receipt"],
+        "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "write app source"},
+    }
+    token = build_job_token_from_record(record, run_id="bench_1", project_id="P1", stage="director_mutation")
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": True,
+            "summary": "mutation claimed without tool receipt",
+        },
+        gate_name="director_mutation",
+    )
+
+    RunLedger(tmp_path, run_id="bench_1").append_event(event)
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
+
+    assert projection["ok"] is False
+    assert projection["integrity_ok"] is False
+    assert projection["evidence_policy"]["missing_required_modalities"] == ["tool_receipt"]
+
+
+def test_run_ledger_projection_accepts_token_scoped_tool_receipt(tmp_path: Path) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "target_files": ["src/app.ts"],
+        "scope_paths": ["src/app.ts"],
+        "required_evidence_modalities": ["tool_receipt"],
+        "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "write app source"},
+    }
+    token = build_job_token_from_record(record, run_id="bench_1", project_id="P1", stage="director_mutation")
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": True,
+            "summary": "mutation wrote file through tool runtime",
+            "commands": [
+                {
+                    "ok": True,
+                    "tool": "write_file",
+                    "effect_receipt": {
+                        "operation": "write_file",
+                        "file": "src/app.ts",
+                        "capability_token": {
+                            "token_id": token.token_id,
+                            "contract_hash": token.contract_hash,
+                            "blueprint_hash": token.blueprint_hash,
+                        },
+                    },
+                }
+            ],
+        },
+        gate_name="director_mutation",
+    )
+
+    RunLedger(tmp_path, run_id="bench_1").append_event(event)
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
+
+    assert projection["ok"] is True
+    assert projection["evidence_policy"]["missing_required_modalities"] == []
+    assert projection["evidence_modalities"]["tool_receipt"]["ok"] == 1
+    gate_receipt = projection["gates"][0]["evidence_modalities"]["tool_receipt"]
+    assert gate_receipt["metadata"]["receipt_count"] == 1
+    assert gate_receipt["metadata"]["expected_token_id"] == token.token_id
+
+
+def test_run_ledger_event_preserves_top_level_batch_receipt(tmp_path: Path) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "target_files": ["src/app.ts"],
+        "scope_paths": ["src/app.ts"],
+        "required_evidence_modalities": ["tool_receipt"],
+        "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "write app source"},
+    }
+    token = build_job_token_from_record(record, run_id="bench_1", project_id="P1", stage="director_mutation")
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": True,
+            "summary": "mutation carried role-runtime batch receipt",
+            "batch_receipt": {
+                "ok": True,
+                "results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "effect_receipt": {
+                            "operation": "write_file",
+                            "file": "src/app.ts",
+                            "capability_token": {
+                                "token_id": token.token_id,
+                                "contract_hash": token.contract_hash,
+                                "blueprint_hash": token.blueprint_hash,
+                            },
+                        },
+                    }
+                ],
+            },
+        },
+        gate_name="director_mutation",
+    )
+
+    RunLedger(tmp_path, run_id="bench_1").append_event(event)
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
+
+    physical_evidence = projection["gates"][0]["evidence_modalities"]["tool_receipt"]
+    assert event["physical_evidence"]["batch_receipt"]["ok"] is True
+    assert projection["ok"] is True
+    assert physical_evidence["ok"] is True
+    assert physical_evidence["metadata"]["operations"] == ["write_file"]
+
+
+def test_run_ledger_projection_rejects_mismatched_tool_receipt_token(tmp_path: Path) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "target_files": ["src/app.ts"],
+        "scope_paths": ["src/app.ts"],
+        "required_evidence_modalities": ["tool_receipt"],
+        "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "write app source"},
+    }
+    token = build_job_token_from_record(record, run_id="bench_1", project_id="P1", stage="director_mutation")
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": True,
+            "summary": "mutation wrote file with mismatched receipt",
+            "commands": [
+                {
+                    "ok": True,
+                    "tool": "write_file",
+                    "effect_receipt": {
+                        "operation": "write_file",
+                        "file": "src/app.ts",
+                        "capability_token": {"token_id": "other-token"},
+                    },
+                }
+            ],
+        },
+        gate_name="director_mutation",
+    )
+
+    RunLedger(tmp_path, run_id="bench_1").append_event(event)
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
+
+    assert projection["ok"] is False
+    assert projection["evidence_policy"]["missing_required_modalities"] == ["tool_receipt"]
+    gate_receipt = projection["gates"][0]["evidence_modalities"]["tool_receipt"]
+    assert gate_receipt["ok"] is False
+    assert gate_receipt["metadata"]["invalid"] == ["receipt[0]:token_mismatch"]
+
+
 def test_run_ledger_policy_does_not_require_browser_unless_explicit(tmp_path: Path) -> None:
     record = {
         "id": "P1",
@@ -404,6 +582,67 @@ def test_run_ledger_policy_tracks_enabled_browser_without_requiring_it(tmp_path:
     assert projection["gates"][0]["enabled_evidence_modalities"] == ["browser", "visual"]
 
 
+def test_run_ledger_projection_tracks_browser_and_visual_entrypoint_evidence(tmp_path: Path) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "code_files": ["index.html"],
+        "target_files": ["index.html"],
+        "scope_paths": ["index.html"],
+        "requires_browser_evidence": True,
+        "verifier_policy": {
+            "browser_enabled": True,
+            "visual_enabled": True,
+            "enabled_evidence_modalities": ["browser", "visual"],
+            "required_evidence_modalities": ["browser", "visual"],
+        },
+        "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "run static web app"},
+    }
+    token = build_job_token_from_record(record, run_id="bench_1", project_id="P1")
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": True,
+            "summary": "browser smoke and visual evidence passed",
+            "requirements": {
+                "artifact_landed": {"ok": True, "detail": "index.html"},
+                "source_files_present": {"ok": True, "detail": "index.html"},
+                "build_test_lint_ran": {"ok": True, "detail": "browser smoke command"},
+            },
+            "commands": [{"ok": True, "tool": "playwright-smoke"}],
+            "command_count_total": 1,
+            "entrypoint": {
+                "kind": "web_playwright",
+                "ok": True,
+                "detail": "canvas rendered",
+                "url": "http://127.0.0.1:8123/",
+                "http_status": 200,
+                "has_canvas": True,
+                "canvas_non_blank": True,
+                "screenshot_hash": "sha256:visual-proof",
+            },
+        },
+    )
+
+    RunLedger(tmp_path, run_id="bench_1").append_event(event)
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
+
+    assert projection["ok"] is True
+    assert projection["evidence_policy"] == {
+        "ok": True,
+        "enabled_modalities": ["browser", "visual"],
+        "required_modalities": ["code", "command", "browser", "visual"],
+        "missing_required_modalities": [],
+    }
+    assert projection["evidence_modalities"]["browser"]["ok"] == 1
+    assert projection["evidence_modalities"]["visual"]["ok"] == 1
+    assert projection["gates"][0]["evidence_modalities"]["browser"]["metadata"]["url"] == "http://127.0.0.1:8123/"
+    assert projection["gates"][0]["evidence_modalities"]["visual"]["metadata"]["screenshot_hash"] == "sha256:visual-proof"
+
+
 def test_run_ledger_policy_can_explicitly_require_browser_evidence(tmp_path: Path) -> None:
     record = {
         "id": "P1",
@@ -433,5 +672,49 @@ def test_run_ledger_policy_can_explicitly_require_browser_evidence(tmp_path: Pat
     RunLedger(tmp_path, run_id="bench_1").append_event(event)
     projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
 
+    assert projection["ok"] is False
+    assert projection["evidence_policy"]["missing_required_modalities"] == ["browser"]
+
+
+def test_persist_real_run_gate_ledger_consumes_platform_verifier_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KERNELONE_BROWSER_VERIFIER_AVAILABLE", "1")
+
+    update_verifier_policy(
+        UpdateVerifierPolicyCommandV1(
+            workspace=str(tmp_path),
+            browser_enabled=True,
+            required_modalities=("browser",),
+        )
+    )
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "target_files": ["index.html"],
+        "scope_paths": ["index.html"],
+        "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "run static web app"},
+    }
+    gate = {
+        "ok": True,
+        "summary": "code and command evidence only",
+        "requirements": {
+            "artifact_landed": {"ok": True, "detail": "index.html"},
+            "source_files_present": {"ok": True, "detail": "index.html"},
+            "build_test_lint_ran": {"ok": True, "detail": "npm test"},
+        },
+        "commands": [{"ok": True, "tool": "npm test"}],
+        "command_count_total": 1,
+    }
+
+    ledger_meta = persist_real_run_gate_ledger(tmp_path, record, gate, run_id="bench_1", project_id="P1")
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
+
+    assert ledger_meta["job_token"]["gate_policy"]["enabled_evidence_modalities"] == ["browser"]
+    assert ledger_meta["job_token"]["gate_policy"]["required_evidence_modalities"] == ["code", "command", "browser"]
     assert projection["ok"] is False
     assert projection["evidence_policy"]["missing_required_modalities"] == ["browser"]

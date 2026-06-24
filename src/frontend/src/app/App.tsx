@@ -35,11 +35,17 @@ import { ContextOSWorkspace } from '@/app/components/contextos';
 import { WorkspaceFilesPage } from '@/app/components/workspace-files/WorkspaceFilesPage';
 import { openPath, pickWorkspace } from '@/api';
 import { runtimeService } from '@/services';
+import {
+  controlPlaneProjectionFromRuntimeMessage,
+  getControlPlaneProjection,
+  type ControlPlaneProjection,
+} from '@/services/controlPlane';
 import { useRuntime } from './hooks/useRuntime';
 import { useRuntimeConnectionNotifications } from './hooks/useConnectionNotifications';
 import {
   RuntimeTransportProvider,
   useConnectionState as useRuntimeTransportConnectionState,
+  useMessageHandler,
   useTransportActions,
 } from '@/runtime/transport';
 import { useLiveTaskQueues } from './hooks/useLiveTaskQueues';
@@ -248,6 +254,8 @@ function AppContent() {
   const [benchObservedWorkspace, setBenchObservedWorkspace] = useState('');
   const pendingBenchWorkspaceRef = useRef('');
   const workspace = benchObservedWorkspace || settingsWorkspace;
+  const internalBenchFlag = String(import.meta.env.VITE_POLARIS_INTERNAL_BENCH ?? '').trim();
+  const internalBenchEnabled = internalBenchFlag === '1' || (import.meta.env.DEV && internalBenchFlag !== '0');
   const [progressSnapshot, setProgressSnapshot] = useState<SnapshotPayload | null>(null);
 
   const handleBenchWorkspaceChange = useCallback(
@@ -299,13 +307,18 @@ function AppContent() {
     runId: runtimeRunId,
     taskProgressMap,
     taskTraceMap,
-  } = useRuntime({ roles: ['pm', 'chief_engineer', 'director', 'qa'], workspace });
+  } = useRuntime({
+    roles: ['pm', 'chief_engineer', 'director', 'qa'],
+    workspace,
+    includeInternalBench: internalBenchEnabled,
+  });
   const {
     connected: live,
     reconnecting,
     attemptCount,
   } = useRuntimeTransportConnectionState();
-  const { reconnect: reconnectWebSocket } = useTransportActions();
+  const { reconnect: reconnectWebSocket, subscribeChannels } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
 
   // Connection status notifications for the unified runtime WebSocket.
   useRuntimeConnectionNotifications({
@@ -332,6 +345,7 @@ function AppContent() {
     isLoading: factoryIsLoading,
   } = useFactory({ workspace });
   const factoryBench = useFactoryBench({
+    enabled: internalBenchEnabled,
     autoSelect: 'newest',
     onWorkspaceChange: handleBenchWorkspaceChange,
   });
@@ -430,6 +444,55 @@ function AppContent() {
     ramdiskRoot: settings?.ramdisk_root
   });
   const backendHealth = useBackendHealthPing();
+  const [controlPlaneProjection, setControlPlaneProjection] = useState<ControlPlaneProjection | undefined>(undefined);
+
+  const refreshControlPlaneProjection = useCallback(async () => {
+    if (!workspace) {
+      setControlPlaneProjection(undefined);
+      return;
+    }
+
+    const result = await getControlPlaneProjection({ workspace });
+    if (result.ok && result.data) {
+      setControlPlaneProjection(result.data);
+      return;
+    }
+
+    setControlPlaneProjection({
+      schema_version: 1,
+      source: 'run_ledger_projection',
+      available: false,
+      ok: false,
+      status: 'error',
+      audit_path: '',
+      compat_ledgers_included: false,
+      total: 0,
+      projected: 0,
+      missing: 0,
+      failed: 0,
+      projects: [],
+      detail: result.error || 'Run Ledger projection 读取失败',
+    });
+  }, [workspace]);
+
+  useEffect(() => {
+    void refreshControlPlaneProjection();
+  }, [refreshControlPlaneProjection]);
+
+  useEffect(() => {
+    if (!workspace) return;
+    const unsubscribe = subscribeChannels([{ channel: 'status.control_plane', tailLines: 0 }]);
+    const unregister = registerMessageHandler((message) => {
+      const projection = controlPlaneProjectionFromRuntimeMessage(message);
+      if (projection) {
+        setControlPlaneProjection(projection);
+      }
+    });
+    return () => {
+      unregister();
+      unsubscribe();
+    };
+  }, [workspace, subscribeChannels, registerMessageHandler]);
 
   const agentsReview = useAgentsReview({
     agentsReview: snapshot?.agents_review ?? null,
@@ -735,6 +798,7 @@ function AppContent() {
   const handleRefresh = () => {
     loadSettings();
     reconnectWebSocket();
+    void refreshControlPlaneProjection();
   };
 
   const handleOpenBrain = () => {
@@ -883,9 +947,11 @@ function AppContent() {
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
+          internalBenchEnabled={internalBenchEnabled}
           llmRuntimeState={llmRuntimeState}
           currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
+          controlPlaneProjection={controlPlaneProjection}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
           processStreamEvents={combinedProcessStreamEvents}
@@ -929,11 +995,13 @@ function AppContent() {
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
+          internalBenchEnabled={internalBenchEnabled}
           llmRuntimeState={llmRuntimeState}
           agentsRequired={agentsRequired}
           agentsDraftReady={agentsDraftReady}
           agentsDraftFailed={agentsDraftFailed}
           qualityGate={qualityGate}
+          controlPlaneProjection={controlPlaneProjection}
           notifyError={notifyError}
         />
         {settingsModalNode}
@@ -965,11 +1033,13 @@ function AppContent() {
           fileEditEvents={fileEditEvents}
           currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
+          controlPlaneProjection={controlPlaneProjection}
           taskTraceMap={taskTraceMap}
           onOpenSettings={() => uiActions.openSettings()}
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
+          internalBenchEnabled={internalBenchEnabled}
           llmRuntimeState={llmRuntimeState}
           notifyError={notifyError}
         />
@@ -1008,9 +1078,11 @@ function AppContent() {
           onRetryCheckpoint={() => factoryCurrentRun && retryFactoryRunFromCheckpoint(factoryCurrentRun.run_id, 'operator retry')}
           isLoading={factoryIsLoading}
           bench={factoryBench}
+          internalBenchEnabled={internalBenchEnabled}
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
+          controlPlaneProjection={controlPlaneProjection}
         />
         <LlmRuntimeOverlay
           activeView={activeRoleView}
@@ -1026,6 +1098,7 @@ function AppContent() {
           factoryRuntimeActive={factoryRuntimeActive}
           currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
+          controlPlaneProjection={controlPlaneProjection}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
           processStreamEvents={combinedProcessStreamEvents}
@@ -1060,6 +1133,7 @@ function AppContent() {
             llmLastUpdated={llmRuntimeState.lastUpdated}
             currentPhase={effectiveCurrentPhase}
             qualityGate={qualityGate}
+            controlPlaneProjection={controlPlaneProjection}
             executionLogs={executionLogs}
             llmStreamEvents={llmStreamEvents}
             processStreamEvents={combinedProcessStreamEvents}
@@ -1095,6 +1169,7 @@ function AppContent() {
               processStreamEvents={combinedProcessStreamEvents}
               snapshot={displaySnapshot ?? snapshot}
               qualityGate={qualityGate}
+              controlPlaneProjection={controlPlaneProjection}
               />
           </div>
         </div>
@@ -1131,6 +1206,7 @@ function AppContent() {
           factoryRuntimeActive={factoryRuntimeActive}
           currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
+          controlPlaneProjection={controlPlaneProjection}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
           processStreamEvents={combinedProcessStreamEvents}
@@ -1232,12 +1308,15 @@ function AppContent() {
           fileEditEvents={fileEditEvents}
         />
 
-        <BenchStatusStrip
-          bench={factoryBench}
-          websocketLive={live}
-          websocketReconnecting={reconnecting}
-          websocketAttemptCount={attemptCount}
-        />
+        {internalBenchEnabled && (
+          <BenchStatusStrip
+            enabled={internalBenchEnabled}
+            bench={factoryBench}
+            websocketLive={live}
+            websocketReconnecting={reconnecting}
+            websocketAttemptCount={attemptCount}
+          />
+        )}
 
         {!floatingRuntimeSuppressed && (
           <LlmRuntimeOverlay
@@ -1253,6 +1332,7 @@ function AppContent() {
             llmLastUpdated={llmRuntimeState.lastUpdated}
             currentPhase={effectiveCurrentPhase}
             qualityGate={qualityGate}
+            controlPlaneProjection={controlPlaneProjection}
             executionLogs={executionLogs}
             llmStreamEvents={llmStreamEvents}
             processStreamEvents={combinedProcessStreamEvents}
@@ -1322,7 +1402,7 @@ function AppContent() {
                       executionLogs={executionLogs}
                       dialogueEvents={dialogueEvents}
                       currentPhase={effectiveCurrentPhase}
-                      benchEvents={factoryBenchEvents}
+                      controlPlaneProjection={controlPlaneProjection}
                     />
                   </div>
                 </div>
@@ -1457,6 +1537,7 @@ function AppContent() {
         <HistoryDrawer
           open={ui.isHistoryDrawerOpen}
           onOpenChange={(open) => open ? uiActions.openHistoryDrawer() : uiActions.closeHistoryDrawer()}
+          workspace={workspace}
         />
 
         <Toaster position="bottom-right" />

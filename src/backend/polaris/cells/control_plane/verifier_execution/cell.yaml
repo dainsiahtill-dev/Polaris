@@ -1,0 +1,43 @@
+id: control_plane.verifier_execution
+title: Control Plane Verifier Execution
+kind: capability
+visibility: public
+stateful: false
+owner: control-plane
+purpose: >
+  Execute explicitly enabled platform verifier providers and return evidence
+  payloads suitable for Run Ledger physical_evidence. This cell is not owned by
+  internal stress harnesses and does not define product state.
+current_modules:
+  - polaris.cells.control_plane.verifier_execution.public.contracts
+  - polaris.cells.control_plane.verifier_execution.public.service
+owned_paths:
+  - polaris/cells/control_plane/verifier_execution/**
+public_contracts:
+  modules:
+    - polaris.cells.control_plane.verifier_execution.public.contracts
+    - polaris.cells.control_plane.verifier_execution.public.service
+  commands:
+    - RunVerifierPolicyCommandV1
+  queries: []
+  events: []
+  results:
+    - VerifierExecutionResultV1
+  errors:
+    - ControlPlaneVerifierExecutionV1Error
+depends_on:
+  - control_plane.verifier_policy
+subgraphs:
+  - execution_governance_pipeline
+state_owners: []
+effects_allowed:
+  - fs.read:workspace/**
+  - process.exec:workspace/**
+  - process.spawn:workspace/**
+verification:
+  tests:
+    - polaris/cells/control_plane/verifier_execution/tests/test_public_service.py
+  gaps:
+    - Browser and visual providers are not executed in this slice; existing
+      entrypoint smoke evidence continues to feed those modalities.
+  smoke_commands: []

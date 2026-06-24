@@ -1,9 +1,9 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { ProjectProgressPanel, extractLatestQaEvidence } from './ProjectProgressPanel';
+import { ProjectProgressPanel, extractLatestQaEvidence, extractRunLedgerQaEvidence } from './ProjectProgressPanel';
 import type { DialogueEvent } from './DialoguePanel';
 import type { LogEntry } from './pm';
-import type { FactoryBenchEvent } from '@/services/benchService';
+import type { ControlPlaneProjection } from '@/services/controlPlane';
 
 const qaLog: LogEntry = {
   id: 'qa-1',
@@ -33,6 +33,78 @@ const qaDialogueEvent: DialogueEvent = {
   },
 };
 
+const failedLedgerProjection: ControlPlaneProjection = {
+  schema_version: 1,
+  source: 'run_ledger_projection',
+  available: true,
+  ok: false,
+  status: 'failed',
+  audit_path: 'runtime/control_plane/ledger/run.jsonl',
+  compat_ledgers_included: false,
+  total: 1,
+  projected: 1,
+  missing: 0,
+  failed: 1,
+  detail: '1 failed gate',
+  projects: [
+    {
+      project_id: 'project-1',
+      ok: false,
+      integrity_ok: true,
+      outcome_ok: false,
+      gate_count: 2,
+      failed_gate_count: 1,
+      latest_token_id: 'jt-failed',
+      detail: 'build gate failed',
+      missing: [],
+    },
+  ],
+};
+
+const pendingLedgerProjection: ControlPlaneProjection = {
+  schema_version: 1,
+  source: 'run_ledger_projection',
+  available: true,
+  ok: false,
+  status: 'pending',
+  audit_path: 'runtime/control_plane/ledger',
+  compat_ledgers_included: false,
+  total: 0,
+  projected: 0,
+  missing: 0,
+  failed: 0,
+  detail: 'run ledger projection is pending',
+  projects: [],
+};
+
+const passedLedgerProjection: ControlPlaneProjection = {
+  schema_version: 1,
+  source: 'run_ledger_projection',
+  available: true,
+  ok: true,
+  status: 'passed',
+  audit_path: 'runtime/control_plane/ledger/run.jsonl',
+  compat_ledgers_included: false,
+  total: 1,
+  projected: 1,
+  missing: 0,
+  failed: 0,
+  detail: 'run ledger projected successfully',
+  projects: [
+    {
+      project_id: 'project-1',
+      ok: true,
+      integrity_ok: true,
+      outcome_ok: true,
+      gate_count: 2,
+      failed_gate_count: 0,
+      latest_token_id: 'jt-passed',
+      detail: 'all gates passed',
+      missing: [],
+    },
+  ],
+};
+
 describe('ProjectProgressPanel QA evidence', () => {
   it('extracts the latest integration QA evidence grade from runtime logs', () => {
     expect(extractLatestQaEvidence([qaLog])).toEqual({
@@ -43,7 +115,7 @@ describe('ProjectProgressPanel QA evidence', () => {
     });
   });
 
-  it('renders QA evidence grade instead of a vague PASS label', () => {
+  it('holds QA pass logs until Run Ledger projection is available', () => {
     render(
       <ProjectProgressPanel
         tasks={[]}
@@ -55,8 +127,148 @@ describe('ProjectProgressPanel QA evidence', () => {
 
     const evidence = screen.getByTestId('qa-evidence-grade');
     expect(evidence).toHaveTextContent('QA evidence');
-    expect(evidence).toHaveTextContent('real command passed');
-    expect(evidence).toHaveTextContent('integration_qa_passed');
+    expect(evidence).toHaveTextContent('run ledger pending');
+    expect(evidence).toHaveTextContent('run_ledger_required');
+    expect(evidence).not.toHaveTextContent('real command passed');
+  });
+
+  it('extracts QA evidence from Run Ledger projection', () => {
+    expect(extractRunLedgerQaEvidence(failedLedgerProjection)).toEqual({
+      grade: 'run_ledger_failed',
+      reason: 'run_ledger_failed_gate:jt-failed',
+      summary: 'build gate failed',
+      passed: false,
+    });
+  });
+
+  it('prioritizes Run Ledger failure over stale QA log success', () => {
+    render(
+      <ProjectProgressPanel
+        tasks={[]}
+        pmRunning={false}
+        executionLogs={[qaLog]}
+        currentPhase="qa"
+        controlPlaneProjection={failedLedgerProjection}
+      />,
+    );
+
+    const evidence = screen.getByTestId('qa-evidence-grade');
+    expect(evidence).toHaveTextContent('QA evidence');
+    expect(evidence).toHaveTextContent('run ledger failed');
+    expect(evidence).toHaveTextContent('run_ledger_failed_gate:jt-failed');
+    expect(evidence).not.toHaveTextContent('real command passed');
+  });
+
+  it('does not fall back to stale QA success while Run Ledger projection is pending', () => {
+    render(
+      <ProjectProgressPanel
+        tasks={[]}
+        pmRunning={false}
+        executionLogs={[qaLog]}
+        currentPhase="qa"
+        controlPlaneProjection={pendingLedgerProjection}
+      />,
+    );
+
+    const evidence = screen.getByTestId('qa-evidence-grade');
+    expect(evidence).toHaveTextContent('QA evidence');
+    expect(evidence).toHaveTextContent('run ledger pending');
+    expect(evidence).toHaveTextContent('run_ledger_pending');
+    expect(evidence).not.toHaveTextContent('real command passed');
+  });
+
+  it('does not show terminal progress success while Run Ledger projection is pending', () => {
+    const tasks = [
+      { id: '1', subject: '实现 CLI 科学计算器核心模块', status: 'completed' },
+      { id: '2', subject: '编写 README', status: 'completed' },
+      { id: '3', subject: '实现验证与 QA 闭环', status: 'completed' },
+    ];
+
+    render(
+      <ProjectProgressPanel
+        tasks={tasks}
+        directorTasks={tasks}
+        pmRunning={false}
+        pmState={{
+          completed_task_count: 3,
+          last_director_status: 'success',
+        }}
+        controlPlaneProjection={pendingLedgerProjection}
+      />,
+    );
+
+    expect(screen.getByText('等待 Run Ledger 证据 · 2/3')).toBeInTheDocument();
+    expect(screen.getByText('67%')).toBeInTheDocument();
+    expect(screen.queryByText('100%')).not.toBeInTheDocument();
+    expect(screen.getByTestId('project-chain-role-director')).toHaveTextContent('blocked');
+    expect(screen.getByTestId('project-chain-role-director')).not.toHaveTextContent('success');
+  });
+
+  it('prevents runtime role completion from bypassing a pending Run Ledger projection', () => {
+    const tasks = [
+      { id: '1', subject: '实现 CLI 科学计算器核心模块', status: 'completed' },
+      { id: '2', subject: '编写 README', status: 'completed' },
+      { id: '3', subject: '实现验证与 QA 闭环', status: 'completed' },
+    ];
+
+    render(
+      <ProjectProgressPanel
+        tasks={tasks}
+        directorTasks={tasks}
+        pmRunning={false}
+        pmState={{
+          completed_task_count: 3,
+          last_director_status: 'success',
+        }}
+        engineStatus={{
+          roles: {
+            PM: { status: 'completed', task_id: '1', task_title: 'PM 合同已完成' },
+            ChiefEngineer: { status: 'completed', task_id: '1', task_title: 'CE 蓝图已完成' },
+            Director: { status: 'success', task_id: '3', task_title: 'Director 已执行' },
+          },
+        }}
+        controlPlaneProjection={pendingLedgerProjection}
+      />,
+    );
+
+    for (const role of ['pm', 'chief-engineer', 'director']) {
+      const card = screen.getByTestId(`project-chain-role-${role}`);
+      expect(card).toHaveTextContent('blocked');
+      expect(card).not.toHaveTextContent('success');
+      expect(card).not.toHaveTextContent('completed');
+    }
+  });
+
+  it('allows runtime role completion after Run Ledger projection passes', () => {
+    const tasks = [
+      { id: '1', subject: '实现 CLI 科学计算器核心模块', status: 'completed' },
+      { id: '2', subject: '编写 README', status: 'completed' },
+      { id: '3', subject: '实现验证与 QA 闭环', status: 'completed' },
+    ];
+
+    render(
+      <ProjectProgressPanel
+        tasks={tasks}
+        directorTasks={tasks}
+        pmRunning={false}
+        pmState={{
+          completed_task_count: 3,
+          last_director_status: 'success',
+        }}
+        engineStatus={{
+          roles: {
+            PM: { status: 'completed', task_id: '1', task_title: 'PM 合同已完成' },
+            ChiefEngineer: { status: 'completed', task_id: '1', task_title: 'CE 蓝图已完成' },
+            Director: { status: 'success', task_id: '3', task_title: 'Director 已执行' },
+          },
+        }}
+        controlPlaneProjection={passedLedgerProjection}
+      />,
+    );
+
+    expect(screen.getByTestId('project-chain-role-pm')).toHaveTextContent('completed');
+    expect(screen.getByTestId('project-chain-role-chief-engineer')).toHaveTextContent('completed');
+    expect(screen.getByTestId('project-chain-role-director')).toHaveTextContent('success');
   });
 
   it('recovers QA evidence from dialogue transcript metadata after reload', () => {
@@ -79,8 +291,9 @@ describe('ProjectProgressPanel QA evidence', () => {
 
     const evidence = screen.getByTestId('qa-evidence-grade');
     expect(evidence).toHaveTextContent('QA evidence');
-    expect(evidence).toHaveTextContent('real command passed');
-    expect(evidence).toHaveTextContent('integration_qa_passed');
+    expect(evidence).toHaveTextContent('run ledger pending');
+    expect(evidence).toHaveTextContent('run_ledger_required');
+    expect(evidence).not.toHaveTextContent('real command passed');
   });
 
   it('renders the PM to Chief Engineer to Director chain and ignores numeric task titles', () => {
@@ -115,46 +328,6 @@ describe('ProjectProgressPanel QA evidence', () => {
     expect(screen.getByTestId('project-task-title')).toHaveTextContent('实现账户服务 API');
     expect(screen.getByTestId('project-task-title')).not.toHaveTextContent(/^1$/);
     expect(screen.queryByText(`任务队列（${['PM', 'Director'].join(' → ')}）`)).not.toBeInTheDocument();
-  });
-
-  it('projects factory bench phase events into the full PM to Chief Engineer to Director chain', () => {
-    const phaseEvents: FactoryBenchEvent[] = [
-      {
-        type: 'factory_bench.project.phase',
-        summary: 'L1-01 phase=director_dispatch status=running',
-        session_id: 'bench-live',
-        meta: {
-          project_id: 'L1-01',
-          title: '发光昆虫花园模拟器',
-          phase: 'director_dispatch',
-          status: 'running',
-          role: 'director',
-        },
-      },
-    ];
-
-    render(
-      <ProjectProgressPanel
-        tasks={[]}
-        pmRunning={false}
-        directorRealtimeConnected
-        benchEvents={phaseEvents}
-      />,
-    );
-
-    const pm = screen.getByTestId('project-chain-role-pm');
-    const chiefEngineer = screen.getByTestId('project-chain-role-chief-engineer');
-    const director = screen.getByTestId('project-chain-role-director');
-
-    expect(screen.getByTestId('project-chain-heading')).toHaveTextContent('PM → Chief Engineer → Director');
-    expect(screen.queryByText(['PM', 'Director'].join(' → '))).not.toBeInTheDocument();
-    expect(pm).toHaveTextContent('success');
-    expect(pm).toHaveTextContent('PM 合同已交接：L1-01 发光昆虫花园模拟器');
-    expect(chiefEngineer).toHaveTextContent('success');
-    expect(chiefEngineer).toHaveTextContent('蓝图已交接：L1-01 发光昆虫花园模拟器');
-    expect(director).toHaveTextContent('running');
-    expect(director).toHaveTextContent('执行落盘：L1-01 发光昆虫花园模拟器');
-    expect(director).not.toHaveTextContent('等待 CE 交接');
   });
 
   it('puts readable task titles before sequence and priority metadata in the task queue', () => {
@@ -213,6 +386,7 @@ describe('ProjectProgressPanel QA evidence', () => {
           completed_task_count: 3,
           last_director_status: 'success',
         }}
+        controlPlaneProjection={passedLedgerProjection}
       />,
     );
 
@@ -229,5 +403,33 @@ describe('ProjectProgressPanel QA evidence', () => {
     expect(director).toHaveTextContent('success');
     expect(director).toHaveTextContent('实现验证与 QA 闭环');
     expect(director).not.toHaveTextContent('等待 CE 交接');
+  });
+
+  it('does not show completed chain success before Run Ledger projection loads', () => {
+    const tasks = [
+      { id: '1', subject: '实现 CLI 科学计算器核心模块', status: 'completed' },
+      { id: '2', subject: '编写 README', status: 'completed' },
+      { id: '3', subject: '实现验证与 QA 闭环', status: 'completed' },
+    ];
+
+    render(
+      <ProjectProgressPanel
+        tasks={tasks}
+        directorTasks={tasks}
+        pmRunning={false}
+        pmState={{
+          completed_task_count: 3,
+          last_director_status: 'success',
+        }}
+      />,
+    );
+
+    expect(screen.getByText('等待 Run Ledger 证据 · 2/3')).toBeInTheDocument();
+    expect(screen.getByText('67%')).toBeInTheDocument();
+    expect(screen.queryByText('100%')).not.toBeInTheDocument();
+    expect(screen.getByTestId('qa-evidence-grade')).toHaveTextContent('run_ledger_required');
+    expect(screen.getByTestId('project-chain-role-pm')).not.toHaveTextContent('success');
+    expect(screen.getByTestId('project-chain-role-chief-engineer')).toHaveTextContent('blocked');
+    expect(screen.getByTestId('project-chain-role-director')).toHaveTextContent('blocked');
   });
 });

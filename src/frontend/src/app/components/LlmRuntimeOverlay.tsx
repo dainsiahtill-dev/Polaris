@@ -20,6 +20,7 @@ import { cn } from '@/app/components/ui/utils';
 import { filterExecutionActivityLogs } from '@/app/utils/appRuntime';
 import type { LogEntry, QualityGateData } from '@/app/components/pm';
 import type { FileEditEvent } from '@/app/hooks/useRuntime';
+import type { ControlPlaneProjection } from '@/services/controlPlane';
 
 type ActiveView = 'main' | 'pm' | 'chief_engineer' | 'director' | 'factory' | 'agi' | 'diagnostics';
 
@@ -54,6 +55,7 @@ interface LlmRuntimeOverlayProps {
   llmStreamEvents: LogEntry[];
   processStreamEvents: LogEntry[];
   fileEditEvents?: FileEditEvent[];
+  controlPlaneProjection?: ControlPlaneProjection | null;
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -73,6 +75,45 @@ const PHASE_LABELS: Record<string, string> = {
   failed: '执行失败',
   error: '执行失败',
 };
+
+type OverlayQualityGateDisplay = {
+  label: string;
+  tone: 'pass' | 'hold' | 'fail';
+};
+
+function overlayQualityGateDisplay(
+  projection: ControlPlaneProjection | null | undefined,
+  qualityGate: QualityGateData | null,
+): OverlayQualityGateDisplay | null {
+  if (projection) {
+    if (!projection.available) {
+      return { label: 'Run Ledger HOLD', tone: 'fail' };
+    }
+    if (projection.total <= 0 && projection.projects.length === 0) {
+      return { label: 'Run Ledger PENDING', tone: 'hold' };
+    }
+    const failedProject = projection.projects.find((project) => !project.ok || project.failed_gate_count > 0);
+    if (!projection.ok || projection.failed > 0 || failedProject) {
+      return { label: 'Run Ledger FAIL', tone: 'fail' };
+    }
+    return { label: `Run Ledger PASS ${projection.projected}/${projection.total}`, tone: 'pass' };
+  }
+
+  if (!qualityGate) return null;
+  if (qualityGate.passed) {
+    return { label: 'Run Ledger PENDING', tone: 'hold' };
+  }
+  return {
+    label: `${qualityGate.score}/100`,
+    tone: qualityGate.passed ? 'pass' : 'hold',
+  };
+}
+
+function overlayQualityGateToneClass(tone: OverlayQualityGateDisplay['tone']): string {
+  if (tone === 'pass') return 'text-emerald-300';
+  if (tone === 'fail') return 'text-red-300';
+  return 'text-amber-300';
+}
 
 function normalizeStateToken(value: string): 'ready' | 'blocked' | 'unknown' {
   const token = String(value || '').trim().toLowerCase();
@@ -291,6 +332,7 @@ export function LlmRuntimeOverlay({
   llmStreamEvents,
   processStreamEvents,
   fileEditEvents = [],
+  controlPlaneProjection,
 }: LlmRuntimeOverlayProps) {
   const [expanded, setExpanded] = useState(false);
   const compactFactoryMode = activeView === 'factory';
@@ -382,6 +424,7 @@ export function LlmRuntimeOverlay({
       .filter((event) => Boolean(event.filePath))
       .sort((a, b) => toEpoch(b.timestamp) - toEpoch(a.timestamp))[0] || null;
   }, [fileEditEvents]);
+  const qualityGateDisplay = overlayQualityGateDisplay(controlPlaneProjection, qualityGate);
 
   const latestStep = recentSteps[0] ?? null;
   const headline = pickHeadline(running, latestStep, displayPhase);
@@ -497,7 +540,7 @@ export function LlmRuntimeOverlay({
                   </span>
                   <span className="font-mono">{toRelativeTime(effectiveUpdateTime)}</span>
                 </div>
-                {qualityGate && (
+                {qualityGateDisplay && (
                   <div className="mt-1.5 flex items-center justify-between text-[10px]">
                     <span className="flex items-center gap-1 text-text-muted">
                       <Sparkles className="size-3 text-accent" />
@@ -505,9 +548,9 @@ export function LlmRuntimeOverlay({
                     </span>
                     <span className={cn(
                       'font-mono font-bold',
-                      qualityGate.passed ? 'text-emerald-300' : 'text-amber-300'
+                      overlayQualityGateToneClass(qualityGateDisplay.tone)
                     )}>
-                      {qualityGate.score}/100
+                      {qualityGateDisplay.label}
                     </span>
                   </div>
                 )}

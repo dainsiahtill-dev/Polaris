@@ -16,6 +16,7 @@ because Python caches module objects, those patches mutate the shared ``shutil``
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,34 @@ from .factory_run_models import (
     _PM_DIRECTIVE_META_LINE_PATTERN,
     _PM_PLAN_META_DIAGNOSTIC_MARKERS,
     _WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS,
+)
+
+_DECLARED_FILE_TOKEN_RE = re.compile(
+    r"(?<![\w./-])"
+    r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\."
+    r"(?:py|txt|toml|json|md|html|js|ts|tsx|jsx|css|yaml|yml|go|mod|sum|sh)"
+    r"(?![\w.-])"
+)
+_FILE_AS_DIRECTORY_SUFFIXES = frozenset(
+    {
+        ".css",
+        ".go",
+        ".html",
+        ".js",
+        ".json",
+        ".jsx",
+        ".md",
+        ".mod",
+        ".py",
+        ".sh",
+        ".sum",
+        ".toml",
+        ".ts",
+        ".tsx",
+        ".txt",
+        ".yaml",
+        ".yml",
+    }
 )
 
 
@@ -54,6 +83,9 @@ def normalize_declared_delivery_target(value: Any) -> str:
         return ""
     if parts[0] in {".git", ".polaris", "runtime"}:
         return ""
+    for index, part in enumerate(parts[:-1]):
+        if Path(part).suffix.lower() in _FILE_AS_DIRECTORY_SUFFIXES:
+            return "/".join(parts[: index + 1])
     return token
 
 
@@ -93,6 +125,13 @@ def collect_declared_delivery_targets(tasks: list[dict[str, Any]]) -> list[str]:
         scope = str(task.get("scope") or "")
         for item in scope.replace("\n", ",").split(","):
             add(item, require_file_like=True)
+        for field in ("goal", "description", "steps", "acceptance", "acceptance_criteria", "execution_checklist"):
+            raw_value = task.get(field)
+            values = raw_value if isinstance(raw_value, (list, tuple, set)) else [raw_value]
+            for value in values:
+                text = str(value or "")
+                for match in _DECLARED_FILE_TOKEN_RE.finditer(text):
+                    add(match.group(0), require_file_like=True)
     return targets
 
 

@@ -26,6 +26,7 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import De
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     build_single_batch_task_contract_hint,
+    platform_tool_contract_is_single_batch,
 )
 
 
@@ -126,17 +127,16 @@ def build_decision_messages(
     if not tool_definitions:
         return messages
 
-    # BUG-01 fix: detect benchmark single-batch mode from user message.
-    # When [Benchmark Tool Contract] is present the execution is always
-    # single-turn; the multi-turn "first turn read_file" wording must NOT
-    # be used because it gives the model explicit permission to defer
-    # writes to a non-existent next turn.
+    # Single-batch execution is driven by platform contract metadata or delivery
+    # mode. The multi-turn wording must not be used for a single-turn contract
+    # because it gives the model permission to defer writes to a non-existent
+    # next turn.
     _latest_user_for_guard = ""
     for _m in reversed(context):
         if isinstance(_m, dict) and str(_m.get("role", "")).strip().lower() == "user":
             _latest_user_for_guard = str(_m.get("content", ""))
             break
-    _is_benchmark_single_batch = "[Benchmark Tool Contract]" in _latest_user_for_guard
+    _is_platform_contract_single_batch = platform_tool_contract_is_single_batch(context)
     _is_super_readonly_stage = "[SUPER_MODE_READONLY_STAGE]" in _latest_user_for_guard
     _latest_user_for_guard_lower = _latest_user_for_guard.lower()
     _is_quality_repair = _is_materialization_quality_repair(_latest_user_for_guard)
@@ -167,7 +167,7 @@ def build_decision_messages(
             "系统约束 (只读规划): 当前为 SUPER 的只读规划阶段。"
             "只允许使用当前角色暴露的读取/探索工具，禁止尝试写入，禁止把本阶段当成代码落地阶段。"
         )
-    elif _is_benchmark_single_batch or _is_materialize_single_batch:
+    elif _is_platform_contract_single_batch or _is_materialize_single_batch:
         if _is_quality_repair:
             single_batch_guard = (
                 "SYSTEM CONSTRAINT (Execution): This is a SINGLE-BATCH materialization quality repair. "

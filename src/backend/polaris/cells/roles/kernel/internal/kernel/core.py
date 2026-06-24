@@ -42,6 +42,7 @@ from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
     _MATERIALIZE_DELIVERY_MODE_MARKERS,
     _MATERIALIZE_DELIVERY_MODE_VALUES,
     _ensure_context_delivery_mode_marker,  # noqa: F401 - re-exported for backward-compat namespace access
+    _ensure_platform_tool_contract_metadata,  # noqa: F401 - re-exported for backward-compat namespace access
 )
 from polaris.cells.roles.kernel.internal.kernel.error_handler import (
     KernelEventEmitter,
@@ -49,6 +50,10 @@ from polaris.cells.roles.kernel.internal.kernel.error_handler import (
 )
 from polaris.cells.roles.kernel.internal.kernel.helpers import (
     quality_result_to_dict,
+)
+from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import (
+    tool_contract_requires_no_tools,
+    tool_contract_requires_single_batch,
 )
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
@@ -318,23 +323,14 @@ class RoleExecutionKernel:
         return None
 
     @staticmethod
+    def _tool_contract_requires_no_tools(request: RoleTurnRequest) -> bool:
+        """Return True when the platform tool contract forbids tool calls."""
+        return tool_contract_requires_no_tools(request)
+
+    @staticmethod
     def _benchmark_requires_no_tools(request: RoleTurnRequest) -> bool:
-        """Return True when benchmark contract explicitly forbids tool calls."""
-        metadata = dict(getattr(request, "metadata", {}) or {})
-        if bool(metadata.get("benchmark_require_no_tool_calls")):
-            return True
-
-        message = str(getattr(request, "message", "") or "")
-        if "[Benchmark Tool Contract]" not in message:
-            return False
-
-        lowered = message.lower()
-        return (
-            "do not call any tools for this case." in lowered
-            or "do not call any tools" in lowered
-            or 'require_no_tool_calls": true' in lowered
-            or "require_no_tool_calls: true" in lowered
-        )
+        """Compatibility shim for legacy callers."""
+        return tool_contract_requires_no_tools(request)
 
     @staticmethod
     def _request_forces_no_transaction_tools(request: RoleTurnRequest) -> bool:
@@ -1216,11 +1212,18 @@ class RoleExecutionKernel:
     def _resolve_tool_gateway_turn_key(request_obj: Any) -> str:
         """Resolve a stable per-turn cache key for gateway counters."""
         run_id = str(getattr(request_obj, "run_id", "") or "").strip()
+        task_id = str(getattr(request_obj, "task_id", "") or "").strip()
+        if run_id and task_id:
+            return f"{run_id}:task:{task_id}"
         if run_id:
             return run_id
         turn_id = str(getattr(request_obj, "turn_id", "") or "").strip()
+        if turn_id and task_id:
+            return f"turn_id:{turn_id}:task:{task_id}"
         if turn_id:
             return f"turn_id:{turn_id}"
+        if task_id:
+            return f"task_id:{task_id}"
         return f"request_obj:{id(request_obj)}"
 
     def reset_tool_gateway_turn_boundary(self, turn_id: str) -> None:
@@ -1278,14 +1281,19 @@ class RoleExecutionKernel:
                 if request is None:
                     request = RoleTurnRequest(message="")
 
-                # Reuse or create the cached gateway for authorization check
+                # Reuse only within the same task-scoped turn. A new turn may
+                # carry a different immutable capability scope.
                 current_turn_id = self._resolve_tool_gateway_turn_key(request)
-                if self._cached_tool_gateway is not None and self._cached_gateway_profile is profile:
+                if (
+                    self._cached_tool_gateway is not None
+                    and self._cached_gateway_profile is profile
+                    and current_turn_id == self._cached_gateway_turn_id
+                ):
                     gateway = self._cached_tool_gateway
-                    if current_turn_id != self._cached_gateway_turn_id:
-                        gateway.reset_execution_count()
-                        self._cached_gateway_turn_id = current_turn_id
                 else:
+                    close_cached = getattr(self._cached_tool_gateway, "close", None)
+                    if callable(close_cached):
+                        close_cached()
                     gateway = executor.create_gateway(
                         profile=profile,
                         request=request,
@@ -1347,17 +1355,18 @@ class RoleExecutionKernel:
         # Also reset FailureBudget on turn boundary to prevent stale failure state
         # from one task/turn affecting the next one.
         current_turn_id = self._resolve_tool_gateway_turn_key(request)
-        if self._cached_tool_gateway is not None and self._cached_gateway_profile is profile:
+        if (
+            self._cached_tool_gateway is not None
+            and self._cached_gateway_profile is profile
+            and current_turn_id == self._cached_gateway_turn_id
+        ):
             gateway = self._cached_tool_gateway
-            # Reset counter and failure budget if turn boundary changed
-            if current_turn_id != self._cached_gateway_turn_id:
-                gateway.reset_execution_count()
-                # Reset FailureBudget to clear stale HALLUCINATION_LOOP state
-                if hasattr(gateway, "_failure_budget") and hasattr(gateway._failure_budget, "reset"):
-                    gateway._failure_budget.reset()
-                self._cached_gateway_turn_id = current_turn_id
         else:
-            # Create new gateway and cache it
+            # Create a new gateway at task/turn boundary so capability scope and
+            # FailureBudget cannot leak across independent tasks.
+            close_cached = getattr(self._cached_tool_gateway, "close", None)
+            if callable(close_cached):
+                close_cached()
             gateway = executor.create_gateway(
                 profile=profile,
                 request=request,
@@ -1672,7 +1681,7 @@ class RoleExecutionKernel:
         )
         is_single_batch_execution = (
             delivery_mode in {"materialize_changes", "propose_patch"}
-            or "[Benchmark Tool Contract]" in message_text
+            or tool_contract_requires_single_batch(context_override)
             or is_factory_contract_materialization
             or "materialization quality repair mode" in message_lower
             or "[director_quality_repair:" in message_lower

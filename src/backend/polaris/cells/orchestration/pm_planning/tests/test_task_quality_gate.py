@@ -6,6 +6,7 @@ check_quality_promote_candidate, get_quality_gate_config, and helpers.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -948,6 +949,247 @@ class TestAutofixPmContractForQuality:
         assert stats["acceptance_hardened"] == 1
         assert "verify src/models/task.ts exists" in payload["tasks"][0]["acceptance_criteria"]
         assert not any("requires executable command or file evidence" in item for item in report["critical_issues"])
+
+    def test_sanitizes_go_contract_directory_evidence_without_typescript_drift(self) -> None:
+        payload: dict[str, Any] = {
+            "overall_goal": "用 Go 实现 ASCII 魔法宠物终端，终端宠物学习咒语并用文本动画反馈情绪",
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "Go 项目骨架与模型层实现",
+                    "goal": "实现 pet/spell/mood/ascii 模型层",
+                    "acceptance_criteria": [
+                        "go.mod 存在且 go build ./... 无错误",
+                        "verify src/models/index.ts exists",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["编写 src/models/pet.go", "执行 go test ./..."],
+                    "scope_paths": [
+                        "src/models",
+                        "src/models/pet.go",
+                        "src/models/spell.go",
+                        "src/models/models_test.go",
+                    ],
+                    "target_files": [],
+                },
+                {
+                    "id": "TASK-2",
+                    "title": "应用入口与 CLI 交互实现",
+                    "goal": "创建 Go main.go 入口",
+                    "acceptance_criteria": [
+                        "main.go 存在且 go build 成功",
+                        "verify src/cli/index.ts exists",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["TASK-1"],
+                    "execution_checklist": ["创建 main.go", "执行 go build -o ascii-pet-terminal ."],
+                    "scope_paths": ["src/cli", "tests"],
+                    "target_files": [],
+                },
+                {
+                    "id": "TASK-3",
+                    "title": "实现QA 闭环与确定性检查验收",
+                    "goal": "执行 go_compile 和入口 smoke",
+                    "acceptance_criteria": ["go test ./... 全部通过"],
+                    "assigned_to": "director",
+                    "phase": "verification",
+                    "depends_on": ["TASK-2"],
+                    "execution_checklist": ["执行 go test ./..."],
+                    "scope_paths": ["README.md", "tests/test_ascii.py", "src/models/pet.go"],
+                    "target_files": ["README.md", "tests/test_ascii.py"],
+                },
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")
+        serialized = str(payload)
+
+        assert stats["language_contract_paths_sanitized"] >= 1
+        assert "index.ts" not in serialized
+        assert "tests/test_ascii.py" not in serialized
+        assert payload["tasks"][0]["target_files"] == [
+            "src/models/pet.go",
+            "src/models/spell.go",
+            "src/models/models_test.go",
+            "go.mod",
+        ]
+        assert payload["tasks"][1]["target_files"] == ["main.go"]
+        assert "verify main.go exists" in payload["tasks"][1]["acceptance_criteria"]
+        assert payload["tasks"][2]["target_files"] == ["README.md", "src/models/pet.go"]
+
+    def test_sanitizes_go_contract_infers_entrypoint_module_and_qa_script_from_task_text(self) -> None:
+        payload: dict[str, Any] = {
+            "overall_goal": "主语言: go；用 Go 实现 ASCII 魔法宠物终端",
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "Project Bootstrap & Domain Model Foundation",
+                    "goal": "Create the Go module and bootstrap pet/spell/mood/ascii models.",
+                    "acceptance_criteria": ["go.mod exists and go test ./... passes"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["write go.mod", "write src/models/pet.go"],
+                    "scope_paths": ["src/models"],
+                    "target_files": [],
+                },
+                {
+                    "id": "TASK-2",
+                    "title": "CLI Entrypoint & Interactive Terminal Loop",
+                    "goal": "Deliver a runnable CLI terminal entrypoint.",
+                    "acceptance_criteria": ["main.go can be executed"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["TASK-1"],
+                    "execution_checklist": ["write main.go"],
+                    "scope_paths": [],
+                    "target_files": [],
+                },
+                {
+                    "id": "TASK-3",
+                    "title": "QA Gate & Final Acceptance",
+                    "goal": "Run QA validation script and sign off.",
+                    "acceptance_criteria": ["scripts/qa.sh exits 0"],
+                    "assigned_to": "director",
+                    "phase": "verification",
+                    "depends_on": ["TASK-2"],
+                    "execution_checklist": ["write scripts/qa.sh", "execute the QA script"],
+                    "scope_paths": ["scripts/qa.sh"],
+                    "target_files": [],
+                },
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")
+
+        assert stats["language_contract_paths_sanitized"] >= 1
+        assert payload["tasks"][0]["target_files"] == ["src/models/pet.go", "go.mod"]
+        assert payload["tasks"][1]["target_files"] == ["main.go"]
+        assert payload["tasks"][2]["target_files"] == ["scripts/qa.sh"]
+
+    def test_sanitizes_go_contract_file_as_directory_paths(self) -> None:
+        payload: dict[str, Any] = {
+            "overall_goal": "主语言: go；用 Go 实现 ASCII 魔法宠物终端",
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "Project Bootstrap & Domain Model Scaffold",
+                    "goal": "Create Go pet, spell, mood, ascii models.",
+                    "description": "Initialize src/models domain files for the Go terminal project.",
+                    "acceptance_criteria": ["verify src/models/pet.go/index.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["write src/models/pet.go/index.ts"],
+                    "scope_paths": ["src/models/pet.go/index.ts"],
+                    "target_files": ["src/models/pet.go/index.ts", "src/models/spell.go"],
+                }
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")
+
+        serialized = json.dumps(payload, ensure_ascii=False)
+        assert stats["language_contract_paths_sanitized"] >= 1
+        assert "src/models/pet.go/index.ts" not in serialized
+        assert "verify src/models/pet.go exists" in payload["tasks"][0]["acceptance_criteria"]
+        assert payload["tasks"][0]["target_files"] == [
+            "src/models/pet.go",
+            "src/models/spell.go",
+            "go.mod",
+            "main.go",
+        ]
+
+    def test_sanitizes_go_contract_removes_web_python_ui_drift(self) -> None:
+        payload: dict[str, Any] = {
+            "overall_goal": "主语言: go；用 Go 实现 ASCII 魔法宠物终端",
+            "tasks": [
+                {
+                    "id": "TASK-3",
+                    "title": "CLI入口与可执行主程序实现",
+                    "goal": "提供可直接运行的CLI入口main.go，实现终端交互循环，验证入口可运行性",
+                    "description": (
+                        "构建main.go作为CLI可执行入口，集成models与engine包。 "
+                        "[quality-gate] 禁止单文件大产物：HTML 只保留结构，样式写入 style.css、"
+                        "逻辑写入 app.js（每个文件 ≤150 行）。单文件大写入会被输出预算截断且无法收敛。"
+                    ),
+                    "acceptance_criteria": [
+                        "main.go存在且go run main.go可正常启动",
+                        "tests/test_ascii.py uses unittest",
+                        "index.html references style.css and app.js",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["TASK-2"],
+                    "execution_checklist": [
+                        "实现main.go",
+                        "实现src/cmd/runner.go",
+                        "编写tests/test_ascii.py",
+                        "更新index.html和style.css",
+                    ],
+                    "scope_paths": ["index.html", "tests/test_ascii.py", "src/cmd/runner.go", "style.css"],
+                    "target_files": ["index.html", "src/cmd/runner.go", "main.go", "style.css", "tests/test_ascii.py"],
+                }
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")
+
+        serialized = json.dumps(payload, ensure_ascii=False)
+        assert stats["language_contract_paths_sanitized"] >= 1
+        assert stats["single_file_ui_tasks_steered"] == 0
+        assert "index.html" not in serialized
+        assert "style.css" not in serialized
+        assert "app.js" not in serialized
+        assert "tests/test_ascii.py" not in serialized
+        assert "HTML 只保留结构" not in serialized
+        target_files = payload["tasks"][0]["target_files"]
+        assert "src/cmd/runner.go" in target_files
+        assert "main.go" in target_files
+        assert all(not path.endswith((".html", ".css", ".js", ".py")) for path in target_files)
+
+    def test_go_foundation_task_with_acceptance_text_still_infers_entrypoint_and_sources(self) -> None:
+        payload: dict[str, Any] = {
+            "overall_goal": "主语言: go；用 Go 实现 ASCII 魔法宠物终端",
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "实现Go模块初始化与项目骨架",
+                    "goal": "初始化Go模块，创建可编译运行的项目骨架，包含go.mod、main.go入口及README.md运行说明",
+                    "description": "实现Go模块初始化与项目骨架，并满足验收标准。",
+                    "acceptance_criteria": [
+                        "go.mod 存在且执行 go mod tidy 无错误",
+                        "main.go 存在且执行 go run main.go 输出非空字符串到终端",
+                        "README.md 包含 go run main.go 命令示例及 pet、spell、mood、ascii 关键词",
+                        "目录 src/models/ 和 src/engine/ 已创建",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "foundation",
+                    "depends_on": [],
+                    "execution_checklist": [
+                        "执行 go mod init ascii-magic-pet 创建模块",
+                        "编写 main.go 实现最小可运行CLI入口，导入本地包并调用核心函数",
+                        "创建 src/models/、src/engine/ 目录结构",
+                    ],
+                    "scope_paths": ["README.md"],
+                    "target_files": ["README.md"],
+                }
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")
+
+        assert stats["language_contract_paths_sanitized"] >= 1
+        assert payload["tasks"][0]["target_files"] == [
+            "README.md",
+            "go.mod",
+            "main.go",
+            "src/models/pet.go",
+            "src/engine/engine.go",
+        ]
 
     def test_adds_dependencies(self) -> None:
         payload = {

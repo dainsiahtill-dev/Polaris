@@ -83,6 +83,31 @@ def test_pm_task_contract_infers_director_materialize_source_artifact(tmp_path) 
     assert audit["inferred_artifact"] == "library"
 
 
+def test_go_cli_contract_does_not_infer_web_artifact_from_foreign_web_paths(tmp_path) -> None:
+    appendix, audit = build_prompt_profile_appendix(
+        workspace=str(tmp_path),
+        role_id="director",
+        message=(
+            "PM Task Contract / 任务合同:\n"
+            "任务: CLI入口与可执行主程序实现\n"
+            "目标: 提供可直接运行的CLI入口main.go，实现终端交互循环\n"
+            "范围: index.html, src/cmd/runner.go, style.css, main.go\n"
+            "目标文件: index.html, src/cmd/runner.go, main.go, style.css\n"
+        ),
+        context_override={
+            "delivery_mode": "materialize_changes",
+            "target_files": ["index.html", "src/cmd/runner.go", "main.go", "style.css"],
+        },
+    )
+
+    assert "[POLARIS PROMPT PROFILE]" in appendix
+    assert "builtin.language.go" in audit["selected_prompt_profile_ids"]
+    assert "builtin.artifact.cli" in audit["selected_prompt_profile_ids"]
+    assert "builtin.artifact.web" not in audit["selected_prompt_profile_ids"]
+    assert audit["inferred_language"] == "go"
+    assert audit["inferred_artifact"] == "cli"
+
+
 def test_user_prompt_profile_can_be_selected_explicitly(tmp_path) -> None:
     profile_dir = tmp_path / ".polaris" / "prompt_profiles"
     profile_dir.mkdir(parents=True)

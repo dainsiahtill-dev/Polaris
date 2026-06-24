@@ -280,6 +280,103 @@ class TestBackendToolRuntime:
         assert "not allowed" in result["error"]
         assert not (tmp_path / "src" / "app.txt").exists()
 
+    def test_invoke_write_file_cannot_expand_runtime_capability_scope(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        escaped = tmp_path / "src" / "escaped.py"
+        escaped.write_text("value = 'original'\n", encoding="utf-8")
+        runtime = BackendToolRuntime(str(tmp_path), capability_scope={"src/allowed.py"})
+
+        result = runtime.invoke(
+            "create_file",
+            {
+                "filename": "src/escaped.py",
+                "text": "value = 'changed'\n",
+                "target_files": ["src/escaped.py"],
+            },
+            cwd=str(tmp_path),
+        )
+
+        assert result["ok"] is False
+        assert result["error_type"] == "director_write_policy_denied"
+        assert result["director_policy"]["scope_source"] == "runtime_capability"
+        assert result["director_policy"]["allowed_scope"] == ["src/allowed.py"]
+        assert escaped.read_text(encoding="utf-8") == "value = 'original'\n"
+
+    def test_invoke_write_file_uses_job_token_scope_and_receipt_evidence(self, tmp_path: Path) -> None:
+        runtime = BackendToolRuntime(
+            str(tmp_path),
+            job_token={
+                "source": "control_plane.job_token",
+                "token_id": "tok-123",
+                "run_id": "run-1",
+                "project_id": "P1",
+                "stage": "director_mutation",
+                "allowed_paths": ["src/app.txt"],
+                "contract_hash": "contract-hash",
+                "blueprint_hash": "blueprint-hash",
+                "capability_audit": {"ok": True},
+            },
+        )
+
+        result = runtime.invoke(
+            "create_file",
+            {"filename": "src/app.txt", "text": "hello token\n"},
+            cwd=str(tmp_path),
+        )
+
+        assert result["ok"] is True
+        receipt = result["result"]["effect_receipt"]
+        policy = receipt["director_policy"]
+        assert policy["scope_source"] == "runtime_capability"
+        assert policy["allowed_scope"] == ["src/app.txt"]
+        assert policy["capability_token"]["token_id"] == "tok-123"
+        assert policy["capability_token"]["contract_hash"] == "contract-hash"
+        assert (tmp_path / "src" / "app.txt").read_text(encoding="utf-8") == "hello token\n"
+
+    def test_invoke_write_file_job_token_scope_blocks_outside_path(self, tmp_path: Path) -> None:
+        runtime = BackendToolRuntime(
+            str(tmp_path),
+            job_token={
+                "token_id": "tok-123",
+                "allowed_paths": ["src/allowed.py"],
+                "capability_audit": {"ok": True},
+            },
+        )
+
+        result = runtime.invoke(
+            "create_file",
+            {
+                "filename": "src/escaped.py",
+                "text": "value = 'changed'\n",
+                "target_files": ["src/escaped.py"],
+            },
+            cwd=str(tmp_path),
+        )
+
+        assert result["ok"] is False
+        assert result["error_type"] == "director_write_policy_denied"
+        assert result["director_policy"]["scope_source"] == "runtime_capability"
+        assert result["director_policy"]["allowed_scope"] == ["src/allowed.py"]
+        assert result["director_policy"]["capability_token"]["token_id"] == "tok-123"
+        assert not (tmp_path / "src" / "escaped.py").exists()
+
+    def test_execute_command_receipt_carries_job_token_evidence(self, tmp_path: Path) -> None:
+        runtime = BackendToolRuntime(
+            str(tmp_path),
+            job_token={
+                "token_id": "tok-cmd",
+                "allowed_paths": ["src"],
+                "capability_audit": {"ok": True},
+            },
+        )
+
+        result = runtime.invoke("run_command", {"cmd": "pwd"}, cwd=str(tmp_path))
+
+        assert result["ok"] is True
+        receipt = result["result"]["effect_receipt"]
+        assert receipt["operation"] == "execute_command"
+        assert receipt["capability_token"]["token_id"] == "tok-cmd"
+
     def test_list_tools_caches_result(self, tmp_path: Path) -> None:
         runtime = BackendToolRuntime(str(tmp_path))
         tools1 = runtime.list_tools()

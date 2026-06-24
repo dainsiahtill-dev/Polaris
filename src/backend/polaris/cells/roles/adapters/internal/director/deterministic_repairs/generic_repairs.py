@@ -34,7 +34,11 @@ from ._common import (
     _parse_missing_declared_target_files,
 )
 from .javascript_repairs import (
+    _apply_deterministic_javascript_esm_commonjs_entrypoint_repair,
+    _apply_deterministic_javascript_missing_export_repair,
+    _apply_deterministic_javascript_missing_method_runtime_repair,
     _apply_deterministic_javascript_test_missing_target_repair,
+    _apply_deterministic_javascript_typescript_annotation_repair,
 )
 from .npm_repairs import (
     _apply_deterministic_npm_test_script_repair,
@@ -42,6 +46,7 @@ from .npm_repairs import (
     _apply_deterministic_typescript_scaffold_repair,
 )
 from .python_repairs import (
+    _apply_deterministic_python_package_shadow_bridge_repair,
     _apply_deterministic_python_unittest_runtime_failure_repair,
     _apply_deterministic_unresolved_import_symbol_repair,
 )
@@ -547,9 +552,44 @@ def _apply_deterministic_materialization_quality_repairs(
         )
     )
     results.extend(
+        _apply_deterministic_javascript_typescript_annotation_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_javascript_missing_export_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_javascript_esm_commonjs_entrypoint_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_javascript_missing_method_runtime_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
         _apply_deterministic_python_unittest_runtime_failure_repair(
             adapter,
             task=task,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_python_package_shadow_bridge_repair(
+            adapter,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
         )

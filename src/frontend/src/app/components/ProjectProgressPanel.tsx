@@ -14,7 +14,7 @@ import type { StatusBadgeColor } from '@/app/components/ui/badge';
 import { PhaseIndicator, QualityGateCard, ExecutionLog } from './pm';
 import type { QualityGateData, LogEntry, Phase } from './pm';
 import type { DialogueEvent } from './DialoguePanel';
-import type { FactoryBenchEvent } from '@/services/benchService';
+import type { ControlPlaneProjection, ControlPlaneProjectProjection } from '@/services/controlPlane';
 
 
 interface ProjectProgressPanelProps {
@@ -39,7 +39,7 @@ interface ProjectProgressPanelProps {
   currentPhase?: string;
   directorTaskSource?: 'realtime';
   directorRealtimeConnected?: boolean;
-  benchEvents?: FactoryBenchEvent[];
+  controlPlaneProjection?: ControlPlaneProjection | null;
 }
 
 const toText = (value: unknown): string => {
@@ -121,114 +121,11 @@ function rolePipelineTask(
   return realtimeOverride || toText(role?.task_title) || toText(role?.task_id) || defaultTask;
 }
 
-type BenchPipelineRole = 'pm' | 'chief_engineer' | 'director' | 'qa' | 'unknown';
-
-interface BenchPipelineSnapshot {
-  role: BenchPipelineRole;
-  phase: string;
-  status: string;
-  projectId: string;
-  title: string;
-  summary: string;
-}
-
-function benchString(meta: Record<string, unknown> | undefined, key: string): string {
-  if (!meta) return '';
-  return toText(meta[key]);
-}
-
-function benchRoleFromPhase(phase: string): BenchPipelineRole {
-  const token = phase.trim().toLowerCase();
-  if (['pending', 'intake', 'planning', 'pm_planning', 'docs_check'].includes(token)) return 'pm';
-  if (token.includes('chief') || token.includes('blueprint') || token === 'ce' || token === 'ce_review') {
-    return 'chief_engineer';
-  }
-  if (token.includes('director') || ['implementation', 'mutation', 'execution', 'handover'].includes(token)) {
-    return 'director';
-  }
-  if (token.includes('qa') || token.includes('verification') || token.includes('quality')) return 'qa';
-  return 'unknown';
-}
-
-function latestBenchPipelineSnapshot(events: FactoryBenchEvent[]): BenchPipelineSnapshot | null {
-  for (let i = events.length - 1; i >= 0; i -= 1) {
-    const event = events[i];
-    if (!event || event.type !== 'factory_bench.project.phase') continue;
-    const meta = event.meta || {};
-    const phase = benchString(meta, 'phase');
-    const roleToken = benchString(meta, 'role');
-    const role = (
-      roleToken === 'pm'
-      || roleToken === 'chief_engineer'
-      || roleToken === 'director'
-      || roleToken === 'qa'
-    )
-      ? roleToken
-      : benchRoleFromPhase(phase);
-    return {
-      role,
-      phase,
-      status: benchString(meta, 'status') || 'running',
-      projectId: benchString(meta, 'project_id'),
-      title: benchString(meta, 'title'),
-      summary: toText(event.summary),
-    };
-  }
-  return null;
-}
-
-function benchProjectLabel(snapshot: BenchPipelineSnapshot | null): string {
-  if (!snapshot) return '';
-  const title = snapshot.title || snapshot.projectId;
-  return title && snapshot.projectId && title !== snapshot.projectId
-    ? `${snapshot.projectId} ${title}`
-    : title;
-}
-
-function benchRoleStatus(
-  target: Exclude<BenchPipelineRole, 'unknown'>,
-  snapshot: BenchPipelineSnapshot | null,
-): string {
-  if (!snapshot) return '';
-  const roleOrder: Record<Exclude<BenchPipelineRole, 'unknown'>, number> = {
-    pm: 1,
-    chief_engineer: 2,
-    director: 3,
-    qa: 4,
-  };
-  const currentOrder = snapshot.role === 'unknown' ? 0 : roleOrder[snapshot.role];
-  const targetOrder = roleOrder[target];
-  if (!currentOrder) return '';
-  const terminal = snapshot.status === 'failed' || snapshot.status === 'error' ? 'failed' : 'success';
-  if (currentOrder > targetOrder) return terminal;
-  if (currentOrder === targetOrder) return terminal === 'failed' ? 'failed' : 'running';
-  return 'waiting';
-}
-
-function benchRoleTask(
-  target: Exclude<BenchPipelineRole, 'unknown'>,
-  snapshot: BenchPipelineSnapshot | null,
-): string {
-  if (!snapshot) return '';
-  const label = benchProjectLabel(snapshot);
-  if (target === 'pm') {
-    if (snapshot.role === 'pm') return label ? `PM 合同生成：${label}` : 'PM 合同生成中';
-    return label ? `PM 合同已交接：${label}` : 'PM 合同已交接';
-  }
-  if (target === 'chief_engineer') {
-    if (snapshot.role === 'pm') return '等待 PM 合同';
-    if (snapshot.role === 'chief_engineer') return label ? `蓝图审查：${label}` : '蓝图审查中';
-    return label ? `蓝图已交接：${label}` : '蓝图已交接';
-  }
-  if (target === 'director') {
-    if (snapshot.role === 'pm' || snapshot.role === 'chief_engineer') return '等待 CE 交接';
-    if (snapshot.role === 'director') return label ? `执行落盘：${label}` : 'Director 执行落盘中';
-    return snapshot.summary || (label ? `等待 QA 验收：${label}` : '等待 QA 验收');
-  }
-  return '';
-}
-
 type QaEvidenceGrade =
+  | 'run_ledger_passed'
+  | 'run_ledger_failed'
+  | 'run_ledger_unavailable'
+  | 'run_ledger_pending'
   | 'real_command_passed'
   | 'real_command_failed'
   | 'structural_fallback_passed'
@@ -246,7 +143,27 @@ type QaEvidenceSummary = {
   passed: boolean | null;
 };
 
+function isTerminalSuccessStatus(value: unknown): boolean {
+  const status = toText(value).toLowerCase();
+  return ['completed', 'complete', 'success', 'passed', 'pass', 'ok'].includes(status);
+}
+
+function runLedgerGuardedPipelineStatus(status: string, ledgerEvidence: QaEvidenceSummary | null): string {
+  if (!ledgerEvidence || ledgerEvidence.passed === true || !isTerminalSuccessStatus(status)) {
+    return status;
+  }
+
+  if (ledgerEvidence.grade === 'run_ledger_failed' || ledgerEvidence.grade === 'run_ledger_unavailable') {
+    return 'failed';
+  }
+  return 'blocked';
+}
+
 const QA_EVIDENCE_LABELS: Record<QaEvidenceGrade, string> = {
+  run_ledger_passed: 'run ledger passed',
+  run_ledger_failed: 'run ledger failed',
+  run_ledger_unavailable: 'run ledger unavailable',
+  run_ledger_pending: 'run ledger pending',
   real_command_passed: 'real command passed',
   real_command_failed: 'real command failed',
   structural_fallback_passed: 'structural fallback',
@@ -300,10 +217,61 @@ function qaEvidenceCandidatePhase(entry: QaEvidenceCandidate): string {
 }
 
 function qaEvidenceColor(grade: QaEvidenceGrade): StatusBadgeColor {
+  if (grade === 'run_ledger_passed') return 'success';
+  if (grade === 'run_ledger_pending') return 'warning';
+  if (grade === 'run_ledger_failed' || grade === 'run_ledger_unavailable') return 'error';
   if (grade === 'real_command_passed') return 'success';
   if (grade === 'structural_fallback_passed' || grade.startsWith('not_run')) return 'warning';
   if (grade === 'blocked_missing_dependencies' || grade.endsWith('_failed') || grade === 'qa_error') return 'error';
   return 'default';
+}
+
+function pickFailedLedgerProject(projects: ControlPlaneProjectProjection[]): ControlPlaneProjectProjection | null {
+  return projects.find((project) => !project.ok || project.failed_gate_count > 0) ?? null;
+}
+
+export function extractRunLedgerQaEvidence(
+  projection: ControlPlaneProjection | null | undefined,
+): QaEvidenceSummary | null {
+  if (!projection) return null;
+
+  const detail = toText(projection.detail);
+  if (projection.available === false) {
+    return {
+      grade: 'run_ledger_unavailable',
+      reason: 'run_ledger_unavailable',
+      summary: detail || 'Run Ledger projection unavailable',
+      passed: false,
+    };
+  }
+
+  if (projection.total <= 0 && projection.projects.length === 0) {
+    return {
+      grade: 'run_ledger_pending',
+      reason: 'run_ledger_pending',
+      summary: detail || 'Run Ledger projection has no projected projects yet',
+      passed: false,
+    };
+  }
+
+  const failedProject = pickFailedLedgerProject(projection.projects);
+  if (!projection.ok || projection.failed > 0 || failedProject) {
+    return {
+      grade: 'run_ledger_failed',
+      reason: failedProject?.latest_token_id
+        ? `run_ledger_failed_gate:${failedProject.latest_token_id}`
+        : 'run_ledger_failed_gate',
+      summary: failedProject?.detail || detail || 'Run Ledger gate failed',
+      passed: false,
+    };
+  }
+
+  return {
+    grade: 'run_ledger_passed',
+    reason: 'run_ledger_projected',
+    summary: detail || `Run Ledger projected ${projection.projected}/${projection.total} project(s)`,
+    passed: true,
+  };
 }
 
 export function extractLatestQaEvidence(logs: LogEntry[], dialogueEvents: DialogueEvent[] = []): QaEvidenceSummary | null {
@@ -355,7 +323,7 @@ export function ProjectProgressPanel({
   currentPhase = 'idle',
   directorTaskSource = 'realtime',
   directorRealtimeConnected = false,
-  benchEvents = [],
+  controlPlaneProjection,
 }: ProjectProgressPanelProps) {
   const [isGoalsExpanded, setIsGoalsExpanded] = useState(true);
   const normalizedTasks = Array.isArray(tasks)
@@ -471,14 +439,49 @@ export function ProjectProgressPanel({
   // 状态展示：pm_state 缺失时回退使用 Engine Director 状态
   const effectiveStatus = lastStatus || engineDirectorStatus?.toLowerCase() || '';
   const effectiveDetail = toText(pmState?.last_director_detail) || engineDirectorDetail || '';
+  const runLedgerQaEvidence = extractRunLedgerQaEvidence(controlPlaneProjection);
+  const latestRuntimeQaEvidence = extractLatestQaEvidence(executionLogs, dialogueEvents);
+  const hasTerminalRuntimeClaim =
+    (totalTasks > 0 && completedCount >= totalTasks)
+    || isTerminalSuccessStatus(effectiveStatus)
+    || directorQueueComplete
+    || isTerminalSuccessStatus(pmRole?.status)
+    || isTerminalSuccessStatus(chiefEngineerRole?.status)
+    || isTerminalSuccessStatus(directorRole?.status)
+    || latestRuntimeQaEvidence?.passed === true;
+  const missingRunLedgerQaEvidence: QaEvidenceSummary | null =
+    !runLedgerQaEvidence && hasTerminalRuntimeClaim
+      ? {
+          grade: 'run_ledger_pending',
+          reason: 'run_ledger_required',
+          summary: 'Run Ledger projection is required before terminal completion',
+          passed: false,
+        }
+      : null;
+  const effectiveRunLedgerQaEvidence = runLedgerQaEvidence ?? missingRunLedgerQaEvidence;
+  const runLedgerBlocksTerminalCompletion = Boolean(
+    effectiveRunLedgerQaEvidence && effectiveRunLedgerQaEvidence.passed !== true,
+  );
+  const displayedCompletedCount =
+    runLedgerBlocksTerminalCompletion && totalTasks > 0 && completedCount >= totalTasks
+      ? Math.max(0, totalTasks - 1)
+      : completedCount;
+  const effectiveStatusForDisplay =
+    runLedgerBlocksTerminalCompletion && effectiveStatus === 'success'
+      ? effectiveRunLedgerQaEvidence?.grade === 'run_ledger_failed'
+        ? 'failed'
+        : 'blocked'
+      : effectiveStatus;
 
   let progress = 0;
   let progressHint = '待 PM 出具任务';
   let progressMode: 'done' | 'position' | 'success' | 'idle' = 'idle';
 
-  if (totalTasks > 0 && completedCount > 0) {
-    progress = completedCount / totalTasks;
-    progressHint = `已完成 ${Math.min(completedCount, totalTasks)}/${totalTasks}`;
+  if (totalTasks > 0 && displayedCompletedCount > 0) {
+    progress = displayedCompletedCount / totalTasks;
+    progressHint = runLedgerBlocksTerminalCompletion && completedCount >= totalTasks
+      ? `等待 Run Ledger 证据 · ${Math.min(displayedCompletedCount, totalTasks)}/${totalTasks}`
+      : `已完成 ${Math.min(displayedCompletedCount, totalTasks)}/${totalTasks}`;
     progressMode = 'done';
   } else if (totalTasks > 0 && positionIndex >= 0) {
     progress = (positionIndex + 1) / totalTasks;
@@ -493,9 +496,9 @@ export function ProjectProgressPanel({
   progress = Math.max(0, Math.min(1, progress));
 
   const statusIcon =
-    effectiveStatus === 'success' ? (
+    effectiveStatusForDisplay === 'success' ? (
       <CheckCircle className="size-4 text-emerald-300" />
-    ) : effectiveStatus === 'blocked' ? (
+    ) : effectiveStatusForDisplay === 'blocked' ? (
       <AlertTriangle className="size-4 text-amber-300" />
     ) : (
       <Activity className="size-4 text-slate-300" />
@@ -503,22 +506,15 @@ export function ProjectProgressPanel({
 
   const focusText = focus ? clampText(focus, 160) : '';
   const notesText = notes ? clampText(notes, 180) : '';
-  const benchPipeline = latestBenchPipelineSnapshot(benchEvents);
-  const benchDirectorTask = benchRoleTask('director', benchPipeline);
-  const currentSummary = clampText(benchDirectorTask || directorTaskLabel || '', 160);
+  const currentSummary = clampText(directorTaskLabel || '', 160);
   const goalList = Array.isArray(goals) ? goals.filter((item) => typeof item === 'string' && item.trim().length > 0) : [];
   const directorQueueHint = normalizedDirectorTasks.length > 0
     ? `${directorCompletedCount}/${normalizedDirectorTasks.length} Director queue 已完成`
     : directorRealtimeConnected
       ? 'Director live queue 为空'
       : 'Director live queue 已断开';
-  const benchPmStatus = benchRoleStatus('pm', benchPipeline);
-  const benchChiefEngineerStatus = benchRoleStatus('chief_engineer', benchPipeline);
-  const benchDirectorStatus = benchRoleStatus('director', benchPipeline);
-  const benchPmTask = benchRoleTask('pm', benchPipeline);
-  const benchChiefEngineerTask = benchRoleTask('chief_engineer', benchPipeline);
   const pmContractsReady = totalTasks > 0;
-  const pmContractsComplete = totalTasks > 0 && completedCount >= totalTasks;
+  const pmContractsComplete = totalTasks > 0 && displayedCompletedCount >= totalTasks;
   const directorHandoffReady = normalizedDirectorTasks.length > 0;
   const chiefEngineerDefaultStatus = currentPhase === 'chief_engineer'
     ? 'running'
@@ -539,41 +535,52 @@ export function ProjectProgressPanel({
   const pmDefaultTask = highlightedTask
     ? pickTaskSummary(highlightedTask)
     : pmContractsComplete
-      ? `任务合同已完成：${completedCount}/${totalTasks}`
+      ? `任务合同已完成：${displayedCompletedCount}/${totalTasks}`
       : pmContractsReady
         ? `任务合同已生成：${totalTasks} 项`
         : '等待任务合同';
-  const directorDefaultStatus = directorQueueComplete
+  const ledgerVerifiedDirectorQueueComplete = directorQueueComplete && !runLedgerBlocksTerminalCompletion;
+  const directorDefaultStatus = ledgerVerifiedDirectorQueueComplete
     ? 'success'
     : liveDirectorTask
       ? 'running'
-      : 'waiting';
-  const qaEvidence = extractLatestQaEvidence(executionLogs, dialogueEvents);
+      : runLedgerBlocksTerminalCompletion
+        ? 'blocked'
+        : 'waiting';
+  const qaEvidence = effectiveRunLedgerQaEvidence ?? latestRuntimeQaEvidence;
   const pipelineRoles = [
     {
       id: 'pm',
       label: 'PM',
-      detail: `${totalTasks} contracts · ${completedCount}/${totalTasks || 0} done`,
-      status: rolePipelineStatus(
-        pmRole,
-        pmRunning ? 'running' : pmContractsComplete ? 'success' : pmContractsReady ? 'ready' : 'waiting',
-        benchPmStatus,
+      detail: `${totalTasks} contracts · ${displayedCompletedCount}/${totalTasks || 0} done`,
+      status: runLedgerGuardedPipelineStatus(
+        rolePipelineStatus(
+          pmRole,
+          pmRunning ? 'running' : pmContractsComplete ? 'success' : pmContractsReady ? 'ready' : 'waiting',
+        ),
+        effectiveRunLedgerQaEvidence,
       ),
-      task: rolePipelineTask(pmRole, pmDefaultTask, benchPmTask),
+      task: rolePipelineTask(pmRole, pmDefaultTask),
     },
     {
       id: 'chief-engineer',
       label: 'Chief Engineer',
       detail: 'blueprint / handoff gate',
-      status: rolePipelineStatus(chiefEngineerRole, chiefEngineerDefaultStatus, benchChiefEngineerStatus),
-      task: rolePipelineTask(chiefEngineerRole, chiefEngineerDefaultTask, benchChiefEngineerTask),
+      status: runLedgerGuardedPipelineStatus(
+        rolePipelineStatus(chiefEngineerRole, chiefEngineerDefaultStatus),
+        effectiveRunLedgerQaEvidence,
+      ),
+      task: rolePipelineTask(chiefEngineerRole, chiefEngineerDefaultTask),
     },
     {
       id: 'director',
       label: 'Director',
       detail: directorQueueHint,
-      status: rolePipelineStatus(directorRole, effectiveStatus || directorDefaultStatus, benchDirectorStatus),
-      task: rolePipelineTask(directorRole, currentSummary || '等待 CE 交接', benchDirectorTask),
+      status: runLedgerGuardedPipelineStatus(
+        rolePipelineStatus(directorRole, effectiveStatusForDisplay || directorDefaultStatus),
+        effectiveRunLedgerQaEvidence,
+      ),
+      task: rolePipelineTask(directorRole, currentSummary || '等待 CE 交接'),
     },
   ];
 
@@ -642,15 +649,15 @@ export function ProjectProgressPanel({
             {statusIcon}
             <StatusBadge
               color={
-                effectiveStatus === 'success' ? 'success'
-                : effectiveStatus === 'blocked' ? 'warning'
-                : effectiveStatus === 'failure' || effectiveStatus === 'failed' ? 'error'
+                effectiveStatusForDisplay === 'success' ? 'success'
+                : effectiveStatusForDisplay === 'blocked' ? 'warning'
+                : effectiveStatusForDisplay === 'failure' || effectiveStatusForDisplay === 'failed' ? 'error'
                 : 'default'
               }
               variant="outlined"
               className="font-mono uppercase"
             >
-              {effectiveStatus || '未有回执'}
+              {effectiveStatusForDisplay || '未有回执'}
             </StatusBadge>
             {lastUpdated ? (
               <>
@@ -669,7 +676,7 @@ export function ProjectProgressPanel({
           progressHint={progressHint}
           progressMode={progressMode}
           totalTasks={totalTasks}
-          completedCount={completedCount}
+          completedCount={displayedCompletedCount}
           successRate={successStats?.rate}
         />
 

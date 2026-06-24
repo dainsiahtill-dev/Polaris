@@ -217,6 +217,7 @@ def _register_routers(app: FastAPI) -> None:
         aggregate_chat,
         arsenal,
         cognitive_runtime,
+        control_plane,
         conversations,
         court,
         docs,
@@ -248,6 +249,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(v2_router)
     app.include_router(v2_context.router)
     app.include_router(factory.router)
+    app.include_router(control_plane.router)
 
     app.include_router(aggregate_chat.router)
     app.include_router(role_chat.router)

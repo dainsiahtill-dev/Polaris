@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { LlmRuntimeOverlay } from './LlmRuntimeOverlay';
+import type { ControlPlaneProjection } from '@/services/controlPlane';
 
 const defaultProps = {
   activeView: 'main' as const,
@@ -18,6 +19,22 @@ const defaultProps = {
   executionLogs: [],
   llmStreamEvents: [],
   processStreamEvents: [],
+};
+
+const pendingLedgerProjection: ControlPlaneProjection = {
+  schema_version: 1,
+  source: 'run_ledger_projection',
+  available: true,
+  ok: false,
+  status: 'pending',
+  audit_path: 'runtime/control_plane/ledger',
+  compat_ledgers_included: false,
+  total: 0,
+  projected: 0,
+  missing: 0,
+  failed: 0,
+  detail: 'run ledger projection is pending',
+  projects: [],
 };
 
 describe('LlmRuntimeOverlay', () => {
@@ -81,6 +98,49 @@ describe('LlmRuntimeOverlay', () => {
     expect(screen.getByText('LLM BLOCKED')).toBeInTheDocument();
     expect(screen.getByText('required: pm, director, qa')).toBeInTheDocument();
     expect(screen.getByText('blocked: pm, director')).toBeInTheDocument();
+  });
+
+  it('uses Run Ledger state before stale quality gate pass in the runtime card', () => {
+    render(
+      <LlmRuntimeOverlay
+        {...defaultProps}
+        pmRunning={true}
+        currentPhase="qa"
+        qualityGate={{
+          passed: true,
+          score: 100,
+          attempt: 1,
+          maxAttempts: 1,
+          issues: [],
+        }}
+        controlPlaneProjection={pendingLedgerProjection}
+      />
+    );
+
+    expect(screen.getByText('质量门控')).toBeInTheDocument();
+    expect(screen.getByText('Run Ledger PENDING')).toBeInTheDocument();
+    expect(screen.queryByText('100/100')).not.toBeInTheDocument();
+  });
+
+  it('does not show quality gate pass as terminal success before Run Ledger loads', () => {
+    render(
+      <LlmRuntimeOverlay
+        {...defaultProps}
+        pmRunning={true}
+        currentPhase="qa"
+        qualityGate={{
+          passed: true,
+          score: 100,
+          attempt: 1,
+          maxAttempts: 1,
+          issues: [],
+        }}
+      />
+    );
+
+    expect(screen.getByText('质量门控')).toBeInTheDocument();
+    expect(screen.getByText('Run Ledger PENDING')).toBeInTheDocument();
+    expect(screen.queryByText('100/100')).not.toBeInTheDocument();
   });
 
   it('keeps Factory runtime details collapsed until the user opens them', () => {

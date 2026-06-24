@@ -46,7 +46,11 @@ from polaris.cells.storage.layout.public.service import (
     save_persisted_settings,
     sync_process_settings_environment,
 )
-from polaris.delivery.http.routers._shared import StructuredHTTPException, ensure_required_roles_ready
+from polaris.delivery.http.routers._shared import (
+    StructuredHTTPException,
+    ensure_required_roles_ready,
+    require_internal_bench_surface,
+)
 from polaris.delivery.http.routers.jetstream_utils import (
     publish_to_jetstream,
 )
@@ -2117,6 +2121,7 @@ async def start_factory_bench_session_v2(
     payload: FactoryBenchStartRequest,
 ) -> FactoryBenchStartResponse:
     """Register a new bench session (typically called by the bench subprocess)."""
+    require_internal_bench_surface()
     sid = _bench_service.register_session(
         work_dir=payload.work_dir,
         project_ids=payload.project_ids,
@@ -2142,6 +2147,7 @@ async def list_factory_bench_sessions_v2(
     limit: int = 50,
 ) -> dict[str, Any]:
     """List recent bench sessions for the Factory panel UI."""
+    require_internal_bench_surface()
     sessions = _bench_service.list_sessions(limit=limit)
     return {"total": len(sessions), "sessions": sessions}
 
@@ -2149,6 +2155,7 @@ async def list_factory_bench_sessions_v2(
 @router.get("/v2/factory/bench/sessions/{session_id}")
 async def get_factory_bench_session_v2(session_id: str) -> dict[str, Any]:
     """Read a bench session's status + a tail of its recent events."""
+    require_internal_bench_surface()
     snapshot = _bench_service.get_session(session_id)
     if snapshot is None:
         raise StructuredHTTPException(
@@ -2179,6 +2186,7 @@ async def append_factory_bench_event_v2(
          client, the same way it already carries ``log.llm`` /
          ``log.process`` / etc.
     """
+    require_internal_bench_surface()
     event: dict[str, Any] = {
         "type": payload.type,
         "name": payload.name,
@@ -2209,6 +2217,7 @@ async def complete_factory_bench_session_v2(
     payload: FactoryBenchCompleteRequest,
 ) -> dict[str, Any]:
     """Mark a bench session complete (or failed)."""
+    require_internal_bench_surface()
     ok = _bench_service.complete_session(
         session_id,
         success=payload.success,
@@ -2245,6 +2254,7 @@ async def update_factory_bench_progress_v2(
     payload: FactoryBenchProgressRequest,
 ) -> dict[str, Any]:
     """Update per-project counters so the front-end sees live ``X/Y 通过``."""
+    require_internal_bench_surface()
     ok = _bench_service.update_progress(
         session_id,
         completed=payload.completed,

@@ -1870,10 +1870,11 @@ def build_requirements_doc(project: dict[str, Any]) -> str:
     type_line = f"- 项目类型: {project_type}\n" if project_type else ""
     hook_line = f"- 创意钩子: {creative_hook}\n" if creative_hook else ""
     metadata_block = ""
-    if domain_line or type_line or hook_line:
+    language_line = f"- 主语言: {primary_language}\n" if primary_language else ""
+    if domain_line or type_line or hook_line or language_line:
         metadata_block = (
             "\n## Project Metadata\n"
-            f"{domain_line}{type_line}{hook_line}"
+            f"{language_line}{domain_line}{type_line}{hook_line}"
             "- PM -> Chief Engineer -> Director -> QA 必须在任务合同中保留这些元数据字段, "
             "确保目标语义不丢失。\n"
         )

@@ -54,6 +54,144 @@ cells:
         - No public `storage.layout` cell is reintroduced yet.
         - Vector rank and rerank are not wired yet.
 
+  - id: control_plane.run_ledger
+    title: Control Plane Run Ledger
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: control-plane
+    purpose: >
+      Own platform-level read models for append-only run ledger evidence.
+      Bench and other internal harnesses may produce compatibility events, but
+      formal consumers must use this platform namespace instead of Bench APIs.
+    current_modules:
+      - polaris.cells.control_plane.run_ledger.public.contracts
+      - polaris.cells.control_plane.run_ledger.public.job_token
+      - polaris.cells.control_plane.run_ledger.public.ledger
+      - polaris.cells.control_plane.run_ledger.public.projection
+      - polaris.cells.control_plane.run_ledger.public.service
+    owned_paths:
+      - polaris/cells/control_plane/run_ledger/**
+    public_contracts:
+      modules:
+        - polaris.cells.control_plane.run_ledger.public.contracts
+        - polaris.cells.control_plane.run_ledger.public.job_token
+        - polaris.cells.control_plane.run_ledger.public.ledger
+        - polaris.cells.control_plane.run_ledger.public.projection
+        - polaris.cells.control_plane.run_ledger.public.service
+      commands: []
+      queries:
+        - ReadRunLedgerProjectionQueryV1
+      events: []
+      results:
+        - RunLedgerProjectionResultV1
+      errors:
+        - ControlPlaneRunLedgerV1Error
+    depends_on: []
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - runtime/control_plane/ledger/*
+    effects_allowed:
+      - fs.write:runtime/control_plane/ledger/*
+      - fs.read:runtime/control_plane/ledger/*
+      - fs.read:runtime/factory/ledger/*
+    verification:
+      tests:
+        - polaris/cells/control_plane/run_ledger/tests/test_public_service.py
+        - polaris/tests/unit/delivery/http/routers/test_control_plane_router.py
+      gaps:
+        - Compatibility readers still accept runtime/factory/ledger until
+          historical internal stress-harness evidence ages out.
+
+  - id: control_plane.verifier_policy
+    title: Control Plane Verifier Policy
+    kind: capability
+    visibility: public
+    stateful: true
+    owner: control-plane
+    purpose: >
+      Own platform-level optional verification policy for browser, visual,
+      multimodal LLM judge, and user-defined script evidence. Internal stress
+      harnesses may consume this policy, but they do not own it.
+    current_modules:
+      - polaris.cells.control_plane.verifier_policy.public.contracts
+      - polaris.cells.control_plane.verifier_policy.public.service
+    owned_paths:
+      - polaris/cells/control_plane/verifier_policy/**
+    public_contracts:
+      modules:
+        - polaris.cells.control_plane.verifier_policy.public.contracts
+        - polaris.cells.control_plane.verifier_policy.public.service
+      commands:
+        - UpdateVerifierPolicyCommandV1
+      queries:
+        - ReadVerifierPolicyQueryV1
+      events: []
+      results:
+        - VerifierPolicyResultV1
+      errors:
+        - ControlPlaneVerifierPolicyV1Error
+    depends_on: []
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners:
+      - workspace/.polaris/verifier_policy.json
+    effects_allowed:
+      - fs.read:workspace/.polaris/verifier_policy.json
+      - fs.write:workspace/.polaris/verifier_policy.json
+    verification:
+      tests:
+        - polaris/cells/control_plane/verifier_policy/tests/test_public_service.py
+        - polaris/tests/unit/delivery/http/routers/test_control_plane_router.py
+      gaps:
+        - Verifier execution providers are not wired in this slice; this cell
+          only owns user policy and platform projection.
+
+  - id: control_plane.verifier_execution
+    title: Control Plane Verifier Execution
+    kind: capability
+    visibility: public
+    stateful: false
+    owner: control-plane
+    purpose: >
+      Execute explicitly enabled platform verifier providers and return
+      physical evidence payloads suitable for Run Ledger projection. Internal
+      stress harnesses may consume this cell, but they do not own verifier
+      execution state or production semantics.
+    current_modules:
+      - polaris.cells.control_plane.verifier_execution.public.contracts
+      - polaris.cells.control_plane.verifier_execution.public.service
+    owned_paths:
+      - polaris/cells/control_plane/verifier_execution/**
+    public_contracts:
+      modules:
+        - polaris.cells.control_plane.verifier_execution.public.contracts
+        - polaris.cells.control_plane.verifier_execution.public.service
+      commands:
+        - RunVerifierPolicyCommandV1
+      queries: []
+      events: []
+      results:
+        - VerifierExecutionResultV1
+      errors:
+        - ControlPlaneVerifierExecutionV1Error
+    depends_on:
+      - control_plane.verifier_policy
+    subgraphs:
+      - execution_governance_pipeline
+    state_owners: []
+    effects_allowed:
+      - fs.read:workspace/**
+      - process.exec:workspace/**
+      - process.spawn:workspace/**
+    verification:
+      tests:
+        - polaris/cells/control_plane/verifier_execution/tests/test_public_service.py
+      gaps:
+        - Browser and visual providers are not executed in this slice; existing
+          entrypoint smoke evidence continues to feed those modalities.
+
   - id: delivery.api_gateway
     title: API Gateway
     kind: capability
@@ -67,6 +205,7 @@ cells:
       - polaris.delivery.http.app_factory
       - polaris.delivery.http.routers
       - polaris.delivery.http.routers.aggregate_chat
+      - polaris.delivery.http.routers.control_plane
       - polaris.delivery.ws.runtime_endpoint
     owned_paths:
       - polaris/delivery/http/app_factory.py
@@ -76,6 +215,7 @@ cells:
       - polaris/delivery/http/routers/__init__.py
       - polaris/delivery/http/routers/_shared.py
       - polaris/delivery/http/routers/aggregate_chat.py
+      - polaris/delivery/http/routers/control_plane.py
       - polaris/delivery/http/routers/jetstream_utils.py
       - polaris/delivery/http/routers/sse_utils.py
       - polaris/delivery/http/v2/__init__.py
@@ -96,6 +236,8 @@ cells:
       - roles.runtime
       - runtime.projection
       - policy.workspace_guard
+      - control_plane.run_ledger
+      - control_plane.verifier_policy
     subgraphs:
       - storage_archive_pipeline
     state_owners: []
@@ -1998,6 +2140,10 @@ cells:
       - roles.kernel
       - storage.layout
       - roles.adapters
+      - control_plane.run_ledger
+      - control_plane.verifier_policy
+      - control_plane.verifier_execution
+      - runtime.projection
     subgraphs:
       - storage_archive_pipeline
       - execution_governance_pipeline
@@ -2010,6 +2156,9 @@ cells:
       - fs.write:workspace/experiments/*
       - fs.write:runtime/runs/*
       - fs.write:runtime/events/*
+      - fs.write:runtime/control_plane/ledger/*
+      - fs.read:runtime/control_plane/ledger/*
+      - fs.read:workspace/.polaris/verifier_policy.json
       - process.spawn:factory/*
       - process.spawn:workspace/experiments/*
       - ws.outbound:factory/*

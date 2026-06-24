@@ -183,24 +183,49 @@ describe('useRuntime llm filtering and dedup', () => {
       channel: 'event.factory',
       lines: [
         JSON.stringify({
-          type: 'factory_bench.project.started',
-          actor: 'factory-bench',
-          message: 'Factory bench project L1-02 started',
-          project_id: 'L1-02',
-          level: 1,
+          type: 'stage_started',
+          actor: 'factory-run',
+          message: 'Factory run stage started',
+          run_id: 'factory-run-1',
+          stage: 'pm',
         }),
       ],
     });
 
     expect(result.current.processStreamEvents).toHaveLength(1);
-    expect(result.current.processStreamEvents[0]?.message).toBe('Factory bench project L1-02 started');
+    expect(result.current.processStreamEvents[0]?.message).toBe('Factory run stage started');
     expect(result.current.processStreamEvents[0]?.meta?.channel).toBe('event.factory');
-    expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('factory_bench.project.started');
+    expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('stage_started');
+  });
+
+  it('keeps formal event.factory snapshots when internal bench mode is disabled', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'snapshot',
+      channel: 'event.factory',
+      lines: [
+        JSON.stringify({
+          type: 'stage_completed',
+          actor: 'factory-run',
+          message: 'Factory run stage completed',
+          run_id: 'factory-run-1',
+          stage: 'director',
+        }),
+      ],
+    });
+
+    expect(result.current.processStreamEvents).toHaveLength(1);
+    expect(result.current.processStreamEvents[0]?.message).toBe('Factory run stage completed');
+    expect(result.current.processStreamEvents[0]?.meta?.channel).toBe('event.factory');
+    expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('stage_completed');
   });
 
   it('merges task_runtime execution events from event.factory snapshots into in-progress tasks', () => {
     const { result } = renderHook(() =>
-      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+      useRuntime({ autoConnect: false, workspace: '/test/workspace', includeInternalBench: true })
     );
 
     emitRuntimeMessage({
@@ -248,18 +273,18 @@ describe('useRuntime llm filtering and dedup', () => {
       type: 'line',
       channel: 'event.factory',
       text: JSON.stringify({
-        type: 'factory_bench.gate.evaluated',
-        actor: 'factory-bench',
-        message: 'real_run_gate ok',
-        gate: 'real_run_gate',
+        type: 'gate_evaluated',
+        actor: 'factory-run',
+        message: 'integration qa gate ok',
+        gate: 'integration_qa',
         ok: true,
       }),
     });
 
     expect(result.current.processStreamEvents).toHaveLength(1);
-    expect(result.current.processStreamEvents[0]?.message).toBe('real_run_gate ok');
+    expect(result.current.processStreamEvents[0]?.message).toBe('integration qa gate ok');
     expect(result.current.processStreamEvents[0]?.meta?.channel).toBe('event.factory');
-    expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('factory_bench.gate.evaluated');
+    expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('gate_evaluated');
   });
 
   it('serializes object-valued process summaries instead of rendering [object Object]', () => {
@@ -271,10 +296,10 @@ describe('useRuntime llm filtering and dedup', () => {
       type: 'line',
       channel: 'event.factory',
       text: JSON.stringify({
-        type: 'factory_bench.project.updated',
-        actor: 'factory-bench',
+        type: 'stage_progress',
+        actor: 'factory-run',
         message: {
-          project_id: 'L1-01',
+          run_id: 'factory-run-1',
           phase: 'director_dispatch',
           status: 'running',
         },
@@ -368,12 +393,12 @@ describe('useRuntime llm filtering and dedup', () => {
         workspace_key: 'test-workspace',
         run_id: 'run-42',
         channel: 'event.factory:run-42',
-        kind: 'factory_bench.project.started',
+        kind: 'stage_started',
         ts: '2026-06-20T08:56:47.770284+00:00',
         payload: {
-          type: 'factory_bench.project.started',
-          name: 'factory_bench.project.started',
-          actor: 'factory-bench',
+          type: 'stage_started',
+          name: 'stage_started',
+          actor: 'factory-run',
           message: 'Factory v2 live event visible',
         },
       },
@@ -381,14 +406,14 @@ describe('useRuntime llm filtering and dedup', () => {
 
     expect(result.current.processStreamEvents).toHaveLength(1);
     expect(result.current.processStreamEvents[0]?.message).toBe('Factory v2 live event visible');
-    expect(result.current.processStreamEvents[0]?.source).toBe('factory-bench');
+    expect(result.current.processStreamEvents[0]?.source).toBe('factory-run');
     expect(result.current.processStreamEvents[0]?.meta?.channel).toBe('event.factory:run-42');
-    expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('factory_bench.project.started');
+    expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('stage_started');
   });
 
   it('routes runtime.v2 event.bench envelopes into process stream events', () => {
     const { result } = renderHook(() =>
-      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+      useRuntime({ autoConnect: false, workspace: '/test/workspace', includeInternalBench: true })
     );
 
     emitRuntimeMessage({
@@ -417,6 +442,35 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(result.current.processStreamEvents[0]?.source).toBe('factory-bench');
     expect(result.current.processStreamEvents[0]?.meta?.channel).toBe('event.bench:bench-1');
     expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('factory_bench.run.started');
+  });
+
+  it('drops runtime.v2 event.bench envelopes when internal bench mode is disabled', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'EVENT',
+      protocol: 'runtime.v2',
+      cursor: 44,
+      event: {
+        schema_version: 'runtime.v2',
+        event_id: 'bench-live-disabled',
+        workspace_key: 'test-workspace',
+        run_id: 'bench-1',
+        channel: 'event.bench:bench-1',
+        kind: 'factory_bench.run.started',
+        ts: '2026-06-20T08:57:47.770284+00:00',
+        payload: {
+          type: 'factory_bench.run.started',
+          name: 'factory_bench.run.started',
+          actor: 'factory-bench',
+          summary: 'Bench v2 live event hidden',
+        },
+      },
+    });
+
+    expect(result.current.processStreamEvents).toHaveLength(0);
   });
 
   it('parses the canonical journal llm_completed line: real tokens + latency into meta', () => {

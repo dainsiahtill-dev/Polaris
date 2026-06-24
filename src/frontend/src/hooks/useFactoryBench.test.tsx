@@ -56,6 +56,19 @@ describe('useFactoryBench', () => {
     });
   });
 
+  it('does not subscribe or hydrate sessions when disabled', async () => {
+    const { result } = renderHook(() => useFactoryBench({ enabled: false }));
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.sessions).toEqual([]);
+    expect(result.current.currentSession).toBeNull();
+    expect(result.current.events).toEqual([]);
+    expect(benchServiceMock.listBenchSessions).not.toHaveBeenCalled();
+    expect(benchServiceMock.getBenchSession).not.toHaveBeenCalled();
+    expect(runtimeTransportMock.subscribeChannels).not.toHaveBeenCalled();
+    expect(runtimeTransportMock.registerMessageHandler).not.toHaveBeenCalled();
+  });
+
   it('applies terminal bench events to the current session and stops streaming', async () => {
     let handler: ((message: unknown) => void) | null = null;
     runtimeTransportMock.registerMessageHandler.mockImplementation((nextHandler: (message: unknown) => void) => {

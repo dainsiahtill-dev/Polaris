@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from polaris.bootstrap.config import Settings
 from polaris.cells.runtime.state_owner.internal.state import AppState, Auth
 from polaris.delivery.http.app_factory import create_app
-from polaris.kernelone.storage import resolve_storage_roots
+from polaris.kernelone.storage.io_paths import build_cache_root
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -17,8 +17,13 @@ def test_history_factory_overview_aggregates_round_flow(tmp_path: Path, monkeypa
     test_token = "test-history-token"
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
     monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+    monkeypatch.setenv("POLARIS_INTERNAL_BENCH_ENABLED", "1")
     workspace = tmp_path
-    runtime_root = Path(resolve_storage_roots(str(workspace)).runtime_root)
+    settings = Settings(workspace=str(workspace), ramdisk_root="")
+    app = create_app(settings)
+    app.state.app_state = AppState(settings=settings)
+    app.state.auth = Auth(token=test_token)
+    runtime_root = Path(build_cache_root("", str(workspace)))
 
     _write_json(
         runtime_root / "state" / "task_history.state.json",
@@ -104,10 +109,6 @@ def test_history_factory_overview_aggregates_round_flow(tmp_path: Path, monkeypa
         },
     )
 
-    settings = Settings(workspace=str(workspace), ramdisk_root="")
-    app = create_app(settings)
-    app.state.app_state = AppState(settings=settings)
-    app.state.auth = Auth(token=test_token)
     client = TestClient(app, headers={"Authorization": f"Bearer {test_token}"})
 
     response = client.get("/history/factory/overview?limit=10")

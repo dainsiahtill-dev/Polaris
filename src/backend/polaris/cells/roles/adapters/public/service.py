@@ -30,7 +30,10 @@ from ..internal.director.deterministic_repairs.generic_repairs import (
     _apply_deterministic_materialization_quality_repairs as apply_deterministic_materialization_quality_repairs,
 )
 from ..internal.pm_adapter import PMAdapter
-from ..internal.qa_adapter import QAAdapter
+from ..internal.qa_adapter import (
+    QAAdapter,
+    _extract_workspace_quality_summary as extract_workspace_quality_summary,
+)
 from ..internal.schemas import (
     ROLE_OUTPUT_SCHEMAS,
     BaseToolEnabledOutput,
@@ -170,6 +173,7 @@ __all__ = [
     "apply_deterministic_materialization_quality_repairs",
     "create_role_adapter",
     "execute_workflow_role",
+    "extract_workspace_quality_summary",
     "get_schema_for_role",
     "get_supported_roles",
     "register_all_adapters",

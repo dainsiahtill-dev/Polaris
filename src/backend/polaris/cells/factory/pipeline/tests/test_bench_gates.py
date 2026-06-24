@@ -6,6 +6,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.control_plane.verifier_policy.public import (
+    UpdateVerifierPolicyCommandV1,
+    update_verifier_policy,
+)
 from polaris.cells.factory.pipeline.internal import bench_gates
 from polaris.cells.factory.pipeline.internal.bench_gates import (
     _command_serves_build_output,
@@ -103,7 +107,7 @@ def test_failure_taxonomy_classifies_missing_run_ledger_gate_as_control_plane() 
 
     taxonomy = classify_factory_bench_failure(record)
 
-    assert taxonomy["category"] == "director_tool_execution"
+    assert taxonomy["category"] == "control_plane"
     assert taxonomy["root_cause_signature"] == "control_plane:run_ledger_projection_missing"
     assert taxonomy["evidence"] == ["run ledger projection missing"]
 
@@ -894,6 +898,77 @@ def test_real_run_gate_accepts_pure_static_html_css_smoke(tmp_path: Path) -> Non
     assert gate["requirements"]["build_test_lint_ran"]["detail"] == "static HTML/CSS entrypoint smoke passed"
     # Accept either web_static or web_playwright (Playwright is preferred when available)
     assert gate["entrypoint"]["kind"] in ("web_static", "web_playwright")
+
+
+def test_real_run_gate_fails_closed_for_required_custom_verifier_when_scripts_disabled(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("KERNELONE_CUSTOM_VERIFIER_SCRIPTS_ENABLED", raising=False)
+    (tmp_path / "index.html").write_text("<html><body><h1>ok</h1></body></html>", encoding="utf-8")
+    (tmp_path / "style.css").write_text("body { display: grid; }\n", encoding="utf-8")
+    (tmp_path / "verify.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
+    update_verifier_policy(
+        UpdateVerifierPolicyCommandV1(
+            workspace=str(tmp_path),
+            custom_script_enabled=True,
+            required_modalities=("custom_script",),
+            custom_scripts=(
+                {
+                    "id": "custom-smoke",
+                    "path": "verify.py",
+                    "modality": "custom_script",
+                    "enabled": True,
+                    "required": True,
+                },
+            ),
+        )
+    )
+    record = {"code_files": ["index.html", "style.css"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    assert gate["requirements"]["user_verifiers"]["ok"] is False
+    assert gate["user_verifiers"][0]["required"] is True
+    assert "KERNELONE_CUSTOM_VERIFIER_SCRIPTS_ENABLED" in gate["user_verifiers"][0]["detail"]
+
+
+def test_real_run_gate_accepts_required_custom_verifier_when_scripts_enabled(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("KERNELONE_CUSTOM_VERIFIER_SCRIPTS_ENABLED", "1")
+    (tmp_path / "index.html").write_text("<html><body><h1>ok</h1></body></html>", encoding="utf-8")
+    (tmp_path / "style.css").write_text("body { display: grid; }\n", encoding="utf-8")
+    (tmp_path / "verify.py").write_text(
+        "from pathlib import Path\n"
+        "assert '<html>' in Path('index.html').read_text(encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    update_verifier_policy(
+        UpdateVerifierPolicyCommandV1(
+            workspace=str(tmp_path),
+            custom_script_enabled=True,
+            required_modalities=("custom_script",),
+            custom_scripts=(
+                {
+                    "id": "custom-smoke",
+                    "path": "verify.py",
+                    "modality": "custom_script",
+                    "enabled": True,
+                    "required": True,
+                },
+            ),
+        )
+    )
+    record = {"code_files": ["index.html", "style.css"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    assert gate["requirements"]["user_verifiers"]["ok"] is True
+    assert gate["user_verifiers"][0]["ok"] is True
+    assert gate["user_verifiers"][0]["required"] is True
+    assert gate["user_verifiers"][0]["hash"].startswith("sha256:")
 
 
 def test_real_run_gate_executes_go_build_and_cli_entrypoint(monkeypatch: Any, tmp_path: Path) -> None:

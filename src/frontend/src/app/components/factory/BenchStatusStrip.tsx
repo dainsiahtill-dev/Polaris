@@ -1,13 +1,13 @@
 /**
- * BenchStatusStrip — compact cross-page bench status indicator.
+ * BenchStatusStrip — compact internal-test bench status indicator.
  *
- * PM / ChiefEngineer / Director / ContextOS pages all render this strip so
- * the user can see L1-L8 batch progress regardless of which role panel
- * they have open. The strip auto-hides when no bench session is active.
+ * Bench is not a formal production workspace surface. Callers must guard this
+ * component behind the internal bench/test-mode flag before rendering it. The
+ * strip auto-hides when no bench session is active.
  *
  * Drives off the same `useFactoryBench` hook as the Factory page's
  * BenchPanel, so the same Nats-JetStream WebSocket stream powers every
- * surface.
+ * internal test surface.
  */
 
 import { useMemo } from 'react';
@@ -22,6 +22,7 @@ import type {
 
 interface BenchStatusStripProps {
   className?: string;
+  enabled?: boolean;
   websocketLive?: boolean;
   websocketReconnecting?: boolean;
   websocketAttemptCount?: number;
@@ -72,8 +73,12 @@ function lastBenchEvent(events: FactoryBenchEvent[]): FactoryBenchEvent | null {
 
 export function BenchStatusStrip({
   bench,
+  enabled = false,
   ...props
 }: BenchStatusStripProps): JSX.Element | null {
+  if (!enabled) {
+    return null;
+  }
   if (bench) {
     return <BenchStatusStripView {...props} bench={bench} />;
   }

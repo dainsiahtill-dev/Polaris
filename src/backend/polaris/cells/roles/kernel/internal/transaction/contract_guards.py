@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from polaris.cells.roles.kernel.internal.transaction.constants import (
+    FILE_TOKEN_EXTENSION_PATTERN,
     READ_TOOLS,
     RECON_TOOLS,
     SAFE_READ_BOOTSTRAP_TOOLS,
@@ -124,6 +125,14 @@ _DECLARED_TARGET_LINE_RE = re.compile(
 _STRUCTURED_SCOPE_ARRAY_RE = re.compile(
     r'"(?:scope_paths|allowed_scope_paths|write_scopes|scope_dirs)"\s*:\s*(?P<value>\[[^\]]*\])',
     flags=re.IGNORECASE | re.DOTALL,
+)
+_FILE_TOKEN_RE = re.compile(
+    r"\b[\w./\\-]+\.(?:" + FILE_TOKEN_EXTENSION_PATTERN + r")\b",
+    flags=re.IGNORECASE,
+)
+_QUALITY_REPAIR_TARGET_BLOCK_PREFIXES: tuple[str, ...] = (
+    "missing target files",
+    "existing failed target files",
 )
 
 _COMMON_SCOPE_DIR_NAMES: frozenset[str] = frozenset(
@@ -255,11 +264,7 @@ def _extract_file_tokens_from_text(text: str) -> list[str]:
     if not raw:
         return []
     # 匹配带扩展名的文件路径
-    ext_tokens = re.findall(
-        r"\b[\w./\\-]+\.(?:py|md|txt|json|ya?ml|toml|js|ts|tsx|jsx|css|html)\b",
-        raw,
-        flags=re.IGNORECASE,
-    )
+    ext_tokens = _FILE_TOKEN_RE.findall(raw)
     # 匹配常见无扩展名文件（Makefile, Dockerfile, README, LICENSE, .env, .gitignore 等）
     no_ext_tokens = re.findall(
         r"\b(?:Makefile|Dockerfile|README|LICENSE|CHANGELOG|CONTRIBUTING|\.env\.?\w*|\.gitignore)\b",
@@ -268,6 +273,33 @@ def _extract_file_tokens_from_text(text: str) -> list[str]:
     )
     tokens = ext_tokens + no_ext_tokens
     return _dedupe_normalized_paths(tokens)
+
+
+def _extract_quality_repair_target_block_files(message: str) -> list[str]:
+    """Extract paths from Polaris-authored quality-repair target blocks only."""
+
+    targets: list[str] = []
+    in_repair_target_block = False
+    for line in str(message or "").splitlines():
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if lowered.startswith(_QUALITY_REPAIR_TARGET_BLOCK_PREFIXES):
+            in_repair_target_block = True
+            targets.extend(_extract_file_tokens_from_text(stripped))
+            continue
+        if not in_repair_target_block:
+            continue
+        if not stripped:
+            in_repair_target_block = False
+            continue
+        if stripped.startswith(("-", "*", "•")):
+            targets.extend(_extract_file_tokens_from_text(stripped))
+            continue
+        if "target path" in lowered and ":" in stripped:
+            targets.extend(_extract_file_tokens_from_text(stripped))
+            continue
+        in_repair_target_block = False
+    return _dedupe_normalized_paths(targets)
 
 
 def _extract_scope_tokens_from_text(text: str) -> list[str]:
@@ -300,7 +332,7 @@ def extract_target_files_from_message(message: str) -> list[str]:
             continue
         declared_tokens.extend(_extract_file_tokens_from_text(match.group("value")))
     if declared_tokens:
-        return _dedupe_normalized_paths(declared_tokens)
+        return _dedupe_normalized_paths([*declared_tokens, *_extract_quality_repair_target_block_files(raw)])
     return _extract_file_tokens_from_text(raw)
 
 
@@ -505,8 +537,10 @@ _COMMON_CODE_EXTENSIONS: set[str] = {
     ".c",
     ".h",
     ".md",
+    ".mod",
     ".txt",
     ".json",
+    ".sum",
     ".yaml",
     ".yml",
     ".toml",

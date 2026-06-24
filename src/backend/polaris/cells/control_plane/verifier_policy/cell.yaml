@@ -1,0 +1,45 @@
+id: control_plane.verifier_policy
+title: Control Plane Verifier Policy
+kind: capability
+visibility: public
+stateful: true
+owner: control-plane
+purpose: >
+  Own platform-level optional verification policy for browser, visual,
+  multimodal LLM judge, and user-defined script evidence. Internal stress
+  harnesses may consume this policy; formal product surfaces must use this
+  platform namespace.
+current_modules:
+  - polaris.cells.control_plane.verifier_policy.public.contracts
+  - polaris.cells.control_plane.verifier_policy.public.service
+owned_paths:
+  - polaris/cells/control_plane/verifier_policy/**
+public_contracts:
+  modules:
+    - polaris.cells.control_plane.verifier_policy.public.contracts
+    - polaris.cells.control_plane.verifier_policy.public.service
+  commands:
+    - UpdateVerifierPolicyCommandV1
+  queries:
+    - ReadVerifierPolicyQueryV1
+  events: []
+  results:
+    - VerifierPolicyResultV1
+  errors:
+    - ControlPlaneVerifierPolicyV1Error
+depends_on: []
+subgraphs:
+  - execution_governance_pipeline
+state_owners:
+  - workspace/.polaris/verifier_policy.json
+effects_allowed:
+  - fs.read:workspace/.polaris/verifier_policy.json
+  - fs.write:workspace/.polaris/verifier_policy.json
+verification:
+  tests:
+    - polaris/cells/control_plane/verifier_policy/tests/test_public_service.py
+    - polaris/tests/unit/delivery/http/routers/test_control_plane_router.py
+  gaps:
+    - This cell owns policy only. Verifier execution providers will consume
+      this policy through public contracts in a later platform slice.
+  smoke_commands: []

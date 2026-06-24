@@ -20,6 +20,10 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public import (
+    ReadRunLedgerProjectionQueryV1,
+    read_run_ledger_projection,
+)
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryContract,
     DeliveryMode,
@@ -176,6 +180,135 @@ async def test_allowed_tool_names_alias_normalization_permits_scaffolding_alias(
     assert result.get("turn_id") == turn_id
 
 
+@pytest.mark.asyncio
+async def test_token_scoped_effect_receipt_appends_platform_run_ledger(tmp_path) -> None:
+    """Token-scoped physical tool receipts must become platform Run Ledger evidence."""
+    capability_token = {
+        "source": "control_plane.job_token",
+        "token_id": "jt-tool-batch",
+        "run_id": "run-tool-batch",
+        "project_id": "project-tool-batch",
+        "stage": "director_mutation",
+        "contract_hash": "contract-tool-batch",
+        "blueprint_hash": "blueprint-tool-batch",
+        "capability_audit_ok": True,
+        "allowed_scope": ["src/app.py"],
+    }
+
+    async def _runtime(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "result": {"file": arguments.get("file")},
+            "effect_receipt": {
+                "operation": tool_name,
+                "file": arguments.get("file"),
+                "capability_token": capability_token,
+            },
+        }
+
+    executor = _make_executor(
+        tool_runtime=AsyncMock(side_effect=_runtime),
+        config=TransactionConfig(role_id="director", mutation_guard_mode="warn"),
+    )
+    turn_id = "turn_tool_receipt_ledger"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [
+            {
+                "call_id": "w",
+                "tool_name": "write_file",
+                "arguments": {"file": "src/app.py", "content": "value = 1\n"},
+                "execution_mode": "write_serial",
+                "effect_type": "write",
+            }
+        ],
+    )
+    decision["metadata"]["workspace"] = str(tmp_path)
+    decision["metadata"]["run_id"] = "run-tool-batch"
+    decision["metadata"]["task_id"] = "task-tool-batch"
+
+    await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        TurnLedger(turn_id=turn_id),
+        [{"role": "user", "content": "write src/app.py"}],
+        stream=False,
+    )
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-tool-batch")
+    ).projection
+
+    assert projection["ok"] is True
+    assert projection["projects"][0]["latest_token_id"] == "jt-tool-batch"
+    assert projection["evidence_modalities"]["tool_receipt"]["present"] == 1
+    assert projection["evidence_modalities"]["tool_receipt"]["ok"] == 1
+
+
+@pytest.mark.asyncio
+async def test_token_scoped_failed_tool_batch_appends_failed_run_ledger_event(tmp_path) -> None:
+    """A JobToken-scoped failed batch must fail the platform Run Ledger projection."""
+    job_token = {
+        "source": "control_plane.job_token",
+        "token_id": "jt-tool-failure",
+        "run_id": "run-tool-failure",
+        "project_id": "project-tool-failure",
+        "stage": "director_mutation",
+        "contract_hash": "contract-tool-failure",
+        "blueprint_hash": "blueprint-tool-failure",
+        "capability_audit": {"ok": True, "issues": []},
+        "allowed_paths": ["src/app.py"],
+    }
+
+    async def _runtime(_tool_name: str, _arguments: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "error": "runtime denied write without producing an effect receipt",
+        }
+
+    executor = _make_executor(
+        tool_runtime=AsyncMock(side_effect=_runtime),
+        config=TransactionConfig(role_id="director", mutation_guard_mode="warn"),
+    )
+    turn_id = "turn_tool_failure_ledger"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [
+            {
+                "call_id": "w",
+                "tool_name": "write_file",
+                "arguments": {"file": "src/app.py", "content": "value = 1\n"},
+                "execution_mode": "write_serial",
+                "effect_type": "write",
+            }
+        ],
+    )
+    decision["metadata"]["workspace"] = str(tmp_path)
+    decision["metadata"]["run_id"] = "run-tool-failure"
+    decision["metadata"]["task_id"] = "task-tool-failure"
+    decision["metadata"]["job_token"] = job_token
+
+    await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        TurnLedger(turn_id=turn_id),
+        [{"role": "user", "content": "write src/app.py"}],
+        stream=False,
+    )
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-tool-failure")
+    ).projection
+
+    assert projection["ok"] is False
+    assert projection["failed"] == 1
+    assert projection["projects"][0]["latest_token_id"] == "jt-tool-failure"
+    assert projection["projects"][0]["failed_gate_count"] == 1
+    assert "failed gate" in projection["projects"][0]["detail"]
+
+
 # ---------------------------------------------------------------------------
 # READ-WRITE BARRIER (690-736)
 # ---------------------------------------------------------------------------
@@ -207,8 +340,8 @@ async def test_read_write_barrier_mixed_read_and_write_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_write_barrier_bypassed_for_benchmark_contract() -> None:
-    """Benchmark contracts (``[Benchmark Tool Contract]``) bypass the barrier."""
+async def test_read_write_barrier_bypassed_for_platform_tool_contract() -> None:
+    """Platform tool contracts can explicitly bypass the read/write barrier."""
     captured: list[Any] = []
     executor = _make_executor(captured_events=captured)
     turn_id = "turn_barrier_bench"
@@ -220,14 +353,55 @@ async def test_read_write_barrier_bypassed_for_benchmark_contract() -> None:
             {"call_id": "w", "tool_name": "write_file", "arguments": {"file": "a.py", "content": "x"}},
         ],
     )
-    # Must NOT raise the barrier error because benchmark marker is present.
+    # Must NOT raise the barrier error because the platform contract allows
+    # mixed read/write batches.
     result = await executor.execute_tool_batch(
         decision,
         _build_decoded_state_machine(turn_id),
         TurnLedger(turn_id=turn_id),
-        [{"role": "user", "content": "[Benchmark Tool Contract] update a.py"}],
+        [
+            {
+                "role": "user",
+                "content": "update a.py",
+                "metadata": {"tool_contract": {"allow_mixed_read_write_batch": True}},
+            }
+        ],
         stream=False,
     )
+    assert result.get("turn_id") == turn_id
+
+
+@pytest.mark.asyncio
+async def test_platform_tool_contract_targets_authorize_mutation_guard() -> None:
+    """Structured platform targets are part of the mutation guard authority."""
+    executor = _make_executor(config=TransactionConfig(mutation_guard_mode="strict"))
+    turn_id = "turn_contract_target"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [
+            {
+                "call_id": "w",
+                "tool_name": "write_file",
+                "arguments": {"file": "go.mod", "content": "module ascii-magic-pet\n\ngo 1.22\n"},
+            }
+        ],
+    )
+
+    result = await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        TurnLedger(turn_id=turn_id),
+        [
+            {
+                "role": "user",
+                "content": "请更新 README.md 并继续落地",
+                "metadata": {"tool_contract": {"target_files": ["go.mod"]}},
+            }
+        ],
+        stream=False,
+    )
+
     assert result.get("turn_id") == turn_id
 
 

@@ -239,7 +239,7 @@ export function DialoguePanel({
         taskIds.add(taskId);
       }
       if (event.type === 'result' && taskId) {
-        const match = formatDialogueContent(event.content).match(/Result:\s*([A-Za-z]+)/);
+        const match = formatDialogueContent(event.content).match(/(?:Result|Event receipt):\s*([A-Za-z]+)/i);
         if (match?.[1]) {
           resultByTaskId.set(taskId, mergeStatus(resultByTaskId.get(taskId), match[1]));
         }

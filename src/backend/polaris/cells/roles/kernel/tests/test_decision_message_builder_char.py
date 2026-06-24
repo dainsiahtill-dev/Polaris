@@ -77,13 +77,14 @@ def test_build_decision_messages_injects_implementing_hard_gate() -> None:
 
 def test_build_decision_messages_materialize_strips_negative_task_contract_lines() -> None:
     controller = _make_controller()
-    # A benchmark contract drives task_contract_hint synthesis with NEGATIVE lines.
-    user_content = (
-        "[Benchmark Tool Contract]\n"
-        "Required tools (at least once): write_file\n"
-        "Create src/main.ts and write the implementation."
-    )
-    context = [{"role": "user", "content": user_content}]
+    user_content = "Create src/main.ts and write the implementation."
+    context = [
+        {
+            "role": "user",
+            "content": user_content,
+            "metadata": {"tool_contract": {"single_batch": True, "required_tools": ["write_file"]}},
+        }
+    ]
     tool_definitions = [
         {"type": "function", "function": {"name": "read_file"}},
         {"type": "function", "function": {"name": "write_file"}},
@@ -134,14 +135,18 @@ def test_build_decision_messages_materialize_guard_is_write_first_for_create_tas
 def test_build_decision_messages_quality_repair_removes_read_first_templates() -> None:
     controller = _make_controller()
     user_content = (
-        "[Benchmark Tool Contract]\n"
-        "Required tools: write_file\n"
         "MATERIALIZATION QUALITY REPAIR MODE:\n"
         "Artifact quality scan failed: npm package manifest script references missing local entrypoint.\n"
         "Do not read files first. Do not list directories. Do not explore. Do not explain.\n"
         "Emit exactly one write_file tool call for package.json."
     )
-    context = [{"role": "user", "content": user_content}]
+    context = [
+        {
+            "role": "user",
+            "content": user_content,
+            "metadata": {"tool_contract": {"single_batch": True, "required_tools": ["write_file"]}},
+        }
+    ]
     tool_definitions = [
         {"type": "function", "function": {"name": "read_file"}},
         {"type": "function", "function": {"name": "write_file"}},

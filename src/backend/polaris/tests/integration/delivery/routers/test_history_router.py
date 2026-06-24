@@ -96,9 +96,13 @@ class TestHistoryRouter:
         assert len(payload["rounds"]) == 1
 
     def test_history_factory_overview_happy_path(self) -> None:
-        """GET /history/factory/overview returns 200 with summary and rounds."""
+        """GET /history/factory/overview returns data only in internal bench mode."""
         client = _build_client()
         with (
+            patch.dict(
+                "os.environ",
+                {"POLARIS_INTERNAL_BENCH_ENABLED": "1"},
+            ),
             patch(
                 "polaris.delivery.http.routers.history._load_merged_rounds",
                 return_value=[
@@ -122,6 +126,14 @@ class TestHistoryRouter:
         assert "rounds" in payload
         assert payload["summary"]["passed_rounds"] == 1
 
+    def test_history_factory_overview_disabled_by_default(self) -> None:
+        """Factory/Bench history is not a formal product history surface."""
+        client = _build_client()
+        response = client.get("/history/factory/overview")
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "INTERNAL_BENCH_SURFACE_DISABLED"
+
     def test_history_round_detail_not_found(self) -> None:
         """GET /history/round/{round_id} returns 404 for missing round."""
         client = _build_client()
@@ -135,6 +147,31 @@ class TestHistoryRouter:
 
         assert response.status_code == 404
         assert "not found" in response.json()["error"]["message"].lower()
+
+    def test_history_round_detail_does_not_expose_internal_factory_flow(self) -> None:
+        """Formal round detail must not expose internal Factory/Bench flow projections."""
+        client = _build_client()
+
+        def fake_load_merged_rounds(_state: Any, include_factory_flow: bool = False) -> list[dict[str, Any]]:
+            assert include_factory_flow is False
+            return [
+                {
+                    "round_id": "r1",
+                    "timestamp": "2026-04-24T00:00:00",
+                    "artifacts": {},
+                }
+            ]
+
+        with patch(
+            "polaris.delivery.http.routers.history._load_merged_rounds",
+            side_effect=fake_load_merged_rounds,
+        ):
+            response = client.get("/history/round/r1")
+
+        assert response.status_code == 200
+        payload: dict[str, Any] = response.json()
+        assert payload["round"]["round_id"] == "r1"
+        assert "factory_flow" not in payload["round"]
 
     def test_v2_history_runs_happy_path(self) -> None:
         """GET /v2/history/runs returns 200 with paginated runs."""
@@ -224,9 +261,13 @@ class TestHistoryRouter:
         assert payload["total"] == 1
 
     def test_v2_history_factory_snapshots_happy_path(self) -> None:
-        """GET /v2/history/factory/snapshots returns 200 with factory runs."""
+        """GET /v2/history/factory/snapshots returns data only in internal bench mode."""
         client = _build_client()
         with (
+            patch.dict(
+                "os.environ",
+                {"POLARIS_INTERNAL_BENCH_ENABLED": "1"},
+            ),
             patch(
                 "polaris.delivery.http.routers.history.list_factory_runs",
                 return_value=[{"run_id": "f1"}],
@@ -237,6 +278,14 @@ class TestHistoryRouter:
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["total"] == 1
+
+    def test_v2_history_factory_snapshots_disabled_by_default(self) -> None:
+        """Factory snapshot history is hidden outside internal test mode."""
+        client = _build_client()
+        response = client.get("/v2/history/factory/snapshots")
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "INTERNAL_BENCH_SURFACE_DISABLED"
 
     def test_history_run_manifest_v1_not_found(self) -> None:
         """GET /history/runs/{run_id}/manifest returns 404 when manifest missing."""
@@ -265,9 +314,13 @@ class TestHistoryRouter:
         assert response.status_code == 404
 
     def test_history_factory_manifest_not_found(self) -> None:
-        """GET /history/factory/{run_id}/manifest returns 404 when missing."""
+        """GET /history/factory/{run_id}/manifest can resolve only in internal bench mode."""
         client = _build_client()
         with (
+            patch.dict(
+                "os.environ",
+                {"POLARIS_INTERNAL_BENCH_ENABLED": "1"},
+            ),
             patch(
                 "polaris.delivery.http.routers.history.get_factory_manifest",
                 return_value=None,
@@ -276,3 +329,11 @@ class TestHistoryRouter:
             response = client.get("/history/factory/f1/manifest")
 
         assert response.status_code == 404
+
+    def test_history_factory_manifest_disabled_by_default(self) -> None:
+        """Factory manifest history is hidden outside internal test mode."""
+        client = _build_client()
+        response = client.get("/history/factory/f1/manifest")
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "INTERNAL_BENCH_SURFACE_DISABLED"

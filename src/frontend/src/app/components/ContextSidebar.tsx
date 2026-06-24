@@ -352,7 +352,7 @@ function runtimeEventToDialogueEvent(entry: LogEntry, index: number): DialogueEv
     const taskId = firstStringValue(meta, ['task_id', 'taskId', 'project_id', 'projectId']);
     const status = inferRuntimeResultStatus(entry);
     const content = status
-        ? `Result: ${status} - ${contentParts.join(' · ')}`
+        ? `Event receipt: ${status} - ${contentParts.join(' · ')}`
         : contentParts.join(' · ');
 
     return {

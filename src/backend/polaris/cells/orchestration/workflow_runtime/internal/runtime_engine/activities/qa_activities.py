@@ -77,6 +77,152 @@ def _write_runtime_result(
     return target
 
 
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _first_mapping(*values: Any) -> dict[str, Any]:
+    for value in values:
+        if isinstance(value, dict) and value:
+            return dict(value)
+    return {}
+
+
+def _qa_workflow_job_token(metadata: dict[str, Any], *, run_id: str) -> dict[str, Any]:
+    token = _first_mapping(
+        metadata.get("job_token"),
+        metadata.get("control_plane_job_token"),
+        metadata.get("capability_token"),
+    )
+    contract_hash = _clean_text(
+        token.get("contract_hash") or metadata.get("contract_hash") or metadata.get("pm_contract_hash")
+    )
+    blueprint_hash = _clean_text(token.get("blueprint_hash") or metadata.get("blueprint_hash"))
+    issues: list[str] = []
+    if not contract_hash:
+        issues.append("missing_contract_hash")
+    if not blueprint_hash:
+        issues.append("missing_blueprint_hash")
+
+    if token:
+        token.setdefault("token_id", _clean_text(metadata.get("job_token_id")) or f"workflow-qa-{run_id}")
+        token.setdefault("run_id", run_id)
+        token.setdefault("project_id", _clean_text(metadata.get("project_id")) or run_id)
+        token.setdefault("contract_hash", contract_hash)
+        token.setdefault("blueprint_hash", blueprint_hash)
+    else:
+        token = {
+            "token_id": _clean_text(metadata.get("job_token_id")) or f"workflow-qa-{run_id}",
+            "run_id": run_id,
+            "project_id": _clean_text(metadata.get("project_id")) or run_id,
+            "contract_hash": contract_hash,
+            "blueprint_hash": blueprint_hash,
+            "target_files": [],
+            "permissions": {},
+        }
+
+    token.setdefault(
+        "gate_policy",
+        {
+            "required_evidence_modalities": ["verifier", "cognitive_runtime"],
+            "enabled_evidence_modalities": ["verifier", "cognitive_runtime"],
+        },
+    )
+    token.setdefault(
+        "capability_audit",
+        {
+            "ok": not issues,
+            "issues": issues,
+        },
+    )
+    return token
+
+
+def _append_qa_workflow_run_ledger_event(
+    *,
+    workspace: str,
+    run_id: str,
+    status: str,
+    reason: str,
+    summary: str,
+    metadata: dict[str, Any],
+    unit_payload: Any,
+    integration_payload: Any,
+    cognitive_runtime_receipt: dict[str, Any],
+    errors: list[str],
+) -> dict[str, Any]:
+    from polaris.cells.control_plane.run_ledger.public import (
+        AppendRunLedgerEventCommandV1,
+        append_run_ledger_event,
+    )
+
+    unit_map = unit_payload if isinstance(unit_payload, dict) else {}
+    integration_map = integration_payload if isinstance(integration_payload, dict) else {}
+    passed = status == "completed" and reason in {"qa_passed", "integration_qa_passed", "passed"}
+    verifier_detail = summary or reason or "workflow QA did not produce a summary"
+    cognitive_ok = bool(cognitive_runtime_receipt.get("ok"))
+    event = {
+        "schema_version": 1,
+        "event_type": "gate_evaluated",
+        "run_id": run_id,
+        "project_id": _clean_text(metadata.get("project_id")) or run_id,
+        "stage": "workflow_qa",
+        "actor": "QA",
+        "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "job_token": _qa_workflow_job_token(metadata, run_id=run_id),
+        "gate": {
+            "name": "workflow_qa",
+            "ok": passed,
+            "summary": verifier_detail,
+        },
+        "physical_evidence": {
+            "result_path": _clean_text(integration_map.get("result_path")),
+            "unit_result_path": _clean_text(unit_map.get("result_path")),
+            "runtime_result_path": _clean_text(integration_map.get("runtime_result_path")),
+            "command_count": 1,
+            "commands": [
+                {
+                    "name": "workflow_qa",
+                    "ok": passed,
+                    "detail": verifier_detail,
+                }
+            ],
+            "modalities": {
+                "cognitive_runtime": {
+                    "present": bool(cognitive_runtime_receipt),
+                    "ok": cognitive_ok,
+                    "detail": _clean_text(cognitive_runtime_receipt.get("receipt_id"))
+                    or _clean_text(cognitive_runtime_receipt.get("error_message"))
+                    or "QA Cognitive Runtime receipt",
+                }
+            },
+            "qa_verifiers": [
+                {
+                    "id": "workflow_qa",
+                    "name": "Workflow QA",
+                    "modality": "verifier",
+                    "ok": passed,
+                    "detail": verifier_detail,
+                    "reason": reason,
+                    "exit_code": 0 if passed else 1,
+                }
+            ],
+            "errors": errors,
+            "unit": unit_map,
+            "integration": integration_map,
+            "cognitive_runtime_receipt": cognitive_runtime_receipt,
+            "evidence_grade": "workflow_qa_ledger",
+        },
+    }
+    return append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=workspace,
+            run_id=run_id,
+            event=event,
+        )
+    ).receipt
+
+
 def _run_command(command: str, workspace: str, timeout_seconds: int) -> tuple[bool, str, list[str]]:
     import shlex
 
@@ -303,9 +449,32 @@ async def record_qa_cognitive_receipt(payload: dict[str, Any]) -> dict[str, Any]
     evidence["ok"] = True
     if receipt_id:
         evidence["receipt_id"] = receipt_id
+    try:
+        ledger_receipt = _append_qa_workflow_run_ledger_event(
+            workspace=workspace,
+            run_id=run_id,
+            status=status,
+            reason=reason,
+            summary=summary,
+            metadata=metadata,
+            unit_payload=unit_payload,
+            integration_payload=integration_payload,
+            cognitive_runtime_receipt=evidence,
+            errors=errors,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        evidence["run_ledger_error"] = str(exc)
+        return ActivityExecutionResult(
+            success=False,
+            summary=f"QA Cognitive Runtime receipt recorded but Run Ledger append failed: {exc}",
+            payload={"cognitive_runtime_receipt": evidence},
+            errors=[str(exc)],
+            error_code="qa_run_ledger_append_failed",
+        ).to_dict()
+    evidence["run_ledger_receipt"] = ledger_receipt
     return ActivityExecutionResult(
         success=True,
-        summary="QA Cognitive Runtime receipt recorded",
+        summary="QA Cognitive Runtime receipt recorded with Run Ledger evidence",
         payload={"cognitive_runtime_receipt": evidence},
     ).to_dict()
 

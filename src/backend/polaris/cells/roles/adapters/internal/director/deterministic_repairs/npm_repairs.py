@@ -119,7 +119,11 @@ def _apply_deterministic_npm_test_script_repair(
         payload = json.loads(package_path.read_text(encoding="utf-8"))
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
         return []
-    if not isinstance(payload, dict) or not _workspace_has_typescript_context(workspace_path, payload):
+    if not isinstance(payload, dict):
+        return []
+    has_typescript_context = _workspace_has_typescript_context(workspace_path, payload)
+    has_node_test_runner_contract = _has_node_test_runner_contract_error(artifact_quality_errors)
+    if not has_typescript_context and not has_node_test_runner_contract:
         return []
 
     changed_metadata: dict[str, str] = {}
@@ -144,7 +148,12 @@ def _apply_deterministic_npm_test_script_repair(
     if any(_is_repairable_npm_test_script_error(error) for error in artifact_quality_errors):
         test_script = str(scripts.get("test") or "").strip()
         missing_test_entrypoint = _missing_npm_script_entrypoint(artifact_quality_errors, script_name="test")
-        if (
+        if has_node_test_runner_contract:
+            repaired_test_script = _node_test_runner_script(workspace_path)
+            if repaired_test_script and repaired_test_script != test_script:
+                scripts["test"] = repaired_test_script
+                changed_scripts["test"] = repaired_test_script
+        elif (
             not test_script
             or "test" in _placeholder_npm_script_names(artifact_quality_errors)
             or "test" in _failure_swallow_npm_script_names(artifact_quality_errors)
@@ -262,6 +271,7 @@ def _is_repairable_npm_test_script_error(error: Any) -> bool:
         or ("npm package manifest script" in text and "references missing local entrypoint" in text)
         or ("npm package manifest script" in text and "is a placeholder command" in text)
         or ("npm package manifest script" in text and "swallows command failures" in text)
+        or "test script must use node --test" in text
         or _has_typescript_source_require_module_not_found([text])
         or _has_missing_jest_config_script_error([text])
         or _has_package_scaffold_marker_error([text])
@@ -283,6 +293,32 @@ def _is_manifest_only_or_default_test_script_error(errors: list[str]) -> bool:
 def _has_package_scaffold_marker_error(errors: list[str]) -> bool:
     joined = "\n".join(str(error or "") for error in errors).lower()
     return "deterministic scaffold marker" in joined and "package.json" in joined
+
+
+def _has_node_test_runner_contract_error(errors: list[str]) -> bool:
+    joined = "\n".join(str(error or "") for error in errors).lower()
+    return "test script must use node --test" in joined
+
+
+def _node_test_runner_script(workspace_path: Path) -> str:
+    tests_root = workspace_path / "tests"
+    if not tests_root.is_dir():
+        return "node --test"
+    preferred = tests_root / "test_basic.js"
+    test_files: list[Path] = []
+    if preferred.is_file():
+        test_files.append(preferred)
+    test_files.extend(
+        path
+        for path in sorted(tests_root.glob("*.js"))
+        if path.is_file()
+        and path not in test_files
+        and (path.name.endswith(".test.js") or path.name.startswith("test_"))
+    )
+    if not test_files:
+        return "node --test"
+    rendered = " ".join(path.relative_to(workspace_path).as_posix() for path in test_files)
+    return f"node --test {rendered}"
 
 
 def _has_typescript_source_require_module_not_found(errors: list[str]) -> bool:

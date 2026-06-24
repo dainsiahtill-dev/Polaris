@@ -42,6 +42,8 @@ export interface ResidentPageProps {
   currentPhase?: string;
   /** 质量门 */
   qualityGate?: unknown;
+  /** 平台 Run Ledger 投影 */
+  controlPlaneProjection?: Parameters<typeof LlmRuntimeOverlay>[0]['controlPlaneProjection'];
   /** 执行日志 */
   executionLogs?: LogEntry[];
   /** LLM 流事件 */
@@ -67,6 +69,7 @@ export function ResidentPage({
   llmRuntimeState,
   currentPhase,
   qualityGate,
+  controlPlaneProjection,
   executionLogs,
   llmStreamEvents,
   processStreamEvents,
@@ -95,6 +98,7 @@ export function ResidentPage({
         executionLogs={executionLogs ?? []}
         llmStreamEvents={llmStreamEvents ?? []}
         processStreamEvents={processStreamEvents ?? []}
+        controlPlaneProjection={controlPlaneProjection}
       />
       <Toaster position="bottom-right" />
     </ErrorBoundaryClass>

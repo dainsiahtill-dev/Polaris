@@ -155,7 +155,8 @@ describe('ContextSidebar', () => {
         />,
       );
 
-      expect(screen.getByText(/Result: FAIL - factory_bench.project.completed/)).toBeInTheDocument();
+      expect(screen.getByText(/Event receipt: FAIL - factory_bench.project.completed/)).toBeInTheDocument();
+      expect(screen.queryByText(/Result: FAIL - factory_bench.project.completed/)).not.toBeInTheDocument();
       expect(screen.getByText(/成功率: 0%/)).toBeInTheDocument();
     });
   });

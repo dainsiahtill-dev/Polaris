@@ -3250,6 +3250,7 @@ from .deterministic_repairs import (  # noqa: E402  (deferred for circular-impor
     _apply_deterministic_npm_test_script_repair as _apply_deterministic_npm_test_script_repair,
     _apply_deterministic_patch_residue_cleanup as _apply_deterministic_patch_residue_cleanup,
     _apply_deterministic_pre_materialization_declared_target_repairs as _apply_deterministic_pre_materialization_declared_target_repairs,
+    _apply_deterministic_python_package_shadow_bridge_repair as _apply_deterministic_python_package_shadow_bridge_repair,
     _apply_deterministic_python_runtime_smoke as _apply_deterministic_python_runtime_smoke,
     _apply_deterministic_python_static_smoke as _apply_deterministic_python_static_smoke,
     _apply_deterministic_python_unittest_missing_target_repair as _apply_deterministic_python_unittest_missing_target_repair,

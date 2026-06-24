@@ -25,6 +25,7 @@ from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
     select_bootstrap_followup_write_tool_name,
 )
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
+    build_single_batch_task_contract_hint,
     extract_allowed_tool_names_from_definitions,
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import (
@@ -361,6 +362,60 @@ def test_resolve_mutation_target_guard_violation_allows_matching_write_target() 
     violation = resolve_mutation_target_guard_violation(context_message, invocations)
 
     assert violation is None
+
+
+def test_resolve_mutation_target_guard_violation_allows_go_write_targets() -> None:
+    context_message = "目标文件: go.mod, src/models/pet.go, src/engine/renderer.go, main.go"
+    invocations = [
+        {
+            "tool_name": "write_file",
+            "arguments": {"file": "go.mod", "content": "module ascii-magic-pet\n"},
+            "effect_type": ToolEffectType.WRITE,
+            "execution_mode": ToolExecutionMode.WRITE_SERIAL,
+        },
+        {
+            "tool_name": "write_file",
+            "arguments": {"file": "src/models/pet.go", "content": "package models\n"},
+            "effect_type": ToolEffectType.WRITE,
+            "execution_mode": ToolExecutionMode.WRITE_SERIAL,
+        },
+        {
+            "tool_name": "write_file",
+            "arguments": {"file": "main.go", "content": "package main\n"},
+            "effect_type": ToolEffectType.WRITE,
+            "execution_mode": ToolExecutionMode.WRITE_SERIAL,
+        },
+    ]
+
+    violation = resolve_mutation_target_guard_violation(context_message, invocations)
+
+    assert violation is None
+
+
+def test_single_batch_task_contract_hint_detects_go_target_files() -> None:
+    context = [
+        {
+            "role": "user",
+            "content": (
+                "请实现 Go CLI，目标文件: go.mod, src/models/pet.go, src/engine/spell_engine.go, main.go。"
+                "必须写入代码。"
+            ),
+        }
+    ]
+    tool_definitions = [
+        {
+            "type": "function",
+            "function": {"name": "write_file"},
+        }
+    ]
+
+    contract_text, metadata = build_single_batch_task_contract_hint(context, tool_definitions)
+
+    assert "expected_read_count" in metadata
+    assert "go.mod" in contract_text
+    assert "src/models/pet.go" in contract_text
+    assert "src/engine/spell_engine.go" in contract_text
+    assert "main.go" in contract_text
 
 
 def test_resolve_mutation_target_guard_violation_rejects_extra_out_of_scope_write_target() -> None:
@@ -1364,9 +1419,11 @@ async def test_retry_bootstrap_scaffold_followup_forces_write_file(monkeypatch) 
     assert result["kind"] == "tool_batch_with_receipt"
     assert captured["execute_calls"] == 2
     overrides = cast(list[object], captured["tool_choice_overrides"])
-    assert overrides[0] is None
+    assert overrides[0] == {"type": "function", "function": {"name": "write_file"}}
     assert overrides[1] == {"type": "function", "function": {"name": "write_file"}}
+    assert cast(list[set[str]], captured["llm_tool_definition_names"])[0] == {"write_file"}
     assert cast(list[set[str]], captured["llm_tool_definition_names"])[1] == {"write_file"}
+    assert cast(list[set[str]], captured["execute_allowed_names"])[0] == {"write_file"}
     assert cast(list[set[str]], captured["execute_allowed_names"])[1] == {"write_file"}
 
 
@@ -1677,12 +1734,15 @@ def test_build_decision_messages_includes_benchmark_required_tools_hint() -> Non
     context = [
         {
             "role": "user",
-            "content": (
-                "在 server.py 中查找并替换 localhost。\n\n"
-                "[Benchmark Tool Contract]\n"
-                "Required tools (at least once): repo_rg, search_replace.\n"
-                "Tool call count must be between 2 and 4."
-            ),
+            "content": "在 server.py 中查找并替换 localhost。",
+            "metadata": {
+                "tool_contract": {
+                    "single_batch": True,
+                    "required_tools": ["repo_rg", "search_replace"],
+                    "min_tool_calls": 2,
+                    "allow_mixed_read_write_batch": True,
+                }
+            },
         }
     ]
     tool_definitions = [
@@ -1693,7 +1753,7 @@ def test_build_decision_messages_includes_benchmark_required_tools_hint() -> Non
     messages = controller._build_decision_messages(context, tool_definitions)
     system_messages = [str(item.get("content") or "") for item in messages if item.get("role") == "system"]
 
-    assert any("Benchmark-required tools are mandatory in this single batch" in text for text in system_messages)
+    assert any("Contract-required tools are mandatory in this single batch" in text for text in system_messages)
     assert any("repo_rg, search_replace" in text for text in system_messages)
 
 
@@ -1706,12 +1766,15 @@ def test_build_decision_messages_adds_equivalent_hint_for_missing_required_tool(
     context = [
         {
             "role": "user",
-            "content": (
-                "在 server.py 中查找并替换 localhost。\n\n"
-                "[Benchmark Tool Contract]\n"
-                "Required tools (at least once): repo_rg, search_replace.\n"
-                "Tool call count must be between 2 and 4."
-            ),
+            "content": "在 server.py 中查找并替换 localhost。",
+            "metadata": {
+                "tool_contract": {
+                    "single_batch": True,
+                    "required_tools": ["repo_rg", "search_replace"],
+                    "min_tool_calls": 2,
+                    "allow_mixed_read_write_batch": True,
+                }
+            },
         }
     ]
     tool_definitions = [
@@ -1723,7 +1786,7 @@ def test_build_decision_messages_adds_equivalent_hint_for_missing_required_tool(
     system_messages = [str(item.get("content") or "") for item in messages if item.get("role") == "system"]
 
     assert any(
-        "Required benchmark tool `search_replace` is not exposed in this profile" in text for text in system_messages
+        "Required contract tool `search_replace` is not exposed in this profile" in text for text in system_messages
     )
     assert any("precision_edit" in text for text in system_messages)
 
@@ -1737,12 +1800,18 @@ def test_build_decision_messages_includes_required_groups_and_min_calls_hint() -
     context = [
         {
             "role": "user",
-            "content": (
-                "把 config.py 里的 DEBUG = True 改成 False。\n\n"
-                "[Benchmark Tool Contract]\n"
-                "Required tool groups: one of [read_file, repo_read_head] ; one of [search_replace, precision_edit].\n"
-                "Tool call count must be >= 2.\n"
-            ),
+            "content": "把 config.py 里的 DEBUG = True 改成 False。",
+            "metadata": {
+                "tool_contract": {
+                    "single_batch": True,
+                    "required_tool_groups": [
+                        ["read_file", "repo_read_head"],
+                        ["search_replace", "precision_edit"],
+                    ],
+                    "min_tool_calls": 2,
+                    "allow_mixed_read_write_batch": True,
+                }
+            },
         }
     ]
     tool_definitions = [
@@ -1753,25 +1822,46 @@ def test_build_decision_messages_includes_required_groups_and_min_calls_hint() -
     messages = controller._build_decision_messages(context, tool_definitions)
     system_messages = [str(item.get("content") or "") for item in messages if item.get("role") == "system"]
 
-    assert any("Benchmark-required tool groups must all be satisfied" in text for text in system_messages)
-    assert any("Benchmark minimum tool-call count for this batch: >= 2." in text for text in system_messages)
+    assert any("Contract-required tool groups must all be satisfied" in text for text in system_messages)
+    assert any("Contract minimum tool-call count for this batch: >= 2." in text for text in system_messages)
     assert any("A single read-only tool call is invalid" in text for text in system_messages)
 
 
-def test_benchmark_requires_no_tools_detects_prompt_and_metadata() -> None:
+def test_tool_contract_requires_no_tools_uses_platform_metadata_only() -> None:
+    legacy_marker = "[" + "Benchmark Tool " + "Contract]"
     request_from_prompt = RoleTurnRequest(
-        message="[Benchmark Tool Contract]\nDo not call any tools for this case.",
+        message=f"{legacy_marker}\nDo not call any tools for this case.",
         metadata={},
     )
     request_from_metadata = RoleTurnRequest(
         message="normal request",
-        metadata={"benchmark_require_no_tool_calls": True},
+        metadata={"tool_contract_require_no_tool_calls": True},
+    )
+    request_from_nested_context = RoleTurnRequest(
+        message="normal request",
+        context_override={"tool_contract": {"require_no_tool_calls": True}},
     )
     normal_request = RoleTurnRequest(message="read and summarize README", metadata={})
 
-    assert RoleExecutionKernel._benchmark_requires_no_tools(request_from_prompt) is True
+    assert RoleExecutionKernel._tool_contract_requires_no_tools(request_from_prompt) is False
+    assert RoleExecutionKernel._tool_contract_requires_no_tools(request_from_metadata) is True
+    assert RoleExecutionKernel._tool_contract_requires_no_tools(request_from_nested_context) is True
+    assert RoleExecutionKernel._tool_contract_requires_no_tools(normal_request) is False
     assert RoleExecutionKernel._benchmark_requires_no_tools(request_from_metadata) is True
-    assert RoleExecutionKernel._benchmark_requires_no_tools(normal_request) is False
+
+
+def test_prompt_layer_single_batch_uses_platform_contract_not_benchmark_text() -> None:
+    marker_only_options = RoleExecutionKernel._resolve_prompt_layer_options(
+        {},
+        message="Tool call count must be between 1 and 2.",
+    )
+    contract_options = RoleExecutionKernel._resolve_prompt_layer_options(
+        {"tool_contract": {"single_batch": True}},
+        message="Tool call count must be between 1 and 2.",
+    )
+
+    assert marker_only_options == {}
+    assert contract_options == {"include_working_memory_contract": False}
 
 
 def test_build_finalization_context_keeps_latest_user_request() -> None:

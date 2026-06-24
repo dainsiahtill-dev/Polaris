@@ -196,6 +196,9 @@
 5. 禁止让正式 UI、ContextOS、TaskBoard、QA 工作台、Settings、public API 或生产运行时依赖 `benchService`、bench session、`factory_audits.json`、bench-only metadata 或任何 Bench 命名空间。
 6. 如果某项能力先在 Bench 中验证成功，进入正式产品前必须完成命名空间提升：从 Bench 抽离到平台级 Control Plane / Run Ledger projection，再由正式视图消费。
 7. 审计发现生产路径出现 Bench 依赖时按 P0 边界污染处理；修复优先级高于新增功能。
+8. 正式角色内核、transaction kernel、tool gating、prompt layer 和 tool batch executor 不得解析 `[Benchmark Tool Contract]`、`benchmark_require_*` 或类似 Bench 文本/字段；内部 evaluator 若需要表达工具数量、必选工具、单批次或 barrier 绕过，必须在进入正式内核前转换为平台级 `tool_contract` / `platform_tool_contract` metadata。
+9. Browser、视觉、多模态 QA、用户脚本、领域脚本等 verifier modality 是平台级 Control Plane 可选能力，默认关闭；设置页可以保存启用意图，但只有当前环境显式声明可用时才允许把它们设为 hard-required evidence，禁止由 Bench harness 或内部压力测试状态决定正式项目是否必须启用这些能力。
+10. Job Token 是从控制面事实源派生的 capability token，不得成为第二事实源；正式写入和命令工具执行层必须消费 Job Token 派生的授权 scope，并把 `token_id`、contract/blueprint hash、stage、project_id 等 capability evidence 写入 effect receipt，供 Run Ledger、QA 和 UI projection 只读消费。
 
 ---
 

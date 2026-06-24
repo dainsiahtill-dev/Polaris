@@ -69,16 +69,16 @@ class BarrierVerdict:
     bypassed_overlap: frozenset[str]
 
 
-def evaluate_read_write_barrier(invocations: list[Any], *, is_benchmark: bool) -> BarrierVerdict:
-    """Evaluate the Read-Write Barrier (BUG-NEW-1 benchmark bypass + overlap bypass).
+def evaluate_read_write_barrier(invocations: list[Any], *, bypass_read_write_barrier: bool) -> BarrierVerdict:
+    """Evaluate the Read-Write Barrier with contract and overlap bypasses.
 
     Returns a verdict only; the orchestrator owns the raise/log. Behavior is
-    byte-identical to the original inline block: benchmark batches are exempt; a
-    tool marked as both read and write bypasses the strict barrier (overlap set is
-    surfaced for logging); otherwise a mixed read+write batch yields a violation
-    message identical to the original.
+    byte-identical to the original inline block: explicitly bypassed batches are
+    exempt; a tool marked as both read and write bypasses the strict barrier
+    (overlap set is surfaced for logging); otherwise a mixed read+write batch
+    yields a violation message identical to the original.
     """
-    if is_benchmark:
+    if bypass_read_write_barrier:
         return BarrierVerdict(violation_message=None, bypassed_overlap=frozenset())
 
     from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry

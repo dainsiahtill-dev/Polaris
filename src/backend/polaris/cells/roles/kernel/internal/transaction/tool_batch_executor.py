@@ -15,6 +15,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Any, NoReturn, cast
 
+from polaris.cells.control_plane.run_ledger.public import (
+    AppendRunLedgerEventCommandV1,
+    append_run_ledger_event,
+)
 from polaris.cells.roles.kernel.internal.speculation.models import CancelToken
 from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteToolPhases
 from polaris.cells.roles.kernel.internal.speculative_flags import is_adoption_audit_enabled
@@ -53,7 +57,13 @@ from polaris.cells.roles.kernel.internal.transaction.receipt_utils import (
     normalize_batch_receipts,
     record_receipts_to_ledger,
 )
-from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import extract_latest_user_message
+from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
+    extract_latest_user_message,
+    extract_platform_tool_contract_scope_paths,
+    extract_platform_tool_contract_target_files,
+    platform_tool_contract_bypasses_read_write_barrier,
+    platform_tool_contract_disables_phase_manager,
+)
 from polaris.cells.roles.kernel.internal.transaction.tool_failure_circuit_breaker import (
     ToolFailureCircuitBreaker,
 )
@@ -376,6 +386,171 @@ def _merge_batch_receipts(receipts: list[Any]) -> dict[str, Any] | None:
     return merge_batch_receipts(receipts)
 
 
+def _capability_token_from_effect_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+    direct = receipt.get("capability_token")
+    if isinstance(direct, dict):
+        return dict(direct)
+    director_policy = receipt.get("director_policy")
+    if isinstance(director_policy, dict):
+        nested = director_policy.get("capability_token")
+        if isinstance(nested, dict):
+            return dict(nested)
+    return {}
+
+
+def _effect_receipts_from_batch_receipts(receipts: list[Any]) -> list[dict[str, Any]]:
+    effect_receipts: list[dict[str, Any]] = []
+    for receipt in normalize_batch_receipts(receipts):
+        for key in ("results", "raw_results"):
+            raw_results = receipt.get(key)
+            if not isinstance(raw_results, list):
+                continue
+            for item in raw_results:
+                if not isinstance(item, dict):
+                    continue
+                direct = item.get("effect_receipt")
+                if isinstance(direct, dict):
+                    effect_receipts.append(dict(direct))
+                    continue
+                result = item.get("result")
+                if isinstance(result, dict):
+                    nested = result.get("effect_receipt")
+                    if isinstance(nested, dict):
+                        effect_receipts.append(dict(nested))
+    return effect_receipts
+
+
+def _job_token_from_capability_token(token: dict[str, Any], *, run_id: str, stage: str) -> dict[str, Any]:
+    audit_ok = token.get("capability_audit_ok")
+    return {
+        "schema_version": 1,
+        "source": str(token.get("source") or "control_plane.job_token"),
+        "token_id": str(token.get("token_id") or ""),
+        "run_id": str(token.get("run_id") or run_id),
+        "project_id": str(token.get("project_id") or ""),
+        "stage": str(token.get("stage") or stage or "tool_batch"),
+        "contract_hash": str(token.get("contract_hash") or ""),
+        "blueprint_hash": str(token.get("blueprint_hash") or ""),
+        "capability_audit": {
+            "ok": bool(audit_ok) if audit_ok is not None else True,
+            "issues": [],
+        },
+        "gate_policy": {
+            "enabled_evidence_modalities": ["tool_receipt"],
+            "required_evidence_modalities": [],
+        },
+    }
+
+
+def _mapping_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        try:
+            payload = to_dict()
+        except (RuntimeError, TypeError, ValueError):
+            return {}
+        return dict(payload) if isinstance(payload, dict) else {}
+    return {}
+
+
+def _normalize_capability_token(value: dict[str, Any]) -> dict[str, Any]:
+    token_id = str(value.get("token_id") or "").strip()
+    if not token_id:
+        return {}
+    capability_audit = value.get("capability_audit")
+    capability_audit_map = capability_audit if isinstance(capability_audit, dict) else {}
+    raw_scope_value = value.get("allowed_scope") or value.get("allowed_paths") or value.get("target_files") or []
+    raw_scope = [raw_scope_value] if isinstance(raw_scope_value, str) else list(raw_scope_value or [])
+    allowed_scope = [str(item).replace("\\", "/").strip("/") for item in raw_scope if str(item).strip()]
+    return {
+        "source": str(value.get("source") or "control_plane.job_token"),
+        "token_id": token_id,
+        "run_id": str(value.get("run_id") or ""),
+        "project_id": str(value.get("project_id") or ""),
+        "stage": str(value.get("stage") or ""),
+        "contract_hash": str(value.get("contract_hash") or ""),
+        "blueprint_hash": str(value.get("blueprint_hash") or ""),
+        "capability_audit_ok": bool(value.get("capability_audit_ok", capability_audit_map.get("ok", True))),
+        "allowed_scope": list(dict.fromkeys(item for item in allowed_scope if item)),
+    }
+
+
+def _capability_token_from_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    for key in ("job_token", "control_plane_job_token", "capability_token"):
+        token = _normalize_capability_token(_mapping_value(metadata.get(key)))
+        if token:
+            return token
+    return _normalize_capability_token(dict(metadata))
+
+
+def _append_tool_batch_receipts_to_run_ledger(
+    *,
+    workspace: str,
+    run_id: str,
+    role_id: str,
+    task_id: str,
+    turn_id: str,
+    receipts: list[dict],
+    capability_token: dict[str, Any] | None = None,
+) -> None:
+    merged_receipt = _merge_batch_receipts(receipts)
+    if not merged_receipt:
+        return
+    effect_receipts = _effect_receipts_from_batch_receipts(receipts)
+    failure_count = int(merged_receipt.get("failure_count") or 0)
+    pending_async_count = int(merged_receipt.get("pending_async_count") or 0)
+    ok = failure_count == 0 and pending_async_count == 0
+    if not effect_receipts and ok:
+        return
+    token = next(
+        (
+            candidate
+            for receipt in effect_receipts
+            if (candidate := _capability_token_from_effect_receipt(receipt)).get("token_id")
+        ),
+        {},
+    )
+    if not token:
+        token = _normalize_capability_token(capability_token or {})
+    if not token:
+        return
+
+    resolved_run_id = str(token.get("run_id") or run_id or turn_id or "").strip()
+    if not resolved_run_id:
+        return
+    stage = str(token.get("stage") or "tool_batch").strip() or "tool_batch"
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=workspace,
+            run_id=resolved_run_id,
+            event={
+                "event_type": "gate_evaluated",
+                "stage": stage,
+                "gate": {
+                    "name": "tool_receipt",
+                    "ok": ok,
+                    "summary": "token-scoped tool batch recorded" if ok else "token-scoped tool batch failed",
+                },
+                "job_token": _job_token_from_capability_token(token, run_id=resolved_run_id, stage=stage),
+                "physical_evidence": {
+                    "batch_receipt": merged_receipt,
+                    "tool_receipts": effect_receipts,
+                    "command_count": 0,
+                    "sampled_command_count": 0,
+                    "commands_truncated": False,
+                    "metadata": {
+                        "role": role_id,
+                        "task_id": task_id,
+                        "turn_id": turn_id,
+                    },
+                },
+            },
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # ToolBatchExecutor
 # ---------------------------------------------------------------------------
@@ -691,11 +866,15 @@ class ToolBatchExecutor:
         latest_user_request = extract_latest_user_message(context)
         single_target_candidates = extract_target_files_from_message(latest_user_request)
         single_scope_candidates = extract_allowed_scope_paths_from_message(latest_user_request)
+        single_target_candidates.extend(extract_platform_tool_contract_target_files(context))
+        single_scope_candidates.extend(extract_platform_tool_contract_scope_paths(context))
         modification_contract = getattr(ledger, "modification_contract", None)
         if modification_contract is not None:
             contract_targets = getattr(modification_contract, "target_files", None)
             if isinstance(contract_targets, (list, tuple)):
                 single_target_candidates.extend(str(item) for item in contract_targets)
+        single_target_candidates = list(dict.fromkeys(str(item) for item in single_target_candidates if str(item)))
+        single_scope_candidates = list(dict.fromkeys(str(item) for item in single_scope_candidates if str(item)))
         single_scope_candidates = filter_scope_paths_for_explicit_targets(
             single_scope_candidates,
             single_target_candidates,
@@ -718,16 +897,13 @@ class ToolBatchExecutor:
             ledger.record_mutation_guard_warning(reason=reason, user_request=latest_user_request)
 
         # --- READ-WRITE BARRIER LOGIC ---
-        # BUG-NEW-1 fix: the Barrier must be bypassed in Benchmark single-batch mode.
-        # Benchmark contracts explicitly require read + write in the SAME batch
-        # (e.g., Ordered groups: [edit_file] -> [read_file]).  Applying the Barrier
-        # here causes an unresolvable retry loop that ultimately forces the model into
-        # a destructive write_file overwrite (see BUG-NEW-2 below).
-        _latest_user_for_barrier = extract_latest_user_message(context)
-        _is_benchmark_batch = "[Benchmark Tool Contract]" in _latest_user_for_barrier
+        # Platform tool contracts can explicitly allow read + write in the same
+        # batch. In that case the normal read/write barrier must not split the
+        # batch and create an impossible retry loop.
+        _bypass_read_write_barrier = platform_tool_contract_bypasses_read_write_barrier(context)
 
-        if not _is_benchmark_batch:
-            # Normal (non-benchmark) execution: enforce the Read-Write Barrier.
+        if not _bypass_read_write_barrier:
+            # Normal execution: enforce the Read-Write Barrier.
             from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
             has_read = False
@@ -935,7 +1111,7 @@ class ToolBatchExecutor:
                         },
                     )
 
-        _exploration_streak_hard_block = "EXPLORATION_STREAK_HARD_BLOCK" in _latest_user_for_barrier
+        _exploration_streak_hard_block = "EXPLORATION_STREAK_HARD_BLOCK" in latest_user_request
         if (
             _exploration_streak_hard_block
             and _is_exploring_phase
@@ -1011,6 +1187,8 @@ class ToolBatchExecutor:
 
         requires_mutation = enforce_mutation_write_guard and self.requires_mutation_intent(latest_user_request)
         known_target_files = extract_target_files_from_message(latest_user_request)
+        known_target_files.extend(extract_platform_tool_contract_target_files(context))
+        known_target_files = list(dict.fromkeys(str(item) for item in known_target_files if str(item)))
         target_files_known = bool(known_target_files) or bool(ledger.mutation_obligation.target_files_known)
         missing_read_evidence = int(ledger.mutation_obligation.read_evidence_count or 0) <= 0
         if (
@@ -1282,6 +1460,15 @@ class ToolBatchExecutor:
             receipts_as_dicts.extend(normalize_batch_receipts(receipts))
 
         record_receipts_to_ledger(receipts_as_dicts, ledger)
+        _append_tool_batch_receipts_to_run_ledger(
+            workspace=workspace,
+            run_id=str(metadata.get("run_id") or ""),
+            role_id=str(getattr(self.config, "role_id", "") or ""),
+            task_id=str(metadata.get("task_id") or ""),
+            turn_id=turn_id,
+            receipts=receipts_as_dicts,
+            capability_token=_capability_token_from_metadata(metadata),
+        )
 
         # 本 turn 的工具批裁决已完成（adopt/join/replay 全部计入 metrics）；在此
         # 发射 per-turn 推测执行汇总，确保它包含全部裁决指标（drain 阶段过早，
@@ -1327,11 +1514,10 @@ class ToolBatchExecutor:
                                 turn_id,
                             )
 
-        # FIX-20250421: PhaseManager — 基于工具执行结果驱动阶段流转
-        # 只有在非 benchmark 模式下才使用 PhaseManager（benchmark 有独立规则）
-        _latest_user = extract_latest_user_message(context)
-        _is_benchmark = "[Benchmark Tool Contract]" in str(_latest_user)
-        if not _is_benchmark:
+        # FIX-20250421: PhaseManager — 基于工具执行结果驱动阶段流转.
+        # External tool contracts may own batch-level phase rules, so only those
+        # contracts can disable the default phase manager.
+        if not platform_tool_contract_disables_phase_manager(context):
             # FIX-20250421: receipts_as_dicts 是 receipt 列表，每个 receipt 包含嵌套的 results
             # 需要展开所有 receipt 的 results 才能正确提取 ToolResult
             all_result_items: list[dict[str, Any]] = []

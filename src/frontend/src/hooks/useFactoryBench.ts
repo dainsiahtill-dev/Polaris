@@ -26,6 +26,7 @@ import { useRuntimeTransport } from '@/runtime/transport';
 
 export interface UseFactoryBenchOptions {
   autoSelect?: 'newest' | 'none';
+  enabled?: boolean;
   onWorkspaceChange?: (workspace: string, event: FactoryBenchEvent) => void;
 }
 
@@ -229,7 +230,7 @@ function mergeBenchEvents(
 export function useFactoryBench(
   options: UseFactoryBenchOptions = {},
 ): UseFactoryBenchResult {
-  const { autoSelect = 'newest', onWorkspaceChange } = options;
+  const { autoSelect = 'newest', enabled = true, onWorkspaceChange } = options;
   const [sessions, setSessions] = useState<FactoryBenchSessionSummary[]>([]);
   const [currentSession, setCurrentSession] = useState<FactoryBenchSessionDetail | null>(null);
   const [events, setEvents] = useState<FactoryBenchEvent[]>([]);
@@ -270,6 +271,15 @@ export function useFactoryBench(
   }, []);
 
   const refresh = useCallback(async () => {
+    if (!enabled) {
+      setSessions([]);
+      setCurrentSession(null);
+      setEvents([]);
+      setIsStreaming(false);
+      setIsLoading(false);
+      setError(null);
+      return;
+    }
     setIsLoading(true);
     setError(null);
     const result = await listBenchSessions(20);
@@ -288,7 +298,7 @@ export function useFactoryBench(
       setError(result.error || '加载Factory bench sessions失败');
     }
     setIsLoading(false);
-  }, []);
+  }, [enabled]);
 
   const disconnect = useCallback(() => {
     selectedSessionRef.current = null;
@@ -304,6 +314,7 @@ export function useFactoryBench(
 
   const loadSessionDetail = useCallback(
     async (sessionId: string, resetBeforeLoad: boolean, manualSelection = false) => {
+      if (!enabled) return;
       if (loadingSessionRef.current === sessionId) return;
       if (!resetBeforeLoad && currentSessionRef.current?.session_id === sessionId) return;
       loadingSessionRef.current = sessionId;
@@ -347,7 +358,7 @@ export function useFactoryBench(
         }
       }
     },
-    [notifyWorkspaceChange],
+    [enabled, notifyWorkspaceChange],
   );
 
   const select = useCallback(
@@ -364,6 +375,16 @@ export function useFactoryBench(
   }, [select]);
 
   useEffect(() => {
+    if (!enabled) {
+      setSessions([]);
+      setCurrentSession(null);
+      setEvents([]);
+      setIsStreaming(false);
+      setIsLoading(false);
+      setError(null);
+      disconnectRef.current();
+      return;
+    }
     const unsubscribe = subscribeChannels([{ channel: 'event.bench', tailLines: 0 }]);
     const unregister = registerMessageHandler((message: unknown) => {
       if (!message || typeof message !== 'object') return;
@@ -441,9 +462,10 @@ export function useFactoryBench(
       unsubscribe();
       disconnectRef.current();
     };
-  }, [notifyWorkspaceChange, refresh, registerMessageHandler, subscribeChannels]);
+  }, [enabled, notifyWorkspaceChange, refresh, registerMessageHandler, subscribeChannels]);
 
   useEffect(() => {
+    if (!enabled) return;
     if (autoSelect !== 'newest') return;
     const newest = sessions[0];
     if (!newest) return;
@@ -456,7 +478,7 @@ export function useFactoryBench(
     if (currentSession && manualSelectionRef.current && !isTerminalStatus(currentSession.status)) return;
     if (currentSession && currentSession.session_id === newest.session_id) return;
     void loadSessionDetail(newest.session_id, true, false);
-  }, [sessions, autoSelect, currentSession, loadSessionDetail]);
+  }, [enabled, sessions, autoSelect, currentSession, loadSessionDetail]);
 
   return useMemo(
     () => ({

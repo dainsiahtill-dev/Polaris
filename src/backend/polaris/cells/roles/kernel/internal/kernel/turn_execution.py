@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
     _context_requests_materialize_delivery,
     _ensure_context_delivery_mode_marker,
+    _ensure_platform_tool_contract_metadata,
     _latest_user_content_preview,
     _text_requests_materialize_delivery,
 )
@@ -139,6 +140,10 @@ async def execute_transaction_kernel_turn(
         getattr(request, "context_override", None),
         getattr(request, "message", None),
     )
+    messages = _ensure_platform_tool_contract_metadata(
+        messages,
+        getattr(request, "context_override", None),
+    )
     if os.getenv("KERNELONE_DELIVERY_MODE_TRACE") == "1":
         context_override = getattr(request, "context_override", None)
         logger.warning(
@@ -153,7 +158,7 @@ async def execute_transaction_kernel_turn(
 
     tool_definitions = (
         []
-        if kernel._benchmark_requires_no_tools(request) or kernel._request_forces_no_transaction_tools(request)
+        if kernel._tool_contract_requires_no_tools(request) or kernel._request_forces_no_transaction_tools(request)
         else build_native_tool_schemas(profile)
     )
     tool_definitions, runtime_tool_policy_audit = kernel._apply_runtime_tool_policy(
@@ -415,10 +420,14 @@ async def execute_transaction_kernel_stream(
     # second projection pass.
     context_result = await context_gateway.build_context(context_request, system_prompt=system_prompt)
     messages: list[dict[str, Any]] = list(context_result.messages)
+    messages = _ensure_platform_tool_contract_metadata(
+        messages,
+        getattr(request, "context_override", None),
+    )
 
     tool_definitions = (
         []
-        if kernel._benchmark_requires_no_tools(request) or kernel._request_forces_no_transaction_tools(request)
+        if kernel._tool_contract_requires_no_tools(request) or kernel._request_forces_no_transaction_tools(request)
         else build_native_tool_schemas(profile)
     )
     tool_definitions, runtime_tool_policy_audit = kernel._apply_runtime_tool_policy(

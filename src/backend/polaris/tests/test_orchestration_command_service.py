@@ -269,6 +269,35 @@ def test_select_pm_task_payloads_discovers_chief_engineer_blueprint_file(tmp_pat
     assert metadata["runtime_blueprint_path"] == str(blueprint_path)
 
 
+def test_select_pm_task_payloads_adds_explicit_task_file_tokens_to_delivery_scope(tmp_path: Path) -> None:
+    plan_path = tmp_path / ".polaris" / "plans" / "latest.plan.json"
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(
+        (
+            '{"tasks": [{'
+            '"id": "TASK-1",'
+            '"title": "Bootstrap Python project",'
+            '"goal": "Create src/app.py and a runnable Python entrypoint.",'
+            '"target_files": ["src/app.py"],'
+            '"scope_paths": ["src"],'
+            '"steps": ["Create requirements.txt before running python -m pip install -r requirements.txt."],'
+            '"acceptance": ["README.md documents execution through main.py."],'
+            '"metadata": {}'
+            "}]}\n"
+        ),
+        encoding="utf-8",
+    )
+    blueprint_path = tmp_path / ".polaris" / "blueprints" / "ce_TASK-1_20260621.json"
+    blueprint_path.parent.mkdir(parents=True, exist_ok=True)
+    blueprint_path.write_text('{"task_id": "TASK-1", "construction_plan": {}}\n', encoding="utf-8")
+
+    payloads = _select_pm_task_payloads(str(tmp_path), ["TASK-1"])
+
+    assert len(payloads) == 1
+    assert payloads[0]["target_files"] == ["src/app.py", "requirements.txt", "README.md", "main.py"]
+    assert payloads[0]["scope_paths"] == ["src", "src/app.py", "requirements.txt", "README.md", "main.py"]
+
+
 def test_select_pm_task_payloads_discovers_factory_pm_plan_mirror_and_workspace_blueprint(tmp_path: Path) -> None:
     plan_path = tmp_path / ".polaris" / "plans" / "latest.plan.json"
     plan_path.parent.mkdir(parents=True, exist_ok=True)

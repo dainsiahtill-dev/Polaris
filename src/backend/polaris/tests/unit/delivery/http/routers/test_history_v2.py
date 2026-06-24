@@ -284,10 +284,13 @@ async def test_v2_history_task_snapshots_server_error(client: AsyncClient) -> No
 
 @pytest.mark.asyncio
 async def test_v2_history_factory_snapshots(client: AsyncClient) -> None:
-    """GET /v2/history/factory/snapshots should return factory runs."""
-    with patch(
-        "polaris.delivery.http.routers.history.list_factory_runs",
-        return_value=[{"run_id": "factory-1", "status": "completed"}],
+    """GET /v2/history/factory/snapshots should return factory runs in internal bench mode."""
+    with (
+        patch.dict("os.environ", {"POLARIS_INTERNAL_BENCH_ENABLED": "1"}),
+        patch(
+            "polaris.delivery.http.routers.history.list_factory_runs",
+            return_value=[{"run_id": "factory-1", "status": "completed"}],
+        ),
     ):
         response = await client.get("/v2/history/factory/snapshots")
         assert response.status_code == 200
@@ -298,11 +301,23 @@ async def test_v2_history_factory_snapshots(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_v2_history_factory_snapshots_disabled_by_default(client: AsyncClient) -> None:
+    """Factory history is internal-test-only and hidden from formal product mode."""
+    response = await client.get("/v2/history/factory/snapshots")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "INTERNAL_BENCH_SURFACE_DISABLED"
+
+
+@pytest.mark.asyncio
 async def test_v2_history_factory_snapshots_server_error(client: AsyncClient) -> None:
-    """GET /v2/history/factory/snapshots should 500 on unexpected error."""
-    with patch(
-        "polaris.delivery.http.routers.history.list_factory_runs",
-        side_effect=RuntimeError("db failure"),
+    """GET /v2/history/factory/snapshots should 500 on unexpected internal-mode error."""
+    with (
+        patch.dict("os.environ", {"POLARIS_INTERNAL_BENCH_ENABLED": "1"}),
+        patch(
+            "polaris.delivery.http.routers.history.list_factory_runs",
+            side_effect=RuntimeError("db failure"),
+        ),
     ):
         response = await client.get("/v2/history/factory/snapshots")
         assert response.status_code == 500

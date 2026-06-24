@@ -41,6 +41,52 @@ logger = logging.getLogger(__name__)
 RoleAdapterFactory = Callable[[str, str], RoleOrchestrationAdapter]
 
 
+def _adapter_task_id_for_role(
+    *,
+    role_id: str,
+    workflow_task_id: str,
+    role_metadata: dict[str, Any],
+) -> str:
+    """Resolve the physical adapter task id without leaking workflow ids."""
+
+    normalized_role = str(role_id or "").strip().lower()
+    fallback = str(workflow_task_id or "").strip()
+    if normalized_role != "director":
+        return fallback
+
+    for key in ("task_id", "pm_task_id", "external_task_id", "source_task_id"):
+        value = str(role_metadata.get(key) or "").strip()
+        if value:
+            return value
+    return fallback
+
+
+def _adapter_input_for_role(
+    *,
+    role_id: str,
+    adapter_task_id: str,
+    role_input: str,
+    role_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Build adapter input with Director TaskBoard ids made explicit."""
+
+    payload: dict[str, Any] = {
+        "input": role_input,
+        "metadata": role_metadata,
+    }
+    if str(role_id or "").strip().lower() != "director":
+        return payload
+
+    resolved_task_id = str(adapter_task_id or "").strip()
+    if not resolved_task_id:
+        return payload
+    payload["task_id"] = resolved_task_id
+    payload.setdefault("pm_task_id", str(role_metadata.get("pm_task_id") or resolved_task_id).strip())
+    payload.setdefault("external_task_id", str(role_metadata.get("external_task_id") or resolved_task_id).strip())
+    payload.setdefault("source_task_id", str(role_metadata.get("source_task_id") or resolved_task_id).strip())
+    return payload
+
+
 class InMemoryOrchestrationRepository(OrchestrationRepository):
     """内存存储实现（用于开发和测试）"""
 
@@ -533,15 +579,23 @@ class UnifiedOrchestrationService(OrchestrationService):
             binding_override = role_metadata.get("binding_override")
             if not isinstance(binding_override, dict):
                 binding_override = None
+            adapter_task_id = _adapter_task_id_for_role(
+                role_id=task.role_entry.role_id,
+                workflow_task_id=task.task_id,
+                role_metadata=role_metadata,
+            )
+            adapter_input = _adapter_input_for_role(
+                role_id=task.role_entry.role_id,
+                adapter_task_id=adapter_task_id,
+                role_input=task.role_entry.input,
+                role_metadata=role_metadata,
+            )
             # 角色执行隔离到独立工作线程，避免阻塞控制面事件循环。
             result = await asyncio.to_thread(
                 self._run_role_adapter_in_worker,
                 adapter,
-                task.task_id,
-                {
-                    "input": task.role_entry.input,
-                    "metadata": role_metadata,
-                },
+                adapter_task_id,
+                adapter_input,
                 context,
                 binding_override,
             )

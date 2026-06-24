@@ -92,7 +92,7 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
    - 模型健康：绑定模型是否可达、连续失败是否应跳过、超时是否匹配模型速度、弱/强模型策略是否按配置生效。
    - 收敛性：当前问题是否是新通用根因，是否需要平台硬化、文档沉淀、回归测试和下一批验证。
 16. **用户观察反向触发复盘**：凡是用户通过 UI、截图、日志或手工观察先于主 Agent 发现缺陷，必须视为主 Agent 审计遗漏。修复时除解决代码根因外，还必须补充一条可自动发现同类问题的审计规则、测试、日志断言或文档硬约束；禁止只修当前样例。
-17. **Bench 测试态边界（强制）**：任何 `Bench`、`Factory Bench`、`factory_bench`、`L1-L12 bench`、benchmark harness、压力测试 UI/API/脚本都只允许存在于 Polaris 内部测试/开发/审计模式，用于压测平台能力、暴露通用根因和生成审计证据。Bench **不是**正式项目功能、不是生产工作台、不是用户交付体验、不是控制面事实源；正式环境/生产环境不得出现 Bench 入口、Bench 文案、Bench 专属 UI、Bench 专属状态模型或以 Bench 命名的业务 API。平台基础设施能力（如 Run Ledger、Job Token、ContextOS、ReceiptStore、Verifier/Gate Policy）必须以平台级命名和契约沉淀，Bench 只能在内部测试态作为这些平台能力的生产者/消费者之一。禁止把为 Bench 写的临时字段、视图、路由或运行假设上升为生产语义；需要在正式产品展示时必须接入平台级 projection/API，而不是 `benchService`、bench session 或 factory audit 文件。
+17. **Bench 测试态边界（强制）**：任何 `Bench`、`Factory Bench`、`factory_bench`、`L1-L12 bench`、benchmark harness、压力测试 UI/API/脚本都只允许存在于 Polaris 内部测试/开发/审计模式，用于压测平台能力、暴露通用根因和生成审计证据。Bench **不是**正式项目功能、不是生产工作台、不是用户交付体验、不是控制面事实源；正式环境/生产环境不得出现 Bench 入口、Bench 文案、Bench 专属 UI、Bench 专属状态模型或以 Bench 命名的业务 API。平台基础设施能力（如 Run Ledger、Job Token、ContextOS、ReceiptStore、Verifier/Gate Policy）必须以平台级命名和契约沉淀，Bench 只能在内部测试态作为这些平台能力的生产者/消费者之一。禁止把为 Bench 写的临时字段、视图、路由或运行假设上升为生产语义；需要在正式产品展示时必须接入平台级 projection/API，而不是 `benchService`、bench session 或 factory audit 文件。Browser、视觉、多模态 QA、用户脚本、领域脚本等 verifier modality 是平台 Control Plane 可选能力，默认关闭；只有当前环境显式声明可用时才允许设为 hard-required evidence，禁止由 Bench 或内部测试状态决定正式项目必须启用这些能力。Job Token 是从控制面事实源派生的 capability token，不得成为第二事实源；正式写入和命令工具执行层必须消费 Job Token 派生 scope，并把 token/hash/stage/project evidence 写入 effect receipt。
 
 ### 实时推送硬门禁
 

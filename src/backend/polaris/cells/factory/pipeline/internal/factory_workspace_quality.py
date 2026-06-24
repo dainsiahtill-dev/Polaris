@@ -24,6 +24,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -113,16 +114,16 @@ class WorkspaceQualityRunner:
 
         configured = context.get("quality_commands") or context.get("workspace_quality_commands")
         if isinstance(configured, list):
-            commands: list[list[str]] = []
+            configured_commands: list[list[str]] = []
             for item in configured:
                 if isinstance(item, list) and all(isinstance(part, str) and part.strip() for part in item):
-                    commands.append([part.strip() for part in item])
+                    configured_commands.append([part.strip() for part in item])
                 elif isinstance(item, str) and item.strip():
-                    commands.append([part for part in item.strip().split(" ") if part])
-            return commands
+                    configured_commands.append([part for part in item.strip().split(" ") if part])
+            return configured_commands
 
         scripts = self.load_package_scripts()
-        commands = []
+        commands: list[list[str]] = []
         if "build" in scripts:
             commands.append(["npm", "run", "build"])
         if "test" in scripts:
@@ -138,7 +139,63 @@ class WorkspaceQualityRunner:
             and "start" in scripts
         ):
             commands.append(["npm", "run", "start"])
+        if commands:
+            return commands
+        commands.extend(self._python_workspace_quality_commands(context))
         return commands
+
+    def _python_workspace_quality_commands(self, context: dict[str, Any]) -> list[list[str]]:
+        """Infer real validation commands for Python-only generated projects."""
+
+        python_files = self._python_workspace_files()
+        if not python_files:
+            return []
+
+        commands: list[list[str]] = []
+        requirements_path = self.workspace / "requirements.txt"
+        pyproject_path = self.workspace / "pyproject.toml"
+        if requirements_path.exists() or not pyproject_path.exists():
+            commands.append([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+        elif pyproject_path.exists():
+            commands.append([sys.executable, "-m", "pip", "install", "-e", "."])
+
+        compile_targets = self._python_compile_targets()
+        if compile_targets:
+            commands.append([sys.executable, "-m", "compileall", "-q", *compile_targets])
+
+        if any((self.workspace / "tests").glob("test_*.py")):
+            commands.append([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"])
+
+        if (
+            helpers.bool_from_context_or_env(
+                context,
+                "workspace_validation_entrypoint_smoke",
+                "qa_workspace_validation_entrypoint_smoke",
+                env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION_ENTRYPOINT_SMOKE",
+                default=True,
+            )
+            and (self.workspace / "main.py").is_file()
+        ):
+            commands.append([sys.executable, "main.py"])
+        return commands
+
+    def _python_workspace_files(self) -> list[Path]:
+        roots = [self.workspace / "main.py", self.workspace / "src", self.workspace / "tests"]
+        files: list[Path] = []
+        for root in roots:
+            if root.is_file() and root.suffix == ".py":
+                files.append(root)
+            elif root.is_dir():
+                files.extend(path for path in root.rglob("*.py") if path.is_file())
+        return files
+
+    def _python_compile_targets(self) -> list[str]:
+        targets: list[str] = []
+        for relative in ("src", "tests", "main.py"):
+            path = self.workspace / relative
+            if path.exists():
+                targets.append(relative)
+        return targets
 
     def run_command(self, command: list[str], timeout_seconds: float) -> dict[str, Any]:
         started_at = datetime.now(timezone.utc).isoformat()

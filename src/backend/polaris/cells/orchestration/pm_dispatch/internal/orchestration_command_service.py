@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -64,6 +65,12 @@ _FACTORY_STAGE_ALIASES = {
     "verification": "quality_gate",
     "quality": "quality_gate",
 }
+_TASK_TEXT_FILE_TOKEN_RE = re.compile(
+    r"(?<![\w./-])"
+    r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\."
+    r"(?:py|txt|toml|json|md|html|js|ts|tsx|jsx|css|yaml|yml)"
+    r"(?=$|[\s,;:，。；：、)\]}]|[.](?:\s|$))"
+)
 
 
 def _coerce_metadata_overrides(value: Any) -> dict[str, Any]:
@@ -186,7 +193,71 @@ def _pm_task_rows_from_payload(payload: Any) -> list[dict[str, Any]]:
         rows = tasks_value if isinstance(tasks_value, list) else []
     else:
         rows = []
-    return [dict(item) for item in rows if isinstance(item, dict)]
+    return [_augment_task_delivery_targets(dict(item)) for item in rows if isinstance(item, dict)]
+
+
+def _augment_task_delivery_targets(row: dict[str, Any]) -> dict[str, Any]:
+    """Include explicit file tokens from task text in Director write scope."""
+
+    explicit_files = _extract_explicit_task_file_tokens(row)
+    if not explicit_files:
+        return row
+
+    for field_name in ("target_files", "scope_paths"):
+        existing = row.get(field_name)
+        values = [str(item).strip() for item in existing] if isinstance(existing, list) else []
+        if isinstance(existing, str) and existing.strip():
+            values = [existing.strip()]
+        seen = {item for item in values if item}
+        for item in explicit_files:
+            if item not in seen:
+                values.append(item)
+                seen.add(item)
+        if values:
+            row[field_name] = values
+    return row
+
+
+def _extract_explicit_task_file_tokens(row: dict[str, Any]) -> list[str]:
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for field_name in (
+        "goal",
+        "description",
+        "steps",
+        "acceptance",
+        "acceptance_criteria",
+        "execution_checklist",
+        "scope",
+    ):
+        raw_value = row.get(field_name)
+        values = raw_value if isinstance(raw_value, (list, tuple, set)) else [raw_value]
+        for value in values:
+            text = str(value or "")
+            for match in _TASK_TEXT_FILE_TOKEN_RE.finditer(text):
+                token = _normalize_task_file_token(match.group(0))
+                if token and token not in seen:
+                    tokens.append(token)
+                    seen.add(token)
+    return tokens
+
+
+def _normalize_task_file_token(value: str) -> str:
+    token = str(value or "").replace("\\", "/").strip().strip("`'\"")
+    while token.startswith("./"):
+        token = token[2:]
+    token = token.lstrip("/")
+    if not token or token.endswith("/"):
+        return ""
+    lowered = token.lower()
+    if lowered.startswith(("http://", "https://")):
+        return ""
+    parts = tuple(part for part in token.split("/") if part)
+    if not parts or any(part in {"", ".."} for part in parts):
+        return ""
+    if parts[0] in {".git", ".polaris", "runtime"}:
+        return ""
+    return token
 
 
 def _task_identity_values(task: dict[str, Any]) -> set[str]:

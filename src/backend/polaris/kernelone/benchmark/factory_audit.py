@@ -319,7 +319,9 @@ def _check_ts_syntax(workspace: str) -> tuple[bool, str]:
             detail_payload = {}
     if proc.returncode != 0:
         if detail_payload.get("unavailable"):
-            return False, str(detail_payload.get("detail") or _tool_unavailable_detail("typescript", "TypeScript", len(ts_files)))
+            return False, str(
+                detail_payload.get("detail") or _tool_unavailable_detail("typescript", "TypeScript", len(ts_files))
+            )
         detail = str(detail_payload.get("detail") or "").strip()
         if not detail:
             lines = (proc.stderr or proc.stdout).strip().splitlines()
@@ -337,13 +339,30 @@ def _check_go_compile(workspace: str) -> tuple[bool, str]:
         return False, _tool_unavailable_detail("go", "Go", len(go_files))
     if os.path.exists(os.path.join(workspace, "go.mod")):
         cmd = [go, "test", "./..."]
-    else:
-        cmd = [go, "test", *_rel_paths(workspace, go_files[:80])]
-    proc = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True, timeout=60, check=False)
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout).strip().splitlines()
-        return False, "go test compile failed: " + (detail[0] if detail else "unknown Go error")
-    return True, f"{len(go_files)} Go files compile via go test"
+        proc = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True, timeout=60, check=False)
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout).strip().splitlines()
+            return False, "go test compile failed: " + (detail[0] if detail else "unknown Go error")
+        return True, f"{len(go_files)} Go files compile via go test"
+
+    go_dirs = sorted({os.path.dirname(path) for path in go_files})
+    env = os.environ.copy()
+    env["GO111MODULE"] = "off"
+    for go_dir in go_dirs:
+        rel_dir = os.path.relpath(go_dir, workspace).replace("\\", "/")
+        proc = subprocess.run(
+            [go, "test"],
+            cwd=go_dir,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+            env=env,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout).strip().splitlines()
+            return False, f"go test compile failed in {rel_dir}: " + (detail[0] if detail else "unknown Go error")
+    return True, f"{len(go_files)} Go files compile via per-directory go test"
 
 
 def _check_rust_compile(workspace: str) -> tuple[bool, str]:
@@ -556,30 +575,10 @@ def _placeholder_package_script_reason(script_name: str, command: str) -> str:
 
 
 def _check_package_scripts(workspace: str) -> tuple[bool, str]:
-    package_path = os.path.join(workspace, "package.json")
-    if not os.path.exists(package_path):
-        return False, "package.json not found"
-    try:
-        with open(package_path, encoding="utf-8") as fh:
-            package = json.load(fh)
-    except (OSError, json.JSONDecodeError) as exc:
-        return False, f"package.json unreadable or invalid: {exc}"
-    scripts = package.get("scripts")
-    if not isinstance(scripts, dict) or not scripts:
-        return False, "package.json has no scripts to validate"
-    failures: list[str] = []
-    for script_name, command in scripts.items():
-        if not isinstance(command, str):
-            failures.append(f"script {script_name!r} is not a string")
-            continue
-        placeholder_reason = _placeholder_package_script_reason(str(script_name), command)
-        if placeholder_reason:
-            failures.append(placeholder_reason)
-            continue
-        failures.extend(_missing_package_script_entrypoints(workspace, str(script_name), command, scripts=scripts))
-    if failures:
-        return False, "; ".join(failures[:3])
-    return True, f"{len(scripts)} package scripts have valid local entrypoint references"
+    from polaris.kernelone.quality import check_package_scripts
+
+    result = check_package_scripts(workspace)
+    return result.ok, result.detail
 
 
 def run_checks(workspace: str, checks: list[str]) -> list[dict[str, Any]]:

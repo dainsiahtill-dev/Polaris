@@ -56,6 +56,8 @@ export interface ChiefEngineerPageProps {
   websocketReconnecting: boolean;
   /** WebSocket 重连次数 */
   websocketAttemptCount: number;
+  /** 内部测试模式下才允许展示 Factory Bench 状态。 */
+  internalBenchEnabled?: boolean;
   /** LLM 运行时状态 */
   llmRuntimeState: {
     state: 'READY' | 'BLOCKED' | 'DEGRADED' | 'UNKNOWN';
@@ -75,6 +77,8 @@ export interface ChiefEngineerPageProps {
   processStreamEvents?: LogEntry[];
   /** 文件编辑事件 */
   fileEditEvents?: Parameters<typeof LlmRuntimeOverlay>[0]['fileEditEvents'];
+  /** 平台 Run Ledger 投影 */
+  controlPlaneProjection?: Parameters<typeof LlmRuntimeOverlay>[0]['controlPlaneProjection'];
   /** 错误通知回调 */
   notifyError: (message: string) => void;
 }
@@ -130,6 +134,7 @@ export function ChiefEngineerPage({
   websocketLive,
   websocketReconnecting,
   websocketAttemptCount,
+  internalBenchEnabled = false,
   llmRuntimeState,
   currentPhase,
   qualityGate,
@@ -137,6 +142,7 @@ export function ChiefEngineerPage({
   llmStreamEvents,
   processStreamEvents,
   fileEditEvents,
+  controlPlaneProjection,
   notifyError,
 }: ChiefEngineerPageProps) {
   const localDirectorStartBlockedReason = resolveChiefEngineerDirectorStartBlockedReason({
@@ -153,6 +159,7 @@ export function ChiefEngineerPage({
   return (
     <ErrorBoundaryClass onError={(error) => notifyError(error.message || '发生未知错误')}>
       <BenchStatusStrip
+        enabled={internalBenchEnabled}
         websocketLive={websocketLive}
         websocketReconnecting={websocketReconnecting}
         websocketAttemptCount={websocketAttemptCount}
@@ -193,6 +200,7 @@ export function ChiefEngineerPage({
         llmStreamEvents={llmStreamEvents ?? []}
         processStreamEvents={processStreamEvents ?? []}
         fileEditEvents={fileEditEvents}
+        controlPlaneProjection={controlPlaneProjection}
       />
       <Toaster position="bottom-right" />
     </ErrorBoundaryClass>

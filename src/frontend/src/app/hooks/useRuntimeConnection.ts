@@ -19,9 +19,10 @@ interface UseRuntimeConnectionOptions {
   roles?: RuntimeRole[];
   autoConnect?: boolean;
   workspace?: string;
+  includeInternalBench?: boolean;
 }
 
-const RUNTIME_STREAM_CHANNELS = [
+const BASE_RUNTIME_STREAM_CHANNELS = [
   'system',
   'process',
   'llm',
@@ -29,12 +30,21 @@ const RUNTIME_STREAM_CHANNELS = [
   'runtime_events',
   'status.workflow',
   'status.process',
+  'status.control_plane',
   'status.snapshot',
   'event.factory',
-  'event.bench',
   'event.file_edit',
 ] as const;
+const INTERNAL_BENCH_CHANNEL = 'event.bench';
 const RUNTIME_LIVE_TAIL_LINES = 0;
+
+function runtimeStreamChannels(includeInternalBench = false): string[] {
+  const channels: string[] = [...BASE_RUNTIME_STREAM_CHANNELS];
+  if (includeInternalBench) {
+    channels.splice(channels.length - 1, 0, INTERNAL_BENCH_CHANNEL);
+  }
+  return channels;
+}
 
 function normalizeRoles(
   input: RuntimeRole[]
@@ -62,6 +72,7 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
     roles = DEFAULT_RUNTIME_ROLES,
     autoConnect = true,
     workspace: workspaceProp,
+    includeInternalBench = false,
   } = options;
 
   const isWorkspaceControlled = workspaceProp !== undefined;
@@ -117,7 +128,7 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
   // Subscribe to concrete runtime channels. Roles are sent as metadata on
   // SUBSCRIBE; using a roles:* pseudo-channel would not match v2 log subjects.
   useEffect(() => {
-    const channels = [...RUNTIME_STREAM_CHANNELS];
+    const channels = runtimeStreamChannels(includeInternalBench);
     const unsubscribe = subscribeChannels(
       channels.map(channel => ({ channel, tailLines: RUNTIME_LIVE_TAIL_LINES })),
       rolesRef.current
@@ -125,7 +136,7 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
     return () => {
       unsubscribe();
     };
-  }, [subscribeChannels]);
+  }, [includeInternalBench, subscribeChannels]);
 
   // Connect action
   const connect = useCallback(
@@ -164,11 +175,11 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
         protocol: 'runtime.v2',
         roles: normalizedNextRoles,
         tail: RUNTIME_LIVE_TAIL_LINES,
-        channels: [...RUNTIME_STREAM_CHANNELS],
+        channels: runtimeStreamChannels(includeInternalBench),
         cursor: getLastCursor(),
       });
     },
-    [sendCommand, getLastCursor]
+    [includeInternalBench, sendCommand, getLastCursor]
   );
 
   // Keep effective subscription roles in sync with prop changes.

@@ -1,5 +1,6 @@
 """Shared helpers used by multiple routers (director, pm, etc.)."""
 
+import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -666,6 +667,43 @@ class StructuredHTTPException(HTTPException):
             "message": self.structured_message,
             "details": self.structured_details,
         }
+
+
+def _env_flag_enabled(name: str) -> bool:
+    return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def internal_bench_surface_enabled() -> bool:
+    """Return whether internal Factory/Bench HTTP surfaces may be exposed."""
+
+    return any(
+        _env_flag_enabled(name)
+        for name in (
+            "POLARIS_INTERNAL_BENCH_ENABLED",
+            "POLARIS_FACTORY_BENCH_INTERNAL_ENABLED",
+            "VITE_POLARIS_INTERNAL_BENCH",
+        )
+    )
+
+
+def require_internal_bench_surface() -> None:
+    """Fail closed for Bench/Factory APIs in formal product mode."""
+
+    if internal_bench_surface_enabled():
+        return
+    raise StructuredHTTPException(
+        status_code=404,
+        code="INTERNAL_BENCH_SURFACE_DISABLED",
+        message=(
+            "Factory/Bench surfaces are internal test-mode APIs. "
+            "Use platform Control Plane projections for formal product state."
+        ),
+        details={
+            "internal_test_only": True,
+            "enable_env": "POLARIS_INTERNAL_BENCH_ENABLED",
+            "formal_projection": "/v2/control-plane/ledger/projection",
+        },
+    )
 
 
 def structured_error_response(

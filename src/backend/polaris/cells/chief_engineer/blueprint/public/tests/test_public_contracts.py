@@ -248,6 +248,7 @@ class TestTaskBlueprintResultV1HappyPath:
         assert res.ok is True
         assert res.blueprint_id is None
         assert res.blueprint_path == "/bp.yaml"
+        assert res.blueprint_hash == ""
         assert res.recommendations == ()
         assert res.risks == ()
 
@@ -343,10 +344,12 @@ class TestChiefEngineerBlueprintPublicService:
 
         assert result.ok is True
         assert result.blueprint_id is not None
+        assert result.blueprint_hash
         assert result.status == "generated"
         assert result.blueprint_path == f"runtime/blueprints/{result.blueprint_id}.json"
         persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
         assert isinstance(persisted, dict)
+        assert persisted["blueprint_hash"] == result.blueprint_hash
         assert persisted["target_files"] == ["src/frontend/src/app/components/director/DirectorTaskPanel.tsx"]
         assert persisted["acceptance_criteria"] == ["Task board shows claimed/running/completed states"]
         assert persisted["execution_checklist"] == ["Create component", "Wire state", "Add focused tests"]
@@ -363,6 +366,7 @@ class TestChiefEngineerBlueprintPublicService:
 
         assert status.ok is True
         assert status.blueprint_id == result.blueprint_id
+        assert status.blueprint_hash == result.blueprint_hash
         assert status.summary.startswith("Chief Engineer blueprint for PM-42")
 
     def test_query_missing_task_blueprint(self, tmp_path) -> None:

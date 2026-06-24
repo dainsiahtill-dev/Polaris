@@ -103,6 +103,50 @@ _GAME_PM_DOMAIN_SCOPE_PATHS = {
     "tooling": "src/tools/balance-report.ts",
     "tests": "tests/integration/game-session.test.ts",
 }
+_GO_CONTRACT_FOREIGN_SUFFIXES = {
+    ".css",
+    ".html",
+    ".htm",
+    ".js",
+    ".jsx",
+    ".py",
+    ".ts",
+    ".tsx",
+}
+_GO_CONTRACT_ALLOWED_SUFFIXES = {
+    ".go",
+    ".json",
+    ".md",
+    ".mod",
+    ".sh",
+    ".sum",
+    ".toml",
+    ".yaml",
+    ".yml",
+}
+_GO_CONTRACT_FILE_SEGMENT_SUFFIXES = _GO_CONTRACT_ALLOWED_SUFFIXES | _GO_CONTRACT_FOREIGN_SUFFIXES
+_GO_CONTRACT_FILE_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9_./-])"
+    r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\."
+    r"(?:go|mod|sum|ts|tsx|js|jsx|py|json|md|html?|css|sh|toml|ya?ml)"
+    r"(?![A-Za-z0-9_.-])"
+)
+_GO_CONTRACT_UI_STEERING_NOTE_RE = re.compile(
+    r"\s*\[quality-gate\]\s*禁止单文件大产物：HTML.*?无法收敛。",
+    re.DOTALL,
+)
+_GO_CONTRACT_PATH_REWRITES = {
+    "src/models/index.ts": "src/models/pet.go",
+    "src/engine/index.ts": "src/engine/engine.go",
+    "src/cli/index.ts": "main.go",
+    "tests/test_ascii.py": "src/models/models_test.go",
+    "tests/test_cli_entry.py": "main.go",
+    "./readme.md": "README.md",
+    "readme.md": "README.md",
+}
+_GO_LANGUAGE_TEXT_RE = re.compile(
+    r"(?i)(?:\bprimary_language\s*=\s*go\b|用\s*go\s*实现|\bgo\s+(?:build|test|mod)\b|\.go\b)"
+)
 _CARD3D_PM_DOMAIN_SCOPE_PATHS = {
     "client3d": "src/client/three-scene.ts",
     "table": "src/client/card-table.ts",
@@ -515,6 +559,296 @@ def _sanitize_game_dependency_policy_in_place(task: dict[str, Any], verify_comma
             task[field] = sanitized_value
             sanitized_count += changed
     return sanitized_count
+
+
+def _sanitize_language_contract_paths_in_place(normalized: dict[str, Any], tasks: list[dict[str, Any]]) -> int:
+    """Make PM contract file evidence match the declared/inferred project language."""
+
+    language = _infer_primary_contract_language(normalized, tasks)
+    if language != "go":
+        return 0
+    changed = 0
+    for task in tasks:
+        changed += _sanitize_go_contract_task_paths_in_place(task)
+    return changed
+
+
+def _infer_primary_contract_language(normalized: dict[str, Any], tasks: list[dict[str, Any]]) -> str:
+    explicit = _normalize_primary_language_value(normalized.get("primary_language"))
+    if explicit:
+        return explicit
+    metadata = normalized.get("metadata")
+    if isinstance(metadata, dict):
+        explicit = _normalize_primary_language_value(metadata.get("primary_language"))
+        if explicit:
+            return explicit
+
+    parts: list[str] = []
+    for field in ("overall_goal", "focus", "notes", "directive", "brief"):
+        value = normalized.get(field)
+        if value is not None:
+            parts.append(_normalize_text(value))
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        projection = _task_projection(task)
+        explicit = _normalize_primary_language_value(projection.get("primary_language"))
+        if explicit:
+            return explicit
+        for field in ("title", "goal", "description"):
+            value = task.get(field)
+            if value is not None:
+                parts.append(_normalize_text(value))
+        for field in ("acceptance", "acceptance_criteria", "execution_checklist", "steps"):
+            value = task.get(field)
+            if isinstance(value, list):
+                parts.extend(_normalize_text(item) for item in value if _normalize_text(item))
+            elif isinstance(value, str):
+                parts.append(_normalize_text(value))
+        parts.extend(_collect_task_delivery_paths(task))
+    combined = " ".join(part for part in parts if part)
+    if _GO_LANGUAGE_TEXT_RE.search(combined):
+        return "go"
+    return ""
+
+
+def _normalize_primary_language_value(value: Any) -> str:
+    token = str(value or "").strip().lower()
+    aliases = {
+        "golang": "go",
+        "go-lang": "go",
+    }
+    return aliases.get(token, token)
+
+
+def _task_projection(task: dict[str, Any]) -> dict[str, Any]:
+    metadata = task.get("metadata")
+    if isinstance(metadata, dict):
+        projection = metadata.get("projection")
+        if isinstance(projection, dict):
+            return projection
+    projection = task.get("projection")
+    return projection if isinstance(projection, dict) else {}
+
+
+def _sanitize_go_contract_task_paths_in_place(task: dict[str, Any]) -> int:
+    changed = 0
+    for field in ("context_files", "scope_paths", "target_files"):
+        original = _normalize_path_list(task.get(field) or [])
+        if not original:
+            continue
+        sanitized = _dedupe_paths(
+            [
+                collapsed
+                for path in original
+                if (collapsed := _collapse_go_file_as_directory_path(path)) and not _is_go_foreign_file_path(collapsed)
+            ]
+        )
+        if sanitized != original:
+            task[field] = sanitized
+            changed += 1
+
+    target_files = _normalize_path_list(task.get("target_files") or [])
+    inferred_targets = _infer_go_target_files_for_task(task)
+    merged_targets = _dedupe_paths([*target_files, *inferred_targets])
+    if merged_targets != target_files:
+        task["target_files"] = merged_targets
+        changed += 1
+
+    for field in ("acceptance", "acceptance_criteria", "execution_checklist", "steps", "goal", "description"):
+        if field not in task:
+            continue
+        sanitized_value, field_changes = _sanitize_go_contract_text_value(task.get(field))
+        if field_changes:
+            task[field] = sanitized_value
+            changed += field_changes
+    return changed
+
+
+def _is_go_foreign_file_path(path: str) -> bool:
+    normalized = _normalize_path(path)
+    if not normalized:
+        return False
+    suffix = Path(normalized).suffix.lower()
+    return suffix in _GO_CONTRACT_FOREIGN_SUFFIXES
+
+
+def _collapse_go_file_as_directory_path(path: str) -> str:
+    """Collapse impossible paths like ``src/models/pet.go/index.ts``.
+
+    PM/CE/Director contracts must not treat a source file as a directory.
+    Returning the concrete file segment preserves the intended Go target while
+    removing the cross-language child path that would poison downstream gates.
+    """
+
+    normalized = _normalize_path(path)
+    if not normalized:
+        return ""
+    display = str(path or "").strip().replace("\\", "/")
+    while display.startswith("./"):
+        display = display[2:]
+    display = re.sub(r"/+", "/", display.strip("/"))
+    display_parts = tuple(part for part in display.split("/") if part)
+    parts = tuple(part for part in normalized.split("/") if part)
+    for index, part in enumerate(parts[:-1]):
+        suffix = Path(part).suffix.lower()
+        if suffix in _GO_CONTRACT_FILE_SEGMENT_SUFFIXES:
+            return "/".join(display_parts[: index + 1])
+    return display
+
+
+def _infer_go_target_files_for_task(task: dict[str, Any]) -> list[str]:
+    targets: list[str] = []
+    for path in _normalize_path_list(task.get("scope_paths") or []):
+        normalized = _normalize_path(path)
+        if not normalized:
+            continue
+        suffix = Path(normalized).suffix.lower()
+        if suffix in _GO_CONTRACT_ALLOWED_SUFFIXES or Path(normalized).name in {"go.mod", "go.sum"}:
+            targets.append(normalized)
+            continue
+        if _is_file_like_pm_scope_path(normalized):
+            continue
+        representative = _go_representative_file_for_scope(normalized, task)
+        if representative:
+            targets.append(representative)
+    targets.extend(_go_text_target_files_for_task(task))
+    return _dedupe_paths(targets)
+
+
+def _go_representative_file_for_scope(scope_path: str, task: dict[str, Any]) -> str:
+    normalized = _normalize_path(scope_path).rstrip("/")
+    if normalized in {"src/models", "models"}:
+        return "src/models/pet.go"
+    if normalized in {"src/engine", "engine"}:
+        return "src/engine/engine.go"
+    if normalized in {"src/cli", "cmd", "cmd/pet"}:
+        return "main.go"
+    if normalized in {"tests", "test"}:
+        return ""
+
+    text = _go_contract_task_text(task)
+    lowered = text.lower()
+    if "qa.sh" in lowered or (
+        ("qa" in lowered or "validation" in lowered or "验收" in lowered) and "script" in lowered
+    ):
+        return "scripts/qa.sh"
+    if "go.mod" in lowered or (
+        "go" in lowered and ("module" in lowered or "bootstrap" in lowered or "骨架" in lowered)
+    ):
+        return "go.mod"
+    if "readme" in lowered or "文档" in lowered:
+        return "README.md"
+    if (
+        "入口" in lowered or "cli" in lowered or "terminal" in lowered or "entrypoint" in lowered
+    ) and not _go_task_is_verification_only(task):
+        return "main.go"
+    if "engine" in lowered or "引擎" in lowered:
+        return "src/engine/engine.go"
+    if "model" in lowered or "模型" in lowered:
+        return "src/models/pet.go"
+    return ""
+
+
+def _go_contract_task_text(task: dict[str, Any], *, include_acceptance: bool = True) -> str:
+    parts: list[str] = []
+    fields = ["title", "goal", "description", "execution_checklist", "steps"]
+    if include_acceptance:
+        fields.extend(["acceptance", "acceptance_criteria"])
+    for field in fields:
+        value = task.get(field)
+        if isinstance(value, list):
+            parts.extend(_normalize_text(item) for item in value if _normalize_text(item))
+        elif isinstance(value, str):
+            normalized = _normalize_text(value)
+            if normalized:
+                parts.append(normalized)
+    return " ".join(parts)
+
+
+def _go_text_target_files_for_task(task: dict[str, Any]) -> list[str]:
+    lowered = _go_contract_task_text(task).lower()
+    implementation_lowered = _go_contract_task_text(task, include_acceptance=False).lower()
+    targets: list[str] = []
+    if "go.mod" in lowered or (
+        "go" in lowered and ("module" in lowered or "bootstrap" in lowered or "骨架" in lowered)
+    ):
+        targets.append("go.mod")
+    if (
+        "入口" in lowered or "cli" in lowered or "terminal" in lowered or "entrypoint" in lowered
+    ) and not _go_task_is_verification_only(task):
+        targets.append("main.go")
+    if "qa.sh" in lowered or (
+        ("qa" in lowered or "validation" in lowered or "验收" in lowered) and "script" in lowered
+    ):
+        targets.append("scripts/qa.sh")
+    if "seed" in lowered and ("spell" in lowered or "spells" in lowered or "咒语" in lowered):
+        targets.append("seed/spells.json")
+    if "src/models" in implementation_lowered or "models/" in implementation_lowered:
+        targets.append("src/models/pet.go")
+    if "src/engine" in implementation_lowered or "engine/" in implementation_lowered:
+        targets.append("src/engine/engine.go")
+    if "readme" in lowered or "文档" in lowered:
+        targets.append("README.md")
+    return targets
+
+
+def _go_task_is_verification_only(task: dict[str, Any]) -> bool:
+    phase = _normalize_text(task.get("phase")).lower()
+    lowered = _go_contract_task_text(task).lower()
+    return (
+        phase in {"verification", "qa", "quality_gate"}
+        or "qa gate" in lowered
+        or "final acceptance" in lowered
+        or "最终验收" in lowered
+        or "验收门禁" in lowered
+        or "质量门禁" in lowered
+    )
+
+
+def _sanitize_go_contract_text_value(value: Any) -> tuple[Any, int]:
+    if isinstance(value, str):
+        return _sanitize_go_contract_text(value)
+    if isinstance(value, list):
+        changed = 0
+        sanitized_items: list[Any] = []
+        for item in value:
+            if isinstance(item, str):
+                sanitized, item_changes = _sanitize_go_contract_text(item)
+                sanitized_items.append(sanitized)
+                changed += item_changes
+            else:
+                sanitized_items.append(item)
+        if changed:
+            sanitized_items = _dedupe_text_items([str(item) for item in sanitized_items if str(item).strip()])
+        return sanitized_items, changed
+    return value, 0
+
+
+def _sanitize_go_contract_text(value: str) -> tuple[str, int]:
+    result = value
+    changed = 0
+    result, note_changes = _GO_CONTRACT_UI_STEERING_NOTE_RE.subn("", result)
+    changed += note_changes
+    for source, replacement in _GO_CONTRACT_PATH_REWRITES.items():
+        if source in result:
+            result = result.replace(source, replacement)
+            changed += 1
+
+    def collapse_match(match: re.Match[str]) -> str:
+        nonlocal changed
+        token = match.group(0)
+        collapsed = _collapse_go_file_as_directory_path(token)
+        if collapsed and collapsed != token:
+            changed += 1
+            token = collapsed
+        if _is_go_foreign_file_path(token):
+            changed += 1
+            return ""
+        return token
+
+    result = _GO_CONTRACT_FILE_TOKEN_RE.sub(collapse_match, result)
+    return result, changed
 
 
 def _has_forbidden_game_dependency_policy(task: dict[str, Any]) -> bool:

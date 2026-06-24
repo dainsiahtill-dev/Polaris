@@ -4,6 +4,10 @@ import inspect
 from typing import Any
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public import (
+    ReadRunLedgerProjectionQueryV1,
+    read_run_ledger_projection,
+)
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.activities.base import get_registered_activity
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.activities.qa_activities import (
     record_qa_cognitive_receipt,
@@ -15,6 +19,7 @@ from polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.workfl
 @pytest.mark.asyncio
 async def test_record_qa_cognitive_receipt_records_required_runtime_evidence(monkeypatch, tmp_path) -> None:
     captured: dict[str, Any] = {}
+    monkeypatch.setenv("KERNELONE_JETSTREAM_PUBLISH", "0")
 
     class _FakeCognitiveRuntimeService:
         def resolve_context(self, command: Any) -> Any:
@@ -67,6 +72,8 @@ async def test_record_qa_cognitive_receipt_records_required_runtime_evidence(mon
                 "qa_session_id": "qa-session-1",
                 "cognitive_runtime_required": True,
                 "context_os_expected": True,
+                "contract_hash": "contract-hash-1",
+                "blueprint_hash": "blueprint-hash-1",
             },
         }
     )
@@ -76,6 +83,7 @@ async def test_record_qa_cognitive_receipt_records_required_runtime_evidence(mon
     receipt = result["payload"]["cognitive_runtime_receipt"]
     assert receipt["ok"] is True
     assert receipt["receipt_id"] == "receipt-qa-1"
+    assert receipt["run_ledger_receipt"]["event"]["stage"] == "workflow_qa"
     receipt_command = captured["receipt_command"]
     resolve_command = captured["resolve_command"]
     assert resolve_command.role == "qa"
@@ -97,6 +105,76 @@ async def test_record_qa_cognitive_receipt_records_required_runtime_evidence(mon
     assert receipt_command.payload["unit"]["command"] == "pytest -q"
     assert receipt_command.turn_envelope["task_id"] == "qa::verification"
     assert captured["closed"] is True
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="pm-00007")
+    ).projection
+    assert projection["source"] == "run_ledger_projection"
+    assert projection["ok"] is True
+    assert projection["evidence_modalities"]["verifier"]["ok"] == 1
+    assert projection["evidence_modalities"]["cognitive_runtime"]["ok"] == 1
+
+
+@pytest.mark.asyncio
+async def test_record_qa_cognitive_receipt_fails_closed_when_run_ledger_append_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class _FakeCognitiveRuntimeService:
+        def resolve_context(self, command: Any) -> Any:
+            snapshot = type(
+                "Snapshot",
+                (),
+                {
+                    "workspace": str(tmp_path),
+                    "role": "qa",
+                    "run_id": "pm-ledger-fail",
+                    "session_id": "qa-session-ledger-fail",
+                    "mode": "workflow_runtime_qa_verification",
+                    "token_usage_estimate": 12,
+                    "source_refs": (),
+                    "context_os_summary": {},
+                },
+            )()
+            return type("Result", (), {"ok": True, "snapshot": snapshot})()
+
+        def record_runtime_receipt(self, command: Any) -> Any:
+            return type("Result", (), {"ok": True, "receipt": type("Receipt", (), {"receipt_id": "receipt-ok"})()})()
+
+        def close(self) -> None:
+            pass
+
+    def _fail_append(command: Any) -> Any:
+        raise RuntimeError("ledger offline")
+
+    monkeypatch.setattr(
+        "polaris.cells.factory.cognitive_runtime.public.get_cognitive_runtime_public_service",
+        lambda: _FakeCognitiveRuntimeService(),
+    )
+    monkeypatch.setattr(
+        "polaris.cells.control_plane.run_ledger.public.append_run_ledger_event",
+        _fail_append,
+    )
+
+    result = await record_qa_cognitive_receipt(
+        {
+            "workspace": str(tmp_path),
+            "run_id": "pm-ledger-fail",
+            "status": "completed",
+            "reason": "qa_passed",
+            "summary": "QA workflow completed",
+            "metadata": {
+                "qa_session_id": "qa-session-ledger-fail",
+                "cognitive_runtime_required": True,
+                "context_os_expected": True,
+                "contract_hash": "contract-hash-1",
+                "blueprint_hash": "blueprint-hash-1",
+            },
+        }
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "qa_run_ledger_append_failed"
+    assert result["payload"]["cognitive_runtime_receipt"]["run_ledger_error"] == "ledger offline"
 
 
 @pytest.mark.asyncio

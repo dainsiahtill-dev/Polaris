@@ -11,6 +11,7 @@ from polaris.cells.llm.evaluation.internal.tool_calling_matrix import (
     load_builtin_tool_calling_matrix_cases,
     load_tool_calling_matrix_case,
 )
+from polaris.cells.llm.evaluation.internal.tool_calling_matrix._runner import _build_platform_tool_contract
 
 
 def _make_case(*, judge: dict[str, object]) -> ToolCallingMatrixCase:
@@ -39,12 +40,28 @@ def test_compose_case_prompt_appends_contract_for_stream() -> None:
 
     prompt = _compose_case_prompt(case, mode="stream")
 
-    assert "[Benchmark Tool Contract]" in prompt
+    assert "[Tool Calling Matrix Contract]" in prompt
     assert "repo_read_head" in prompt
     assert "append_to_file" in prompt
     assert "execute_command" in prompt
     assert "between 2 and 3" in prompt
     assert "[repo_read_head] -> [append_to_file]" in prompt
+
+
+def test_platform_tool_contract_carries_required_tools_from_mode_spec() -> None:
+    contract = _build_platform_tool_contract(
+        {
+            "required_tools": ["repo_read_head", "append_to_file"],
+            "min_tool_calls": 2,
+            "ordered_tool_groups": [["repo_read_head"], ["append_to_file"]],
+        }
+    )
+
+    assert contract["single_batch"] is True
+    assert contract["required_tools"] == ["repo_read_head", "append_to_file"]
+    assert contract["min_tool_calls"] == 2
+    assert contract["ordered_tool_groups"] == [["repo_read_head"], ["append_to_file"]]
+    assert contract["allow_mixed_read_write_batch"] is True
 
 
 def test_compose_case_prompt_respects_non_stream_mode_spec() -> None:

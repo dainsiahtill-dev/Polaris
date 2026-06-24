@@ -942,6 +942,20 @@ def get_provider_base_url(provider_id: str) -> str:
     return ""
 
 
+def get_provider_entry(provider_id: str) -> dict[str, Any]:
+    """Return a provider config entry from the runtime LLM config.
+
+    Best-effort and read-only: returns an empty dict when the provider/config is
+    absent. Callers use this for routing/probing decisions without duplicating
+    runtime config parsing.
+    """
+
+    try:
+        return get_runtime_config_manager()._provider_entry(provider_id)
+    except (RuntimeError, ValueError, OSError):
+        return {}
+
+
 __all__ = [
     "ResolvedRoleBinding",
     "RoleBindingSlot",
@@ -949,6 +963,7 @@ __all__ = [
     "RuntimeConfigManager",
     "clear_role_binding_health",
     "get_provider_base_url",
+    "get_provider_entry",
     "get_provider_max_concurrency",
     "get_role_binding_override",
     "get_role_binding_slots",

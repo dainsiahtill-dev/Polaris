@@ -65,6 +65,16 @@ def _director_write_allowed_scope(tool_kwargs: dict[str, Any] | None) -> list[st
     return []
 
 
+def _runtime_capability_scope(self: AgentAccelToolExecutor) -> list[str]:
+    scope = getattr(self, "_capability_scope", ())
+    return _coerce_policy_scope_list(scope)
+
+
+def _runtime_capability_token(self: AgentAccelToolExecutor) -> dict[str, Any]:
+    token = getattr(self, "_capability_token", {})
+    return dict(token) if isinstance(token, dict) else {}
+
+
 def _validate_director_policy_for_write(
     self: AgentAccelToolExecutor,
     *,
@@ -79,9 +89,13 @@ def _validate_director_policy_for_write(
 
     normalized_rel = str(rel or "").replace("\\", "/").strip("/")
     package_write = normalized_rel == "package.json" or normalized_rel.endswith("/package.json")
+    runtime_scope = _runtime_capability_scope(self)
+    tool_scope = _director_write_allowed_scope(tool_kwargs)
+    allowed_scope = runtime_scope or tool_scope
+    scope_source = "runtime_capability" if runtime_scope else "tool_arguments_legacy"
     verdict = validate_tool_write_policy(
         changed_files=[normalized_rel] if normalized_rel else [],
-        allowed_scope=_director_write_allowed_scope(tool_kwargs),
+        allowed_scope=allowed_scope,
         agents_md=_read_workspace_agents_policy_text(self, normalized_rel),
         operation=operation,
         package_before=old_content if package_write else None,
@@ -89,6 +103,13 @@ def _validate_director_policy_for_write(
         require_change=True,
     )
     evidence = verdict.to_dict()
+    evidence["scope_source"] = scope_source
+    evidence["allowed_scope"] = allowed_scope
+    capability_token = _runtime_capability_token(self)
+    if capability_token:
+        evidence["capability_token"] = capability_token
+    if runtime_scope and tool_scope and tool_scope != runtime_scope:
+        evidence["ignored_tool_declared_scope"] = tool_scope
     if verdict.allowed:
         return {"ok": True, "director_policy": evidence}
 

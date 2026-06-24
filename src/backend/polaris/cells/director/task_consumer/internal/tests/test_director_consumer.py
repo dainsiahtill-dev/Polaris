@@ -122,6 +122,10 @@ class TestDirectorExecutionConsumerPollOnce:
         claim_result.lease_token = "lease-xyz"
         claim_result.payload = {
             "blueprint_id": "bp-001",
+            "blueprint_hash": "bh-001",
+            "contract_hash": "ch-001",
+            "job_token_id": "job-001",
+            "job_token": {"token_id": "job-001", "contract_hash": "ch-001", "blueprint_hash": "bh-001"},
             "scope_paths": ["/src/main.py"],
         }
 
@@ -151,6 +155,9 @@ class TestDirectorExecutionConsumerPollOnce:
         # Verify ack was called with correct next_stage=pending_qa
         ack_call = mock_svc.acknowledge_task_stage.call_args[0][0]
         assert ack_call.next_stage == "pending_qa"
+        assert ack_call.metadata["job_token"]["token_id"] == "job-001"
+        assert ack_call.metadata["blueprint_hash"] == "bh-001"
+        assert ack_call.metadata["contract_hash"] == "ch-001"
         assert ack_call.metadata["changed_files"] == ["src/main.py"]
         assert ack_call.metadata["director_evidence_status"] == "changed_files_reported"
 
@@ -429,6 +436,9 @@ class TestDirectorExecutionConsumerPollOnce:
             "PM-1-S1",
             {
                 "title": "step",
+                "blueprint_hash": "bh-ctx",
+                "contract_hash": "ch-ctx",
+                "job_token": {"token_id": "job-ctx", "contract_hash": "ch-ctx", "blueprint_hash": "bh-ctx"},
                 "construction_step": {"step_id": "PM-1-S1", "target_file": "index.html"},
                 "last_failure": {
                     "error_code": "QA_step_verify_failed",
@@ -444,6 +454,8 @@ class TestDirectorExecutionConsumerPollOnce:
         assert seen_context["metadata"]["task_id"] == "PM-1-S1"
         assert seen_context["metadata"]["pm_task_id"] == "PM-1-S1"
         assert seen_context["metadata"]["task_market_task_id"] == "PM-1-S1"
+        assert seen_context["metadata"]["job_token"]["token_id"] == "job-ctx"
+        assert seen_context["metadata"]["blueprint_hash"] == "bh-ctx"
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_step_target_covered_advances_to_qa(self, mock_get_svc: MagicMock) -> None:

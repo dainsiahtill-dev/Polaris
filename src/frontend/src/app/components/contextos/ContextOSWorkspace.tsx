@@ -149,9 +149,23 @@ function controlPlaneProjectionLabel(projection: ControlPlaneProjection): string
 
 function controlPlaneProjectionSummary(projection: ControlPlaneProjection): string {
   if (!projection.available) {
-    return projection.detail || 'factory_audits.json 尚不可用';
+    return projection.detail || 'Run Ledger projection 尚不可用';
   }
   return `${projection.projected}/${projection.total} 投影 · ${projection.failed} 异常`;
+}
+
+function controlPlaneSourceSummary(projection: ControlPlaneProjection): string {
+  const source = `source=${projection.source}`;
+  if (!projection.compat_ledgers_included) return source;
+  return `${source} · compat=factory-ledger`;
+}
+
+function controlPlaneGatePassed(projection: ControlPlaneProjection | undefined): boolean | undefined {
+  if (!projection) return undefined;
+  if (!projection.available) return false;
+  if (projection.total <= 0 && projection.projects.length === 0) return false;
+  if (!projection.ok || projection.failed > 0) return false;
+  return projection.projects.every((project) => project.ok && project.failed_gate_count === 0);
 }
 
 function evidencePolicyLabel(projection: ControlPlaneProjection): string {
@@ -1830,7 +1844,9 @@ export function ContextOSWorkspace({
   const wsTone = live ? 'success' : reconnecting ? 'warning' : 'error';
   const wsLabel = live ? 'WS LIVE' : reconnecting ? 'WS RECONNECT' : 'WS OFFLINE';
   const phaseLabel = (currentPhase || 'idle').trim() || 'idle';
-  const gatePassed = qualityGate?.passed;
+  const ledgerGatePassed = controlPlaneGatePassed(controlPlaneProjection);
+  const gatePassed = ledgerGatePassed ?? qualityGate?.passed;
+  const gateSource = ledgerGatePassed === undefined ? 'quality gate' : 'Run Ledger';
   // 观测到活动 = PM/Director 运行中 或 真实遥测有内容。
   const observed = model.running || model.telemetryActive;
   // 「真正有数据」= 真实遥测有内容；此时不再视为空闲水印。
@@ -1983,7 +1999,7 @@ export function ContextOSWorkspace({
                 'h-2 w-2 rounded-full',
                 gatePassed ? 'bg-status-success' : 'bg-status-warning',
               )}
-              title={`质量门 ${gatePassed ? 'PASS' : 'HOLD'}`}
+              title={`质量门 ${gatePassed ? 'PASS' : 'HOLD'} · ${gateSource}`}
             />
           )}
 
@@ -2003,7 +2019,7 @@ export function ContextOSWorkspace({
                 <span>{controlPlaneProjectionLabel(controlPlaneProjection)}</span>
                 <span className="text-text-dim/60">·</span>
                 <span>{controlPlaneProjectionSummary(controlPlaneProjection)}</span>
-                <span className="text-text-dim/70">source={controlPlaneProjection.source}</span>
+                <span className="text-text-dim/70">{controlPlaneSourceSummary(controlPlaneProjection)}</span>
               </div>
               <div
                 className={cn(

@@ -238,14 +238,45 @@ describe('useRuntimeConnection', () => {
         'runtime_events',
         'status.workflow',
         'status.process',
+        'status.control_plane',
         'status.snapshot',
         'event.factory',
-        'event.bench',
         'event.file_edit',
       ]);
       expect(channels).not.toContain('roles:pm,director,qa');
       expect(subscriptions.map((item: { tailLines?: number }) => item.tailLines)).toEqual([
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      ]);
+    });
+
+    it('subscribes bench events only when internal bench mode is explicitly enabled', async () => {
+      renderHook(() =>
+        useRuntimeConnection({
+          autoConnect: false,
+          workspace: '/test',
+          includeInternalBench: true,
+        })
+      );
+
+      await waitFor(() => {
+        expect(mockSubscribeChannels).toHaveBeenCalled();
+      });
+
+      const subscriptions = mockSubscribeChannels.mock.calls[0]?.[0] ?? [];
+      const channels = subscriptions.map((item: { channel: string }) => item.channel);
+      expect(channels).toEqual([
+        'system',
+        'process',
+        'llm',
+        'dialogue',
+        'runtime_events',
+        'status.workflow',
+        'status.process',
+        'status.control_plane',
+        'status.snapshot',
+        'event.factory',
+        'event.bench',
+        'event.file_edit',
       ]);
     });
 
@@ -334,9 +365,9 @@ describe('useRuntimeConnection', () => {
           'runtime_events',
           'status.workflow',
           'status.process',
+          'status.control_plane',
           'status.snapshot',
           'event.factory',
-          'event.bench',
           'event.file_edit',
         ],
         cursor: 128,
@@ -402,9 +433,9 @@ describe('useRuntimeConnection', () => {
           'runtime_events',
           'status.workflow',
           'status.process',
+          'status.control_plane',
           'status.snapshot',
           'event.factory',
-          'event.bench',
           'event.file_edit',
         ],
         cursor: 0,
@@ -446,9 +477,9 @@ describe('useRuntimeConnection', () => {
             'runtime_events',
             'status.workflow',
             'status.process',
+            'status.control_plane',
             'status.snapshot',
             'event.factory',
-            'event.bench',
             'event.file_edit',
           ],
           cursor: 0,

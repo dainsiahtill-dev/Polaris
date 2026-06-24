@@ -275,14 +275,17 @@ test("candidate runtime coverage maps runtime isolation and history archive prob
       e2eFields: ["attachment_manifest_path", "attachment_names"],
     },
     {
-      id: "history_factory_overview_defect_loop_projection",
-      title: "History factory overview defect-loop projection",
+      id: "control_plane_ledger_history_projection",
+      title: "Control Plane Run Ledger history projection",
       category: "history",
       status: "implemented",
       source: "test",
-      paths: ["src/backend/polaris/delivery/http/routers/history.py"],
-      gates: ["GET /history/factory/overview"],
-      e2eFields: ["summary", "rounds"],
+      paths: [
+        "src/backend/polaris/delivery/http/routers/control_plane.py",
+        "src/backend/polaris/delivery/http/routers/history.py",
+      ],
+      gates: ["GET /v2/control-plane/ledger/projection"],
+      e2eFields: ["source=run_ledger_projection", "projects", "missing", "failed"],
     },
     {
       id: "immutable_archive_manifest_jsonl_index",

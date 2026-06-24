@@ -51,7 +51,7 @@ def build_retry_tool_definitions_for_mutation(
         "repo_rg",
         "repo_glob",
     }
-    # Only add verification tools that are NOT forbidden by the benchmark case.
+    # Only add verification tools that are NOT forbidden by the active contract.
     verification_candidates = {t for t in {"execute_command"} if t not in _forbidden}
     narrowed: list[dict] = []
     has_write = False
@@ -300,7 +300,7 @@ def build_forced_write_only_retry_tool_definitions(
 ) -> list[dict]:
     """Builds the strict forced-write tool definitions.
 
-    Respects ``forbidden_tool_names`` so that benchmark-forbidden tools
+    Respects ``forbidden_tool_names`` so that contract-forbidden tools
     (e.g. execute_command) are never included even when verification is enabled.
     """
     _forbidden: set[str] = forbidden_tool_names or set()

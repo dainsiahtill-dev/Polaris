@@ -6,10 +6,10 @@ from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     requires_mutation_intent,
 )
 
-# The L2 benchmark prompt + injected benchmark contract
+# The L2 matrix prompt + injected matrix contract
 full_msg = """读取 helpers.py 文件的内容。注意：不要猜测路径，如果不确定位置，先用工具查找。
 
-[Benchmark Tool Contract]
+[Tool Calling Matrix Contract]
 This is a deterministic tool-calling matrix run. Follow the contract strictly.
 Required tool groups: one of [read_file] ; one of [glob, repo_rg].
 Forbidden tools: execute_command, search_replace, edit_file.

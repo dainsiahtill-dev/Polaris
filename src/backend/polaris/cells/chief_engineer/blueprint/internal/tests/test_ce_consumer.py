@@ -127,6 +127,12 @@ class TestCEConsumerPollOnce:
         assert cmd.metadata["blueprint_id"] == "bp-task-42"
         assert cmd.metadata["blueprint_path"] == "runtime/blueprints/bp-task-42.json"
         assert cmd.metadata["runtime_blueprint_path"] == "runtime/blueprints/bp-task-42.json"
+        assert cmd.metadata["blueprint_hash"]
+        assert cmd.metadata["contract_hash"]
+        assert cmd.metadata["job_token"]["token_id"] == cmd.metadata["job_token_id"]
+        assert cmd.metadata["job_token"]["contract_hash"] == cmd.metadata["contract_hash"]
+        assert cmd.metadata["job_token"]["blueprint_hash"] == cmd.metadata["blueprint_hash"]
+        assert cmd.metadata["control_plane_lineage"]["blueprint_hash"] == cmd.metadata["blueprint_hash"]
         assert cmd.metadata["route"] == "chief_blueprint_required"
         assert cmd.metadata["blueprint_required"] is True
         assert cmd.metadata["target_files"] == ["/src/main.py"]
@@ -210,9 +216,25 @@ class TestStepSplitterIntegration:
         assert validate_construction_steps(split, parent_pm_task="PM-0001-1") == []
 
         consumer._publish_step_tasks(
-            "PM-0001-1", {"run_id": "r"}, split, blueprint_id="b", blueprint_path="p", prior_file_owners={}
+            "PM-0001-1",
+            {
+                "run_id": "r",
+                "blueprint_hash": "bh",
+                "contract_hash": "ch",
+                "job_token_id": "job-1",
+                "job_token": {"token_id": "job-1", "contract_hash": "ch", "blueprint_hash": "bh"},
+                "control_plane_lineage": {"blueprint_hash": "bh"},
+            },
+            split,
+            blueprint_id="b",
+            blueprint_path="p",
+            prior_file_owners={},
         )
         published = [c.args[0].payload["construction_step"] for c in consumer._svc.publish_work_item.call_args_list]
+        first_command = consumer._svc.publish_work_item.call_args_list[0].args[0]
+        assert first_command.payload["job_token"]["token_id"] == "job-1"
+        assert first_command.payload["blueprint_hash"] == "bh"
+        assert first_command.metadata["job_token"]["token_id"] == "job-1"
         ids = [s["step_id"] for s in published]
         assert "PM-0001-1-S4-skel" in ids
         assert sum(1 for i in ids if "-fill" in i) == 4

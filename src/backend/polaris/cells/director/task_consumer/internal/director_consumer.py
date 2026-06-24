@@ -69,6 +69,21 @@ def _normalize_task_market_route(payload: dict[str, Any]) -> str:
     return _ROUTE_CHIEF_BLUEPRINT_REQUIRED
 
 
+def _job_token_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    metadata_raw = payload.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    for container in (payload, metadata):
+        for key in ("job_token", "control_plane_job_token", "capability_token"):
+            value = container.get(key)
+            if isinstance(value, dict) and str(value.get("token_id") or "").strip():
+                return dict(value)
+    return {}
+
+
+def _mapping_copy(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 _NO_CHANGE_FLAGS = frozenset(
     {
         "allow_no_changes",
@@ -899,6 +914,7 @@ class DirectorExecutionConsumer:
             )
             adapter_summary_raw = exec_result.get("director_adapter_result")
             adapter_summary = adapter_summary_raw if isinstance(adapter_summary_raw, dict) else {}
+            job_token = _job_token_from_payload(payload)
 
             # Acknowledge → PENDING_QA
             ack = self._svc.acknowledge_task_stage(
@@ -910,6 +926,13 @@ class DirectorExecutionConsumer:
                     summary=f"Execution complete for {task_id}",
                     metadata={
                         "blueprint_id": blueprint_id,
+                        "blueprint_hash": str(payload.get("blueprint_hash") or job_token.get("blueprint_hash") or ""),
+                        "contract_hash": str(payload.get("contract_hash") or job_token.get("contract_hash") or ""),
+                        "job_token_id": str(payload.get("job_token_id") or job_token.get("token_id") or ""),
+                        "job_token": job_token,
+                        "control_plane_job_token": job_token,
+                        "capability_token": job_token,
+                        "control_plane_lineage": _mapping_copy(payload.get("control_plane_lineage")),
                         "route": route,
                         "task_market_route": route,
                         "blueprint_required": True,
@@ -1102,6 +1125,7 @@ class DirectorExecutionConsumer:
         adapter = create_role_adapter("director", str(workspace_path))
         adapter_input = _build_director_adapter_input(task_id, payload, lease_token)
         pm_task_id = str(adapter_input.get("pm_task_id") or task_id).strip() or task_id
+        job_token = _job_token_from_payload(payload)
         context = {
             "run_id": str(payload.get("run_id") or f"task-market-director-{task_id}"),
             "task_id": task_id,
@@ -1115,6 +1139,12 @@ class DirectorExecutionConsumer:
                 "task_market_stage": "pending_exec",
                 "task_market_worker_id": self._worker_id,
                 "blueprint_id": str(payload.get("blueprint_id") or ""),
+                "blueprint_hash": str(payload.get("blueprint_hash") or job_token.get("blueprint_hash") or ""),
+                "contract_hash": str(payload.get("contract_hash") or job_token.get("contract_hash") or ""),
+                "job_token": job_token,
+                "control_plane_job_token": job_token,
+                "capability_token": job_token,
+                "control_plane_lineage": _mapping_copy(payload.get("control_plane_lineage")),
                 "route": _normalize_task_market_route(payload),
             },
         }

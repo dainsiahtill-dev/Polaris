@@ -62,6 +62,8 @@ export interface FactoryPageProps {
   isLoading: boolean;
   /** Factory Bench 实时会话状态 */
   bench?: UseFactoryBenchResult;
+  /** 内部测试模式下才允许展示 Factory Bench 面板/状态。 */
+  internalBenchEnabled?: boolean;
   /** Factory Bench 观测到项目 workspace 后同步到全局 workspace。 */
   onBenchWorkspaceChange?: (workspace: string) => void;
   /** WebSocket 连接状态 */
@@ -85,6 +87,8 @@ export interface FactoryPageProps {
   currentPhase?: string;
   /** 质量门 */
   qualityGate?: unknown;
+  /** 平台 Run Ledger 投影 */
+  controlPlaneProjection?: Parameters<typeof LlmRuntimeOverlay>[0]['controlPlaneProjection'];
   /** 错误通知回调 */
   notifyError: (message: string) => void;
 }
@@ -116,6 +120,7 @@ export function FactoryPage({
   onRetryCheckpoint,
   isLoading,
   bench,
+  internalBenchEnabled = false,
   onBenchWorkspaceChange,
   websocketLive,
   websocketReconnecting,
@@ -125,16 +130,20 @@ export function FactoryPage({
   llmRuntimeState,
   currentPhase,
   qualityGate,
+  controlPlaneProjection,
   notifyError,
 }: FactoryPageProps) {
   return (
     <ErrorBoundaryClass onError={(error) => notifyError(error.message || '发生未知错误')}>
-      <BenchStatusStrip
-        bench={bench}
-        websocketLive={websocketLive}
-        websocketReconnecting={websocketReconnecting}
-        websocketAttemptCount={websocketAttemptCount}
-      />
+      {internalBenchEnabled ? (
+        <BenchStatusStrip
+          enabled={internalBenchEnabled}
+          bench={bench}
+          websocketLive={websocketLive}
+          websocketReconnecting={websocketReconnecting}
+          websocketAttemptCount={websocketAttemptCount}
+        />
+      ) : null}
       <FactoryWorkspace
         workspace={workspace}
         onBackToMain={onBackToMain}
@@ -159,8 +168,16 @@ export function FactoryPage({
         onRetryCheckpoint={onRetryCheckpoint}
         isLoading={isLoading}
         bench={bench}
+        internalBenchEnabled={internalBenchEnabled}
+        controlPlaneProjection={controlPlaneProjection}
       />
-      <BenchPanel className="border-t border-white/10" onWorkspaceChange={onBenchWorkspaceChange} />
+      {internalBenchEnabled ? (
+        <BenchPanel
+          enabled={internalBenchEnabled}
+          className="border-t border-white/10"
+          onWorkspaceChange={onBenchWorkspaceChange}
+        />
+      ) : null}
       <LlmRuntimeOverlay
         activeView="factory"
         websocketLive={websocketLive}
@@ -177,6 +194,7 @@ export function FactoryPage({
         executionLogs={executionLogs ?? []}
         llmStreamEvents={llmStreamEvents ?? []}
         processStreamEvents={processStreamEvents ?? []}
+        controlPlaneProjection={controlPlaneProjection}
       />
       <Toaster position="bottom-right" />
     </ErrorBoundaryClass>

@@ -513,8 +513,9 @@ class PMWorkflow(WorkflowQueryState):
 
         # PM 完成事件
         final_status = "completed" if qa_passed else "failed"
+        final_phase = "completed" if qa_passed else "failed"
         await self._broadcast_task_trace(
-            phase="completed",
+            phase=final_phase,
             step_kind="system",
             step_title="PM completed",
             step_detail="All PM phases completed successfully" if qa_passed else f"PM workflow failed: {qa_status}",

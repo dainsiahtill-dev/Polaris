@@ -133,6 +133,25 @@ describe('DialoguePanel', () => {
       expect(screen.getByText('结果: FAIL')).toBeInTheDocument();
       expect(screen.getByText(/成功率: 0%/)).toBeInTheDocument();
     });
+
+    it('keeps event receipt stats without requiring formal result wording', () => {
+      const events: DialogueEvent[] = [
+        {
+          seq: 1,
+          eventId: 'event-pass',
+          speaker: 'System',
+          type: 'result',
+          content: 'Event receipt: PASS - L1-01 command exit=0',
+          timestamp: '2026-06-19T02:02:30Z',
+          refs: { task_id: 'L1-01' },
+        },
+      ];
+
+      render(<DialoguePanel events={events} live={false} />);
+
+      expect(screen.getByText('结果: PASS')).toBeInTheDocument();
+      expect(screen.getByText(/成功率: 100%/)).toBeInTheDocument();
+    });
   });
 
   describe('Clear Logs', () => {

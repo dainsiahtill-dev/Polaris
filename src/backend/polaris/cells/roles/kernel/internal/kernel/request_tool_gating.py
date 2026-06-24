@@ -1,45 +1,71 @@
 """Request-level tool-gating predicates for RoleExecutionKernel.
 
-Holds the bodies of ``RoleExecutionKernel._benchmark_requires_no_tools`` and
-``RoleExecutionKernel._request_forces_no_transaction_tools`` extracted verbatim
-(behavior-preserving) into free functions. The class methods become thin
-delegating shims.
-
-FROZEN behavior notes (do NOT change):
-- ``benchmark_requires_no_tools`` preserves the metadata flag check, the
-  ``[Benchmark Tool Contract]`` marker gate, and the exact lowered-substring
-  matches verbatim.
-- ``request_forces_no_transaction_tools`` preserves the context-override
-  short-circuits (``disable_internal_tool_rounds``, ``propose_patch``
-  delivery-mode, the empty forced-definitions + ``none`` forced-choice case) and
-  the ``[mode:propose]`` + "do not call tools" message gate verbatim.
-- Both are pure functions of the request; they take no kernel reference. They
-  remain reachable through the bound ``kernel._<name>`` shims (called from
-  ``turn_execution``).
+Formal runtime gates are driven by platform metadata, not evaluator prompt
+markers embedded in user-visible text. Internal evaluation harnesses may convert
+their own case format into these metadata fields before invoking the role kernel.
 """
 
 from __future__ import annotations
 
 from polaris.cells.roles.profile.public.service import RoleTurnRequest
 
+_NO_TOOL_KEYS: tuple[str, ...] = (
+    "tool_contract_require_no_tool_calls",
+    "require_no_tool_calls",
+    "no_tool_calls",
+)
+
+_SINGLE_BATCH_KEYS: tuple[str, ...] = (
+    "tool_contract_single_batch",
+    "single_batch_execution",
+    "single_batch",
+)
+
+
+def _mapping(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def _truthy_key(mapping: dict[str, object], keys: tuple[str, ...]) -> bool:
+    return any(bool(mapping.get(key)) for key in keys)
+
+
+def _nested_tool_contract(mapping: dict[str, object]) -> dict[str, object]:
+    return _mapping(mapping.get("tool_contract") or mapping.get("platform_tool_contract"))
+
+
+def tool_contract_requires_no_tools(request: RoleTurnRequest) -> bool:
+    """Return True when the platform tool contract forbids tool calls."""
+    metadata = _mapping(getattr(request, "metadata", None))
+    context = _mapping(getattr(request, "context_override", None))
+    context_metadata = _mapping(context.get("metadata"))
+    return (
+        _truthy_key(metadata, _NO_TOOL_KEYS)
+        or _truthy_key(context_metadata, _NO_TOOL_KEYS)
+        or _truthy_key(_nested_tool_contract(metadata), _NO_TOOL_KEYS)
+        or _truthy_key(_nested_tool_contract(context), _NO_TOOL_KEYS)
+    )
+
+
+def tool_contract_requires_single_batch(context_override: object) -> bool:
+    """Return True when the platform tool contract pins a single-batch turn."""
+    context = _mapping(context_override)
+    context_metadata = _mapping(context.get("metadata"))
+    contract = _nested_tool_contract(context)
+    metadata_contract = _nested_tool_contract(context_metadata)
+    execution_mode = str(contract.get("execution_mode") or metadata_contract.get("execution_mode") or "").strip()
+    return (
+        _truthy_key(context, _SINGLE_BATCH_KEYS)
+        or _truthy_key(context_metadata, _SINGLE_BATCH_KEYS)
+        or _truthy_key(contract, _SINGLE_BATCH_KEYS)
+        or _truthy_key(metadata_contract, _SINGLE_BATCH_KEYS)
+        or execution_mode in {"single_batch", "single-batch"}
+    )
+
 
 def benchmark_requires_no_tools(request: RoleTurnRequest) -> bool:
-    """Return True when benchmark contract explicitly forbids tool calls."""
-    metadata = dict(getattr(request, "metadata", {}) or {})
-    if bool(metadata.get("benchmark_require_no_tool_calls")):
-        return True
-
-    message = str(getattr(request, "message", "") or "")
-    if "[Benchmark Tool Contract]" not in message:
-        return False
-
-    lowered = message.lower()
-    return (
-        "do not call any tools for this case." in lowered
-        or "do not call any tools" in lowered
-        or 'require_no_tool_calls": true' in lowered
-        or "require_no_tool_calls: true" in lowered
-    )
+    """Compatibility shim for old callers; delegates to the platform contract."""
+    return tool_contract_requires_no_tools(request)
 
 
 def request_forces_no_transaction_tools(request: RoleTurnRequest) -> bool:

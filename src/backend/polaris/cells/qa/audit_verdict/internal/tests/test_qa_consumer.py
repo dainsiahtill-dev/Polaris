@@ -24,6 +24,21 @@ from polaris.cells.runtime.task_market.public.contracts import (
 from polaris.cells.runtime.task_market.public.service import TaskMarketService
 
 
+def _qa_job_token(*, run_id: str = "run-qa", token_id: str = "token-qa") -> dict[str, Any]:
+    return {
+        "token_id": token_id,
+        "run_id": run_id,
+        "project_id": "P-QA",
+        "contract_hash": "contract-hash-qa",
+        "blueprint_hash": "blueprint-hash-qa",
+        "capability_audit": {"ok": True, "issues": []},
+        "gate_policy": {
+            "enabled_evidence_modalities": ["qa"],
+            "required_evidence_modalities": [],
+        },
+    }
+
+
 class TestResolveQARoute:
     def test_pass_maps_to_resolved_terminal(self) -> None:
         verdict, next_stage, terminal_status = _resolve_qa_route({"verdict": "PASS"})
@@ -373,12 +388,13 @@ class TestQAConsumerPollOnce:
     def test_pass_verdict_acks_resolved(self, mock_get_svc: MagicMock) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
+        job_token = _qa_job_token(run_id="run-qa-pass", token_id="token-qa-pass")
 
         claim_result = MagicMock()
         claim_result.ok = True
         claim_result.task_id = "task-qa-1"
         claim_result.lease_token = "lease-1"
-        claim_result.payload = {"title": "QA task"}
+        claim_result.payload = {"title": "QA task", "job_token": job_token}
 
         no_claim = MagicMock()
         no_claim.ok = False
@@ -386,7 +402,14 @@ class TestQAConsumerPollOnce:
         mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="resolved")
 
         consumer = QAConsumer(workspace="/test", worker_id="qa-1")
-        with patch.object(consumer, "_run_qa_audit", return_value={"verdict": "PASS", "audit_id": "a1"}):
+        with (
+            patch.object(
+                consumer,
+                "_run_qa_audit",
+                return_value={"verdict": "PASS", "audit_id": "a1", "findings": [], "metrics": {}},
+            ),
+            patch.object(qa_consumer_module, "append_run_ledger_event") as append_event,
+        ):
             results = consumer.poll_once()
 
         assert len(results) == 1
@@ -396,17 +419,29 @@ class TestQAConsumerPollOnce:
         ack_call = mock_svc.acknowledge_task_stage.call_args[0][0]
         assert ack_call.terminal_status == "resolved"
         assert ack_call.next_stage is None
+        assert ack_call.metadata["job_token"]["token_id"] == "token-qa-pass"
+        assert ack_call.metadata["contract_hash"] == "contract-hash-qa"
+        ledger_command = append_event.call_args[0][0]
+        assert ledger_command.run_id == "run-qa-pass"
+        assert ledger_command.event["event_type"] == "gate_evaluated"
+        assert ledger_command.event["stage"] == "qa"
+        assert ledger_command.event["gate"]["name"] == "qa_verdict"
+        assert ledger_command.event["gate"]["ok"] is True
+        assert ledger_command.event["job_token"]["token_id"] == "token-qa-pass"
+        assert ledger_command.event["physical_evidence"]["verdict"] == "PASS"
+        assert ledger_command.event["physical_evidence"]["modalities"]["qa"]["ok"] is True
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_requeue_exec_verdict_routes_to_pending_exec(self, mock_get_svc: MagicMock) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
+        job_token = _qa_job_token(run_id="run-qa-requeue", token_id="token-qa-requeue")
 
         claim_result = MagicMock()
         claim_result.ok = True
         claim_result.task_id = "task-qa-2"
         claim_result.lease_token = "lease-2"
-        claim_result.payload = {"title": "QA task"}
+        claim_result.payload = {"title": "QA task", "job_token": job_token}
 
         no_claim = MagicMock()
         no_claim.ok = False
@@ -414,10 +449,18 @@ class TestQAConsumerPollOnce:
         mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
 
         consumer = QAConsumer(workspace="/test", worker_id="qa-2")
-        with patch.object(
-            consumer,
-            "_run_qa_audit",
-            return_value={"verdict": "REQUEUE_EXEC", "audit_id": "a2", "findings": ["missing artifact evidence"]},
+        with (
+            patch.object(
+                consumer,
+                "_run_qa_audit",
+                return_value={
+                    "verdict": "REQUEUE_EXEC",
+                    "audit_id": "a2",
+                    "findings": ["missing artifact evidence"],
+                    "metrics": {},
+                },
+            ),
+            patch.object(qa_consumer_module, "append_run_ledger_event") as append_event,
         ):
             results = consumer.poll_once()
 
@@ -429,6 +472,14 @@ class TestQAConsumerPollOnce:
         fail_call = mock_svc.fail_task_stage.call_args[0][0]
         assert fail_call.requeue_stage == "pending_exec"
         assert "missing artifact evidence" in fail_call.error_message
+        assert fail_call.metadata["job_token"]["token_id"] == "token-qa-requeue"
+        ledger_command = append_event.call_args[0][0]
+        assert ledger_command.run_id == "run-qa-requeue"
+        assert ledger_command.event["gate"]["name"] == "qa_verdict"
+        assert ledger_command.event["gate"]["ok"] is False
+        assert ledger_command.event["job_token"]["token_id"] == "token-qa-requeue"
+        assert ledger_command.event["physical_evidence"]["next_stage"] == "pending_exec"
+        assert ledger_command.event["physical_evidence"]["findings_count"] == 1
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_requeue_design_verdict_preserves_findings_as_last_failure(self, mock_get_svc: MagicMock) -> None:

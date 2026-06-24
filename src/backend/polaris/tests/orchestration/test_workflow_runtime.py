@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 
 BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 for candidate in (BACKEND_ROOT,):
@@ -36,6 +38,17 @@ from polaris.cells.resident.autonomy.internal.resident_runtime_service import ( 
 )
 from polaris.cells.runtime.projection.internal import workflow_status as workflow_status_module  # noqa: E402
 from polaris.delivery.cli.pm import orchestration_engine as engine  # noqa: E402
+
+PM_WORKFLOW_PATH = (
+    Path(__file__).parents[2]
+    / "cells"
+    / "orchestration"
+    / "workflow_runtime"
+    / "internal"
+    / "runtime_engine"
+    / "workflows"
+    / "pm_workflow.py"
+)
 
 
 def test_resolve_orchestration_runtime_normalizes_to_workflow() -> None:
@@ -94,6 +107,35 @@ def test_director_workflow_input_reads_execution_mode_parallel_limits_and_timeou
     assert workflow_input.max_parallel_tasks == 8
     assert workflow_input.ready_timeout_seconds == 45
     assert workflow_input.task_timeout_seconds == 1200
+
+
+def test_pm_workflow_final_trace_phase_is_derived_from_qa_outcome() -> None:
+    tree = ast.parse(PM_WORKFLOW_PATH.read_text(encoding="utf-8"), filename=str(PM_WORKFLOW_PATH))
+    final_broadcasts: list[ast.Call] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Await):
+            continue
+        call = node.value
+        if not isinstance(call, ast.Call):
+            continue
+        func = call.func
+        if isinstance(func, ast.Attribute) and func.attr == "_broadcast_task_trace":
+            step_title = next(
+                (
+                    keyword.value.value
+                    for keyword in call.keywords
+                    if keyword.arg == "step_title"
+                    and isinstance(keyword.value, ast.Constant)
+                    and isinstance(keyword.value.value, str)
+                ),
+                "",
+            )
+            if step_title == "PM completed":
+                final_broadcasts.append(call)
+
+    assert len(final_broadcasts) == 1
+    phase_keyword = next(keyword for keyword in final_broadcasts[0].keywords if keyword.arg == "phase")
+    assert not (isinstance(phase_keyword.value, ast.Constant) and phase_keyword.value.value == "completed")
 
 
 def test_submit_pm_workflow_sync_returns_disabled_when_workflow_is_off() -> None:
@@ -533,7 +575,7 @@ def test_get_workflow_runtime_status_derives_failure_from_completed_pm_result(
     assert result["running"] is False
 
 
-def test_get_workflow_runtime_status_prefers_success_artifacts_over_stale_nested_qa_failure(
+def test_get_workflow_runtime_status_prefers_run_ledger_success_over_stale_nested_qa_failure(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -590,6 +632,47 @@ def test_get_workflow_runtime_status_prefers_success_artifacts_over_stale_nested
             ensure_ascii=False,
         ),
         encoding="utf-8",
+    )
+    monkeypatch.setenv("KERNELONE_JETSTREAM_PUBLISH", "0")
+    from polaris.cells.control_plane.run_ledger.public import (
+        AppendRunLedgerEventCommandV1,
+        append_run_ledger_event,
+    )
+
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=workspace,
+            run_id="pm-00001-20260531191424476749",
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "workflow_qa",
+                "gate": {"name": "workflow_qa", "ok": True, "summary": "QA ledger passed"},
+                "job_token": {
+                    "token_id": "workflow-qa-token",
+                    "run_id": "pm-00001-20260531191424476749",
+                    "project_id": "pm-00001-20260531191424476749",
+                    "contract_hash": "contract-hash-1",
+                    "blueprint_hash": "blueprint-hash-1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {
+                        "enabled_evidence_modalities": ["verifier"],
+                        "required_evidence_modalities": ["verifier"],
+                    },
+                },
+                "physical_evidence": {
+                    "qa_verifiers": [
+                        {
+                            "id": "workflow_qa",
+                            "name": "Workflow QA",
+                            "modality": "verifier",
+                            "ok": True,
+                            "detail": "QA ledger passed",
+                            "exit_code": 0,
+                        }
+                    ],
+                },
+            },
+        )
     )
 
     def _fake_describe(workflow_id: str, config) -> dict[str, object]:
@@ -684,10 +767,53 @@ def test_build_workflow_director_status_payload_marks_queued_tasks_as_pending() 
     assert status_payload["state"] == "PENDING"
 
 
-def test_build_workflow_director_task_rows_merges_base_contract_fields() -> None:
+def test_build_workflow_director_task_rows_merges_base_contract_fields_when_run_ledger_completed(
+    tmp_path,
+) -> None:
+    from polaris.cells.control_plane.run_ledger.public import (
+        AppendRunLedgerEventCommandV1,
+        append_run_ledger_event,
+    )
+
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-snapshot-ok",
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "director_task",
+                "gate": {"name": "director_task", "ok": True, "summary": "Snapshot task ledger passed"},
+                "job_token": {
+                    "token_id": "snapshot-task-ledger-token",
+                    "run_id": "run-snapshot-ok",
+                    "project_id": "run-snapshot-ok",
+                    "contract_hash": "contract-hash",
+                    "blueprint_hash": "blueprint-hash",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {
+                        "enabled_evidence_modalities": ["verifier"],
+                        "required_evidence_modalities": ["verifier"],
+                    },
+                },
+                "physical_evidence": {
+                    "qa_verifiers": [
+                        {
+                            "id": "director_task",
+                            "name": "Director Task",
+                            "modality": "verifier",
+                            "ok": True,
+                            "detail": "Snapshot task ledger passed",
+                            "exit_code": 0,
+                        }
+                    ],
+                },
+            },
+        )
+    )
     workflow_status = {
         "running": False,
         "workflow_id": "wf-parent",
+        "workflow_chain_run_id": "run-snapshot-ok",
         "director_runtime_snapshot": {
             "stage": "director_completed",
             "tasks": {
@@ -717,7 +843,7 @@ def test_build_workflow_director_task_rows_merges_base_contract_fields() -> None
     task_rows = workflow_status_module.build_workflow_director_task_rows(
         workflow_status,
         base_tasks=base_tasks,
-        workspace="X:\\workspace",
+        workspace=str(tmp_path),
     )
 
     assert len(task_rows) == 1
@@ -732,6 +858,49 @@ def test_build_workflow_director_task_rows_merges_base_contract_fields() -> None
     assert task_rows[0]["metadata"]["target_files"] == ["src/client/lobby.ts"]
     assert task_rows[0]["metadata"]["scope_paths"] == ["src/client"]
     assert task_rows[0]["metadata"]["execution_checklist"] == ["replace the lobby seed module"]
+
+
+def test_build_workflow_director_task_rows_does_not_complete_snapshot_without_run_ledger(
+    tmp_path,
+) -> None:
+    workflow_status = {
+        "running": False,
+        "workflow_id": "wf-parent",
+        "workflow_chain_run_id": "run-snapshot-missing-ledger",
+        "director_runtime_snapshot": {
+            "stage": "director_completed",
+            "tasks": {
+                "PM-2": {
+                    "task_id": "PM-2",
+                    "state": "completed",
+                    "summary": "Task completed cleanly",
+                    "metadata": {"summary": "Task completed cleanly"},
+                }
+            },
+        },
+    }
+
+    task_rows = workflow_status_module.build_workflow_director_task_rows(
+        workflow_status,
+        base_tasks=[
+            {
+                "id": "PM-2",
+                "title": "Wire Workflow snapshot into main dashboard",
+                "goal": "Main dashboard must show current task state",
+                "priority": "HIGH",
+                "target_files": ["src/client/lobby.ts"],
+                "scope_paths": ["src/client"],
+                "acceptance_criteria": ["npm run build passes"],
+                "execution_checklist": ["replace the lobby seed module"],
+                "dependencies": ["PM-1"],
+            }
+        ],
+        workspace=str(tmp_path),
+    )
+
+    assert len(task_rows) == 1
+    assert task_rows[0]["status"] == "PENDING"
+    assert task_rows[0]["metadata"]["workflow_snapshot_completion_ignored"] == "missing_run_ledger_terminal_success"
 
 
 def test_merge_workflow_tasks_projects_runtime_metadata_fields() -> None:
@@ -779,7 +948,9 @@ def test_merge_workflow_tasks_projects_runtime_metadata_fields() -> None:
     ]
 
 
-def test_summarize_workflow_tasks_uses_task_director_result_files(tmp_path) -> None:
+def test_summarize_workflow_tasks_uses_task_director_result_files_when_run_ledger_completed(
+    tmp_path,
+) -> None:
     result_dir = tmp_path / "workflow" / "run-1" / "TASK-001"
     result_dir.mkdir(parents=True, exist_ok=True)
     (result_dir / "director.result.json").write_text(
@@ -789,6 +960,91 @@ def test_summarize_workflow_tasks_uses_task_director_result_files(tmp_path) -> N
                 "exit_code": 0,
                 "qa_verdict": "PASS",
                 "qa_diagnostics": "execution_successful",
+                "changed_files": ["src/main.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    from polaris.cells.control_plane.run_ledger.public import (
+        AppendRunLedgerEventCommandV1,
+        append_run_ledger_event,
+    )
+
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-1",
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "director_task",
+                "gate": {"name": "director_task", "ok": True, "summary": "Task ledger passed"},
+                "job_token": {
+                    "token_id": "task-run-ledger-token",
+                    "run_id": "run-1",
+                    "project_id": "run-1",
+                    "contract_hash": "contract-hash",
+                    "blueprint_hash": "blueprint-hash",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {
+                        "enabled_evidence_modalities": ["verifier"],
+                        "required_evidence_modalities": ["verifier"],
+                    },
+                },
+                "physical_evidence": {
+                    "qa_verifiers": [
+                        {
+                            "id": "director_task",
+                            "name": "Director Task",
+                            "modality": "verifier",
+                            "ok": True,
+                            "detail": "Task ledger passed",
+                            "exit_code": 0,
+                        }
+                    ],
+                },
+            },
+        )
+    )
+    workflow_status = {
+        "workflow_status": "failed",
+        "workflow_chain_run_id": "run-1",
+        "director_runtime_snapshot": {"tasks": {}},
+    }
+
+    summary = workflow_status_module.summarize_workflow_tasks(
+        workflow_status,
+        base_tasks=[
+            {
+                "id": "TASK-001",
+                "title": "Create entry point",
+                "status": "pending",
+            }
+        ],
+        workspace=str(tmp_path),
+        cache_root=str(tmp_path),
+    )
+
+    assert summary["state"] == "completed"
+    assert summary["completed"] == 1
+    assert summary["failed"] == 0
+    task = summary["tasks"][0]
+    assert task["status"] == "completed"
+    assert task["changed_files"] == ["src/main.py"]
+    assert task["metadata"]["qa_verdict"] == "PASS"
+
+
+def test_summarize_workflow_tasks_does_not_complete_from_success_artifact_without_run_ledger(
+    tmp_path,
+) -> None:
+    result_dir = tmp_path / "workflow" / "run-1" / "TASK-001"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    (result_dir / "director.result.json").write_text(
+        json.dumps(
+            {
+                "status": "success",
+                "exit_code": 0,
+                "qa_verdict": "PASS",
+                "qa_diagnostics": "legacy execution artifact",
                 "changed_files": ["src/main.py"],
             }
         ),
@@ -806,19 +1062,19 @@ def test_summarize_workflow_tasks_uses_task_director_result_files(tmp_path) -> N
             {
                 "id": "TASK-001",
                 "title": "Create entry point",
-                "status": "todo",
+                "status": "pending",
             }
         ],
+        workspace=str(tmp_path),
         cache_root=str(tmp_path),
     )
 
-    assert summary["state"] == "completed"
-    assert summary["completed"] == 1
+    assert summary["state"] == "queued"
+    assert summary["completed"] == 0
     assert summary["failed"] == 0
     task = summary["tasks"][0]
-    assert task["status"] == "completed"
-    assert task["changed_files"] == ["src/main.py"]
-    assert task["metadata"]["qa_verdict"] == "PASS"
+    assert task["status"] == "pending"
+    assert task["metadata"]["director_result_completion_ignored"] == "missing_run_ledger_terminal_success"
 
 
 def test_summarize_workflow_tasks_does_not_upgrade_failed_task_from_stale_success_artifact(tmp_path) -> None:

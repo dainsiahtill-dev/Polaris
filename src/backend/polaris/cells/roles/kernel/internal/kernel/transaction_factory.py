@@ -105,7 +105,7 @@ def _assert_task_runtime_guard_allows_tool(request: Any) -> None:
     if missing:
         raise RuntimeError("director_tool_execution_guard_misconfigured: missing " + ",".join(missing))
 
-    from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
+    from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
 
     result = TaskRuntimeService(workspace).heartbeat_execution(
         task_id,

@@ -69,6 +69,8 @@ class RoleToolGateway:
         run_id: str | None = None,
         task_id: str | None = None,
         iteration: int = 0,
+        capability_scope: list[str] | tuple[str, ...] | frozenset[str] | None = None,
+        capability_token: dict[str, Any] | None = None,
     ) -> None:
         """初始化工具网关
 
@@ -80,12 +82,20 @@ class RoleToolGateway:
             run_id: 运行时ID（用于事件追踪）
             task_id: 当前角色任务ID（用于工具事件归因）
             iteration: 当前 turn 内的工具调用轮次（用于日志审计）
+            capability_scope: 当前回合不可变写权限路径范围
+            capability_token: 当前回合 Job Token evidence，用于物理 effect receipt
         """
         self.profile = profile
         self.policy = profile.tool_policy
         self.workspace = workspace
         self.session_id = str(session_id or "").strip() or None
         self.session_memory_provider = session_memory_provider
+        self._capability_scope = tuple(
+            str(item or "").replace("\\", "/").strip("/")
+            for item in (capability_scope or ())
+            if str(item or "").strip()
+        )
+        self._capability_token = dict(capability_token or {})
         self._execution_count = 0
         self._run_id = str(run_id or "").strip() or None
         self._task_id = str(task_id or "").strip() or None
@@ -435,6 +445,8 @@ class RoleToolGateway:
                 session_memory_provider=self.session_memory_provider,
                 failure_budget=self._failure_budget,
                 allowed_tools=self._get_allowed_tools_for_executor(),
+                capability_scope=list(self._capability_scope),
+                capability_token=self._capability_token,
             )
             try:
                 result = executor.execute(execution_tool, dict(execution_args))
@@ -446,6 +458,7 @@ class RoleToolGateway:
             normalized_success = True
             normalized_payload: Any = result
             error_message = ""
+            effect_receipt = result.get("effect_receipt") if isinstance(result, dict) else None
             if isinstance(result, dict):
                 ok_flag = result.get("ok")
                 success_flag = result.get("success")
@@ -460,6 +473,10 @@ class RoleToolGateway:
                     normalized_payload = result.get("result")
                 elif "data" in result:
                     normalized_payload = result.get("data")
+                if effect_receipt is None and isinstance(normalized_payload, dict):
+                    nested_effect_receipt = normalized_payload.get("effect_receipt")
+                    if isinstance(nested_effect_receipt, dict):
+                        effect_receipt = nested_effect_receipt
 
                 if not normalized_success:
                     error_message = (
@@ -533,7 +550,7 @@ class RoleToolGateway:
 
             # 返回结果
             # error_type/retryable/blocked_tools/loop_break are at top level for direct access
-            return {
+            response = {
                 "success": normalized_success,
                 "tool": requested_tool,
                 "result": normalized_payload,
@@ -543,6 +560,9 @@ class RoleToolGateway:
                 "blocked_tools": blocked_tools,
                 "loop_break": loop_break,
             }
+            if isinstance(effect_receipt, dict):
+                response["effect_receipt"] = effect_receipt
+            return response
 
         except (RuntimeError, ValueError) as e:
             logger.error(

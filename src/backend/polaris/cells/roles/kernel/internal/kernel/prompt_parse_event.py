@@ -27,6 +27,9 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
+from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import (
+    tool_contract_requires_single_batch,
+)
 from polaris.cells.roles.kernel.internal.output_parser import ToolCallResult
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest
 from polaris.kernelone.storage import resolve_storage_roots
@@ -232,7 +235,7 @@ def resolve_prompt_layer_options(context_override: Any, *, message: str | None =
     )
     is_single_batch_execution = (
         delivery_mode in {"materialize_changes", "propose_patch"}
-        or "[Benchmark Tool Contract]" in message_text
+        or tool_contract_requires_single_batch(context_override)
         or "materialization quality repair mode" in message_lower
         or "[director_quality_repair:" in message_lower
         or ("artifact quality scan failed" in message_lower and "do not read files first" in message_lower)

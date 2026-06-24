@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { BenchPanel } from './BenchPanel';
+import { useFactoryBench } from '@/hooks/useFactoryBench';
 import type {
   FactoryBenchSessionDetail,
   FactoryBenchSessionSummary,
@@ -26,7 +27,7 @@ const mockHookValue = {
 };
 
 vi.mock('@/hooks/useFactoryBench', () => ({
-  useFactoryBench: () => mockHookValue,
+  useFactoryBench: vi.fn(() => mockHookValue),
 }));
 
 describe('BenchPanel', () => {
@@ -37,21 +38,32 @@ describe('BenchPanel', () => {
     mockHookValue.isStreaming = false;
     mockHookValue.isLoading = false;
     mockHookValue.error = null;
+    vi.mocked(useFactoryBench).mockClear();
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it('shows the empty-state when no sessions exist', () => {
+  it('renders nothing and does not subscribe when internal bench mode is not enabled', () => {
     render(<BenchPanel />);
+    expect(screen.queryByTestId('bench-panel')).not.toBeInTheDocument();
+    expect(useFactoryBench).not.toHaveBeenCalled();
+  });
+
+  it('shows the empty-state when no sessions exist', () => {
+    render(<BenchPanel enabled />);
     expect(screen.getByTestId('bench-panel')).toBeTruthy();
     expect(screen.getByText(/暂无 bench session/)).toBeTruthy();
+    expect(useFactoryBench).toHaveBeenCalledWith({
+      autoSelect: 'newest',
+      onWorkspaceChange: undefined,
+    });
   });
 
   it('shows error message when hook reports one', () => {
     mockHookValue.error = 'backend offline';
-    render(<BenchPanel />);
+    render(<BenchPanel enabled />);
     expect(screen.getByText('backend offline')).toBeTruthy();
   });
 
@@ -96,7 +108,7 @@ describe('BenchPanel', () => {
     mockHookValue.events = mockHookValue.currentSession.events;
     mockHookValue.isStreaming = true;
 
-    render(<BenchPanel />);
+    render(<BenchPanel enabled />);
     const panel = screen.getByTestId('bench-panel');
     expect(within(panel).getAllByText('运行中').length).toBeGreaterThan(0);
     // Progress bar reflects 1/2 = 50%.
@@ -122,7 +134,7 @@ describe('BenchPanel', () => {
         metadata: {},
       },
     ];
-    render(<BenchPanel />);
+    render(<BenchPanel enabled />);
     expect(screen.getAllByText('已完成').length).toBeGreaterThanOrEqual(1);
   });
 });

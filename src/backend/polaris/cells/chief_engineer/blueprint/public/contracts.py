@@ -181,6 +181,7 @@ class TaskBlueprintResultV1:
     status: str
     blueprint_id: str | None = None
     blueprint_path: str | None = None
+    blueprint_hash: str = ""
     summary: str = ""
     recommendations: tuple[str, ...] = field(default_factory=tuple)
     risks: tuple[str, ...] = field(default_factory=tuple)
@@ -191,6 +192,7 @@ class TaskBlueprintResultV1:
         object.__setattr__(self, "status", _require_non_empty("status", self.status))
         if self.blueprint_id is not None:
             object.__setattr__(self, "blueprint_id", str(self.blueprint_id).strip() or None)
+        object.__setattr__(self, "blueprint_hash", str(self.blueprint_hash or "").strip())
         object.__setattr__(self, "recommendations", tuple(str(v) for v in self.recommendations))
         object.__setattr__(self, "risks", tuple(str(v) for v in self.risks))
 

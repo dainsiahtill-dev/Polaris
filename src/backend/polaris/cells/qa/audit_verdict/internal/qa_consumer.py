@@ -9,6 +9,8 @@ import subprocess
 import threading
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public.contracts import AppendRunLedgerEventCommandV1
+from polaris.cells.control_plane.run_ledger.public.service import append_run_ledger_event
 from polaris.cells.qa.audit_verdict.internal.qa_service import QAService
 from polaris.cells.runtime.task_market.public.contracts import (
     AcknowledgeTaskStageCommandV1,
@@ -128,12 +130,58 @@ def _extract_qa_prompt_context(payload: dict[str, Any]) -> str:
     return sanitized[:_QA_CONTEXT_MAX_CHARS].rstrip() + "\n[qa_context_truncated]"
 
 
+def _mapping_copy(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _extract_control_plane_job_token(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the immutable capability token carried by the claimed work item."""
+
+    metadata = _mapping_copy(payload.get("metadata"))
+    for container in (payload, metadata):
+        for key in ("job_token", "control_plane_job_token", "capability_token"):
+            token = container.get(key)
+            if isinstance(token, dict) and str(token.get("token_id") or "").strip():
+                return dict(token)
+    return {}
+
+
+def _qa_control_plane_metadata(
+    payload: dict[str, Any],
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Preserve the control-plane lineage when QA ack/requeue mutates a task."""
+
+    metadata: dict[str, Any] = dict(extra or {})
+    job_token = _extract_control_plane_job_token(payload)
+    if job_token:
+        metadata["job_token"] = dict(job_token)
+        metadata["control_plane_job_token"] = dict(job_token)
+        metadata["capability_token"] = dict(job_token)
+        metadata["job_token_id"] = str(job_token.get("token_id") or "")
+    for key in ("contract_hash", "pm_contract_hash", "blueprint_hash"):
+        value = str(payload.get(key) or job_token.get(key) or "").strip()
+        if value:
+            metadata[key] = value
+    lineage = _mapping_copy(payload.get("control_plane_lineage"))
+    if not lineage:
+        lineage = _mapping_copy(_mapping_copy(payload.get("metadata")).get("control_plane_lineage"))
+    if lineage:
+        metadata["control_plane_lineage"] = lineage
+    return metadata
+
+
+def _qa_findings_count(findings: Any) -> int:
+    if isinstance(findings, list):
+        return len([item for item in findings if str(item or "").strip()])
+    return 0
+
+
 _QA_LLM_AUDIT_ENABLED_ENV = "KERNELONE_QA_LLM_AUDIT_ENABLED"
 _QA_LLM_AUDIT_TIMEOUT_ENV = "KERNELONE_QA_LLM_AUDIT_TIMEOUT_SECONDS"
 _BOOL_TRUE = {"1", "true", "yes", "on", "enabled"}
 _BOOL_FALSE = {"0", "false", "no", "off", "disabled"}
 _VERIFY_SCRIPT_NAMES = frozenset({"verify.js", "scripts/verify.js"})
-_PACKAGE_SCRIPT_CHECKS = ("package_scripts",)
 _VERIFY_SCRIPT_CHECK_LABELS = {
     "py_compile": "py_compile Python syntax check",
     "html": "html entrypoint check",
@@ -381,13 +429,12 @@ def _package_scripts_gate_failure(workspace: str, payload: dict[str, Any]) -> st
     text = _payload_text(payload)
     if not (_path_set_contains(paths, "package.json") or _contract_mentions_package_scripts(text)):
         return ""
-    from polaris.kernelone.benchmark.factory_audit import run_checks
+    from polaris.kernelone.quality import check_package_scripts
 
-    failures = [result for result in run_checks(workspace, list(_PACKAGE_SCRIPT_CHECKS)) if not result.get("ok")]
-    if not failures:
+    result = check_package_scripts(workspace)
+    if result.ok:
         return ""
-    details = "; ".join(str(item.get("detail") or item.get("check") or "package_scripts failed") for item in failures)
-    return f"package script gate failed: {details}"
+    return f"package script gate failed: {result.detail}"
 
 
 # RANK 1 (Reflexion / Actor-Critic): the critic's precise findings must reach the
@@ -826,6 +873,81 @@ class QAConsumer:
                 return failure
         return ""
 
+    def _append_qa_gate_to_run_ledger(
+        self,
+        *,
+        task_id: str,
+        payload: dict[str, Any],
+        gate_name: str,
+        ok: bool,
+        summary: str,
+        verdict: str = "FAIL",
+        audit_result: dict[str, Any] | None = None,
+        next_stage: str = "",
+        terminal_status: str = "",
+        failure_reason: str = "",
+    ) -> bool:
+        """Append QA verdict evidence to the platform Run Ledger when token-scoped."""
+
+        job_token = _extract_control_plane_job_token(payload)
+        if not job_token:
+            return False
+        run_id = str(job_token.get("run_id") or payload.get("run_id") or payload.get("source_run_id") or "").strip()
+        if not run_id:
+            raise ValueError("QA Run Ledger event requires job_token.run_id")
+
+        audit = dict(audit_result or {})
+        findings = audit.get("findings", [])
+        metrics = audit.get("metrics")
+        clean_summary = str(summary or gate_name).strip()
+        physical_evidence = {
+            "task_id": task_id,
+            "audit_id": str(audit.get("audit_id") or ""),
+            "verdict": str(verdict or "").strip().upper() or "FAIL",
+            "next_stage": str(next_stage or "").strip(),
+            "terminal_status": str(terminal_status or "").strip(),
+            "failure_reason": str(failure_reason or "").strip(),
+            "findings_count": _qa_findings_count(findings),
+            "metrics": metrics if isinstance(metrics, dict) else {},
+            "modalities": {
+                "qa": {
+                    "present": True,
+                    "ok": bool(ok),
+                    "detail": clean_summary,
+                    "verdict": str(verdict or "").strip().upper() or "FAIL",
+                    "findings_count": _qa_findings_count(findings),
+                }
+            },
+            "qa_verifiers": [
+                {
+                    "id": str(audit.get("audit_id") or task_id),
+                    "name": gate_name,
+                    "kind": "qa",
+                    "modality": "qa",
+                    "ok": bool(ok),
+                    "detail": clean_summary,
+                }
+            ],
+        }
+        append_run_ledger_event(
+            AppendRunLedgerEventCommandV1(
+                workspace=self._workspace,
+                run_id=run_id,
+                event={
+                    "event_type": "gate_evaluated",
+                    "stage": "qa",
+                    "gate": {
+                        "name": gate_name,
+                        "ok": bool(ok),
+                        "summary": clean_summary,
+                    },
+                    "job_token": job_token,
+                    "physical_evidence": physical_evidence,
+                },
+            )
+        )
+        return True
+
     def _claim_and_process_one(self) -> dict[str, Any] | None:
         """Attempt to claim one PENDING_QA task and process it.
 
@@ -846,9 +968,10 @@ class QAConsumer:
 
         task_id = str(claim.task_id or "").strip()
         lease_token = str(claim.lease_token or "").strip()
+        payload: dict[str, Any] = {}
 
         try:
-            payload: dict[str, Any] = dict(claim.payload) if claim.payload else {}
+            payload = dict(claim.payload) if claim.payload else {}
 
             # Fission steps carry a machine-executable verify — run it FIRST.
             # The generic audit is blind to the step contract (live I3-r9: a
@@ -857,6 +980,15 @@ class QAConsumer:
             # requeues to pending_exec so the Director can correct course.
             verify_failure = self._run_step_verify(payload)
             if verify_failure:
+                self._append_qa_gate_to_run_ledger(
+                    task_id=task_id,
+                    payload=payload,
+                    gate_name="qa_step_verify",
+                    ok=False,
+                    summary=verify_failure,
+                    verdict="FAIL",
+                    failure_reason="step_verify_failed",
+                )
                 self._svc.fail_task_stage(
                     FailTaskStageCommandV1(
                         workspace=self._workspace,
@@ -865,6 +997,7 @@ class QAConsumer:
                         error_code="QA_step_verify_failed",
                         error_message=verify_failure,
                         requeue_stage="pending_exec",
+                        metadata=_qa_control_plane_metadata(payload),
                     )
                 )
                 return {
@@ -882,6 +1015,15 @@ class QAConsumer:
             # only when no checker could run (node absent / unknown ext / timeout).
             syntax_failure = self._run_syntax_gate(payload)
             if syntax_failure:
+                self._append_qa_gate_to_run_ledger(
+                    task_id=task_id,
+                    payload=payload,
+                    gate_name="qa_syntax",
+                    ok=False,
+                    summary=syntax_failure,
+                    verdict="FAIL",
+                    failure_reason="syntax_failed",
+                )
                 self._svc.fail_task_stage(
                     FailTaskStageCommandV1(
                         workspace=self._workspace,
@@ -890,6 +1032,7 @@ class QAConsumer:
                         error_code="QA_syntax_failed",
                         error_message=syntax_failure,
                         requeue_stage="pending_exec",
+                        metadata=_qa_control_plane_metadata(payload),
                     )
                 )
                 return {
@@ -906,6 +1049,15 @@ class QAConsumer:
             # contract misses before the LLM reviewer can rubber-stamp them.
             contract_failure = self._run_contract_gate(payload)
             if contract_failure:
+                self._append_qa_gate_to_run_ledger(
+                    task_id=task_id,
+                    payload=payload,
+                    gate_name="qa_contract",
+                    ok=False,
+                    summary=contract_failure,
+                    verdict="FAIL",
+                    failure_reason="contract_gate_failed",
+                )
                 self._svc.fail_task_stage(
                     FailTaskStageCommandV1(
                         workspace=self._workspace,
@@ -914,6 +1066,7 @@ class QAConsumer:
                         error_code="QA_contract_gate_failed",
                         error_message=contract_failure,
                         requeue_stage="pending_exec",
+                        metadata=_qa_control_plane_metadata(payload),
                     )
                 )
                 return {
@@ -949,6 +1102,17 @@ class QAConsumer:
                 next_bounce_count = qa_findings_bounce_count + 1
                 self._qa_findings_bounce_counts[task_id] = next_bounce_count
                 feedback_counters[_QA_FINDINGS_COUNTER_KEY] = next_bounce_count
+                self._append_qa_gate_to_run_ledger(
+                    task_id=task_id,
+                    payload=payload,
+                    gate_name="qa_verdict",
+                    ok=False,
+                    summary=_format_qa_findings_feedback(audit_findings, verdict),
+                    verdict=verdict,
+                    audit_result=audit_result,
+                    next_stage="pending_exec",
+                    failure_reason="qa_findings_requeued",
+                )
                 self._svc.fail_task_stage(
                     FailTaskStageCommandV1(
                         workspace=self._workspace,
@@ -957,7 +1121,10 @@ class QAConsumer:
                         error_code="QA_audit_failed",
                         error_message=_format_qa_findings_feedback(audit_findings, verdict),
                         requeue_stage="pending_exec",
-                        metadata={_QA_FEEDBACK_COUNTERS_KEY: feedback_counters},
+                        metadata=_qa_control_plane_metadata(
+                            payload,
+                            {_QA_FEEDBACK_COUNTERS_KEY: feedback_counters},
+                        ),
                     )
                 )
                 return {
@@ -972,6 +1139,18 @@ class QAConsumer:
             self._qa_findings_bounce_counts.pop(task_id, None)
 
             if next_stage and next_stage != "waiting_human":
+                self._append_qa_gate_to_run_ledger(
+                    task_id=task_id,
+                    payload=payload,
+                    gate_name="qa_verdict",
+                    ok=False,
+                    summary=_format_qa_requeue_feedback(audit_result, verdict),
+                    verdict=verdict,
+                    audit_result=audit_result,
+                    next_stage=next_stage,
+                    terminal_status=terminal_status,
+                    failure_reason="qa_requeue",
+                )
                 requeue = self._svc.fail_task_stage(
                     FailTaskStageCommandV1(
                         workspace=self._workspace,
@@ -980,11 +1159,14 @@ class QAConsumer:
                         error_code=f"QA_{verdict}_requeue",
                         error_message=_format_qa_requeue_feedback(audit_result, verdict),
                         requeue_stage=next_stage,
-                        metadata={
-                            _QA_FEEDBACK_COUNTERS_KEY: feedback_counters,
-                            "qa_next_stage": next_stage,
-                            "qa_terminal_status": terminal_status,
-                        },
+                        metadata=_qa_control_plane_metadata(
+                            payload,
+                            {
+                                _QA_FEEDBACK_COUNTERS_KEY: feedback_counters,
+                                "qa_next_stage": next_stage,
+                                "qa_terminal_status": terminal_status,
+                            },
+                        ),
                     )
                 )
                 return {
@@ -1006,6 +1188,18 @@ class QAConsumer:
             }
             if feedback_counters:
                 ack_payload[_QA_FEEDBACK_COUNTERS_KEY] = feedback_counters
+            ack_payload = _qa_control_plane_metadata(payload, ack_payload)
+            self._append_qa_gate_to_run_ledger(
+                task_id=task_id,
+                payload=payload,
+                gate_name="qa_verdict",
+                ok=terminal_status == "resolved" and verdict == "PASS",
+                summary=f"QA verdict: {verdict}",
+                verdict=verdict,
+                audit_result=audit_result,
+                next_stage=next_stage,
+                terminal_status=terminal_status,
+            )
 
             command_kwargs: dict[str, Any] = {
                 "workspace": self._workspace,
@@ -1029,6 +1223,18 @@ class QAConsumer:
 
         except Exception as exc:
             logger.exception("QA consumer failed for task %s: %s", task_id, exc)
+            try:
+                self._append_qa_gate_to_run_ledger(
+                    task_id=task_id,
+                    payload=payload,
+                    gate_name="qa_exception",
+                    ok=False,
+                    summary=str(exc),
+                    verdict="FAIL",
+                    failure_reason="qa_consumer_exception",
+                )
+            except (OSError, RuntimeError, TypeError, ValueError):
+                logger.exception("QA consumer could not append failure evidence for task %s", task_id)
             self._svc.fail_task_stage(
                 FailTaskStageCommandV1(
                     workspace=self._workspace,
@@ -1037,6 +1243,7 @@ class QAConsumer:
                     error_code="QA_audit_failed",
                     error_message=str(exc),
                     requeue_stage="pending_qa",
+                    metadata=_qa_control_plane_metadata(payload),
                 )
             )
             return {

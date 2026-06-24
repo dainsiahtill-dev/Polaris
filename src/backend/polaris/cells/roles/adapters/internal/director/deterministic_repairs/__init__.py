@@ -83,7 +83,11 @@ from .generic_repairs import (
     _task_allows_scaffold_marker_cleanup as _task_allows_scaffold_marker_cleanup,
 )
 from .javascript_repairs import (
+    _apply_deterministic_javascript_esm_commonjs_entrypoint_repair as _apply_deterministic_javascript_esm_commonjs_entrypoint_repair,
+    _apply_deterministic_javascript_missing_export_repair as _apply_deterministic_javascript_missing_export_repair,
+    _apply_deterministic_javascript_missing_method_runtime_repair as _apply_deterministic_javascript_missing_method_runtime_repair,
     _apply_deterministic_javascript_test_missing_target_repair as _apply_deterministic_javascript_test_missing_target_repair,
+    _apply_deterministic_javascript_typescript_annotation_repair as _apply_deterministic_javascript_typescript_annotation_repair,
     _apply_deterministic_node_test_script_contract_repair as _apply_deterministic_node_test_script_contract_repair,
     _build_javascript_frontend_smoke_test_content as _build_javascript_frontend_smoke_test_content,
     _build_substantive_node_test_script as _build_substantive_node_test_script,
@@ -98,6 +102,7 @@ from .npm_repairs import (
     _is_repairable_npm_test_script_error as _is_repairable_npm_test_script_error,
 )
 from .python_repairs import (
+    _apply_deterministic_python_package_shadow_bridge_repair as _apply_deterministic_python_package_shadow_bridge_repair,
     _apply_deterministic_python_runtime_smoke as _apply_deterministic_python_runtime_smoke,
     _apply_deterministic_python_static_smoke as _apply_deterministic_python_static_smoke,
     _apply_deterministic_python_unittest_missing_target_repair as _apply_deterministic_python_unittest_missing_target_repair,
@@ -181,13 +186,18 @@ __all__ = [
     "_UNRESOLVED_IMPORT_SYMBOL_ERROR_RE",
     "_UNRESOLVED_RELATIVE_IMPORT_ERROR_RE",
     "_apply_deterministic_declared_target_contract_repairs",
+    "_apply_deterministic_javascript_esm_commonjs_entrypoint_repair",
+    "_apply_deterministic_javascript_missing_export_repair",
+    "_apply_deterministic_javascript_missing_method_runtime_repair",
     "_apply_deterministic_javascript_test_missing_target_repair",
+    "_apply_deterministic_javascript_typescript_annotation_repair",
     "_apply_deterministic_materialization_quality_repairs",
     "_apply_deterministic_missing_declared_target_repair",
     "_apply_deterministic_node_test_script_contract_repair",
     "_apply_deterministic_npm_test_script_repair",
     "_apply_deterministic_patch_residue_cleanup",
     "_apply_deterministic_pre_materialization_declared_target_repairs",
+    "_apply_deterministic_python_package_shadow_bridge_repair",
     "_apply_deterministic_python_runtime_smoke",
     "_apply_deterministic_python_static_smoke",
     "_apply_deterministic_python_unittest_missing_target_repair",

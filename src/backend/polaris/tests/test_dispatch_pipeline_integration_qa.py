@@ -14,6 +14,10 @@ for candidate in (BACKEND_ROOT, SCRIPTS_ROOT, CORE_ROOT):
     if candidate not in sys.path:
         sys.path.insert(0, candidate)
 
+from polaris.cells.control_plane.run_ledger.public import (  # noqa: E402
+    ReadRunLedgerProjectionQueryV1,
+    read_run_ledger_projection,
+)
 from polaris.cells.orchestration.pm_dispatch.internal import dispatch_pipeline  # noqa: E402
 from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (  # noqa: E402
     run_post_dispatch_integration_qa,
@@ -244,6 +248,102 @@ def test_run_post_dispatch_integration_qa_records_cognitive_runtime_receipt(monk
     assert context_command.policy["context_os_required"] is True
     assert receipt_command.turn_envelope["task_id"] == "qa::post_dispatch_integration"
     assert captured["closed"] is True
+
+
+def test_run_post_dispatch_integration_qa_appends_fail_closed_run_ledger_without_job_token(tmp_path) -> None:
+    run_dir = tmp_path / "runtime" / "runs" / "qa-ledger"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_events = tmp_path / "runtime" / "events" / "runtime.events.jsonl"
+    run_events.parent.mkdir(parents=True, exist_ok=True)
+    dialogue_full = tmp_path / "runtime" / "events" / "dialogue.transcript.jsonl"
+    dialogue_full.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = run_post_dispatch_integration_qa(
+        args=SimpleNamespace(integration_qa=True),
+        workspace_full=str(tmp_path),
+        cache_root_full="",
+        run_dir=str(run_dir),
+        run_id="pm-ledger-missing-token",
+        iteration=7,
+        tasks=[
+            {
+                "id": "TASK-A",
+                "assigned_to": "Director",
+                "status": "done",
+            }
+        ],
+        run_events=str(run_events),
+        dialogue_full=str(dialogue_full),
+        verify_runner=lambda workspace: (True, "Integration verification passed: pytest -q", []),
+    )
+
+    assert payload["passed"] is True
+    assert payload["run_ledger_receipt"]["event"]["run_id"] == "pm-ledger-missing-token"
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=str(tmp_path),
+            run_id="pm-ledger-missing-token",
+        )
+    ).projection
+    assert projection["available"] is True
+    assert projection["failed"] == 1
+    assert projection["projects"][0]["latest_token_id"] == "qa-pm-ledger-missing-token"
+    assert "missing_contract_hash" not in projection["projects"][0]["missing"]
+    assert "missing_blueprint_hash" in projection["projects"][0]["missing"]
+
+
+def test_run_post_dispatch_integration_qa_job_token_accepts_pm_contract_and_ce_blueprint_lineage(tmp_path) -> None:
+    run_dir = tmp_path / "runtime" / "runs" / "qa-ledger-lineage"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_events = tmp_path / "runtime" / "events" / "runtime.events.jsonl"
+    run_events.parent.mkdir(parents=True, exist_ok=True)
+    dialogue_full = tmp_path / "runtime" / "events" / "dialogue.transcript.jsonl"
+    dialogue_full.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = run_post_dispatch_integration_qa(
+        args=SimpleNamespace(integration_qa=True),
+        workspace_full=str(tmp_path),
+        cache_root_full="",
+        run_dir=str(run_dir),
+        run_id="pm-ledger-lineage",
+        iteration=8,
+        tasks=[
+            {
+                "id": "TASK-A",
+                "assigned_to": "Director",
+                "status": "done",
+                "title": "Implement ledger-backed QA",
+                "target_files": ["src/index.ts"],
+                "metadata": {
+                    "lineage": {
+                        "blueprint_hash": "ce-blueprint-hash",
+                        "job_token_id": "jt-qa-lineage",
+                        "project_id": "ledger-project",
+                    }
+                },
+            }
+        ],
+        run_events=str(run_events),
+        dialogue_full=str(dialogue_full),
+        verify_runner=lambda workspace: (True, "Integration verification passed: pytest -q", []),
+    )
+
+    assert payload["passed"] is True
+    assert payload["contract_hash"]
+    assert payload["blueprint_hash"] == "ce-blueprint-hash"
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=str(tmp_path),
+            run_id="pm-ledger-lineage",
+        )
+    ).projection
+    assert projection["available"] is True
+    assert projection["ok"] is True
+    assert projection["failed"] == 0
+    assert projection["projects"][0]["latest_token_id"] == "jt-qa-lineage"
+    assert projection["projects"][0]["missing"] == []
 
 
 def test_run_post_dispatch_integration_qa_failure_requeues_director_with_critique(

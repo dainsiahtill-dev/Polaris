@@ -83,6 +83,7 @@ class TestServiceGovernance(unittest.TestCase):
         self.assertTrue(path.exists())
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
+        self.assertEqual(data["blueprint_hash"], result.blueprint_hash)
         self.assertIn("governance", data)
         self.assertIn("quality_gate", data["governance"])
         self.assertIn("rollback", data["governance"])

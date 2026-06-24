@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
+from polaris.cells.roles.kernel.internal.kernel.delivery_mode import _ensure_platform_tool_contract_metadata
 from polaris.cells.roles.kernel.internal.kernel.helpers import quality_result_to_dict
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import _apply_forced_transaction_tool_definitions
 from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
@@ -693,10 +694,14 @@ class TurnEngineExecutor:
         # second projection pass.
         context_result = await context_gateway.build_context(context_request, system_prompt=system_prompt)
         messages: list[dict[str, Any]] = list(context_result.messages)
+        messages = _ensure_platform_tool_contract_metadata(
+            messages,
+            getattr(request, "context_override", None),
+        )
 
         tool_definitions = (
             []
-            if self._kernel._benchmark_requires_no_tools(request)
+            if self._kernel._tool_contract_requires_no_tools(request)
             or self._kernel._request_forces_no_transaction_tools(request)
             else build_native_tool_schemas(profile)
         )
@@ -931,10 +936,14 @@ class TurnEngineExecutor:
         # second projection pass.
         context_result = await context_gateway.build_context(context_request, system_prompt=system_prompt)
         messages: list[dict[str, Any]] = list(context_result.messages)
+        messages = _ensure_platform_tool_contract_metadata(
+            messages,
+            getattr(request, "context_override", None),
+        )
 
         tool_definitions = (
             []
-            if self._kernel._benchmark_requires_no_tools(request)
+            if self._kernel._tool_contract_requires_no_tools(request)
             or self._kernel._request_forces_no_transaction_tools(request)
             else build_native_tool_schemas(profile)
         )

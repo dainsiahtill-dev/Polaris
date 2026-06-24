@@ -160,6 +160,8 @@ Cell 是最小自治边界。
 5. Bench 可以作为平台基础设施的内部 producer/consumer：写入测试样本、读取 projection、聚合压力测试结果。但它只能验证平台能力，不得反向决定平台架构边界。
 6. 如果某项能力未来要进入正式项目工作台，必须先从 Bench 命名空间抽离为平台级 Cell/contract/API/UI 类型，再由正式视图消费；禁止把 `factory_audits.json`、bench session、bench route、bench-only metadata 直接接入生产 UI。
 7. 审计时发现生产路径、正式 UI、设置页、ContextOS、TaskBoard、QA 工作台或 public API 依赖 Bench 命名空间时，按 P0 边界污染处理，必须迁移到平台级 Run Ledger/Control Plane projection。
+8. Browser、视觉、多模态 QA、用户脚本、领域脚本等 verifier modality 是平台 Control Plane 的可选能力，默认关闭；设置页可以保存启用意图，但只有当前环境显式声明可用时才允许设为 hard-required evidence，禁止由 Bench 或内部压力测试状态决定正式项目必须启用这些能力。
+9. Job Token 是从控制面事实源派生的 capability token，不得成为第二事实源；正式写入和命令工具执行层必须消费 Job Token 派生的授权 scope，并把 token/hash/stage/project capability evidence 写入 effect receipt，供 Run Ledger、QA 和 UI projection 只读消费。
 
 ## 5. 根目录与归属裁决
 

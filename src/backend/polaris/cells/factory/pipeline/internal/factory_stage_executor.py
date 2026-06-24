@@ -879,7 +879,7 @@ class OrchestrationStageExecutor:
             context = {}
         try:
             from polaris.bootstrap.config import Settings
-            from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+            from polaris.cells.runtime.projection.public import build_llm_status
         except ImportError as exc:
             logger.debug("Director readiness skip resolution unavailable: %s", exc)
             return {}
@@ -3042,7 +3042,7 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _taskboard_idle_with_unresolved_work(stats: dict[str, int]) -> bool:
-        """Return true when no work is active but terminal/pending residue remains."""
+        """Return true when no work is active and only blocked residue remains."""
         active_keys = (
             "in_progress",
             "in_design",
@@ -3055,9 +3055,10 @@ class OrchestrationStageExecutor:
         )
         if any(int(stats.get(key) or 0) > 0 for key in active_keys):
             return False
-        unresolved = int(stats.get("pending") or 0) + int(stats.get("ready") or 0) + int(stats.get("blocked") or 0)
+        claimable = int(stats.get("pending") or 0) + int(stats.get("ready") or 0)
+        blocked = int(stats.get("blocked") or 0)
         terminal = int(stats.get("completed") or 0) + int(stats.get("failed") or 0)
-        return unresolved > 0 and terminal > 0
+        return claimable == 0 and blocked > 0 and terminal > 0
 
     def _workspace_has_materialized_delivery_evidence(self, tasks: list[dict[str, Any]]) -> bool:
         workspace_root = self.workspace.resolve()
@@ -3111,9 +3112,10 @@ class OrchestrationStageExecutor:
         final_stats: dict[str, int],
         pm_tasks: list[dict[str, Any]],
     ) -> bool:
-        taskboard_terminal_enough = self._is_taskboard_converged(
-            final_stats
-        ) or self._taskboard_idle_with_unresolved_work(final_stats)
+        idle_with_unresolved = self._taskboard_idle_with_unresolved_work(final_stats)
+        if idle_with_unresolved and self._missing_declared_delivery_targets(pm_tasks):
+            return False
+        taskboard_terminal_enough = self._is_taskboard_converged(final_stats) or idle_with_unresolved
         if not taskboard_terminal_enough:
             return False
         if not self._workspace_has_materialized_delivery_evidence(pm_tasks):
@@ -3306,7 +3308,10 @@ class OrchestrationStageExecutor:
                 "tool_results": 0,
             }
         target_files = self._workspace_quality_repair_target_files()
-        task = {"target_files": target_files or changed_files, "metadata": {"target_files": target_files}}
+        task: dict[str, Any] = {
+            "target_files": target_files or changed_files,
+            "metadata": {"target_files": target_files},
+        }
         repair_context = {
             **dict(context or {}),
             "run_id": run_id,
@@ -3345,7 +3350,9 @@ class OrchestrationStageExecutor:
             }
         normalized_summary = dict(summary)
         normalized_summary["repair_mode"] = "director_llm"
-        source_tools = [str(item) for item in normalized_summary.get("source_tools", []) if str(item or "").strip()]
+        raw_source_tools = normalized_summary.get("source_tools")
+        source_tool_items = raw_source_tools if isinstance(raw_source_tools, list | tuple | set) else []
+        source_tools = [str(item) for item in source_tool_items if str(item or "").strip()]
         if results and "director_materialization_quality_repair" not in source_tools:
             source_tools.append("director_materialization_quality_repair")
         normalized_summary["source_tools"] = source_tools

@@ -51,6 +51,46 @@ _DIRECT_TOOL_NAMES: tuple[str, ...] = (
     "append_to_file",
 )
 
+def _job_token_to_dict(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        raw = to_dict()
+        return dict(raw) if isinstance(raw, dict) else {}
+    return {}
+
+def _normalize_scope_items(value: Iterable[Any] | None) -> tuple[str, ...]:
+    return tuple(
+        str(item or "").replace("\\", "/").strip("/")
+        for item in (value or ())
+        if str(item or "").strip()
+    )
+
+def _scope_from_job_token(value: dict[str, Any]) -> tuple[str, ...]:
+    raw_scope = value.get("allowed_paths") or value.get("target_files")
+    if not isinstance(raw_scope, (list, tuple, set)):
+        return ()
+    return _normalize_scope_items(raw_scope)
+
+def _job_token_evidence(value: dict[str, Any], scope: Iterable[str]) -> dict[str, Any]:
+    if not value:
+        return {}
+    capability_audit = value.get("capability_audit")
+    capability_audit_map = capability_audit if isinstance(capability_audit, dict) else {}
+    return {
+        "source": str(value.get("source") or "control_plane.job_token"),
+        "token_id": str(value.get("token_id") or ""),
+        "run_id": str(value.get("run_id") or ""),
+        "project_id": str(value.get("project_id") or ""),
+        "stage": str(value.get("stage") or ""),
+        "contract_hash": str(value.get("contract_hash") or ""),
+        "blueprint_hash": str(value.get("blueprint_hash") or ""),
+        "capability_audit_ok": bool(capability_audit_map.get("ok")),
+        "allowed_scope": list(scope),
+    }
 
 class ReadBudgetGuard:
     """Layer-1 budget guard for read_file operations.
@@ -470,11 +510,21 @@ class BackendToolRuntime:
 
     _EXECUTOR_CACHE_MAX: int = 4
 
-    def __init__(self, workspace: str, allowed_tools: Iterable[str] | None = None) -> None:
+    def __init__(
+        self,
+        workspace: str,
+        allowed_tools: Iterable[str] | None = None,
+        capability_scope: Iterable[str] | None = None,
+        job_token: Any | None = None,
+    ) -> None:
         self.workspace = str(workspace or ".")
         self._handlers: dict[str, ToolFn] | None = None
         self._executor_cache: dict[str, Any] = {}
         self._allowed_tools = self._normalize_allowed_tools(allowed_tools)
+        self._job_token = _job_token_to_dict(job_token)
+        token_scope = _scope_from_job_token(self._job_token)
+        self._capability_scope = token_scope or _normalize_scope_items(capability_scope)
+        self._capability_token_evidence = _job_token_evidence(self._job_token, self._capability_scope)
 
         self._path_resolver = WorkspacePathResolver(self.workspace)
         self._argument_normalizer = ToolArgumentNormalizer()
@@ -641,7 +691,12 @@ class BackendToolRuntime:
                 with contextlib.suppress(Exception):
                     close_sync()
 
-        executor = AgentAccelToolExecutor(workspace=cwd, allowed_tools=self._allowed_tools)
+        executor = AgentAccelToolExecutor(
+            workspace=cwd,
+            allowed_tools=self._allowed_tools,
+            capability_scope=list(self._capability_scope),
+            capability_token=self._capability_token_evidence,
+        )
         self._executor_cache[cwd] = executor
         return executor
 

@@ -8,6 +8,7 @@
 import { cn } from '@/app/components/ui/utils';
 import { useRoles, useSummary, useRuntimeEvents } from '@/runtime';
 import { RoleState, RoleType } from '@/runtime/v2';
+import type { ControlPlaneProjection, ControlPlaneProjectProjection } from '@/services/controlPlane';
 
 export type GateStatus = 'green' | 'yellow' | 'red' | 'pending';
 
@@ -20,12 +21,46 @@ export interface QualityGate {
   lastCheck?: string;
 }
 
+function evaluateRunLedgerEvidence(
+  projection: ControlPlaneProjection | null | undefined,
+  waitingDetail = '等待 Run Ledger 证据'
+): Pick<QualityGate, 'status' | 'detail'> {
+  if (!projection) {
+    return { status: 'pending', detail: waitingDetail };
+  }
+  if (!projection.available) {
+    return {
+      status: 'red',
+      detail: projection.detail || 'Run Ledger projection 不可用',
+    };
+  }
+  if (projection.total <= 0 && projection.projects.length === 0) {
+    return {
+      status: 'pending',
+      detail: projection.detail || waitingDetail,
+    };
+  }
+  const failedProject = pickFailedLedgerProject(projection.projects);
+  if (!projection.ok || projection.failed > 0 || failedProject) {
+    return {
+      status: 'red',
+      detail: failedProject?.detail || projection.detail || 'Run Ledger gate failed',
+    };
+  }
+  return {
+    status: 'green',
+    detail: `Run Ledger verified ${projection.projected}/${projection.total}`,
+  };
+}
+
 /**
- * 评估 PM 质量门
+ * 评估 PM 质量门。PM 的完成率只能表示流程进度；绿色通过必须来自
+ * Control Plane Run Ledger，否则会把角色状态冒充为物理证据链。
  */
-function evaluatePMGate(
+export function evaluatePMGate(
   summary: { completed: number; failed: number; blocked: number; total: number },
-  roleState: RoleState
+  roleState: RoleState,
+  controlPlaneProjection?: ControlPlaneProjection | null
 ): QualityGate {
   let status: GateStatus = 'pending';
   let detail = '';
@@ -40,22 +75,17 @@ function evaluatePMGate(
     status = 'yellow';
     detail = `${summary.blocked} 个任务被阻塞`;
   } else if (roleState === 'completed') {
-    const completionRate = summary.total > 0 ? (summary.completed / summary.total) * 100 : 0;
-    if (completionRate >= 90) {
-      status = 'green';
-      detail = `完成率 ${Math.round(completionRate)}%`;
-    } else if (completionRate >= 70) {
-      status = 'yellow';
-      detail = `完成率 ${Math.round(completionRate)}%`;
-    } else {
-      status = 'red';
-      detail = `完成率 ${Math.round(completionRate)}%`;
-    }
+    const evidence = evaluateRunLedgerEvidence(
+      controlPlaneProjection,
+      'PM 已完成，等待 Run Ledger 证据'
+    );
+    status = evidence.status;
+    detail = evidence.detail || '';
   } else if (roleState === 'executing' || roleState === 'planning') {
     const completionRate = summary.total > 0 ? (summary.completed / summary.total) * 100 : 0;
     if (completionRate >= 50) {
-      status = 'green';
-      detail = `进行中 - ${Math.round(completionRate)}%`;
+      status = 'yellow';
+      detail = `进行中 - ${Math.round(completionRate)}%，等待 Run Ledger`;
     } else {
       status = 'yellow';
       detail = '规划/执行中';
@@ -76,11 +106,13 @@ function evaluatePMGate(
 }
 
 /**
- * 评估 Director 安全门
+ * 评估 Director 安全门。工具越权和错误仍可直接置红；执行完成不能直接
+ * 置绿，必须等待 Run Ledger 的 write receipt / gate evidence。
  */
-function evaluateDirectorGate(
+export function evaluateDirectorGate(
   roleState: RoleState,
-  events: ReturnType<typeof useRuntimeEvents>
+  events: ReturnType<typeof useRuntimeEvents>,
+  controlPlaneProjection?: ControlPlaneProjection | null
 ): QualityGate {
   const recentErrors = events.filter(
     e => e.severity === 'error' && 
@@ -107,11 +139,15 @@ function evaluateDirectorGate(
     status = 'yellow';
     detail = `${recentErrors.length} 个警告事件`;
   } else if (roleState === 'completed') {
-    status = 'green';
-    detail = '执行完成';
+    const evidence = evaluateRunLedgerEvidence(
+      controlPlaneProjection,
+      'Director 已完成，等待 Run Ledger 证据'
+    );
+    status = evidence.status;
+    detail = evidence.detail || '';
   } else if (roleState === 'executing') {
-    status = 'green';
-    detail = '执行中';
+    status = 'yellow';
+    detail = '执行中，等待 Run Ledger';
   } else if (roleState === 'idle') {
     status = 'pending';
     detail = '等待执行';
@@ -130,30 +166,47 @@ function evaluateDirectorGate(
   };
 }
 
+function pickFailedLedgerProject(projects: ControlPlaneProjectProjection[]): ControlPlaneProjectProjection | null {
+  return projects.find((project) => !project.ok || project.failed_gate_count > 0) ?? null;
+}
+
+function evaluateRunLedgerQAGate(projection: ControlPlaneProjection): QualityGate {
+  const evidence = evaluateRunLedgerEvidence(projection);
+  return {
+    id: 'qa-gate',
+    name: 'QA 验收门',
+    status: evidence.status,
+    description: '质量验收与测试通过',
+    detail: evidence.detail,
+    lastCheck: new Date().toISOString(),
+  };
+}
+
 /**
- * 评估 QA 验收门
+ * 评估 QA 验收门。QA 成功必须来自平台 Run Ledger；角色状态和 summary
+ * 只能表达流程进度，不能替代物理证据链。
  */
-function evaluateQAGate(
+export function evaluateQAGate(
   roleState: RoleState,
-  summary: { completed: number; failed: number; total: number }
+  summary: { completed: number; failed: number; total: number },
+  controlPlaneProjection?: ControlPlaneProjection | null
 ): QualityGate {
+  if (controlPlaneProjection) {
+    return evaluateRunLedgerQAGate(controlPlaneProjection);
+  }
+
   let status: GateStatus = 'pending';
   let detail = '';
   
   if (summary.total === 0) {
     status = 'pending';
-    detail = '等待任务';
+    detail = '等待 Run Ledger 证据';
   } else if (summary.failed > 0) {
     status = 'red';
     detail = `${summary.failed} 个任务未通过`;
   } else if (roleState === 'completed') {
-    if (summary.completed === summary.total) {
-      status = 'green';
-      detail = '全部验收通过';
-    } else {
-      status = 'yellow';
-      detail = `${summary.completed}/${summary.total} 通过`;
-    }
+    status = 'pending';
+    detail = '角色已完成，等待 Run Ledger 证据';
   } else if (roleState === 'executing' || roleState === 'verification') {
     status = 'yellow';
     detail = '验收中';
@@ -252,15 +305,19 @@ function GateItem({ gate }: { gate: QualityGate }) {
   );
 }
 
-export function QualityGatePanel() {
+export interface QualityGatePanelProps {
+  controlPlaneProjection?: ControlPlaneProjection | null;
+}
+
+export function QualityGatePanel({ controlPlaneProjection }: QualityGatePanelProps = {}) {
   const roles = useRoles();
   const summary = useSummary();
   const events = useRuntimeEvents();
   
   // 评估各门禁状态
-  const pmGate = evaluatePMGate(summary, roles.PM.state);
-  const directorGate = evaluateDirectorGate(roles.Director.state, events);
-  const qaGate = evaluateQAGate(roles.QA.state, summary);
+  const pmGate = evaluatePMGate(summary, roles.PM.state, controlPlaneProjection);
+  const directorGate = evaluateDirectorGate(roles.Director.state, events, controlPlaneProjection);
+  const qaGate = evaluateQAGate(roles.QA.state, summary, controlPlaneProjection);
   
   const gates = [pmGate, directorGate, qaGate];
   

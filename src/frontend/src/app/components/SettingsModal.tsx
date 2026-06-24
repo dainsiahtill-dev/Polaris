@@ -37,6 +37,9 @@ const ArsenalPanel = lazy(() =>
 const SystemServicesTab = lazy(() =>
   import('./SystemServicesTab').then((module) => ({ default: module.SystemServicesTab }))
 );
+const VerifierPolicyPanel = lazy(() =>
+  import('./control-plane/VerifierPolicyPanel').then((module) => ({ default: module.VerifierPolicyPanel }))
+);
 
 // 安全的JSON序列化函数，处理循环引用
 const safeJsonStringify = (obj: unknown, space?: number): string => {
@@ -2549,9 +2552,14 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
               </TabsContent>
 
               <TabsContent value="services" className="mt-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1">
-                <Suspense fallback={<DeferredSectionFallback label="内务司" />}>
-                  <SystemServicesTab />
-                </Suspense>
+                <div className="space-y-4">
+                  <Suspense fallback={<DeferredSectionFallback label="平台验收策略" />}>
+                    <VerifierPolicyPanel />
+                  </Suspense>
+                  <Suspense fallback={<DeferredSectionFallback label="内务司" />}>
+                    <SystemServicesTab />
+                  </Suspense>
+                </div>
               </TabsContent>
 
             </Tabs>

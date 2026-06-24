@@ -7,6 +7,8 @@ loaders in ``_lazy_imports``, so this module imports no Cell at load time."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 from datetime import datetime
@@ -26,6 +28,14 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+
+def _stable_sha256(value: Any) -> str:
+    try:
+        serialized = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    except (TypeError, ValueError):
+        serialized = str(value)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def _classify_integration_qa_evidence(
@@ -516,6 +526,82 @@ def _build_post_dispatch_integration_qa_result(
         },
         # Evidence-chain field: documents which QA path was used.
         "qa_path": "dispatch_pipeline",
+    }
+
+
+def _first_non_empty_mapping_value(payloads: list[dict[str, Any]], keys: tuple[str, ...]) -> str:
+    for payload in payloads:
+        for key in keys:
+            value = str(payload.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _lineage_payload_from_tasks(tasks: Any, docs_stage_payload: dict[str, Any]) -> dict[str, Any]:
+    task_rows = [item for item in tasks if isinstance(item, dict)] if isinstance(tasks, list) else []
+    lineage_maps: list[dict[str, Any]] = []
+    for task in task_rows:
+        for key in (
+            "job_token",
+            "capability_token",
+            "lineage",
+            "control_plane_lineage",
+            "ce_blueprint",
+            "chief_engineer_handoff",
+            "blueprint",
+        ):
+            value = task.get(key)
+            if isinstance(value, dict):
+                lineage_maps.append(value)
+        metadata = task.get("metadata")
+        if isinstance(metadata, dict):
+            lineage = metadata.get("lineage") or metadata.get("control_plane_lineage") or metadata.get("job_token")
+            if isinstance(lineage, dict):
+                lineage_maps.append(lineage)
+    if docs_stage_payload:
+        lineage_maps.append(docs_stage_payload)
+
+    contract_hash = _first_non_empty_mapping_value(
+        lineage_maps,
+        ("contract_hash", "pm_contract_hash", "task_contract_hash", "requirement_digest"),
+    )
+    blueprint_hash = _first_non_empty_mapping_value(
+        lineage_maps,
+        ("blueprint_hash", "ce_blueprint_hash", "chief_engineer_blueprint_hash", "handoff_hash"),
+    )
+    token_id = _first_non_empty_mapping_value(lineage_maps, ("token_id", "job_token_id", "capability_token_id"))
+    project_id = _first_non_empty_mapping_value(lineage_maps, ("project_id", "plan_id", "run_id"))
+
+    explicit_contract = bool(contract_hash)
+    explicit_blueprint = bool(blueprint_hash)
+    if not contract_hash and task_rows:
+        contract_basis: list[dict[str, Any]] = [
+            {
+                "id": str(task.get("id") or task.get("task_id") or "").strip(),
+                "title": str(task.get("title") or task.get("subject") or task.get("name") or "").strip(),
+                "goal": str(task.get("goal") or "").strip(),
+                "scope_paths": task.get("scope_paths") if isinstance(task.get("scope_paths"), list) else [],
+                "target_files": task.get("target_files") if isinstance(task.get("target_files"), list) else [],
+                "acceptance_criteria": task.get("acceptance_criteria")
+                if isinstance(task.get("acceptance_criteria"), list)
+                else task.get("acceptance")
+                if isinstance(task.get("acceptance"), list)
+                else [],
+            }
+            for task in task_rows
+        ]
+        contract_hash = _stable_sha256({"source": "pm_tasks", "tasks": contract_basis})
+
+    return {
+        "contract_hash": contract_hash,
+        "blueprint_hash": blueprint_hash,
+        "job_token_id": token_id,
+        "project_id": project_id,
+        "lineage_explicit": {
+            "contract_hash": explicit_contract,
+            "blueprint_hash": explicit_blueprint,
+        },
     }
 
 
@@ -1016,6 +1102,122 @@ def _persist_post_dispatch_integration_qa_result(
             write_json_atomic(result_path, result)
 
 
+def _integration_qa_job_token(result: dict[str, Any], *, run_id: str) -> dict[str, Any]:
+    raw_token = result.get("job_token")
+    if isinstance(raw_token, dict) and raw_token:
+        return dict(raw_token)
+
+    contract_hash = str(result.get("contract_hash") or "").strip()
+    blueprint_hash = str(result.get("blueprint_hash") or "").strip()
+    issues: list[str] = []
+    if not contract_hash:
+        issues.append("missing_contract_hash")
+    if not blueprint_hash:
+        issues.append("missing_blueprint_hash")
+
+    return {
+        "token_id": str(result.get("job_token_id") or f"qa-{run_id}").strip(),
+        "run_id": run_id,
+        "project_id": str(result.get("project_id") or run_id).strip(),
+        "contract_hash": contract_hash,
+        "blueprint_hash": blueprint_hash,
+        "target_files": [],
+        "permissions": {},
+        "gate_policy": {
+            "required_evidence_modalities": ["verifier"] if result.get("ran") is True else [],
+            "enabled_evidence_modalities": ["verifier"],
+        },
+        "capability_audit": {
+            "ok": not issues,
+            "issues": issues,
+        },
+    }
+
+
+def _append_post_dispatch_integration_qa_run_ledger_event(
+    *,
+    workspace_full: str,
+    run_id: str,
+    iteration: int,
+    result: dict[str, Any],
+) -> None:
+    """Append platform Run Ledger evidence for integration QA.
+
+    Legacy JSON artifacts remain as compatibility outputs, but the platform
+    read model must be ledger-backed. When lineage hashes are missing, the
+    ledger event is still recorded and its projection fails closed through the
+    capability audit.
+    """
+
+    from polaris.cells.control_plane.run_ledger.public import (
+        AppendRunLedgerEventCommandV1,
+        append_run_ledger_event,
+    )
+
+    passed = result.get("passed") is True
+    ran = result.get("ran") is True
+    summary = str(result.get("summary") or "").strip()
+    reason = str(result.get("reason") or "").strip()
+    job_token = _integration_qa_job_token(result, run_id=run_id)
+    verifier_detail = summary or reason or "integration QA did not produce a summary"
+    event = {
+        "schema_version": 1,
+        "event_type": "gate_evaluated",
+        "run_id": run_id,
+        "project_id": str(job_token.get("project_id") or run_id),
+        "stage": "integration_qa",
+        "actor": "QA",
+        "timestamp": datetime.now().isoformat(),
+        "job_token": job_token,
+        "gate": {
+            "name": "integration_qa",
+            "ok": passed,
+            "summary": verifier_detail,
+        },
+        "physical_evidence": {
+            "result_path": str(result.get("result_path") or ""),
+            "runtime_result_path": str(result.get("runtime_result_path") or ""),
+            "command_count": 1 if ran else 0,
+            "commands": [
+                {
+                    "name": "integration_qa_runner",
+                    "ok": passed,
+                    "detail": verifier_detail,
+                }
+            ]
+            if ran
+            else [],
+            "qa_verifiers": [
+                {
+                    "id": "integration_qa",
+                    "name": "Integration QA",
+                    "modality": "verifier",
+                    "ok": passed,
+                    "detail": verifier_detail,
+                    "reason": reason,
+                    "exit_code": 0 if passed else 1,
+                }
+            ]
+            if ran
+            else [],
+            "errors": list(result.get("errors") or []),
+            "pm_iteration": int(iteration or 0),
+            "evidence_grade": str(result.get("evidence_grade") or "unknown"),
+            "cognitive_runtime_receipt": result.get("cognitive_runtime_receipt")
+            if isinstance(result.get("cognitive_runtime_receipt"), dict)
+            else {},
+        },
+    }
+    receipt = append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=workspace_full,
+            run_id=run_id,
+            event=event,
+        )
+    ).receipt
+    result["run_ledger_receipt"] = receipt
+
+
 def _emit_post_dispatch_integration_qa_result(
     *,
     run_events: str,
@@ -1129,6 +1331,7 @@ def run_post_dispatch_integration_qa(
         status_summary=status_summary,
         docs_stage_payload=docs_stage_payload,
     )
+    result.update(_lineage_payload_from_tasks(tasks, docs_stage_payload))
 
     should_skip = _apply_post_dispatch_skip_reason(
         result=result,
@@ -1166,6 +1369,29 @@ def run_post_dispatch_integration_qa(
         result=result,
         tasks=tasks,
     )
+    try:
+        _append_post_dispatch_integration_qa_run_ledger_event(
+            workspace_full=workspace_full,
+            run_id=run_id,
+            iteration=iteration,
+            result=result,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raw_errors = result.get("errors")
+        errors = list(raw_errors) if isinstance(raw_errors, list) else []
+        result["errors"] = [*errors, f"run_ledger_append_failed: {exc}"]
+        result["run_ledger_append_error"] = str(exc)
+        if result.get("passed") is True:
+            result["passed"] = False
+            result["reason"] = "integration_qa_ledger_write_failed"
+            result["summary"] = f"Integration QA passed but Run Ledger append failed: {exc}"
+            result["evidence_grade"] = _classify_integration_qa_evidence(
+                ran=bool(result.get("ran") is True),
+                passed=False,
+                reason=str(result["reason"]),
+                summary=str(result["summary"]),
+                errors=list(result["errors"]),
+            )
     _persist_post_dispatch_integration_qa_result(
         run_dir=run_dir,
         workspace_full=workspace_full,

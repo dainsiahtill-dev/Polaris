@@ -134,6 +134,23 @@ TOOL_ALIASES: dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
+# 文件 token 扩展名识别
+# ---------------------------------------------------------------------------
+# 用于从最终 prompt、SESSION_PATCH、quality repair target blocks 中提取
+# “像文件路径”的 token。该集合必须覆盖平台支持的主流语言，否则
+# mutation guard 会错误地把真实目标文件判为 out-of-scope。
+FILE_TOKEN_EXTENSION_PATTERN: str = (
+    "py|md|txt|json|ya?ml|toml|"
+    "js|ts|tsx|jsx|css|html|"
+    "go|rs|java|kt|kts|scala|"
+    "c|h|cc|cpp|cxx|hpp|cs|"
+    "php|rb|swift|m|mm|"
+    "sh|bash|zsh|ps1|bat|cmd|"
+    "sql|proto|graphql|prisma|xml|"
+    "mod|sum"
+)
+
+# ---------------------------------------------------------------------------
 # 必需工具等价映射（contract 守卫用）
 #   key: 契约中要求的工具名
 #   value: 可接受的等价工具名元组

@@ -24,6 +24,7 @@ from polaris.cells.chief_engineer.blueprint.internal.step_contract import (
     normalize_construction_step,
     validate_construction_steps,
 )
+from polaris.cells.control_plane.run_ledger.public import JobToken, stable_hash
 from polaris.cells.runtime.task_market.public.contracts import (
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
@@ -75,6 +76,93 @@ def _normalize_owned_target(raw: Any) -> str:
 
 def _blueprint_runtime_path(blueprint_id: str) -> str:
     return f"runtime/blueprints/{blueprint_id}.json"
+
+
+_CONTROL_PLANE_SELF_REF_KEYS = frozenset(
+    {
+        "blueprint_hash",
+        "job_token",
+        "control_plane_job_token",
+        "capability_token",
+        "capability_token_hash",
+        "job_token_id",
+    }
+)
+
+
+def _hashable_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _hashable_payload(item)
+            for key, item in value.items()
+            if str(key) not in _CONTROL_PLANE_SELF_REF_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_hashable_payload(item) for item in value]
+    return value
+
+
+def _payload_hash(value: Any) -> str:
+    return stable_hash(_hashable_payload(value))
+
+
+def _control_plane_job_token(
+    *,
+    task_id: str,
+    payload: dict[str, Any],
+    blueprint_id: str,
+    blueprint_path: str,
+    blueprint_hash: str,
+    contract_hash: str,
+    target_files: list[str],
+    scope_paths: list[str],
+) -> dict[str, Any]:
+    run_id = str(payload.get("run_id") or "").strip()
+    project_id = (
+        str(payload.get("project_id") or payload.get("plan_id") or "").strip()
+        or str(payload.get("root_task_id") or "").strip()
+        or task_id
+    )
+    token_basis = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "project_id": project_id,
+        "task_id": task_id,
+        "blueprint_id": blueprint_id,
+        "blueprint_hash": blueprint_hash,
+        "contract_hash": contract_hash,
+        "target_files": target_files,
+        "scope_paths": scope_paths,
+    }
+    token_id = f"job-{stable_hash(token_basis)[:24]}"
+    allowed_paths = list(dict.fromkeys([*target_files, *scope_paths]))
+    missing_issues = [
+        issue
+        for issue, missing in (
+            ("missing_contract_hash", not contract_hash),
+            ("missing_blueprint_hash", not blueprint_hash),
+            ("missing_allowed_paths", not allowed_paths),
+        )
+        if missing
+    ]
+    return JobToken(
+        schema_version=1,
+        token_id=token_id,
+        run_id=run_id,
+        factory_run_id=str(payload.get("factory_run_id") or run_id).strip(),
+        project_id=project_id,
+        stage="pending_exec",
+        target_files=list(target_files),
+        allowed_paths=allowed_paths,
+        required_artifacts=[blueprint_path, *target_files],
+        gate_policy={
+            "enabled_evidence_modalities": ["tool_receipt", "build_test", "entry_smoke"],
+            "required_evidence_modalities": ["tool_receipt"],
+        },
+        capability_audit={"ok": not missing_issues, "issues": missing_issues},
+        contract_hash=contract_hash,
+        blueprint_hash=blueprint_hash,
+    ).to_dict()
 
 
 def _string_list(value: Any) -> list[str]:
@@ -288,10 +376,63 @@ class CEConsumer:
                 execution_checklist=execution_checklist,
             )
             blueprint_path = _blueprint_runtime_path(blueprint_id)
+            blueprint_record: dict[str, Any] = {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": blueprint_id,
+                "status": "approved",
+                "task_id": task_id,
+                "run_id": str(payload.get("run_id", "")),
+                "route": "chief_blueprint_required",
+                "preflight_result": blueprint_result,
+                "scope_paths": scope_paths,
+                "target_files": target_files,
+                "acceptance_criteria": acceptance_criteria,
+                "execution_checklist": execution_checklist,
+                "dependencies": dependencies,
+                "constraints": constraints,
+                "risks": risks,
+                "pm_task": dict(contract["task"]),
+                "qa_contract": dict(contract["qa_contract"]),
+                "contract_completeness": contract_completeness,
+                "handoff_ready": bool(contract_completeness["handoff_ready"]),
+                "guardrails": blueprint_result.get("guardrails", []),
+                "no_touch_zones": blueprint_result.get("no_touch_zones", []),
+            }
+            blueprint_hash = _payload_hash(blueprint_record)
+            blueprint_record["blueprint_hash"] = blueprint_hash
+            contract_hash = str(payload.get("contract_hash") or payload.get("pm_contract_hash") or "").strip()
+            if not contract_hash:
+                contract_hash = _payload_hash(dict(contract["task"]))
+            job_token = _control_plane_job_token(
+                task_id=task_id,
+                payload=payload,
+                blueprint_id=blueprint_id,
+                blueprint_path=blueprint_path,
+                blueprint_hash=blueprint_hash,
+                contract_hash=contract_hash,
+                target_files=target_files,
+                scope_paths=scope_paths,
+            )
+            control_plane_lineage = {
+                "source": "chief_engineer.handoff",
+                "job_token_id": str(job_token.get("token_id") or ""),
+                "contract_hash": contract_hash,
+                "blueprint_hash": blueprint_hash,
+                "blueprint_id": blueprint_id,
+                "blueprint_path": blueprint_path,
+            }
             ack_payload: dict[str, Any] = {
                 "blueprint_id": blueprint_id,
                 "blueprint_path": blueprint_path,
                 "runtime_blueprint_path": blueprint_path,
+                "blueprint_hash": blueprint_hash,
+                "contract_hash": contract_hash,
+                "pm_contract_hash": contract_hash,
+                "job_token_id": str(job_token.get("token_id") or ""),
+                "job_token": job_token,
+                "control_plane_job_token": job_token,
+                "capability_token": job_token,
+                "control_plane_lineage": control_plane_lineage,
                 "context_snapshot_ref": str(payload.get("context_snapshot_ref", "")),
                 "guardrails": blueprint_result.get("guardrails", []),
                 "no_touch_zones": blueprint_result.get("no_touch_zones", []),
@@ -314,55 +455,13 @@ class CEConsumer:
             if self._enable_director_pool and self._adr_store is not None:
                 self._adr_store.create_blueprint(
                     blueprint_id,
-                    {
-                        "task_id": task_id,
-                        "run_id": str(payload.get("run_id", "")),
-                        "route": "chief_blueprint_required",
-                        "preflight_result": blueprint_result,
-                        "scope_paths": scope_paths,
-                        "target_files": target_files,
-                        "acceptance_criteria": acceptance_criteria,
-                        "execution_checklist": execution_checklist,
-                        "dependencies": dependencies,
-                        "constraints": constraints,
-                        "risks": risks,
-                        "pm_task": dict(contract["task"]),
-                        "qa_contract": dict(contract["qa_contract"]),
-                        "contract_completeness": contract_completeness,
-                        "handoff_ready": bool(contract_completeness["handoff_ready"]),
-                        "guardrails": ack_payload["guardrails"],
-                        "no_touch_zones": ack_payload["no_touch_zones"],
-                    },
+                    blueprint_record,
                 )
                 self._adr_store.compile(blueprint_id)
 
                 ack_payload["director_pool_assignment"] = "deferred_to_task_market"
             else:
-                BlueprintPersistence(self._workspace).save(
-                    blueprint_id,
-                    {
-                        "schema_version": "chief_engineer.blueprint.v1",
-                        "blueprint_id": blueprint_id,
-                        "status": "approved",
-                        "task_id": task_id,
-                        "run_id": str(payload.get("run_id", "")),
-                        "route": "chief_blueprint_required",
-                        "scope_paths": scope_paths,
-                        "target_files": target_files,
-                        "acceptance_criteria": acceptance_criteria,
-                        "execution_checklist": execution_checklist,
-                        "dependencies": dependencies,
-                        "constraints": constraints,
-                        "risks": risks,
-                        "pm_task": dict(contract["task"]),
-                        "qa_contract": dict(contract["qa_contract"]),
-                        "contract_completeness": contract_completeness,
-                        "handoff_ready": bool(contract_completeness["handoff_ready"]),
-                        "guardrails": ack_payload["guardrails"],
-                        "no_touch_zones": ack_payload["no_touch_zones"],
-                        "preflight_result": blueprint_result,
-                    },
-                )
+                BlueprintPersistence(self._workspace).save(blueprint_id, blueprint_record)
 
             fission_published = 0
             if self._step_fission_enabled():
@@ -437,7 +536,7 @@ class CEConsumer:
                 )
                 fission_published = self._publish_step_tasks(
                     task_id,
-                    payload,
+                    {**payload, **ack_payload},
                     steps,
                     blueprint_id=blueprint_id,
                     blueprint_path=blueprint_path,
@@ -757,6 +856,14 @@ class CEConsumer:
                 "construction_step": step,
                 "blueprint_id": blueprint_id,
                 "blueprint_path": blueprint_path,
+                "blueprint_hash": str(payload.get("blueprint_hash") or ""),
+                "contract_hash": str(payload.get("contract_hash") or payload.get("pm_contract_hash") or ""),
+                "pm_contract_hash": str(payload.get("contract_hash") or payload.get("pm_contract_hash") or ""),
+                "job_token_id": str(payload.get("job_token_id") or ""),
+                "job_token": _mapping(payload.get("job_token")),
+                "control_plane_job_token": _mapping(payload.get("control_plane_job_token")),
+                "capability_token": _mapping(payload.get("capability_token")),
+                "control_plane_lineage": _mapping(payload.get("control_plane_lineage")),
                 "route": "chief_blueprint_required",
                 "acceptance_criteria": [step["verify"]] if step.get("verify") else [],
             }
@@ -773,7 +880,14 @@ class CEConsumer:
                     root_task_id=str(payload.get("root_task_id") or task_id),
                     is_leaf=True,
                     depends_on=tuple(depends_on),
-                    metadata={"blueprint_id": blueprint_id, "fission": "ce-blueprint-tasks/1"},
+                    metadata={
+                        "blueprint_id": blueprint_id,
+                        "blueprint_hash": str(payload.get("blueprint_hash") or ""),
+                        "job_token_id": str(payload.get("job_token_id") or ""),
+                        "job_token": _mapping(payload.get("job_token")),
+                        "control_plane_lineage": _mapping(payload.get("control_plane_lineage")),
+                        "fission": "ce-blueprint-tasks/1",
+                    },
                 )
             )
             published += 1

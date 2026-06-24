@@ -6,6 +6,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public import stable_hash
+
 from ..internal.adr_log import ADRDecisionLog, build_adr_event
 from ..internal.blueprint_persistence import BlueprintPersistence
 from ..internal.ce_consumer import CEConsumer
@@ -65,6 +67,25 @@ def _safe_token(value: str) -> str:
 
 def _blueprint_path(blueprint_id: str) -> str:
     return f"runtime/blueprints/{blueprint_id}.json"
+
+
+_BLUEPRINT_HASH_IGNORED_KEYS = frozenset({"blueprint_hash", "job_token", "capability_token"})
+
+
+def _hashable_blueprint_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _hashable_blueprint_payload(item)
+            for key, item in value.items()
+            if str(key) not in _BLUEPRINT_HASH_IGNORED_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_hashable_blueprint_payload(item) for item in value]
+    return value
+
+
+def _blueprint_hash(payload: dict[str, Any]) -> str:
+    return stable_hash(_hashable_blueprint_payload(payload))
 
 
 def _string_list(value: Any) -> list[str]:
@@ -282,6 +303,9 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     # ``payload`` in place (adds ``governance`` + recomputes
     # ``handoff_ready``) and rewrites the on-disk JSON.
     attach_governance_to_blueprint(command.workspace, blueprint_id, payload)
+    blueprint_hash = _blueprint_hash(payload)
+    payload["blueprint_hash"] = blueprint_hash
+    BlueprintPersistence(command.workspace).save(blueprint_id, payload)
 
     return TaskBlueprintResultV1(
         ok=True,
@@ -290,6 +314,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         status="generated",
         blueprint_id=blueprint_id,
         blueprint_path=_blueprint_path(blueprint_id),
+        blueprint_hash=blueprint_hash,
         summary=summary,
         recommendations=recommendations,
         risks=risks,
@@ -316,6 +341,7 @@ def get_blueprint_status(query: GetBlueprintStatusQueryV1) -> TaskBlueprintResul
 
     blueprint_id, payload = match
     status = str(payload.get("status") or "generated").strip() or "generated"
+    blueprint_hash = str(payload.get("blueprint_hash") or "").strip() or _blueprint_hash(payload)
     return TaskBlueprintResultV1(
         ok=True,
         task_id=query.task_id,
@@ -323,6 +349,7 @@ def get_blueprint_status(query: GetBlueprintStatusQueryV1) -> TaskBlueprintResul
         status=status,
         blueprint_id=blueprint_id,
         blueprint_path=_blueprint_path(blueprint_id),
+        blueprint_hash=blueprint_hash,
         summary=str(payload.get("summary") or "").strip(),
         recommendations=_tuple_from_payload(payload.get("recommendations")),
         risks=_tuple_from_payload(payload.get("risks")),

@@ -63,6 +63,8 @@ export interface DirectorPageProps {
   websocketReconnecting: boolean;
   /** WebSocket 重连次数 */
   websocketAttemptCount: number;
+  /** 内部测试模式下才允许展示 Factory Bench 状态。 */
+  internalBenchEnabled?: boolean;
   /** LLM 运行时状态 */
   llmRuntimeState: {
     state: 'READY' | 'BLOCKED' | 'DEGRADED' | 'UNKNOWN';
@@ -78,6 +80,8 @@ export interface DirectorPageProps {
   agentsDraftFailed?: boolean;
   /** 质量门 */
   qualityGate?: unknown;
+  /** 平台 Run Ledger 投影 */
+  controlPlaneProjection?: Parameters<typeof LlmRuntimeOverlay>[0]['controlPlaneProjection'];
   /** 错误通知回调 */
   notifyError: (message: string) => void;
 }
@@ -137,11 +141,13 @@ export function DirectorPage({
   websocketLive,
   websocketReconnecting,
   websocketAttemptCount,
+  internalBenchEnabled = false,
   llmRuntimeState,
   agentsRequired = false,
   agentsDraftReady = false,
   agentsDraftFailed = false,
   qualityGate,
+  controlPlaneProjection,
   notifyError,
 }: DirectorPageProps) {
   const localStartBlockedReason = resolveDirectorStartBlockedReason({
@@ -158,6 +164,7 @@ export function DirectorPage({
   return (
     <ErrorBoundaryClass onError={(error) => notifyError(error.message || '发生未知错误')}>
       <BenchStatusStrip
+        enabled={internalBenchEnabled}
         websocketLive={websocketLive}
         websocketReconnecting={websocketReconnecting}
         websocketAttemptCount={websocketAttemptCount}
@@ -201,6 +208,7 @@ export function DirectorPage({
         llmStreamEvents={llmStreamEvents ?? []}
         processStreamEvents={processStreamEvents ?? []}
         fileEditEvents={fileEditEvents as Parameters<typeof LlmRuntimeOverlay>[0]['fileEditEvents']}
+        controlPlaneProjection={controlPlaneProjection}
       />
       <Toaster position="bottom-right" />
     </ErrorBoundaryClass>

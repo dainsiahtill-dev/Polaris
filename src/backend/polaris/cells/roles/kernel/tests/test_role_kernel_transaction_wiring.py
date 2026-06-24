@@ -153,6 +153,35 @@ class TestForcedToolScopePolicy:
         assert _tool_schema_names(result) == ["write_file"]
         assert _file_param_enum(result, "write_file") == ["src/models/moon.ts", "./src/models/moon.ts"]
 
+    def test_multi_target_quality_repair_exact_scope_does_not_add_context_companion_tools(self) -> None:
+        forced_write_tool = _tool_schema("write_file")
+        tool_definitions = [
+            forced_write_tool,
+            _tool_schema("read_file"),
+            _tool_schema("repo_tree"),
+            _tool_schema("file_exists"),
+        ]
+        context_override = {
+            "_transaction_kernel_force_exact_tools": True,
+            "_transaction_kernel_forced_tool_definitions": [forced_write_tool],
+            "_transaction_kernel_forced_tool_choice": {
+                "type": "function",
+                "function": {"name": "write_file"},
+            },
+            "director_quality_repair": {
+                "missing_target_files": [],
+                "repair_target_files": [
+                    "src/index.js",
+                    "src/models/Note.js",
+                    "src/engine/AlchemyEngine.js",
+                ],
+            },
+        }
+
+        result = _apply_forced_transaction_tool_definitions(tool_definitions, context_override)
+
+        assert _tool_schema_names(result) == ["write_file"]
+
     def test_plain_forced_scope_stays_exact(self) -> None:
         forced_write_tool = _tool_schema("write_file")
         tool_definitions = [
@@ -237,6 +266,46 @@ class TestContextDeliveryModeMarker:
 
         assert ensure_marker is not None
         assert ensure_marker(messages, {"delivery_mode": "propose_patch"}) == messages
+
+    def test_platform_tool_contract_metadata_projects_to_latest_user_message(self) -> None:
+        ensure_contract = getattr(kernel_core, "_ensure_platform_tool_contract_metadata", None)
+        messages = [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "Update a.py", "metadata": {"trace_id": "t1"}},
+        ]
+
+        assert ensure_contract is not None
+        result = ensure_contract(
+            messages,
+            {"tool_contract": {"single_batch": True, "required_tools": ["write_file"]}},
+        )
+
+        assert result is not messages
+        assert messages[-1]["metadata"] == {"trace_id": "t1"}
+        assert result[-1]["content"] == "Update a.py"
+        assert result[-1]["metadata"]["trace_id"] == "t1"
+        assert result[-1]["metadata"]["tool_contract"] == {
+            "single_batch": True,
+            "required_tools": ["write_file"],
+        }
+
+    def test_platform_tool_contract_metadata_merges_existing_contract(self) -> None:
+        ensure_contract = getattr(kernel_core, "_ensure_platform_tool_contract_metadata", None)
+        messages = [
+            {
+                "role": "user",
+                "content": "Update a.py",
+                "metadata": {"tool_contract": {"min_tool_calls": 2}},
+            }
+        ]
+
+        assert ensure_contract is not None
+        result = ensure_contract(messages, {"platform_tool_contract": {"single_batch": True}})
+
+        assert result[-1]["metadata"]["tool_contract"] == {
+            "min_tool_calls": 2,
+            "single_batch": True,
+        }
 
 
 class TestTransactionTurnId:
@@ -949,6 +1018,59 @@ class TestExecuteTransactionKernelTurn:
         assert mock_execute.await_args is not None
         passed_messages = mock_execute.await_args.args[1]
         assert passed_messages[-1]["content"].startswith("[mode:materialize]\n")
+
+    @pytest.mark.asyncio
+    async def test_execute_transaction_kernel_turn_projects_tool_contract_metadata(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(
+            role_id="director",
+            tool_policy=MagicMock(policy_id="tp1", whitelist=["write_file", "read_file"]),
+        )
+        tool_contract = {
+            "single_batch": True,
+            "required_tools": ["write_file"],
+            "min_tool_calls": 1,
+        }
+        request = _MockRequest(
+            message="Create worker_1.txt",
+            run_id="run_123",
+            context_override={"context_os_snapshot": {}, "tool_contract": tool_contract},
+        )
+        fingerprint = _MockFingerprint()
+        mock_execute = AsyncMock(
+            return_value={
+                "turn_id": "turn_abc",
+                "kind": "final_answer",
+                "visible_content": "ok",
+                "metrics": {"duration_ms": 100, "llm_calls": 1, "tool_calls": 0},
+            }
+        )
+
+        with (
+            patch.object(kernel, "_create_transaction_kernel", return_value=MagicMock(execute=mock_execute)),
+            patch(
+                "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+                return_value=MagicMock(
+                    build_context=AsyncMock(
+                        return_value=MagicMock(messages=[{"role": "user", "content": "Create worker_1.txt"}])
+                    )
+                ),
+            ),
+        ):
+            await kernel._execute_transaction_kernel_turn(
+                role="director",
+                profile=profile,
+                request=request,
+                system_prompt="You are a Director",
+                fingerprint=fingerprint,
+                observer_run_id="run_123",
+                response_schema=None,
+            )
+
+        assert mock_execute.await_args is not None
+        passed_messages = mock_execute.await_args.args[1]
+        assert passed_messages[-1]["content"] == "Create worker_1.txt"
+        assert passed_messages[-1]["metadata"]["tool_contract"] == tool_contract
 
     @pytest.mark.asyncio
     async def test_execute_transaction_kernel_turn_handoff_populates_metadata(self) -> None:

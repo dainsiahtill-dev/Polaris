@@ -651,3 +651,46 @@ class TestResilientPool:
             _FakeConsumer, workspace_full="/ws", worker_suffix="s", exec_timeout=1800, enable_safe_parallel=False
         )
         assert workers == []  # no live backend → single inline consumer fallback
+
+    def test_cloud_anthropic_compat_is_not_skipped_by_anonymous_models_probe(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _install_raw_config(
+            tmp_path,
+            {
+                "schema_version": 2,
+                "providers": {
+                    "minimax-cloud": {
+                        "type": "anthropic_compat",
+                        "base_url": "https://api.minimaxi.com/anthropic",
+                        "model": "MiniMax-M3",
+                    }
+                },
+                "roles": {
+                    "director": {
+                        "provider_id": "minimax-cloud",
+                        "model": "MiniMax-M3",
+                        "provider_pool": ["minimax-cloud"],
+                        "concurrency": 2,
+                    }
+                },
+            },
+        )
+
+        def _unexpected_probe(base_url: str, **_kw: Any) -> bool:
+            raise AssertionError(f"cloud provider should not be anonymously probed: {base_url}")
+
+        monkeypatch.setattr(_REACHABLE, _unexpected_probe)
+
+        workers = _build_director_worker_pool(
+            _FakeConsumer,
+            workspace_full="/ws",
+            worker_suffix="s",
+            exec_timeout=1800,
+            enable_safe_parallel=False,
+        )
+
+        bound = [str(pid) for _c, pid in workers]
+        assert bound == ["minimax-cloud", "minimax-cloud"]

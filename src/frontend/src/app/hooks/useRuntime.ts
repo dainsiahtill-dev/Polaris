@@ -86,6 +86,7 @@ export interface UseRuntimeOptions {
   maxRetries?: number;
   baseDelay?: number;
   workspace?: string;
+  includeInternalBench?: boolean;
 }
 
 export interface UseRuntimeResult {
@@ -149,12 +150,18 @@ const DEFAULT_RUNTIME_ROLES: Array<'pm' | 'chief_engineer' | 'director' | 'qa'> 
 const FACTORY_EVENT_CHANNEL = 'event.factory';
 const BENCH_EVENT_CHANNEL = 'event.bench';
 
-function isFactoryEventChannel(channel: string): boolean {
+function isInternalBenchEventChannel(channel: string): boolean {
+  return (
+    channel === BENCH_EVENT_CHANNEL ||
+    channel.startsWith(`${BENCH_EVENT_CHANNEL}:`)
+  );
+}
+
+function isRuntimeFactoryOrBenchEventChannel(channel: string): boolean {
   return (
     channel === FACTORY_EVENT_CHANNEL ||
     channel.startsWith(`${FACTORY_EVENT_CHANNEL}:`) ||
-    channel === BENCH_EVENT_CHANNEL ||
-    channel.startsWith(`${BENCH_EVENT_CHANNEL}:`)
+    isInternalBenchEventChannel(channel)
   );
 }
 
@@ -221,7 +228,7 @@ function normalizeRuntimeV2Envelope(eventPayload: Record<string, unknown>): WebS
       timestamp: String(eventPayload.timestamp || eventPayload.ts || rawPayload?.timestamp || nestedEvent?.timestamp || ''),
     };
   }
-  if (isFactoryEventChannel(targetChannel)) {
+  if (isRuntimeFactoryOrBenchEventChannel(targetChannel)) {
     return { type: 'line', channel: targetChannel, text: JSON.stringify(mergedPayload) };
   }
   if (targetChannel === 'llm' || v2Domain === 'llm' || kind.startsWith('llm.')) {
@@ -1168,7 +1175,7 @@ function parseProcessStreamLine(channel: string, line: string): LogEntry | null 
                   ? 'RunLog'
                     : channel === 'engine_status'
                     ? 'Engine'
-                    : isFactoryEventChannel(channel)
+                    : isRuntimeFactoryOrBenchEventChannel(channel)
                       ? 'Factory'
                       : 'Planner'
   );
@@ -1393,6 +1400,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
     maxRetries = Infinity,
     baseDelay = 1000,
     workspace: workspaceProp,
+    includeInternalBench = false,
   } = options;
 
   // Settings
@@ -1453,6 +1461,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
     roles,
     autoConnect,
     workspace: workspaceProp,
+    includeInternalBench,
   });
 
   // Refs for message processing
@@ -1504,6 +1513,9 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
         }
 
         const finalMsgType = String(payload.type || '').trim().toLowerCase();
+        if (!includeInternalBench && isInternalBenchEventChannel(channel)) {
+          return;
+        }
         if (finalMsgType === 'ping') {
           connection.sendCommand({ type: 'PONG' });
           return;
@@ -1724,7 +1736,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               const current = useRuntimeStore.getState().llmStreamEvents;
               setLlmStreamEvents([...current, ...uniqueLogs].slice(-180));
             }
-          } else if (isProcessStreamChannel(channel) || isFactoryEventChannel(channel)) {
+          } else if (isProcessStreamChannel(channel) || isRuntimeFactoryOrBenchEventChannel(channel)) {
             const processLogs: LogEntry[] = [];
             payload.lines.forEach((line: string) => {
               if (!line.trim()) return;
@@ -1819,7 +1831,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
                 appendLlmStreamEvent(withLlmRunScope(llmLog, llmRunScopeRef.current));
               }
             }
-          } else if (isProcessStreamChannel(channel) || isFactoryEventChannel(channel)) {
+          } else if (isProcessStreamChannel(channel) || isRuntimeFactoryOrBenchEventChannel(channel)) {
             try {
               const raw = JSON.parse(payload.text);
               if (Parsing.isRecord(raw)) mergeTaskLifecycleFromRaw(raw);
@@ -1845,6 +1857,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
       appendSequentialTrace,
       appendTaskTrace,
       connection,
+      includeInternalBench,
       isWorkspaceControlled,
       loadRuntimeSettings,
       setCurrentPhase,

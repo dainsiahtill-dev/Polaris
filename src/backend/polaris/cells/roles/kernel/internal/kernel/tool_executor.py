@@ -25,6 +25,177 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_DIRECT_SCOPE_KEYS: tuple[str, ...] = (
+    "capability_scope",
+    "allowed_scope",
+    "allowed_scope_paths",
+    "allowed_paths",
+    "authorized_paths",
+    "scope_paths",
+    "target_files",
+    "pm_target_files",
+    "repair_target_files",
+)
+
+_SCOPE_CONTAINER_KEYS: tuple[str, ...] = (
+    "job_token",
+    "control_plane_job_token",
+    "capability_token",
+    "capability",
+    "capability_permissions",
+    "permissions",
+)
+
+_NO_AUTHORIZED_SCOPE_SENTINEL = "__polaris_no_authorized_paths__"
+_CAPABILITY_TOKEN_KEYS: tuple[str, ...] = ("job_token", "control_plane_job_token", "capability_token")
+
+
+def _scope_items(value: Any) -> list[str]:
+    """Coerce a scope-like value into string path candidates."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, dict):
+        items: list[str] = []
+        for key in _DIRECT_SCOPE_KEYS:
+            items.extend(_scope_items(value.get(key)))
+        for key in ("path", "file", "target", "source"):
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip():
+                items.append(raw.strip())
+        return items
+    if isinstance(value, (list, tuple, set)):
+        items = []
+        for entry in value:
+            items.extend(_scope_items(entry))
+        return items
+    return []
+
+
+def _mapping_from_value(value: Any) -> dict[str, Any] | None:
+    """Return a mapping from dict-like platform contracts without importing them."""
+    if isinstance(value, dict):
+        return value
+    to_dict = getattr(value, "to_dict", None)
+    if not callable(to_dict):
+        return None
+    try:
+        payload = to_dict()
+    except (RuntimeError, ValueError, TypeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _normalize_scope_path(value: str) -> str | None:
+    """Return a workspace-relative capability path or None for unsafe input."""
+    text = str(value or "").replace("\\", "/").strip()
+    while text.startswith("./"):
+        text = text[2:]
+    if not text or text in {".", "/"}:
+        return None
+    if text.startswith("/") or (len(text) >= 2 and text[1] == ":"):
+        return None
+    parts = [part for part in text.split("/") if part and part != "."]
+    if not parts or any(part == ".." for part in parts):
+        return None
+    return "/".join(parts)
+
+
+def _collect_scope_from_mapping(mapping: dict[str, Any]) -> tuple[list[str], bool]:
+    candidates: list[str] = []
+    saw_scope_source = False
+    for key in _DIRECT_SCOPE_KEYS:
+        if key in mapping:
+            saw_scope_source = True
+            candidates.extend(_scope_items(mapping.get(key)))
+    for key in _SCOPE_CONTAINER_KEYS:
+        nested = _mapping_from_value(mapping.get(key))
+        if nested is not None:
+            nested_candidates, nested_saw_source = _collect_scope_from_mapping(nested)
+            saw_scope_source = saw_scope_source or nested_saw_source
+            candidates.extend(nested_candidates)
+    return candidates, saw_scope_source
+
+
+def derive_role_turn_capability_scope(request: RoleTurnRequest) -> tuple[str, ...] | None:
+    """Derive immutable per-turn write capability paths from runtime context.
+
+    Only request metadata/context_override are considered. Model-supplied tool
+    arguments are intentionally ignored here and cannot expand this scope later.
+    """
+    candidates: list[str] = []
+    saw_scope_source = False
+    for container in (getattr(request, "metadata", None), getattr(request, "context_override", None)):
+        mapping = _mapping_from_value(container)
+        if mapping is None:
+            continue
+        container_candidates, container_saw_source = _collect_scope_from_mapping(mapping)
+        candidates.extend(container_candidates)
+        saw_scope_source = saw_scope_source or container_saw_source
+
+    if not saw_scope_source:
+        return None
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        path = _normalize_scope_path(candidate)
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        normalized.append(path)
+
+    return tuple(normalized or (_NO_AUTHORIZED_SCOPE_SENTINEL,))
+
+
+def _first_capability_token_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
+    for key in _CAPABILITY_TOKEN_KEYS:
+        token = _mapping_from_value(mapping.get(key))
+        if token is not None:
+            return token
+    if any(str(mapping.get(key) or "").strip() for key in ("token_id", "contract_hash", "blueprint_hash")):
+        return dict(mapping)
+    return {}
+
+
+def _job_token_evidence(value: dict[str, Any], scope: tuple[str, ...] | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    token_id = str(value.get("token_id") or "").strip()
+    if not token_id:
+        return {}
+    capability_audit = value.get("capability_audit")
+    capability_audit_map = capability_audit if isinstance(capability_audit, dict) else {}
+    return {
+        "source": str(value.get("source") or "control_plane.job_token"),
+        "token_id": token_id,
+        "run_id": str(value.get("run_id") or ""),
+        "project_id": str(value.get("project_id") or ""),
+        "stage": str(value.get("stage") or ""),
+        "contract_hash": str(value.get("contract_hash") or ""),
+        "blueprint_hash": str(value.get("blueprint_hash") or ""),
+        "capability_audit_ok": bool(capability_audit_map.get("ok")),
+        "allowed_scope": list(scope or ()),
+    }
+
+
+def derive_role_turn_capability_token(
+    request: RoleTurnRequest,
+    capability_scope: tuple[str, ...] | None,
+) -> dict[str, Any]:
+    """Derive immutable Job Token evidence for tool receipts."""
+
+    for container in (getattr(request, "metadata", None), getattr(request, "context_override", None)):
+        mapping = _mapping_from_value(container)
+        if mapping is None:
+            continue
+        evidence = _job_token_evidence(_first_capability_token_mapping(mapping), capability_scope)
+        if evidence:
+            return evidence
+    return {}
+
 
 class KernelToolExecutor:
     """内核工具执行器
@@ -81,6 +252,8 @@ class KernelToolExecutor:
             getattr(request, "run_id", None),
             getattr(profile, "role_id", None),
         )
+        capability_scope = derive_role_turn_capability_scope(request)
+        capability_token = derive_role_turn_capability_token(request, capability_scope)
         return RoleToolGateway(
             profile,
             self._workspace,
@@ -88,6 +261,8 @@ class KernelToolExecutor:
             session_memory_provider=memory_provider,
             run_id=getattr(request, "run_id", None),
             task_id=getattr(request, "task_id", None),
+            capability_scope=capability_scope,
+            capability_token=capability_token,
         )
 
     async def execute_tools(
@@ -340,4 +515,4 @@ class KernelToolExecutor:
             )
 
 
-__all__ = ["KernelToolExecutor"]
+__all__ = ["KernelToolExecutor", "derive_role_turn_capability_scope"]

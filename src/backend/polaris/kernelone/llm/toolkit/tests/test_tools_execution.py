@@ -405,6 +405,30 @@ class TestDirectorWritePolicyGate:
         assert result["director_policy"]["allowed"] is False
         assert protected.read_text(encoding="utf-8") == original
 
+    def test_write_file_runtime_capability_scope_cannot_be_expanded_by_tool_args(self, temp_workspace) -> None:
+        workspace = Path(temp_workspace)
+        escaped = workspace / "src" / "escaped.py"
+        escaped.write_text("value = 'original'\n", encoding="utf-8")
+
+        executor = AgentAccelToolExecutor(
+            workspace=temp_workspace,
+            capability_scope=["src/allowed.py"],
+        )
+        result = executor.execute(
+            "write_file",
+            {
+                "file": "src/escaped.py",
+                "target_files": ["src/escaped.py"],
+                "content": "value = 'changed'\n",
+            },
+        )
+
+        assert result["ok"] is False
+        assert result["error_type"] == "director_write_policy_denied"
+        assert result["director_policy"]["scope_source"] == "runtime_capability"
+        assert result["director_policy"]["allowed_scope"] == ["src/allowed.py"]
+        assert escaped.read_text(encoding="utf-8") == "value = 'original'\n"
+
     def test_write_file_package_json_reports_structured_dependency_diff(self, temp_workspace) -> None:
         workspace = Path(temp_workspace)
         before = {

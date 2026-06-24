@@ -42,6 +42,9 @@ from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
 from polaris.cells.roles.kernel.internal.transaction.slm_coprocessor import (
     SLMCoprocessor,
 )
+from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
+    extract_continuation_prompt_metadata,
+)
 
 __all__ = [
     "VERIFICATION_TOOLS",
@@ -56,6 +59,7 @@ __all__ = [
     "ToolResult",
     "TransactionConfig",
     "evaluate_modification_readiness",
+    "extract_continuation_prompt_metadata",
     "extract_tool_results_from_batch_receipt",
     "get_verification_patterns",
     "has_authoritative_write_receipt",

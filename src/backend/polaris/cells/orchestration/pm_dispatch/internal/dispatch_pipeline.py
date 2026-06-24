@@ -12,6 +12,7 @@ isolation.  Validated by ``tests/test_pm_dispatch_no_delivery_import.py``.
 from __future__ import annotations
 
 import hashlib  # noqa: F401 — preserved as a module attribute for surface parity
+import ipaddress
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -202,6 +204,35 @@ def _endpoint_reachable(base_url: str, *, timeout: float = 4.0) -> bool:
         return False
 
 
+def _base_url_requires_anonymous_probe(base_url: str, provider_type: str = "") -> bool:
+    """Return true when an anonymous ``/models`` probe is a reliable health signal."""
+
+    normalized_type = str(provider_type or "").strip().lower()
+    if normalized_type in {"ollama", "local", "local_http", "openai_local", "local_openai"}:
+        return True
+
+    value = str(base_url or "").strip()
+    if not value:
+        return False
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
+    scheme = str(parsed.scheme or "").strip().lower()
+    host = str(parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+    if scheme == "http":
+        return True
+    if host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".local"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private or ip.is_link_local
+
+
 def _reachable_provider_pool(pool: tuple[str, ...], *, probe_timeout: float = 3.0) -> list[str]:
     """Filter a provider pool to currently-reachable backends (skip offline endpoints).
 
@@ -212,19 +243,28 @@ def _reachable_provider_pool(pool: tuple[str, ...], *, probe_timeout: float = 3.
     """
     from concurrent.futures import ThreadPoolExecutor
 
-    from polaris.kernelone.llm.runtime_config import get_provider_base_url
+    from polaris.kernelone.llm.runtime_config import get_provider_base_url, get_provider_entry
 
     base_urls = {provider_id: get_provider_base_url(provider_id) for provider_id in pool}
+    provider_types = {
+        provider_id: str(get_provider_entry(provider_id).get("type") or "").strip().lower() for provider_id in pool
+    }
     if not pool:
         return []
     with ThreadPoolExecutor(max_workers=max(1, len(pool))) as executor:
-        reachable = dict(
+        probe_ids = [
+            provider_id
+            for provider_id in pool
+            if _base_url_requires_anonymous_probe(base_urls[provider_id], provider_types.get(provider_id, ""))
+        ]
+        probed = dict(
             zip(
-                pool,
-                executor.map(lambda pid: _endpoint_reachable(base_urls[pid], timeout=probe_timeout), pool),
+                probe_ids,
+                executor.map(lambda pid: _endpoint_reachable(base_urls[pid], timeout=probe_timeout), probe_ids),
                 strict=True,
             )
         )
+        reachable = {provider_id: probed.get(provider_id, True) for provider_id in pool}
     live: list[str] = []
     for provider_id in pool:
         if reachable.get(provider_id):
@@ -782,6 +822,15 @@ def _mainline_publish_dispatch_tasks_to_task_market(
         task_route = _task_market_route_for_task(task)
         task_stage = _task_market_stage_for_route(task_route)
         blueprint_required = task_route == _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
+        pm_contract_hash = _hash_payload(dict(task))
+        control_plane_lineage = {
+            "source": "pm_dispatch.publish",
+            "contract_hash": pm_contract_hash,
+            "plan_id": revision_context["plan_id"],
+            "plan_revision_id": revision_context["plan_revision_id"],
+            "requirement_digest": revision_context["requirement_digest"],
+            "constraint_digest": revision_context["constraint_digest"],
+        }
         payload: dict[str, Any] = {
             "source_pm_task_id": task_id,
             "title": str(task.get("title") or task.get("goal") or task_id).strip(),
@@ -799,6 +848,9 @@ def _mainline_publish_dispatch_tasks_to_task_market(
             "risk_flags": task.get("risk_flags") if isinstance(task.get("risk_flags"), list) else [],
             "qa_contract": task.get("qa_contract") if isinstance(task.get("qa_contract"), dict) else {},
             "pm_contract": dict(task),
+            "contract_hash": pm_contract_hash,
+            "pm_contract_hash": pm_contract_hash,
+            "control_plane_lineage": control_plane_lineage,
             "task": dict(task),
             # CE consumer PreflightContext requires these runtime fields.
             "workspace": workspace_full,
@@ -809,6 +861,8 @@ def _mainline_publish_dispatch_tasks_to_task_market(
             "route": task_route,
             "task_market_route": task_route,
             "blueprint_required": blueprint_required,
+            "plan_id": revision_context["plan_id"],
+            "plan_revision_id": revision_context["plan_revision_id"],
         }
         try:
             command = publish_contract_type(
@@ -929,6 +983,15 @@ def _shadow_publish_dispatch_tasks_to_task_market(
             continue
         trace_id = str(task.get("trace_id") or run_id).strip() or run_id
         task_route = _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
+        pm_contract_hash = _hash_payload(dict(task))
+        control_plane_lineage = {
+            "source": "pm_dispatch.publish",
+            "contract_hash": pm_contract_hash,
+            "plan_id": revision_context["plan_id"],
+            "plan_revision_id": revision_context["plan_revision_id"],
+            "requirement_digest": revision_context["requirement_digest"],
+            "constraint_digest": revision_context["constraint_digest"],
+        }
         payload: dict[str, Any] = {
             "source_pm_task_id": task_id,
             "title": str(task.get("title") or task.get("goal") or task_id).strip(),
@@ -946,12 +1009,17 @@ def _shadow_publish_dispatch_tasks_to_task_market(
             "risk_flags": task.get("risk_flags") if isinstance(task.get("risk_flags"), list) else [],
             "qa_contract": task.get("qa_contract") if isinstance(task.get("qa_contract"), dict) else {},
             "pm_contract": dict(task),
+            "contract_hash": pm_contract_hash,
+            "pm_contract_hash": pm_contract_hash,
+            "control_plane_lineage": control_plane_lineage,
             "task": dict(task),
             "workspace": workspace_full,
             "run_id": run_id,
             "route": task_route,
             "task_market_route": task_route,
             "blueprint_required": True,
+            "plan_id": revision_context["plan_id"],
+            "plan_revision_id": revision_context["plan_revision_id"],
         }
         try:
             command = publish_contract_type(

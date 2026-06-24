@@ -1,8 +1,10 @@
 /**
- * BenchPanel — a Factory sub-panel that streams L1-L8 bench progress in
- * real time. Driven by `useFactoryBench`; no polling, all events arrive
- * over the unified Nats-JetStream/WebSocket runtime transport, keyed to the
- * bench session instead of the chain subprocess workspace.
+ * BenchPanel — internal test-mode panel for Factory Bench batch progress.
+ *
+ * Bench is not a production workspace surface. Callers must guard this
+ * component behind the internal bench/test-mode flag before rendering it.
+ * Driven by `useFactoryBench`; no polling, all events arrive over the unified
+ * Nats-JetStream/WebSocket runtime transport.
  */
 
 import { useMemo } from 'react';
@@ -33,6 +35,7 @@ import type {
 
 interface BenchPanelProps {
   className?: string;
+  enabled?: boolean;
   onWorkspaceChange?: UseFactoryBenchOptions['onWorkspaceChange'];
 }
 
@@ -93,7 +96,14 @@ function summarizeControlPlane(projection: FactoryBenchControlPlaneProjection | 
   return `${projection.projected}/${projection.total} 投影 · ${projection.failed} 异常`;
 }
 
-export function BenchPanel({ className, onWorkspaceChange }: BenchPanelProps): JSX.Element {
+export function BenchPanel({ enabled = false, ...props }: BenchPanelProps): JSX.Element | null {
+  if (!enabled) {
+    return null;
+  }
+  return <BenchPanelSubscribed {...props} />;
+}
+
+function BenchPanelSubscribed({ className, onWorkspaceChange }: Omit<BenchPanelProps, 'enabled'>): JSX.Element {
   const bench: UseFactoryBenchResult = useFactoryBench({ autoSelect: 'newest', onWorkspaceChange });
   const { sessions, currentSession, events, isStreaming, isLoading, error, refresh, select } = bench;
 

@@ -30,7 +30,7 @@ from polaris.delivery.http.schemas.common import (
 from polaris.kernelone.runtime.defaults import DEFAULT_WORKSPACE
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
-from ._shared import StructuredHTTPException, get_state, require_auth
+from ._shared import StructuredHTTPException, get_state, require_auth, require_internal_bench_surface
 
 logger = logging.getLogger(__name__)
 
@@ -568,6 +568,7 @@ def history_rounds(request: Request, limit: int = 50) -> dict[str, Any]:
 
 @router.get("/history/factory/overview", dependencies=[Depends(require_auth)])
 def history_factory_overview(request: Request, limit: int = 50) -> dict[str, Any]:
+    require_internal_bench_surface()
     merged_rounds = _load_merged_rounds(get_state(request), include_factory_flow=True)
     limited_rounds = merged_rounds[:limit]
     return {"summary": _build_factory_summary(limited_rounds), "rounds": limited_rounds}
@@ -579,7 +580,7 @@ def history_round_detail(request: Request, round_id: str) -> dict[str, Any]:
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
     workspace = workspace or DEFAULT_WORKSPACE
-    rounds = _load_merged_rounds(state, include_factory_flow=True)
+    rounds = _load_merged_rounds(state, include_factory_flow=False)
     round_detail: dict[str, Any] | None = None
     for item in rounds:
         if item.get("round_id") == round_id:
@@ -814,6 +815,7 @@ def v2_history_factory_snapshots(
     Returns:
         Paginated factory snapshots with total count.
     """
+    require_internal_bench_surface()
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -902,6 +904,7 @@ def history_task_snapshot_manifest(request: Request, snapshot_id: str) -> dict[s
 @router.get("/history/factory/{run_id}/manifest", dependencies=[Depends(require_auth)])
 def history_factory_manifest(request: Request, run_id: str) -> dict[str, Any]:
     """Get manifest for an archived factory run."""
+    require_internal_bench_surface()
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw

@@ -142,6 +142,9 @@ def test_shadow_publish_emits_publish_commands(monkeypatch) -> None:
     assert first.kwargs["metadata"]["dispatch_rollout_mode"] == "mainline-full"
     assert first.kwargs["metadata"]["route"] == "chief_blueprint_required"
     assert first.kwargs["metadata"]["blueprint_required"] is True
+    assert first.kwargs["payload"]["contract_hash"]
+    assert first.kwargs["payload"]["pm_contract_hash"] == first.kwargs["payload"]["contract_hash"]
+    assert first.kwargs["payload"]["control_plane_lineage"]["contract_hash"] == first.kwargs["payload"]["contract_hash"]
     assert first.kwargs["metadata"]["published_via"] == "legacy_shadow_normalized"
     assert first.kwargs["plan_id"]
     assert first.kwargs["plan_revision_id"].startswith("rev-")
@@ -203,6 +206,9 @@ def test_mainline_publish_routes_tasks_by_contract(monkeypatch) -> None:
     assert second.kwargs["metadata"]["blueprint_required"] is True
     assert first.kwargs["metadata"]["dispatch_mode"] == "mainline"
     assert first.kwargs["metadata"]["published_via"] == "mainline"
+    assert first.kwargs["payload"]["contract_hash"]
+    assert first.kwargs["payload"]["pm_contract_hash"] == first.kwargs["payload"]["contract_hash"]
+    assert first.kwargs["payload"]["control_plane_lineage"]["plan_revision_id"] == first.kwargs["plan_revision_id"]
     assert first.kwargs["plan_id"]
     assert first.kwargs["plan_revision_id"].startswith("rev-")
     # Results are returned

@@ -135,23 +135,37 @@ def _handle_execute_command(self: AgentAccelToolExecutor, **kwargs) -> dict[str,
                 "error": f"Command blocked: {validation_result.reason}",
                 "blocked": True,
                 "command": command_text,
-            }
+            },
+            self,
         )
 
     translated = _translate_readonly_command_alias(self, command_text)
     if translated is not None:
-        return _attach_command_effect_receipt(translated)
+        return _attach_command_effect_receipt(translated, self)
 
     if _contains_shell_operators(command_text):
-        return _attach_command_effect_receipt(_execute_command_chain(self, command_text, timeout_seconds))
+        return _attach_command_effect_receipt(_execute_command_chain(self, command_text, timeout_seconds), self)
 
-    return _attach_command_effect_receipt(_execute_command_base(self, command_text, timeout_seconds))
+    return _attach_command_effect_receipt(_execute_command_base(self, command_text, timeout_seconds), self)
 
 
-def _attach_command_effect_receipt(result: dict[str, Any]) -> dict[str, Any]:
+def _command_capability_token(self: AgentAccelToolExecutor | None) -> dict[str, Any]:
+    token = getattr(self, "_capability_token", {}) if self is not None else {}
+    return dict(token) if isinstance(token, dict) else {}
+
+
+def _attach_command_effect_receipt(
+    result: dict[str, Any],
+    self: AgentAccelToolExecutor | None = None,
+) -> dict[str, Any]:
     """Attach a canonical effect receipt to execute_command results."""
     if "effect_receipt" in result:
-        return result
+        payload = dict(result)
+        receipt = payload.get("effect_receipt")
+        capability_token = _command_capability_token(self)
+        if isinstance(receipt, dict) and capability_token:
+            receipt["capability_token"] = capability_token
+        return payload
     payload = dict(result)
     payload["effect_receipt"] = {
         "operation": "execute_command",
@@ -162,6 +176,9 @@ def _attach_command_effect_receipt(result: dict[str, Any]) -> dict[str, Any]:
         "timed_out": bool(payload.get("timed_out")),
         "success": bool(payload.get("ok")),
     }
+    capability_token = _command_capability_token(self)
+    if capability_token:
+        payload["effect_receipt"]["capability_token"] = capability_token
     if isinstance(payload.get("director_policy"), dict):
         payload["effect_receipt"]["director_policy"] = payload["director_policy"]
     if isinstance(payload.get("redirect_writes"), list):

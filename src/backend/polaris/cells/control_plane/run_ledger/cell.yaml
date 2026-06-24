@@ -1,0 +1,56 @@
+id: control_plane.run_ledger
+title: Control Plane Run Ledger
+kind: capability
+visibility: public
+stateful: true
+owner: control-plane
+purpose: >
+  Provide platform-level read models for append-only run ledger evidence.
+  Internal stress harnesses may produce sample ledger events in test mode,
+  but production consumers must use this platform namespace and never depend on
+  test-harness APIs, naming, or state models.
+current_modules:
+  - polaris.cells.control_plane.run_ledger.public.contracts
+  - polaris.cells.control_plane.run_ledger.public.job_token
+  - polaris.cells.control_plane.run_ledger.public.ledger
+  - polaris.cells.control_plane.run_ledger.public.projection
+  - polaris.cells.control_plane.run_ledger.public.service
+owned_paths:
+  - polaris/cells/control_plane/run_ledger/**
+public_contracts:
+  modules:
+    - polaris.cells.control_plane.run_ledger.public.contracts
+    - polaris.cells.control_plane.run_ledger.public.job_token
+    - polaris.cells.control_plane.run_ledger.public.ledger
+    - polaris.cells.control_plane.run_ledger.public.projection
+    - polaris.cells.control_plane.run_ledger.public.service
+  commands: []
+  queries:
+    - ReadRunLedgerProjectionQueryV1
+  events: []
+  results:
+    - RunLedgerProjectionResultV1
+  errors:
+    - ControlPlaneRunLedgerV1Error
+depends_on: []
+subgraphs:
+  - execution_governance_pipeline
+state_owners:
+  - runtime/control_plane/ledger/*
+effects_allowed:
+  - fs.write:runtime/control_plane/ledger/*
+  - fs.read:runtime/control_plane/ledger/*
+  # Migration-only compatibility input. Production projection defaults must not
+  # read this path unless ReadRunLedgerProjectionQueryV1.include_compat_ledgers
+  # is explicitly enabled by an internal audit/migration caller.
+  - fs.read:runtime/factory/ledger/*
+verification:
+  tests:
+    - polaris/cells/control_plane/run_ledger/tests/test_public_service.py
+    - polaris/tests/unit/delivery/http/routers/test_control_plane_router.py
+  gaps:
+    - Compatibility readers may explicitly accept historical internal
+      stress-harness ledger files under runtime/factory/ledger until old test
+      evidence ages out; production projection defaults must remain
+      runtime/control_plane/ledger only.
+  smoke_commands: []

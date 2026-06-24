@@ -105,6 +105,7 @@ _EXPORT_TO_MODULE: dict[str, str] = {
     "from_tool_result": "polaris.cells.roles.kernel.public.transcript_ir",
     "get_dead_loop_metrics": "polaris.cells.roles.kernel.public.metrics_contracts",
     "LLMInvoker": "polaris.cells.roles.kernel.internal.llm_caller.invoker",
+    "extract_continuation_prompt_metadata": "polaris.cells.roles.kernel.public.transaction_contracts",
     "extract_target_files_from_message": "polaris.cells.roles.kernel.internal.transaction.contract_guards",
 }
 

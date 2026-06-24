@@ -846,17 +846,18 @@ export const EXPANDED_TECH_CANDIDATES: ExpandedTechCandidate[] = [
     e2eFields: ["stream_meta.json.archive_id", "session_id", "turn_id", "event_count", "format=jsonl.gz"],
   },
   {
-    id: "history_factory_overview_defect_loop_projection",
-    title: "History factory overview and defect loop projection",
+    id: "control_plane_ledger_history_projection",
+    title: "Control Plane Run Ledger history projection",
     category: "history",
     status: "implemented",
     source: "factory-archive-resident-audit",
     paths: [
       "src/backend/polaris/delivery/http/routers/history.py",
+      "src/backend/polaris/delivery/http/routers/control_plane.py",
       "src/backend/polaris/tests/unit/delivery/http/routers/test_history_v2.py",
     ],
-    gates: ["GET /history/factory/overview", "GET /v2/history/runs?source=runtime|archived"],
-    e2eFields: ["policy_gate_blocks", "defect_followups_generated", "runs[].source"],
+    gates: ["GET /v2/control-plane/ledger/projection", "GET /v2/history/runs?source=runtime|archived"],
+    e2eFields: ["source=run_ledger_projection", "projected", "missing", "failed", "runs[].source"],
   },
   {
     id: "runtime_storage_layout_migration_reset_control",
@@ -1044,7 +1045,7 @@ export const CANDIDATE_RUNTIME_PROBE_IDS: Record<string, string[]> = {
     "e2e_automatic_evidence_attachments",
   ],
   history_archive_readonly_runtime_probe: [
-    "history_factory_overview_defect_loop_projection",
+    "control_plane_ledger_history_projection",
     "immutable_archive_manifest_jsonl_index",
   ],
   resident_self_learning_runtime_probe: [
@@ -4039,23 +4040,22 @@ function collectE2eRuntimeIsolationProbe(workspace: string, runtimeRoot: string)
 
 async function collectHistoryArchiveReadonlyRuntimeProbe(page: Page): Promise<EvidenceProbe> {
   try {
-    const [runsResponse, taskSnapshotsResponse, factorySnapshotsResponse, overviewResponse] = await Promise.all([
+    const [runsResponse, taskSnapshotsResponse, ledgerProjectionResponse] = await Promise.all([
       requestJson<JsonRecord>(page, "/v2/history/runs?limit=5&source=all"),
       requestJson<JsonRecord>(page, "/v2/history/tasks/snapshots?limit=5"),
-      requestJson<JsonRecord>(page, "/v2/history/factory/snapshots?limit=5"),
-      requestJson<JsonRecord>(page, "/history/factory/overview?limit=5"),
+      requestJson<JsonRecord>(page, "/v2/control-plane/ledger/projection?max_runs=5"),
     ]);
     const runs = Array.isArray(asRecord(runsResponse).runs) ? asRecord(runsResponse).runs : null;
     const taskSnapshots = Array.isArray(asRecord(taskSnapshotsResponse).snapshots)
       ? asRecord(taskSnapshotsResponse).snapshots
       : null;
-    const factoryRuns = Array.isArray(asRecord(factorySnapshotsResponse).factory_runs)
-      ? asRecord(factorySnapshotsResponse).factory_runs
-      : null;
-    const overview = asRecord(overviewResponse);
-    const overviewSummary = asRecord(overview.summary);
-    const overviewRounds = Array.isArray(overview.rounds) ? overview.rounds : null;
-    const pass = Boolean(runs && taskSnapshots && factoryRuns && Object.keys(overviewSummary).length > 0 && overviewRounds);
+    const ledgerProjection = asRecord(ledgerProjectionResponse);
+    const pass = Boolean(
+      runs &&
+      taskSnapshots &&
+      ledgerProjection.source === "run_ledger_projection" &&
+      Array.isArray(ledgerProjection.projects),
+    );
 
     return makeProbe({
       id: "history_archive_readonly_runtime_probe",
@@ -4076,19 +4076,16 @@ async function collectHistoryArchiveReadonlyRuntimeProbe(page: Page): Promise<Ev
         },
         {
           type: "api",
-          ref: "/v2/history/factory/snapshots",
-          value: { factory_run_count: factoryRuns?.length ?? 0, total: asNumber(asRecord(factorySnapshotsResponse).total) },
-        },
-        {
-          type: "api",
-          ref: "/history/factory/overview",
+          ref: "/v2/control-plane/ledger/projection",
           value: {
-            summary_keys: Object.keys(overviewSummary),
-            round_count: overviewRounds?.length ?? 0,
+            status: String(ledgerProjection.status || ""),
+            projected: asNumber(ledgerProjection.projected),
+            missing: asNumber(ledgerProjection.missing),
+            failed: asNumber(ledgerProjection.failed),
           },
         },
       ],
-      findings: pass ? [] : ["history/archive responses did not expose the required indexed runtime projections"],
+      findings: pass ? [] : ["history/archive responses did not expose the required Run Ledger projection"],
     });
   } catch (error) {
     return makeProbe({
@@ -4100,8 +4097,7 @@ async function collectHistoryArchiveReadonlyRuntimeProbe(page: Page): Promise<Ev
       evidence: [
         { type: "api", ref: "/v2/history/runs" },
         { type: "api", ref: "/v2/history/tasks/snapshots" },
-        { type: "api", ref: "/v2/history/factory/snapshots" },
-        { type: "api", ref: "/history/factory/overview" },
+        { type: "api", ref: "/v2/control-plane/ledger/projection" },
       ],
       findings: [String(error)],
     });

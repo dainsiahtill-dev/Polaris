@@ -24,6 +24,7 @@ from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapt
 from polaris.cells.roles.adapters.internal.director.execute_method import (
     _apply_deterministic_javascript_test_missing_target_repair,
     _apply_deterministic_patch_residue_cleanup,
+    _apply_deterministic_python_package_shadow_bridge_repair,
     _apply_deterministic_python_unittest_missing_target_repair,
     _apply_deterministic_python_unittest_runtime_failure_repair,
     _apply_deterministic_scaffold_marker_cleanup,
@@ -662,6 +663,45 @@ def test_deterministic_npm_script_repair_removes_missing_jest_config_flag(tmp_pa
     assert results
     repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
     assert repaired["scripts"]["test"] == "jest --forceExit"
+
+
+def test_deterministic_npm_script_repair_uses_node_test_for_javascript_contract(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
+        _apply_deterministic_npm_test_script_repair,
+    )
+
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_basic.js").write_text("import test from 'node:test';\n", encoding="utf-8")
+    (tmp_path / "tests" / "smoke.test.js").write_text("import test from 'node:test';\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "javascript-project",
+                "version": "1.0.0",
+                "scripts": {
+                    "start": "node src/index.js",
+                    "test": "node tests/smoke.test.js",
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_npm_test_script_repair(
+        _make_adapter(tmp_path),
+        task_id="task-js-test-script",
+        artifact_quality_errors=[
+            "Artifact quality scan failed: workspace validation command failed (npm test): "
+            "AssertionError: test script must use node --test"
+        ],
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert repaired["scripts"]["test"] == "node --test tests/test_basic.js tests/smoke.test.js"
 
 
 def test_deterministic_runtime_dependency_repair_adds_typescript_dev_dependency(tmp_path: Any) -> None:
@@ -5912,6 +5952,39 @@ class TestDeterministicPythonRuntimeSmoke:
 
         assert errors == [], errors
 
+    def test_python_runtime_smoke_runs_unittest_discover_for_touched_tests(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "__init__.py").write_text("", encoding="utf-8")
+        (src_dir / "weather.py").write_text("class Weather:\n    pass\n", encoding="utf-8")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_weather.py").write_text(
+            "import unittest\n"
+            "from src.weather import Weather\n\n"
+            "class WeatherTests(unittest.TestCase):\n"
+            "    def test_weather_updates(self) -> None:\n"
+            "        Weather().update(dt_s=1.0, is_day=True)\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-unittest-discover",
+            all_affected_files=["tests/test_weather.py"],
+            timeout_seconds=10.0,
+        )
+
+        assert len(errors) == 1, errors
+        assert "python -m unittest discover" in errors[0]
+        assert "tests/test_weather.py" in errors[0]
+        assert "AttributeError" in errors[0]
+
     def test_python_unittest_missing_target_repair_creates_discoverable_test(self, tmp_path: Any) -> None:
         class _Adapter:
             workspace = str(tmp_path)
@@ -6015,6 +6088,229 @@ class TestDeterministicPythonRuntimeSmoke:
         )
         assert completed.returncode == 0, completed.stdout + completed.stderr
         assert "Ran 2 tests" in completed.stderr
+
+    def test_python_package_shadow_bridge_repair_exports_sibling_module_symbol(self, tmp_path: Any) -> None:
+        class _Adapter:
+            workspace = str(tmp_path)
+
+            def __init__(self) -> None:
+                self.progress_files: list[str] = []
+                self._execution = SimpleNamespace(_message_bus=None)
+
+            def _update_task_progress(self, task_id: str, status: str, **kwargs: Any) -> None:
+                del task_id, status
+                current_file = str(kwargs.get("current_file") or "")
+                if current_file:
+                    self.progress_files.append(current_file)
+
+        src_dir = tmp_path / "src"
+        package_dir = src_dir / "engine"
+        package_dir.mkdir(parents=True)
+        (src_dir / "__init__.py").write_text("", encoding="utf-8")
+        (src_dir / "engine.py").write_text("def run() -> str:\n    return 'planet-weather-ok'\n", encoding="utf-8")
+        (package_dir / "__init__.py").write_text('"""Renderer package."""\n', encoding="utf-8")
+        (tmp_path / "main.py").write_text(
+            "from src.engine import run\n\nif __name__ == '__main__':\n    print(run())\n",
+            encoding="utf-8",
+        )
+
+        failed = subprocess.run(
+            [sys.executable, "main.py"],
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=10,
+            check=False,
+        )
+        assert failed.returncode == 1
+        assert "cannot import name 'run' from 'src.engine'" in failed.stderr
+
+        adapter = _Adapter()
+        results = _apply_deterministic_python_package_shadow_bridge_repair(
+            adapter,
+            task_id="TASK-3",
+            artifact_quality_errors=[failed.stderr],
+        )
+
+        assert [item["result"]["file"] for item in results] == ["src/engine/__init__.py"]
+        assert results[0]["result"]["symbols"] == ["run"]
+        assert adapter.progress_files == ["src/engine/__init__.py"]
+
+        completed = subprocess.run(
+            [sys.executable, "main.py"],
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=10,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert completed.stdout.strip() == "planet-weather-ok"
+
+    def test_python_package_shadow_bridge_repair_registers_dataclass_module(self, tmp_path: Any) -> None:
+        class _Adapter:
+            workspace = str(tmp_path)
+
+            def __init__(self) -> None:
+                self.progress_files: list[str] = []
+                self._execution = SimpleNamespace(_message_bus=None)
+
+            def _update_task_progress(self, task_id: str, status: str, **kwargs: Any) -> None:
+                del task_id, status
+                current_file = str(kwargs.get("current_file") or "")
+                if current_file:
+                    self.progress_files.append(current_file)
+
+        src_dir = tmp_path / "src"
+        package_dir = src_dir / "engine"
+        package_dir.mkdir(parents=True)
+        (src_dir / "__init__.py").write_text("", encoding="utf-8")
+        (src_dir / "engine.py").write_text(
+            "from dataclasses import dataclass\n\n"
+            "@dataclass\n"
+            "class EngineState:\n"
+            "    tick: int = 3\n\n"
+            "def run() -> EngineState:\n"
+            "    return EngineState()\n",
+            encoding="utf-8",
+        )
+        (package_dir / "__init__.py").write_text(
+            "def run() -> str:\n    return 'renderer-run'\n\n__all__ = ['run']\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "main.py").write_text(
+            "from src.engine import EngineState, run\n\n"
+            "if __name__ == '__main__':\n"
+            "    state = EngineState()\n"
+            "    print(f'{state.tick}:{run()}')\n",
+            encoding="utf-8",
+        )
+
+        failed = subprocess.run(
+            [sys.executable, "main.py"],
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=10,
+            check=False,
+        )
+        assert failed.returncode == 1
+        assert "cannot import name 'EngineState' from 'src.engine'" in failed.stderr
+
+        adapter = _Adapter()
+        results = _apply_deterministic_python_package_shadow_bridge_repair(
+            adapter,
+            task_id="TASK-3",
+            artifact_quality_errors=[failed.stderr],
+        )
+
+        assert [item["result"]["file"] for item in results] == ["src/engine/__init__.py"]
+        assert results[0]["result"]["symbols"] == ["EngineState"]
+        assert adapter.progress_files == ["src/engine/__init__.py"]
+
+        completed = subprocess.run(
+            [sys.executable, "main.py"],
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=10,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert completed.stdout.strip() == "3:renderer-run"
+
+    def test_python_package_shadow_bridge_repair_reexports_child_module_symbol(self, tmp_path: Any) -> None:
+        class _Adapter:
+            workspace = str(tmp_path)
+
+            def __init__(self) -> None:
+                self.progress_files: list[str] = []
+                self._execution = SimpleNamespace(_message_bus=None)
+
+            def _update_task_progress(self, task_id: str, status: str, **kwargs: Any) -> None:
+                del task_id, status
+                current_file = str(kwargs.get("current_file") or "")
+                if current_file:
+                    self.progress_files.append(current_file)
+
+        src_dir = tmp_path / "src"
+        package_dir = src_dir / "engine"
+        package_dir.mkdir(parents=True)
+        (src_dir / "__init__.py").write_text(
+            "from .engine import Engine\nfrom .weather import Weather\n\n__all__ = ['Engine', 'Weather']\n",
+            encoding="utf-8",
+        )
+        (src_dir / "weather.py").write_text(
+            "class Weather:\n    def summary(self) -> str:\n        return 'temperature=22C'\n",
+            encoding="utf-8",
+        )
+        (package_dir / "core.py").write_text(
+            "class Engine:\n"
+            "    def __init__(self) -> None:\n"
+            "        self.altitude = 0\n\n"
+            "    def step(self) -> int:\n"
+            "        self.altitude += 1\n"
+            "        return self.altitude\n",
+            encoding="utf-8",
+        )
+        (package_dir / "__init__.py").write_text(
+            "from .renderer import RenderFrame\n\n__all__ = ['RenderFrame']\n",
+            encoding="utf-8",
+        )
+        (package_dir / "renderer.py").write_text("class RenderFrame:\n    pass\n", encoding="utf-8")
+        (tmp_path / "main.py").write_text(
+            "from src import Engine, Weather\nfrom src.engine import Engine as EngineFromEnginePkg\n\n"
+            "if __name__ == '__main__':\n"
+            "    engine = Engine()\n"
+            "    weather = Weather()\n"
+            "    print(f'altitude={engine.step()} {weather.summary()} alias={Engine is EngineFromEnginePkg}')\n",
+            encoding="utf-8",
+        )
+
+        failed = subprocess.run(
+            [sys.executable, "main.py"],
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=10,
+            check=False,
+        )
+        assert failed.returncode == 1
+        assert "cannot import name 'Engine' from 'src.engine'" in failed.stderr
+
+        adapter = _Adapter()
+        results = _apply_deterministic_python_package_shadow_bridge_repair(
+            adapter,
+            task_id="TASK-3",
+            artifact_quality_errors=[failed.stderr],
+        )
+
+        assert [item["result"]["file"] for item in results] == ["src/engine/__init__.py"]
+        assert results[0]["result"]["source_tool"] == "deterministic_python_package_child_reexport_repair"
+        assert results[0]["result"]["source_module"] == ".core"
+        assert results[0]["result"]["symbols"] == ["Engine"]
+        assert adapter.progress_files == ["src/engine/__init__.py"]
+
+        init_text = (package_dir / "__init__.py").read_text(encoding="utf-8")
+        assert "from .core import Engine" in init_text
+        assert "__all__ = _polaris_existing_all" in init_text
+
+        completed = subprocess.run(
+            [sys.executable, "main.py"],
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=10,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert completed.stdout.strip() == "altitude=1 temperature=22C alias=True"
 
     def test_javascript_test_missing_target_repair_creates_frontend_smoke(self, tmp_path: Any) -> None:
         class _Adapter:
@@ -7756,6 +8052,506 @@ class TestQualityRepairMissingTargetContract:
 
         assert missing == ["src/styles/global.css"]
 
+    def test_repair_targets_missing_workspace_file_from_python_unittest_error(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _missing_materialization_quality_repair_target_files,
+        )
+
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "__init__.py").write_text('"""package."""\n', encoding="utf-8")
+        (tmp_path / "main.py").write_text("import src\n", encoding="utf-8")
+        (tmp_path / "README.md").write_text("# Mini Planet\n", encoding="utf-8")
+        test_file = tests / "test_scaffold.py"
+        test_file.write_text(
+            "import unittest\n\n"
+            "class ScaffoldTest(unittest.TestCase):\n"
+            "    def test_requirements(self) -> None:\n"
+            "        self.assertTrue(False, 'requirements.txt must exist')\n",
+            encoding="utf-8",
+        )
+        error = (
+            "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_scaffold.py' "
+            "(returncode=1); tail:\n"
+            f'  File "{test_file}", line 28, in test_requirements_txt_exists\n'
+            "AssertionError: False is not true : requirements.txt must exist at "
+            f"{tmp_path / 'requirements.txt'}\n"
+            "ERROR: Could not open requirements file: [Errno 2] No such file or directory: "
+            f"'{tmp_path / 'requirements.txt'}'\n"
+        )
+
+        missing = _missing_materialization_quality_repair_target_files(
+            {"target_files": ["src/__init__.py", "main.py", "README.md"]},
+            str(tmp_path),
+            [error],
+        )
+
+        assert missing == ["requirements.txt"]
+
+    def test_repair_targets_workspace_file_named_by_assertion_requirement(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _missing_materialization_quality_repair_target_files,
+        )
+
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        test_file = tests / "test_planet.py"
+        test_file.write_text(
+            "import unittest\n\n"
+            "class PlanetTest(unittest.TestCase):\n"
+            "    def test_requirements_txt_non_empty(self) -> None:\n"
+            "        self.fail('requirements.txt must declare at least one dependency.')\n",
+            encoding="utf-8",
+        )
+        error = (
+            "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_planet.py' "
+            "(returncode=1); tail:\n"
+            f'  File "{test_file}", line 39, in test_requirements_txt_non_empty\n'
+            "AssertionError: '' is not true : requirements.txt must declare at least one dependency.\n"
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "__init__.py").write_text('"""package."""\n', encoding="utf-8")
+        (tmp_path / "main.py").write_text("import src\n", encoding="utf-8")
+        (tmp_path / "README.md").write_text("# Mini Planet\n", encoding="utf-8")
+        missing = _missing_materialization_quality_repair_target_files(
+            {"target_files": ["src/__init__.py", "main.py", "README.md"]},
+            str(tmp_path),
+            [error],
+        )
+
+        assert missing == ["requirements.txt"]
+
+    def test_repair_targets_existing_workspace_file_named_by_content_assertion(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _missing_materialization_quality_repair_target_files,
+        )
+
+        (tmp_path / "requirements.txt").write_text("# standard library only\n", encoding="utf-8")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "__init__.py").write_text('"""package."""\n', encoding="utf-8")
+        (tmp_path / "main.py").write_text("import src\n", encoding="utf-8")
+        (tmp_path / "README.md").write_text("# Mini Planet\n", encoding="utf-8")
+        error = (
+            "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_planet.py' "
+            "(returncode=1); tail:\n"
+            "AssertionError: 'pygame' not found in '# standard library only\\n' : "
+            "requirements.txt must declare pygame\n"
+        )
+
+        missing = _missing_materialization_quality_repair_target_files(
+            {"target_files": ["src/__init__.py", "main.py", "README.md"]},
+            str(tmp_path),
+            [error],
+        )
+
+        assert missing == ["requirements.txt"]
+
+    @pytest.mark.asyncio
+    async def test_quality_repair_merges_missing_workspace_file_with_runtime_smoke_targets(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+                self.allow_patch_fallback: bool | None = None
+
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            async def execute_tools(
+                self,
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self._execution = _Execution()
+                self.repair_context: dict[str, Any] = {}
+                self.repair_message = ""
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del timeout_seconds, stage_label
+                self.repair_context = context
+                self.repair_message = message
+                return {"content": ""}
+
+        adapter = _Adapter()
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "__init__.py").write_text('"""package."""\n', encoding="utf-8")
+        (tmp_path / "main.py").write_text("import src\n", encoding="utf-8")
+        (tmp_path / "README.md").write_text("# Mini Planet\n", encoding="utf-8")
+        test_file = tmp_path / "tests" / "test_scaffold.py"
+        test_file.parent.mkdir()
+        test_file.write_text(
+            "import unittest\n\n"
+            "class ScaffoldTest(unittest.TestCase):\n"
+            "    def test_requirements_txt_exists(self) -> None:\n"
+            "        raise AssertionError('requirements.txt must exist')\n",
+            encoding="utf-8",
+        )
+        quality_error = (
+            "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_scaffold.py' "
+            "(returncode=1); tail:\n"
+            f'  File "{test_file}", line 28, in test_requirements_txt_exists\n'
+            "AssertionError: False is not true : requirements.txt must exist at "
+            f"{tmp_path / 'requirements.txt'}\n"
+            "ERROR: Could not open requirements file: [Errno 2] No such file or directory: "
+            f"'{tmp_path / 'requirements.txt'}'\n"
+        )
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["src/__init__.py", "main.py", "README.md"]},
+            target_task_id="PM-0001-1",
+            run_id="run-python-missing-requirements",
+            context={},
+            original_message="Create Python scaffold.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[quality_error],
+            changed_files=["README.md", "main.py", "src/__init__.py", "tests/test_scaffold.py"],
+        )
+
+        assert summary["missing_target_files"] == ["requirements.txt"]
+        assert summary["repair_target_files"][0] == "requirements.txt"
+        assert "tests/test_scaffold.py" in summary["repair_target_files"]
+        assert "requirements.txt" in adapter.repair_context["repair_target_files"]
+        assert "MISSING TARGET FILES" in adapter.repair_message
+        assert adapter._execution.allowed_tool_names == {"write_file"}
+        assert adapter._execution.allow_patch_fallback is False
+
+    @pytest.mark.asyncio
+    async def test_quality_repair_deterministically_creates_single_missing_requirements(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                return {"content": ""}
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "__init__.py").write_text('"""package."""\n', encoding="utf-8")
+        (tmp_path / "main.py").write_text("import src\n", encoding="utf-8")
+        (tmp_path / "README.md").write_text("# Mini Planet\n", encoding="utf-8")
+        test_file = tmp_path / "tests" / "test_scaffold.py"
+        test_file.parent.mkdir()
+        test_file.write_text("import unittest\n", encoding="utf-8")
+        quality_error = (
+            "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_scaffold.py' "
+            "(returncode=1); tail:\n"
+            f'  File "{test_file}", line 29, in test_requirements_file_exists\n'
+            "AssertionError: False is not true : requirements.txt must exist at "
+            f"{tmp_path / 'requirements.txt'}\n"
+        )
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["src/__init__.py", "main.py", "README.md"]},
+            target_task_id="PM-0001-1",
+            run_id="run-python-deterministic-requirements",
+            context={},
+            original_message="Create Python scaffold.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[quality_error],
+            changed_files=["README.md", "main.py", "src/__init__.py", "tests/test_scaffold.py"],
+            repair_attempt=2,
+        )
+
+        assert summary["repair_target_files"] == ["requirements.txt"]
+        assert (tmp_path / "requirements.txt").read_text(encoding="utf-8") == "# standard library only\n"
+        assert any(
+            (item.get("result") or {}).get("source_tool")
+            == "director_quality_repair_deterministic_missing_requirements_write_file"
+            for item in tool_results
+            if isinstance(item, dict)
+        )
+
+    @pytest.mark.asyncio
+    async def test_quality_repair_deterministically_writes_required_requirement(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                return {"content": ""}
+
+        (tmp_path / "requirements.txt").write_text("# standard library only\n", encoding="utf-8")
+        quality_error = (
+            "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_planet.py' "
+            "(returncode=1); tail:\n"
+            "AssertionError: 'pygame' not found in '# standard library only\\n' : "
+            "requirements.txt must declare pygame\n"
+        )
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["src/__init__.py", "main.py", "README.md"]},
+            target_task_id="PM-0001-1",
+            run_id="run-python-deterministic-requirement-contract",
+            context={},
+            original_message="Create Python scaffold.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[quality_error],
+            changed_files=["requirements.txt", "tests/test_planet.py"],
+            repair_attempt=2,
+        )
+
+        assert summary["repair_target_files"] == ["requirements.txt"]
+        assert (tmp_path / "requirements.txt").read_text(encoding="utf-8") == "pygame\n"
+        assert any(
+            (item.get("result") or {}).get("source_tool")
+            == "director_quality_repair_deterministic_missing_requirements_write_file"
+            for item in tool_results
+            if isinstance(item, dict)
+        )
+
+    @pytest.mark.asyncio
+    async def test_quality_repair_exception_path_still_runs_deterministic_requirement(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                raise RuntimeError(
+                    "single_batch_contract_violation: mutation write target drift; "
+                    "write targets out-of-scope=['requirements.txt']"
+                )
+
+        quality_error = (
+            "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_planet.py' "
+            "(returncode=1); tail:\n"
+            "AssertionError: 0 not greater than or equal to 1 : "
+            "requirements.txt must declare at least one dependency\n"
+        )
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["src/__init__.py", "main.py", "README.md"]},
+            target_task_id="PM-0001-1",
+            run_id="run-python-exception-fallback",
+            context={},
+            original_message="Create Python scaffold.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[quality_error],
+            changed_files=["tests/test_planet.py"],
+            repair_attempt=3,
+        )
+
+        assert summary["repair_target_files"] == ["requirements.txt"]
+        assert summary["write_tool_evidence"] is True
+        assert (tmp_path / "requirements.txt").read_text(encoding="utf-8") == "typing-extensions>=4.0\n"
+        assert any(
+            (item.get("result") or {}).get("source_tool")
+            == "director_quality_repair_deterministic_missing_requirements_write_file"
+            for item in tool_results
+            if isinstance(item, dict)
+        )
+
+    def test_repair_targets_missing_python_module_alias_from_unittest_error(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _missing_materialization_quality_repair_target_files,
+        )
+
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "src" / "models" / "weather.py").write_text("class Weather:\n    pass\n", encoding="utf-8")
+        test_file = tmp_path / "tests" / "test_weather.py"
+        test_file.parent.mkdir()
+        test_file.write_text("from weather import Weather\n", encoding="utf-8")
+        error = (
+            "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_weather.py' "
+            "(returncode=1); tail:\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{test_file}", line 14, in <module>\n'
+            "    from weather import Weather\n"
+            "ModuleNotFoundError: No module named 'weather'\n"
+        )
+
+        missing = _missing_materialization_quality_repair_target_files(
+            {"target_files": ["tests/test_weather.py"]},
+            str(tmp_path),
+            [error],
+        )
+
+        assert missing == ["src/weather.py"]
+
+    @pytest.mark.asyncio
+    async def test_quality_repair_deterministically_creates_python_module_alias(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                return {"content": ""}
+
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "src" / "models" / "weather.py").write_text("class Weather:\n    pass\n", encoding="utf-8")
+        test_file = tmp_path / "tests" / "test_weather.py"
+        test_file.parent.mkdir()
+        test_file.write_text("from weather import Weather\n", encoding="utf-8")
+        quality_error = (
+            "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_weather.py' "
+            "(returncode=1); tail:\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{test_file}", line 14, in <module>\n'
+            "    from weather import Weather\n"
+            "ModuleNotFoundError: No module named 'weather'\n"
+        )
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["tests/test_weather.py"]},
+            target_task_id="PM-0001-3",
+            run_id="run-python-module-alias",
+            context={},
+            original_message="Create unittest coverage.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[quality_error],
+            changed_files=["tests/test_weather.py"],
+            repair_attempt=2,
+        )
+
+        assert summary["repair_target_files"] == ["src/weather.py"]
+        assert "from src.models.weather import *" in (tmp_path / "src" / "weather.py").read_text(encoding="utf-8")
+        assert any(
+            (item.get("result") or {}).get("source_tool")
+            == "director_quality_repair_deterministic_python_module_alias_write_file"
+            for item in tool_results
+            if isinstance(item, dict)
+        )
+
     def test_repair_targets_unresolved_import_before_unrelated_declared_targets(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _missing_materialization_quality_repair_target_files,
@@ -8774,6 +9570,355 @@ class TestQualityRepairMissingTargetContract:
 
         assert targets == ["calculator.py", "tests/test_calculator.py"]
 
+    def test_python_unittest_discover_result_lines_infer_imported_src_modules(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _python_runtime_smoke_repair_target_files,
+        )
+
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "planet.py").write_text("class Planet:\n    pass\n", encoding="utf-8")
+        (src_dir / "weather.py").write_text("class Weather:\n    pass\n", encoding="utf-8")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_planet.py").write_text(
+            "import unittest\n"
+            "from src.planet import Planet\n\n"
+            "class TestPlanet(unittest.TestCase):\n"
+            "    def test_name_attribute(self) -> None:\n"
+            "        Planet(name='Aurora', radius=6371.0, mass=5.972e24)\n",
+            encoding="utf-8",
+        )
+        (tests_dir / "test_weather.py").write_text(
+            "import unittest\n"
+            "from src.planet import Planet\n"
+            "from src.weather import Weather\n\n"
+            "class TestWeather(unittest.TestCase):\n"
+            "    def test_temperature_attribute(self) -> None:\n"
+            "        Weather(planet=Planet(), temperature=288.15, humidity=0.5)\n",
+            encoding="utf-8",
+        )
+
+        error = (
+            "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_planet.py' "
+            "(returncode=1); tail:\n"
+            "test_name_attribute (test_planet.TestPlanet.test_name_attribute) ... ERROR\n"
+            "test_weather (unittest.loader._FailedTest.test_weather) ... ERROR\n"
+            "TypeError: Planet.__init__() got an unexpected keyword argument 'radius'\n"
+        )
+
+        targets = _python_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=["tests/test_planet.py", "tests/test_weather.py"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/planet.py", "src/weather.py", "tests/test_planet.py", "tests/test_weather.py"]
+
+    def test_python_unittest_missing_top_level_src_module_authorizes_shim(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _python_runtime_smoke_repair_target_files,
+        )
+
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "src" / "models" / "planet.py").write_text("class Planet:\n    pass\n", encoding="utf-8")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_planet.py").write_text(
+            "import os\n"
+            "import sys\n"
+            "import unittest\n\n"
+            "PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))\n"
+            "SRC_DIR = os.path.join(PROJECT_ROOT, 'src')\n"
+            "sys.path.insert(0, SRC_DIR)\n\n"
+            "from planet import Planet\n\n"
+            "class TestPlanet(unittest.TestCase):\n"
+            "    def test_default(self) -> None:\n"
+            "        Planet()\n",
+            encoding="utf-8",
+        )
+
+        error = (
+            "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_planet.py' "
+            "(returncode=1); tail:\n"
+            "test_planet (unittest.loader._FailedTest.test_planet) ... ERROR\n"
+            "ImportError: Failed to import test module: test_planet\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{tests_dir / "test_planet.py"}", line 10, in <module>\n'
+            "    from planet import Planet  # noqa: E402\n"
+            "ModuleNotFoundError: No module named 'planet'\n"
+        )
+
+        targets = _python_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=["tests/test_planet.py"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/planet.py", "tests/test_planet.py"]
+
+    def test_python_unittest_src_imports_authorize_missing_source_modules(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _python_runtime_smoke_repair_target_files,
+        )
+
+        (tmp_path / "src").mkdir()
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_planet.py").write_text(
+            "import unittest\n\n"
+            "class TestPlanet(unittest.TestCase):\n"
+            "    def test_default(self) -> None:\n"
+            "        from src.planet import Planet\n"
+            "        Planet()\n",
+            encoding="utf-8",
+        )
+        (tests_dir / "test_weather.py").write_text(
+            "import unittest\n\n"
+            "class TestWeather(unittest.TestCase):\n"
+            "    def test_default(self) -> None:\n"
+            "        from src.weather import Weather\n"
+            "        Weather()\n",
+            encoding="utf-8",
+        )
+        (tests_dir / "test_simulation.py").write_text(
+            "import unittest\n\n"
+            "class TestSimulation(unittest.TestCase):\n"
+            "    def test_default(self) -> None:\n"
+            "        from src.simulation import Simulation\n"
+            "        Simulation()\n",
+            encoding="utf-8",
+        )
+
+        error = (
+            "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_planet.py' "
+            "(returncode=1); tail:\n"
+            "test_planet_initialization_default (test_planet.TestPlanet.test_planet_initialization_default) ... ERROR\n"
+            "test_weather_initialization (test_weather.TestWeather.test_weather_initialization) ... ERROR\n"
+            "test_simulation_initialization (test_simulation.TestSimulation.test_simulation_initialization) ... ERROR\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{tests_dir / "test_planet.py"}", line 5, in test_default\n'
+            "    from src.planet import Planet\n"
+            "ModuleNotFoundError: No module named 'src.planet'\n"
+        )
+
+        targets = _python_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=[
+                "tests/test_planet.py",
+                "tests/test_weather.py",
+                "tests/test_simulation.py",
+            ],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == [
+            "src/planet.py",
+            "src/weather.py",
+            "src/simulation.py",
+            "tests/test_planet.py",
+            "tests/test_weather.py",
+            "tests/test_simulation.py",
+        ]
+
+    def test_python_unittest_workspace_validation_authorizes_missing_src_modules(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _python_runtime_smoke_repair_target_files,
+        )
+
+        (tmp_path / "src").mkdir()
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_planet.py").write_text(
+            "import unittest\n"
+            "from src.planet import Planet\n\n"
+            "class TestPlanet(unittest.TestCase):\n"
+            "    def test_default(self) -> None:\n"
+            "        Planet()\n",
+            encoding="utf-8",
+        )
+        (tests_dir / "test_weather.py").write_text(
+            "import unittest\n"
+            "from src.weather import Weather, Cloud, Wind\n\n"
+            "class TestWeather(unittest.TestCase):\n"
+            "    def test_default(self) -> None:\n"
+            "        Weather(); Cloud(); Wind()\n",
+            encoding="utf-8",
+        )
+        (tests_dir / "test_simulation.py").write_text(
+            "import unittest\n"
+            "from src.simulation import Simulation\n\n"
+            "class TestSimulation(unittest.TestCase):\n"
+            "    def test_default(self) -> None:\n"
+            "        Simulation()\n",
+            encoding="utf-8",
+        )
+
+        error = (
+            "Artifact quality scan failed: workspace validation command failed "
+            "(python -m unittest discover -s tests -p test_*.py -v); tail:\n"
+            "test_planet (unittest.loader._FailedTest.test_planet) ... ERROR\n"
+            "test_simulation (unittest.loader._FailedTest.test_simulation) ... ERROR\n"
+            "test_weather (unittest.loader._FailedTest.test_weather) ... ERROR\n"
+            "ImportError: Failed to import test module: test_planet\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{tests_dir / "test_planet.py"}", line 2, in <module>\n'
+            "    from src.planet import Planet\n"
+            "ModuleNotFoundError: No module named 'src.planet'\n"
+        )
+
+        targets = _python_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=[
+                "tests/test_planet.py",
+                "tests/test_weather.py",
+                "tests/test_simulation.py",
+            ],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == [
+            "src/planet.py",
+            "src/simulation.py",
+            "src/weather.py",
+            "tests/test_planet.py",
+            "tests/test_simulation.py",
+            "tests/test_weather.py",
+        ]
+
+    def test_python_runtime_smoke_source_failure_infers_imported_local_modules(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _python_runtime_smoke_repair_target_files,
+        )
+
+        core_dir = tmp_path / "src" / "core"
+        engine_dir = tmp_path / "src" / "engine"
+        models_dir = tmp_path / "src" / "models"
+        core_dir.mkdir(parents=True)
+        engine_dir.mkdir(parents=True)
+        models_dir.mkdir(parents=True)
+        (engine_dir / "renderer.py").write_text("class Renderer:\n    pass\n", encoding="utf-8")
+        (models_dir / "planet.py").write_text("class Planet:\n    pass\n", encoding="utf-8")
+        (models_dir / "weather.py").write_text("class Weather:\n    pass\n", encoding="utf-8")
+        (core_dir / "simulation.py").write_text(
+            "from src.engine.renderer import Renderer\n"
+            "from src.models.planet import Planet\n"
+            "from src.models.weather import Cloud, Weather, Wind\n\n"
+            "def build() -> None:\n"
+            "    Renderer(); Planet(); Weather(); Cloud(); Wind()\n",
+            encoding="utf-8",
+        )
+
+        targets = _python_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: python runtime smoke crashed for 'src/core/simulation.py' "
+                "(returncode=1); tail:\n"
+                "ImportError: cannot import name 'Cloud' from 'src.models.weather'"
+            ],
+            changed_files=["src/core/simulation.py"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == [
+            "src/engine/renderer.py",
+            "src/models/planet.py",
+            "src/models/weather.py",
+            "src/core/simulation.py",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_python_unittest_quality_repair_context_authorizes_imported_source(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+                self.allow_patch_fallback: bool | None = None
+
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            async def execute_tools(
+                self,
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self._execution = _Execution()
+                self.repair_context: dict[str, Any] = {}
+                self.repair_message = ""
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del timeout_seconds, stage_label
+                self.repair_context = context
+                self.repair_message = message
+                return {"content": ""}
+
+        adapter = _Adapter()
+        source = tmp_path / "src" / "models" / "weather.py"
+        source.parent.mkdir(parents=True)
+        source.write_text("class Weather:\n    pass\n", encoding="utf-8")
+        test_file = tmp_path / "tests" / "test_weather.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text(
+            "import unittest\n"
+            "from src.models.weather import Weather\n\n"
+            "class WeatherTest(unittest.TestCase):\n"
+            "    def setUp(self) -> None:\n"
+            "        self.weather = Weather(cloud_cover=0.5)\n",
+            encoding="utf-8",
+        )
+        quality_error = (
+            "Artifact quality scan failed: workspace validation command failed "
+            "(python -m unittest discover -s tests -p test_*.py -v):\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{test_file}", line 6, in setUp\n'
+            "    self.weather = Weather(cloud_cover=0.5)\n"
+            "TypeError: Weather.__init__() got an unexpected keyword argument 'cloud_cover'\n"
+        )
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["tests/test_weather.py"]},
+            target_task_id="PM-0001-3",
+            run_id="run-python-unittest-cross-task-source",
+            context={},
+            original_message="Create Python unittest coverage.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[quality_error],
+            changed_files=["tests/test_weather.py"],
+        )
+
+        expected_targets = ["src/models/weather.py", "tests/test_weather.py"]
+        assert summary["explicit_quality_target_files"] == expected_targets
+        assert summary["repair_target_files"] == expected_targets
+        assert adapter.repair_context["repair_target_files"] == expected_targets
+        assert adapter.repair_context["director_quality_repair"]["repair_target_files"] == expected_targets
+        assert "src/models/weather.py" in adapter.repair_message
+        assert adapter._execution.allowed_tool_names == {"write_file"}
+        assert adapter._execution.allow_patch_fallback is False
+
     @pytest.mark.asyncio
     async def test_semantic_quality_single_changed_file_repair_forces_write_context(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
@@ -9110,6 +10255,45 @@ class TestQualityRepairMissingTargetContract:
 
         assert targets == ["src/index.ts", "tests/index.test.ts"]
 
+    def test_explicit_quality_repair_targets_python_unittest_imported_source(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _explicit_artifact_quality_repair_target_files,
+        )
+
+        source = tmp_path / "src" / "models" / "weather.py"
+        source.parent.mkdir(parents=True)
+        source.write_text(
+            "class Weather:\n    def __init__(self, condition: str) -> None:\n        self.condition = condition\n",
+            encoding="utf-8",
+        )
+        test_file = tmp_path / "tests" / "test_weather.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text(
+            "import unittest\n"
+            "from src.models.weather import Weather\n\n"
+            "class WeatherTest(unittest.TestCase):\n"
+            "    def setUp(self) -> None:\n"
+            "        self.weather = Weather(cloud_cover=0.5)\n",
+            encoding="utf-8",
+        )
+        error = (
+            "Artifact quality scan failed: workspace validation command failed "
+            "(python -m unittest discover -s tests -p test_*.py -v):\n"
+            "ERROR: test_summary (tests.test_weather.WeatherTest.test_summary)\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{test_file}", line 6, in setUp\n'
+            "    self.weather = Weather(cloud_cover=0.5)\n"
+            "TypeError: Weather.__init__() got an unexpected keyword argument 'cloud_cover'\n"
+        )
+
+        targets = _explicit_artifact_quality_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=["tests/test_weather.py"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/models/weather.py", "tests/test_weather.py"]
+
     def test_explicit_artifact_quality_repair_targets_prettier_syntax_path(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _explicit_artifact_quality_repair_target_files,
@@ -9321,6 +10505,7 @@ class TestQualityRepairMissingTargetContract:
             "file",
             "content",
         ]
+        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
         assert "SINGLE MISSING TARGET REPAIR" not in adapter.repair_message
         assert "write_only_single_target" not in adapter.repair_context["director_quality_repair"]
         assert adapter.repair_context["director_quality_repair"]["repair_target_files"] == missing_targets
@@ -9417,6 +10602,40 @@ class TestQualityRepairMissingTargetContract:
         assert "src/styles.css" in extracted
         assert "src/main.js" not in extracted
 
+    def test_repair_message_missing_targets_augment_declared_contract_targets(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+        from polaris.cells.roles.kernel.public import (
+            extract_target_files_from_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message=(
+                "[mode:materialize]\n"
+                "target_files: tests/test_planet.py, tests/test_weather.py, tests/test_simulation.py\n"
+                "Create Python unittest coverage for the planet weather simulation."
+            ),
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed "
+                "(python -m unittest discover -s tests -p test_*.py -v); tail:\n"
+                "ModuleNotFoundError: No module named 'planet'"
+            ],
+            changed_files=["tests/test_planet.py", "tests/test_weather.py", "tests/test_simulation.py"],
+            missing_target_files=["src/planet.py", "src/weather.py", "src/simulation.py"],
+        )
+
+        extracted = extract_target_files_from_message(message)
+
+        assert extracted == [
+            "tests/test_planet.py",
+            "tests/test_weather.py",
+            "tests/test_simulation.py",
+            "src/planet.py",
+            "src/weather.py",
+            "src/simulation.py",
+        ]
+
     def test_single_missing_target_repair_forces_one_write_without_reads(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _build_materialization_quality_repair_message,
@@ -9460,6 +10679,901 @@ class TestQualityRepairMissingTargetContract:
         assert "Do not read files first" in message
         assert "Do not list directories" in message
         assert "If this repair prompt also names package or typecheck targets" in message
+
+    def test_javascript_missing_named_export_gets_contract_repair_directive(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="Create JavaScript CLI app.",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm test): "
+                "import furnace, { loadData, saveData, refineDream, addNote } from '../src/index.js';\n"
+                "SyntaxError: The requested module '../src/index.js' does not provide an export named 'addNote'"
+            ],
+            changed_files=["src/index.js", "tests/index.test.js"],
+            repair_target_files=["src/index.js", "tests/index.test.js"],
+        )
+
+        assert "JAVASCRIPT NAMED EXPORT REPAIR" in message
+        assert "../src/index.js" in message
+        assert "'loadData'" in message
+        assert "'saveData'" in message
+        assert "'refineDream'" in message
+        assert "'addNote'" in message
+        assert "default binding(s): 'furnace'" in message
+        assert "keep a valid default export" in message
+        assert "Do not remove, weaken, or skip that import" in message
+        assert "preserve its import contract" in message
+
+    def test_javascript_module_system_error_gets_coherence_directive(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="Create JavaScript CLI app.",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                "ReferenceError: require is not defined in ES module scope. "
+                'package.json contains "type": "module".'
+            ],
+            changed_files=["package.json", "src/index.js"],
+            repair_target_files=["package.json", "src/index.js"],
+        )
+
+        assert "JAVASCRIPT MODULE SYSTEM REPAIR" in message
+        assert "one coherent module system" in message
+        assert "module.exports" in message
+        assert "package.json is an authorized failed repair target" in message
+        assert "Prefer preserving the named ESM import/export contract" in message
+        assert "npm test plus the entrypoint smoke can run" in message
+
+    def test_javascript_module_system_repair_freezes_package_when_out_of_scope(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="Create JavaScript CLI app.",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                "ReferenceError: require is not defined in ES module scope. "
+                'package.json contains "type": "module".'
+            ],
+            changed_files=["package.json", "src/index.js"],
+            repair_target_files=["src/index.js"],
+        )
+
+        assert "JAVASCRIPT MODULE SYSTEM REPAIR" in message
+        assert "treat its existing module declaration as fixed input" in message
+        assert "do not write package.json" in message
+        assert "rewrite only the authorized JavaScript source/test files" in message
+        assert "export` declarations" in message
+
+    def test_deterministic_javascript_esm_commonjs_entrypoint_repair(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_esm_commonjs_entrypoint_repair,
+        )
+
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "dream-note-alchemy-furnace",
+                    "type": "module",
+                    "main": "src/index.js",
+                    "scripts": {"start": "node src/index.js"},
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "models" / "Note.js").write_text(
+            "export class Note {}\nexport default Note;\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.js").write_text(
+            '"use strict";\n\n'
+            'const Note = require("./models/Note");\n\n'
+            "function main() {\n"
+            "  return new Note();\n"
+            "}\n\n"
+            "if (require.main === module) {\n"
+            "  main();\n"
+            "}\n\n"
+            "module.exports = {\n"
+            "  main,\n"
+            "  Note,\n"
+            "};\n"
+            ".exports;\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_esm_commonjs_entrypoint_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-entrypoint",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/index.js:3\n"
+                "ReferenceError: require is not defined in ES module scope. "
+                'package.json contains "type": "module".'
+            ],
+        )
+
+        assert results
+        assert results[0]["result"]["source_tool"] == "deterministic_javascript_esm_commonjs_entrypoint_repair"
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert 'import { fileURLToPath } from "node:url";' in repaired
+        assert 'import { Note } from "./models/Note.js";' in repaired
+        assert "require(" not in repaired
+        assert "require.main" not in repaired
+        assert "module.exports" not in repaired
+        assert ".exports" not in repaired
+        assert "if (process.argv[1] === __filename)" in repaired
+        assert "export { main, Note };" in repaired
+        assert "export default { main, Note };" in repaired
+
+    def test_deterministic_javascript_esm_commonjs_repair_converts_default_imported_commonjs_module(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_esm_commonjs_entrypoint_repair,
+        )
+
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "package.json").write_text(
+            json.dumps({"type": "module", "main": "src/index.js", "scripts": {"start": "node src/index.js"}}),
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.js").write_text(
+            'import AlchemyEngine from "./engine/AlchemyEngine.js";\n'
+            'import { buildDefaultEngine } from "./engine/AlchemyEngine.js";\n'
+            "export function main() {\n"
+            "  return new AlchemyEngine(buildDefaultEngine());\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "models" / "Note.js").write_text(
+            "export class Note {}\nexport default Note;\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            '"use strict";\n\n'
+            'const Note = require("../models/Note");\n\n'
+            "class AlchemyEngine {\n"
+            "  constructor() {\n"
+            "    this.notes = [new Note()];\n"
+            "  }\n"
+            "}\n\n"
+            "function buildDefaultEngine() {\n"
+            "  return { notes: [] };\n"
+            "}\n\n"
+            "module.exports = AlchemyEngine;\n"
+            "module.exports.buildDefaultEngine = buildDefaultEngine;\n"
+            'module.exports.VERSION = "1.0.0";\n',
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_esm_commonjs_entrypoint_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-default-import-cjs",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/index.js:1\n"
+                'import AlchemyEngine from "./engine/AlchemyEngine.js";\n'
+                "       ^^^^^^^^^^^^^\n"
+                "SyntaxError: The requested module './engine/AlchemyEngine.js' "
+                "does not provide an export named 'default'"
+            ],
+        )
+
+        assert results
+        repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
+        assert 'import { Note } from "../models/Note.js";' in repaired
+        assert "export default AlchemyEngine;" in repaired
+        assert "export { buildDefaultEngine };" in repaired
+        assert 'export const VERSION = "1.0.0";' in repaired
+        assert "module.exports" not in repaired
+        assert "require(" not in repaired
+
+    def test_deterministic_javascript_esm_commonjs_repair_preserves_namespace_require_binding(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_esm_commonjs_entrypoint_repair,
+        )
+
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "package.json").write_text(
+            json.dumps({"type": "module", "main": "src/index.js", "scripts": {"start": "node src/index.js"}}),
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            "export class AlchemyEngine {}\nexport class Recipe {}\nexport class Note {}\nexport class DreamCard {}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.js").write_text(
+            'const AlchemyEngine = require("./engine/AlchemyEngine");\n'
+            "const { Note, DreamCard, Recipe } = AlchemyEngine;\n"
+            "function buildDemoEngine() {\n"
+            "  const engine = new AlchemyEngine();\n"
+            "  return { engine, Note, DreamCard, Recipe };\n"
+            "}\n"
+            "module.exports = { buildDemoEngine };\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_esm_commonjs_entrypoint_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-cjs-namespace-binding",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/index.js:1\n"
+                "ReferenceError: require is not defined in ES module scope\n"
+                'package.json contains "type": "module"'
+            ],
+        )
+
+        assert results
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert 'import * as AlchemyEngine from "./engine/AlchemyEngine.js";' in repaired
+        assert "const engine = new AlchemyEngine.AlchemyEngine();" in repaired
+        assert "const { Note, DreamCard, Recipe } = AlchemyEngine;" in repaired
+        assert "require(" not in repaired
+        assert "module.exports" not in repaired
+
+    def test_deterministic_javascript_missing_export_repair_uses_js_contracts(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_missing_export_repair,
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "index.js").write_text("console.log('dream note app');\n", encoding="utf-8")
+        (tmp_path / "tests" / "test_basic.js").write_text(
+            'import { run, refineDreamNotes } from "../src/index.js";\n'
+            "const result = refineDreamNotes({ notes: ['有效便签', '', null] });\n"
+            "assert.equal(result.count, 1);\n"
+            "assert.equal(result.distilled[0], '[提炼] 有效便签');\n"
+            "const output = run();\n"
+            "assert.equal(output.ok, true);\n"
+            "assert.match(output.entrypoint, /src[\\\\/]+index\\.js$/);\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_missing_export_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-missing-export",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: unresolved import symbol 'refineDreamNotes' "
+                "from '../src/index.js' in tests/test_basic.js",
+                "Artifact quality scan failed: unresolved import symbol 'run' "
+                "from '../src/index.js' in tests/test_basic.js",
+            ],
+        )
+
+        assert results
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert "export function refineDreamNotes(...args)" in repaired
+        assert '"[提炼] " + note.trim()' in repaired
+        assert "return { count: distilled.length, distilled };" in repaired
+        assert "export function run(...args)" in repaired
+        assert "return { ok: true, entrypoint };" in repaired
+        assert ": unknown" not in repaired
+        assert "): any" not in repaired
+
+    def test_deterministic_javascript_missing_export_repair_turns_iterable_method_into_constant(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_missing_export_repair,
+        )
+
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            "export class AlchemyEngine {\n  defaultRecipes() {\n    return [{ name: 'starter' }];\n  }\n}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "alchemyEngine.test.js").write_text(
+            'import { AlchemyEngine, defaultRecipes } from "../src/engine/AlchemyEngine.js";\n'
+            "const engine = new AlchemyEngine();\n"
+            "for (const recipe of defaultRecipes) engine.addRecipe(recipe);\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_missing_export_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-iterable-export",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: unresolved import symbol 'defaultRecipes' "
+                "from '../src/engine/AlchemyEngine.js' in tests/alchemyEngine.test.js",
+            ],
+        )
+
+        assert results
+        repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
+        assert "export const defaultRecipes = new AlchemyEngine().defaultRecipes();" in repaired
+        assert "export function defaultRecipes" not in repaired
+        assert "export class AlchemyEngine" in repaired
+
+    def test_deterministic_javascript_export_contract_repair_replaces_wrong_existing_function(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_missing_export_repair,
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "index.js").write_text(
+            "export function refineDreamNotes(cards) {\n  if (!Array.isArray(cards)) return [];\n  return cards;\n}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "smoke.test.js").write_text(
+            'import assert from "node:assert/strict";\n'
+            'import { refineDreamNotes } from "../src/index.js";\n'
+            "const result = refineDreamNotes('a glowing key', 'silent bell', 'paper moon');\n"
+            "assert.equal(result.count, 3);\n"
+            "assert.equal(result.summary, 'a glowing key | silent bell | paper moon');\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_missing_export_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-export-contract",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm test): "
+                f"file://{tmp_path}/tests/smoke.test.js:5\n"
+                "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n"
+                "\n"
+                "undefined !== 3"
+            ],
+        )
+
+        assert results
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert "export function refineDreamNotes(...args)" in repaired
+        assert "const values = args" in repaired
+        assert 'summary: values.join(" | ")' in repaired
+        assert "if (!Array.isArray(cards)) return [];" not in repaired
+
+    def test_deterministic_javascript_export_contract_repair_supports_prefixed_text_and_semver(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_missing_export_repair,
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "package.json").write_text('{"version":"0.2.0"}', encoding="utf-8")
+        (tmp_path / "src" / "index.js").write_text(
+            "function refineDreamNotes(notes) {\n"
+            "  return [];\n"
+            "}\n\n"
+            "export function getVersion(...args) {\n"
+            "  return { ok: true };\n"
+            "}\n\n"
+            "export { refineDreamNotes };\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "smoke.test.js").write_text(
+            'import assert from "node:assert/strict";\n'
+            'import { refineDreamNotes, getVersion, VERSION } from "../src/index.js";\n'
+            "const result = refineDreamNotes('  first dream  \\n\\n second dream ');\n"
+            'assert.equal(result, "[dream] first dream\\n[dream] second dream");\n'
+            "assert.throws(() => refineDreamNotes(null), TypeError);\n"
+            "const v = getVersion();\n"
+            "assert.equal(typeof v, 'string');\n"
+            "assert.ok(/^\\d+\\.\\d+\\.\\d+/.test(v));\n"
+            "assert.equal(typeof VERSION, 'string');\n"
+            "assert.equal(VERSION, getVersion());\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_missing_export_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-text-contract",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm test): "
+                f"file://{tmp_path}/tests/smoke.test.js:4\n"
+                "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal"
+            ],
+        )
+
+        assert results
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert "function refineDreamNotes(...args)" in repaired
+        assert 'throw new TypeError("Expected a string input");' in repaired
+        assert '"[dream] " + line' in repaired
+        assert "return VERSION;" in repaired
+        assert 'export const VERSION = "0.2.0";' in repaired
+
+    def test_deterministic_javascript_export_contract_repair_supports_app_metadata(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_missing_export_repair,
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "dream-note-alchemy-furnace",
+                    "version": "0.1.0",
+                    "description": "Dream note alchemy CLI",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.js").write_text(
+            "export function getAppInfo() {\n  return { ok: true };\n}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "version.test.js").write_text(
+            'import assert from "node:assert/strict";\n'
+            'import { APP_NAME, APP_VERSION, APP_DESCRIPTION, getAppInfo } from "../src/index.js";\n'
+            "assert.equal(typeof APP_NAME, 'string');\n"
+            "assert.ok(APP_NAME.length > 0);\n"
+            "assert.match(APP_VERSION, /^\\d+\\.\\d+\\.\\d+/);\n"
+            "assert.equal(typeof APP_DESCRIPTION, 'string');\n"
+            "const info = getAppInfo();\n"
+            "assert.equal(info.name, APP_NAME);\n"
+            "assert.equal(info.version, APP_VERSION);\n"
+            "assert.equal(info.description, APP_DESCRIPTION);\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_missing_export_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-app-metadata-contract",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm test): "
+                f"file://{tmp_path}/tests/version.test.js:8\n"
+                "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal",
+                "Artifact quality scan failed: unresolved import symbol 'APP_DESCRIPTION' "
+                "from '../src/index.js' in tests/version.test.js (sibling module does not define it)",
+                "Artifact quality scan failed: unresolved import symbol 'APP_NAME' "
+                "from '../src/index.js' in tests/version.test.js (sibling module does not define it)",
+                "Artifact quality scan failed: unresolved import symbol 'APP_VERSION' "
+                "from '../src/index.js' in tests/version.test.js (sibling module does not define it)",
+            ],
+        )
+
+        assert results
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert 'export const APP_NAME = "dream-note-alchemy-furnace";' in repaired
+        assert 'export const APP_VERSION = "0.1.0";' in repaired
+        assert 'export const APP_DESCRIPTION = "Dream note alchemy CLI";' in repaired
+        assert "name: APP_NAME" in repaired
+        assert "version: APP_VERSION" in repaired
+        assert "description: APP_DESCRIPTION" in repaired
+
+    def test_deterministic_javascript_export_contract_repair_uses_asserted_literal_and_note_shape(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_missing_export_repair,
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "dream-note-alchemy-furnace",
+                    "version": "0.1.0",
+                    "description": "Dream note alchemy CLI",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.js").write_text(
+            "export function main() {\n  return true;\n}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "test_index.js").write_text(
+            'import assert from "node:assert/strict";\n'
+            'import { ALCHEMY_FURNACE, refineDreamNote } from "../src/index.js";\n'
+            'assert.equal(typeof ALCHEMY_FURNACE, "string");\n'
+            'assert.equal(ALCHEMY_FURNACE, "dream-note-alchemy-furnace");\n'
+            'const result = refineDreamNote("  flying over paper lanterns  ");\n'
+            "assert.deepEqual(result, {\n"
+            '  source: "  flying over paper lanterns  ",\n'
+            '  refined: "flying over paper lanterns",\n'
+            '  tag: "dream-fragment",\n'
+            "});\n"
+            'const empty = refineDreamNote("   ");\n'
+            'assert.equal(empty.source, "   ");\n'
+            'assert.equal(empty.refined, "");\n'
+            'assert.equal(empty.tag, "empty");\n',
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_missing_export_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-note-contract",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: unresolved import symbol 'ALCHEMY_FURNACE' "
+                "from '../src/index.js' in tests/test_index.js (sibling module does not define it)",
+                "Artifact quality scan failed: unresolved import symbol 'refineDreamNote' "
+                "from '../src/index.js' in tests/test_index.js (sibling module does not define it)",
+            ],
+        )
+
+        assert results
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert 'export const ALCHEMY_FURNACE = "dream-note-alchemy-furnace";' in repaired
+        assert "export function refineDreamNote(...args)" in repaired
+        assert 'const source = typeof args[0] === "string" ? args[0] : "";' in repaired
+        assert "const refined = source.trim();" in repaired
+        assert 'tag: refined.length > 0 ? "dream-fragment" : "empty"' in repaired
+
+    def test_deterministic_javascript_typescript_annotation_repair_updates_placeholder_contracts(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_typescript_annotation_repair,
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "index.js").write_text(
+            "export function refineDreamNotes(..._args: unknown[]): any {\n"
+            "  return undefined;\n"
+            "}\n\n"
+            "export function run(..._args: unknown[]): any {\n"
+            "  return undefined;\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "test_basic.js").write_text(
+            'import { run, refineDreamNotes } from "../src/index.js";\n'
+            "const result = refineDreamNotes({ notes: ['有效便签'] });\n"
+            "assert.equal(result.count, 1);\n"
+            "assert.equal(result.distilled[0], '[提炼] 有效便签');\n"
+            "const output = run();\n"
+            "assert.equal(output.ok, true);\n"
+            "assert.match(output.entrypoint, /src[\\\\/]+index\\.js$/);\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_typescript_annotation_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-ts-annotation",
+            artifact_quality_errors=[
+                f"Artifact quality scan failed: workspace validation command failed: file://{tmp_path}/src/index.js:1\n"
+                "export function refineDreamNotes(..._args: unknown[]): any {\n"
+                "                                         ^\n\n"
+                "SyntaxError: Unexpected token ':'"
+            ],
+        )
+
+        assert results
+        repaired = (tmp_path / "src" / "index.js").read_text(encoding="utf-8")
+        assert "export function refineDreamNotes(...args)" in repaired
+        assert "export function run(..._args)" in repaired
+        assert ": unknown" not in repaired
+        assert "): any" not in repaired
+        assert "return undefined" not in repaired
+        assert '"[提炼] " + note.trim()' in repaired
+
+    def test_deterministic_javascript_missing_method_runtime_repair(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_missing_method_runtime_repair,
+        )
+
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "index.js").write_text(
+            'import { AlchemyEngine } from "./engine/AlchemyEngine.js";\n'
+            "function main() {\n"
+            "  const engine = new AlchemyEngine();\n"
+            "  const notes = [{ id: 'n1' }];\n"
+            "  engine.addRecipe({ name: 'moon' });\n"
+            "  const { dreamCards, rituals } = engine.transmute(notes);\n"
+            "  return { dreamCards, rituals };\n"
+            "}\n"
+            "main();\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            "export class AlchemyEngine {\n"
+            "  constructor({ recipes = [] } = {}) {\n"
+            "    this.recipes = recipes;\n"
+            "  }\n\n"
+            "  refine(notes) {\n"
+            "    return { dreamCards: notes, unconsumed: [] };\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_missing_method_runtime_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-runtime-method",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/index.js:4\n"
+                "  engine.addRecipe({ name: 'moon' });\n"
+                "         ^\n\n"
+                "TypeError: engine.addRecipe is not a function"
+            ],
+        )
+
+        assert results
+        assert results[0]["result"]["source_tool"] == "deterministic_javascript_missing_method_runtime_repair"
+        repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
+        assert "addRecipe(recipe)" in repaired
+        assert "this.recipes.push(recipe);" in repaired
+        assert "transmute(notes)" in repaired
+        assert "const result = this.refine(notes);" in repaired
+        assert "dreamCards: result.dreamCards ?? result.cards ?? []" in repaired
+        assert "rituals: result.rituals ?? []" in repaired
+
+    def test_deterministic_javascript_missing_method_runtime_repair_aliases_run_to_transmute_result_shape(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_missing_method_runtime_repair,
+        )
+
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "index.js").write_text(
+            'import { AlchemyEngine } from "./engine/AlchemyEngine.js";\n'
+            "function main() {\n"
+            "  const engine = new AlchemyEngine();\n"
+            "  const notes = [{ id: 'n1' }];\n"
+            "  const result = engine.run(notes);\n"
+            "  return result.cards.length + result.untouched.length;\n"
+            "}\n"
+            "main();\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            "export class AlchemyEngine {\n"
+            "  transmute(notes) {\n"
+            "    return { dreamCards: notes, embers: [] };\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_missing_method_runtime_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-runtime-run-method",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/index.js:5\n"
+                "  const result = engine.run(notes);\n"
+                "                        ^\n\n"
+                "TypeError: engine.run is not a function"
+            ],
+        )
+
+        assert results
+        repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
+        assert "run(notes)" in repaired
+        assert "const result = this.transmute(notes);" in repaired
+        assert "cards: result.cards ?? result.dreamCards ?? []" in repaired
+        assert "untouched: result.untouched ?? result.unmatched ?? result.unconsumed ?? result.embers ?? []" in repaired
+
+    def test_deterministic_javascript_missing_method_runtime_repair_resolves_imported_loop_variable_class(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_missing_method_runtime_repair,
+        )
+
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "src" / "index.js").write_text(
+            'import { Recipe } from "./models/Recipe.js";\n'
+            'import { AlchemyEngine } from "./engine/AlchemyEngine.js";\n'
+            "const recipes = [new Recipe({ name: 'moon', keywords: ['moon'], absurdityBoost: 4, ritual: 'hum' })];\n"
+            "new AlchemyEngine({ recipes }).transmute([{ content: 'moon', matchesAllTags: () => true, intensity: 1 }]);\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            'import { Recipe } from "../models/Recipe.js";\n'
+            "export class AlchemyEngine {\n"
+            "  constructor({ recipes = [] } = {}) { this.recipes = recipes; }\n"
+            "  pickRecipeFor(notes) {\n"
+            "    for (const recipe of this.recipes) {\n"
+            "      if (recipe.matchesAll(notes)) return recipe;\n"
+            "    }\n"
+            "    return null;\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "models" / "Recipe.js").write_text(
+            "export class Recipe {\n"
+            "  constructor({ name, requiredTags = [] } = {}) {\n"
+            "    this.name = name;\n"
+            "    this.requiredTags = requiredTags;\n"
+            "  }\n"
+            "  isSatisfiedBy(notes) { return Array.isArray(notes); }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_missing_method_runtime_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-runtime-loop-var-method",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                "TypeError: recipe.matchesAll is not a function\n"
+                f"    at AlchemyEngine.pickRecipeFor (file://{tmp_path}/src/engine/AlchemyEngine.js:6:18)"
+            ],
+        )
+
+        assert results
+        repaired = (tmp_path / "src" / "models" / "Recipe.js").read_text(encoding="utf-8")
+        assert "matchesAll(notes)" in repaired
+        assert "return this.isSatisfiedBy(notes);" in repaired
+        assert "keywords," in repaired
+        assert "absurdityBoost," in repaired
+        assert "ritual," in repaired
+        assert "this.keywords = Array.isArray(keywords) ? keywords.map(String) : [];" in repaired
+        assert "this.absurdityBoost = Number.isFinite(absurdityBoost) ? absurdityBoost : 0;" in repaired
+        assert "this.ritual = ritual;" in repaired
+
+    def test_deterministic_javascript_missing_method_runtime_repair_fixes_constructor_object_contracts(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_missing_method_runtime_repair,
+        )
+
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "models" / "DreamCard.js").write_text(
+            "export class DreamCard {\n"
+            "  constructor({ id, title, narrative, sourceNoteIds = [] } = {}) {\n"
+            '    if (!id) throw new Error("DreamCard requires an id");\n'
+            '    if (!title) throw new Error("DreamCard requires a title");\n'
+            '    if (!narrative) throw new Error("DreamCard requires a narrative");\n'
+            "    this.id = id;\n"
+            "    this.title = title;\n"
+            "    this.narrative = narrative;\n"
+            "    this.sourceNoteIds = sourceNoteIds;\n"
+            "  }\n"
+            "  toJSON() {\n"
+            "    return {\n"
+            "      id: this.id,\n"
+            "      title: this.title,\n"
+            "      narrative: this.narrative,\n"
+            "    };\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests" / "smoke.test.js").write_text(
+            'import { DreamCard } from "../src/models/DreamCard.js";\n'
+            "new DreamCard({\n"
+            '  title: "Library of Forgotten Names",\n'
+            '  body: "Each book whispered a name I almost remembered.",\n'
+            '  tags: ["memory", "library"],\n'
+            "  createdAt: new Date(),\n"
+            "});\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            'import * as DreamCard from "../models/DreamCard.js";\n'
+            "DreamCard.composeTitle(0.42);\n"
+            "new DreamCard.DreamCard({ title: 'x', fragments: ['a'], absurdity: 4, ritual: 'hum' });\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_missing_method_runtime_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-constructor-contract",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm test): "
+                "Error: DreamCard requires an id\n"
+                f"    at new DreamCard (file://{tmp_path}/src/models/DreamCard.js:3:20)"
+            ],
+        )
+
+        assert results
+        repaired = (tmp_path / "src" / "models" / "DreamCard.js").read_text(encoding="utf-8")
+        assert "body," in repaired
+        assert "tags," in repaired
+        assert "createdAt," in repaired
+        assert "fragments," in repaired
+        assert "absurdity," in repaired
+        assert "ritual," in repaired
+        assert "const normalizedId" in repaired
+        assert "const normalizedNarrative" in repaired
+        assert "this.id = normalizedId;" in repaired
+        assert "this.narrative = normalizedNarrative;" in repaired
+        assert "this.body =" in repaired
+        assert "this.tags = Array.isArray(tags) ? tags.map(String) : [];" in repaired
+        assert "createdAt: this.createdAt instanceof Date ? this.createdAt.toISOString() : this.createdAt" in repaired
+        assert "body: this.body" in repaired
+        assert "tags: this.tags" in repaired
+        assert "this.fragments = Array.isArray(fragments) ? fragments.map(String) : [];" in repaired
+        assert "this.absurdity = Number.isFinite(absurdity) ? absurdity : 0;" in repaired
+        assert "this.ritual = ritual;" in repaired
+        assert "export function composeTitle" in repaired
+
+    def test_deterministic_javascript_missing_method_runtime_repair_adds_collection_list_and_refine_alias(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_missing_method_runtime_repair,
+        )
+
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "index.js").write_text(
+            'import { AlchemyEngine } from "./engine/AlchemyEngine.js";\n'
+            "function main() {\n"
+            "  const engine = new AlchemyEngine({ recipes: [] });\n"
+            "  const notes = [{ id: 'n1' }];\n"
+            "  engine.listRecipes().length;\n"
+            "  const { dreamCards, unmatched } = engine.transmute(notes);\n"
+            "  return { dreamCards, unmatched };\n"
+            "}\n"
+            "main();\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "AlchemyEngine.js").write_text(
+            "export class AlchemyEngine {\n"
+            "  constructor({ recipes = [] } = {}) {\n"
+            "    this.recipes = recipes;\n"
+            "  }\n\n"
+            "  registerRecipe(recipe) {\n"
+            "    this.recipes.push(recipe);\n"
+            "    return recipe;\n"
+            "  }\n\n"
+            "  refine(notes) {\n"
+            "    return { cards: notes, unmatched: [] };\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_javascript_missing_method_runtime_repair(
+            _make_adapter(tmp_path),
+            task_id="task-js-runtime-method-list",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/src/index.js:5\n"
+                "  engine.listRecipes().length;\n"
+                "         ^\n\n"
+                "TypeError: engine.listRecipes is not a function"
+            ],
+        )
+
+        assert results
+        repaired = (tmp_path / "src" / "engine" / "AlchemyEngine.js").read_text(encoding="utf-8")
+        assert "listRecipes()" in repaired
+        assert "return Array.isArray(this.recipes) ? [...this.recipes] : [];" in repaired
+        assert "transmute(notes)" in repaired
+        assert "const result = this.refine(notes);" in repaired
+        assert "dreamCards: result.dreamCards ?? result.cards ?? []" in repaired
+        assert "unmatched: result.unmatched ?? result.unconsumed ?? []" in repaired
 
     def test_unresolved_relative_import_repair_prompt_omits_parent_traversal_specifier(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

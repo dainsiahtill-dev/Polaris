@@ -165,7 +165,8 @@ describe('ContextOSWorkspace', () => {
           available: true,
           ok: true,
           status: 'ready',
-          audit_path: '/tmp/demo/factory_audits.json',
+          audit_path: '/tmp/demo/runtime/control_plane/ledger/run-1.ndjson',
+          compat_ledgers_included: false,
           total: 2,
           projected: 2,
           missing: 0,
@@ -180,6 +181,79 @@ describe('ContextOSWorkspace', () => {
     expect(chip.textContent).toContain('账本一致');
     expect(chip.textContent).toContain('2/2 投影');
     expect(chip.textContent).toContain('source=run_ledger_projection');
+    expect(chip.textContent).not.toContain('compat=factory-ledger');
+  });
+
+  it('shows when control-plane projection includes migration compatibility ledgers', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        controlPlaneProjection={{
+          schema_version: 1,
+          source: 'run_ledger_projection',
+          available: true,
+          ok: true,
+          status: 'ready',
+          audit_path: '/tmp/demo/runtime/control_plane/ledger/run-1.ndjson',
+          compat_ledgers_included: true,
+          total: 1,
+          projected: 1,
+          missing: 0,
+          failed: 0,
+          projects: [],
+          detail: 'run ledger projection 1 project(s), 0 failed',
+        }}
+      />,
+    );
+
+    const chip = screen.getByTestId('contextos-control-plane-projection');
+    expect(chip.textContent).toContain('source=run_ledger_projection');
+    expect(chip.textContent).toContain('compat=factory-ledger');
+  });
+
+  it('uses Run Ledger state for the quality gate marker before stale qualityGate data', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        qualityGate={{
+          score: 100,
+          passed: true,
+          attempt: 1,
+          maxAttempts: 1,
+          issues: [],
+        }}
+        controlPlaneProjection={{
+          schema_version: 1,
+          source: 'run_ledger_projection',
+          available: true,
+          ok: false,
+          status: 'failed',
+          audit_path: '/tmp/demo/runtime/control_plane/ledger/run-1.ndjson',
+          compat_ledgers_included: false,
+          total: 1,
+          projected: 1,
+          missing: 0,
+          failed: 1,
+          projects: [
+            {
+              project_id: 'project-1',
+              ok: false,
+              integrity_ok: true,
+              outcome_ok: false,
+              gate_count: 2,
+              failed_gate_count: 1,
+              latest_token_id: 'token-failed',
+              detail: 'qa gate failed',
+              missing: [],
+            },
+          ],
+          detail: 'run ledger projection 1 project(s), 1 failed',
+        }}
+      />,
+    );
+
+    expect(screen.getByTitle('质量门 HOLD · Run Ledger')).toBeTruthy();
+    expect(screen.queryByTitle('质量门 PASS · quality gate')).toBeNull();
   });
 
   it('distinguishes enabled verifier capabilities from hard evidence requirements', () => {
@@ -193,6 +267,7 @@ describe('ContextOSWorkspace', () => {
           ok: true,
           status: 'ready',
           audit_path: '/tmp/demo/run_ledger.ndjson',
+          compat_ledgers_included: false,
           total: 1,
           projected: 1,
           missing: 0,

@@ -8,14 +8,23 @@ to persist it through ``RunLedger``.
 
 from __future__ import annotations
 
-import fcntl
-import hashlib
-import json
-import os
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from polaris.cells.control_plane.run_ledger.public.job_token import JobToken
+from polaris.cells.control_plane.run_ledger.public.ledger import (
+    RunLedger as PlatformRunLedger,
+    stable_hash,
+)
+from polaris.cells.control_plane.run_ledger.public.projection import (
+    build_run_ledger_projection as _build_platform_run_ledger_projection,
+    summarize_run_ledger_projection as _summarize_platform_run_ledger_projection,
+)
+from polaris.cells.control_plane.verifier_policy.public import (
+    ReadVerifierPolicyQueryV1,
+    read_verifier_policy,
+    verifier_policy_to_gate_policy,
+)
 
 
 def _clean_string(value: Any) -> str:
@@ -63,12 +72,28 @@ def _lineage_entries(value: Any) -> list[dict[str, Any]]:
     return output
 
 
-def stable_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+def _receipt_payload(value: Any) -> dict[str, Any] | list[dict[str, Any]] | None:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, (list, tuple)):
+        items = [dict(item) for item in value if isinstance(item, dict)]
+        return items if items else None
+    return None
 
 
-def stable_hash(value: Any) -> str:
-    return hashlib.sha256(stable_json(value).encode("utf-8")).hexdigest()
+def _attach_tool_receipt_evidence(physical_evidence: dict[str, Any], gate: dict[str, Any]) -> None:
+    for key in (
+        "effect_receipt",
+        "effect_receipts",
+        "tool_receipts",
+        "write_receipts",
+        "command_receipts",
+        "batch_receipt",
+        "batch_receipts",
+    ):
+        payload = _receipt_payload(gate.get(key))
+        if payload is not None:
+            physical_evidence[key] = payload
 
 
 def _event_content_payload(event: dict[str, Any]) -> dict[str, Any]:
@@ -77,79 +102,8 @@ def _event_content_payload(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@dataclass(frozen=True)
-class JobToken:
-    """Immutable task fact carried across PM/CE/Director/QA projections."""
-
-    schema_version: int
-    token_id: str
-    run_id: str
-    factory_run_id: str
-    project_id: str
-    stage: str
-    target_files: list[str] = field(default_factory=list)
-    allowed_paths: list[str] = field(default_factory=list)
-    required_artifacts: list[str] = field(default_factory=list)
-    gate_policy: dict[str, Any] = field(default_factory=dict)
-    capability_audit: dict[str, Any] = field(default_factory=dict)
-    parent_token_id: str = ""
-    repair_lineage: list[dict[str, Any]] = field(default_factory=list)
-    contract_hash: str = ""
-    blueprint_hash: str = ""
-    source: str = "factory.pipeline"
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-class RunLedger:
-    """Append-only JSONL ledger for factory pipeline evidence."""
-
-    def __init__(self, workspace: Path, *, run_id: str) -> None:
-        self.workspace = Path(workspace)
-        safe_run_id = _safe_token(run_id or "unknown")
-        self.path = self.workspace / "runtime" / "factory" / "ledger" / f"{safe_run_id}.ndjson"
-
-    def append_event(self, event: dict[str, Any]) -> dict[str, Any]:
-        payload = dict(event)
-        payload.setdefault("schema_version", 1)
-        payload.setdefault("content_id", stable_hash(_event_content_payload(payload)))
-        payload.setdefault("event_id", payload["content_id"])
-        recorded_at = datetime.now(timezone.utc).isoformat()
-        payload.setdefault("recorded_at", recorded_at)
-        payload.setdefault(
-            "append_id",
-            stable_hash(
-                {
-                    "content_id": payload["content_id"],
-                    "ledger_path": str(self.path),
-                    "recorded_at": payload["recorded_at"],
-                }
-            ),
-        )
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            handle.write(stable_json(payload) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        return {"ledger_path": str(self.path), "event": payload}
-
-    def read_events(self) -> list[dict[str, Any]]:
-        if not self.path.is_file():
-            return []
-        events: list[dict[str, Any]] = []
-        with self.path.open("r", encoding="utf-8") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
-            for line in handle.read().splitlines():
-                if not line.strip():
-                    continue
-                parsed = json.loads(line)
-                if isinstance(parsed, dict):
-                    events.append(parsed)
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        return events
+class RunLedger(PlatformRunLedger):
+    """Compatibility wrapper for factory callers using the platform ledger."""
 
 
 def _safe_token(value: str) -> str:
@@ -275,6 +229,10 @@ def _record_policy_dict(record: dict[str, Any], *keys: str) -> dict[str, Any]:
     return {}
 
 
+def _record_policy_dicts(record: dict[str, Any], *keys: str) -> list[dict[str, Any]]:
+    return [value for key in keys if isinstance((value := record.get(key)), dict)]
+
+
 def _record_bool(record: dict[str, Any], *keys: str) -> bool:
     for key in keys:
         value = record.get(key)
@@ -303,12 +261,24 @@ def _required_evidence_modalities_from_record(
         required.append("visual")
 
     gate_policy = _record_policy_dict(record, "gate_policy", "quality_gate_policy")
-    verifier_policy = _record_policy_dict(record, "verifier_policy", "qa_verifier_policy", "domain_verifier_policy")
+    verifier_policies = _record_policy_dicts(
+        record,
+        "control_plane_verifier_policy",
+        "verifier_policy",
+        "qa_verifier_policy",
+        "domain_verifier_policy",
+    )
     extend(record.get("required_evidence_modalities"))
     extend(gate_policy.get("required_evidence_modalities") or gate_policy.get("required_modalities"))
-    extend(verifier_policy.get("required_evidence_modalities") or verifier_policy.get("required_modalities"))
+    for verifier_policy in verifier_policies:
+        extend(verifier_policy.get("required_evidence_modalities") or verifier_policy.get("required_modalities"))
 
-    verifier_specs = record.get("required_verifiers") or verifier_policy.get("required_verifiers")
+    verifier_specs = record.get("required_verifiers")
+    if verifier_specs is None:
+        verifier_specs = next(
+            (policy.get("required_verifiers") for policy in verifier_policies if policy.get("required_verifiers")),
+            None,
+        )
     for verifier in _verifier_entries(verifier_specs):
         required.append("verifier")
         required.append(_clean_string(verifier.get("modality") or verifier.get("kind") or "domain"))
@@ -323,21 +293,43 @@ def _enabled_evidence_modalities_from_record(record: dict[str, Any]) -> list[str
         enabled.extend(_modality_list(value))
 
     gate_policy = _record_policy_dict(record, "gate_policy", "quality_gate_policy")
-    verifier_policy = _record_policy_dict(record, "verifier_policy", "qa_verifier_policy", "domain_verifier_policy")
+    verifier_policies = _record_policy_dicts(
+        record,
+        "control_plane_verifier_policy",
+        "verifier_policy",
+        "qa_verifier_policy",
+        "domain_verifier_policy",
+    )
     extend(record.get("enabled_evidence_modalities"))
     extend(gate_policy.get("enabled_evidence_modalities") or gate_policy.get("enabled_modalities"))
-    extend(verifier_policy.get("enabled_evidence_modalities") or verifier_policy.get("enabled_modalities"))
-    if _record_bool(record, "browser_enabled", "qa_browser_enabled") or bool(verifier_policy.get("browser_enabled")):
+    for verifier_policy in verifier_policies:
+        extend(verifier_policy.get("enabled_evidence_modalities") or verifier_policy.get("enabled_modalities"))
+    if _record_bool(record, "browser_enabled", "qa_browser_enabled") or any(
+        bool(policy.get("browser_enabled")) for policy in verifier_policies
+    ):
         enabled.append("browser")
-    if _record_bool(record, "visual_enabled", "qa_visual_enabled") or bool(verifier_policy.get("visual_enabled")):
+    if _record_bool(record, "visual_enabled", "qa_visual_enabled") or any(
+        bool(policy.get("visual_enabled")) for policy in verifier_policies
+    ):
         enabled.append("visual")
-    if bool(verifier_policy.get("multimodal_llm_enabled")):
+    if any(bool(policy.get("llm_judge_enabled") or policy.get("multimodal_llm_enabled")) for policy in verifier_policies):
         enabled.append("llm_judge")
-    if bool(verifier_policy.get("user_scripts_enabled")):
-        enabled.append("user_script")
-    if bool(verifier_policy.get("domain_verifiers_enabled")):
+    if any(bool(policy.get("custom_script_enabled") or policy.get("user_scripts_enabled")) for policy in verifier_policies):
+        enabled.append("custom_script")
+    if any(bool(policy.get("domain_verifiers_enabled")) for policy in verifier_policies):
         enabled.append("domain")
     return _string_list(enabled)
+
+
+def _record_with_control_plane_verifier_policy(workspace: Path, record: dict[str, Any]) -> dict[str, Any]:
+    policy = read_verifier_policy(ReadVerifierPolicyQueryV1(workspace=str(workspace))).policy
+    gate_policy = verifier_policy_to_gate_policy(policy)
+    if not gate_policy.get("enabled_evidence_modalities") and not gate_policy.get("required_evidence_modalities"):
+        return record
+    return {
+        **record,
+        "control_plane_verifier_policy": gate_policy,
+    }
 
 
 def _required_modalities_from_job_token(job_token: dict[str, Any]) -> list[str]:
@@ -738,7 +730,7 @@ def build_job_token_from_record(
         "repair_lineage": repair_lineage,
         "contract_hash": contract_hash,
         "blueprint_hash": blueprint_hash,
-        "source": "factory.pipeline",
+        "source": "control_plane.job_token",
     }
     return JobToken(
         schema_version=1,
@@ -756,7 +748,7 @@ def build_job_token_from_record(
         repair_lineage=repair_lineage,
         contract_hash=contract_hash,
         blueprint_hash=blueprint_hash,
-        source="factory.pipeline",
+        source="control_plane.job_token",
     )
 
 
@@ -775,6 +767,33 @@ def build_gate_ledger_event(
     raw_commands = gate.get("commands")
     commands: list[Any] = raw_commands if isinstance(raw_commands, list) else []
     total_command_count = int(gate.get("command_count_total") or len(commands))
+    physical_evidence = {
+        "requirements": requirements,
+        "entrypoint": entrypoint,
+        "command_count": total_command_count,
+        "sampled_command_count": len(commands),
+        "commands_truncated": bool(gate.get("commands_truncated")),
+        "commands": commands,
+        "modalities": _evidence_modalities_from_physical_evidence(
+            {
+                "modalities": gate.get("modalities"),
+                "requirements": requirements,
+                "entrypoint": entrypoint,
+                "command_count": total_command_count,
+                "commands": commands,
+                "verifier_results": gate.get("verifier_results"),
+                "custom_verifiers": gate.get("custom_verifiers"),
+                "domain_verifiers": gate.get("domain_verifiers"),
+                "script_verifiers": gate.get("script_verifiers"),
+                "user_verifiers": gate.get("user_verifiers"),
+                "qa_verifiers": gate.get("qa_verifiers"),
+                "llm_judge": gate.get("llm_judge"),
+                "visual_judgement": gate.get("visual_judgement"),
+                "qa_visual_judgement": gate.get("qa_visual_judgement"),
+            }
+        ),
+    }
+    _attach_tool_receipt_evidence(physical_evidence, gate)
     event = {
         "schema_version": 1,
         "event_type": "gate_evaluated",
@@ -788,32 +807,7 @@ def build_gate_ledger_event(
                 name for name, item in requirements.items() if isinstance(item, dict) and not bool(item.get("ok"))
             ],
         },
-        "physical_evidence": {
-            "requirements": requirements,
-            "entrypoint": entrypoint,
-            "command_count": total_command_count,
-            "sampled_command_count": len(commands),
-            "commands_truncated": bool(gate.get("commands_truncated")),
-            "commands": commands,
-            "modalities": _evidence_modalities_from_physical_evidence(
-                {
-                    "modalities": gate.get("modalities"),
-                    "requirements": requirements,
-                    "entrypoint": entrypoint,
-                    "command_count": total_command_count,
-                    "commands": commands,
-                    "verifier_results": gate.get("verifier_results"),
-                    "custom_verifiers": gate.get("custom_verifiers"),
-                    "domain_verifiers": gate.get("domain_verifiers"),
-                    "script_verifiers": gate.get("script_verifiers"),
-                    "user_verifiers": gate.get("user_verifiers"),
-                    "qa_verifiers": gate.get("qa_verifiers"),
-                    "llm_judge": gate.get("llm_judge"),
-                    "visual_judgement": gate.get("visual_judgement"),
-                    "qa_visual_judgement": gate.get("qa_visual_judgement"),
-                }
-            ),
-        },
+        "physical_evidence": physical_evidence,
     }
     event["content_id"] = stable_hash(_event_content_payload(event))
     event["event_id"] = event["content_id"]
@@ -832,7 +826,8 @@ def persist_real_run_gate_ledger(
 ) -> dict[str, Any]:
     """Persist a real-run gate event and return lightweight ledger metadata."""
 
-    token = build_job_token_from_record(record, run_id=run_id, project_id=project_id, stage=stage)
+    token_record = _record_with_control_plane_verifier_policy(workspace, record)
+    token = build_job_token_from_record(token_record, run_id=run_id, project_id=project_id, stage=stage)
     event = build_gate_ledger_event(token, gate, gate_name=gate_name)
     persisted = RunLedger(workspace, run_id=token.run_id or run_id or "unknown").append_event(event)
     persisted_event = persisted["event"]
@@ -852,186 +847,13 @@ def persist_real_run_gate_ledger(
 def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the canonical read model for ledger-backed UI/QA projections."""
 
-    gates: list[dict[str, Any]] = []
-    capability_issues: list[str] = []
-    job_token_ids: list[str] = []
-    latest_token: dict[str, Any] = {}
-    command_count_total = 0
-    sampled_command_count = 0
-    truncated_command_events = 0
-    evidence_modalities: dict[str, dict[str, Any]] = {}
-    enabled_modalities: list[str] = []
-    required_modalities: list[str] = []
-    missing_required_modalities: list[str] = []
-    for event in events:
-        if not isinstance(event, dict) or event.get("event_type") != "gate_evaluated":
-            continue
-        raw_gate = event.get("gate")
-        gate: dict[str, Any] = raw_gate if isinstance(raw_gate, dict) else {}
-        raw_physical_evidence = event.get("physical_evidence")
-        physical_evidence: dict[str, Any] = raw_physical_evidence if isinstance(raw_physical_evidence, dict) else {}
-        raw_job_token = event.get("job_token")
-        job_token: dict[str, Any] = raw_job_token if isinstance(raw_job_token, dict) else {}
-        raw_capability_audit = job_token.get("capability_audit")
-        capability_audit: dict[str, Any] = raw_capability_audit if isinstance(raw_capability_audit, dict) else {}
-        issues = capability_audit.get("issues")
-        if isinstance(issues, list):
-            capability_issues.extend(str(item) for item in issues if str(item))
-        token_id = _clean_string(job_token.get("token_id"))
-        if token_id:
-            job_token_ids.append(token_id)
-            latest_token = job_token
-        command_count_total += int(physical_evidence.get("command_count") or 0)
-        sampled_command_count += int(physical_evidence.get("sampled_command_count") or 0)
-        if physical_evidence.get("commands_truncated"):
-            truncated_command_events += 1
-        gate_modalities = _evidence_modalities_from_physical_evidence(physical_evidence)
-        gate_enabled_modalities = _enabled_modalities_from_job_token(job_token)
-        gate_required_modalities = _required_modalities_from_job_token(job_token)
-        enabled_modalities.extend(gate_enabled_modalities)
-        required_modalities.extend(gate_required_modalities)
-        gate_missing_required_modalities = _missing_required_modalities(gate_required_modalities, gate_modalities)
-        missing_required_modalities.extend(gate_missing_required_modalities)
-        for modality_name, modality in gate_modalities.items():
-            summary = evidence_modalities.setdefault(
-                modality_name,
-                {"total": 0, "present": 0, "ok": 0, "failed": 0, "latest_detail": ""},
-            )
-            summary["total"] = int(summary["total"]) + 1
-            if modality.get("present"):
-                summary["present"] = int(summary["present"]) + 1
-            if modality.get("ok"):
-                summary["ok"] = int(summary["ok"]) + 1
-            else:
-                summary["failed"] = int(summary["failed"]) + 1
-            detail = _clean_string(modality.get("detail"))
-            if detail:
-                summary["latest_detail"] = detail
-        gates.append(
-            {
-                "name": _clean_string(gate.get("name")) or "unknown",
-                "stage": _clean_string(event.get("stage")),
-                "ok": bool(gate.get("ok")),
-                "summary": _clean_string(gate.get("summary")),
-                "content_id": _clean_string(event.get("content_id") or event.get("event_id")),
-                "append_id": _clean_string(event.get("append_id")),
-                "job_token_id": token_id,
-                "capability_ok": bool(capability_audit.get("ok")),
-                "capability_issues": list(issues) if isinstance(issues, list) else [],
-                "evidence_modalities": gate_modalities,
-                "enabled_evidence_modalities": gate_enabled_modalities,
-                "required_evidence_modalities": gate_required_modalities,
-                "missing_required_evidence_modalities": gate_missing_required_modalities,
-            }
-        )
-    failed_gates = [gate for gate in gates if not gate["ok"]]
-    capability_ok = bool(gates) and not capability_issues and all(gate["capability_ok"] for gate in gates)
-    enabled_modalities = _string_list(enabled_modalities)
-    required_modalities = _string_list(required_modalities)
-    missing_required_modalities = _string_list(missing_required_modalities)
-    evidence_policy_ok = bool(gates) and not missing_required_modalities
-    integrity_ok = bool(gates) and capability_ok and evidence_policy_ok
-    outcome_ok = bool(gates) and not failed_gates
-    projection_ok = integrity_ok and outcome_ok
-    return {
-        "schema_version": 1,
-        "source": "run_ledger",
-        "ok": projection_ok,
-        "integrity_ok": integrity_ok,
-        "outcome_ok": outcome_ok,
-        "event_count": len(events),
-        "gate_count": len(gates),
-        "missing": ([] if gates else ["gate_events"]) + missing_required_modalities,
-        "gates": gates,
-        "failed_gates": failed_gates,
-        "capability": {
-            "ok": capability_ok,
-            "issues": sorted(set(capability_issues)),
-            "latest_token_id": _clean_string(latest_token.get("token_id")) if latest_token else "",
-            "latest_contract_hash": _clean_string(latest_token.get("contract_hash")) if latest_token else "",
-            "latest_blueprint_hash": _clean_string(latest_token.get("blueprint_hash")) if latest_token else "",
-            "job_token_ids": list(dict.fromkeys(job_token_ids)),
-        },
-        "physical_evidence": {
-            "command_count": command_count_total,
-            "sampled_command_count": sampled_command_count,
-            "truncated_command_events": truncated_command_events,
-        },
-        "evidence_modalities": dict(sorted(evidence_modalities.items())),
-        "evidence_policy": {
-            "ok": evidence_policy_ok,
-            "enabled_modalities": enabled_modalities,
-            "required_modalities": required_modalities,
-            "missing_required_modalities": missing_required_modalities,
-        },
-    }
+    return _build_platform_run_ledger_projection(events)
 
 
 def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
     """Return the control-plane integrity status for a ledger projection."""
 
-    if not isinstance(value, dict):
-        return {
-            "ok": False,
-            "detail": "run ledger projection missing",
-            "missing": ["run_ledger_projection"],
-        }
-    if value.get("source") != "run_ledger":
-        return {
-            "ok": False,
-            "detail": "run ledger projection source mismatch",
-            "missing": ["source"],
-        }
-    if int(value.get("gate_count") or 0) <= 0:
-        return {
-            "ok": False,
-            "detail": "run ledger projection has no gate events",
-            "missing": ["gate_events"],
-        }
-    capability = value.get("capability")
-    capability_map = capability if isinstance(capability, dict) else {}
-    if not bool(capability_map.get("ok")):
-        issues = capability_map.get("issues")
-        issue_list = [str(item) for item in issues] if isinstance(issues, list) else ["capability"]
-        return {
-            "ok": False,
-            "detail": "run ledger projection capability invalid: " + ", ".join(issue_list),
-            "missing": issue_list,
-            "capability": capability_map,
-        }
-    evidence_policy = value.get("evidence_policy")
-    evidence_policy_map = evidence_policy if isinstance(evidence_policy, dict) else {}
-    if evidence_policy_map and not bool(evidence_policy_map.get("ok")):
-        missing = evidence_policy_map.get("missing_required_modalities")
-        missing_list = [str(item) for item in missing] if isinstance(missing, list) else ["evidence_modalities"]
-        return {
-            "ok": False,
-            "detail": "run ledger projection missing required evidence: " + ", ".join(missing_list),
-            "missing": missing_list,
-            "capability": capability_map,
-            "evidence_policy": evidence_policy_map,
-        }
-    failed_gates = value.get("failed_gates")
-    failed_gate_count = len(failed_gates) if isinstance(failed_gates, list) else 0
-    if not bool(value.get("ok")):
-        return {
-            "ok": False,
-            "detail": f"run ledger projection has {failed_gate_count} failed gate(s)",
-            "missing": ["failed_gates"] if failed_gate_count else ["projection_ok"],
-            "outcome_ok": bool(value.get("outcome_ok")),
-            "failed_gate_count": failed_gate_count,
-            "capability": capability_map,
-            "evidence_policy": evidence_policy_map,
-        }
-    return {
-        "ok": True,
-        "detail": f"run ledger projection ready ({int(value.get('gate_count') or 0)} gate event(s))",
-        "missing": [],
-        "outcome_ok": bool(value.get("outcome_ok")),
-        "failed_gate_count": failed_gate_count,
-        "capability": capability_map,
-        "evidence_policy": evidence_policy_map,
-    }
+    return _summarize_platform_run_ledger_projection(value)
 
 
 def load_run_ledger_projection(workspace: Path, *, run_id: str) -> dict[str, Any]:
