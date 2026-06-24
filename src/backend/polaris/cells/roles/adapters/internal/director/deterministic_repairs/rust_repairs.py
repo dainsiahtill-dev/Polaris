@@ -1043,7 +1043,7 @@ def _run_cargo_check_stderr(workspace: Path) -> str:
         return ""
     try:
         result = subprocess.run(
-            [cargo, "check", "--quiet", "--message-format=short"],
+            [cargo, "check", "--quiet"],
             cwd=str(workspace),
             capture_output=True,
             text=True,
@@ -1052,6 +1052,74 @@ def _run_cargo_check_stderr(workspace: Path) -> str:
         return result.stderr or ""
     except (OSError, subprocess.TimeoutExpired):
         return ""
+
+
+def repair_rust_field_rename_suggestions(workspace: Path, stderr: str = "") -> list[dict[str, Any]]:
+    """Apply cargo's field rename suggestions (e.g., ingredients → ingredient).
+
+    When cargo says ``no field `ingredients` on type `&Recipe``` and suggests
+    ``a field with a similar name exists``, extract the wrong and correct field
+    names from the error message and do a targeted rename on the specific line.
+    """
+    if not stderr:
+        stderr = _run_cargo_check_stderr(workspace)
+    if not stderr:
+        return []
+
+    # Extract: error[E0609]: no field `wrong` on type `&Struct`
+    # + --> file.rs:line
+    field_error_re = re.compile(
+        r"error\[E0609\]:\s*no field [`'\"](?P<wrong>[A-Za-z_][A-Za-z0-9_]*)[`'\"]"
+        r"\s+on type [`'\"]&?(?P<struct>[A-Za-z_][A-Za-z0-9_]*)[`'\"].*?"
+        r"-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+)",
+        re.DOTALL,
+    )
+    # Extract the suggested field name from the diff line:
+    # 72 +         for ingredient in &recipe.ingredient {
+    suggestion_re = re.compile(r"\d+\s*\+\s*.+\.(?P<correct>[A-Za-z_][A-Za-z0-9_]*)\b")
+
+    repairs: list[dict[str, Any]] = []
+    error_blocks = re.split(r"(?=error\[E\d+\])", stderr)
+
+    for block in error_blocks:
+        err_match = field_error_re.search(block)
+        if not err_match:
+            continue
+        wrong_field = err_match.group("wrong")
+        rel_path = err_match.group("path").strip()
+        line_num = int(err_match.group("line"))
+
+        # Find the suggested correct field name
+        sug_match = suggestion_re.search(block)
+        if not sug_match:
+            continue
+        correct_field = sug_match.group("correct")
+        if wrong_field == correct_field:
+            continue
+
+        target = (workspace / rel_path).resolve()
+        if not target.is_file():
+            continue
+        try:
+            lines = target.read_text(encoding="utf-8").split("\n")
+        except OSError:
+            continue
+        idx = line_num - 1
+        if idx < 0 or idx >= len(lines):
+            continue
+        old_line = lines[idx]
+        # Replace .wrong with .correct on this specific line
+        new_line = old_line.replace(f".{wrong_field}", f".{correct_field}")
+        if new_line != old_line:
+            lines[idx] = new_line
+            target.write_text("\n".join(lines), encoding="utf-8")
+            repairs.append(
+                {
+                    "file": rel_path,
+                    "action": f"field_rename_{wrong_field}_to_{correct_field}",
+                }
+            )
+    return repairs
 
 
 def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
@@ -1071,6 +1139,7 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
     all_repairs: list[dict[str, Any]] = []
     all_repairs.extend(repair_rust_unused_imports(workspace, stderr))
     all_repairs.extend(repair_rust_missing_fields(workspace, stderr))
+    all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr))
 
     # Second pass with fresh cargo check output
     if all_repairs:
@@ -1078,6 +1147,7 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
         if stderr2 and ("error" in stderr2 or "warning" in stderr2):
             all_repairs.extend(repair_rust_unused_imports(workspace, stderr2))
             all_repairs.extend(repair_rust_missing_fields(workspace, stderr2))
+            all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr2))
 
     return all_repairs
 

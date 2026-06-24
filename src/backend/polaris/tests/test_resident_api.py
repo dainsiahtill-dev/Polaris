@@ -171,7 +171,9 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
         assert capabilities_response.status_code == 200
         capabilities = capabilities_response.json()
         assert capabilities["schema_version"] == "resident.agi_capability_surface.v1"
+        assert capabilities["decision_boundary_schema"] == "resident.agi_decision_boundary.v1"
         assert capabilities["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
         assert any(item["capability_id"] == "run_ledger.read" for item in capabilities["items"])
+        assert any(item["authority"] == "platform_hard_rule" for item in capabilities["decision_boundaries"])
 
     reset_resident_services()

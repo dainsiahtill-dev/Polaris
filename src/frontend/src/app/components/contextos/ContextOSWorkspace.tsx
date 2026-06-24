@@ -140,6 +140,11 @@ const AGI_FINAL_REQUEST_COVERAGE: Array<{ id: string; label: string; key: string
     label: 'AGI 能力面',
     key: 'has_resident_agi_capability_surface',
   },
+  {
+    id: 'resident-agi-decision-boundary',
+    label: 'AGI 决策边界',
+    key: 'has_resident_agi_decision_boundary',
+  },
 ];
 
 function badgeColorForState(state: PipelineState): 'success' | 'error' | 'default' {
@@ -1117,6 +1122,7 @@ function formatFinalRequestAuditTitle(audit: Record<string, unknown> | null): st
     ['feedback', coverage['has_failure_feedback']],
     ['agi_decision', coverage['has_resident_agi_decision_trace']],
     ['agi_capability', coverage['has_resident_agi_capability_surface']],
+    ['agi_boundary', coverage['has_resident_agi_decision_boundary']],
   ].map(([key, value]) => `${key}=${String(value ?? 'n/a')}`);
   return parts.join(' ');
 }

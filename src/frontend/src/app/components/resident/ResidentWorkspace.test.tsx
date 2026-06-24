@@ -128,6 +128,7 @@ const mockResidentState = {
   },
   residentAgiCapabilitySurface: {
     schema_version: 'resident.agi_capability_surface.v1',
+    decision_boundary_schema: 'resident.agi_decision_boundary.v1',
     role_id: 'resident_agi',
     runtime_foundation: 'RoleRuntime / ContextOS / TurnEngine',
     implementation_cell: 'resident.autonomy',
@@ -154,6 +155,32 @@ const mockResidentState = {
         access: 'execute_through_pm_ce_director_chain',
         contract_ref: 'resident.goal_bridge',
         risk_level: 'high',
+      },
+    ],
+    decision_boundaries: [
+      {
+        boundary_id: 'platform.invariants',
+        name: 'Platform hard invariants',
+        authority: 'platform_hard_rule',
+        platform_hard_rule: 'Security, runtime topology, and final request audit are enforced by code.',
+        agi_decision_scope: 'AGI may detect missing evidence and propose remediation.',
+        evidence_required: ['final_request_context_audit', 'runtime.v2 events'],
+      },
+      {
+        boundary_id: 'architecture.options',
+        name: 'Architecture and dependency choice',
+        authority: 'agi_recommendation',
+        platform_hard_rule: 'Preserve Cell/KernelOne reuse and role handoff contracts.',
+        agi_decision_scope: 'AGI may compare architecture options and library choices using task evidence.',
+        evidence_required: ['task.execution_profile.v1', 'chief_engineer.blueprint'],
+      },
+      {
+        boundary_id: 'goal.execution',
+        name: 'Goal promotion and unattended execution',
+        authority: 'agi_governed_execution',
+        platform_hard_rule: 'Approved goals may only execute through the governed role chain.',
+        agi_decision_scope: 'AGI may prioritize, stage, and promote evidence-backed goals.',
+        evidence_required: ['decision_trace.jsonl', 'PM runtime contract'],
       },
     ],
   },
@@ -205,6 +232,12 @@ describe('ResidentWorkspace', () => {
     expect(screen.getByTestId('resident-agi-governance-matrix')).toHaveTextContent('Governed ops');
     expect(screen.getByTestId('resident-agi-governance-matrix')).toHaveTextContent('High risk');
     expect(screen.getByTestId('resident-agi-governance-tags')).toHaveTextContent('resident.goal_bridge');
+    expect(screen.getByTestId('resident-agi-decision-boundaries')).toHaveTextContent('AGI 决策边界');
+    expect(screen.getByTestId('resident-agi-decision-boundaries')).toHaveTextContent('平台硬规则');
+    expect(screen.getByTestId('resident-agi-decision-boundaries')).toHaveTextContent('AGI 智能判断');
+    expect(screen.getByTestId('resident-agi-decision-boundaries')).toHaveTextContent('AGI 受控执行');
+    expect(screen.getByTestId('resident-agi-decision-boundaries')).toHaveTextContent('Architecture and dependency choice');
+    expect(screen.getByTestId('resident-agi-decision-boundaries')).toHaveTextContent('final_request_context_audit');
   });
 
   it('creates a goal from the AGI console', async () => {

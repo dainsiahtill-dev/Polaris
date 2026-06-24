@@ -95,8 +95,11 @@ class TestResidentAgiCapabilitySurfaceSignal:
             get_task_history=lambda _tid: None,
             get_resident_agi_capabilities=lambda: (
                 "runtime_foundation: roles.runtime + ContextOS + TurnEngine\n"
+                "decision_boundary_schema: resident.agi_decision_boundary.v1\n"
                 "capabilities:\n"
-                "- contextos.final_request_audit.read"
+                "- contextos.final_request_audit.read\n"
+                "decision_boundaries:\n"
+                "- platform_hard_rule | agi_decision_scope"
             ),
         )
         signal = ResidentAgiCapabilitySurfaceSignal()
@@ -105,6 +108,9 @@ class TestResidentAgiCapabilitySurfaceSignal:
         assert block is not None
         assert "Resident AGI 能力面" in block.content
         assert "roles.runtime + ContextOS + TurnEngine" in block.content
+        assert "resident.agi_decision_boundary.v1" in block.content
+        assert "platform_hard_rule" in block.content
+        assert "agi_decision_scope" in block.content
         assert block.level == "must_have"
 
     def test_not_for_other_roles(self) -> None:
@@ -192,6 +198,17 @@ class TestResidentAgiCapabilitySurfaceSignal:
                         "evidence_refs": ["runtime/contexts/<shard>/<hash>"],
                     }
                 ],
+                "decision_boundary_schema": "resident.agi_decision_boundary.v1",
+                "decision_boundaries": [
+                    {
+                        "boundary_id": "architecture.options",
+                        "name": "Architecture and dependency choice",
+                        "authority": "agi_recommendation",
+                        "platform_hard_rule": "Preserve Cell/KernelOne reuse.",
+                        "agi_decision_scope": "AGI may compare architecture options using task evidence.",
+                        "evidence_required": ["task.execution_profile.v1", "chief_engineer.blueprint"],
+                    }
+                ],
             }
         )
         source = SignalSourceProvider(
@@ -206,8 +223,10 @@ class TestResidentAgiCapabilitySurfaceSignal:
 
         assert rendered is not None
         assert "roles.runtime + ContextOS + TurnEngine" in rendered
-        assert "non_bypass_rules" in rendered
-        assert "PM -> Chief Engineer -> Director" in rendered
+        assert "resident.agi_decision_boundary.v1" in rendered
+        assert "architecture.options" in rendered
+        assert "platform_hard_rule" in rendered
+        assert "agi_decision_scope" in rendered
         assert "contextos.final_request_audit.read" in rendered
 
 

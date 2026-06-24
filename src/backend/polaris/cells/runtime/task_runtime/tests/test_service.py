@@ -214,6 +214,25 @@ def test_task_runtime_service_materializes_legacy_task_and_claims_it(tmp_path: P
     assert str(claim["session"]["session_id"])
 
 
+def test_task_runtime_external_task_id_does_not_collide_with_numeric_row(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    stale = service.create(subject="stale", description="old row")
+    service.update(stale.id, status="completed", metadata={"previous_run": "old"})
+
+    row = service.ensure_task_row(
+        external_task_id="TASK-1",
+        subject="current PM task",
+        metadata={"pm_task_id": "TASK-1"},
+    )
+
+    assert row["id"] != stale.id
+    assert service.get_task("TASK-1")["id"] == row["id"]
+    assert service.get_task(f"task-{stale.id}")["id"] == stale.id
+
+
 def test_task_runtime_service_surfaces_resumable_task_and_reclaims_it(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

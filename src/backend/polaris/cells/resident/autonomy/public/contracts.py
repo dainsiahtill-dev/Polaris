@@ -119,6 +119,56 @@ class ResidentAgiCapabilityV1:
 
 
 @dataclass(frozen=True)
+class ResidentAgiDecisionBoundaryV1:
+    boundary_id: str
+    name: str
+    authority: str
+    platform_hard_rule: str
+    agi_decision_scope: str
+    evidence_required: tuple[str, ...] = field(default_factory=tuple)
+    escalation: str = ""
+    contract_refs: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "boundary_id", _require_non_empty("boundary_id", self.boundary_id))
+        object.__setattr__(self, "name", _require_non_empty("name", self.name))
+        object.__setattr__(self, "authority", _require_non_empty("authority", self.authority))
+        object.__setattr__(
+            self,
+            "platform_hard_rule",
+            _require_non_empty("platform_hard_rule", self.platform_hard_rule),
+        )
+        object.__setattr__(
+            self,
+            "agi_decision_scope",
+            _require_non_empty("agi_decision_scope", self.agi_decision_scope),
+        )
+        object.__setattr__(
+            self,
+            "evidence_required",
+            tuple(str(v).strip() for v in self.evidence_required if str(v).strip()),
+        )
+        object.__setattr__(self, "escalation", str(self.escalation or "").strip())
+        object.__setattr__(
+            self,
+            "contract_refs",
+            tuple(str(v).strip() for v in self.contract_refs if str(v).strip()),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "boundary_id": self.boundary_id,
+            "name": self.name,
+            "authority": self.authority,
+            "platform_hard_rule": self.platform_hard_rule,
+            "agi_decision_scope": self.agi_decision_scope,
+            "evidence_required": list(self.evidence_required),
+            "escalation": self.escalation,
+            "contract_refs": list(self.contract_refs),
+        }
+
+
+@dataclass(frozen=True)
 class ResidentCycleCompletedEventV1:
     event_id: str
     workspace: str
@@ -177,6 +227,7 @@ __all__ = [
     "QueryResidentStatusV1",
     "RecordResidentEvidenceCommandV1",
     "ResidentAgiCapabilityV1",
+    "ResidentAgiDecisionBoundaryV1",
     "ResidentAutonomyError",
     "ResidentAutonomyResultV1",
     "ResidentCycleCompletedEventV1",

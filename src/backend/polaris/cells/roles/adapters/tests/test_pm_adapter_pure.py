@@ -213,6 +213,54 @@ class TestFrontendTestRepairContracts:
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
+    def test_rust_root_workspace_directive_prefers_cargo_contracts(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+请基于 Architect 阶段产物生成 PM 执行任务合同。
+
+## Original Requirement Excerpt
+# Product Requirements — 厨房味觉配色器
+
+## Goal
+- 用 Rust 实现「厨房味觉配色器」。创意钩子: 把味觉映射成菜谱色板和摆盘规则。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。
+
+## Acceptance Criteria
+- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。
+- 必须提供至少一种真实可执行入口, 且验收脚本可自动发现: Web/visual/simulation/game 项目提供含 <html> 的 index.html 或等价 HTML 入口; CLI 项目提供 package.json 脚本或可直接执行的 main 文件; API 项目提供可启动服务入口和健康检查说明。
+- 附 README.md 说明如何运行。
+- 关键验收维度: 把味觉映射成菜谱色板和摆盘规则; 同时验证 Rust 产物结构、入口可运行性和核心领域规则。
+
+## Deterministic Checks
+- rust_compile
+- min_files:3
+- content_any:flavor|palette|ingredient|recipe
+- source_target_coverage:src/**/*.rs
+
+## Language-Specific Runnable Contract (Rust)
+- 必须包含 `Cargo.toml`。
+- `cargo build` 必须成功。
+""".strip()
+
+        contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+        _normalized, quality = adapter._evaluate_contract_quality(contracts, directive=directive)
+        targets = [target for item in contracts for target in item.get("target_files", [])]
+        serialized = json.dumps(contracts, ensure_ascii=False)
+
+        assert "Cargo.toml" in targets
+        assert "src/lib.rs" in targets
+        assert "src/main.rs" in targets
+        assert "src/engine/mapper.rs" in targets
+        assert "src/models/flavor.rs" in targets
+        assert "tests/test_product.py" in targets
+        assert "README.md" in targets
+        assert "index.html" not in targets
+        assert "styles.css" not in targets
+        assert "cargo build" in serialized or "cargo check" in serialized
+        assert "flavor" in serialized
+        assert "palette" in serialized
+        assert quality["ok"] is True
+        assert (quality.get("score") or 0) >= 80
+
     def test_typescript_web_bad_llm_contract_fails_factory_guard(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         directive = """

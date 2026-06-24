@@ -324,17 +324,10 @@ class SignalSourceProvider:
 
         lines = [
             f"schema_version: {payload.get('schema_version', '')}",
+            f"decision_boundary_schema: {payload.get('decision_boundary_schema', '')}",
             f"role_id: {payload.get('role_id', 'resident_agi')}",
             f"runtime_foundation: {payload.get('runtime_foundation', '')}",
             f"implementation_cell: {payload.get('implementation_cell', 'resident.autonomy')}",
-            f"product_role: {payload.get('product_role', 'embedded_agi_supervisor')}",
-            f"unattended_factory_role: {payload.get('unattended_factory_role', 'replace_human_supervision')}",
-            "decision_boundary: hard_rules_then_resident_agi_supervisor",
-            "",
-            "non_bypass_rules:",
-            "- Resident AGI is a RoleRuntime actor, not a sidecar or second orchestration system.",
-            "- It may inspect audit evidence, final provider requests, runtime events, task profiles, and blueprints.",
-            "- Execution-impacting actions must preserve PM -> Chief Engineer -> Director and canonical gates.",
             "",
             "capabilities:",
         ]
@@ -347,27 +340,54 @@ class SignalSourceProvider:
             category = str(raw_item.get("category") or "unknown").strip()
             access = str(raw_item.get("access") or "unknown").strip()
             risk = str(raw_item.get("risk_level") or "low").strip()
-            name = str(raw_item.get("name") or capability_id).strip()
-            purpose = str(raw_item.get("purpose") or "").strip()
             contract_ref = str(raw_item.get("contract_ref") or "").strip()
-            endpoint = str(raw_item.get("endpoint") or "").strip()
-            lines.append(f"- {capability_id} | {name} | category={category} | access={access} | risk={risk}")
-            if purpose:
-                lines.append(f"  purpose: {purpose}")
+            parts = [
+                f"- {capability_id}",
+                f"category={category}",
+                f"access={access}",
+                f"risk={risk}",
+            ]
             if contract_ref:
-                lines.append(f"  contract: {contract_ref}")
-            if endpoint:
-                lines.append(f"  endpoint: {endpoint}")
-            guardrails = raw_item.get("guardrails") or ()
-            if isinstance(guardrails, (list, tuple)):
-                rendered_guardrails = [str(item).strip() for item in guardrails if str(item).strip()]
-                if rendered_guardrails:
-                    lines.append(f"  guardrails: {'; '.join(rendered_guardrails[:3])}")
-            evidence_refs = raw_item.get("evidence_refs") or ()
-            if isinstance(evidence_refs, (list, tuple)):
-                rendered_refs = [str(item).strip() for item in evidence_refs if str(item).strip()]
-                if rendered_refs:
-                    lines.append(f"  evidence_refs: {', '.join(rendered_refs[:3])}")
+                parts.append(f"contract={contract_ref}")
+            lines.append(" | ".join(parts))
+            if risk == "high":
+                guardrails = raw_item.get("guardrails") or ()
+                if isinstance(guardrails, (list, tuple)):
+                    rendered_guardrails = [str(item).strip() for item in guardrails if str(item).strip()]
+                    if rendered_guardrails:
+                        lines.append(f"  guardrails: {'; '.join(rendered_guardrails[:3])}")
+
+        decision_boundaries = payload.get("decision_boundaries") or ()
+        if isinstance(decision_boundaries, list) and decision_boundaries:
+            lines.extend(["", "decision_boundaries:"])
+            for raw_boundary in decision_boundaries[:8]:
+                if not isinstance(raw_boundary, Mapping):
+                    continue
+                boundary_id = str(raw_boundary.get("boundary_id") or "").strip()
+                if not boundary_id:
+                    continue
+                name = str(raw_boundary.get("name") or boundary_id).strip()
+                authority = str(raw_boundary.get("authority") or "unknown").strip()
+                hard_rule = str(raw_boundary.get("platform_hard_rule") or "").strip()
+                agi_scope = str(raw_boundary.get("agi_decision_scope") or "").strip()
+                escalation = str(raw_boundary.get("escalation") or "").strip()
+                lines.append(f"- {boundary_id} | {name} | authority={authority}")
+                if hard_rule:
+                    lines.append(f"  platform_hard_rule: {hard_rule}")
+                if agi_scope:
+                    lines.append(f"  agi_decision_scope: {agi_scope}")
+                evidence_required = raw_boundary.get("evidence_required") or ()
+                if isinstance(evidence_required, (list, tuple)):
+                    rendered_evidence = [str(item).strip() for item in evidence_required if str(item).strip()]
+                    if rendered_evidence:
+                        lines.append(f"  evidence_required: {', '.join(rendered_evidence[:4])}")
+                contract_refs = raw_boundary.get("contract_refs") or ()
+                if isinstance(contract_refs, (list, tuple)):
+                    rendered_contracts = [str(item).strip() for item in contract_refs if str(item).strip()]
+                    if rendered_contracts:
+                        lines.append(f"  contract_refs: {', '.join(rendered_contracts[:4])}")
+                if escalation:
+                    lines.append(f"  escalation: {escalation}")
 
         rendered = "\n".join(lines).strip()
         return rendered or None

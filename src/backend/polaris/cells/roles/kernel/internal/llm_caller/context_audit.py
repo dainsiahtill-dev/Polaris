@@ -180,6 +180,18 @@ def _coverage_flags(text: str) -> dict[str, bool]:
                 "embedded_agi_supervisor",
             )
         ),
+        "has_resident_agi_decision_boundary": any(
+            needle in lowered
+            for needle in (
+                "resident.agi_decision_boundary.v1",
+                "decision_boundary_schema",
+                "decision_boundaries",
+                "platform_hard_rule",
+                "agi_decision_scope",
+                "agi_governed_execution",
+                "agi_recommendation",
+            )
+        ),
     }
 
 

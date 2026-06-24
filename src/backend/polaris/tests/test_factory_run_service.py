@@ -1245,6 +1245,10 @@ class TestOrchestrationStageExecutor:
         mirrored_plan = Path(resolve_logical_path(str(temp_workspace), f"workspace/roles/pm/{run.id}/plan.json"))
         assert json.loads(mirrored_plan.read_text(encoding="utf-8"))["tasks"][0]["id"] == "TASK-1"
         assert TaskRuntimeService(str(temp_workspace)).get_task(stale.id) is None
+        task_row = TaskRuntimeService(str(temp_workspace)).get_task("TASK-1")
+        assert task_row is not None
+        assert task_row["status"] == "pending"
+        assert task_row["metadata"]["pm_task_id"] == "TASK-1"
 
     @pytest.mark.asyncio
     async def test_chief_engineer_stage_requires_pm_plan_artifact(self, temp_workspace):

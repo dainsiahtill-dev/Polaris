@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from polaris.cells.resident.autonomy.public.contracts import ResidentAgiCapabilityV1
+from polaris.cells.resident.autonomy.public.contracts import (
+    ResidentAgiCapabilityV1,
+    ResidentAgiDecisionBoundaryV1,
+)
 
 
 def build_resident_agi_capability_surface() -> list[ResidentAgiCapabilityV1]:
@@ -116,13 +119,109 @@ def build_resident_agi_capability_surface() -> list[ResidentAgiCapabilityV1]:
     ]
 
 
+def build_resident_agi_decision_boundaries() -> list[ResidentAgiDecisionBoundaryV1]:
+    """Return the governed boundary between platform rules and AGI judgement."""
+
+    return [
+        ResidentAgiDecisionBoundaryV1(
+            boundary_id="platform.invariants",
+            name="Platform hard invariants",
+            authority="platform_hard_rule",
+            platform_hard_rule=(
+                "Security, path authorization, realtime single-rail transport, final provider-request audit, "
+                "and PM → Chief Engineer → Director topology are enforced by code."
+            ),
+            agi_decision_scope=(
+                "AGI may detect missing evidence, explain the blocker, and propose remediation; it cannot override gates."
+            ),
+            evidence_required=(
+                "final_request_context_audit",
+                "runtime.v2 events",
+                "permission/tool receipts",
+            ),
+            escalation="Block or request governed remediation when hard-rule evidence is missing.",
+            contract_refs=(
+                "roles.final_request_context_audit",
+                "runtime.v2.websocket",
+                "tool_permission_policy",
+            ),
+        ),
+        ResidentAgiDecisionBoundaryV1(
+            boundary_id="architecture.options",
+            name="Architecture and dependency choice",
+            authority="agi_recommendation",
+            platform_hard_rule=(
+                "AGI must preserve repository architecture standards, Cell/KernelOne reuse, and existing role handoff contracts."
+            ),
+            agi_decision_scope=(
+                "AGI may compare architecture options, libraries, storage, messaging, and UI patterns using current task evidence."
+            ),
+            evidence_required=(
+                "task.execution_profile.v1",
+                "chief_engineer.blueprint",
+                "workspace code evidence",
+            ),
+            escalation="Escalate to CE blueprint revision for high-risk or cross-cell architecture changes.",
+            contract_refs=(
+                "task.execution_profile.v1",
+                "chief_engineer.blueprint",
+                "resident.decision_trace",
+            ),
+        ),
+        ResidentAgiDecisionBoundaryV1(
+            boundary_id="goal.execution",
+            name="Goal promotion and unattended execution",
+            authority="agi_governed_execution",
+            platform_hard_rule=(
+                "Approved goals may only execute through the governed PM → Chief Engineer → Director chain."
+            ),
+            agi_decision_scope=(
+                "AGI may prioritize goals, stage them, attach evidence, and decide whether a run is ready for promotion."
+            ),
+            evidence_required=(
+                "resident goal artifact",
+                "decision_trace.jsonl",
+                "PM runtime contract",
+            ),
+            escalation="Hold execution when evidence is incomplete or chain handoff cannot be proven.",
+            contract_refs=(
+                "resident.goal_bridge",
+                "resident.decision_trace",
+                "PM runtime contract",
+            ),
+        ),
+        ResidentAgiDecisionBoundaryV1(
+            boundary_id="quality.response",
+            name="Quality gate response",
+            authority="agi_recommendation",
+            platform_hard_rule="AGI cannot mark failed build, lint, test, audit, or QA gates as passed.",
+            agi_decision_scope=(
+                "AGI may choose retry strategy, evidence collection priority, and whether to ask CE/Director for a targeted fix."
+            ),
+            evidence_required=(
+                "test/lint/build output",
+                "Run Ledger projection",
+                "ContextOS final request coverage",
+            ),
+            escalation="Block promotion and create a remediation decision when gates remain red.",
+            contract_refs=(
+                "control_plane.run_ledger",
+                "contextos.final_request_audit",
+                "resident.decision_trace",
+            ),
+        ),
+    ]
+
+
 def resident_agi_capability_surface_payload() -> dict[str, object]:
     """Return a serializable capability-surface payload."""
 
     items = [item.to_dict() for item in build_resident_agi_capability_surface()]
+    decision_boundaries = [item.to_dict() for item in build_resident_agi_decision_boundaries()]
     categories = sorted({str(item["category"]) for item in items})
     return {
         "schema_version": "resident.agi_capability_surface.v1",
+        "decision_boundary_schema": "resident.agi_decision_boundary.v1",
         "role_id": "resident_agi",
         "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
         "implementation_cell": "resident.autonomy",
@@ -130,11 +229,13 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
         "unattended_factory_role": "replace_human_supervision",
         "categories": categories,
         "items": items,
+        "decision_boundaries": decision_boundaries,
         "count": len(items),
     }
 
 
 __all__ = [
     "build_resident_agi_capability_surface",
+    "build_resident_agi_decision_boundaries",
     "resident_agi_capability_surface_payload",
 ]

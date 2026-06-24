@@ -131,6 +131,28 @@ class TaskRuntimeService:
             return False
         return self._board.get(normalized) is not None
 
+    @staticmethod
+    def _metadata_matches_external_task_id(metadata: dict[str, Any], external_id: str) -> bool:
+        token = str(external_id or "").strip()
+        if not token:
+            return False
+        for key in ("external_task_id", "pm_task_id", "source_task_id", "task_id"):
+            if str(metadata.get(key) or "").strip() == token:
+                return True
+        return False
+
+    def _get_task_by_external_task_id(self, external_id: str) -> dict[str, Any] | None:
+        token = str(external_id or "").strip()
+        if not token:
+            return None
+        for task in self._board.list_all():
+            row = task.to_dict()
+            raw_metadata = row.get("metadata")
+            metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+            if self._metadata_matches_external_task_id(metadata, token):
+                return self._augment_task_row(row)
+        return None
+
     def create(
         self,
         *,
@@ -170,7 +192,7 @@ class TaskRuntimeService:
         if not external_id:
             raise ValueError("external_task_id is required")
 
-        existing = self.get_task(external_id)
+        existing = self._get_task_by_external_task_id(external_id)
         if isinstance(existing, dict):
             return existing
 
@@ -204,20 +226,16 @@ class TaskRuntimeService:
         return self._board.get(normalized)
 
     def get_task(self, task_id: Any) -> dict[str, Any] | None:
+        external_id = str(task_id or "").strip()
+        external_row = self._get_task_by_external_task_id(external_id)
+        if isinstance(external_row, dict):
+            return external_row
+
         normalized = self.normalize_task_id(task_id)
         if normalized is not None:
             task = self._board.get(normalized)
             return self._augment_task_row(task.to_dict()) if task is not None else None
 
-        external_id = str(task_id or "").strip()
-        if not external_id:
-            return None
-        for task in self._board.list_all():
-            row = task.to_dict()
-            raw_metadata = row.get("metadata")
-            metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
-            if str(metadata.get("external_task_id") or "").strip() == external_id:
-                return self._augment_task_row(row)
         return None
 
     def update(

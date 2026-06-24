@@ -31,7 +31,23 @@ def _directive_requires_typescript_package_contract(directive: str) -> bool:
     return has_typescript and has_package_contract
 
 
-_DETERMINISTIC_CHECK_RE = re.compile(r"(?i)(html|ts_syntax|package_scripts|content_any:[A-Za-z0-9_|-]+)")
+def _directive_requires_rust_package_contract(directive: str) -> bool:
+    lower = str(directive or "").lower()
+    return any(
+        token in lower
+        for token in (
+            "rust",
+            "cargo",
+            ".rs",
+            "rust_compile",
+            "source_target_coverage:src/**/*.rs",
+        )
+    )
+
+
+_DETERMINISTIC_CHECK_RE = re.compile(
+    r"(?i)(html|ts_syntax|package_scripts|rust_compile|min_files:\d+|source_target_coverage:[^\s]+|content_any:[A-Za-z0-9_|-]+)"
+)
 _CONTENT_ANY_RE = re.compile(r"(?i)content_any:([A-Za-z0-9_|-]+)")
 
 
@@ -255,6 +271,17 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         if frontend_contracts:
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(frontend_contracts)
+            ]
+            return [item for item in contracts if isinstance(item, dict)]
+
+        if _directive_requires_rust_package_contract(directive):
+            rust_contracts = self._synthesize_rust_workspace_contracts(
+                directive=directive,
+                domain_label=str(domain_label),
+                source_metadata=source_metadata,
+            )
+            contracts = [
+                self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(rust_contracts)
             ]
             return [item for item in contracts if isinstance(item, dict)]
 
@@ -610,6 +637,116 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
 
         contracts = [self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(raw_contracts)]
         return [item for item in contracts if isinstance(item, dict)]
+
+    def _synthesize_rust_workspace_contracts(
+        self,
+        *,
+        directive: str,
+        domain_label: str,
+        source_metadata: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        deterministic_checks = _extract_deterministic_checks_from_directive(directive)
+        content_keywords = _extract_content_any_keywords_from_directive(directive)
+        if not content_keywords:
+            content_keywords = self._extract_domain_keywords(directive, limit=6)
+        keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
+        check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "rust_compile; cargo build"
+        model_targets = [
+            "Cargo.toml",
+            "src/lib.rs",
+            "src/models/mod.rs",
+            "src/models/flavor.rs",
+            "src/models/ingredient.rs",
+            "src/models/recipe.rs",
+            "src/models/palette.rs",
+        ]
+        engine_targets = [
+            "src/engine/mod.rs",
+            "src/engine/mapper.rs",
+            "src/engine/plating.rs",
+            "src/main.rs",
+        ]
+        verification_targets = [
+            "tests/test_product.py",
+            "README.md",
+        ]
+        return [
+            {
+                "id": "TASK-1",
+                "title": f"实现 {domain_label} Rust crate 与领域模型",
+                "goal": f"在工作区根交付 {domain_label} 的 Cargo/Rust 项目骨架和领域模型源码。",
+                "description": (
+                    "创建 Cargo.toml、src/lib.rs 与 src/models/ 下的 Rust 源文件，"
+                    f"确保源码覆盖需求关键词：{keyword_summary}。"
+                ),
+                "scope": model_targets,
+                "target_files": model_targets,
+                "steps": [
+                    "创建 Cargo.toml，声明 package、edition 和可构建的 lib/bin 目标",
+                    "创建 src/lib.rs，公开 models 与 engine 模块入口",
+                    "实现 src/models/ 下的 flavor、palette、ingredient、recipe 数据结构",
+                    f"在 Rust 源码中保留验收关键词：{keyword_summary}",
+                ],
+                "acceptance": [
+                    "`Cargo.toml`、`src/lib.rs` 与 `src/models/` Rust 源文件存在且非空",
+                    f"源码包含需求关键词：{keyword_summary}",
+                    f"确定性检查进入任务验收：{check_summary}",
+                ],
+                "phase": "requirements",
+                "depends_on": [],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+            {
+                "id": "TASK-2",
+                "title": f"实现 {domain_label} Rust 映射引擎与 CLI 入口",
+                "goal": f"实现 {domain_label} 的味觉到色板/摆盘规则核心引擎和可执行入口。",
+                "description": (
+                    "补齐 src/engine/ 下的映射和摆盘逻辑，并创建 src/main.rs 调用公开 API 输出可验证结果。"
+                ),
+                "scope": engine_targets,
+                "target_files": engine_targets,
+                "steps": [
+                    "实现 src/engine/mapper.rs，将 flavor/taste 映射为 palette/color 结果",
+                    "实现 src/engine/plating.rs，根据 ingredient/recipe 生成摆盘规则",
+                    "实现 src/engine/mod.rs，导出 generate_palette_and_plating 或等价公开 API",
+                    "实现 src/main.rs，构造示例 recipe 并打印 palette 与 plating 输出",
+                    "执行 `cargo build` 或 `cargo check` 验证 Rust 编译通过",
+                ],
+                "acceptance": [
+                    "`src/main.rs` 可通过 `cargo run` 执行",
+                    "`src/engine/` 源码实现 flavor -> palette 和 ingredient/recipe -> plating 规则",
+                    "`cargo build` 或 `cargo check` 返回成功",
+                ],
+                "phase": "implementation",
+                "depends_on": ["TASK-1"],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+            {
+                "id": "TASK-3",
+                "title": f"实现 {domain_label} Rust 验收测试与 README",
+                "goal": f"固化 {domain_label} 的自动验收脚本、运行说明和交付证据。",
+                "description": "创建 tests/test_product.py 与 README.md，验证 Rust 文件结构、cargo 入口和核心领域规则。",
+                "scope": verification_targets,
+                "target_files": verification_targets,
+                "steps": [
+                    "创建 tests/test_product.py，使用 Python unittest 调用 cargo check/run 或检查 Rust 产物结构",
+                    "测试覆盖 Rust 产物结构、入口可运行性和核心领域规则",
+                    "编写 README，说明 cargo build、cargo run 和测试命令",
+                    f"验证脚本覆盖确定性检查：{check_summary}",
+                ],
+                "acceptance": [
+                    "`tests/test_product.py` 存在且可执行",
+                    "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
+                    "`README.md` 包含 Cargo 构建、运行和验证步骤",
+                ],
+                "phase": "verification",
+                "depends_on": ["TASK-2"],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+        ]
 
     def _synthesize_placeholder_repair_contracts(
         self,

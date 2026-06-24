@@ -972,6 +972,33 @@ class TestArtifactStore:
         assert payload["signals"] == [{"code": "x"}]
         assert payload["source"] == "factory_stage_executor"
 
+    def test_ensure_pm_plan_contract_available_copies_latest_plan_mirror(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        latest_plan = Path(resolve_logical_path(str(tmp_path), "workspace/plans/latest.plan.json"))
+        latest_plan.parent.mkdir(parents=True, exist_ok=True)
+        latest_plan.write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": "TASK-1",
+                            "goal": "Implement Rust API",
+                            "scope": "src/lib.rs",
+                            "steps": ["Create crate"],
+                            "acceptance": ["cargo test passes"],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        source = executor._ensure_pm_plan_contract_available()
+
+        assert source == ".polaris/plans/latest.plan.json"
+        plan = json.loads(executor._artifact_path("tasks/plan.json").read_text(encoding="utf-8"))
+        assert plan["tasks"][0]["id"] == "TASK-1"
+
     def test_emit_audit_event_appends(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         executor._emit_audit_event("ce.call", task_id="t1")

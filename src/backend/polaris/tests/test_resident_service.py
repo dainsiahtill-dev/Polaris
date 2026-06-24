@@ -152,10 +152,19 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     detailed = service.get_status(include_details=True)
     capability_surface = detailed["agi_capability_surface"]
     assert capability_surface["schema_version"] == "resident.agi_capability_surface.v1"
+    assert capability_surface["decision_boundary_schema"] == "resident.agi_decision_boundary.v1"
     assert capability_surface["role_id"] == "resident_agi"
     assert capability_surface["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
     assert capability_surface["count"] >= 1
     assert any(item["capability_id"] == "contextos.final_request_audit.read" for item in capability_surface["items"])
+    decision_boundaries = capability_surface["decision_boundaries"]
+    assert {item["authority"] for item in decision_boundaries} >= {
+        "platform_hard_rule",
+        "agi_recommendation",
+        "agi_governed_execution",
+    }
+    assert any(item["boundary_id"] == "architecture.options" for item in decision_boundaries)
+    assert any("final_request_context_audit" in item["evidence_required"] for item in decision_boundaries)
     serialized_capability_surface = json.dumps(capability_surface, ensure_ascii=False)
     assert "PM -> CE -> Director" not in serialized_capability_surface
     assert "PM -> Director" not in serialized_capability_surface

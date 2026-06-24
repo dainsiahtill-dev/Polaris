@@ -791,8 +791,20 @@ export interface ResidentAgiCapabilityPayload {
   evidence_refs?: string[];
 }
 
+export interface ResidentAgiDecisionBoundaryPayload {
+  boundary_id?: string;
+  name?: string;
+  authority?: string;
+  platform_hard_rule?: string;
+  agi_decision_scope?: string;
+  evidence_required?: string[];
+  escalation?: string;
+  contract_refs?: string[];
+}
+
 export interface ResidentAgiCapabilitySurfacePayload {
   schema_version?: string;
+  decision_boundary_schema?: string;
   role_id?: string;
   runtime_foundation?: string;
   implementation_cell?: string;
@@ -800,6 +812,7 @@ export interface ResidentAgiCapabilitySurfacePayload {
   unattended_factory_role?: string;
   categories?: string[];
   items?: ResidentAgiCapabilityPayload[];
+  decision_boundaries?: ResidentAgiDecisionBoundaryPayload[];
   count?: number;
 }
 

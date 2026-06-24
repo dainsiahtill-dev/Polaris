@@ -528,6 +528,67 @@ class TestStateFirstContextOSIntegration:
         )
         reset_resident_services()
 
+    @pytest.mark.asyncio
+    async def test_resident_agi_context_includes_capability_decision_boundaries(self, tmp_path):
+        """Resident AGI context must see capability surface plus hard/LLM decision boundaries."""
+        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+        from polaris.kernelone.context.context_os.models_v2 import (
+            ContextOSProjectionV2 as ContextOSProjection,
+            ContextOSSnapshotV2 as ContextOSSnapshot,
+        )
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+
+        mock_profile = MagicMock()
+        mock_profile.context_policy = MagicMock()
+        mock_profile.context_policy.max_history_turns = 8
+        mock_profile.context_policy.max_context_tokens = 128000
+        mock_profile.context_policy.include_project_structure = False
+        mock_profile.context_policy.include_task_history = False
+        mock_profile.context_policy.compression_strategy = "truncate"
+        mock_profile.context_domain = None
+        mock_profile.provider_id = "test_provider"
+        mock_profile.model = "test_model"
+        mock_profile.role_id = "resident_agi"
+        mock_profile.display_name = "Resident AGI"
+
+        gateway = RoleContextGateway(mock_profile, workspace=workspace)
+        mock_snapshot = MagicMock(spec=ContextOSSnapshot)
+        mock_snapshot.budget_plan = MagicMock()
+        mock_snapshot.budget_plan.validation_error = ""
+        mock_projection = MagicMock(spec=ContextOSProjection)
+        mock_projection.head_anchor = ""
+        mock_projection.tail_anchor = ""
+        mock_projection.active_window = ()
+        mock_projection.run_card = MagicMock()
+        mock_projection.run_card.current_goal = "Supervise governed development"
+        mock_projection.run_card.open_loops = ()
+        mock_projection.run_card.latest_user_intent = ""
+        mock_projection.run_card.pending_followup_action = ""
+        mock_projection.run_card.last_turn_outcome = ""
+        mock_projection.snapshot = mock_snapshot
+
+        with patch.object(gateway._context_os, "project", return_value=mock_projection):
+            result = await gateway.build_context(
+                ContextRequest(
+                    message="Decide the next unattended action",
+                    history=[],
+                    context_os_snapshot=None,
+                )
+            )
+
+        rendered_prompt = "\n".join(
+            str(message.get("content") or "") for message in result.messages if isinstance(message, dict)
+        )
+
+        assert "resident_agi_capability_surface" in result.context_sources
+        assert "Resident AGI 能力面" in rendered_prompt
+        assert "resident.agi_capability_surface.v1" in rendered_prompt
+        assert "resident.agi_decision_boundary.v1" in rendered_prompt
+        assert "platform_hard_rule" in rendered_prompt
+        assert "agi_decision_scope" in rendered_prompt
+
 
 class TestMessagesFromProjection:
     """Test the _messages_from_projection helper."""

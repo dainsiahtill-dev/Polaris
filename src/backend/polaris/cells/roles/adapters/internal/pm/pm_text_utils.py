@@ -87,6 +87,7 @@ _PM_SCOPE_PATH_SUFFIXES = {
     ".md",
     ".mjs",
     ".py",
+    ".rs",
     ".toml",
     ".ts",
     ".tsx",

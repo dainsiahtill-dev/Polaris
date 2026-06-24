@@ -491,6 +491,7 @@ describe('ContextOSWorkspace', () => {
             coverage: {
               has_resident_agi_decision_trace: true,
               has_resident_agi_capability_surface: false,
+              has_resident_agi_decision_boundary: true,
             },
             context_quality: {
               missing_coverage: ['has_resident_agi_capability_surface'],
@@ -514,6 +515,7 @@ describe('ContextOSWorkspace', () => {
     expect(llmDetail.textContent).toContain('最终请求 AGI 覆盖');
     expect(llmDetail.textContent).toContain('AGI 决策交接: 已进入');
     expect(llmDetail.textContent).toContain('AGI 能力面: 缺失');
+    expect(llmDetail.textContent).toContain('AGI 决策边界: 已进入');
     expect(screen.getByTestId('contextos-final-request-agi-resident-agi-capability-surface')).toHaveAttribute(
       'title',
       expect.stringContaining('missing=true'),
@@ -524,6 +526,7 @@ describe('ContextOSWorkspace', () => {
     const rolePanel = screen.getByTestId('contextos-role-panel-director');
     expect(rolePanel.textContent).toContain('AGI 决策交接: 已进入');
     expect(rolePanel.textContent).toContain('AGI 能力面: 缺失');
+    expect(rolePanel.textContent).toContain('AGI 决策边界: 已进入');
   });
 
   it('renders Context Budget against the actual selected role window', () => {

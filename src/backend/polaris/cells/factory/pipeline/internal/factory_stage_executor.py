@@ -468,6 +468,109 @@ class OrchestrationStageExecutor:
             return []
         return [item for item in tasks if isinstance(item, dict)]
 
+    def _iter_pm_plan_contract_candidates(self) -> list[Path]:
+        candidates: list[Path] = []
+        latest_plan = self.workspace / ".polaris" / "plans" / "latest.plan.json"
+        candidates.append(latest_plan)
+
+        for pattern in (".polaris/plans/*.plan.json", ".polaris/roles/pm/*/plan.json"):
+            candidates.extend(self.workspace.glob(pattern))
+
+        deduped: dict[str, Path] = {}
+        for candidate in candidates:
+            deduped[candidate.resolve().as_posix()] = candidate
+
+        def _mtime(path: Path) -> float:
+            try:
+                return path.stat().st_mtime
+            except OSError:
+                return 0.0
+
+        return sorted(deduped.values(), key=_mtime, reverse=True)
+
+    def _ensure_pm_plan_contract_available(self) -> str:
+        """Copy PM's workspace mirror into the runtime artifact path consumed downstream."""
+
+        if self._load_pm_plan_tasks("tasks/plan.json"):
+            return ""
+
+        for candidate in self._iter_pm_plan_contract_candidates():
+            if not candidate.exists() or not candidate.is_file():
+                continue
+            try:
+                payload = json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, TypeError, ValueError, UnicodeDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            tasks = payload.get("tasks")
+            if not isinstance(tasks, list) or not any(isinstance(item, dict) for item in tasks):
+                continue
+            self._write_json_artifact("tasks/plan.json", payload)
+            try:
+                return candidate.relative_to(self.workspace).as_posix()
+            except ValueError:
+                return candidate.as_posix()
+        return ""
+
+    def _materialize_pm_plan_taskboard(
+        self,
+        tasks: list[dict[str, Any]],
+        *,
+        run_id: str,
+        source_stage: str,
+    ) -> dict[str, Any]:
+        if not tasks:
+            return {"ensured_count": 0, "created_count": 0, "task_ids": []}
+
+        service = TaskRuntimeService(str(self.workspace))
+        task_ids: list[str] = []
+        created_count = 0
+        for index, task in enumerate(tasks, start=1):
+            task_id = self._task_id(task, index)
+            if not task_id:
+                continue
+            existing = service.get_task(task_id)
+            metadata_raw = task.get("metadata")
+            metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+            metadata.update(
+                {
+                    "external_task_id": task_id,
+                    "pm_task_id": task_id,
+                    "source_task_id": task_id,
+                    "task_index": index,
+                    "factory_run_id": str(run_id or "").strip(),
+                    "factory_stage": str(source_stage or "").strip(),
+                    "source_artifact": "tasks/plan.json",
+                    "task_contract": dict(task),
+                }
+            )
+            for key in ("scope", "target_files", "acceptance", "acceptance_criteria", "steps", "depends_on"):
+                if key in task:
+                    metadata.setdefault(key, task.get(key))
+            description_parts = [
+                self._task_string(task, "description"),
+                "\n".join(self._task_string_list(task, "steps")),
+                "\n".join(self._task_string_list(task, "acceptance", "acceptance_criteria")),
+            ]
+            description = "\n\n".join(part for part in description_parts if part.strip())
+            service.ensure_task_row(
+                external_task_id=task_id,
+                subject=self._task_objective(task),
+                description=description,
+                metadata=metadata,
+                priority=task.get("priority", index),
+            )
+            if existing is None:
+                created_count += 1
+            task_ids.append(task_id)
+
+        return {
+            "ensured_count": len(task_ids),
+            "created_count": created_count,
+            "task_ids": task_ids,
+        }
+
     @staticmethod
     def _compact_text_for_prompt(text: str, *, max_chars: int) -> str:
         return helpers.compact_text_for_prompt(text, max_chars=max_chars)
@@ -1793,6 +1896,16 @@ class OrchestrationStageExecutor:
                     "upstream_status": str(final_result.status or "").strip(),
                 }
             )
+        synced_plan_source = self._ensure_pm_plan_contract_available()
+        if synced_plan_source:
+            stage_signals.append(
+                {
+                    "code": "pm.plan_contract_synced_from_workspace_mirror",
+                    "severity": "info",
+                    "detail": "Copied PM workspace plan mirror into runtime tasks/plan.json for downstream stages.",
+                    "source_path": synced_plan_source,
+                }
+            )
         contract_issue = self._validate_pm_plan_contract("tasks/plan.json")
         if contract_issue:
             stage_signals.append(
@@ -1800,6 +1913,21 @@ class OrchestrationStageExecutor:
                     "code": "pm.contract_issue_detected",
                     "severity": "error",
                     "detail": contract_issue,
+                }
+            )
+        pm_tasks = self._load_pm_plan_tasks("tasks/plan.json")
+        if not contract_issue and pm_tasks:
+            materialize_summary = self._materialize_pm_plan_taskboard(
+                pm_tasks,
+                run_id=run.id,
+                source_stage="pm_planning",
+            )
+            stage_signals.append(
+                {
+                    "code": "pm.taskboard_materialized_from_plan",
+                    "severity": "info",
+                    "detail": "Materialized PM plan tasks into canonical TaskBoard for Director claim enforcement.",
+                    **materialize_summary,
                 }
             )
         artifacts: list[str] = []
@@ -1981,9 +2109,19 @@ class OrchestrationStageExecutor:
     async def _execute_chief_engineer_review(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing Chief Engineer review for run %s", run.id)
 
+        synced_plan_source = self._ensure_pm_plan_contract_available()
         pm_tasks = self._load_pm_plan_tasks("tasks/plan.json")
         stage_signals: list[dict[str, Any]] = []
         blueprint_rows: list[dict[str, Any]] = []
+        if synced_plan_source:
+            stage_signals.append(
+                {
+                    "code": "chief_engineer.plan_contract_synced_from_workspace_mirror",
+                    "severity": "info",
+                    "detail": "Copied PM workspace plan mirror into runtime tasks/plan.json before blueprint review.",
+                    "source_path": synced_plan_source,
+                }
+            )
 
         if not pm_tasks:
             stage_signals.append(
@@ -2246,6 +2384,7 @@ class OrchestrationStageExecutor:
         logger.info("Executing Director dispatch for run %s", run.id)
         abort_checker = self._resolve_abort_checker(context)
 
+        synced_plan_source = self._ensure_pm_plan_contract_available()
         pm_tasks = self._load_pm_plan_tasks("tasks/plan.json")
         plan_task_filter = self._build_director_task_filter(pm_tasks)
         configured_task_filter = str(context.get("task_filter") or "").strip()
@@ -2254,6 +2393,30 @@ class OrchestrationStageExecutor:
 
         service = self._build_orchestration_service(context)
         stage_signals: list[dict[str, Any]] = []
+        if synced_plan_source:
+            stage_signals.append(
+                {
+                    "code": "director.plan_contract_synced_from_workspace_mirror",
+                    "severity": "info",
+                    "detail": "Copied PM workspace plan mirror into runtime tasks/plan.json before Director dispatch.",
+                    "source_path": synced_plan_source,
+                }
+            )
+        if pm_tasks:
+            materialize_summary = self._materialize_pm_plan_taskboard(
+                pm_tasks,
+                run_id=run.id,
+                source_stage="director_dispatch",
+            )
+            if int(materialize_summary.get("created_count") or 0) > 0:
+                stage_signals.append(
+                    {
+                        "code": "director.taskboard_materialized_from_plan",
+                        "severity": "info",
+                        "detail": "Materialized missing PM plan tasks into TaskBoard before Director dispatch.",
+                        **materialize_summary,
+                    }
+                )
         snapshot_signals: list[dict[str, Any]] = []
         raw_start_metadata = context.get("metadata")
         start_metadata: dict[str, Any] = dict(raw_start_metadata) if isinstance(raw_start_metadata, dict) else {}
@@ -2360,7 +2523,7 @@ class OrchestrationStageExecutor:
                 }
             )
 
-        if not stage_signals:
+        if not any(str(item.get("severity") or "").strip().lower() == "error" for item in stage_signals):
             director_binding_fanout = self._resolve_director_binding_fanout(context)
             director_binding_skips = list(getattr(self, "_last_director_binding_skips", []))
 

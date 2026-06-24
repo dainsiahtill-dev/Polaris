@@ -12,6 +12,7 @@ from polaris.cells.audit.evidence.public.service import (
 )
 from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
     build_resident_agi_capability_surface,
+    build_resident_agi_decision_boundaries,
     resident_agi_capability_surface_payload,
 )
 from polaris.cells.resident.autonomy.internal.capability_graph import CapabilityGraph
@@ -218,6 +219,7 @@ __all__ = [
     "StrategyInsightEngine",
     "TestRunEvidence",
     "build_resident_agi_capability_surface",
+    "build_resident_agi_decision_boundaries",
     "create_evidence_bundle_service",
     "get_evidence_service",
     "get_execution_projection_service",

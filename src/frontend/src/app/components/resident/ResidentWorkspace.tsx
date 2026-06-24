@@ -30,6 +30,7 @@ import { ExecutionProgressBar } from './ExecutionProgressBar';
 import { useResident } from '@/hooks/useResident';
 import type {
   ResidentAgiCapabilityPayload,
+  ResidentAgiDecisionBoundaryPayload,
   ResidentDecisionPayload,
   ResidentGoalPayload,
   ResidentStatusDetailsPayload,
@@ -119,6 +120,7 @@ export function ResidentWorkspace({
   const capabilities = resident.residentCapabilityGraph?.capabilities || [];
   const agiCapabilitySurface = resident.residentAgiCapabilitySurface;
   const agiCapabilities = agiCapabilitySurface?.items || [];
+  const agiDecisionBoundaries = agiCapabilitySurface?.decision_boundaries || [];
   const decisionStats = useMemo(() => buildDecisionStats(resident.decisions), [resident.decisions]);
   const capabilityGovernance = useMemo(
     () => buildCapabilityGovernanceStats(agiCapabilities),
@@ -391,6 +393,10 @@ export function ResidentWorkspace({
                 <CapabilityGovernanceMatrix
                   stats={capabilityGovernance}
                   runtimeFoundation={agiCapabilitySurface?.runtime_foundation || 'roles.runtime + ContextOS + TurnEngine'}
+                />
+                <DecisionBoundaryMatrix
+                  schema={agiCapabilitySurface?.decision_boundary_schema}
+                  boundaries={agiDecisionBoundaries}
                 />
                 <div className="mt-3 grid gap-2 lg:grid-cols-2">
                   {agiCapabilities.slice(0, 6).map((capability) => (
@@ -777,6 +783,85 @@ function CapabilityGovernanceMatrix({
           <span key={contractRef} className="rounded border border-slate-700 bg-slate-950/50 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
             {contractRef}
           </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function boundaryAuthorityLabel(authority?: string): string {
+  const normalized = String(authority || '').toLowerCase();
+  if (normalized === 'platform_hard_rule') return '平台硬规则';
+  if (normalized === 'agi_governed_execution') return 'AGI 受控执行';
+  if (normalized === 'agi_recommendation') return 'AGI 智能判断';
+  return authority || '未分类';
+}
+
+function boundaryAuthorityClass(authority?: string): string {
+  const normalized = String(authority || '').toLowerCase();
+  if (normalized === 'platform_hard_rule') return 'border-rose-500/20 bg-rose-500/10 text-rose-300';
+  if (normalized === 'agi_governed_execution') return 'border-amber-500/20 bg-amber-500/10 text-amber-300';
+  if (normalized === 'agi_recommendation') return 'border-cyan-500/20 bg-cyan-500/10 text-cyan-200';
+  return 'border-slate-700 bg-slate-900 text-slate-300';
+}
+
+function countBoundariesByAuthority(boundaries: ResidentAgiDecisionBoundaryPayload[], authority: string): number {
+  return boundaries.filter((boundary) => boundary.authority === authority).length;
+}
+
+function DecisionBoundaryMatrix({
+  schema,
+  boundaries,
+}: {
+  schema?: string;
+  boundaries: ResidentAgiDecisionBoundaryPayload[];
+}) {
+  if (boundaries.length === 0) return null;
+  return (
+    <div
+      className="mt-3 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2"
+      data-testid="resident-agi-decision-boundaries"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-medium text-slate-100">AGI 决策边界</div>
+          <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+            {schema || 'resident.agi_decision_boundary.v1'}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1">
+          <Badge className="border-rose-500/20 bg-rose-500/10 text-rose-300">
+            硬规则 {countBoundariesByAuthority(boundaries, 'platform_hard_rule')}
+          </Badge>
+          <Badge className="border-cyan-500/20 bg-cyan-500/10 text-cyan-200">
+            智能判断 {countBoundariesByAuthority(boundaries, 'agi_recommendation')}
+          </Badge>
+          <Badge className="border-amber-500/20 bg-amber-500/10 text-amber-300">
+            受控执行 {countBoundariesByAuthority(boundaries, 'agi_governed_execution')}
+          </Badge>
+        </div>
+      </div>
+      <div className="mt-3 grid gap-2 lg:grid-cols-2">
+        {boundaries.slice(0, 4).map((boundary) => (
+          <div key={boundary.boundary_id || boundary.name} className="rounded border border-slate-800 bg-slate-900/50 px-2.5 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-xs font-medium text-slate-200">{boundary.name || '未命名边界'}</span>
+              <span className={cn('shrink-0 rounded border px-1.5 py-0.5 text-[10px]', boundaryAuthorityClass(boundary.authority))}>
+                {boundaryAuthorityLabel(boundary.authority)}
+              </span>
+            </div>
+            <div className="mt-1 line-clamp-2 text-[11px] text-slate-500" title={boundary.platform_hard_rule || ''}>
+              硬约束: {boundary.platform_hard_rule || '未声明'}
+            </div>
+            <div className="mt-1 line-clamp-2 text-[11px] text-slate-400" title={boundary.agi_decision_scope || ''}>
+              AGI: {boundary.agi_decision_scope || '未声明'}
+            </div>
+            {(boundary.evidence_required || []).length > 0 && (
+              <div className="mt-1 truncate font-mono text-[10px] text-slate-500">
+                evidence: {(boundary.evidence_required || []).slice(0, 3).join(', ')}
+              </div>
+            )}
+          </div>
         ))}
       </div>
     </div>
