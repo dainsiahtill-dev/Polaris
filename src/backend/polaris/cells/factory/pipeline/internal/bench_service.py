@@ -83,6 +83,7 @@ def _merge_project_evidence_policy(projects: list[dict[str, Any]]) -> dict[str, 
     enabled: list[str] = []
     required: list[str] = []
     missing: list[str] = []
+    failed: list[str] = []
     has_policy = False
     for project in projects:
         policy = project.get("evidence_policy")
@@ -98,14 +99,19 @@ def _merge_project_evidence_policy(projects: list[dict[str, Any]]) -> dict[str, 
         raw_missing = policy.get("missing_required_modalities")
         if isinstance(raw_missing, list):
             missing.extend(str(item) for item in raw_missing if str(item))
+        raw_failed = policy.get("failed_required_modalities")
+        if isinstance(raw_failed, list):
+            failed.extend(str(item) for item in raw_failed if str(item))
     enabled = list(dict.fromkeys(enabled))
     required = list(dict.fromkeys(required))
     missing = list(dict.fromkeys(missing))
+    failed = list(dict.fromkeys(failed))
     return {
         "ok": has_policy and not missing,
         "enabled_modalities": enabled,
         "required_modalities": required,
         "missing_required_modalities": missing,
+        "failed_required_modalities": failed,
     }
 
 
@@ -129,6 +135,40 @@ def _merge_project_evidence_modalities(projects: list[dict[str, Any]]) -> dict[s
             if detail:
                 summary["latest_detail"] = detail
     return dict(sorted(merged.items()))
+
+
+def _modality_summary_is_present_failed(summary: Any) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    present = int(summary.get("present") or 0)
+    ok = int(summary.get("ok") or 0)
+    failed = int(summary.get("failed") or 0)
+    return present > 0 and ok == 0 and failed > 0
+
+
+def _normalize_legacy_evidence_policy(
+    evidence_policy: dict[str, Any],
+    evidence_modalities: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize old audit snapshots without mutating the stored audit file."""
+
+    if not evidence_policy:
+        return evidence_policy
+    raw_missing = evidence_policy.get("missing_required_modalities")
+    missing = [str(item) for item in raw_missing] if isinstance(raw_missing, list) else []
+    raw_failed = evidence_policy.get("failed_required_modalities")
+    failed = [str(item) for item in raw_failed] if isinstance(raw_failed, list) else []
+    normalized_missing: list[str] = []
+    for modality in missing:
+        if _modality_summary_is_present_failed(evidence_modalities.get(modality)):
+            failed.append(modality)
+        else:
+            normalized_missing.append(modality)
+    normalized = dict(evidence_policy)
+    normalized["missing_required_modalities"] = list(dict.fromkeys(normalized_missing))
+    normalized["failed_required_modalities"] = list(dict.fromkeys(failed))
+    normalized["ok"] = not normalized["missing_required_modalities"]
+    return normalized
 
 
 def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, Any]:
@@ -163,30 +203,42 @@ def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, An
     for index, item in enumerate(records):
         record: dict[str, Any] = item if isinstance(item, dict) else {}
         projection = record.get("run_ledger_projection")
-        projection_status = summarize_run_ledger_projection(projection)
         projection_map: dict[str, Any] = projection if isinstance(projection, dict) else {}
-        ok = bool(projection_status.get("ok"))
-        if ok:
-            projected += 1
-        else:
-            failed += 1
         capability = projection_map.get("capability")
         capability_map: dict[str, Any] = capability if isinstance(capability, dict) else {}
         evidence_policy = projection_map.get("evidence_policy")
         evidence_policy_map: dict[str, Any] = evidence_policy if isinstance(evidence_policy, dict) else {}
         evidence_modalities = projection_map.get("evidence_modalities")
         evidence_modalities_map: dict[str, Any] = evidence_modalities if isinstance(evidence_modalities, dict) else {}
+        evidence_policy_map = _normalize_legacy_evidence_policy(evidence_policy_map, evidence_modalities_map)
+        projection_for_summary = dict(projection_map)
+        if evidence_policy_map:
+            projection_for_summary["evidence_policy"] = evidence_policy_map
+            if int(projection_for_summary.get("gate_count") or 0) > 0:
+                projection_for_summary["integrity_ok"] = bool(capability_map.get("ok")) and bool(
+                    evidence_policy_map.get("ok")
+                )
+                if evidence_policy_map.get("failed_required_modalities"):
+                    projection_for_summary["outcome_ok"] = False
+                    projection_for_summary["ok"] = False
+        projection_status = summarize_run_ledger_projection(projection_for_summary)
+        ok = bool(projection_status.get("ok"))
+        if ok:
+            projected += 1
+        else:
+            failed += 1
         projects.append(
             {
                 "project_id": str(record.get("project_id") or record.get("id") or f"record-{index + 1}"),
                 "ok": ok,
-                "integrity_ok": bool(projection_map.get("integrity_ok")),
-                "outcome_ok": bool(projection_map.get("outcome_ok")),
+                "integrity_ok": bool(projection_for_summary.get("integrity_ok")),
+                "outcome_ok": bool(projection_for_summary.get("outcome_ok")),
                 "gate_count": int(projection_map.get("gate_count") or 0),
                 "failed_gate_count": int(projection_status.get("failed_gate_count") or 0),
                 "latest_token_id": str(capability_map.get("latest_token_id") or ""),
                 "detail": str(projection_status.get("detail") or ""),
                 "missing": list(projection_status.get("missing") or []),
+                "failed_required_modalities": list(projection_status.get("failed_required_modalities") or []),
                 "evidence_policy": evidence_policy_map,
                 "evidence_modalities": evidence_modalities_map,
             }

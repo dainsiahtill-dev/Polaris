@@ -17,6 +17,28 @@ def _to_dict_copy(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(payload or {})
 
 
+def _string_tuple(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        rows = [value]
+    elif isinstance(value, (list, tuple, set)):
+        rows = list(value)
+    else:
+        return ()
+    return tuple(str(item).strip() for item in rows if str(item or "").strip())
+
+
+def _json_safe_mapping(value: Mapping[str, Any] | None) -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    for key, item in dict(value or {}).items():
+        if isinstance(item, Mapping):
+            data[str(key)] = _json_safe_mapping(item)
+        elif isinstance(item, (list, tuple, set)):
+            data[str(key)] = [_json_safe_mapping(v) if isinstance(v, Mapping) else v for v in item]
+        else:
+            data[str(key)] = item
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Enums (Tier-1 governance surface)
 # ---------------------------------------------------------------------------
@@ -174,6 +196,80 @@ class TaskBlueprintGeneratedEventV1:
 
 
 @dataclass(frozen=True)
+class ArchitectureDecisionV1:
+    """Structured Chief Engineer architecture or dependency decision."""
+
+    concern: str
+    decision: str
+    selected_libraries: tuple[str, ...] = field(default_factory=tuple)
+    options_considered: tuple[str, ...] = field(default_factory=tuple)
+    rationale: str = ""
+    constraints: tuple[str, ...] = field(default_factory=tuple)
+    risk_level: str = "medium"
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+    decision_status: str = "decision"
+    source: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "concern", _require_non_empty("concern", self.concern))
+        object.__setattr__(self, "decision", _require_non_empty("decision", self.decision))
+        object.__setattr__(self, "selected_libraries", _string_tuple(self.selected_libraries))
+        object.__setattr__(self, "options_considered", _string_tuple(self.options_considered))
+        object.__setattr__(self, "rationale", str(self.rationale or "").strip())
+        object.__setattr__(self, "constraints", _string_tuple(self.constraints))
+        risk_level = str(self.risk_level or "medium").strip().lower() or "medium"
+        object.__setattr__(self, "risk_level", risk_level)
+        object.__setattr__(self, "evidence", _json_safe_mapping(self.evidence))
+        decision_status = str(self.decision_status or "decision").strip().lower() or "decision"
+        object.__setattr__(self, "decision_status", decision_status)
+        object.__setattr__(self, "source", str(self.source or "").strip())
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any]) -> ArchitectureDecisionV1:
+        """Build a decision contract from a persisted JSON payload."""
+
+        evidence = _json_safe_mapping(payload.get("evidence") if isinstance(payload.get("evidence"), Mapping) else {})
+        decision_status = str(
+            payload.get("decision_status")
+            or payload.get("status")
+            or ("guidance" if evidence.get("guidance_only") is True else "decision")
+        ).strip()
+        return cls(
+            concern=str(payload.get("concern") or payload.get("area") or "").strip(),
+            decision=str(payload.get("decision") or payload.get("selected") or "").strip(),
+            selected_libraries=_string_tuple(
+                payload.get("selected_libraries") or payload.get("libraries") or payload.get("technologies")
+            ),
+            options_considered=_string_tuple(
+                payload.get("options_considered") or payload.get("options") or payload.get("alternatives")
+            ),
+            rationale=str(payload.get("rationale") or payload.get("reason") or "").strip(),
+            constraints=_string_tuple(payload.get("constraints")),
+            risk_level=str(payload.get("risk_level") or "medium").strip(),
+            evidence=evidence,
+            decision_status=decision_status,
+            source=str(payload.get("source") or "").strip(),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe architecture decision payload."""
+
+        return {
+            "schema_version": "chief_engineer.architecture_decision.v1",
+            "concern": self.concern,
+            "decision": self.decision,
+            "selected_libraries": list(self.selected_libraries),
+            "options_considered": list(self.options_considered),
+            "rationale": self.rationale,
+            "constraints": list(self.constraints),
+            "risk_level": self.risk_level,
+            "evidence": _json_safe_mapping(self.evidence),
+            "decision_status": self.decision_status,
+            "source": self.source,
+        }
+
+
+@dataclass(frozen=True)
 class TaskBlueprintResultV1:
     ok: bool
     task_id: str
@@ -192,6 +288,8 @@ class TaskBlueprintResultV1:
     scope_paths: tuple[str, ...] = field(default_factory=tuple)
     objective: str = ""
     dependencies: tuple[str, ...] = field(default_factory=tuple)
+    architecture_decisions: tuple[ArchitectureDecisionV1, ...] = field(default_factory=tuple)
+    selected_libraries: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
@@ -208,6 +306,14 @@ class TaskBlueprintResultV1:
         object.__setattr__(self, "scope_paths", tuple(str(v) for v in self.scope_paths))
         object.__setattr__(self, "objective", str(self.objective or "").strip())
         object.__setattr__(self, "dependencies", tuple(str(v) for v in self.dependencies))
+        decisions: list[ArchitectureDecisionV1] = []
+        for item in self.architecture_decisions:
+            if isinstance(item, ArchitectureDecisionV1):
+                decisions.append(item)
+            elif isinstance(item, Mapping):
+                decisions.append(ArchitectureDecisionV1.from_mapping(item))
+        object.__setattr__(self, "architecture_decisions", tuple(decisions))
+        object.__setattr__(self, "selected_libraries", _string_tuple(self.selected_libraries))
 
 
 class ChiefEngineerBlueprintErrorV1(RuntimeError):  # noqa: N818
@@ -1203,6 +1309,7 @@ __all__ = [
     "ADREventV1",
     "ADRRecordV1",
     "ADRStatus",
+    "ArchitectureDecisionV1",
     "ChiefEngineerBlueprintError",
     "ChiefEngineerBlueprintErrorV1",
     "GenerateTaskBlueprintCommandV1",

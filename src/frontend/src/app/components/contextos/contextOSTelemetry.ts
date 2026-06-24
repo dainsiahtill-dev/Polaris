@@ -29,6 +29,8 @@
 
 import type { LogEntry } from '@/types/log';
 
+const CONTEXT_SNAPSHOT_REF_RE = /^[0-9a-f]{24}$/i;
+
 /** ContextOS 真实观测事件（由一条 WS 推送的 LogEntry 派生）。 */
 export interface ContextOSEvent {
   id: string;
@@ -320,6 +322,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function nonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function contextSnapshotRefOrNull(value: unknown): string | null {
+  const text = nonEmptyString(value);
+  if (!text) return null;
+  return CONTEXT_SNAPSHOT_REF_RE.test(text) ? text.toLowerCase() : null;
 }
 
 function redactedDisplayText(value: Record<string, unknown>): string | null {
@@ -675,7 +683,8 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const snapshotHash = nonEmptyString(meta['snapshot_hash']);
   const requestHash = nonEmptyString(meta['request_hash']);
   const contextHash = nonEmptyString(meta['context_hash']) || requestHash || null;
-  const contextSnapshotRef = nonEmptyString(meta['contextSnapshotRef']) || nonEmptyString(meta['context_snapshot_ref']);
+  const contextSnapshotRef =
+    contextSnapshotRefOrNull(meta['contextSnapshotRef']) || contextSnapshotRefOrNull(meta['context_snapshot_ref']);
   const contextSnapshotDegraded = readContextSnapshotDegraded(meta);
   const promptHash = nonEmptyString(meta['promptHash']) || nonEmptyString(meta['prompt_hash']);
   const turnId = nonEmptyString(meta['turnId']) || nonEmptyString(meta['turn_id']);

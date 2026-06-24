@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
+    ArchitectureDecisionV1,
     ChiefEngineerBlueprintError,
     ChiefEngineerBlueprintErrorV1,
     GenerateTaskBlueprintCommandV1,
@@ -286,6 +287,31 @@ class TestTaskBlueprintResultV1:
             risks=["High complexity", "Tight deadline"],
         )
         assert result.risks == ("High complexity", "Tight deadline")
+
+    def test_result_with_architecture_decisions(self) -> None:
+        """Test architecture decisions are normalized as typed contracts."""
+        result = TaskBlueprintResultV1(
+            ok=True,
+            task_id="task-001",
+            workspace="/workspace",
+            status="completed",
+            architecture_decisions=[
+                {
+                    "concern": "application_architecture",
+                    "decision": "Use layered architecture with dependency injection",
+                    "selected_libraries": ["Layered Architecture", "Dependency Injection"],
+                }
+            ],
+            selected_libraries=["Layered Architecture", "Dependency Injection"],
+        )
+
+        assert isinstance(result.architecture_decisions[0], ArchitectureDecisionV1)
+        assert result.architecture_decisions[0].concern == "application_architecture"
+        assert result.architecture_decisions[0].selected_libraries == (
+            "Layered Architecture",
+            "Dependency Injection",
+        )
+        assert result.selected_libraries == ("Layered Architecture", "Dependency Injection")
 
     def test_result_failed(self) -> None:
         """Test failed result construction."""

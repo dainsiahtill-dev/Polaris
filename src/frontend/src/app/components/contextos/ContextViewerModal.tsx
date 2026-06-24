@@ -67,6 +67,8 @@ import {
   type ViewModelPayload,
 } from './contextosViewModel';
 
+const CONTEXT_SNAPSHOT_REF_RE = /^[0-9a-f]{24}$/i;
+
 // 公共类型别名（保持原公共面不变）。
 export type ContextMessage = ViewModelMessage;
 export type ContextPayload = ViewModelPayload;
@@ -611,6 +613,14 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worker
 
   const fetchContext = useCallback(async (signal?: AbortSignal) => {
     if (!contextSnapshotRef) return;
+    if (!CONTEXT_SNAPSHOT_REF_RE.test(contextSnapshotRef)) {
+      setContent(null);
+      setLoading(false);
+      setError(null);
+      setContextMissing(true);
+      setWorkspaceForbidden(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     setContextMissing(false);

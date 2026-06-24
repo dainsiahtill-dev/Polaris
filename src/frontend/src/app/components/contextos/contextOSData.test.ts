@@ -703,7 +703,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
           promptTokens: 1000,
           completionTokens: 500,
           finalRequestTokenEstimate: 6329,
-          contextSnapshotRef: 'provider-call-older',
+          contextSnapshotRef: 'b1b2c3d4e5f6a7b8c9d0e1f2',
           turnId: 'turn-provider',
           callId: 'call-provider',
         },
@@ -713,7 +713,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
     const model = buildContextOSModel(baseInput({ telemetry }));
     const pm = model.roles.find((r) => r.id === 'pm');
 
-    expect(pm?.internalContext.latestContextSnapshotRef).toBe('provider-call-older');
+    expect(pm?.internalContext.latestContextSnapshotRef).toBe('b1b2c3d4e5f6a7b8c9d0e1f2');
     expect(pm?.internalContext.latestCallId).toBe('call-provider');
     expect(pm?.internalContext.latestTurnId).toBe('turn-provider');
   });
@@ -1240,13 +1240,13 @@ describe('Phase 3+ multi-worker LLM tracking model', () => {
           streamEvent: 'llm_completed',
           role: 'Director',
           worker_id: 'worker-1',
-          contextSnapshotRef: 'abc123',
+          contextSnapshotRef: 'abc123abc123abc123abc123',
         },
       }),
     ];
     const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
     const w1 = model.workers.find((w) => w.workerId === 'worker-1');
-    expect(w1?.latestContextSnapshotRef).toBe('abc123');
+    expect(w1?.latestContextSnapshotRef).toBe('abc123abc123abc123abc123');
   });
 });
 

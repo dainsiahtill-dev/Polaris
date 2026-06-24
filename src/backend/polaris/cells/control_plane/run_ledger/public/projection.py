@@ -118,16 +118,27 @@ def _enabled_modalities_from_job_token(job_token: dict[str, Any]) -> list[str]:
     return _modality_list(gate_policy.get("enabled_evidence_modalities") or gate_policy.get("enabled_modalities"))
 
 
+def _required_modalities_status(
+    required_modalities: list[str],
+    gate_modalities: dict[str, dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    missing: list[str] = []
+    failed: list[str] = []
+    for modality_name in required_modalities:
+        modality = gate_modalities.get(modality_name)
+        if not isinstance(modality, dict) or not modality.get("present"):
+            missing.append(modality_name)
+        elif not modality.get("ok"):
+            failed.append(modality_name)
+    return _string_list(missing), _string_list(failed)
+
+
 def _missing_required_modalities(
     required_modalities: list[str],
     gate_modalities: dict[str, dict[str, Any]],
 ) -> list[str]:
-    missing: list[str] = []
-    for modality_name in required_modalities:
-        modality = gate_modalities.get(modality_name)
-        if not isinstance(modality, dict) or not modality.get("present") or not modality.get("ok"):
-            missing.append(modality_name)
-    return _string_list(missing)
+    missing, _failed = _required_modalities_status(required_modalities, gate_modalities)
+    return missing
 
 
 def _receipt_entries(value: Any) -> list[dict[str, Any]]:
@@ -401,6 +412,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     enabled_modalities: list[str] = []
     required_modalities: list[str] = []
     missing_required_modalities: list[str] = []
+    failed_required_modalities: list[str] = []
     tool_receipt_count = 0
     tool_receipt_tools: list[str] = []
     tool_receipt_hash_deltas: list[dict[str, Any]] = []
@@ -453,8 +465,12 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         gate_required_modalities = _required_modalities_from_job_token(job_token)
         enabled_modalities.extend(gate_enabled_modalities)
         required_modalities.extend(gate_required_modalities)
-        gate_missing_required_modalities = _missing_required_modalities(gate_required_modalities, gate_modalities)
+        gate_missing_required_modalities, gate_failed_required_modalities = _required_modalities_status(
+            gate_required_modalities,
+            gate_modalities,
+        )
         missing_required_modalities.extend(gate_missing_required_modalities)
+        failed_required_modalities.extend(gate_failed_required_modalities)
         for modality_name, modality in gate_modalities.items():
             summary = evidence_modalities.setdefault(
                 modality_name,
@@ -485,6 +501,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "enabled_evidence_modalities": gate_enabled_modalities,
                 "required_evidence_modalities": gate_required_modalities,
                 "missing_required_evidence_modalities": gate_missing_required_modalities,
+                "failed_required_evidence_modalities": gate_failed_required_modalities,
             }
         )
     failed_gates = [gate for gate in gates if not gate["ok"]]
@@ -492,9 +509,10 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     enabled_modalities = _string_list(enabled_modalities)
     required_modalities = _string_list(required_modalities)
     missing_required_modalities = _string_list(missing_required_modalities)
+    failed_required_modalities = _string_list(failed_required_modalities)
     evidence_policy_ok = bool(gates) and not missing_required_modalities
     integrity_ok = bool(gates) and capability_ok and evidence_policy_ok
-    outcome_ok = bool(gates) and not failed_gates
+    outcome_ok = bool(gates) and not failed_gates and not failed_required_modalities
     projection_ok = integrity_ok and outcome_ok
     return {
         "schema_version": 1,
@@ -526,6 +544,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             "enabled_modalities": enabled_modalities,
             "required_modalities": required_modalities,
             "missing_required_modalities": missing_required_modalities,
+            "failed_required_modalities": failed_required_modalities,
         },
         "tool_receipts": {
             "count": tool_receipt_count,
@@ -581,6 +600,19 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
         }
     failed_gates = value.get("failed_gates")
     failed_gate_count = len(failed_gates) if isinstance(failed_gates, list) else 0
+    failed_required = evidence_policy_map.get("failed_required_modalities") if evidence_policy_map else []
+    failed_required_list = [str(item) for item in failed_required] if isinstance(failed_required, list) else []
+    if failed_required_list:
+        return {
+            "ok": False,
+            "detail": "run ledger projection required evidence failed: " + ", ".join(failed_required_list),
+            "missing": [],
+            "failed_required_modalities": failed_required_list,
+            "outcome_ok": bool(value.get("outcome_ok")),
+            "failed_gate_count": failed_gate_count,
+            "capability": capability_map,
+            "evidence_policy": evidence_policy_map,
+        }
     if not bool(value.get("ok")):
         return {
             "ok": False,

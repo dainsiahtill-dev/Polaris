@@ -42,6 +42,17 @@ export function isLauncherBackendReady(instance: PolarisInstance): boolean {
   return String(instance.metadata?.backend_health || '').trim() === 'ok';
 }
 
+export function isLauncherBackendOpenable(instance: PolarisInstance): boolean {
+  const backendHealth = String(instance.metadata?.backend_health || '').trim();
+  const backendOpenable =
+    isLauncherBackendReady(instance) ||
+    (instance.status === 'running' && (backendHealth === 'process' || Boolean(instance.backend_alive)));
+  if (!backendOpenable) return false;
+  if (instance.start_frontend === false) return true;
+  const frontendHealth = String(instance.metadata?.frontend_health || '').trim();
+  return frontendHealth === 'ok' || frontendHealth === 'process' || Boolean(instance.frontend_alive);
+}
+
 export function launcherInstanceStatusTone(instance: PolarisInstance): 'success' | 'warning' | 'error' | 'info' | 'default' {
   if (instance.status === 'running' && isLauncherBackendReady(instance)) return 'success';
   if (instance.status === 'observed') return 'info';
@@ -66,9 +77,38 @@ function isStoppedInternalBench(instance: PolarisInstance): boolean {
   );
 }
 
+function currentControlInstanceId(): string {
+  if (typeof window !== 'undefined') {
+    const raw = new URLSearchParams(window.location.search).get('instance');
+    if (raw && raw.trim()) return raw.trim();
+  }
+  const envInstanceId = import.meta.env.VITE_POLARIS_INSTANCE_ID;
+  if (typeof envInstanceId === 'string' && envInstanceId.trim()) return envInstanceId.trim();
+  return 'main';
+}
+
+export function isCurrentControlInstance(instance: PolarisInstance, currentInstanceId = currentControlInstanceId()): boolean {
+  return Boolean(currentInstanceId) && instance.instance_id === currentInstanceId;
+}
+
 function basename(path: string): string {
   const normalized = String(path || '').replace(/\\/g, '/').replace(/\/+$/, '');
   return normalized.split('/').filter(Boolean).pop() || normalized || 'workspace';
+}
+
+function stringField(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+}
+
+export function instanceSubtitle(instance: PolarisInstance): string {
+  const parts = [instance.instance_id, instance.kind].filter(Boolean);
+  if (instance.kind === 'bench_project') {
+    const projectId = stringField(instance.bench?.project_id);
+    const benchWorkspace = stringField(instance.bench?.bench_workspace);
+    if (projectId && !parts.includes(projectId)) parts.push(projectId);
+    if (benchWorkspace) parts.push(basename(benchWorkspace));
+  }
+  return parts.join(' · ');
 }
 
 function openInstance(instance: PolarisInstance): void {
@@ -84,7 +124,7 @@ const defaultForm: StartInstancePayload = {
   kind: 'project',
   workspace: '',
   name: '',
-  backend_reload: true,
+  backend_reload: false,
   frontend_vite: true,
   start_frontend: true,
 };
@@ -120,7 +160,7 @@ export function LauncherWorkspace() {
   const connection = useConnectionState();
 
   const runningCount = useMemo(
-    () => instances.filter((item) => item.status === 'running' && isLauncherBackendReady(item)).length,
+    () => instances.filter((item) => item.status === 'running' && isLauncherBackendOpenable(item)).length,
     [instances],
   );
   const benchCount = useMemo(
@@ -362,7 +402,9 @@ export function LauncherWorkspace() {
               <div className="col-span-full rounded-lg border border-dashed border-white/10 p-8 text-center text-sm text-slate-500">
                 暂无实例
               </div>
-            ) : instances.map((instance) => (
+            ) : instances.map((instance) => {
+              const isCurrentControl = isCurrentControlInstance(instance);
+              return (
               <article key={instance.instance_id} className="rounded-lg border border-cyan-300/10 bg-slate-950/80 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -373,7 +415,7 @@ export function LauncherWorkspace() {
                       </StatusBadge>
                     </div>
                     <p className="mt-1 truncate text-[11px] uppercase text-slate-500" title={instance.workspace}>
-                      {instance.instance_id} · {instance.kind}
+                      {instanceSubtitle(instance)}
                     </p>
                   </div>
                 </div>
@@ -392,15 +434,27 @@ export function LauncherWorkspace() {
                   </div>
                 </dl>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => openInstance(instance)} disabled={!isLauncherBackendReady(instance)}>
+                  <Button size="sm" onClick={() => openInstance(instance)} disabled={!isLauncherBackendOpenable(instance)}>
                     <ExternalLink className="h-3.5 w-3.5" />
-                    {isLauncherBackendReady(instance) ? '打开' : '等待后端'}
+                    {isLauncherBackendOpenable(instance) ? '打开' : '等待后端'}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => void runAction(instance, 'restart')} disabled={Boolean(actionId)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void runAction(instance, 'restart')}
+                    disabled={Boolean(actionId) || isCurrentControl}
+                    title={isCurrentControl ? '当前控制后端不能自我重启' : undefined}
+                  >
                     <RotateCcw className="h-3.5 w-3.5" />
                     {restartActionLabel(instance)}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => void runAction(instance, 'stop')} disabled={Boolean(actionId)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void runAction(instance, 'stop')}
+                    disabled={Boolean(actionId) || isCurrentControl}
+                    title={isCurrentControl ? '当前控制后端不能自我停止' : undefined}
+                  >
                     <Square className="h-3.5 w-3.5" />
                     停止
                   </Button>
@@ -416,15 +470,16 @@ export function LauncherWorkspace() {
                     variant="ghost"
                     size="sm"
                     onClick={() => void runAction(instance, 'delete')}
-                    disabled={Boolean(actionId)}
-                    title="删除实例记录"
+                    disabled={Boolean(actionId) || isCurrentControl}
+                    title={isCurrentControl ? '当前控制后端不能删除自身记录' : '删除实例记录'}
                     aria-label={`删除实例 ${instance.instance_id}`}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
               </article>
-            ))}
+              );
+            })}
           </div>
         </section>
       </main>

@@ -160,7 +160,23 @@ def build_invoke_config(
         if key in options:
             cfg[key] = options[key]
 
-    cfg.setdefault("temperature", 0.2)
+    # Dynamic temperature: resolve from role + phase if available
+    if "temperature" not in cfg:
+        from polaris.kernelone.llm.temperature_strategy import TemperatureContext, resolve_temperature
+
+        role = str(options.get("role") or options.get("role_id") or "").strip()
+        phase = str(options.get("phase") or options.get("stage") or "").strip()
+        is_retry = bool(options.get("is_retry") or options.get("retry_round"))
+        is_repair = bool(options.get("is_repair") or "repair" in phase.lower())
+        user_temp = options.get("temperature_override")
+        ctx = TemperatureContext(
+            role=role,
+            phase=phase,
+            is_retry=is_retry,
+            is_repair=is_repair,
+            user_override=user_temp,
+        )
+        cfg["temperature"] = resolve_temperature(ctx)
     cfg.setdefault("stream", False)
     cfg.setdefault("max_tokens", 3000)
     return cfg

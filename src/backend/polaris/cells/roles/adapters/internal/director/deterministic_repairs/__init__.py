@@ -117,7 +117,11 @@ from .python_repairs import (
 )
 from .rust_repairs import (
     _apply_deterministic_rust_crate_import_repair as _apply_deterministic_rust_crate_import_repair,
+    _apply_deterministic_rust_dependency_repair as _apply_deterministic_rust_dependency_repair,
+    _apply_deterministic_rust_unresolved_pub_use_repair as _apply_deterministic_rust_unresolved_pub_use_repair,
     repair_rust_crate_imports as repair_rust_crate_imports,
+    repair_rust_dependencies as repair_rust_dependencies,
+    repair_rust_unresolved_pub_uses as repair_rust_unresolved_pub_uses,
 )
 from .typeorm_repairs import (
     _apply_deterministic_typeorm_model_normalization_repair as _apply_deterministic_typeorm_model_normalization_repair,
@@ -208,6 +212,8 @@ __all__ = [
     "_apply_deterministic_python_unittest_runtime_failure_repair",
     "_apply_deterministic_runtime_dependency_repair",
     "_apply_deterministic_rust_crate_import_repair",
+    "_apply_deterministic_rust_dependency_repair",
+    "_apply_deterministic_rust_unresolved_pub_use_repair",
     "_apply_deterministic_scaffold_marker_cleanup",
     "_apply_deterministic_typeorm_model_normalization_repair",
     "_apply_deterministic_typescript_entrypoint_repair",
@@ -280,4 +286,6 @@ __all__ = [
     "_typescript_module_runtime_exports_symbol",
     "_typescript_relative_import_without_suffix",
     "repair_rust_crate_imports",
+    "repair_rust_dependencies",
+    "repair_rust_unresolved_pub_uses",
 ]

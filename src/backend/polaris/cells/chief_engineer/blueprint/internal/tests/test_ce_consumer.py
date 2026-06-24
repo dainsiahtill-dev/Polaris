@@ -79,6 +79,10 @@ class TestCEConsumerPollOnce:
         claim_result.lease_token = "lease-abc"
         claim_result.payload = {
             "title": "Test task",
+            "description": (
+                "Build a complex realtime service with WebSocket updates, "
+                "database persistence, and dependency injection."
+            ),
             "scope_paths": ["/src/main.py"],
             "acceptance_criteria": ["Main module is generated"],
             "execution_checklist": ["Create main module", "Verify import"],
@@ -141,6 +145,14 @@ class TestCEConsumerPollOnce:
         assert cmd.metadata["constraints"] == {"layer": "application"}
         assert cmd.metadata["pm_contract"]["id"] == "task-42"
         assert cmd.metadata["contract_completeness"]["handoff_ready"] is True
+        concerns = {item["concern"] for item in cmd.metadata["architecture_decisions"]}
+        assert concerns >= {"application_architecture", "realtime", "database"}
+        assert cmd.metadata["selected_libraries"] == []
+        database = next(item for item in cmd.metadata["architecture_decisions"] if item["concern"] == "database")
+        assert database["evidence"]["guidance_only"] is True
+        assert database["decision_status"] == "guidance"
+        assert database["source"] == "platform_signal_guidance"
+        assert any("vector" in item.lower() for item in database["options_considered"])
 
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
     def test_claim_then_preflight_failure_requeues(self, mock_get_svc: MagicMock) -> None:
@@ -224,6 +236,14 @@ class TestStepSplitterIntegration:
                 "job_token_id": "job-1",
                 "job_token": {"token_id": "job-1", "contract_hash": "ch", "blueprint_hash": "bh"},
                 "control_plane_lineage": {"blueprint_hash": "bh"},
+                "architecture_decisions": [
+                    {
+                        "concern": "application_architecture",
+                        "decision": "Use layered architecture with dependency injection.",
+                        "selected_libraries": ["Layered Architecture", "Dependency Injection"],
+                    }
+                ],
+                "selected_libraries": ["Layered Architecture", "Dependency Injection"],
             },
             split,
             blueprint_id="b",
@@ -235,6 +255,8 @@ class TestStepSplitterIntegration:
         assert first_command.payload["job_token"]["token_id"] == "job-1"
         assert first_command.payload["blueprint_hash"] == "bh"
         assert first_command.metadata["job_token"]["token_id"] == "job-1"
+        assert first_command.payload["architecture_decisions"][0]["concern"] == "application_architecture"
+        assert first_command.metadata["selected_libraries"] == ["Layered Architecture", "Dependency Injection"]
         ids = [s["step_id"] for s in published]
         assert "PM-0001-1-S4-skel" in ids
         assert sum(1 for i in ids if "-fill" in i) == 4

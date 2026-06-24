@@ -71,6 +71,7 @@ class PromptBuilder:
         self._verification_repair = verification_repair
         self._codegen_rounds = codegen_rounds
         self._compact_prompt_fragment = compact_fragment
+        self._workspace = str(getattr(target_resolver, "workspace", "") or "")
 
     def extract_architecture_context(self, task: Task) -> dict[str, Any]:
         """Extract architecture context from task metadata."""
@@ -148,6 +149,61 @@ class PromptBuilder:
                 break
         return items
 
+    def _architecture_decision_items(
+        self,
+        value: Any,
+        *,
+        limit: int = 6,
+        max_chars: int = 420,
+    ) -> list[str]:
+        if not isinstance(value, list | tuple):
+            return []
+        rows: list[str] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            concern = str(item.get("concern") or item.get("area") or "").strip()
+            decision = str(item.get("decision") or item.get("selected") or "").strip()
+            raw_evidence = item.get("evidence")
+            evidence: dict[str, Any] = raw_evidence if isinstance(raw_evidence, dict) else {}
+            kind = str(item.get("decision_status") or "").strip()
+            if not kind:
+                kind = "guidance" if evidence.get("guidance_only") is True else "decision"
+            source = str(item.get("source") or "").strip()
+            libraries = self._metadata_items(
+                item.get("selected_libraries") or item.get("libraries"),
+                limit=4,
+                max_chars=80,
+            )
+            options = self._metadata_items(
+                item.get("options_considered") or item.get("options"),
+                limit=5,
+                max_chars=120,
+            )
+            constraints = self._metadata_items(item.get("constraints"), limit=2, max_chars=120)
+            rationale = str(item.get("rationale") or item.get("reason") or "").strip()
+            parts: list[str] = [kind]
+            if source:
+                parts.append("source=" + source)
+            if concern:
+                parts.append(concern)
+            if decision:
+                parts.append(decision)
+            if libraries:
+                parts.append("libraries=" + ", ".join(libraries))
+            if options:
+                parts.append("options=" + " | ".join(options))
+            if constraints:
+                parts.append("constraints=" + " | ".join(constraints))
+            if rationale:
+                parts.append("rationale=" + self._compact_prompt_fragment(rationale, max_chars=160))
+            text = self._compact_prompt_fragment("; ".join(parts), max_chars=max_chars)
+            if text:
+                rows.append(text)
+            if len(rows) >= limit:
+                break
+        return rows
+
     def _contract_context_section(self, task: Task) -> str:
         metadata = task.metadata if isinstance(task.metadata, dict) else {}
         lines: list[str] = []
@@ -171,11 +227,16 @@ class PromptBuilder:
             ("Verification commands", "verification_commands", 8),
             ("Entrypoints", "entrypoints", 8),
             ("Dependencies", "dependencies", 8),
+            ("Selected libraries", "selected_libraries", 8),
         )
         for label, key, limit in section_specs:
             items = self._metadata_items(metadata.get(key), limit=limit)
             if items:
                 lines.append(f"- {label}: " + "; ".join(items))
+
+        architecture_decisions = self._architecture_decision_items(metadata.get("architecture_decisions"))
+        if architecture_decisions:
+            lines.append("- Architecture guidance/decisions: " + " || ".join(architecture_decisions))
 
         task_context = metadata.get("task_context")
         if isinstance(task_context, dict):
@@ -262,9 +323,11 @@ class PromptBuilder:
         round_files: list[Any] | None = None,
     ) -> str:
         """Build LLM prompt for code generation."""
-        task_subject = self._compact_prompt_fragment(str(task.subject or ""), max_chars=280)
+        raw_subject = str(task.subject or "")
+        raw_description = str(task.description or "")
+        task_subject = self._compact_prompt_fragment(raw_subject, max_chars=280)
         task_description = self._compact_prompt_fragment(
-            str(task.description or ""),
+            raw_description,
             max_chars=2600,
         )
         normalized_round_files: list[str] = []
@@ -344,18 +407,57 @@ class PromptBuilder:
 
         arch_section = "\n".join(f"- {h}" for h in arch_hints) if arch_hints else "- 无全局架构上下文"
         contract_context = self._contract_context_section(task)
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
 
         # Language-specific role identity + expert guidance
+        from .execution_profile import resolve_director_execution_profile
         from .language_guidance import build_language_section
 
+        execution_profile = resolve_director_execution_profile(
+            subject=raw_subject,
+            description=raw_description,
+            metadata=metadata,
+            target_files=target_files,
+            scope_paths=scope_paths,
+            workspace=self._workspace or str(getattr(task, "workspace", "") or ""),
+        )
+        guidance_metadata = dict(metadata)
+        guidance_metadata.setdefault("detected_language", execution_profile.language)
+        if execution_profile.framework:
+            guidance_metadata.setdefault("detected_framework", execution_profile.framework)
+        guidance_metadata.setdefault("project_type", execution_profile.project_type)
+        guidance_metadata.setdefault("task_type", execution_profile.task_type)
+        guidance_metadata.setdefault("phase", execution_profile.phase)
         role_identity, language_section = build_language_section(
-            target_files, str(getattr(task, "workspace", "") or "")
+            target_files,
+            self._workspace or str(getattr(task, "workspace", "") or ""),
+            metadata=guidance_metadata,
+            subject=raw_subject,
+            description=raw_description,
+            scope_paths=scope_paths,
+        )
+        execution_profile_section = "\n".join(
+            [
+                f"- schema: {execution_profile.schema_version}",
+                f"- dispatch_type: {execution_profile.dispatch_type}",
+                f"- task_type: {execution_profile.task_type}",
+                f"- phase: {execution_profile.phase}",
+                f"- project_type: {execution_profile.project_type}",
+                f"- language: {execution_profile.language_display_name}",
+                f"- framework: {execution_profile.framework_display_name or '(none)'}",
+                f"- temperature_phase: {execution_profile.temperature_phase}",
+                f"- temperature: {execution_profile.temperature:.2f}",
+                f"- output_contract_id: {execution_profile.output_contract_id}",
+            ]
         )
 
-        prompt = f"""{role_identity}
+        prompt_body = f"""{role_identity}
 
 你正在实现以下任务。
 {language_section}
+
+=== Director Execution Profile ===
+{execution_profile_section}
 
 Task: {task_subject}
 Description: {task_description}
@@ -388,8 +490,10 @@ IMPORTANT ARCHITECTURE GUIDELINES:
 7. 接口优先: 对于稳定模块，先定义清晰的公共接口，再实现内部逻辑
 
 Please generate the code to implement this task.
+"""
 
-Output contract:
+        output_contract = f"""
+Output contract: {execution_profile.output_contract_id}
 {target_scope_rule}
 - Return only `PATCH_FILE:` blocks or fenced ` ```file: path` file sections.
 - Do not output `Command:`, shell commands, terminal logs, status narration, SESSION_PATCH, or tool-call wrappers.
@@ -434,4 +538,7 @@ Requirements:
 """
 
         max_chars = self._resolve_prompt_max_chars(task)
-        return self._compact_prompt_fragment(prompt, max_chars=max_chars)
+        protected_suffix_budget = len(output_contract) + 2
+        body_budget = max(500, max_chars - protected_suffix_budget)
+        compact_body = self._compact_prompt_fragment(prompt_body, max_chars=body_budget)
+        return f"{compact_body.rstrip()}\n{output_contract}"

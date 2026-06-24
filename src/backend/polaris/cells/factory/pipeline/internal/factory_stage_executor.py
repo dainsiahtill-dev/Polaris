@@ -2306,12 +2306,14 @@ class OrchestrationStageExecutor:
         final_result: CommandResult | None = None
         max_rounds = int(context.get("director_max_rounds") or 0)
         if max_rounds <= 0:
-            dynamic_rounds = (
+            active_rounds = (
                 int(initial_stats.get("pending") or 0)
                 + int(initial_stats.get("ready") or 0)
                 + int(initial_stats.get("in_progress") or 0)
                 + 2
             )
+            total_rounds = int(initial_stats.get("total") or 0) + 2
+            dynamic_rounds = max(active_rounds, total_rounds)
             max_rounds = max(2, min(dynamic_rounds, 12))
         idle_budget = max(1, int(context.get("director_idle_budget") or 2))
         idle_rounds = 0

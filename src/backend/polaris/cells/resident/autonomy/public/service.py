@@ -11,6 +11,10 @@ from polaris.cells.audit.evidence.public.service import (
     create_evidence_bundle_service,
 )
 from polaris.cells.resident.autonomy.internal.capability_graph import CapabilityGraph
+from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
+    build_resident_agi_capability_surface,
+    resident_agi_capability_surface_payload,
+)
 from polaris.cells.resident.autonomy.internal.counterfactual_lab import CounterfactualLab
 from polaris.cells.resident.autonomy.internal.decision_trace import DecisionTraceRecorder
 from polaris.cells.resident.autonomy.internal.execution_projection import (
@@ -31,7 +35,9 @@ from polaris.cells.resident.autonomy.internal.self_improvement_lab import SelfIm
 from polaris.cells.resident.autonomy.internal.skill_foundry import SkillFoundry
 from polaris.cells.resident.autonomy.public.contracts import (
     QueryResidentStatusV1,
+    QueryResidentCapabilitiesV1,
     RecordResidentEvidenceCommandV1,
+    ResidentAgiCapabilityV1,
     ResidentAutonomyError,
     ResidentAutonomyResultV1,
     ResidentCycleCompletedEventV1,
@@ -86,6 +92,12 @@ _CYCLE_ACTIONS: tuple[str, ...] = (
 def query_resident_status(query: QueryResidentStatusV1, *, include_details: bool = False) -> dict[str, Any]:
     """Handle :class:`QueryResidentStatusV1` → resident status snapshot."""
     return get_resident_service(query.workspace).get_status(include_details=include_details)
+
+
+def query_resident_capabilities(query: QueryResidentCapabilitiesV1) -> dict[str, Any]:
+    """Handle :class:`QueryResidentCapabilitiesV1` → AGI capability surface."""
+    _ = get_resident_service(query.workspace)
+    return resident_agi_capability_surface_payload()
 
 
 def _emit_cycle_completed_event(
@@ -181,8 +193,10 @@ __all__ = [
     "GoalGovernor",
     "GoalProposal",
     "PerfEvidence",
+    "QueryResidentCapabilitiesV1",
     "QueryResidentStatusV1",
     "RecordResidentEvidenceCommandV1",
+    "ResidentAgiCapabilityV1",
     "ResidentAgenda",
     "ResidentAutonomyError",
     "ResidentAutonomyResultV1",
@@ -204,10 +218,13 @@ __all__ = [
     "StrategyInsightEngine",
     "TestRunEvidence",
     "create_evidence_bundle_service",
+    "build_resident_agi_capability_surface",
     "get_evidence_service",
     "get_execution_projection_service",
     "get_resident_service",
+    "query_resident_capabilities",
     "query_resident_status",
+    "resident_agi_capability_surface_payload",
     "record_resident_decision",
     "record_resident_evidence",
     "reset_resident_services",

@@ -743,7 +743,7 @@ describe('ContextOSWorkspace', () => {
       ...LLM_STREAM[0],
       meta: {
         ...LLM_STREAM[0].meta,
-        contextSnapshotRef: 'same-context-snapshot-ref',
+        contextSnapshotRef: 'abcdefabcdefabcdefabcdef',
         promptHash: 'same-prompt-hash',
         turnId: 'same-turn',
       },

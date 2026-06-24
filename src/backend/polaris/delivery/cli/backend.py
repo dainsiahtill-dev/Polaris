@@ -17,6 +17,10 @@ def _apply_env(args: argparse.Namespace) -> None:
     if args.token:
         os.environ["KERNELONE_TOKEN"] = args.token
     os.environ["KERNELONE_BACKEND_PORT"] = str(args.port)
+    if args.instance_id:
+        os.environ["POLARIS_INSTANCE_ID"] = str(args.instance_id)
+    if args.kind:
+        os.environ["POLARIS_INSTANCE_KIND"] = str(args.kind)
     if args.cors_origins:
         os.environ["KERNELONE_CORS_ORIGINS"] = args.cors_origins
 

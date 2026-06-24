@@ -3354,6 +3354,75 @@ class TestDirectorDispatchLoop:
         assert "director.run_status_non_success" not in codes
 
     @pytest.mark.asyncio
+    async def test_dynamic_director_rounds_cover_blocked_taskboard_total(self, tmp_path: Path) -> None:
+        class _BlockedUnrollExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.rounds = 0
+                self.stats = [
+                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 4},
+                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 4},
+                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 3},
+                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 3},
+                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 2, "failed": 0, "blocked": 2},
+                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 2, "failed": 0, "blocked": 2},
+                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 3, "failed": 0, "blocked": 1},
+                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 3, "failed": 0, "blocked": 1},
+                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 4, "failed": 0, "blocked": 0},
+                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 4, "failed": 0, "blocked": 0},
+                    {"total": 5, "pending": 0, "ready": 0, "in_progress": 0, "completed": 5, "failed": 0, "blocked": 0},
+                ]
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                return object()
+
+            def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+                del context
+                return [{"provider_id": "p1", "model": "m1"}]
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                if len(self.stats) > 1:
+                    return dict(self.stats.pop(0))
+                return dict(self.stats[0])
+
+            async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                self.rounds += 1
+                return CommandResult(
+                    run_id=f"director-round-{self.rounds}",
+                    status="completed",
+                    message="Run status: completed",
+                    metadata={"task_status_counts": {"completed": self.rounds}},
+                )
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        executor = _BlockedUnrollExecutor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {"tasks": [{"id": f"TASK-{idx}", "target_files": [f"src/{idx}.rs"]} for idx in range(1, 6)]},
+        )
+        run = FactoryRun(
+            id="factory-blocked-unroll",
+            config=FactoryConfig(name="blocked-unroll"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-24T00:00:00+00:00",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"timeout": 1, "execution_mode": "parallel", "max_workers": 1},
+        )
+
+        assert result.status == "success"
+        assert executor.rounds == 5
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        assert payload["taskboard"]["converged"] is True
+
+    @pytest.mark.asyncio
     async def test_timeout_produces_terminal_status_with_diagnostic(self, tmp_path: Path) -> None:
         """超时应产生终端失败状态和明确的超时诊断信号。"""
 

@@ -59,10 +59,18 @@ describe('ContextViewerModal', () => {
     expect(screen.getByTestId('contextos-viewer-empty')).toBeTruthy();
   });
 
+  it('does not call the backend for non-snapshot refs', async () => {
+    render(<ContextViewerModal contextSnapshotRef="provider-call-older" roleId="pm" onClose={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('contextos-viewer-context-missing')).toBeTruthy();
+    });
+    expect(mockedApiFetch).not.toHaveBeenCalled();
+  });
+
   it('renders loading spinner then content on apiFetch resolving with 2-message payload', async () => {
     const payload = makePayload();
     mockFetchOk(payload);
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     expect(screen.getByTestId('contextos-viewer-loading')).toBeTruthy();
     await waitFor(() => {
       expect(screen.queryByTestId('contextos-viewer-loading')).toBeNull();
@@ -74,7 +82,7 @@ describe('ContextViewerModal', () => {
   it('renders meta bar with call/trace/stored_at/message_count/total_chars chips', async () => {
     const payload = makePayload({ total_chars: 12345, message_count: 2 });
     mockFetchOk(payload);
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-meta-count'));
     expect(screen.getByTestId('contextos-viewer-meta-call').textContent).toContain('call: call-1');
     expect(screen.getByTestId('contextos-viewer-meta-trace').textContent).toContain('trace: trace-1');
@@ -88,7 +96,7 @@ describe('ContextViewerModal', () => {
       messages: [{ role: 'assistant', content: 'Hello world' }],
     });
     mockFetchOk(payload);
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-msg-0'));
     const card = screen.getByTestId('contextos-msg-0');
     expect(card.textContent).toMatch(/~\d+ tok/);
@@ -100,7 +108,7 @@ describe('ContextViewerModal', () => {
       messages: [{ role: 'assistant', content: 'Hello world' }],
     });
     mockFetchOk(payload);
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-msg-0'));
 
     const card = screen.getByTestId('contextos-msg-0');
@@ -118,7 +126,7 @@ describe('ContextViewerModal', () => {
       ],
     });
     mockFetchOk(payload);
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-search'));
     fireEvent.change(screen.getByTestId('contextos-viewer-search'), {
       target: { value: 'apples' },
@@ -147,7 +155,7 @@ describe('ContextViewerModal', () => {
       ],
     });
     mockFetchOk(payload);
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-group-toggle'));
     fireEvent.click(screen.getByTestId('contextos-viewer-group-toggle'));
     expect(screen.getByTestId('contextos-viewer-anchor-nav')).toBeTruthy();
@@ -167,7 +175,7 @@ describe('ContextViewerModal', () => {
     const originalClipboard = (navigator as { clipboard?: { writeText: typeof writeText } }).clipboard;
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
 
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-copy-all'));
     fireEvent.click(screen.getByTestId('contextos-viewer-copy-all'));
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
@@ -192,7 +200,7 @@ describe('ContextViewerModal', () => {
       ],
     });
     mockFetchOk(payload);
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-msg-0'));
     const block = document.querySelector('[data-lang="json"]');
     expect(block).toBeTruthy();
@@ -203,7 +211,7 @@ describe('ContextViewerModal', () => {
   it('Escape key calls onClose', async () => {
     mockFetchOk(makePayload());
     const onClose = vi.fn();
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={onClose} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={onClose} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-body'));
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -212,7 +220,7 @@ describe('ContextViewerModal', () => {
   it('clicking on backdrop calls onClose', async () => {
     mockFetchOk(makePayload());
     const onClose = vi.fn();
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={onClose} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={onClose} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-modal'));
     const modal = screen.getByTestId('contextos-viewer-modal');
     fireEvent.click(modal, { target: modal });
@@ -231,7 +239,7 @@ describe('ContextViewerModal', () => {
     // retry 后 200
     mockFetchOk(makePayload({ messages: [{ role: 'user', content: 'retry ok' }] }));
 
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-error'));
     expect(screen.getByTestId('contextos-viewer-error').textContent).toContain('加载失败');
     fireEvent.click(screen.getByText('重试'));
@@ -260,7 +268,7 @@ describe('ContextViewerModal', () => {
       }),
     });
 
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
 
     const missing = await waitFor(() => screen.getByTestId('contextos-viewer-context-missing'));
     expect(missing.textContent).toContain('完整上下文快照不可用');
@@ -287,7 +295,7 @@ describe('ContextViewerModal', () => {
       }),
     });
 
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
 
     const missing = await waitFor(() => screen.getByTestId('contextos-viewer-context-missing'));
     expect(missing.textContent).toContain('完整上下文快照不可用');
@@ -308,7 +316,7 @@ describe('ContextViewerModal', () => {
       }),
     });
 
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
 
     await waitFor(() => screen.getByTestId('contextos-viewer-error'));
     expect(screen.getByText(/HTTP 403/)).toBeTruthy();
@@ -325,7 +333,7 @@ describe('ContextViewerModal', () => {
       },
     });
 
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
 
     await waitFor(() => screen.getByTestId('contextos-viewer-error'));
     expect(screen.getByText(/HTTP 500/)).toBeTruthy();
@@ -355,7 +363,7 @@ describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
 
   it('dialog has aria-describedby pointing at the meta bar once content loads', async () => {
     mockFetchOk(makePayload());
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-meta-count'));
     const dialog = screen.getByTestId('contextos-viewer-modal');
     const describedBy = dialog.getAttribute('aria-describedby');
@@ -374,7 +382,7 @@ describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
           // 永不 resolve
         }),
     );
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     const loading = screen.getByTestId('contextos-viewer-loading');
     expect(loading.getAttribute('role')).toBe('status');
     expect(loading.getAttribute('aria-live')).toBe('polite');
@@ -390,7 +398,7 @@ describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
         throw new Error('not json');
       },
     });
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-error'));
     const error = screen.getByTestId('contextos-viewer-error');
     expect(error.getAttribute('role')).toBe('alert');
@@ -399,7 +407,7 @@ describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
 
   it('focus is moved into the dialog on mount (initial focus inside container)', async () => {
     mockFetchOk(makePayload());
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-close'));
     // 关闭按钮在弹窗内，且应被赋予初始焦点。
     await waitFor(() => {
@@ -417,7 +425,7 @@ describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
         ],
       }),
     );
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-close'));
     // 寻找弹窗内最后一个可聚焦元素（footer 关闭按钮）
     const dialog = screen.getByTestId('contextos-viewer-modal');
@@ -439,7 +447,7 @@ describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
 
   it('Shift+Tab on first focusable element wraps focus to last focusable element', async () => {
     mockFetchOk(makePayload());
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-close'));
     // 等焦点稳定到弹窗内
     await waitFor(() => {
@@ -455,7 +463,7 @@ describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
   it('body scroll is locked while modal is mounted and restored on unmount', async () => {
     const previousOverflow = document.body.style.overflow;
     mockFetchOk(makePayload());
-    const { unmount } = render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    const { unmount } = render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     expect(document.body.style.overflow).toBe('hidden');
     unmount();
     expect(document.body.style.overflow).toBe(previousOverflow);
@@ -469,7 +477,7 @@ describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
     expect(document.activeElement).toBe(trigger);
 
     mockFetchOk(makePayload());
-    const { unmount } = render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    const { unmount } = render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-close'));
     // 焦点应已迁入弹窗
     const dialog = screen.getByTestId('contextos-viewer-modal');
@@ -494,13 +502,13 @@ describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
     mockFetchOk(makePayload({ messages: [{ role: 'user', content: 'second' }] }));
 
     const { rerender } = render(
-      <ContextViewerModal contextSnapshotRef="first-ref" roleId="pm" onClose={vi.fn()} />,
+      <ContextViewerModal contextSnapshotRef="111111111111111111111111" roleId="pm" onClose={vi.fn()} />,
     );
     // 第一次请求已发出但未返回
     expect(mockedApiFetch).toHaveBeenCalledTimes(1);
 
     // 切换 ref：触发新请求，旧的应被取消
-    rerender(<ContextViewerModal contextSnapshotRef="second-ref" roleId="pm" onClose={vi.fn()} />);
+    rerender(<ContextViewerModal contextSnapshotRef="222222222222222222222222" roleId="pm" onClose={vi.fn()} />);
     expect(mockedApiFetch).toHaveBeenCalledTimes(2);
 
     // 让第一次 fetch 在「取消后」resolve：组件应忽略该结果
@@ -523,7 +531,7 @@ describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
 
   it('search input has aria-label for screen readers', async () => {
     mockFetchOk(makePayload());
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-search'));
     const search = screen.getByTestId('contextos-viewer-search');
     expect(search.getAttribute('aria-label')).toBeTruthy();
@@ -531,7 +539,7 @@ describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
 
   it('group toggle has aria-pressed reflecting state', async () => {
     mockFetchOk(makePayload());
-    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
     await waitFor(() => screen.getByTestId('contextos-viewer-group-toggle'));
     const toggle = screen.getByTestId('contextos-viewer-group-toggle');
     expect(toggle.getAttribute('aria-pressed')).toBe('false');

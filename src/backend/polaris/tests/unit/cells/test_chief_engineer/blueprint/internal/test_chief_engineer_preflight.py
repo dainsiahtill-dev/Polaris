@@ -23,6 +23,7 @@ from polaris.cells.chief_engineer.blueprint.internal.chief_engineer_preflight im
     _slice_blueprint_for_task,
     _tail_non_empty_lines,
     _trim_str_list,
+    build_chief_engineer_decision_evidence,
     build_task_focused_chief_engineer_payload,
     chief_engineer_auto_decision,
     inject_chief_engineer_constraints,
@@ -510,15 +511,40 @@ class TestInjectChiefEngineerConstraints:
 class TestChiefEngineerAutoDecision:
     """Tests for chief_engineer_auto_decision."""
 
+    def test_builds_decision_evidence(self) -> None:
+        evidence = build_chief_engineer_decision_evidence(
+            [
+                {"status": "ok"},
+                {"status": "failed"},
+                {"status": "ok", "needs_review": True},
+                "bad",  # type: ignore[list-item]
+            ]
+        )
+        assert evidence["schema_version"] == "chief_engineer.decision_evidence.v1"
+        assert evidence["task_count"] == 4
+        assert evidence["blocked_count"] == 1
+        assert evidence["needs_review_count"] == 1
+        assert evidence["malformed_task_count"] == 1
+        assert "blocked_or_failed_tasks" in evidence["hard_rule_blockers"]
+
     def test_no_tasks_blocks(self) -> None:
         result = chief_engineer_auto_decision([])
         assert result["proceed"] is False
         assert result["reason"] == "no_tasks"
+        assert result["decision_source"] == "hard_rule"
 
     def test_blocked_tasks_block(self) -> None:
-        result = chief_engineer_auto_decision([{"status": "blocked"}])
+        called = False
+
+        def advisor(_evidence):
+            nonlocal called
+            called = True
+            return {"proceed": True, "reason": "ignore blocker"}
+
+        result = chief_engineer_auto_decision([{"status": "blocked"}], advisor=advisor)
         assert result["proceed"] is False
         assert result["needs_review"] is True
+        assert called is False
 
     def test_failed_tasks_block(self) -> None:
         result = chief_engineer_auto_decision([{"status": "failed"}])
@@ -540,3 +566,42 @@ class TestChiefEngineerAutoDecision:
         result = chief_engineer_auto_decision(tasks)
         assert result["proceed"] is True
         assert result["reason"] == "auto_approved"
+
+    def test_intelligent_advisor_can_decide_non_blocked_case(self) -> None:
+        tasks = [{"status": "ok"} for _ in range(3)]
+
+        def advisor(evidence):
+            assert evidence["schema_version"] == "chief_engineer.decision_evidence.v1"
+            return {
+                "proceed": False,
+                "reason": "architecture risk requires stronger CE review",
+                "needs_review": True,
+                "decision_source": "embedded_agi_advisor",
+                "advisor_rationale": "Small task count is not enough evidence when risk is architectural.",
+            }
+
+        result = chief_engineer_auto_decision(tasks, advisor=advisor)
+        assert result["proceed"] is False
+        assert result["needs_review"] is True
+        assert result["decision_source"] == "embedded_agi_advisor"
+        assert result["evidence_schema"] == "chief_engineer.decision_evidence.v1"
+
+    def test_invalid_intelligent_advisor_decision_fails_closed(self) -> None:
+        tasks = [{"status": "ok"}]
+
+        result = chief_engineer_auto_decision(tasks, advisor=lambda _evidence: {"reason": "missing proceed"})
+
+        assert result["proceed"] is False
+        assert result["needs_review"] is True
+        assert result["decision_source"] == "intelligent_advisor_invalid"
+
+    def test_intelligent_advisor_exception_fails_closed(self) -> None:
+        tasks = [{"status": "ok"}]
+
+        def advisor(_evidence):
+            raise RuntimeError("model unavailable")
+
+        result = chief_engineer_auto_decision(tasks, advisor=advisor)
+        assert result["proceed"] is False
+        assert result["reason"] == "intelligent_advisor_error"
+        assert result["advisor_error"] == "model unavailable"

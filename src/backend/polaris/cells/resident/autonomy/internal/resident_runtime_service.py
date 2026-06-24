@@ -11,6 +11,9 @@ from typing import Any
 from polaris.cells.audit.evidence.public.service import create_evidence_bundle_service
 from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
 from polaris.cells.resident.autonomy.internal.capability_graph import CapabilityGraph
+from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
+    resident_agi_capability_surface_payload,
+)
 from polaris.cells.resident.autonomy.internal.counterfactual_lab import CounterfactualLab
 from polaris.cells.resident.autonomy.internal.decision_trace import DecisionTraceRecorder
 
@@ -479,6 +482,7 @@ class ResidentService:
             payload["skills"] = [item.to_dict() for item in self.storage.load_skills()]
             payload["experiments"] = [item.to_dict() for item in self.storage.load_experiments()]
             payload["improvements"] = [item.to_dict() for item in self.storage.load_improvements()]
+            payload["agi_capability_surface"] = resident_agi_capability_surface_payload()
             graph = self.storage.load_capability_graph()
             payload["capability_graph"] = (
                 graph.to_dict() if graph else {"generated_at": "", "capabilities": [], "gaps": []}

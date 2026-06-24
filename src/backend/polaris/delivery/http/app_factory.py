@@ -47,6 +47,7 @@ def is_auth_token_discovery_enabled() -> bool:
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     from polaris.bootstrap.assembly import assemble_core_services
+    from polaris.cells.instances.public.service import maybe_start_instance_watchdog
     from polaris.cells.resident.autonomy.public.service import reset_resident_services
     from polaris.delivery.http.resident_autotick import maybe_start_resident_autotick
     from polaris.infrastructure.di.container import get_container, reset_container
@@ -124,9 +125,14 @@ async def lifespan(app: FastAPI):
 
     # Opt-in unattended ignition for the Resident autonomy loop (default off).
     resident_autotick_task = maybe_start_resident_autotick(workspace)
+    instance_watchdog_task = maybe_start_instance_watchdog()
 
     yield
 
+    if instance_watchdog_task is not None:
+        instance_watchdog_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await instance_watchdog_task
     if resident_autotick_task is not None:
         resident_autotick_task.cancel()
         with suppress(asyncio.CancelledError, Exception):

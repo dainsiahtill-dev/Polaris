@@ -272,7 +272,11 @@ def test_prompt_output_contract_literals() -> None:
     executor = WorkerExecutor(workspace="/tmp")
     task = _task({"target_files": ["src/a.ts"]})
     prompt = executor._build_code_generation_prompt(task)
-    assert "You are a software developer implementing a task." in prompt
+    assert "资深 TypeScript 前端/全栈架构师" in prompt
+    assert "=== Prompt Guidance Context ===" in prompt
+    assert "=== TypeScript Language Best Practices ===" in prompt
+    assert "=== Task Type Best Practices ===" in prompt
+    assert "Primary language: TypeScript" in prompt
     assert "Do not output `Command:`" in prompt
     assert "Output contract:" in prompt
     assert "IMPORTANT ARCHITECTURE GUIDELINES:" in prompt
@@ -326,6 +330,114 @@ def test_prompt_includes_pm_ce_contract_context() -> None:
     assert "Quality gates: npm test" in prompt
     assert "Verification commands: npm run build" in prompt
     assert "Entrypoints: npm run dev" in prompt
+
+
+def test_prompt_includes_ce_architecture_decisions() -> None:
+    executor = WorkerExecutor(workspace="/tmp")
+    task = _task(
+        {
+            "target_files": ["src/app/server.ts"],
+            "selected_libraries": ["NATS JetStream", "WebSocket", "PostgreSQL", "Dependency Injection"],
+            "architecture_decisions": [
+                {
+                    "concern": "application_architecture",
+                    "decision": "Use Clean/Hexagonal Architecture with constructor-based dependency injection.",
+                    "selected_libraries": ["Clean Architecture", "Dependency Injection"],
+                    "constraints": ["Keep domain logic independent from framework adapters"],
+                    "rationale": "The task is complex and needs long-term module boundaries.",
+                },
+                {
+                    "concern": "realtime",
+                    "decision": "Use NATS JetStream as durable event backbone with WebSocket gateway.",
+                    "selected_libraries": ["NATS JetStream", "WebSocket"],
+                    "options_considered": ["WebSocket", "SSE", "NATS JetStream"],
+                },
+                {
+                    "concern": "database",
+                    "decision": "Use PostgreSQL behind a repository boundary.",
+                    "selected_libraries": ["PostgreSQL"],
+                    "options_considered": ["SQLite", "PostgreSQL", "MySQL", "MongoDB"],
+                },
+            ],
+        },
+        subject="Implement complex realtime dashboard backend",
+        description="Create WebSocket live updates with durable events and database persistence.",
+    )
+
+    prompt = executor._build_code_generation_prompt(task)
+
+    assert "Selected libraries: NATS JetStream; WebSocket; PostgreSQL; Dependency Injection" in prompt
+    assert "Architecture guidance/decisions:" in prompt
+    assert "application_architecture" in prompt
+    assert "Clean/Hexagonal Architecture" in prompt
+    assert "Dependency Injection" in prompt
+    assert "realtime" in prompt
+    assert "NATS JetStream" in prompt
+    assert "WebSocket" in prompt
+    assert "database" in prompt
+    assert "PostgreSQL" in prompt
+
+
+def test_prompt_uses_metadata_language_framework_and_task_focus() -> None:
+    executor = WorkerExecutor(workspace="/tmp")
+    task = _task(
+        {
+            "target_files": ["src/api/users.py"],
+            "tech_stack": {"language": "python", "framework": "fastapi"},
+            "project_type": "api",
+        },
+        subject="Implement FastAPI users endpoint",
+        description="Create request validation and stable HTTP error handling",
+    )
+
+    prompt = executor._build_code_generation_prompt(task)
+
+    assert "Primary language: Python" in prompt
+    assert "FastAPI" in prompt
+    assert "Pydantic model" in prompt
+    assert "API/backend service" in prompt
+    assert "Write code / implement feature" in prompt
+    assert "Output contract:" in prompt
+
+
+def test_prompt_includes_file_role_guidance() -> None:
+    executor = WorkerExecutor(workspace="/tmp")
+    task = _task(
+        {
+            "target_files": ["tests/test_login.py", "pyproject.toml"],
+        },
+        subject="Fix pytest login regression",
+        description="Repair failing test coverage and keep configuration valid",
+    )
+
+    prompt = executor._build_code_generation_prompt(task)
+
+    assert "=== File Role Best Practices ===" in prompt
+    assert "Test/spec file" in prompt
+    assert "Config/manifest file" in prompt
+    assert "Bug fix / production repair" in prompt
+    assert "Output contract:" in prompt
+
+
+def test_prompt_preserves_output_contract_when_body_is_truncated(monkeypatch) -> None:
+    monkeypatch.setenv("KERNELONE_WORKER_PROMPT_MAX_CHARS", "2000")
+    executor = WorkerExecutor(workspace="/tmp")
+    task = _task(
+        {
+            "target_files": ["src/a.py"],
+            "tech_stack": {"language": "python"},
+            "acceptance_criteria": ["must preserve output contract"],
+        },
+        subject="Implement Python module",
+        description="Long implementation details.\n" + ("details " * 2000),
+    )
+
+    prompt = executor._build_code_generation_prompt(task)
+
+    assert "Output contract: director.patch_file.v1" in prompt
+    assert "PATCH_FILE: path/to/file.py" in prompt
+    assert "Do not output `Command:`" in prompt
+    assert "Return only `PATCH_FILE:` blocks" in prompt
 
 
 # --------------------------------------------------------------------------

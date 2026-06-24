@@ -397,6 +397,7 @@ class RoleId(StrEnum):
     ARCHITECT = "architect"
     CHIEF_ENGINEER = "chief_engineer"
     SCOUT = "scout"
+    RESIDENT_AGI = "resident_agi"
     SYSTEM = "system"
     DEFAULT = "default"
 

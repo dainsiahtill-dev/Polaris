@@ -9,6 +9,12 @@ from typing import Any
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 
 from ..internal.adr_log import ADRDecisionLog, build_adr_event
+from ..internal.architecture_decisions import (
+    infer_architecture_decisions,
+    merge_architecture_decisions,
+    normalize_architecture_decisions,
+    selected_libraries_from_decisions,
+)
 from ..internal.blueprint_persistence import BlueprintPersistence
 from ..internal.ce_consumer import CEConsumer
 from ..internal.chief_engineer_agent import ChiefEngineerAgent
@@ -179,6 +185,12 @@ def _blueprint_contract_fields(context: dict[str, Any]) -> dict[str, Any]:
         task_payload.get("blocked_by"),
     )
     risks = _first_string_list(context.get("risks"), task_payload.get("risks"))
+    architecture_decisions = normalize_architecture_decisions(
+        context.get("architecture_decisions")
+        or context.get("architectureDecision")
+        or task_payload.get("architecture_decisions")
+        or task_payload.get("architectureDecision")
+    )
     return {
         "task": task_payload,
         "acceptance_criteria": acceptance_criteria,
@@ -186,6 +198,7 @@ def _blueprint_contract_fields(context: dict[str, Any]) -> dict[str, Any]:
         "scope_paths": scope_paths,
         "dependencies": dependencies,
         "risks": risks,
+        "architecture_decisions": architecture_decisions,
     }
 
 
@@ -269,6 +282,20 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     execution_checklist = list(contract_fields["execution_checklist"])
     scope_paths = list(contract_fields["scope_paths"])
     dependencies = list(contract_fields["dependencies"])
+    inferred_decisions = infer_architecture_decisions(
+        objective=command.objective,
+        context=context,
+        constraints=constraints,
+        target_files=target_files,
+        scope_paths=scope_paths,
+        dependencies=dependencies,
+    )
+    architecture_decisions = merge_architecture_decisions(
+        tuple(contract_fields["architecture_decisions"]),
+        inferred_decisions,
+    )
+    architecture_decision_payloads = [decision.to_dict() for decision in architecture_decisions]
+    selected_libraries = list(selected_libraries_from_decisions(architecture_decisions))
     contract_completeness = _contract_completeness(
         target_files=target_files,
         acceptance_criteria=acceptance_criteria,
@@ -279,6 +306,8 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     context.setdefault("target_files", target_files)
     context.setdefault("scope_paths", scope_paths)
     context.setdefault("dependencies", dependencies)
+    context.setdefault("architecture_decisions", architecture_decision_payloads)
+    context.setdefault("selected_libraries", selected_libraries)
     recommendations = (
         "Validate PM acceptance criteria before Director execution.",
         "Keep implementation scope within the recorded target files.",
@@ -300,6 +329,8 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "acceptance_criteria": acceptance_criteria,
         "execution_checklist": execution_checklist,
         "dependencies": dependencies,
+        "architecture_decisions": architecture_decision_payloads,
+        "selected_libraries": selected_libraries,
         "constraints": constraints,
         "context": context,
         "pm_task": contract_fields["task"],
@@ -335,6 +366,14 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         summary=summary,
         recommendations=recommendations,
         risks=risks,
+        target_files=tuple(target_files),
+        acceptance_criteria=tuple(acceptance_criteria),
+        execution_checklist=tuple(execution_checklist),
+        scope_paths=tuple(scope_paths),
+        objective=command.objective,
+        dependencies=tuple(dependencies),
+        architecture_decisions=architecture_decisions,
+        selected_libraries=tuple(selected_libraries),
     )
 
 
@@ -377,6 +416,8 @@ def get_blueprint_status(query: GetBlueprintStatusQueryV1) -> TaskBlueprintResul
         scope_paths=_tuple_from_payload(payload.get("scope_paths")),
         objective=str(payload.get("objective") or "").strip(),
         dependencies=_tuple_from_payload(payload.get("dependencies")),
+        architecture_decisions=normalize_architecture_decisions(payload.get("architecture_decisions")),
+        selected_libraries=_tuple_from_payload(payload.get("selected_libraries")),
     )
 
 

@@ -63,6 +63,62 @@ class QueryResidentStatusV1:
 
 
 @dataclass(frozen=True)
+class QueryResidentCapabilitiesV1:
+    workspace: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+
+
+@dataclass(frozen=True)
+class ResidentAgiCapabilityV1:
+    capability_id: str
+    name: str
+    category: str
+    access: str
+    purpose: str
+    contract_ref: str
+    endpoint: str = ""
+    risk_level: str = "low"
+    guardrails: tuple[str, ...] = field(default_factory=tuple)
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "capability_id", _require_non_empty("capability_id", self.capability_id))
+        object.__setattr__(self, "name", _require_non_empty("name", self.name))
+        object.__setattr__(self, "category", _require_non_empty("category", self.category))
+        object.__setattr__(self, "access", _require_non_empty("access", self.access))
+        object.__setattr__(self, "purpose", _require_non_empty("purpose", self.purpose))
+        object.__setattr__(self, "contract_ref", _require_non_empty("contract_ref", self.contract_ref))
+        object.__setattr__(self, "endpoint", str(self.endpoint or "").strip())
+        object.__setattr__(self, "risk_level", str(self.risk_level or "low").strip() or "low")
+        object.__setattr__(
+            self,
+            "guardrails",
+            tuple(str(v).strip() for v in self.guardrails if str(v).strip()),
+        )
+        object.__setattr__(
+            self,
+            "evidence_refs",
+            tuple(str(v).strip() for v in self.evidence_refs if str(v).strip()),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "capability_id": self.capability_id,
+            "name": self.name,
+            "category": self.category,
+            "access": self.access,
+            "purpose": self.purpose,
+            "contract_ref": self.contract_ref,
+            "endpoint": self.endpoint,
+            "risk_level": self.risk_level,
+            "guardrails": list(self.guardrails),
+            "evidence_refs": list(self.evidence_refs),
+        }
+
+
+@dataclass(frozen=True)
 class ResidentCycleCompletedEventV1:
     event_id: str
     workspace: str
@@ -118,7 +174,9 @@ class ResidentAutonomyError(RuntimeError):
 
 __all__ = [
     "QueryResidentStatusV1",
+    "QueryResidentCapabilitiesV1",
     "RecordResidentEvidenceCommandV1",
+    "ResidentAgiCapabilityV1",
     "ResidentAutonomyError",
     "ResidentAutonomyResultV1",
     "ResidentCycleCompletedEventV1",

@@ -7,9 +7,11 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from polaris.cells.resident.autonomy.public.service import (
+    QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
     ResidentMode,
     get_resident_service,
+    query_resident_capabilities,
     query_resident_status,
 )
 from polaris.delivery.http.dependencies import require_auth
@@ -119,6 +121,12 @@ class GoalRunRequest(ResidentWorkspaceRequest):
 def resident_status(request: Request, details: bool = False, workspace: str = "") -> dict[str, Any]:
     ws = _resolve_workspace(request, workspace)
     return query_resident_status(QueryResidentStatusV1(workspace=ws or "."), include_details=details)
+
+
+@router.get("/capabilities", dependencies=[Depends(require_auth)])
+def resident_capabilities(request: Request, workspace: str = "") -> dict[str, Any]:
+    ws = _resolve_workspace(request, workspace)
+    return query_resident_capabilities(QueryResidentCapabilitiesV1(workspace=ws or "."))
 
 
 @router.post("/start", dependencies=[Depends(require_auth)])

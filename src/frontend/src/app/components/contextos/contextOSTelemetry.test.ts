@@ -283,7 +283,7 @@ describe('buildTelemetryFromStream', () => {
         streamEvent: 'llm_completed',
         role: 'PM',
         callId: 'call-final-context',
-        contextSnapshotRef: 'ctx-final-context',
+        contextSnapshotRef: 'c0ffee000000000000000001',
         promptTokens: 5000,
         completionTokens: 37,
         totalTokens: 5037,
@@ -577,7 +577,7 @@ describe('buildTelemetryFromStream', () => {
         channel: 'llm',
         streamEvent: 'llm_completed',
         role: 'Director',
-        context_snapshot_ref: 'abc123def456',
+        context_snapshot_ref: 'abc123def456abc123def456',
         prompt_hash: 'hash789',
         turn_id: 'turn-99',
         call_id: 'call-99',
@@ -585,7 +585,7 @@ describe('buildTelemetryFromStream', () => {
     });
     const t = buildTelemetryFromStream([entry], [], []);
     const event = t.events[0];
-    expect(event.contextSnapshotRef).toBe('abc123def456');
+    expect(event.contextSnapshotRef).toBe('abc123def456abc123def456');
     expect(event.promptHash).toBe('hash789');
     expect(event.turnId).toBe('turn-99');
     expect(event.callId).toBe('call-99');
@@ -603,7 +603,7 @@ describe('buildTelemetryFromStream', () => {
         channel: 'llm',
         streamEvent: 'llm_completed',
         role: 'chief_engineer',
-        contextSnapshotRef: 'ce-context-ref',
+        contextSnapshotRef: 'ce0000000000000000000000',
         promptTokens: 100,
         completionTokens: 20,
         totalTokens: 120,
@@ -630,7 +630,7 @@ describe('buildTelemetryFromStream', () => {
         channel: 'llm',
         streamEvent: 'llm_completed',
         role: 'Director',
-        contextSnapshotRef: 'director-context-ref',
+        contextSnapshotRef: 'dd0000000000000000000000',
       },
     });
 
@@ -640,6 +640,31 @@ describe('buildTelemetryFromStream', () => {
       'director-context-snapshot',
     ]);
     expect(filterEventsForRole(telemetry.events, 'chief_engineer')).toEqual([]);
+  });
+
+  it('does not expose non-24-hex context refs as clickable snapshot refs', () => {
+    const entry = logEntry({
+      id: 'llm-invalid-context-ref',
+      timestamp: '2026-06-23T10:00:01Z',
+      level: 'success',
+      source: 'Director',
+      message: 'llm response completed',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'Director',
+        context_snapshot_ref: 'provider-call-older',
+        prompt_hash: 'prompt-hash-only',
+        call_id: 'call-without-snapshot',
+      },
+    });
+
+    const telemetry = buildTelemetryFromStream([entry], [], []);
+    const event = telemetry.events[0];
+
+    expect(event.contextSnapshotRef).toBeNull();
+    expect(event.promptHash).toBe('prompt-hash-only');
+    expect(event.callId).toBe('call-without-snapshot');
   });
 
   it('surfaces context snapshot degraded evidence without leaking objects', () => {

@@ -68,6 +68,7 @@ def _empty_projection(
             "enabled_modalities": [],
             "required_modalities": [],
             "missing_required_modalities": [],
+            "failed_required_modalities": [],
         },
         "evidence_modalities": {},
     }
@@ -134,6 +135,7 @@ def _merge_evidence_policy(projects: list[dict[str, Any]]) -> dict[str, Any]:
     enabled: list[str] = []
     required: list[str] = []
     missing: list[str] = []
+    failed: list[str] = []
     for project in projects:
         policy = project.get("evidence_policy")
         if not isinstance(policy, dict):
@@ -142,6 +144,7 @@ def _merge_evidence_policy(projects: list[dict[str, Any]]) -> dict[str, Any]:
             (enabled, "enabled_modalities"),
             (required, "required_modalities"),
             (missing, "missing_required_modalities"),
+            (failed, "failed_required_modalities"),
         ):
             raw_items = policy.get(key)
             if isinstance(raw_items, list):
@@ -149,11 +152,13 @@ def _merge_evidence_policy(projects: list[dict[str, Any]]) -> dict[str, Any]:
     enabled = list(dict.fromkeys(enabled))
     required = list(dict.fromkeys(required))
     missing = list(dict.fromkeys(missing))
+    failed = list(dict.fromkeys(failed))
     return {
         "ok": not missing,
         "enabled_modalities": enabled,
         "required_modalities": required,
         "missing_required_modalities": missing,
+        "failed_required_modalities": failed,
     }
 
 

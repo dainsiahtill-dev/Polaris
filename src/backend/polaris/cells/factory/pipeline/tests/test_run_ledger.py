@@ -317,6 +317,7 @@ def test_run_ledger_projection_tracks_user_verifier_modalities(tmp_path: Path) -
         "enabled_modalities": [],
         "required_modalities": ["physics"],
         "missing_required_modalities": [],
+        "failed_required_modalities": [],
     }
     assert projection["evidence_modalities"]["verifier"]["ok"] == 1
     assert projection["evidence_modalities"]["physics"]["ok"] == 1
@@ -519,7 +520,9 @@ def test_run_ledger_projection_rejects_mismatched_tool_receipt_token(tmp_path: P
     projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
 
     assert projection["ok"] is False
-    assert projection["evidence_policy"]["missing_required_modalities"] == ["tool_receipt"]
+    assert projection["evidence_policy"]["missing_required_modalities"] == []
+    assert projection["evidence_policy"]["failed_required_modalities"] == ["tool_receipt"]
+    assert projection["gates"][0]["failed_required_evidence_modalities"] == ["tool_receipt"]
     gate_receipt = projection["gates"][0]["evidence_modalities"]["tool_receipt"]
     assert gate_receipt["ok"] is False
     assert gate_receipt["metadata"]["invalid"] == ["receipt[0]:token_mismatch"]
@@ -578,6 +581,7 @@ def test_run_ledger_policy_tracks_enabled_browser_without_requiring_it(tmp_path:
         "enabled_modalities": ["browser", "visual"],
         "required_modalities": [],
         "missing_required_modalities": [],
+        "failed_required_modalities": [],
     }
     assert projection["gates"][0]["enabled_evidence_modalities"] == ["browser", "visual"]
 
@@ -636,6 +640,7 @@ def test_run_ledger_projection_tracks_browser_and_visual_entrypoint_evidence(tmp
         "enabled_modalities": ["browser", "visual"],
         "required_modalities": ["code", "command", "browser", "visual"],
         "missing_required_modalities": [],
+        "failed_required_modalities": [],
     }
     assert projection["evidence_modalities"]["browser"]["ok"] == 1
     assert projection["evidence_modalities"]["visual"]["ok"] == 1

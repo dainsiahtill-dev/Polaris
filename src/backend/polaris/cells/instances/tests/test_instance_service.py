@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,192 @@ def test_instance_registry_round_trip(tmp_path: Path) -> None:
 
     data = json.loads((tmp_path / "instances" / "registry.json").read_text(encoding="utf-8"))
     assert data["instances"][0]["instance_id"] == "project-a"
+
+
+def test_current_backend_instance_cannot_stop_restart_or_delete_itself(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    record = registry.save(
+        InstanceRecord(
+            instance_id="main",
+            name="Main Polaris Dev",
+            kind="development",
+            polaris_root=str(root),
+            workspace=str(root),
+            runtime_root=str((tmp_path / "runtime").resolve()),
+            backend_port=instance_service.DEFAULT_BACKEND_PORT,
+            frontend_port=instance_service.DEFAULT_FRONTEND_PORT,
+            backend_url=f"http://127.0.0.1:{instance_service.DEFAULT_BACKEND_PORT}",
+            frontend_url=f"http://127.0.0.1:{instance_service.DEFAULT_FRONTEND_PORT}",
+            token="test-token",
+            backend_pid=os.getpid(),
+            frontend_pid=None,
+            start_frontend=False,
+            status="running",
+        )
+    )
+    terminated: list[int] = []
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: terminated.append(int(pid or 0))))
+
+    for operation in (
+        lambda: supervisor.stop_instance(record.instance_id),
+        lambda: supervisor.restart_instance(record.instance_id),
+        lambda: supervisor.delete_instance(record.instance_id),
+    ):
+        try:
+            operation()
+        except RuntimeError as exc:
+            assert "current backend instance" in str(exc)
+        else:
+            raise AssertionError("self-management operation should fail closed")
+
+    assert terminated == []
+    assert registry.get(record.instance_id) is not None
+
+
+def test_list_instances_uses_fast_process_projection_without_http_probe(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    registry.save(
+        InstanceRecord(
+            instance_id="main",
+            name="Main",
+            kind="development",
+            polaris_root=str(root),
+            workspace=str(root),
+            runtime_root=str((tmp_path / "runtime").resolve()),
+            backend_port=instance_service.DEFAULT_BACKEND_PORT,
+            frontend_port=instance_service.DEFAULT_FRONTEND_PORT,
+            backend_url=f"http://127.0.0.1:{instance_service.DEFAULT_BACKEND_PORT}",
+            frontend_url=f"http://127.0.0.1:{instance_service.DEFAULT_FRONTEND_PORT}",
+            token="test-token",
+            backend_pid=12345,
+            frontend_pid=None,
+            start_frontend=False,
+            status="running",
+        )
+    )
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: pid == 12345)
+
+    def fail_http_probe(_url: str, _token: str) -> bool:
+        raise AssertionError("HTTP probe not allowed")
+
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(fail_http_probe))
+
+    records = InstanceSupervisor(registry).list_instances()
+
+    assert records[0]["instance_id"] == "main"
+    assert records[0]["status"] == "running"
+    assert records[0]["metadata"]["backend_health"] == "process"
+    assert records[0]["metadata"]["frontend_health"] == "disabled"
+
+
+def test_refresh_instance_states_publishes_natural_process_death(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    published: list[dict[str, Any]] = []
+
+    class FakePublisher:
+        def publish(self, *, subject: str, payload: dict[str, Any]) -> bool:
+            published.append({"subject": subject, "payload": payload})
+            return True
+
+    monkeypatch.setattr(
+        "polaris.infrastructure.log_pipeline.jetstream_publisher.get_log_jetstream_publisher",
+        lambda: FakePublisher(),
+    )
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda _pid: False)
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=True)
+    registry.save(
+        InstanceRecord(
+            instance_id="dead-bench",
+            name="Dead Bench",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "bench" / "L1-07").resolve()),
+            runtime_root=str((tmp_path / "bench" / "L1-07" / "runtime").resolve()),
+            backend_port=59911,
+            frontend_port=59912,
+            backend_url="http://127.0.0.1:59911",
+            frontend_url="http://127.0.0.1:59912",
+            token="secret-token",
+            backend_pid=61001,
+            frontend_pid=61002,
+            start_frontend=True,
+            status="running",
+            metadata={"backend_health": "ok", "frontend_health": "ok"},
+        )
+    )
+    published.clear()
+
+    changed = InstanceSupervisor(registry).refresh_instance_states()
+
+    stored = registry.get("dead-bench")
+    assert stored is not None
+    assert changed[0]["instance_id"] == "dead-bench"
+    assert stored.status == "stopped"
+    assert stored.metadata["backend_health"] == "stopped"
+    assert stored.metadata["frontend_health"] == "stopped"
+    assert published[0]["subject"] == "hp.runtime.instances.status.instances"
+    payload = published[0]["payload"]
+    assert payload["payload"]["action"] == "health_changed"
+    assert payload["payload"]["instance"]["instance_id"] == "dead-bench"
+    assert "token" not in payload["payload"]["instance"]
+
+
+def test_refresh_instance_states_does_not_publish_without_state_change(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    published: list[dict[str, Any]] = []
+
+    class FakePublisher:
+        def publish(self, *, subject: str, payload: dict[str, Any]) -> bool:
+            published.append({"subject": subject, "payload": payload})
+            return True
+
+    monkeypatch.setattr(
+        "polaris.infrastructure.log_pipeline.jetstream_publisher.get_log_jetstream_publisher",
+        lambda: FakePublisher(),
+    )
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda _pid: False)
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=True)
+    registry.save(
+        InstanceRecord(
+            instance_id="stopped-bench",
+            name="Stopped Bench",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "bench" / "L1-08").resolve()),
+            runtime_root=str((tmp_path / "bench" / "L1-08" / "runtime").resolve()),
+            backend_port=59921,
+            frontend_port=59922,
+            backend_url="http://127.0.0.1:59921",
+            frontend_url="http://127.0.0.1:59922",
+            token="secret-token",
+            backend_pid=None,
+            frontend_pid=None,
+            start_frontend=True,
+            status="stopped",
+            metadata={"backend_health": "stopped", "frontend_health": "stopped"},
+        )
+    )
+    published.clear()
+
+    changed = InstanceSupervisor(registry).refresh_instance_states()
+
+    assert changed == []
+    assert published == []
 
 
 def test_start_instance_builds_backend_and_frontend_processes(
@@ -97,6 +284,23 @@ def test_start_instance_builds_backend_and_frontend_processes(
     assert frontend_call["env"]["VITE_POLARIS_INSTANCE_ID"] == "bench-l1-01"
     assert frontend_call["env"]["VITE_POLARIS_WORKSPACE"] == str((tmp_path / "bench" / "L1-01").resolve())
     assert frontend_call["env"]["VITE_WORKSPACE"] == str((tmp_path / "bench" / "L1-01").resolve())
+    assert backend_call["env"]["POLARIS_INSTANCE_ID"] == "bench-l1-01"
+    assert backend_call["env"]["POLARIS_INSTANCE_KIND"] == "bench_project"
+    assert backend_call["env"]["POLARIS_INSTANCE_WATCHDOG_ENABLED"] == "0"
+
+
+def test_instance_watchdog_default_scope(monkeypatch: Any) -> None:
+    monkeypatch.delenv("POLARIS_INSTANCE_ID", raising=False)
+    monkeypatch.delenv("POLARIS_INSTANCE_KIND", raising=False)
+    assert instance_service._instance_watchdog_default_enabled() is False
+
+    monkeypatch.setenv("POLARIS_INSTANCE_ID", "main")
+    monkeypatch.setenv("POLARIS_INSTANCE_KIND", "development")
+    assert instance_service._instance_watchdog_default_enabled() is True
+
+    monkeypatch.setenv("POLARIS_INSTANCE_ID", "factory-bench-l1-01")
+    monkeypatch.setenv("POLARIS_INSTANCE_KIND", "bench_project")
+    assert instance_service._instance_watchdog_default_enabled() is False
 
 
 def test_start_instance_rejects_requested_busy_backend_port(tmp_path: Path, monkeypatch: Any) -> None:
@@ -126,6 +330,51 @@ def test_start_instance_rejects_requested_busy_backend_port(tmp_path: Path, monk
         raise AssertionError("requested busy backend port must fail closed")
 
 
+def test_bench_project_reserved_main_ports_are_reallocated(tmp_path: Path, monkeypatch: Any) -> None:
+    root = _make_polaris_root(tmp_path)
+    calls: list[dict[str, Any]] = []
+
+    class FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+        calls.append({"command": command, **kwargs})
+        return FakeProcess(64500 + len(calls))
+
+    def fake_allocate_port(start: int) -> int:
+        if start == instance_service.DEFAULT_BACKEND_PORT + 1:
+            return 60111
+        if start == instance_service.DEFAULT_FRONTEND_PORT + 1:
+            return 60112
+        raise AssertionError(f"unexpected allocation start: {start}")
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(instance_service, "allocate_port", fake_allocate_port)
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
+    supervisor = InstanceSupervisor(InstanceRegistry(tmp_path / "instances", publish_events=False))
+
+    record = supervisor.start_instance(
+        {
+            "instance_id": "bench-reserved-ports",
+            "kind": "bench_project",
+            "polaris_root": str(root),
+            "workspace": str(tmp_path / "bench" / "L1-03"),
+            "backend_port": instance_service.DEFAULT_BACKEND_PORT,
+            "frontend_port": instance_service.DEFAULT_FRONTEND_PORT,
+            "start_frontend": True,
+            "metadata": {"backend_binding": "isolated_backend_instance"},
+        }
+    )
+
+    assert record["backend_port"] == 60111
+    assert record["frontend_port"] == 60112
+    assert calls[0]["command"][calls[0]["command"].index("--port") + 1] == "60111"
+    assert calls[1]["command"][calls[1]["command"].index("--port") + 1] == "60112"
+    assert calls[1]["env"]["VITE_BACKEND_URL"] == "http://127.0.0.1:60111"
+
+
 def test_start_instance_auto_allocates_free_ports_without_claiming_busy_ports(
     tmp_path: Path,
     monkeypatch: Any,
@@ -142,9 +391,9 @@ def test_start_instance_auto_allocates_free_ports_without_claiming_busy_ports(
         return FakeProcess(64000 + len(calls))
 
     def fake_allocate_port(start: int) -> int:
-        if start == instance_service.DEFAULT_BACKEND_PORT:
+        if start == instance_service.DEFAULT_BACKEND_PORT + 1:
             return 60021
-        if start == instance_service.DEFAULT_FRONTEND_PORT:
+        if start == instance_service.DEFAULT_FRONTEND_PORT + 1:
             return 60022
         raise AssertionError(f"unexpected allocation start: {start}")
 
@@ -567,3 +816,117 @@ def test_restart_isolated_bench_project_disables_backend_reload(
     assert record["metadata"]["backend_binding"] == "isolated_backend_instance"
     assert len(calls) == 2
     assert "--reload" not in calls[0]["command"]
+
+
+def test_restart_waits_for_old_ports_before_starting_replacement(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    events: list[str] = []
+
+    class FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+        events.append(f"popen:{command[command.index('--port') + 1]}")
+        return FakeProcess(63500 + len(events))
+
+    def fake_wait(record: InstanceRecord) -> None:
+        assert not any(item.startswith("popen:") for item in events)
+        events.append(f"wait:{record.backend_port}:{record.frontend_port}")
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: events.append(f"term:{pid}")))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_record_ports_free", staticmethod(fake_wait))
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
+    registry.save(
+        InstanceRecord(
+            instance_id="factory-bench-l1-06",
+            name="L1-06",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "bench" / "L1-06").resolve()),
+            runtime_root=str((tmp_path / "bench" / "L1-06" / "runtime").resolve()),
+            backend_port=59931,
+            frontend_port=59932,
+            backend_url="http://127.0.0.1:59931",
+            frontend_url="http://127.0.0.1:59932",
+            token="isolated-token",
+            backend_pid=62101,
+            frontend_pid=62102,
+            backend_reload=False,
+            start_frontend=True,
+            status="running",
+            metadata={"backend_binding": "isolated_backend_instance"},
+        )
+    )
+
+    record = supervisor.restart_instance("factory-bench-l1-06")
+
+    assert record["status"] == "running"
+    assert events == ["term:62102", "term:62101", "wait:59931:59932", "popen:59931", "popen:59932"]
+
+
+def test_restart_isolated_bench_project_does_not_reuse_reserved_main_ports(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    calls: list[dict[str, Any]] = []
+
+    class FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+        calls.append({"command": command, **kwargs})
+        return FakeProcess(62500 + len(calls))
+
+    def fake_allocate_port(start: int) -> int:
+        if start == instance_service.DEFAULT_BACKEND_PORT + 1:
+            return 60121
+        if start == instance_service.DEFAULT_FRONTEND_PORT + 1:
+            return 60122
+        raise AssertionError(f"unexpected allocation start: {start}")
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(instance_service, "allocate_port", fake_allocate_port)
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
+    registry.save(
+        InstanceRecord(
+            instance_id="factory-bench-l1-02",
+            name="L1-02",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "bench" / "L1-02").resolve()),
+            runtime_root=str((tmp_path / "bench" / "L1-02" / "runtime").resolve()),
+            backend_port=instance_service.DEFAULT_BACKEND_PORT,
+            frontend_port=instance_service.DEFAULT_FRONTEND_PORT,
+            backend_url=f"http://127.0.0.1:{instance_service.DEFAULT_BACKEND_PORT}",
+            frontend_url=f"http://127.0.0.1:{instance_service.DEFAULT_FRONTEND_PORT}",
+            token="isolated-token",
+            backend_pid=None,
+            frontend_pid=None,
+            start_frontend=True,
+            status="stopped",
+            metadata={"backend_binding": "isolated_backend_instance"},
+        )
+    )
+
+    record = supervisor.restart_instance("factory-bench-l1-02")
+
+    assert record["status"] == "running"
+    assert record["backend_port"] == 60121
+    assert record["frontend_port"] == 60122
+    assert record["backend_url"] == "http://127.0.0.1:60121"
+    assert record["frontend_url"] == "http://127.0.0.1:60122"
+    assert calls[0]["command"][calls[0]["command"].index("--port") + 1] == "60121"
+    assert calls[1]["command"][calls[1]["command"].index("--port") + 1] == "60122"

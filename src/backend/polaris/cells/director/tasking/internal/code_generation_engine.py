@@ -673,18 +673,38 @@ class CodeGenerationEngine:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         """Invoke the canonical Director role runtime for one generation round."""
+        from polaris.cells.director.tasking.internal.execution_profile import resolve_director_execution_profile
         from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
-        task_id, run_id, _task_metadata = self._director_codegen_task_identity(task)
+        task_id, run_id, task_metadata = self._director_codegen_task_identity(task)
+        execution_profile = resolve_director_execution_profile(
+            subject=str(getattr(task, "subject", "") or ""),
+            description=str(getattr(task, "description", "") or ""),
+            metadata=task_metadata,
+            target_files=list(round_files or []),
+            scope_paths=task_metadata.get("scope_paths")
+            if isinstance(task_metadata.get("scope_paths"), list)
+            else None,
+            workspace=self.workspace,
+        )
+        execution_profile_payload = execution_profile.to_dict()
         context = {
             "task_id": task_id,
             "run_id": run_id,
             "round_label": str(round_label or "").strip(),
             "target_files": list(round_files or []),
+            "task_type": execution_profile.task_type,
+            "phase": execution_profile.phase,
+            "stage": execution_profile.temperature_phase,
+            "temperature_phase": execution_profile.temperature_phase,
+            "director_execution_profile": execution_profile_payload,
+            "director_execution_profile_schema": execution_profile.schema_version,
+            "director_execution_profile_source": execution_profile.source,
+            "_transaction_kernel_temperature_override": execution_profile.temperature,
             "llm_call_timeout_seconds": timeout,
             "director_runtime_codegen": True,
-            "director_runtime_codegen_mode": "proposal_then_apply",
+            "director_runtime_codegen_mode": execution_profile.generation_mode,
             "delivery_mode": "propose_patch",
             "disable_internal_tool_rounds": True,
             "suppress_working_memory_contract": True,
@@ -724,6 +744,12 @@ class CodeGenerationEngine:
                 "cognitive_runtime_required": True,
                 "context_os_expected": True,
                 "director_runtime_codegen": True,
+                "director_execution_profile": execution_profile_payload,
+                "task_type": execution_profile.task_type,
+                "phase": execution_profile.phase,
+                "temperature": execution_profile.temperature,
+                "temperature_phase": execution_profile.temperature_phase,
+                "temperature_source": execution_profile.temperature_source,
                 "validate_output": False,
                 "max_retries": 0,
                 "prompt_appendix": appendix,

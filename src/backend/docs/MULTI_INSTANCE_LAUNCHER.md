@@ -51,6 +51,16 @@ WebSocket must consume the same workspace binding. They must not silently fall
 back to the default backend, default workspace, or the Polaris source checkout
 runtime when an explicit instance binding is present.
 
+Validation must prove the binding at the network layer, not only through UI
+labels. When a project instance is opened from Launcher, browser request logs
+must show:
+
+- HTTP API calls target that instance's `backend` port.
+- `/v2/ws/runtime` connects to that instance's backend port.
+- The WebSocket URL carries the bound `workspace` query parameter.
+- No request or WebSocket falls back to the main development backend
+  (`49977`) unless the opened instance is the `main` instance itself.
+
 For internal stress tests, a `kind=bench_project` registry entry may point at a
 shared backend in observed mode. That registration is only a test-observation
 surface; it does not prove that the project is running as an isolated production
@@ -108,6 +118,19 @@ The Launcher subscribes to `status.instances` and refreshes the registry view
 when an update arrives. This keeps discovery on the existing runtime WebSocket
 rail instead of adding HTTP polling or a second realtime mechanism.
 
+A backend instance watchdog refreshes registry process-state projections and
+publishes `status.instances` when a registered backend/frontend process changes
+state outside an explicit start/stop/restart/delete action. This is a server-side
+registry monitor; Launcher must still consume changes through runtime.v2
+WebSocket events rather than timer-driven HTTP refreshes.
+
+The instance that currently serves the Launcher API is not allowed to stop,
+restart, or delete itself through `/v2/instances/{id}`. Self-management must
+fail closed; otherwise the control plane can terminate before it records the
+new state or starts the replacement process. Operators should manage the
+current `main` backend from the shell/process supervisor, while Launcher manages
+other project instances.
+
 ## Bench Boundary
 
 `factory_bench`, L1-L12 catalogs, and benchmark harnesses are internal
@@ -124,8 +147,34 @@ Formal project workspaces must depend on platform-level infrastructure:
 - ReceiptStore
 - Verifier policy
 
+Run Ledger projections are platform facts, not Bench facts. Consumers must keep
+missing evidence and failed evidence separate:
+
+- `missing_required_modalities` means the control plane did not record a
+  required evidence modality, such as a missing command receipt.
+- `failed_required_modalities` means the evidence exists and the verifier/gate
+  failed, such as a non-zero test command, failed browser smoke, or failed user
+  script.
+
+UI, QA, ContextOS, and internal stress tools must not render a failed verifier
+as "missing evidence". Missing evidence is a ledger/tooling gap; failed evidence
+is a product or validation failure.
+
+Each opened instance page must bind API calls and runtime WebSocket subscriptions
+to that instance's backend/workspace. ContextOS full-context links may only be
+created from `context_snapshot_ref` values that are 24-character hexadecimal
+snapshot keys readable through `/v2/context/{hash}` on the bound backend.
+`request_hash`, `prompt_hash`, call ids, turn ids, file paths, and legacy event
+strings are audit metadata only; they must not be rendered as "view full
+context" links.
+
 They must not depend on Bench sessions, Bench labels, or factory_bench audit
 files.
+
+Stopped internal bench records may be cleaned from Launcher only when they are
+clearly internal test records: `kind=bench_project`, not running, backend dead,
+and `metadata.internal_test_only=true`. Running instances and formal project
+records must remain visible until explicitly stopped and removed by the user.
 
 ## Development Modes
 
@@ -133,15 +182,20 @@ Backend instances can run with `--reload`, allowing changes to Polaris Python
 code to restart the instance process automatically. Frontend instances can run
 through Vite, allowing React/TypeScript changes to hot-refresh project pages.
 
-The recommended development mode is:
+The recommended multi-agent / factory_bench observation mode is:
 
 ```text
 shared polaris_root
 isolated workspace per instance
 isolated runtime_root per instance
-backend --reload enabled
+backend --reload disabled by default
 frontend Vite enabled
 ```
 
 This supports several agents repairing the Polaris source tree while multiple
 L1-L12 projects remain observable through their own pages.
+
+Enable backend `--reload` only for a single developer's focused backend
+debugging session. In shared multi-agent pressure testing it can create reload
+storms: unrelated edits under `src/backend` restart the main backend while
+operators are observing Launcher, ContextOS, and runtime WebSocket streams.

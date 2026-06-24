@@ -211,6 +211,33 @@ def _request_option_payloads(ai_request: Any, prepared: PreparedLLMRequest) -> t
     return tool_schema_payload, response_format_payload, tool_choice_payload
 
 
+def _request_options(ai_request: Any, prepared: PreparedLLMRequest) -> dict[str, Any]:
+    request_options = getattr(ai_request, "options", None)
+    if isinstance(request_options, dict):
+        return dict(request_options)
+    raw_prepared_options = getattr(prepared, "request_options", {})
+    return dict(raw_prepared_options) if isinstance(raw_prepared_options, dict) else {}
+
+
+def _request_sampling_audit(ai_request: Any, prepared: PreparedLLMRequest) -> dict[str, Any]:
+    options = _request_options(ai_request, prepared)
+    ctx = getattr(ai_request, "context", None)
+    context_payload = ctx if isinstance(ctx, dict) else {}
+    raw_profile = context_payload.get("director_execution_profile")
+    profile = raw_profile if isinstance(raw_profile, dict) else {}
+    temperature = options.get("temperature")
+    return {
+        "temperature": temperature if isinstance(temperature, (int, float)) else None,
+        "temperature_source": str(profile.get("temperature_source") or "request_options"),
+        "temperature_phase": str(profile.get("temperature_phase") or ""),
+        "sampling_mode": str(profile.get("sampling_mode") or ""),
+        "task_type": str(profile.get("task_type") or ""),
+        "phase": str(profile.get("phase") or ""),
+        "execution_profile_schema": str(profile.get("schema_version") or ""),
+        "execution_profile_source": str(profile.get("source") or ""),
+    }
+
+
 def _json_safe(value: Any) -> Any:
     try:
         return json.loads(json.dumps(value, ensure_ascii=False))
@@ -365,6 +392,7 @@ def build_final_request_context_audit_for_request(
     )
     coverage = _coverage_flags(message_text)
     prompt_profile_selection = _prompt_profile_selection(ai_request)
+    sampling = _request_sampling_audit(ai_request, prepared)
     quality = _context_quality_findings(
         coverage=coverage,
         context_underutilized=context_underutilized,
@@ -389,6 +417,7 @@ def build_final_request_context_audit_for_request(
         "available_token_headroom": max(0, window_tokens - final_request_token_estimate),
         "coverage": coverage,
         "context_quality": quality,
+        "sampling": sampling,
         "prompt_profile_selection": prompt_profile_selection,
         "selected_prompt_profile_ids": prompt_profile_selection.get("selected_prompt_profile_ids", []),
     }

@@ -60,6 +60,8 @@ from .python_repairs import (
 )
 from .rust_repairs import (
     _apply_deterministic_rust_crate_import_repair,
+    _apply_deterministic_rust_dependency_repair,
+    _apply_deterministic_rust_unresolved_pub_use_repair,
 )
 from .typeorm_repairs import (
     _apply_deterministic_typeorm_model_normalization_repair,
@@ -684,6 +686,20 @@ def _apply_deterministic_materialization_quality_repairs(
     )
     results.extend(
         _apply_deterministic_rust_crate_import_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_rust_dependency_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_rust_unresolved_pub_use_repair(
             adapter,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,

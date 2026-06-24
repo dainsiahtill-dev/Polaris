@@ -47,21 +47,22 @@ npm run dev:renderer
 npm run dev:electron
 
 # 后端单独运行
+# 仅用于 main 开发实例；bench/临时项目实例不得占用 49977。
 python src/backend/server.py --host 127.0.0.1 --port 49977
 
-# 后端实例运行（推荐给 Web/SaaS 开发观测；会注册到 Launcher）
+# 后端实例运行（main 开发实例；会注册到 Launcher）
 cd src/backend
 KERNELONE_CONTEXT_ADMIN_ENABLED=1 python -m polaris.delivery.cli.backend serve \
   --workspace /path/to/workspace \
   --runtime-root /path/to/workspace/runtime \
   --port 49977 \
   --token polaris-local-dev \
-  --reload \
   --frontend-port 5173 \
   --register-instance \
   --instance-id main \
   --instance-name "Main Polaris Dev" \
   --kind development
+# 单人调试后端热重载时才追加 --reload；多 Agent/bench 观测阶段不要默认开启。
 
 # Web 前端单独运行（绑定当前后端实例）
 VITE_POLARIS_BACKEND_URL=http://127.0.0.1:49977 \
@@ -121,7 +122,10 @@ python scripts/run_factory_e2e_smoke.py --workspace .
 - `factory_bench`、L1-L12 和 benchmark harness 只属于内部测试/开发/审计模式；共享后端 bench 注册只能作为“可观测的测试实例”，不得冒充独立生产实例，正式产品/生产环境不得出现 Bench 入口、Bench 文案、Bench 专属 UI/API 或 Bench 事实模型。
 - `metadata.backend_binding=shared_backend_workspace_switch` 的 `bench_project` 执行 restart/独立启动时，Supervisor 必须分配新的 backend/frontend 端口并启动独立实例，禁止复用共享 backend 端口。
 - 多 Agent 并行跑 `factory_bench` 时 runner 必须显式使用 `--launcher-instance-mode isolated --bench-session-reporting off`，让每个项目的 Factory run 指向自己的 backend；Launcher 可见性来自 Instance Registry 和项目实例自己的 runtime.v2。共享主后端 `/v2/factory/bench/sessions` 只是内部兼容观测桥，只有串行调试时才允许 `--launcher-instance-mode observed --bench-session-reporting shared`，不得用于共享 49977 的并发压测。
+- `49977/5173` 只属于 `main` 开发实例。bench、Factory Bench、临时项目或 Agent 私有实例不得手工指定这些端口，不得向主后端 `POST /settings` 切换到 bench workspace；必须通过 Instance Supervisor/Launcher 自动分配非主端口，并打开对应实例 URL。
 - Launcher 实时状态只走 runtime.v2 WebSocket `status.instances`；禁止用 HTTP polling、文件轮询或 Bench session 替代正式实时链路。
+- 当前承载 Launcher API 的实例不能通过自己的 `/v2/instances/{id}/stop|restart|delete` 自我停止、自我重启或删除自身记录；这类操作应返回 fail-closed，前端也必须禁用当前控制实例的危险操作。清理 stale bench 只能作用于 stopped、backend dead、`metadata.internal_test_only=true` 的内部测试实例。
+- Run Ledger 投影必须区分 `missing_required_modalities` 与 `failed_required_modalities`：前者是控制面/工具链没有记录证据，后者是证据存在但命令、browser smoke、用户脚本或其它 verifier 失败。不要把 failed evidence 写成 missing evidence；内部 bench 只能消费这个平台级语义，不能定义自己的成功/失败事实源。
 
 ## 6) 常用环境变量
 - `KERNELONE_WORKSPACE`
@@ -258,7 +262,7 @@ board.create(subject="实现登录功能", priority="high")
 6. **tools** → 是否包含 write_file, read_file, execute_command 等必要工具
 7. **tool_choice** → 是否正确（auto vs forced）
 
-审计位置：`~/.cache/polaris/.polaris/projects/<workspace-key>/runtime/contexts/<shard>/<hash>`
+审计位置：通过 `resolve_storage_roots(workspace).runtime_root / "contexts" / <shard> / <hash>` 读取当前 canonical ContextOS 快照；开发环境通常位于 `~/.cache/kernelone/.polaris/projects/<workspace-key>/runtime/contexts/<shard>/<hash>`。旧 `~/.cache/polaris/...` 路径不得作为新链路依据。`context_snapshot_ref` 必须是 `/v2/context/{hash}` 可读取的 24 位 hex 快照 key；不得把 `request_hash`、`prompt_hash`、`call_id`、`turn_id`、文件路径或旧事件字符串当成完整上下文快照引用。
 
 ### 9.3) CE Blueprint → Director 注入链路
 

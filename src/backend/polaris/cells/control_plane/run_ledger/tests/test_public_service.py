@@ -9,8 +9,10 @@ from polaris.cells.control_plane.run_ledger.public import (
     ReadRunLedgerProjectionQueryV1,
     RunLedger,
     append_run_ledger_event,
+    build_run_ledger_projection,
     read_run_ledger_projection,
     service as run_ledger_service,
+    summarize_run_ledger_projection,
 )
 
 
@@ -109,6 +111,55 @@ def test_append_run_ledger_event_public_service_projects_event(tmp_path: Path) -
     assert projection["ok"] is True
     assert projection["projects"][0]["project_id"] == "P1"
     assert projection["evidence_modalities"]["tool_receipt"]["present"] == 1
+
+
+def test_required_evidence_distinguishes_missing_from_failed() -> None:
+    base_event = {
+        "event_type": "gate_evaluated",
+        "stage": "real_run",
+        "gate": {"name": "real_run_gate", "ok": False, "summary": "command failed"},
+        "job_token": {
+            "token_id": "token-1",
+            "project_id": "P1",
+            "capability_audit": {"ok": True, "issues": []},
+            "gate_policy": {"required_evidence_modalities": ["code", "command"]},
+        },
+        "physical_evidence": {
+            "modalities": {
+                "code": {"present": True, "ok": True, "detail": "files landed"},
+                "command": {"present": True, "ok": False, "detail": "go test failed"},
+            }
+        },
+    }
+
+    projection = build_run_ledger_projection([base_event])
+    summary = summarize_run_ledger_projection(projection)
+
+    assert projection["integrity_ok"] is True
+    assert projection["outcome_ok"] is False
+    assert projection["evidence_policy"]["missing_required_modalities"] == []
+    assert projection["evidence_policy"]["failed_required_modalities"] == ["command"]
+    assert projection["missing"] == []
+    assert summary["missing"] == []
+    assert summary["failed_required_modalities"] == ["command"]
+    assert summary["detail"] == "run ledger projection required evidence failed: command"
+
+    missing_projection = build_run_ledger_projection(
+        [
+            {
+                **base_event,
+                "physical_evidence": {
+                    "modalities": {
+                        "code": {"present": True, "ok": True, "detail": "files landed"},
+                    }
+                },
+            }
+        ]
+    )
+
+    assert missing_projection["integrity_ok"] is False
+    assert missing_projection["evidence_policy"]["missing_required_modalities"] == ["command"]
+    assert missing_projection["evidence_policy"]["failed_required_modalities"] == []
 
 
 def test_append_run_ledger_event_publishes_control_plane_projection_event(tmp_path: Path, monkeypatch) -> None:

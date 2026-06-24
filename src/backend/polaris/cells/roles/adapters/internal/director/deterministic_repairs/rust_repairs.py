@@ -12,6 +12,18 @@ _RUST_UNRESOLVED_CRATE_RE = re.compile(
     r"cannot find (?:module or )?crate [`'\"](?P<crate>[A-Za-z_][A-Za-z0-9_]*)[`'\"]",
     re.IGNORECASE,
 )
+_RUST_UNRESOLVED_IMPORT_RE = re.compile(
+    r"unresolved import [`'\"](?P<import>[A-Za-z_][A-Za-z0-9_:]*)[`'\"]",
+    re.IGNORECASE,
+)
+_RUST_NO_SYMBOL_RE = re.compile(
+    r"no [`'\"](?P<symbol>[A-Za-z_][A-Za-z0-9_]*)[`'\"] in [`'\"](?P<module>[A-Za-z_][A-Za-z0-9_:]*)[`'\"]",
+    re.IGNORECASE,
+)
+_KNOWN_RUST_DEPENDENCIES: dict[str, str] = {
+    "serde": 'serde = { version = "1.0", features = ["derive"] }',
+    "serde_json": 'serde_json = "1.0"',
+}
 
 
 def _apply_deterministic_rust_crate_import_repair(
@@ -43,6 +55,56 @@ def _apply_deterministic_rust_crate_import_repair(
     return results
 
 
+def _apply_deterministic_rust_dependency_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    del task_id
+    workspace = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    repairs = repair_rust_dependencies(workspace, artifact_quality_errors)
+    return [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_rust_dependency_repair",
+                "file": "Cargo.toml",
+                "packages": record["packages"],
+            },
+        }
+        for record in repairs
+    ]
+
+
+def _apply_deterministic_rust_unresolved_pub_use_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    del task_id
+    workspace = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    repairs = repair_rust_unresolved_pub_uses(workspace, artifact_quality_errors)
+    return [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_rust_unresolved_pub_use_repair",
+                "file": record["file"],
+                "symbols": record["symbols"],
+            },
+        }
+        for record in repairs
+    ]
+
+
 def repair_rust_crate_imports(workspace: Path, artifact_quality_errors: list[str]) -> list[dict[str, Any]]:
     if not workspace.is_dir():
         return []
@@ -70,6 +132,59 @@ def repair_rust_crate_imports(workspace: Path, artifact_quality_errors: list[str
         if not _rust_crate_names_look_related(missing_crate, canonical_crate):
             continue
         repairs.extend(_replace_rust_crate_prefix(workspace, missing_crate, canonical_crate))
+    return repairs
+
+
+def repair_rust_dependencies(workspace: Path, artifact_quality_errors: list[str]) -> list[dict[str, Any]]:
+    if not workspace.is_dir():
+        return []
+    cargo_path = workspace / "Cargo.toml"
+    if not cargo_path.is_file():
+        return []
+    packages = _rust_dependency_packages_to_add(workspace, artifact_quality_errors)
+    if not packages:
+        return []
+    try:
+        original = cargo_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    missing = [package for package in packages if not _cargo_dependency_declared(original, package)]
+    if not missing:
+        return []
+    repaired = original
+    for package in missing:
+        repaired = _insert_cargo_dependency(repaired, _KNOWN_RUST_DEPENDENCIES[package])
+    if repaired == original:
+        return []
+    cargo_path.write_text(repaired, encoding="utf-8")
+    return [{"packages": missing}]
+
+
+def repair_rust_unresolved_pub_uses(workspace: Path, artifact_quality_errors: list[str]) -> list[dict[str, Any]]:
+    if not workspace.is_dir():
+        return []
+    missing_symbols = _parse_missing_rust_symbols(artifact_quality_errors)
+    if not missing_symbols:
+        return []
+    repairs: list[dict[str, Any]] = []
+    for rust_file in sorted(workspace.rglob("*.rs")):
+        if "target" in rust_file.relative_to(workspace).parts:
+            continue
+        try:
+            original = rust_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        repaired = original
+        removed: list[str] = []
+        for symbol in missing_symbols:
+            next_repaired = _remove_unresolved_pub_use_symbol(repaired, symbol)
+            if next_repaired != repaired:
+                repaired = next_repaired
+                removed.append(symbol)
+        if not removed or repaired == original:
+            continue
+        rust_file.write_text(repaired, encoding="utf-8")
+        repairs.append({"file": str(rust_file.relative_to(workspace)), "symbols": removed})
     return repairs
 
 
@@ -131,6 +246,81 @@ def _parse_unresolved_rust_crates(artifact_quality_errors: list[str]) -> list[st
                 seen.add(crate)
                 crates.append(crate)
     return crates
+
+
+def _rust_dependency_packages_to_add(workspace: Path, artifact_quality_errors: list[str]) -> list[str]:
+    packages: list[str] = []
+    seen: set[str] = set()
+    for error in artifact_quality_errors:
+        for match in _RUST_UNRESOLVED_IMPORT_RE.finditer(str(error or "")):
+            root = match.group("import").split("::", 1)[0]
+            if root in _KNOWN_RUST_DEPENDENCIES and root not in seen:
+                seen.add(root)
+                packages.append(root)
+    source_text = _rust_workspace_source_text(workspace)
+    if "serde_json::" in source_text and "serde_json" not in seen:
+        seen.add("serde_json")
+        packages.append("serde_json")
+    return packages
+
+
+def _rust_workspace_source_text(workspace: Path) -> str:
+    chunks: list[str] = []
+    for rust_file in sorted(workspace.rglob("*.rs")):
+        if "target" in rust_file.relative_to(workspace).parts:
+            continue
+        try:
+            chunks.append(rust_file.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+    return "\n".join(chunks)
+
+
+def _cargo_dependency_declared(cargo_text: str, package: str) -> bool:
+    return bool(re.search(rf"(?m)^\s*{re.escape(package)}\s*=", cargo_text))
+
+
+def _insert_cargo_dependency(cargo_text: str, dependency_line: str) -> str:
+    dependency_header = re.search(r"(?m)^\[dependencies\]\s*$", cargo_text)
+    if not dependency_header:
+        suffix = "" if cargo_text.endswith("\n") else "\n"
+        return f"{cargo_text}{suffix}\n[dependencies]\n{dependency_line}\n"
+    insert_at = dependency_header.end()
+    return f"{cargo_text[:insert_at]}\n{dependency_line}{cargo_text[insert_at:]}"
+
+
+def _parse_missing_rust_symbols(artifact_quality_errors: list[str]) -> list[str]:
+    seen: set[str] = set()
+    symbols: list[str] = []
+    for error in artifact_quality_errors:
+        for match in _RUST_NO_SYMBOL_RE.finditer(str(error or "")):
+            symbol = match.group("symbol")
+            if symbol not in seen:
+                seen.add(symbol)
+                symbols.append(symbol)
+    return symbols
+
+
+def _remove_unresolved_pub_use_symbol(text: str, symbol: str) -> str:
+    repaired = re.sub(
+        rf"(?m)^\s*pub\s+use\s+[A-Za-z_][A-Za-z0-9_:]*::{re.escape(symbol)}\s*;\s*\n?",
+        "",
+        text,
+    )
+    group_pattern = re.compile(
+        r"(?m)^(?P<prefix>\s*pub\s+use\s+[A-Za-z_][A-Za-z0-9_:]*::\{)(?P<body>[^}]+)(?P<suffix>\}\s*;\s*)$"
+    )
+
+    def replace_group(match: re.Match[str]) -> str:
+        items = [item.strip() for item in match.group("body").split(",") if item.strip()]
+        filtered = [item for item in items if item.split(" as ", 1)[0].strip() != symbol]
+        if len(filtered) == len(items):
+            return match.group(0)
+        if not filtered:
+            return ""
+        return f"{match.group('prefix')}{', '.join(filtered)}{match.group('suffix')}"
+
+    return group_pattern.sub(replace_group, repaired)
 
 
 def _rust_crate_names_look_related(missing: str, canonical: str) -> bool:

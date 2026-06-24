@@ -574,3 +574,100 @@ roles:
       version_constraints: {}
 
     version: "1.0.0"
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # Resident AGI - platform-level autonomous supervisor — auxiliary role,
+  # NOT part of the PM -> Chief Engineer -> Director -> QA execution chain.
+  # Runs on the same RoleRuntime / ContextOS / TurnEngine foundation and uses
+  # wider platform evidence to replace human supervision in unattended factory
+  # mode. Execution still flows through governed role contracts and gates.
+  # ═══════════════════════════════════════════════════════════════════════
+  - role_id: resident_agi
+    display_name: "Resident AGI Supervisor"
+    description: "平台级无人值守监督与决策角色，负责审计证据、判断风险、选择下一步和治理 AGI 目标"
+    responsibilities:
+      - 作为内嵌 AGI 控制面替代人工持续监督 PM / Chief Engineer / Director / QA 任务链路
+      - 读取 ContextOS、最终 provider request audit、Run Ledger、Resident decision trace、CE blueprint、任务执行画像和运行时事件
+      - 判断任务是否应继续、暂停、升级、补证据或生成治理目标
+      - 将决策写入 Resident decision trace，并维护可审计的目标、能力、实验和自改提案
+      - 通过受控 goal bridge 把已批准目标交给 PM -> Chief Engineer -> Director 链路执行
+      - 在证据不足、上下文污染、角色串线、工具缺失、越权风险或实时双轨时 fail-closed
+
+    prompt_policy:
+      core_template_id: resident_agi
+      allow_appendix: true
+      allow_override: false
+      output_format: json
+      include_thinking: true
+      quality_checklist:
+        - 决策结论必须包含证据引用、风险、下一步动作和是否允许进入下游
+        - 必须区分 hard rule、profile guidance、AGI proposed、accepted、blocked
+        - 不得绕过 PM -> Chief Engineer -> Director -> QA 正式链路
+        - 不得直接执行代码修改；执行必须通过 Director 和工具门禁
+        - 不得伪造 ContextOS、Run Ledger、审计或测试证据
+
+    tool_policy:
+      whitelist:
+        # RoleRuntime/TurnEngine read surface
+        - read_file
+        - repo_read_head
+        - repo_read_slice
+        - repo_read_tail
+        - repo_read_around
+        - repo_tree
+        - repo_rg
+        - search_code
+        - grep
+        - ripgrep
+        - glob
+        - list_directory
+        - file_exists
+        - search_memory
+        - read_artifact
+        - read_episode
+        - get_state
+        - scout_probe
+      blacklist:
+        - delete_file
+      allow_code_write: false
+      allow_command_execution: false
+      allow_file_delete: false
+      max_tool_calls_per_turn: 60
+      tool_timeout_seconds: 180
+
+    context_policy:
+      max_context_tokens: 32000
+      max_history_turns: 20
+      include_project_structure: true
+      include_code_snippets: true
+      max_code_lines: 500
+      include_task_history: true
+      include_blueprint_overview: true
+      include_blueprint_step: true
+      include_repo_identity: true
+      include_scout_anchors: true
+      include_verdict_history: true
+      compression_strategy: sliding_window
+
+    data_policy:
+      data_subdir: resident_agi
+      encoding: utf-8
+      atomic_write: true
+      backup_before_write: true
+      retention_days: 365
+      encrypt_at_rest: false
+      allowed_extensions:
+        - .json
+        - .jsonl
+        - .md
+        - .txt
+        - .yaml
+        - .yml
+
+    library_policy:
+      core_libraries: []
+      optional_libraries: []
+      forbidden_libraries: []
+      version_constraints: {}
+
+    version: "1.0.0"

@@ -26,6 +26,156 @@ def _to_dict_copy(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(payload or {})
 
 
+def _to_str_tuple(values: Any) -> tuple[str, ...]:
+    if isinstance(values, str):
+        raw_items: list[Any] = [values]
+    elif isinstance(values, (list, tuple, set, frozenset)):
+        raw_items = list(values)
+    else:
+        return ()
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        token = str(item or "").strip()
+        if token and token not in seen:
+            seen.add(token)
+            normalized.append(token)
+    return tuple(normalized)
+
+
+def _to_path_roles(payload: Mapping[str, Any] | None) -> dict[str, tuple[str, ...]]:
+    result: dict[str, tuple[str, ...]] = {}
+    for raw_path, raw_roles in dict(payload or {}).items():
+        path = str(raw_path or "").strip().replace("\\", "/")
+        if not path:
+            continue
+        roles = _to_str_tuple(raw_roles)
+        if roles:
+            result[path] = roles
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Canonical execution metadata
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TaskExecutionProfileV1:
+    """Canonical task execution profile.
+
+    Polaris normalizes loose PM/CE/task metadata into this contract once, then
+    reuses it for dispatch compatibility, prompt guidance, sampling policy,
+    output protocol, and final request audit. This prevents prompt, execution,
+    audit, and temperature code from maintaining independent task classifiers.
+    """
+
+    schema_version: str = "task.execution_profile.v1"
+    source: str = "director.tasking"
+    dispatch_type: str = "generic"
+    task_type: str = "generic"
+    phase: str = "implementation"
+    project_type: str = "generic"
+    language: str = "generic"
+    language_display_name: str = "generic/unknown"
+    framework: str = ""
+    framework_display_name: str = ""
+    task_foci: tuple[str, ...] = ()
+    task_focus_labels: tuple[str, ...] = ()
+    file_roles: tuple[str, ...] = ()
+    file_role_labels: tuple[str, ...] = ()
+    file_roles_by_path: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    generation_mode: str = "proposal_then_apply"
+    output_contract_id: str = "director.patch_file.v1"
+    scope_policy: str = "target_files_or_declared_scopes"
+    sampling_mode: str = "precise"
+    temperature_phase: str = "code_generation"
+    temperature: float = 0.15
+    temperature_source: str = "task.execution_profile.v1"
+    target_files: tuple[str, ...] = ()
+    scope_paths: tuple[str, ...] = ()
+    signal_evidence: Mapping[str, Any] = field(default_factory=dict)
+    normalization_warnings: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        object.__setattr__(self, "dispatch_type", _require_non_empty("dispatch_type", self.dispatch_type))
+        object.__setattr__(self, "task_type", _require_non_empty("task_type", self.task_type))
+        object.__setattr__(self, "phase", _require_non_empty("phase", self.phase))
+        object.__setattr__(self, "project_type", _require_non_empty("project_type", self.project_type))
+        object.__setattr__(self, "language", _require_non_empty("language", self.language))
+        object.__setattr__(self, "language_display_name", str(self.language_display_name or "generic/unknown"))
+        object.__setattr__(self, "framework", str(self.framework or "").strip())
+        object.__setattr__(self, "framework_display_name", str(self.framework_display_name or "").strip())
+        object.__setattr__(self, "task_foci", _to_str_tuple(self.task_foci))
+        object.__setattr__(self, "task_focus_labels", _to_str_tuple(self.task_focus_labels))
+        object.__setattr__(self, "file_roles", _to_str_tuple(self.file_roles))
+        object.__setattr__(self, "file_role_labels", _to_str_tuple(self.file_role_labels))
+        object.__setattr__(self, "file_roles_by_path", _to_path_roles(self.file_roles_by_path))
+        object.__setattr__(self, "generation_mode", _require_non_empty("generation_mode", self.generation_mode))
+        object.__setattr__(
+            self,
+            "output_contract_id",
+            _require_non_empty("output_contract_id", self.output_contract_id),
+        )
+        object.__setattr__(self, "scope_policy", _require_non_empty("scope_policy", self.scope_policy))
+        object.__setattr__(self, "sampling_mode", _require_non_empty("sampling_mode", self.sampling_mode))
+        object.__setattr__(self, "temperature_phase", _require_non_empty("temperature_phase", self.temperature_phase))
+        object.__setattr__(self, "temperature", max(0.0, min(2.0, float(self.temperature))))
+        object.__setattr__(
+            self,
+            "temperature_source",
+            _require_non_empty("temperature_source", self.temperature_source),
+        )
+        object.__setattr__(self, "target_files", _to_str_tuple(self.target_files))
+        object.__setattr__(self, "scope_paths", _to_str_tuple(self.scope_paths))
+        object.__setattr__(self, "signal_evidence", _to_dict_copy(self.signal_evidence))
+        object.__setattr__(self, "normalization_warnings", _to_str_tuple(self.normalization_warnings))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe profile payload for runtime context and receipts."""
+
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "dispatch_type": self.dispatch_type,
+            "task_type": self.task_type,
+            "phase": self.phase,
+            "project_type": self.project_type,
+            "language": self.language,
+            "language_display_name": self.language_display_name,
+            "framework": self.framework,
+            "framework_display_name": self.framework_display_name,
+            "task_foci": list(self.task_foci),
+            "task_focus_labels": list(self.task_focus_labels),
+            "file_roles": list(self.file_roles),
+            "file_role_labels": list(self.file_role_labels),
+            "file_roles_by_path": {path: list(roles) for path, roles in self.file_roles_by_path.items()},
+            "generation_mode": self.generation_mode,
+            "output_contract_id": self.output_contract_id,
+            "scope_policy": self.scope_policy,
+            "sampling_mode": self.sampling_mode,
+            "temperature_phase": self.temperature_phase,
+            "temperature": self.temperature,
+            "temperature_source": self.temperature_source,
+            "target_files": list(self.target_files),
+            "scope_paths": list(self.scope_paths),
+            "signal_evidence": dict(self.signal_evidence),
+            "normalization_warnings": list(self.normalization_warnings),
+        }
+
+
+DirectorExecutionProfileV1 = TaskExecutionProfileV1
+"""Backward-compatible name for Director-owned consumers.
+
+New code should prefer ``TaskExecutionProfileV1``. The compatibility alias keeps
+existing Director imports stable while the profile contract moves to the
+platform-level task-execution vocabulary.
+"""
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -180,8 +330,10 @@ class DirectorTaskingError(RuntimeError):
 __all__ = [
     "CancelTaskCommandV1",
     "CreateTaskCommandV1",
+    "DirectorExecutionProfileV1",
     "DirectorTaskingError",
     "TaskCreatedResultV1",
+    "TaskExecutionProfileV1",
     "TaskResultQueryV1",
     "TaskResultResultV1",
     "TaskStatusQueryV1",

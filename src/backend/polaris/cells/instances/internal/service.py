@@ -7,7 +7,9 @@ factory_bench may create instances, but Bench is not a production concept here.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import secrets
 import signal
@@ -28,6 +30,13 @@ DEFAULT_BACKEND_PORT = 49977
 DEFAULT_FRONTEND_PORT = 5173
 DEFAULT_HOST = "127.0.0.1"
 INSTANCE_HOME_ENV = "POLARIS_INSTANCE_HOME"
+INSTANCE_WATCHDOG_ENABLED_ENV = "POLARIS_INSTANCE_WATCHDOG_ENABLED"
+INSTANCE_WATCHDOG_INTERVAL_ENV = "POLARIS_INSTANCE_WATCHDOG_INTERVAL_SECONDS"
+DEFAULT_WATCHDOG_INTERVAL_SECONDS = 2.0
+PROCESS_TERMINATE_TIMEOUT_SECONDS = 5.0
+PORT_RELEASE_TIMEOUT_SECONDS = 8.0
+
+logger = logging.getLogger(__name__)
 
 
 def utc_timestamp() -> str:
@@ -86,6 +95,29 @@ def allocate_port(start: int) -> int:
             return port
         port += 1
     raise RuntimeError("no free local port available")
+
+
+def _coerce_requested_port(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return None
+    return port if port > 0 else None
+
+
+def _choose_instance_port(
+    requested_port: Any,
+    *,
+    start: int,
+    reserved_max: int,
+) -> tuple[int, bool]:
+    """Choose an instance port, ignoring requests that collide with reserved ports."""
+    port = _coerce_requested_port(requested_port)
+    if port is None or port <= reserved_max:
+        return allocate_port(start), False
+    return port, True
 
 
 def validate_polaris_root(path: Path) -> Path:
@@ -199,6 +231,18 @@ class InstanceRegistry:
             publish_instances_update(action="saved", record=record, records=records)
         return record
 
+    def replace_records(
+        self,
+        records: list[InstanceRecord],
+        *,
+        action: str,
+        record: InstanceRecord | None = None,
+    ) -> None:
+        records.sort(key=lambda item: item.instance_id)
+        self._write_raw({"schema_version": SCHEMA_VERSION, "instances": [item.to_dict() for item in records]})
+        if self.publish_events:
+            publish_instances_update(action=action, record=record, records=records)
+
     def delete(self, instance_id: str) -> bool:
         wanted = sanitize_instance_id(instance_id)
         records = self.list_records()
@@ -280,16 +324,34 @@ class InstanceSupervisor:
     def list_instances(self) -> list[dict[str, Any]]:
         records = []
         for record in self.registry.list_records():
-            records.append(self._with_health(record).to_dict())
+            records.append(self._with_health(record, probe_http=False).to_dict())
         return records
+
+    def refresh_instance_states(self) -> list[dict[str, Any]]:
+        """Persist process-state changes and publish one runtime update when needed."""
+        records = self.registry.list_records()
+        changed: list[InstanceRecord] = []
+        next_records: list[InstanceRecord] = []
+        for record in records:
+            before = _instance_state_signature(record)
+            projected = self._with_health(record, probe_http=False)
+            after = _instance_state_signature(projected)
+            if after != before:
+                projected.updated_at = utc_timestamp()
+                changed.append(projected)
+            next_records.append(projected)
+        if changed:
+            self.registry.replace_records(next_records, action="health_changed", record=changed[0])
+        return [item.to_dict() for item in changed]
 
     def start_instance(self, request: dict[str, Any]) -> dict[str, Any]:
         record = self._build_record(request)
         existing = self.registry.get(record.instance_id)
         if existing and is_process_alive(existing.backend_pid):
             if self._record_matches_start_request(existing, record):
-                return self._with_health(existing).to_dict()
+                return self._with_health(existing, probe_http=True).to_dict()
             self._terminate_record_processes_for_replacement(existing)
+            self._wait_for_record_ports_free(existing)
             existing.frontend_pid = None
             existing.backend_pid = None
             existing.status = "stopped"
@@ -305,7 +367,7 @@ class InstanceSupervisor:
         record.status = "running"
         record.last_started_at = utc_timestamp()
         self.registry.save(record)
-        return self._with_health(record).to_dict()
+        return self._with_health(record, probe_http=True).to_dict()
 
     @staticmethod
     def _record_matches_start_request(existing: InstanceRecord, requested: InstanceRecord) -> bool:
@@ -355,8 +417,11 @@ class InstanceSupervisor:
 
     def stop_instance(self, instance_id: str) -> dict[str, Any]:
         record = self._require_record(instance_id)
+        if self._record_is_current_backend(record):
+            raise RuntimeError("current backend instance cannot stop itself")
         self._terminate_pid(record.frontend_pid)
         self._terminate_pid(record.backend_pid)
+        self._wait_for_record_ports_free(record)
         record.frontend_pid = None
         record.backend_pid = None
         record.status = "stopped"
@@ -366,6 +431,8 @@ class InstanceSupervisor:
 
     def restart_instance(self, instance_id: str) -> dict[str, Any]:
         record = self._require_record(instance_id)
+        if self._record_is_current_backend(record):
+            raise RuntimeError("current backend instance cannot restart itself")
         payload = self._restart_payload(record)
         self.stop_instance(instance_id)
         return self.start_instance(payload)
@@ -373,6 +440,8 @@ class InstanceSupervisor:
     def delete_instance(self, instance_id: str) -> bool:
         record = self.registry.get(instance_id)
         if record:
+            if self._record_is_current_backend(record):
+                raise RuntimeError("current backend instance cannot delete itself")
             self._terminate_pid(record.frontend_pid)
             self._terminate_pid(record.backend_pid)
         return self.registry.delete(instance_id)
@@ -384,7 +453,7 @@ class InstanceSupervisor:
         return tail_text(log_path, tail_lines)
 
     def health(self, instance_id: str) -> dict[str, Any]:
-        return self._with_health(self._require_record(instance_id)).to_dict()
+        return self._with_health(self._require_record(instance_id), probe_http=True).to_dict()
 
     def _build_record(self, request: dict[str, Any]) -> InstanceRecord:
         polaris_root = validate_polaris_root(Path(str(request.get("polaris_root") or default_polaris_root())))
@@ -402,17 +471,22 @@ class InstanceSupervisor:
         metadata_payload: dict[str, Any] = metadata if isinstance(metadata, dict) else {}
         requested_backend_port = request.get("backend_port")
         requested_frontend_port = request.get("frontend_port")
-        is_isolated_bench = (
-            kind == "bench_project"
-            and str(metadata_payload.get("backend_binding") or "") == "isolated_backend_instance"
+        is_bench_project = kind == "bench_project"
+        backend_port_start = DEFAULT_BACKEND_PORT + 1 if is_bench_project else DEFAULT_BACKEND_PORT
+        frontend_port_start = DEFAULT_FRONTEND_PORT + 1 if is_bench_project else DEFAULT_FRONTEND_PORT
+        backend_port, backend_requested = _choose_instance_port(
+            requested_backend_port,
+            start=backend_port_start,
+            reserved_max=DEFAULT_BACKEND_PORT if is_bench_project else 0,
         )
-        backend_port_start = DEFAULT_BACKEND_PORT + 1 if is_isolated_bench else DEFAULT_BACKEND_PORT
-        frontend_port_start = DEFAULT_FRONTEND_PORT + 1 if is_isolated_bench else DEFAULT_FRONTEND_PORT
-        backend_port = int(requested_backend_port or allocate_port(backend_port_start))
-        frontend_port = int(requested_frontend_port or allocate_port(frontend_port_start))
-        if requested_backend_port and not is_port_free(backend_port):
+        frontend_port, frontend_requested = _choose_instance_port(
+            requested_frontend_port,
+            start=frontend_port_start,
+            reserved_max=DEFAULT_FRONTEND_PORT if is_bench_project else 0,
+        )
+        if backend_requested and not is_port_free(backend_port):
             raise RuntimeError(f"backend port is already in use: {backend_port}")
-        if request.get("start_frontend", True) and requested_frontend_port and not is_port_free(frontend_port):
+        if request.get("start_frontend", True) and frontend_requested and not is_port_free(frontend_port):
             raise RuntimeError(f"frontend port is already in use: {frontend_port}")
         token = str(request.get("token") or f"polaris-{secrets.token_urlsafe(18)}")
         bench = request.get("bench")
@@ -479,6 +553,10 @@ class InstanceSupervisor:
             command.append("--reload")
         env = os.environ.copy()
         env["PYTHONPATH"] = str(backend_root) + os.pathsep + env.get("PYTHONPATH", "")
+        env["POLARIS_INSTANCE_ID"] = record.instance_id
+        env["POLARIS_INSTANCE_KIND"] = record.kind
+        if record.instance_id != "main":
+            env.setdefault(INSTANCE_WATCHDOG_ENABLED_ENV, "0")
         env["KERNELONE_CORS_ORIGINS"] = ",".join(
             [
                 record.frontend_url,
@@ -529,16 +607,36 @@ class InstanceSupervisor:
             )
         return int(process.pid)
 
-    def _with_health(self, record: InstanceRecord) -> InstanceRecord:
+    def _with_health(self, record: InstanceRecord, *, probe_http: bool) -> InstanceRecord:
         backend_alive = is_process_alive(record.backend_pid)
+        frontend_pid_alive = is_process_alive(record.frontend_pid)
+        if not probe_http:
+            if backend_alive and (not record.start_frontend or frontend_pid_alive):
+                record.status = "running"
+            elif backend_alive or frontend_pid_alive:
+                record.status = "starting"
+            else:
+                record.status = "stopped"
+            record.metadata["backend_health"] = "process" if backend_alive else "stopped"
+            if frontend_pid_alive:
+                record.metadata["frontend_health"] = "process"
+            elif record.start_frontend:
+                record.metadata["frontend_health"] = "stopped"
+            else:
+                record.metadata["frontend_health"] = "disabled"
+            return record
+
         if backend_alive and record.backend_pid in {os.getpid(), os.getppid()}:
             backend_http_ok = True
         else:
             backend_http_ok = (
-                self._http_ok(f"{record.backend_url}/health", record.token) if record.backend_url else False
+                self._http_ok(f"{record.backend_url}/health", record.token)
+                if probe_http and record.backend_url
+                else False
             )
-        frontend_pid_alive = is_process_alive(record.frontend_pid)
-        frontend_http_ok = self._http_ok(record.frontend_url, record.token) if record.frontend_url else False
+        frontend_http_ok = (
+            self._http_ok(record.frontend_url, record.token) if probe_http and record.frontend_url else False
+        )
         if record.start_frontend:
             frontend_alive = frontend_pid_alive or frontend_http_ok
         else:
@@ -573,18 +671,63 @@ class InstanceSupervisor:
             raise KeyError(f"instance not found: {instance_id}")
         return record
 
+    @staticmethod
+    def _record_is_current_backend(record: InstanceRecord) -> bool:
+        current_pid = os.getpid()
+        if record.backend_pid and int(record.backend_pid) == current_pid:
+            return True
+        env_instance_id = str(os.environ.get("POLARIS_INSTANCE_ID", "") or "").strip()
+        return bool(env_instance_id and record.instance_id == env_instance_id)
+
     def _instance_dir(self, instance_id: str) -> Path:
         return ensure_absolute_dir(self.registry.home / sanitize_instance_id(instance_id))
+
+    @staticmethod
+    def _wait_for_port_free(port: int, *, timeout_seconds: float = PORT_RELEASE_TIMEOUT_SECONDS) -> None:
+        if port <= 0:
+            return
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if is_port_free(port):
+                return
+            time.sleep(0.1)
+        raise RuntimeError(f"backend/frontend port did not become free after stop: {port}")
+
+    def _wait_for_record_ports_free(self, record: InstanceRecord) -> None:
+        if record.backend_pid:
+            self._wait_for_port_free(record.backend_port)
+        if record.start_frontend and record.frontend_pid and record.frontend_port > 0:
+            self._wait_for_port_free(record.frontend_port)
+
+    @staticmethod
+    def _signal_pid(pid: int, sig: signal.Signals) -> None:
+        if os.name == "posix":
+            os.killpg(pid, sig)
+        else:
+            os.kill(pid, sig)
+
+    @staticmethod
+    def _wait_for_pid_exit(pid: int, *, timeout_seconds: float = PROCESS_TERMINATE_TIMEOUT_SECONDS) -> bool:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if not is_process_alive(pid):
+                return True
+            time.sleep(0.1)
+        return not is_process_alive(pid)
 
     @staticmethod
     def _terminate_pid(pid: int | None) -> None:
         if not pid or pid <= 0:
             return
+        try:
+            InstanceSupervisor._signal_pid(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        if InstanceSupervisor._wait_for_pid_exit(pid):
+            return
         with suppress(ProcessLookupError):
-            if os.name == "posix":
-                os.killpg(pid, signal.SIGTERM)
-            else:
-                os.kill(pid, signal.SIGTERM)
+            InstanceSupervisor._signal_pid(pid, signal.SIGKILL)
+        InstanceSupervisor._wait_for_pid_exit(pid, timeout_seconds=1.0)
 
     @staticmethod
     def _http_ok(url: str, token: str) -> bool:
@@ -594,3 +737,56 @@ class InstanceSupervisor:
                 return 200 <= int(response.status) < 300
         except (urllib.error.URLError, TimeoutError, OSError):
             return False
+
+
+def _instance_state_signature(record: InstanceRecord) -> tuple[Any, ...]:
+    return (
+        record.status,
+        bool(is_process_alive(record.backend_pid)),
+        bool(is_process_alive(record.frontend_pid)),
+        str(record.metadata.get("backend_health") or ""),
+        str(record.metadata.get("frontend_health") or ""),
+    )
+
+
+def _env_flag_enabled(name: str, *, default: bool) -> bool:
+    raw = str(os.environ.get(name, "") or "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _watchdog_interval_seconds() -> float:
+    raw = str(os.environ.get(INSTANCE_WATCHDOG_INTERVAL_ENV, "") or "").strip()
+    if not raw:
+        return DEFAULT_WATCHDOG_INTERVAL_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_WATCHDOG_INTERVAL_SECONDS
+    return max(0.5, min(value, 60.0))
+
+
+def _instance_watchdog_default_enabled() -> bool:
+    instance_id = str(os.environ.get("POLARIS_INSTANCE_ID", "") or "").strip()
+    instance_kind = str(os.environ.get("POLARIS_INSTANCE_KIND", "") or "").strip()
+    return instance_id == "main" or instance_kind == "development"
+
+
+async def _instance_watchdog_loop(supervisor: InstanceSupervisor, interval_seconds: float) -> None:
+    while True:
+        try:
+            supervisor.refresh_instance_states()
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.warning("instance watchdog refresh failed: %s", exc)
+        await asyncio.sleep(interval_seconds)
+
+
+def maybe_start_instance_watchdog() -> asyncio.Task[None] | None:
+    if not _env_flag_enabled(INSTANCE_WATCHDOG_ENABLED_ENV, default=_instance_watchdog_default_enabled()):
+        return None
+    interval_seconds = _watchdog_interval_seconds()
+    return asyncio.create_task(
+        _instance_watchdog_loop(InstanceSupervisor(), interval_seconds),
+        name="polaris-instance-watchdog",
+    )

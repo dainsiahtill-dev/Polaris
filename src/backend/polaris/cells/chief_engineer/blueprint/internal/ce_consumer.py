@@ -8,6 +8,12 @@ import threading
 from typing import Any
 
 from polaris.cells.chief_engineer.blueprint.internal.adr_store import ADRStore
+from polaris.cells.chief_engineer.blueprint.internal.architecture_decisions import (
+    infer_architecture_decisions,
+    merge_architecture_decisions,
+    normalize_architecture_decisions,
+    selected_libraries_from_decisions,
+)
 from polaris.cells.chief_engineer.blueprint.internal.blueprint_persistence import (
     BlueprintPersistence,
 )
@@ -242,6 +248,12 @@ def _contract_fields(payload: dict[str, Any]) -> dict[str, Any]:
         task.get("risks"),
         task.get("risk_flags"),
     )
+    architecture_decisions = normalize_architecture_decisions(
+        payload.get("architecture_decisions")
+        or payload.get("architectureDecision")
+        or task.get("architecture_decisions")
+        or task.get("architectureDecision")
+    )
     return {
         "task": task,
         "qa_contract": qa_contract,
@@ -250,6 +262,7 @@ def _contract_fields(payload: dict[str, Any]) -> dict[str, Any]:
         "dependencies": dependencies,
         "constraints": constraints,
         "risks": risks,
+        "architecture_decisions": architecture_decisions,
     }
 
 
@@ -370,6 +383,24 @@ class CEConsumer:
             dependencies = list(contract["dependencies"])
             constraints = dict(contract["constraints"])
             risks = list(contract["risks"])
+            explicit_decisions = merge_architecture_decisions(
+                tuple(contract["architecture_decisions"]),
+                normalize_architecture_decisions(blueprint_result.get("architecture_decisions")),
+            )
+            objective = str(payload.get("objective") or payload.get("description") or payload.get("title") or task_id)
+            architecture_decisions = merge_architecture_decisions(
+                explicit_decisions,
+                infer_architecture_decisions(
+                    objective=objective,
+                    context=payload,
+                    constraints=constraints,
+                    target_files=target_files,
+                    scope_paths=scope_paths,
+                    dependencies=dependencies,
+                ),
+            )
+            architecture_decision_payloads = [decision.to_dict() for decision in architecture_decisions]
+            selected_libraries = list(selected_libraries_from_decisions(architecture_decisions))
             contract_completeness = _contract_completeness(
                 target_files=target_files,
                 acceptance_criteria=acceptance_criteria,
@@ -389,6 +420,8 @@ class CEConsumer:
                 "acceptance_criteria": acceptance_criteria,
                 "execution_checklist": execution_checklist,
                 "dependencies": dependencies,
+                "architecture_decisions": architecture_decision_payloads,
+                "selected_libraries": selected_libraries,
                 "constraints": constraints,
                 "risks": risks,
                 "pm_task": dict(contract["task"]),
@@ -441,6 +474,8 @@ class CEConsumer:
                 "acceptance_criteria": acceptance_criteria,
                 "execution_checklist": execution_checklist,
                 "dependencies": dependencies,
+                "architecture_decisions": architecture_decision_payloads,
+                "selected_libraries": selected_libraries,
                 "constraints": constraints,
                 "risks": risks,
                 "pm_contract": dict(contract["task"]),
@@ -866,6 +901,8 @@ class CEConsumer:
                 "control_plane_lineage": _mapping(payload.get("control_plane_lineage")),
                 "route": "chief_blueprint_required",
                 "acceptance_criteria": [step["verify"]] if step.get("verify") else [],
+                "architecture_decisions": list(payload.get("architecture_decisions") or []),
+                "selected_libraries": list(payload.get("selected_libraries") or []),
             }
             self._svc.publish_work_item(
                 PublishTaskWorkItemCommandV1(
@@ -886,6 +923,8 @@ class CEConsumer:
                         "job_token_id": str(payload.get("job_token_id") or ""),
                         "job_token": _mapping(payload.get("job_token")),
                         "control_plane_lineage": _mapping(payload.get("control_plane_lineage")),
+                        "architecture_decisions": list(payload.get("architecture_decisions") or []),
+                        "selected_libraries": list(payload.get("selected_libraries") or []),
                         "fission": "ce-blueprint-tasks/1",
                     },
                 )

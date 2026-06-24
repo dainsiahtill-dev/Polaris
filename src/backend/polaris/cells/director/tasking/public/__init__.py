@@ -65,8 +65,10 @@ from polaris.cells.director.tasking.internal.worker_executor import (
 from polaris.cells.director.tasking.public.contracts import (
     CancelTaskCommandV1,
     CreateTaskCommandV1,
+    DirectorExecutionProfileV1,
     DirectorTaskingError,
     TaskCreatedResultV1,
+    TaskExecutionProfileV1,
     TaskResultQueryV1,
     TaskResultResultV1,
     TaskStatusQueryV1,
@@ -93,6 +95,7 @@ __all__ = [
     # Worker
     "CodeGenerationResult",
     "CreateTaskCommandV1",
+    "DirectorExecutionProfileV1",
     "DirectorTaskingError",
     "EditType",
     # Existence gate
@@ -105,6 +108,7 @@ __all__ = [
     "RepairResult",
     "RepairService",
     "TaskCreatedResultV1",
+    "TaskExecutionProfileV1",
     # Task lifecycle
     "TaskLifecycleService",
     # Services

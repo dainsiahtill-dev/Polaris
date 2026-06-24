@@ -54,6 +54,8 @@ async def stop_instance(instance_id: str) -> dict[str, Any]:
         return {"instance": supervisor.stop_instance(instance_id)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/{instance_id}/restart", dependencies=[Depends(require_auth)])
@@ -63,13 +65,18 @@ async def restart_instance(instance_id: str) -> dict[str, Any]:
         return {"instance": supervisor.restart_instance(instance_id)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.delete("/{instance_id}", dependencies=[Depends(require_auth)])
 async def delete_instance(instance_id: str) -> dict[str, Any]:
-    deleted = get_instance_supervisor().delete_instance(instance_id)
+    try:
+        deleted = get_instance_supervisor().delete_instance(instance_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="instance not found")
     return {"ok": True}

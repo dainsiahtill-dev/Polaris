@@ -567,8 +567,12 @@ class LLMCaller:
         context_result_id = str(context_metadata.get("context_result_id") or "").strip()
         prompt_profile_audit: dict[str, Any] = {}
         selected_prompt_profile_ids: list[str] = []
+        director_execution_profile: dict[str, Any] = {}
         prompt_profile_context_override = getattr(context, "context_override", None)
         if isinstance(prompt_profile_context_override, dict):
+            raw_director_execution_profile = prompt_profile_context_override.get("director_execution_profile")
+            if isinstance(raw_director_execution_profile, dict):
+                director_execution_profile = dict(raw_director_execution_profile)
             raw_prompt_profile_audit = prompt_profile_context_override.get("prompt_profile_audit")
             if isinstance(raw_prompt_profile_audit, dict):
                 prompt_profile_audit = dict(raw_prompt_profile_audit)
@@ -599,6 +603,7 @@ class LLMCaller:
                 "capability_profile_ref": capability_profile_ref if isinstance(capability_profile_ref, dict) else {},
                 "context_projection_id": context_projection_id,
                 "context_result_id": context_result_id,
+                "director_execution_profile": director_execution_profile,
                 "prompt_profile_audit": prompt_profile_audit,
                 "selected_prompt_profile_ids": selected_prompt_profile_ids,
                 # ADR-0090 W1.5: carry the STRUCTURED message array alongside the

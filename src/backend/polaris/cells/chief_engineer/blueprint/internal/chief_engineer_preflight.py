@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -58,6 +59,12 @@ class EventEmitter(Protocol):
         refs: dict[str, Any],
         meta: dict[str, Any],
     ) -> None: ...
+
+
+class ResidentDecisionSupervisor(Protocol):
+    """Resident/AGI control-plane supervisor for non-invariant CE decisions."""
+
+    def __call__(self, evidence: dict[str, Any]) -> Mapping[str, Any] | None: ...
 
 
 class _NullEventEmitter:
@@ -458,57 +465,373 @@ def inject_chief_engineer_constraints(
     return chief_payload
 
 
-def chief_engineer_auto_decision(director_tasks: list[dict[str, Any]]) -> dict[str, Any]:
+def build_chief_engineer_decision_evidence(
+    director_tasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build structured evidence for CE proceed/review decisions."""
+
+    total_tasks = len(director_tasks)
+    status_counts: dict[str, int] = {}
+    needs_review_count = 0
+    malformed_task_count = 0
+
+    for task in director_tasks:
+        if not isinstance(task, dict):
+            malformed_task_count += 1
+            continue
+        status = str(task.get("status") or "").strip().lower() or "unknown"
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if task.get("needs_review"):
+            needs_review_count += 1
+
+    blocked_count = status_counts.get("blocked", 0) + status_counts.get("failed", 0)
+    return {
+        "schema_version": "chief_engineer.decision_evidence.v1",
+        "decision_boundary": "hard_rules_then_resident_agi_supervisor",
+        "control_plane_actor": "resident.autonomy",
+        "unattended_factory_role": "replace_human_supervision",
+        "contract_refs": [
+            "task.execution_profile.v1",
+            "chief_engineer.blueprint",
+            "resident.decision_trace",
+        ],
+        "task_count": total_tasks,
+        "status_counts": status_counts,
+        "blocked_count": blocked_count,
+        "needs_review_count": needs_review_count,
+        "malformed_task_count": malformed_task_count,
+        "hard_rule_blockers": [
+            blocker
+            for blocker, count in (
+                ("no_tasks", 0 if total_tasks else 1),
+                ("blocked_or_failed_tasks", blocked_count),
+                ("tasks_need_review", needs_review_count),
+            )
+            if count > 0
+        ],
+    }
+
+
+def _normalize_resident_supervisor_decision(
+    decision: Mapping[str, Any] | None,
+    *,
+    evidence: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Validate Resident/AGI supervisor output before it affects CE flow."""
+
+    if not isinstance(decision, Mapping):
+        return None
+    if not isinstance(decision.get("proceed"), bool):
+        return None
+    reason = str(decision.get("reason") or "").strip()
+    if not reason:
+        return None
+    return {
+        "proceed": bool(decision["proceed"]),
+        "reason": reason,
+        "needs_review": bool(decision.get("needs_review", not bool(decision["proceed"]))),
+        "task_count": int(evidence.get("task_count") or 0),
+        "decision_source": str(decision.get("decision_source") or "resident_agi_supervisor"),
+        "decision_status": str(decision.get("decision_status") or "decision"),
+        "evidence_schema": str(evidence.get("schema_version") or ""),
+        "supervisor_rationale": str(decision.get("supervisor_rationale") or decision.get("rationale") or "").strip(),
+    }
+
+
+def build_chief_engineer_resident_decision_payload(
+    decision: Mapping[str, Any],
+    *,
+    evidence: Mapping[str, Any],
+    workspace: str = "",
+    run_id: str = "",
+    task_id: str = "",
+    context_refs: list[str] | None = None,
+    evidence_refs: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build the Resident decision-trace payload for a CE control decision."""
+
+    proceed = bool(decision.get("proceed"))
+    reason = str(decision.get("reason") or "").strip() or "chief_engineer_decision"
+    needs_review = bool(decision.get("needs_review", not proceed))
+    decision_source = str(decision.get("decision_source") or "unknown").strip() or "unknown"
+    status_counts = evidence.get("status_counts") if isinstance(evidence.get("status_counts"), Mapping) else {}
+    confidence = 0.8 if proceed else 0.62
+    if "confidence" in decision:
+        try:
+            confidence = max(0.0, min(1.0, float(decision["confidence"])))
+        except (TypeError, ValueError):
+            confidence = 0.62 if needs_review else 0.8
+
+    if proceed:
+        verdict = "success"
+        selected_option_id = "continue_execution"
+    elif str(decision_source).endswith("_error") or str(decision_source).endswith("_invalid"):
+        verdict = "failure"
+        selected_option_id = "fail_closed_for_review"
+    else:
+        verdict = "blocked"
+        selected_option_id = "hold_for_review"
+
+    return {
+        "workspace": str(workspace or "").strip(),
+        "run_id": str(run_id or "").strip(),
+        "actor": "resident_agi",
+        "stage": "chief_engineer_pre_dispatch_supervision",
+        "task_id": str(task_id or "").strip(),
+        "summary": f"Resident/AGI supervision: {reason}",
+        "context_refs": [
+            ref
+            for ref in [
+                str(evidence.get("schema_version") or "").strip(),
+                str(evidence.get("decision_boundary") or "").strip(),
+                *(context_refs or []),
+            ]
+            if ref
+        ],
+        "options": [
+            {
+                "option_id": "continue_execution",
+                "label": "Continue PM -> Chief Engineer -> Director execution",
+                "rationale": "No hard blocker or Resident/AGI stop signal is present.",
+                "strategy_tags": ["continue_execution", "unattended_factory"],
+                "estimated_score": 0.8,
+            },
+            {
+                "option_id": "hold_for_review",
+                "label": "Hold and request stronger evidence or blueprint review",
+                "rationale": "A hard blocker or Resident/AGI risk signal requires review before Director execution.",
+                "strategy_tags": ["needs_review", "fail_closed"],
+                "estimated_score": 0.6,
+            },
+            {
+                "option_id": "fail_closed_for_review",
+                "label": "Fail closed because the Resident/AGI decision was invalid",
+                "rationale": "Invalid supervisor output must not become an execution permission.",
+                "strategy_tags": ["schema_validation", "fail_closed"],
+                "estimated_score": 0.2,
+            },
+        ],
+        "selected_option_id": selected_option_id,
+        "strategy_tags": [
+            "resident_autonomy",
+            "agi_supervision",
+            "chief_engineer_preflight",
+            "task_execution_profile",
+            decision_source,
+        ],
+        "expected_outcome": {
+            "control_plane_actor": evidence.get("control_plane_actor") or "resident.autonomy",
+            "unattended_factory_role": evidence.get("unattended_factory_role") or "replace_human_supervision",
+            "contract_refs": list(evidence.get("contract_refs") or []),
+        },
+        "actual_outcome": {
+            "proceed": proceed,
+            "needs_review": needs_review,
+            "reason": reason,
+            "decision_source": decision_source,
+            "decision_status": str(decision.get("decision_status") or "").strip(),
+            "evidence_schema": evidence.get("schema_version"),
+            "task_count": evidence.get("task_count"),
+            "status_counts": dict(status_counts),
+            "blocked_count": evidence.get("blocked_count"),
+            "needs_review_count": evidence.get("needs_review_count"),
+            "malformed_task_count": evidence.get("malformed_task_count"),
+            "hard_rule_blockers": list(evidence.get("hard_rule_blockers") or []),
+            "supervisor_rationale": str(decision.get("supervisor_rationale") or "").strip(),
+        },
+        "verdict": verdict,
+        "evidence_refs": [str(ref).strip() for ref in (evidence_refs or []) if str(ref).strip()],
+        "confidence": confidence,
+    }
+
+
+def _with_resident_decision_payload(
+    decision: dict[str, Any],
+    *,
+    evidence: dict[str, Any],
+    workspace: str,
+    run_id: str,
+    task_id: str,
+    context_refs: list[str] | None,
+    evidence_refs: list[str] | None,
+) -> dict[str, Any]:
+    decision = dict(decision)
+    decision["resident_decision"] = build_chief_engineer_resident_decision_payload(
+        decision,
+        evidence=evidence,
+        workspace=workspace,
+        run_id=run_id,
+        task_id=task_id,
+        context_refs=context_refs,
+        evidence_refs=evidence_refs,
+    )
+    return decision
+
+
+def chief_engineer_auto_decision(
+    director_tasks: list[dict[str, Any]],
+    resident_supervisor: ResidentDecisionSupervisor | None = None,
+    *,
+    workspace: str = "",
+    run_id: str = "",
+    task_id: str = "",
+    context_refs: list[str] | None = None,
+    evidence_refs: list[str] | None = None,
+) -> dict[str, Any]:
     """Make automatic decision for Chief Engineer.
 
     Analyzes director tasks and determines if they can proceed or need intervention.
+    Hard safety/review blockers stay deterministic. For non-blocked cases an
+    optional Resident/AGI supervisor may make the variable proceed/review
+    decision from structured evidence. Supervisor output is schema-checked and
+    fail-closed.
 
     Args:
         director_tasks: List of director tasks
+        resident_supervisor: Resident/AGI control-plane supervisor
 
     Returns:
         Decision dict with 'proceed' boolean and 'reason'
     """
+    evidence = build_chief_engineer_decision_evidence(director_tasks)
+    total_tasks = int(evidence["task_count"])
+    blocked_count = int(evidence["blocked_count"])
+    needs_review_count = int(evidence["needs_review_count"])
+
     if not director_tasks:
-        return {"proceed": False, "reason": "no_tasks", "needs_review": True}
-
-    needs_review_count = 0
-    blocked_count = 0
-    total_tasks = len(director_tasks)
-
-    for task in director_tasks:
-        if not isinstance(task, dict):
-            continue
-        status = str(task.get("status") or "").lower()
-        if status in ("blocked", "failed"):
-            blocked_count += 1
-        if task.get("needs_review"):
-            needs_review_count += 1
+        return _with_resident_decision_payload(
+            {
+                "proceed": False,
+                "reason": "no_tasks",
+                "needs_review": True,
+                "decision_source": "hard_rule",
+                "evidence_schema": evidence["schema_version"],
+            },
+            evidence=evidence,
+            workspace=workspace,
+            run_id=run_id,
+            task_id=task_id,
+            context_refs=context_refs,
+            evidence_refs=evidence_refs,
+        )
 
     if blocked_count > 0:
-        return {
-            "proceed": False,
-            "reason": f"{blocked_count} tasks blocked/failed",
-            "blocked_count": blocked_count,
-            "needs_review": True,
-        }
+        return _with_resident_decision_payload(
+            {
+                "proceed": False,
+                "reason": f"{blocked_count} tasks blocked/failed",
+                "blocked_count": blocked_count,
+                "needs_review": True,
+                "decision_source": "hard_rule",
+                "evidence_schema": evidence["schema_version"],
+            },
+            evidence=evidence,
+            workspace=workspace,
+            run_id=run_id,
+            task_id=task_id,
+            context_refs=context_refs,
+            evidence_refs=evidence_refs,
+        )
 
     if needs_review_count > 0:
-        return {
-            "proceed": False,
-            "reason": f"{needs_review_count} tasks need review",
-            "needs_review_count": needs_review_count,
-            "needs_review": True,
-        }
+        return _with_resident_decision_payload(
+            {
+                "proceed": False,
+                "reason": f"{needs_review_count} tasks need review",
+                "needs_review_count": needs_review_count,
+                "needs_review": True,
+                "decision_source": "hard_rule",
+                "evidence_schema": evidence["schema_version"],
+            },
+            evidence=evidence,
+            workspace=workspace,
+            run_id=run_id,
+            task_id=task_id,
+            context_refs=context_refs,
+            evidence_refs=evidence_refs,
+        )
+
+    if resident_supervisor is not None:
+        try:
+            supervised = _normalize_resident_supervisor_decision(
+                resident_supervisor(evidence),
+                evidence=evidence,
+            )
+        except (RuntimeError, ValueError, TypeError) as exc:
+            return _with_resident_decision_payload(
+                {
+                    "proceed": False,
+                    "reason": "resident_supervisor_error",
+                    "needs_review": True,
+                    "decision_source": "resident_supervisor_error",
+                    "evidence_schema": evidence["schema_version"],
+                    "supervisor_error": str(exc),
+                },
+                evidence=evidence,
+                workspace=workspace,
+                run_id=run_id,
+                task_id=task_id,
+                context_refs=context_refs,
+                evidence_refs=evidence_refs,
+            )
+        if supervised is None:
+            return _with_resident_decision_payload(
+                {
+                    "proceed": False,
+                    "reason": "invalid_resident_supervisor_decision",
+                    "needs_review": True,
+                    "decision_source": "resident_supervisor_invalid",
+                    "evidence_schema": evidence["schema_version"],
+                },
+                evidence=evidence,
+                workspace=workspace,
+                run_id=run_id,
+                task_id=task_id,
+                context_refs=context_refs,
+                evidence_refs=evidence_refs,
+            )
+        return _with_resident_decision_payload(
+            supervised,
+            evidence=evidence,
+            workspace=workspace,
+            run_id=run_id,
+            task_id=task_id,
+            context_refs=context_refs,
+            evidence_refs=evidence_refs,
+        )
 
     if total_tasks >= 10 and needs_review_count == 0:
-        return {
-            "proceed": True,
-            "reason": "all tasks ready",
-            "task_count": total_tasks,
-        }
+        return _with_resident_decision_payload(
+            {
+                "proceed": True,
+                "reason": "all tasks ready",
+                "task_count": total_tasks,
+                "decision_source": "hard_rule_compatibility",
+                "evidence_schema": evidence["schema_version"],
+            },
+            evidence=evidence,
+            workspace=workspace,
+            run_id=run_id,
+            task_id=task_id,
+            context_refs=context_refs,
+            evidence_refs=evidence_refs,
+        )
 
-    return {"proceed": True, "reason": "auto_approved", "task_count": total_tasks}
+    return _with_resident_decision_payload(
+        {
+            "proceed": True,
+            "reason": "auto_approved",
+            "task_count": total_tasks,
+            "decision_source": "hard_rule_compatibility",
+            "evidence_schema": evidence["schema_version"],
+        },
+        evidence=evidence,
+        workspace=workspace,
+        run_id=run_id,
+        task_id=task_id,
+        context_refs=context_refs,
+        evidence_refs=evidence_refs,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -743,8 +1066,11 @@ def _safe_payload_digest(payload: Any) -> str:
 
 __all__ = [
     "EventEmitter",
+    "ResidentDecisionSupervisor",
     # New API
     "PreflightContext",
+    "build_chief_engineer_decision_evidence",
+    "build_chief_engineer_resident_decision_payload",
     "_collect_task_scope_modules",
     "_module_key_from_path",
     "_slice_blueprint_for_task",

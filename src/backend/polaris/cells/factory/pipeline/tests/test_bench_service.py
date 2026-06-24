@@ -189,6 +189,82 @@ class TestFactoryBenchService(unittest.TestCase):
         self.assertEqual(projection["goal_audit"], {"projected": 1, "total": 1, "missing": 0})
         self.assertEqual(listed[0]["control_plane_projection"], projection)
 
+    def test_session_snapshots_normalize_legacy_failed_evidence_projection(self) -> None:
+        work_dir = self.root / "bench-work-legacy"
+        work_dir.mkdir()
+        (work_dir / "factory_audits.json").write_text(
+            json.dumps(
+                {
+                    "records": [
+                        {
+                            "project_id": "L1-04",
+                            "run_ledger_projection": {
+                                "schema_version": 1,
+                                "source": "run_ledger",
+                                "ok": False,
+                                "integrity_ok": False,
+                                "outcome_ok": False,
+                                "event_count": 1,
+                                "gate_count": 1,
+                                "missing": ["command"],
+                                "gates": [],
+                                "failed_gates": [],
+                                "capability": {
+                                    "ok": True,
+                                    "issues": [],
+                                    "latest_token_id": "job-token-legacy",
+                                },
+                                "evidence_policy": {
+                                    "ok": False,
+                                    "enabled_modalities": [],
+                                    "required_modalities": ["code", "command"],
+                                    "missing_required_modalities": ["command"],
+                                },
+                                "evidence_modalities": {
+                                    "code": {
+                                        "total": 1,
+                                        "present": 1,
+                                        "ok": 1,
+                                        "failed": 0,
+                                        "latest_detail": "files landed",
+                                    },
+                                    "command": {
+                                        "total": 1,
+                                        "present": 1,
+                                        "ok": 0,
+                                        "failed": 1,
+                                        "latest_detail": "go test failed",
+                                    },
+                                },
+                            },
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        sid = self.svc.register_session(
+            work_dir=str(work_dir), project_ids=["L1-04"], total=1, session_id="bench-ledger-legacy"
+        )
+
+        snapshot = self.svc.get_session(sid)
+
+        assert snapshot is not None
+        projection = snapshot["control_plane_projection"]
+        project = projection["projects"][0]
+        self.assertFalse(projection["ok"])
+        self.assertFalse(project["ok"])
+        self.assertTrue(project["integrity_ok"])
+        self.assertFalse(project["outcome_ok"])
+        self.assertEqual(project["missing"], [])
+        self.assertEqual(project["failed_required_modalities"], ["command"])
+        self.assertEqual(project["detail"], "run ledger projection required evidence failed: command")
+        self.assertEqual(project["evidence_policy"]["missing_required_modalities"], [])
+        self.assertEqual(project["evidence_policy"]["failed_required_modalities"], ["command"])
+        self.assertEqual(projection["evidence_policy"]["missing_required_modalities"], [])
+        self.assertEqual(projection["evidence_policy"]["failed_required_modalities"], ["command"])
+
     def test_read_events_from_returns_all_events_from_offset(self) -> None:
         sid = self.svc.register_session(work_dir="/tmp/ws", project_ids=["L1-01"], total=1)
         for i in range(5):

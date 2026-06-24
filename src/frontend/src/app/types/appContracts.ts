@@ -251,6 +251,29 @@ export interface ResidentDecisionPayload {
   affected_symbols?: string[];
 }
 
+export interface ResidentAgiCapabilityPayload {
+  capability_id?: string;
+  name?: string;
+  category?: string;
+  access?: string;
+  purpose?: string;
+  contract_ref?: string;
+  endpoint?: string;
+  risk_level?: string;
+  guardrails?: string[];
+  evidence_refs?: string[];
+}
+
+export interface ResidentAgiCapabilitySurfacePayload {
+  schema_version?: string;
+  implementation_cell?: string;
+  product_role?: string;
+  unattended_factory_role?: string;
+  categories?: string[];
+  items?: ResidentAgiCapabilityPayload[];
+  count?: number;
+}
+
 export interface ResidentGoalPayload {
   goal_id?: string;
   goal_type?: string;
@@ -386,6 +409,7 @@ export interface ResidentStatusDetailsPayload extends ResidentStatusPayload {
   experiments?: ResidentExperimentPayload[];
   improvements?: ResidentImprovementPayload[];
   capability_graph?: ResidentCapabilityGraphPayload;
+  agi_capability_surface?: ResidentAgiCapabilitySurfacePayload;
   // Phase 1.2: Goal Execution Projection (via WebSocket status)
   goal_executions?: GoalExecutionView[];
 }

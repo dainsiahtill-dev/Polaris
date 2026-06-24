@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  instanceSubtitle,
+  isCurrentControlInstance,
+  isLauncherBackendOpenable,
   isLauncherBackendReady,
   launcherInstanceStatusTone,
 } from './LauncherWorkspace';
@@ -53,7 +56,67 @@ describe('Launcher instance readiness display', () => {
     expect(launcherInstanceStatusTone(starting)).toBe('warning');
   });
 
+  it('allows opening process-projected running instances without showing HTTP success', () => {
+    const projected = instance({
+      metadata: { backend_health: 'process', frontend_health: 'disabled' },
+      backend_alive: true,
+      frontend_alive: false,
+      start_frontend: false,
+      status: 'running',
+    });
+
+    expect(isLauncherBackendReady(projected)).toBe(false);
+    expect(isLauncherBackendOpenable(projected)).toBe(true);
+    expect(launcherInstanceStatusTone(projected)).toBe('warning');
+  });
+
+  it('does not allow opening a dedicated frontend instance before frontend is alive', () => {
+    const noFrontend = instance({
+      metadata: { backend_health: 'process', frontend_health: 'stopped' },
+      backend_alive: true,
+      frontend_alive: false,
+      start_frontend: true,
+      status: 'running',
+    });
+
+    expect(isLauncherBackendOpenable(noFrontend)).toBe(false);
+  });
+
+  it('allows opening a main-style instance that uses the shared frontend', () => {
+    const main = instance({
+      instance_id: 'main',
+      kind: 'development',
+      metadata: { backend_health: 'process', frontend_health: 'disabled' },
+      backend_alive: true,
+      frontend_alive: false,
+      start_frontend: false,
+      status: 'running',
+    });
+
+    expect(isLauncherBackendOpenable(main)).toBe(true);
+  });
+
   it('shows success only after running backend health is ok', () => {
     expect(launcherInstanceStatusTone(instance())).toBe('success');
+  });
+
+  it('adds bench project and work-dir identity to the card subtitle', () => {
+    expect(
+      instanceSubtitle(
+        instance({
+          instance_id: 'factory-bench-l1-05',
+          bench: {
+            project_id: 'L1-05',
+            bench_workspace: '/tmp/factory-bench-L1-05-r06',
+          },
+        }),
+      ),
+    ).toBe('factory-bench-l1-05 · bench_project · L1-05 · factory-bench-L1-05-r06');
+  });
+
+  it('identifies only the current control backend instance as self-managed', () => {
+    expect(isCurrentControlInstance(instance({ instance_id: 'main' }), 'main')).toBe(true);
+    expect(isCurrentControlInstance(instance({ instance_id: 'factory-bench-l1-05' }), 'main')).toBe(false);
+    expect(isCurrentControlInstance(instance({ instance_id: 'factory-bench-l1-05' }), 'factory-bench-l1-05')).toBe(true);
   });
 });
