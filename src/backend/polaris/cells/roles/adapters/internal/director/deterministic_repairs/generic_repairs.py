@@ -34,6 +34,7 @@ from ._common import (
     _parse_missing_declared_target_files,
 )
 from .go_repairs import (
+    repair_go_bare_local_imports,
     repair_go_duplicate_declarations,
     repair_go_import_subpaths,
     repair_go_module_imports,
@@ -402,6 +403,25 @@ def _apply_deterministic_go_module_import_repair(
                     "result": {
                         "ok": True,
                         "source_tool": "deterministic_go_module_import_repair",
+                        "file": record["file"],
+                        "before": record["before"],
+                        "after": record["after"],
+                    },
+                }
+            )
+
+    # Pass 1b: Bare local import prefix repair (e.g. "src/models" → "module/src/models").
+    if (workspace / "go.mod").is_file():
+        bare_repairs = repair_go_bare_local_imports(workspace)
+        for record in bare_repairs:
+            results.append(
+                {
+                    "tool": "write_file",
+                    "tool_name": "write_file",
+                    "success": True,
+                    "result": {
+                        "ok": True,
+                        "source_tool": "deterministic_go_bare_import_repair",
                         "file": record["file"],
                         "before": record["before"],
                         "after": record["after"],

@@ -170,6 +170,54 @@ def repair_go_module_imports(workspace: Path) -> list[dict[str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# Bare local import prefix repair
+# ---------------------------------------------------------------------------
+
+
+def repair_go_bare_local_imports(workspace: Path) -> list[dict[str, str]]:
+    """Add module prefix to bare local imports like ``"src/models"``.
+
+    When the Director generates ``import "src/models"`` instead of
+    ``import "module/src/models"``, this repair prepends the module name.
+    """
+    module = _parse_go_mod_module(workspace)
+    if not module:
+        return []
+    pkg_dirs = _discover_go_package_dirs(workspace)
+    if not pkg_dirs:
+        return []
+
+    repairs: list[dict[str, str]] = []
+    for go_file in workspace.rglob("*.go"):
+        try:
+            original = go_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        repaired = original
+        for match in _GO_IMPORT_RE.finditer(original):
+            imp = match.group(1).strip()
+            # Skip: empty, already has module prefix, standard library, external
+            if not imp or imp.startswith(module) or "." in imp.split("/")[0]:
+                continue
+            # Check if this bare path matches a known package directory
+            if imp in pkg_dirs or any(imp.startswith(d + "/") for d in pkg_dirs):
+                new_imp = f"{module}/{imp}"
+                repaired = repaired.replace(f'"{imp}"', f'"{new_imp}"')
+        if repaired != original:
+            go_file.write_text(repaired, encoding="utf-8")
+            repairs.append(
+                {
+                    "file": str(go_file.relative_to(workspace)),
+                    "before": "bare local import",
+                    "after": f"prefixed with {module}",
+                }
+            )
+    if repairs:
+        logger.info("Go bare local import repair: %d file(s) fixed", len(repairs))
+    return repairs
+
+
+# ---------------------------------------------------------------------------
 # Nested import keyword repair
 # ---------------------------------------------------------------------------
 
