@@ -14,12 +14,14 @@ from polaris.cells.factory.pipeline.internal import bench_gates
 from polaris.cells.factory.pipeline.internal.bench_gates import (
     _collect_go_local_imports,
     _command_serves_build_output,
+    _discover_go_package_dirs,
     _go_command,
     _go_version_of,
     _infer_go_module_name,
     _normalize_go_imports,
     _primary_source_language,
     _read_go_mod_module,
+    _repair_go_import_subpath,
     _resolve_polaris_roots_runtime_dir,
     _script_depends_on_build_output,
     aggregate_goal_audit,
@@ -3348,3 +3350,54 @@ def test_go_command_normalizes_even_with_go_mod(monkeypatch: Any, tmp_path: Path
     main_text = (tmp_path / "main.go").read_text(encoding="utf-8")
     assert '"canonical/pkg"' in main_text
     assert '"wrong-prefix/' not in main_text
+
+
+# ---------------------------------------------------------------------------
+# Tests for F8: Go import sub-path hallucination repair
+# ---------------------------------------------------------------------------
+
+
+class TestGoImportSubpathRepair:
+    """Verify _repair_go_import_subpath fixes hallucinated sub-paths."""
+
+    def test_repairs_hallucinated_subpath(self) -> None:
+        pkg_dirs = {"src/engine", "src/models"}
+        result = _repair_go_import_subpath("mymod/example/pet-ascii/src/engine", "mymod", pkg_dirs)
+        assert result == "mymod/src/engine"
+
+    def test_leaves_valid_subpath_unchanged(self) -> None:
+        pkg_dirs = {"src/engine", "src/models"}
+        result = _repair_go_import_subpath("mymod/src/engine", "mymod", pkg_dirs)
+        assert result == "mymod/src/engine"
+
+    def test_leaves_non_matching_module_unchanged(self) -> None:
+        pkg_dirs = {"src/engine"}
+        result = _repair_go_import_subpath("other/src/engine", "mymod", pkg_dirs)
+        assert result == "other/src/engine"
+
+    def test_discovers_go_package_dirs(self, tmp_path: Path) -> None:
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "engine" / "engine.go").write_text("package engine\n", encoding="utf-8")
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "src" / "models" / "pet.go").write_text("package models\n", encoding="utf-8")
+        dirs = _discover_go_package_dirs(tmp_path)
+        assert "src/engine" in dirs
+        assert "src/models" in dirs
+
+    def test_normalize_repairs_both_prefix_and_subpath(self, tmp_path: Path) -> None:
+        (tmp_path / "go.mod").write_text("module my-project\n\ngo 1.23\n", encoding="utf-8")
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "engine" / "engine.go").write_text("package engine\n", encoding="utf-8")
+        # main.go has a hallucinated sub-path with the correct prefix.
+        (tmp_path / "main.go").write_text(
+            'package main\n\nimport "my-project/hallucinated/path/src/engine"\n\n'
+            "// comment about my-project should NOT change\n"
+            "func main() {}\n",
+            encoding="utf-8",
+        )
+        modified = _normalize_go_imports(tmp_path, ["main.go", "src/engine/engine.go"], "my-project")
+        assert modified == 1
+        main_text = (tmp_path / "main.go").read_text(encoding="utf-8")
+        assert '"my-project/src/engine"' in main_text
+        # Comment must NOT be modified.
+        assert "// comment about my-project should NOT change" in main_text

@@ -826,17 +826,68 @@ def _collect_go_local_imports(workspace: Path, go_files: list[str]) -> list[tupl
     return results
 
 
+def _discover_go_package_dirs(workspace: Path) -> set[str]:
+    """Return the set of relative directory paths that contain ``.go`` files.
+
+    These are the valid Go package import sub-paths (e.g. ``src/engine``,
+    ``src/models``).  Used to repair hallucinated sub-paths.
+    """
+    dirs: set[str] = set()
+    try:
+        for p in workspace.rglob("*.go"):
+            rel_dir = str(p.parent.relative_to(workspace))
+            if rel_dir == ".":
+                continue
+            # Skip vendored and hidden directories.
+            if "/." in rel_dir or rel_dir.startswith(".") or "/vendor/" in rel_dir:
+                continue
+            dirs.add(rel_dir)
+    except OSError:
+        pass
+    return dirs
+
+
+def _repair_go_import_subpath(import_path: str, canonical_module: str, pkg_dirs: set[str]) -> str:
+    """Repair a Go import path's sub-path to match an actual package directory.
+
+    If the import is ``canonical_module/example/pet-ascii/src/engine`` but the
+    actual package directory is ``src/engine``, returns
+    ``canonical_module/src/engine``.  Returns the original path when no repair
+    is needed or possible.
+    """
+    prefix = canonical_module + "/"
+    if not import_path.startswith(prefix):
+        return import_path
+    subpath = import_path[len(prefix) :]
+    # Already valid?
+    if subpath in pkg_dirs:
+        return import_path
+    # Try to find the best matching actual directory by suffix match.
+    # E.g. ``example/pet-ascii/src/engine`` ends with ``src/engine``.
+    best: str = ""
+    for d in pkg_dirs:
+        if (subpath.endswith("/" + d) or subpath.endswith(d)) and len(d) > len(best):
+            best = d
+    if best:
+        return canonical_module + "/" + best
+    return import_path
+
+
 def _normalize_go_imports(workspace: Path, go_files: list[str], canonical_module: str) -> int:
     """Rewrite inconsistent Go import paths to use *canonical_module*.
 
-    Returns the number of files modified.  This is a best-effort repair for
-    the common Director failure mode where different files use different
-    module-name prefixes (e.g. ``ascii-pet/src/models`` vs
-    ``ascii-pet-terminal/src/models``).
+    Returns the number of files modified.  Repairs two classes of Director
+    failure:
+
+    1. **Prefix mismatch**: ``ascii-pet/src/models`` vs
+       ``ascii-pet-terminal/src/models`` → normalise to canonical module.
+    2. **Sub-path hallucination**: ``ascii-pet-terminal/example/pet-ascii/src/engine``
+       when the actual directory is ``src/engine`` → repair to the real path.
 
     Scans both *go_files* AND any ``.go`` files on disk under *workspace*
     to catch files the Director created but didn't declare in the contract.
     """
+
     # Build a comprehensive file list: declared + discovered on disk.
     all_go: set[str] = set(go_files)
     try:
@@ -854,13 +905,32 @@ def _normalize_go_imports(workspace: Path, go_files: list[str], canonical_module
     if not local_imports:
         return 0
 
-    # Identify distinct top-level module prefixes.
+    # Phase 1: Prefix normalization.
     prefixes = {imp.split("/")[0] for _, imp in local_imports}
-    # Remove the canonical prefix — only non-canonical ones need repair.
     prefixes.discard(canonical_module)
-    if not prefixes:
-        return 0  # Already consistent.
 
+    # Phase 2: Discover actual package directories for sub-path repair.
+    pkg_dirs = _discover_go_package_dirs(workspace)
+
+    # Build a replacement map: old_import → new_import.
+    replacements: dict[str, str] = {}
+    for _, imp in local_imports:
+        repaired = imp
+        # Fix prefix.
+        first_seg = imp.split("/")[0]
+        if first_seg != canonical_module and first_seg in prefixes:
+            repaired = canonical_module + "/" + imp[len(first_seg) + 1 :]
+        # Fix sub-path.
+        repaired = _repair_go_import_subpath(repaired, canonical_module, pkg_dirs)
+        if repaired != imp:
+            replacements[imp] = repaired
+
+    if not replacements:
+        return 0
+
+    # Apply replacements to all Go files using exact string matching.
+    # Only replace ``"old_import"`` → ``"new_import"`` (exact quoted strings
+    # containing a slash, which are import-path-shaped).
     modified = 0
     for rel in file_list[:80]:
         fpath = workspace / rel
@@ -869,9 +939,8 @@ def _normalize_go_imports(workspace: Path, go_files: list[str], canonical_module
         except OSError:
             continue
         original = text
-        for prefix in prefixes:
-            # Replace ``"prefix/..."`` → ``"canonical_module/..."``
-            text = text.replace(f'"{prefix}/', f'"{canonical_module}/')
+        for old_imp, new_imp in replacements.items():
+            text = text.replace(f'"{old_imp}"', f'"{new_imp}"')
         if text != original:
             fpath.write_text(text, encoding="utf-8")
             modified += 1
