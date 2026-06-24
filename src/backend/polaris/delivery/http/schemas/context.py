@@ -51,7 +51,6 @@ class ContextStoreStatsResponse(BaseModel):
     oldest_mtime: float | None
     newest_mtime: float | None
     primary_store: dict[str, Any] | None = None
-    legacy_store: dict[str, Any] | None = None
     config: dict[str, Any] = Field(default_factory=dict)
     last_sweep_at: float
     last_sweep_report: dict[str, Any] | None = None

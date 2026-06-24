@@ -38,8 +38,12 @@ type LogSelection = {
   content: string;
 };
 
-function statusTone(instance: PolarisInstance): 'success' | 'warning' | 'error' | 'info' | 'default' {
-  if (instance.status === 'running' && instance.backend_alive) return 'success';
+export function isLauncherBackendReady(instance: PolarisInstance): boolean {
+  return String(instance.metadata?.backend_health || '').trim() === 'ok';
+}
+
+export function launcherInstanceStatusTone(instance: PolarisInstance): 'success' | 'warning' | 'error' | 'info' | 'default' {
+  if (instance.status === 'running' && isLauncherBackendReady(instance)) return 'success';
   if (instance.status === 'observed') return 'info';
   if (instance.backend_pid || instance.frontend_pid) return 'warning';
   return 'default';
@@ -60,10 +64,6 @@ function isStoppedInternalBench(instance: PolarisInstance): boolean {
     !instance.backend_alive &&
     Boolean(instance.metadata?.internal_test_only)
   );
-}
-
-function isBackendReady(instance: PolarisInstance): boolean {
-  return String(instance.metadata?.backend_health || '').trim() === 'ok';
 }
 
 function basename(path: string): string {
@@ -120,7 +120,7 @@ export function LauncherWorkspace() {
   const connection = useConnectionState();
 
   const runningCount = useMemo(
-    () => instances.filter((item) => item.status === 'running' && item.backend_alive).length,
+    () => instances.filter((item) => item.status === 'running' && isLauncherBackendReady(item)).length,
     [instances],
   );
   const benchCount = useMemo(
@@ -368,7 +368,7 @@ export function LauncherWorkspace() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <h3 className="truncate text-sm font-semibold text-slate-100">{instance.name}</h3>
-                      <StatusBadge color={statusTone(instance)} variant="dot" pulse={instance.status === 'running'}>
+                      <StatusBadge color={launcherInstanceStatusTone(instance)} variant="dot" pulse={instance.status === 'running'}>
                         {instance.status}
                       </StatusBadge>
                     </div>
@@ -392,9 +392,9 @@ export function LauncherWorkspace() {
                   </div>
                 </dl>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => openInstance(instance)} disabled={!isBackendReady(instance)}>
+                  <Button size="sm" onClick={() => openInstance(instance)} disabled={!isLauncherBackendReady(instance)}>
                     <ExternalLink className="h-3.5 w-3.5" />
-                    {isBackendReady(instance) ? '打开' : '等待后端'}
+                    {isLauncherBackendReady(instance) ? '打开' : '等待后端'}
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => void runAction(instance, 'restart')} disabled={Boolean(actionId)}>
                     <RotateCcw className="h-3.5 w-3.5" />
@@ -450,7 +450,7 @@ export function LauncherWorkspace() {
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h2 className="truncate text-sm font-semibold text-cyan-100">{selectedInstance.name}</h2>
-                <StatusBadge color={statusTone(selectedInstance)} variant="dot">
+                <StatusBadge color={launcherInstanceStatusTone(selectedInstance)} variant="dot">
                   {selectedInstance.status}
                 </StatusBadge>
               </div>

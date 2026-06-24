@@ -139,10 +139,14 @@ class WorkspaceQualityRunner:
             and "start" in scripts
         ):
             commands.append(["npm", "run", "start"])
-        if commands:
-            return commands
+        commands.extend(self._rust_workspace_quality_commands())
         commands.extend(self._python_workspace_quality_commands(context))
         return commands
+
+    def _rust_workspace_quality_commands(self) -> list[list[str]]:
+        if not (self.workspace / "Cargo.toml").is_file():
+            return []
+        return [["cargo", "check", "--quiet"]]
 
     def _python_workspace_quality_commands(self, context: dict[str, Any]) -> list[list[str]]:
         """Infer real validation commands for Python-only generated projects."""

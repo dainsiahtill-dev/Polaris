@@ -32,76 +32,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _legacy_context_file_candidates(canonical_hash: str) -> list[Path]:
-    """Return bounded legacy Polaris runtime candidates for a context hash.
-
-    Older factory/bench workers can write per-LLM context snapshots under
-    ``~/.cache/polaris/.polaris/projects`` while the current reader resolves
-    active workspaces through KernelOne's runtime root.  This compatibility
-    lookup is deliberately limited to that legacy runtime root and the exact
-    hash shard; it is not a general cross-workspace filesystem scan.
-    """
-    shard = canonical_hash[:2]
-    projects_root = Path.home() / ".cache" / "polaris" / ".polaris" / "projects"
-    if not projects_root.is_dir():
-        return []
-    pattern = f"*/runtime/projects/*/runtime/contexts/{shard}/{canonical_hash}"
-    return [path for path in projects_root.glob(pattern) if path.is_file()]
-
-
-def _legacy_contexts_root_for_stats(contexts_root: str) -> Path | None:
-    """Return the bounded legacy contexts root paired with ``contexts_root``."""
-    active_root = Path(str(contexts_root or ""))
-    if active_root.name != "contexts" or active_root.parent.name != "runtime":
-        return None
-    project_runtime_root = active_root.parent
-    project_root = project_runtime_root.parent
-    project_key = project_root.name
-    if not project_key:
-        return None
-    candidate = project_runtime_root / "projects" / project_key / "runtime" / "contexts"
-    if candidate == active_root:
-        return None
-    return candidate
-
-
-def _scan_context_tree(root: Path) -> dict[str, Any]:
-    """Collect a cheap stats snapshot for a bounded context tree."""
-    if not root.is_dir():
-        return {
-            "file_count": 0,
-            "total_bytes": 0,
-            "oldest_mtime": None,
-            "newest_mtime": None,
-        }
-
-    file_count = 0
-    total_bytes = 0
-    oldest_mtime: float | None = None
-    newest_mtime: float | None = None
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        file_count += 1
-        total_bytes += int(stat.st_size)
-        mtime = float(stat.st_mtime)
-        if oldest_mtime is None or mtime < oldest_mtime:
-            oldest_mtime = mtime
-        if newest_mtime is None or mtime > newest_mtime:
-            newest_mtime = mtime
-
-    return {
-        "file_count": file_count,
-        "total_bytes": total_bytes,
-        "oldest_mtime": oldest_mtime,
-        "newest_mtime": newest_mtime,
-    }
-
-
 def _context_store_breakdown(root: str | Path, stats: dict[str, Any]) -> dict[str, Any]:
     """Return a JSON-friendly per-root store breakdown."""
     return {
@@ -113,57 +43,21 @@ def _context_store_breakdown(root: str | Path, stats: dict[str, Any]) -> dict[st
     }
 
 
-def _merge_legacy_context_stats(stats: dict[str, Any]) -> dict[str, Any]:
-    """Merge active stats with the legacy nested factory context tree.
-
-    Factory runs can still write snapshots under
-    ``runtime/projects/<project-key>/runtime/contexts``. The hash reader
-    already supports that bounded legacy path, so the stats endpoint must count
-    it too; otherwise ContextOS reports zero snapshots while individual refs are
-    readable.
-    """
-    merged = dict(stats)
+def _context_stats_response(stats: dict[str, Any], last_sweep_report: dict[str, Any] | None) -> dict[str, Any]:
+    """Build a stats response from the current KernelOne context store only."""
     contexts_root = str(stats.get("contexts_root") or "")
-    merged["primary_store"] = _context_store_breakdown(contexts_root, stats)
-    legacy_root = _legacy_contexts_root_for_stats(str(stats.get("contexts_root") or ""))
-    if legacy_root is None:
-        merged["legacy_store"] = None
-        return merged
-
-    legacy = _scan_context_tree(legacy_root)
-    legacy_file_count = int(legacy["file_count"])
-    merged["legacy_store"] = _context_store_breakdown(legacy_root, legacy)
-    if legacy_file_count <= 0:
-        return merged
-
-    merged["file_count"] = int(stats.get("file_count") or 0) + legacy_file_count
-    merged["total_bytes"] = int(stats.get("total_bytes") or 0) + int(legacy["total_bytes"])
-
-    active_oldest = stats.get("oldest_mtime")
-    legacy_oldest = legacy.get("oldest_mtime")
-    merged["oldest_mtime"] = (
-        legacy_oldest
-        if active_oldest is None
-        else active_oldest
-        if legacy_oldest is None
-        else min(float(active_oldest), float(legacy_oldest))
-    )
-
-    active_newest = stats.get("newest_mtime")
-    legacy_newest = legacy.get("newest_mtime")
-    merged["newest_mtime"] = (
-        legacy_newest
-        if active_newest is None
-        else active_newest
-        if legacy_newest is None
-        else max(float(active_newest), float(legacy_newest))
-    )
-
-    config = dict(stats.get("config") or {})
-    config["legacy_contexts_root"] = str(legacy_root)
-    config["legacy_file_count"] = legacy_file_count
-    merged["config"] = config
-    return merged
+    return {
+        "workspace": stats["workspace"],
+        "contexts_root": contexts_root,
+        "file_count": stats["file_count"],
+        "total_bytes": stats["total_bytes"],
+        "oldest_mtime": stats["oldest_mtime"],
+        "newest_mtime": stats["newest_mtime"],
+        "primary_store": _context_store_breakdown(contexts_root, stats),
+        "config": stats["config"],
+        "last_sweep_at": stats["last_sweep_at"],
+        "last_sweep_report": last_sweep_report,
+    }
 
 
 def _load_context_payload(file_path: Path, canonical_hash: str) -> dict[str, Any]:
@@ -201,20 +95,7 @@ def get_context_stats(request: Request) -> dict[str, Any]:
     """
     workspace = _resolve_workspace(request)
     retention = _build_retention(workspace)
-    stats = _merge_legacy_context_stats(retention.get_stats())
-    return {
-        "workspace": stats["workspace"],
-        "contexts_root": stats["contexts_root"],
-        "file_count": stats["file_count"],
-        "total_bytes": stats["total_bytes"],
-        "oldest_mtime": stats["oldest_mtime"],
-        "newest_mtime": stats["newest_mtime"],
-        "primary_store": stats.get("primary_store"),
-        "legacy_store": stats.get("legacy_store"),
-        "config": stats["config"],
-        "last_sweep_at": stats["last_sweep_at"],
-        "last_sweep_report": None,
-    }
+    return _context_stats_response(retention.get_stats(), last_sweep_report=None)
 
 
 @router.get("/v2/context/{hash}", dependencies=[Depends(require_auth)])
@@ -259,18 +140,13 @@ def get_context_by_hash(request: Request, hash: str) -> dict[str, Any]:
     file_path = Path(resolve_storage_roots(workspace).runtime_root) / "contexts" / shard / canonical_hash
 
     storage_source = "active_workspace"
-    if os.path.isfile(file_path):
-        payload = _load_context_payload(Path(file_path), canonical_hash)
-    else:
-        legacy_candidates = _legacy_context_file_candidates(canonical_hash)
-        if not legacy_candidates:
-            raise StructuredHTTPException(
-                status_code=404,
-                code="CONTEXT_NOT_FOUND",
-                message=f"Context snapshot not found for hash {canonical_hash}",
-            )
-        storage_source = "legacy_runtime"
-        payload = _load_context_payload(legacy_candidates[0], canonical_hash)
+    if not file_path.is_file():
+        raise StructuredHTTPException(
+            status_code=404,
+            code="CONTEXT_NOT_FOUND",
+            message=f"Context snapshot not found for hash {canonical_hash}",
+        )
+    payload = _load_context_payload(file_path, canonical_hash)
 
     if not isinstance(payload, dict):
         raise StructuredHTTPException(
@@ -361,25 +237,12 @@ def get_context_admin_stats(request: Request) -> dict[str, Any]:
         )
     workspace = _resolve_workspace(request)
     retention = _build_retention(workspace)
-    stats = _merge_legacy_context_stats(retention.get_stats())
     counter = retention._read_sweep_state()
     last_report: dict[str, Any] | None = None
     last_sweep_report = counter.get("last_sweep_report")
     if isinstance(last_sweep_report, dict):
         last_report = last_sweep_report
-    return {
-        "workspace": stats["workspace"],
-        "contexts_root": stats["contexts_root"],
-        "file_count": stats["file_count"],
-        "total_bytes": stats["total_bytes"],
-        "oldest_mtime": stats["oldest_mtime"],
-        "newest_mtime": stats["newest_mtime"],
-        "primary_store": stats.get("primary_store"),
-        "legacy_store": stats.get("legacy_store"),
-        "config": stats["config"],
-        "last_sweep_at": stats["last_sweep_at"],
-        "last_sweep_report": last_report,
-    }
+    return _context_stats_response(retention.get_stats(), last_sweep_report=last_report)
 
 
 @router.post(

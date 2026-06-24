@@ -34,6 +34,7 @@ from ._common import (
     _parse_missing_declared_target_files,
 )
 from .go_repairs import (
+    repair_go_bare_import_strings,
     repair_go_bare_local_imports,
     repair_go_duplicate_declarations,
     repair_go_import_subpaths,
@@ -56,6 +57,9 @@ from .python_repairs import (
     _apply_deterministic_python_package_shadow_bridge_repair,
     _apply_deterministic_python_unittest_runtime_failure_repair,
     _apply_deterministic_unresolved_import_symbol_repair,
+)
+from .rust_repairs import (
+    _apply_deterministic_rust_crate_import_repair,
 )
 from .typeorm_repairs import (
     _apply_deterministic_typeorm_model_normalization_repair,
@@ -372,8 +376,29 @@ def _apply_deterministic_go_module_import_repair(
         return []
     results: list[dict[str, Any]] = []
 
-    # Pass 1: Prefix normalization.
-    # Pass 0: Nested import keyword repair (syntax fix before other passes).
+    # Pass -1: Bare import string repair (add missing "import" keyword).
+    # Must run BEFORE nested import keyword repair to avoid contradiction:
+    # bare_strings adds "import" to bare strings; nested_import removes extra
+    # "import" inside import blocks. Order matters.
+    bare_str_repairs = repair_go_bare_import_strings(workspace)
+    for record in bare_str_repairs:
+        results.append(
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_go_bare_import_string_repair",
+                    "file": record["file"],
+                    "before": record["before"],
+                    "after": record["after"],
+                },
+            }
+        )
+
+    # Pass 0: Nested import keyword repair (remove extra "import" inside import blocks).
+    # Runs AFTER bare import string repair so we don't undo each other.
     nested_repairs = repair_go_nested_import_keyword(workspace)
     for record in nested_repairs:
         results.append(
@@ -652,6 +677,13 @@ def _apply_deterministic_materialization_quality_repairs(
     )
     results.extend(
         _apply_deterministic_runtime_dependency_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_rust_crate_import_repair(
             adapter,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,

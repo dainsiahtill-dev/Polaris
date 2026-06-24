@@ -1109,6 +1109,31 @@ class TestPackageJsonParsing:
             [sys.executable, "main.py"],
         ]
 
+    def test_workspace_quality_commands_rust_project_include_cargo_check(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "Cargo.toml").write_text('[package]\nname = "kitchen-flavor-palette"\n', encoding="utf-8")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "lib.rs").write_text("pub fn ok() {}\n", encoding="utf-8")
+
+        assert executor._workspace_quality_commands({}) == [["cargo", "check", "--quiet"]]
+
+    def test_workspace_quality_commands_mixed_rust_python_keep_cargo_check_first(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "Cargo.toml").write_text('[package]\nname = "kitchen-flavor-palette"\n', encoding="utf-8")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "lib.rs").write_text("pub fn ok() {}\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_product.py").write_text("def test_contract():\n    assert True\n", encoding="utf-8")
+
+        commands = executor._workspace_quality_commands({})
+
+        assert commands == [
+            ["cargo", "check", "--quiet"],
+            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
+            [sys.executable, "-m", "compileall", "-q", "src", "tests"],
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
+        ]
+
     def test_declared_delivery_targets_extract_explicit_file_tokens_from_task_text(self) -> None:
         targets = OrchestrationStageExecutor._collect_declared_delivery_targets(
             [

@@ -218,6 +218,83 @@ def repair_go_bare_local_imports(workspace: Path) -> list[dict[str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# Bare import string repair (missing "import" keyword)
+# ---------------------------------------------------------------------------
+
+_BARE_IMPORT_STRING_RE = re.compile(r'^(\s+)"([^"]+)"\s*$', re.MULTILINE)
+
+
+def repair_go_bare_import_strings(workspace: Path) -> list[dict[str, str]]:
+    """Fix bare quoted strings that should be import statements.
+
+    When the Director generates:
+        package models
+
+        "fmt"
+        type Foo struct { ... }
+
+    This repairs it to:
+        package models
+
+        import "fmt"
+        type Foo struct { ... }
+    """
+    repairs: list[dict[str, str]] = []
+    for go_file in workspace.rglob("*.go"):
+        if go_file.name.endswith("_test.go"):
+            continue
+        try:
+            original = go_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        lines = original.split("\n")
+        modified = False
+        in_import_block = False
+        past_package = False
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("package "):
+                past_package = True
+                continue
+            if stripped == "import (" or stripped.startswith("import ("):
+                in_import_block = True
+                continue
+            if in_import_block:
+                if stripped == ")":
+                    in_import_block = False
+                continue
+            if stripped.startswith("import "):
+                continue
+            # After package declaration and before any type/func/const/var,
+            # a bare quoted string should be an import.
+            if (
+                past_package
+                and stripped
+                and stripped.startswith('"')
+                and stripped.endswith('"')
+                and not line.startswith("\t\t")
+                and not line.startswith("    ")
+            ):
+                lines[i] = f"import {stripped}"
+                modified = True
+
+        if modified:
+            repaired = "\n".join(lines)
+            go_file.write_text(repaired, encoding="utf-8")
+            repairs.append(
+                {
+                    "file": str(go_file.relative_to(workspace)),
+                    "before": "bare import string",
+                    "after": "import statement",
+                }
+            )
+    if repairs:
+        logger.info("Go bare import string repair: %d file(s) fixed", len(repairs))
+    return repairs
+
+
+# ---------------------------------------------------------------------------
 # Nested import keyword repair
 # ---------------------------------------------------------------------------
 
@@ -238,6 +315,10 @@ def repair_go_nested_import_keyword(workspace: Path) -> list[dict[str, str]]:
             "errors"
             "fmt"
         )
+
+    Only fixes lines that are actually inside an import block (between
+    ``import (`` and the matching ``)``). Standalone ``import "pkg"``
+    statements are left untouched.
     """
     repairs: list[dict[str, str]] = []
     for go_file in workspace.rglob("*.go"):
@@ -247,8 +328,25 @@ def repair_go_nested_import_keyword(workspace: Path) -> list[dict[str, str]]:
             original = go_file.read_text(encoding="utf-8")
         except OSError:
             continue
-        repaired = _NESTED_IMPORT_RE.sub(r'\1"\2"', original)
-        if repaired != original:
+        # Only fix import "..." lines that are INSIDE an import (...) block.
+        lines = original.split("\n")
+        modified = False
+        in_import_block = False
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("import (") or stripped == "import (":
+                in_import_block = True
+                continue
+            if in_import_block and stripped == ")":
+                in_import_block = False
+                continue
+            if in_import_block:
+                m = re.match(r'^(\s+)import\s+"([^"]+)"\s*$', line)
+                if m:
+                    lines[i] = f'{m.group(1)}"{m.group(2)}"'
+                    modified = True
+        if modified:
+            repaired = "\n".join(lines)
             go_file.write_text(repaired, encoding="utf-8")
             repairs.append(
                 {

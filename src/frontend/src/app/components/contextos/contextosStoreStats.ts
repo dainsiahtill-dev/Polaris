@@ -9,7 +9,7 @@
  *   GET /v2/context/admin/stats
  *   {
  *     workspace, contexts_root, file_count, total_bytes,
- *     oldest_mtime, newest_mtime, config: {...},
+ *     oldest_mtime, newest_mtime, primary_store, config: {...},
  *     last_sweep_at, last_sweep_report: {...} | null
  *   }
  *
@@ -51,7 +51,6 @@ export interface ContextStoreStatsResponse {
   oldest_mtime: number | null;
   newest_mtime: number | null;
   primary_store?: ContextStorePathStats | null;
-  legacy_store?: ContextStorePathStats | null;
   config: ContextStoreStatsConfig;
   last_sweep_at: number;
   last_sweep_report: ContextStoreSweepReport | null;
@@ -157,6 +156,9 @@ export function parseContextStoreStatsResponse(payload: unknown): ContextStoreSt
   if (!payload || typeof payload !== 'object') return null;
   const obj = payload as Record<string, unknown>;
   const configRaw = obj.config && typeof obj.config === 'object' ? (obj.config as Record<string, unknown>) : {};
+  const primaryStoreRaw = obj.primary_store && typeof obj.primary_store === 'object'
+    ? (obj.primary_store as Record<string, unknown>)
+    : null;
   const reportRaw = obj.last_sweep_report && typeof obj.last_sweep_report === 'object'
     ? (obj.last_sweep_report as Record<string, unknown>)
     : null;
@@ -167,6 +169,15 @@ export function parseContextStoreStatsResponse(payload: unknown): ContextStoreSt
     total_bytes: toIntOrZero(obj.total_bytes),
     oldest_mtime: toFloatOrNull(obj.oldest_mtime),
     newest_mtime: toFloatOrNull(obj.newest_mtime),
+    primary_store: primaryStoreRaw
+      ? {
+          contexts_root: typeof primaryStoreRaw.contexts_root === 'string' ? primaryStoreRaw.contexts_root : '',
+          file_count: toIntOrZero(primaryStoreRaw.file_count),
+          total_bytes: toIntOrZero(primaryStoreRaw.total_bytes),
+          oldest_mtime: toFloatOrNull(primaryStoreRaw.oldest_mtime),
+          newest_mtime: toFloatOrNull(primaryStoreRaw.newest_mtime),
+        }
+      : null,
     config: {
       ttl_seconds: toIntOrNull(configRaw.ttl_seconds),
       max_total_bytes: toIntOrNull(configRaw.max_total_bytes),
