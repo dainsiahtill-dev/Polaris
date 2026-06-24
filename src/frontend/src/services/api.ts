@@ -5,6 +5,7 @@ import type {
   BackendStatus,
   FilePayload,
   LanceDbStatus,
+  ResidentAgiCapabilitySurfacePayload,
   ResidentDecisionPayload,
   ResidentExperimentPayload,
   ResidentGoalPayload,
@@ -235,6 +236,12 @@ export const residentService = {
     const suffix = query.toString();
     const res = await apiFetch(`/v2/resident/status${suffix ? `?${suffix}` : ''}`);
     return handleResponse(res, 'Failed to load Resident status');
+  },
+
+  async getCapabilities(workspace = ''): Promise<ApiResult<ResidentAgiCapabilitySurfacePayload>> {
+    const suffix = workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
+    const res = await apiFetch(`/v2/resident/capabilities${suffix}`);
+    return handleResponse(res, 'Failed to load Resident AGI capability surface');
   },
 
   async start(workspace: string, mode: string): Promise<ApiResult<ResidentStatusDetailsPayload>> {

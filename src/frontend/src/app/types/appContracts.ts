@@ -266,6 +266,8 @@ export interface ResidentAgiCapabilityPayload {
 
 export interface ResidentAgiCapabilitySurfacePayload {
   schema_version?: string;
+  role_id?: string;
+  runtime_foundation?: string;
   implementation_cell?: string;
   product_role?: string;
   unattended_factory_role?: string;

@@ -159,5 +159,13 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
         assert payload["identity"]["name"] == "Polaris Resident"
         assert payload["counts"]["decisions"] >= 1
         assert payload["counts"]["goals"] >= 1
+        assert payload["agi_capability_surface"]["role_id"] == "resident_agi"
+
+        capabilities_response = client.get("/v2/resident/capabilities", params={"workspace": str(workspace)})
+        assert capabilities_response.status_code == 200
+        capabilities = capabilities_response.json()
+        assert capabilities["schema_version"] == "resident.agi_capability_surface.v1"
+        assert capabilities["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
+        assert any(item["capability_id"] == "run_ledger.read" for item in capabilities["items"])
 
     reset_resident_services()

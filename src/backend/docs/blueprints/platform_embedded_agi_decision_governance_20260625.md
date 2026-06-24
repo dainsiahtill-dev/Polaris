@@ -6,13 +6,21 @@ Scope: embedded AGI decision boundaries, structured evidence, audit, and UI surf
 
 ## Problem
 
+Polaris already has an embedded AGI/Resident layer. It is not a new sidecar and
+not a replacement for the role kernel. It is a platform-level Role running on the
+same RoleRuntime / ContextOS / TurnEngine foundation as PM, Chief Engineer,
+Director, and QA. Its difference is responsibility and capability: it replaces
+the human who would otherwise watch agent runs, inspect evidence, decide whether
+to continue, pause, escalate, or ask for more proof, and turn repeated lessons
+into governed goals.
+
 Polaris should not hard-code every project, architecture, library, repair, or
 planning decision. Hard-coded rules are useful for platform invariants, but they
-become a liability when they encode fast-changing engineering judgment. The
-platform was designed around an embedded LLM/AGI planning layer, so variable
-decisions should be made by an intelligent advisor that can read the task
-contract, project documents, current code, dependency manifests, runtime
-constraints, and verification evidence.
+become a liability when they encode fast-changing engineering judgment. Variable
+decisions should be made by the embedded Resident/AGI supervisor from structured
+evidence: task contracts, project documents, current code, dependency manifests,
+runtime constraints, ContextOS, final provider-request audit, Run Ledger, CE
+blueprints, task execution profiles, runtime events, and verification results.
 
 The platform must still remain safe and auditable. AGI decisions cannot bypass
 path gates, tool authorization, output contracts, realtime policy, role flow, or
@@ -20,9 +28,25 @@ final provider-request audit. The correct architecture is therefore not
 "everything hard-coded" and not "LLM can do anything"; it is:
 
 ```text
-hard invariants -> evidence package -> AGI/LLM advisor -> structured decision
+hard invariants -> evidence package -> Resident/AGI Role -> structured decision
     -> schema/risk validation -> handoff/runtime/audit/UI projection
 ```
+
+## Runtime Foundation
+
+AGI/Resident is a role-level control-plane capability:
+
+- role id: `resident_agi`
+- role profile source: `roles.profile` / `core_roles.yaml`
+- runtime foundation: `roles.runtime` + ContextOS + TurnEngine
+- durable state: `resident.autonomy`
+- decision trace: Resident decision trace
+- public capability surface: `resident.agi_capability_surface.v1`
+
+It must not become a parallel orchestration stack. PM, Chief Engineer, Director,
+and QA remain the execution roles. AGI/Resident supervises and decides from a
+wider evidence surface, then writes decisions/goals through governed Resident
+contracts. Code mutation still belongs to Director and tool/security gates.
 
 ## Decision Layers
 
@@ -41,7 +65,7 @@ Hard rules protect platform invariants and must remain deterministic:
 
 ### AGI Decisions
 
-Embedded AGI/strong-model advisors should handle context-dependent decisions:
+Embedded Resident/AGI should handle context-dependent decisions:
 
 - task decomposition and sequencing when task contracts are ambiguous
 - architecture and dependency tradeoffs
@@ -60,7 +84,7 @@ should include:
 
 - decision id / concern / status (`guidance`, `proposed`, `accepted`,
   `rejected`, `blocked`)
-- source (`platform_signal_guidance`, `embedded_agi_advisor`, `chief_engineer`,
+- source (`platform_signal_guidance`, `resident_agi_supervisor`, `chief_engineer`,
   `user`, `project_document`)
 - selected option only when an explicit decision was made
 - options considered as families or evaluation dimensions, not fixed product
@@ -70,25 +94,49 @@ should include:
 
 ## Current Landing
 
-`chief_engineer_auto_decision` now demonstrates the desired pattern:
+`chief_engineer_auto_decision` now demonstrates the desired pattern without
+creating a second AGI path:
 
 1. Deterministic hard rules still block no-task, blocked/failed, and
    `needs_review` cases.
-2. Non-blocked cases can optionally call an `IntelligentDecisionAdvisor`.
-3. The advisor receives `chief_engineer.decision_evidence.v1` evidence.
-4. Advisor output must contain a boolean `proceed` and non-empty `reason`.
-5. Invalid advisor output or advisor exceptions fail closed and require review.
+2. Non-blocked cases can optionally call a `ResidentDecisionSupervisor`.
+3. The supervisor receives `chief_engineer.decision_evidence.v1` evidence.
+4. Supervisor output must contain a boolean `proceed` and non-empty `reason`.
+5. Invalid supervisor output or supervisor exceptions fail closed and require review.
+6. Every result carries a `resident_decision` payload that can be written to
+   Resident decision trace.
 
 This is intentionally a small landing point. It proves the boundary without
 making AGI a hidden runtime dependency for every path.
+
+## AGI Capability Surface
+
+The Resident/AGI role needs platform facts, not just prompt prose. Polaris now
+exposes a governed capability surface:
+
+- schema: `resident.agi_capability_surface.v1`
+- endpoint: `/v2/resident/capabilities`
+- status projection: `/v2/resident/status?details=true`
+
+Capabilities are grouped by access class:
+
+- read-only evidence: ContextOS, final request audit, Run Ledger, evidence
+  bundles, CE blueprint, task execution profile, runtime events
+- controlled decision writes: Resident decision trace, goal proposals
+- controlled execution: Resident goal bridge into PM -> Chief Engineer ->
+  Director, never direct code mutation
+
+The capability surface is a whitelist and a UI contract. It does not bypass
+tool/path/security/output gates.
 
 ## UI Requirements
 
 The AGI UI should not expose a vague "AI says yes" panel. It should show:
 
 - hard-rule result and blockers
-- evidence schema/version used by the advisor
-- advisor source/model/run id when available
+- evidence schema/version used by the supervisor
+- role id, runtime foundation, and available capability surface
+- supervisor source/model/run id when available
 - structured decision status and rationale
 - selected option only when status is proposed/accepted
 - rejected alternatives or evaluation dimensions
@@ -109,7 +157,7 @@ The UI must distinguish:
 
 - Do not encode fast-changing technology trends as hard-coded product lists.
 - Hard-code only platform invariants, schema contracts, and safety gates.
-- AGI advisors must never bypass tool/path/security/output-contract gates.
+- AGI supervisors must never bypass tool/path/security/output-contract gates.
 - Every AGI decision that affects execution must be structured and auditable.
 - If AGI evidence is insufficient, the correct result is `blocked` or
   `guidance`, not a fabricated decision.
@@ -120,7 +168,7 @@ The UI must distinguish:
 
 1. Add a shared `AgiDecisionRecordV1` or promote `ArchitectureDecisionV1` into a
    role-neutral decision contract.
-2. Add CE architecture advisor invocation behind an opt-in runtime flag.
+2. Add CE architecture Resident/AGI supervisor invocation behind an opt-in runtime flag.
 3. Project AGI decisions into ContextOS and runtime.v2 events.
 4. Add frontend UI for decision timeline, evidence, validation status, and
    accepted/rejected handoff impact.

@@ -131,6 +131,17 @@ new state or starts the replacement process. Operators should manage the
 current `main` backend from the shell/process supervisor, while Launcher manages
 other project instances.
 
+Restarting a non-current instance is ordered:
+
+1. Terminate the old frontend/backend process group.
+2. Wait until the owned backend/frontend ports are actually free.
+3. Start the replacement processes with the same instance binding.
+
+If an owned port does not become free, restart must fail closed instead of
+silently choosing a different port or returning success. Registry records that
+only observe a shared backend and do not own a process pid must not wait for the
+shared main port to become free.
+
 ## Bench Boundary
 
 `factory_bench`, L1-L12 catalogs, and benchmark harnesses are internal

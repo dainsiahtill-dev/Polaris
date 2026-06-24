@@ -24,6 +24,7 @@ from polaris.cells.chief_engineer.blueprint.internal.chief_engineer_preflight im
     _tail_non_empty_lines,
     _trim_str_list,
     build_chief_engineer_decision_evidence,
+    build_chief_engineer_resident_decision_payload,
     build_task_focused_chief_engineer_payload,
     chief_engineer_auto_decision,
     inject_chief_engineer_constraints,
@@ -521,27 +522,50 @@ class TestChiefEngineerAutoDecision:
             ]
         )
         assert evidence["schema_version"] == "chief_engineer.decision_evidence.v1"
+        assert evidence["decision_boundary"] == "hard_rules_then_resident_agi_supervisor"
+        assert evidence["control_plane_actor"] == "resident.autonomy"
         assert evidence["task_count"] == 4
         assert evidence["blocked_count"] == 1
         assert evidence["needs_review_count"] == 1
         assert evidence["malformed_task_count"] == 1
         assert "blocked_or_failed_tasks" in evidence["hard_rule_blockers"]
 
+    def test_builds_resident_decision_payload(self) -> None:
+        evidence = build_chief_engineer_decision_evidence([{"status": "ok"}])
+        payload = build_chief_engineer_resident_decision_payload(
+            {
+                "proceed": True,
+                "reason": "auto_approved",
+                "decision_source": "resident_agi_supervisor",
+                "evidence_schema": evidence["schema_version"],
+            },
+            evidence=evidence,
+            workspace="/tmp/ws",
+            run_id="run-1",
+            context_refs=["runtime/contracts/chief_engineer.blueprint.json"],
+        )
+        assert payload["actor"] == "resident_agi"
+        assert payload["stage"] == "chief_engineer_pre_dispatch_supervision"
+        assert payload["selected_option_id"] == "continue_execution"
+        assert "task_execution_profile" in payload["strategy_tags"]
+        assert payload["actual_outcome"]["evidence_schema"] == "chief_engineer.decision_evidence.v1"
+
     def test_no_tasks_blocks(self) -> None:
         result = chief_engineer_auto_decision([])
         assert result["proceed"] is False
         assert result["reason"] == "no_tasks"
         assert result["decision_source"] == "hard_rule"
+        assert result["resident_decision"]["actor"] == "resident_agi"
 
     def test_blocked_tasks_block(self) -> None:
         called = False
 
-        def advisor(_evidence):
+        def supervisor(_evidence):
             nonlocal called
             called = True
             return {"proceed": True, "reason": "ignore blocker"}
 
-        result = chief_engineer_auto_decision([{"status": "blocked"}], advisor=advisor)
+        result = chief_engineer_auto_decision([{"status": "blocked"}], resident_supervisor=supervisor)
         assert result["proceed"] is False
         assert result["needs_review"] is True
         assert called is False
@@ -567,41 +591,46 @@ class TestChiefEngineerAutoDecision:
         assert result["proceed"] is True
         assert result["reason"] == "auto_approved"
 
-    def test_intelligent_advisor_can_decide_non_blocked_case(self) -> None:
+    def test_resident_supervisor_can_decide_non_blocked_case(self) -> None:
         tasks = [{"status": "ok"} for _ in range(3)]
 
-        def advisor(evidence):
+        def supervisor(evidence):
             assert evidence["schema_version"] == "chief_engineer.decision_evidence.v1"
             return {
                 "proceed": False,
                 "reason": "architecture risk requires stronger CE review",
                 "needs_review": True,
-                "decision_source": "embedded_agi_advisor",
-                "advisor_rationale": "Small task count is not enough evidence when risk is architectural.",
+                "decision_source": "resident_agi_supervisor",
+                "supervisor_rationale": "Small task count is not enough evidence when risk is architectural.",
             }
 
-        result = chief_engineer_auto_decision(tasks, advisor=advisor)
+        result = chief_engineer_auto_decision(tasks, resident_supervisor=supervisor)
         assert result["proceed"] is False
         assert result["needs_review"] is True
-        assert result["decision_source"] == "embedded_agi_advisor"
+        assert result["decision_source"] == "resident_agi_supervisor"
         assert result["evidence_schema"] == "chief_engineer.decision_evidence.v1"
+        assert result["resident_decision"]["selected_option_id"] == "hold_for_review"
 
-    def test_invalid_intelligent_advisor_decision_fails_closed(self) -> None:
+    def test_invalid_resident_supervisor_decision_fails_closed(self) -> None:
         tasks = [{"status": "ok"}]
 
-        result = chief_engineer_auto_decision(tasks, advisor=lambda _evidence: {"reason": "missing proceed"})
+        result = chief_engineer_auto_decision(
+            tasks,
+            resident_supervisor=lambda _evidence: {"reason": "missing proceed"},
+        )
 
         assert result["proceed"] is False
         assert result["needs_review"] is True
-        assert result["decision_source"] == "intelligent_advisor_invalid"
+        assert result["decision_source"] == "resident_supervisor_invalid"
+        assert result["resident_decision"]["selected_option_id"] == "fail_closed_for_review"
 
-    def test_intelligent_advisor_exception_fails_closed(self) -> None:
+    def test_resident_supervisor_exception_fails_closed(self) -> None:
         tasks = [{"status": "ok"}]
 
-        def advisor(_evidence):
+        def supervisor(_evidence):
             raise RuntimeError("model unavailable")
 
-        result = chief_engineer_auto_decision(tasks, advisor=advisor)
+        result = chief_engineer_auto_decision(tasks, resident_supervisor=supervisor)
         assert result["proceed"] is False
-        assert result["reason"] == "intelligent_advisor_error"
-        assert result["advisor_error"] == "model unavailable"
+        assert result["reason"] == "resident_supervisor_error"
+        assert result["supervisor_error"] == "model unavailable"

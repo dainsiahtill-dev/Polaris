@@ -20,6 +20,15 @@ _RUST_NO_SYMBOL_RE = re.compile(
     r"no [`'\"](?P<symbol>[A-Za-z_][A-Za-z0-9_]*)[`'\"] in [`'\"](?P<module>[A-Za-z_][A-Za-z0-9_:]*)[`'\"]",
     re.IGNORECASE,
 )
+_RUST_TRAIT_IMPORT_SUGGESTION_RE = re.compile(
+    r"error\[E0599\]:\s+no method named [`'\"][A-Za-z_][A-Za-z0-9_]*[`'\"].*?"
+    r"^\s*-->\s*(?P<path>[^:\n]+\.rs):\d+:\d+.*?"
+    r"help:\s+trait [`'\"][A-Za-z_][A-Za-z0-9_]*[`'\"].*?"
+    r"perhaps you want to import it.*?"
+    r"^\s*(?:\d+\s*)?\+\s*(?P<import>use\s+[^;\n]+;)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _KNOWN_RUST_DEPENDENCIES: dict[str, str] = {
     "serde": 'serde = { version = "1.0", features = ["derive"] }',
     "serde_json": 'serde_json = "1.0"',
@@ -99,6 +108,31 @@ def _apply_deterministic_rust_unresolved_pub_use_repair(
                 "source_tool": "deterministic_rust_unresolved_pub_use_repair",
                 "file": record["file"],
                 "symbols": record["symbols"],
+            },
+        }
+        for record in repairs
+    ]
+
+
+def _apply_deterministic_rust_trait_import_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    del task_id
+    workspace = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    repairs = repair_rust_trait_imports(workspace, artifact_quality_errors)
+    return [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_rust_trait_import_repair",
+                "file": record["file"],
+                "import": record["import"],
             },
         }
         for record in repairs
@@ -185,6 +219,33 @@ def repair_rust_unresolved_pub_uses(workspace: Path, artifact_quality_errors: li
             continue
         rust_file.write_text(repaired, encoding="utf-8")
         repairs.append({"file": str(rust_file.relative_to(workspace)), "symbols": removed})
+    return repairs
+
+
+def repair_rust_trait_imports(workspace: Path, artifact_quality_errors: list[str]) -> list[dict[str, Any]]:
+    if not workspace.is_dir():
+        return []
+    suggestions = _parse_rust_trait_import_suggestions(artifact_quality_errors)
+    if not suggestions:
+        return []
+    repairs: list[dict[str, Any]] = []
+    for relative_path, import_line in suggestions:
+        target_path = (workspace / relative_path).resolve()
+        try:
+            relative = target_path.relative_to(workspace)
+        except ValueError:
+            continue
+        if target_path.suffix.lower() != ".rs" or not target_path.is_file():
+            continue
+        try:
+            original = target_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        repaired = _insert_rust_use_import(original, import_line)
+        if repaired == original:
+            continue
+        target_path.write_text(repaired, encoding="utf-8")
+        repairs.append({"file": relative.as_posix(), "import": import_line})
     return repairs
 
 
@@ -299,6 +360,58 @@ def _parse_missing_rust_symbols(artifact_quality_errors: list[str]) -> list[str]
                 seen.add(symbol)
                 symbols.append(symbol)
     return symbols
+
+
+def _parse_rust_trait_import_suggestions(artifact_quality_errors: list[str]) -> list[tuple[str, str]]:
+    suggestions: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    text = _ANSI_ESCAPE_RE.sub("", "\n".join(str(error or "") for error in artifact_quality_errors))
+    for match in _RUST_TRAIT_IMPORT_SUGGESTION_RE.finditer(text):
+        relative_path = str(match.group("path") or "").strip().replace("\\", "/")
+        import_line = str(match.group("import") or "").strip()
+        if not relative_path or not import_line.startswith("use ") or not import_line.endswith(";"):
+            continue
+        key = (relative_path, import_line)
+        if key in seen:
+            continue
+        seen.add(key)
+        suggestions.append(key)
+    return suggestions
+
+
+def _insert_rust_use_import(text: str, import_line: str) -> str:
+    if re.search(rf"(?m)^\s*{re.escape(import_line)}\s*$", text):
+        return text
+    lines = text.splitlines(keepends=True)
+    insert_index = _rust_use_insert_index(lines)
+    lines.insert(insert_index, f"{import_line}\n")
+    return "".join(lines)
+
+
+def _rust_use_insert_index(lines: list[str]) -> int:
+    index = 0
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if stripped == "" or stripped.startswith("//!") or stripped.startswith("#!["):
+            index += 1
+            continue
+        break
+
+    insert_index = index
+    seen_use = False
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if stripped.startswith("use ") and stripped.endswith(";"):
+            seen_use = True
+            insert_index = index + 1
+            index += 1
+            continue
+        if seen_use and stripped == "":
+            insert_index = index + 1
+            index += 1
+            continue
+        break
+    return insert_index
 
 
 def _remove_unresolved_pub_use_symbol(text: str, symbol: str) -> str:

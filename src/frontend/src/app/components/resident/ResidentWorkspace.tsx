@@ -107,6 +107,8 @@ export function ResidentWorkspace({
   const approvedGoals = resident.goals.filter(g => g.status === 'approved' || g.status === 'materialized');
   const latestInsight = resident.residentInsights?.[0] || null;
   const capabilities = resident.residentCapabilityGraph?.capabilities || [];
+  const agiCapabilitySurface = resident.residentAgiCapabilitySurface;
+  const agiCapabilities = agiCapabilitySurface?.items || [];
 
   const handleCreateGoal = async () => {
     if (!newGoalTitle.trim()) return;
@@ -305,7 +307,7 @@ export function ResidentWorkspace({
                   ) : (
                     <>
                       <div className="text-base font-medium text-white">
-                        {resident.residentIdentity?.name || 'Software Engineering AGI'}
+                        {resident.residentIdentity?.name || 'Resident AGI Supervisor'}
                       </div>
                       <div className="mt-1 text-sm text-slate-400">
                         {resident.residentIdentity?.mission || '尚未设定任务宣言'}
@@ -357,6 +359,43 @@ export function ResidentWorkspace({
                 </CardContent>
               </Card>
             )}
+
+            <Card className="border-slate-800 bg-slate-900/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm text-slate-300">
+                  <Brain className="size-4 text-cyan-400" />
+                  AGI Role 能力面
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <CapabilityMetric label="Role" value={agiCapabilitySurface?.role_id || 'resident_agi'} />
+                  <CapabilityMetric label="Runtime" value={agiCapabilitySurface?.runtime_foundation || 'RoleRuntime / ContextOS / TurnEngine'} />
+                  <CapabilityMetric label="Capabilities" value={String(agiCapabilitySurface?.count ?? agiCapabilities.length)} />
+                </div>
+                <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                  {agiCapabilities.slice(0, 6).map((capability) => (
+                    <div
+                      key={capability.capability_id || capability.name}
+                      className="rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-sm font-medium text-slate-200">{capability.name || '未命名能力'}</span>
+                        <span className="shrink-0 text-[10px] uppercase text-slate-500">{capability.access || 'read_only'}</span>
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {[capability.category, capability.contract_ref].filter(Boolean).join(' · ')}
+                      </div>
+                    </div>
+                  ))}
+                  {agiCapabilities.length === 0 && (
+                    <div className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-500">
+                      暂无能力面投影
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Recent Goals */}
             <div className="space-y-2">
@@ -635,6 +674,17 @@ function EvolutionSection({
   );
 }
 
+function CapabilityMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">{label}</div>
+      <div className="mt-1 truncate text-xs font-medium text-slate-200" title={value}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
 // Simplified Goal Item
 function GoalItem({
   goal,
@@ -752,6 +802,21 @@ function GoalItem({
   );
 }
 
+function decisionString(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return '';
+}
+
+function decisionNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 // Decision Item with Evidence support
 function DecisionItem({
   decision,
@@ -765,6 +830,14 @@ function DecisionItem({
   const isFailure = verdict === 'failure';
   const hasEvidence = Boolean(decision.evidence_bundle_id);
   const [showEvidence, setShowEvidence] = useState(false);
+  const actual = decision.actual_outcome || {};
+  const decisionSource = decisionString(actual.decision_source) || decision.actor || '';
+  const evidenceSchema = decisionString(actual.evidence_schema);
+  const profileSchema = decisionString(actual.execution_profile_schema) || decisionString(actual.profile_schema);
+  const taskCount = decisionNumber(actual.task_count);
+  const hardRuleBlockers = Array.isArray(actual.hard_rule_blockers)
+    ? actual.hard_rule_blockers.map(decisionString).filter(Boolean)
+    : [];
 
   return (
     <Card className="border-slate-800 bg-slate-900/50">
@@ -799,6 +872,43 @@ function DecisionItem({
             </button>
           )}
         </div>
+        <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+          {decision.stage && (
+            <span className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-300">
+              stage: {decision.stage}
+            </span>
+          )}
+          {decisionSource && (
+            <span className="rounded border border-cyan-500/20 bg-cyan-500/10 px-2 py-1 text-cyan-200">
+              source: {decisionSource}
+            </span>
+          )}
+          {evidenceSchema && (
+            <span className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-300">
+              evidence: {evidenceSchema}
+            </span>
+          )}
+          {profileSchema && (
+            <span className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-300">
+              profile: {profileSchema}
+            </span>
+          )}
+          {taskCount !== null && (
+            <span className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-300">
+              tasks: {taskCount}
+            </span>
+          )}
+          {hardRuleBlockers.map((blocker) => (
+            <span key={blocker} className="rounded border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-amber-200">
+              blocker: {blocker}
+            </span>
+          ))}
+        </div>
+        {(decision.context_refs || []).length > 0 && (
+          <div className="mt-2 truncate text-xs text-slate-500" title={(decision.context_refs || []).join(' · ')}>
+            context: {(decision.context_refs || []).slice(0, 3).join(' · ')}
+          </div>
+        )}
       </div>
 
       {showEvidence && decision.decision_id && (

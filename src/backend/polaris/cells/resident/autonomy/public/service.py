@@ -10,11 +10,11 @@ from polaris.cells.audit.evidence.public.service import (
     EvidenceBundleService,
     create_evidence_bundle_service,
 )
-from polaris.cells.resident.autonomy.internal.capability_graph import CapabilityGraph
 from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
     build_resident_agi_capability_surface,
     resident_agi_capability_surface_payload,
 )
+from polaris.cells.resident.autonomy.internal.capability_graph import CapabilityGraph
 from polaris.cells.resident.autonomy.internal.counterfactual_lab import CounterfactualLab
 from polaris.cells.resident.autonomy.internal.decision_trace import DecisionTraceRecorder
 from polaris.cells.resident.autonomy.internal.execution_projection import (
@@ -34,8 +34,8 @@ from polaris.cells.resident.autonomy.internal.resident_storage import ResidentPa
 from polaris.cells.resident.autonomy.internal.self_improvement_lab import SelfImprovementLab
 from polaris.cells.resident.autonomy.internal.skill_foundry import SkillFoundry
 from polaris.cells.resident.autonomy.public.contracts import (
-    QueryResidentStatusV1,
     QueryResidentCapabilitiesV1,
+    QueryResidentStatusV1,
     RecordResidentEvidenceCommandV1,
     ResidentAgiCapabilityV1,
     ResidentAutonomyError,
@@ -196,8 +196,8 @@ __all__ = [
     "QueryResidentCapabilitiesV1",
     "QueryResidentStatusV1",
     "RecordResidentEvidenceCommandV1",
-    "ResidentAgiCapabilityV1",
     "ResidentAgenda",
+    "ResidentAgiCapabilityV1",
     "ResidentAutonomyError",
     "ResidentAutonomyResultV1",
     "ResidentCycleCompletedEventV1",
@@ -217,16 +217,16 @@ __all__ = [
     "StaticAnalysisEvidence",
     "StrategyInsightEngine",
     "TestRunEvidence",
-    "create_evidence_bundle_service",
     "build_resident_agi_capability_surface",
+    "create_evidence_bundle_service",
     "get_evidence_service",
     "get_execution_projection_service",
     "get_resident_service",
     "query_resident_capabilities",
     "query_resident_status",
-    "resident_agi_capability_surface_payload",
     "record_resident_decision",
     "record_resident_evidence",
     "reset_resident_services",
+    "resident_agi_capability_surface_payload",
     "run_resident_cycle",
 ]

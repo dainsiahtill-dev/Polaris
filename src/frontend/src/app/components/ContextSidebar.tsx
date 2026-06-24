@@ -282,7 +282,7 @@ export function ContextSidebar({
                             <div className="flex-1 overflow-auto p-4 space-y-4">
                                 <div className="rounded-xl border border-white/10 bg-black/20 p-4">
                                     <div className="text-[10px] uppercase tracking-[0.24em] text-text-dim">Identity</div>
-                                    <div className="mt-2 text-sm font-semibold text-text-main">{resident?.identity?.name || 'Software Engineering AGI'}</div>
+                                    <div className="mt-2 text-sm font-semibold text-text-main">{resident?.identity?.name || 'Resident AGI Supervisor'}</div>
                                     <div className="mt-1 text-xs text-text-dim">{resident?.identity?.mission || '尚未设定任务宣言'}</div>
                                 </div>
 

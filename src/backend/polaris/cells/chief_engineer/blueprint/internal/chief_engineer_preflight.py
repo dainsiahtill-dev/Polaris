@@ -554,7 +554,8 @@ def build_chief_engineer_resident_decision_payload(
     reason = str(decision.get("reason") or "").strip() or "chief_engineer_decision"
     needs_review = bool(decision.get("needs_review", not proceed))
     decision_source = str(decision.get("decision_source") or "unknown").strip() or "unknown"
-    status_counts = evidence.get("status_counts") if isinstance(evidence.get("status_counts"), Mapping) else {}
+    raw_status_counts = evidence.get("status_counts")
+    status_counts: dict[str, Any] = dict(raw_status_counts) if isinstance(raw_status_counts, Mapping) else {}
     confidence = 0.8 if proceed else 0.62
     if "confidence" in decision:
         try:
@@ -1066,16 +1067,14 @@ def _safe_payload_digest(payload: Any) -> str:
 
 __all__ = [
     "EventEmitter",
-    "ResidentDecisionSupervisor",
-    # New API
     "PreflightContext",
-    "build_chief_engineer_decision_evidence",
-    "build_chief_engineer_resident_decision_payload",
+    "ResidentDecisionSupervisor",
     "_collect_task_scope_modules",
     "_module_key_from_path",
     "_slice_blueprint_for_task",
     "_tail_non_empty_lines",
-    # Legacy API (backward compat)
+    "build_chief_engineer_decision_evidence",
+    "build_chief_engineer_resident_decision_payload",
     "build_task_focused_chief_engineer_payload",
     "chief_engineer_auto_decision",
     "inject_chief_engineer_constraints",

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from .contracts import (
+    QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
     RecordResidentEvidenceCommandV1,
+    ResidentAgiCapabilityV1,
     ResidentAutonomyError,
     ResidentAutonomyResultV1,
     ResidentCycleCompletedEventV1,
@@ -38,12 +40,15 @@ from .service import (
     StaticAnalysisEvidence,
     StrategyInsightEngine,
     TestRunEvidence,
+    build_resident_agi_capability_surface,
     create_evidence_bundle_service,
     get_evidence_service,
     get_execution_projection_service,
     get_resident_service,
+    query_resident_capabilities,
     record_resident_decision,
     reset_resident_services,
+    resident_agi_capability_surface_payload,
 )
 
 __all__ = [
@@ -58,9 +63,11 @@ __all__ = [
     "GoalGovernor",
     "GoalProposal",
     "PerfEvidence",
+    "QueryResidentCapabilitiesV1",
     "QueryResidentStatusV1",
     "RecordResidentEvidenceCommandV1",
     "ResidentAgenda",
+    "ResidentAgiCapabilityV1",
     "ResidentAutonomyError",
     "ResidentAutonomyResultV1",
     "ResidentCycleCompletedEventV1",
@@ -80,10 +87,13 @@ __all__ = [
     "StaticAnalysisEvidence",
     "StrategyInsightEngine",
     "TestRunEvidence",
+    "build_resident_agi_capability_surface",
     "create_evidence_bundle_service",
     "get_evidence_service",
     "get_execution_projection_service",
     "get_resident_service",
+    "query_resident_capabilities",
     "record_resident_decision",
     "reset_resident_services",
+    "resident_agi_capability_surface_payload",
 ]

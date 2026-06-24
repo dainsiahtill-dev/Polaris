@@ -123,6 +123,8 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
     categories = sorted({str(item["category"]) for item in items})
     return {
         "schema_version": "resident.agi_capability_surface.v1",
+        "role_id": "resident_agi",
+        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
         "implementation_cell": "resident.autonomy",
         "product_role": "embedded_agi_supervisor",
         "unattended_factory_role": "replace_human_supervision",

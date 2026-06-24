@@ -10,10 +10,10 @@ from typing import Any
 
 from polaris.cells.audit.evidence.public.service import create_evidence_bundle_service
 from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
-from polaris.cells.resident.autonomy.internal.capability_graph import CapabilityGraph
 from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
     resident_agi_capability_surface_payload,
 )
+from polaris.cells.resident.autonomy.internal.capability_graph import CapabilityGraph
 from polaris.cells.resident.autonomy.internal.counterfactual_lab import CounterfactualLab
 from polaris.cells.resident.autonomy.internal.decision_trace import DecisionTraceRecorder
 

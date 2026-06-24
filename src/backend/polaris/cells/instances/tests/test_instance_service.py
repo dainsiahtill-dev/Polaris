@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+import pytest
 from polaris.cells.instances.internal import service as instance_service
 from polaris.cells.instances.internal.service import (
     InstanceRecord,
@@ -12,6 +13,11 @@ from polaris.cells.instances.internal.service import (
     InstanceSupervisor,
     publish_instances_update,
 )
+
+
+@pytest.fixture(autouse=True)
+def _disable_backend_identity_probe(monkeypatch: Any) -> None:
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_backend_identity", lambda _self, _record: None)
 
 
 def _make_polaris_root(tmp_path: Path) -> Path:
@@ -419,6 +425,106 @@ def test_start_instance_auto_allocates_free_ports_without_claiming_busy_ports(
     assert record["frontend_port"] == 60022
     assert calls[0]["command"][calls[0]["command"].index("--port") + 1] == "60021"
     assert calls[1]["command"][calls[1]["command"].index("--port") + 1] == "60022"
+
+
+def test_start_instance_auto_ports_skip_registered_running_instances(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    registry.save(
+        InstanceRecord(
+            instance_id="existing-bench",
+            name="Existing",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "bench" / "L1-09").resolve()),
+            runtime_root=str((tmp_path / "bench" / "L1-09" / "runtime").resolve()),
+            backend_port=instance_service.DEFAULT_BACKEND_PORT + 1,
+            frontend_port=instance_service.DEFAULT_FRONTEND_PORT + 1,
+            backend_url=f"http://127.0.0.1:{instance_service.DEFAULT_BACKEND_PORT + 1}",
+            frontend_url=f"http://127.0.0.1:{instance_service.DEFAULT_FRONTEND_PORT + 1}",
+            token="existing-token",
+            backend_pid=71001,
+            frontend_pid=71002,
+            status="running",
+        )
+    )
+    calls: list[dict[str, Any]] = []
+
+    class FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+        calls.append({"command": command, **kwargs})
+        return FakeProcess(71010 + len(calls))
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(instance_service, "is_port_free", lambda _port: True)
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
+
+    record = InstanceSupervisor(registry).start_instance(
+        {
+            "instance_id": "new-bench",
+            "kind": "bench_project",
+            "polaris_root": str(root),
+            "workspace": str(tmp_path / "bench" / "L1-10"),
+            "start_frontend": True,
+        }
+    )
+
+    assert record["backend_port"] == instance_service.DEFAULT_BACKEND_PORT + 2
+    assert record["frontend_port"] == instance_service.DEFAULT_FRONTEND_PORT + 2
+    assert calls[0]["command"][calls[0]["command"].index("--port") + 1] == str(
+        instance_service.DEFAULT_BACKEND_PORT + 2
+    )
+
+
+def test_start_instance_rejects_explicit_registered_backend_port(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    registry.save(
+        InstanceRecord(
+            instance_id="existing-explicit",
+            name="Existing",
+            kind="project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "project-a").resolve()),
+            runtime_root=str((tmp_path / "project-a" / "runtime").resolve()),
+            backend_port=60231,
+            frontend_port=0,
+            backend_url="http://127.0.0.1:60231",
+            frontend_url="",
+            token="existing-token",
+            backend_pid=72001,
+            frontend_pid=None,
+            start_frontend=False,
+            status="running",
+        )
+    )
+    monkeypatch.setattr(instance_service, "is_port_free", lambda _port: True)
+
+    try:
+        InstanceSupervisor(registry).start_instance(
+            {
+                "instance_id": "new-explicit",
+                "kind": "project",
+                "polaris_root": str(root),
+                "workspace": str(tmp_path / "project-b"),
+                "backend_port": 60231,
+                "start_frontend": False,
+            }
+        )
+    except RuntimeError as exc:
+        assert "backend port is already in use: 60231" in str(exc)
+    else:
+        raise AssertionError("explicit registered backend port must fail closed")
 
 
 def test_start_instance_restarts_alive_record_when_workspace_changes(tmp_path: Path, monkeypatch: Any) -> None:

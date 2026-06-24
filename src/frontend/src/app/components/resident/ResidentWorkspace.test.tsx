@@ -62,8 +62,8 @@ const mockResidentState = {
     last_tick_at: '2026-03-07T00:00:00Z',
   },
   residentIdentity: {
-    name: 'Software Engineering AGI',
-    mission: 'Ship governed software engineering improvements',
+    name: 'Resident AGI Supervisor',
+    mission: 'Supervise unattended Polaris development runs with governed evidence.',
     owner: 'human',
     operating_mode: 'propose',
   },
@@ -111,6 +111,29 @@ const mockResidentState = {
     ],
     gaps: ['shadow-runtime-promotion'],
   },
+  residentAgiCapabilitySurface: {
+    schema_version: 'resident.agi_capability_surface.v1',
+    role_id: 'resident_agi',
+    runtime_foundation: 'RoleRuntime / ContextOS / TurnEngine',
+    implementation_cell: 'resident.autonomy',
+    count: 2,
+    items: [
+      {
+        capability_id: 'contextos.final_request_audit.read',
+        name: 'Final provider-request audit',
+        category: 'llm_audit',
+        access: 'read_only',
+        contract_ref: 'roles.final_request_context_audit',
+      },
+      {
+        capability_id: 'run_ledger.read',
+        name: 'Run Ledger projection',
+        category: 'run_ledger',
+        access: 'read_only',
+        contract_ref: 'control_plane.run_ledger',
+      },
+    ],
+  },
   refresh: vi.fn(),
   isActing: vi.fn(() => false),
   start: vi.fn(),
@@ -149,9 +172,11 @@ describe('ResidentWorkspace', () => {
     );
 
     expect(screen.getByText('AGI 工作区')).toBeInTheDocument();
-    expect(screen.getByText('Software Engineering AGI')).toBeInTheDocument();
+    expect(screen.getByText('Resident AGI Supervisor')).toBeInTheDocument();
     expect(screen.getByText('最新元认知')).toBeInTheDocument();
     expect(screen.getByText('Task decomposition')).toBeInTheDocument();
+    expect(screen.getByText('AGI Role 能力面')).toBeInTheDocument();
+    expect(screen.getByText('Final provider-request audit')).toBeInTheDocument();
   });
 
   it('creates a goal from the AGI console', async () => {

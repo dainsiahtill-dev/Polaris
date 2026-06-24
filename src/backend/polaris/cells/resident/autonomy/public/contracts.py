@@ -173,8 +173,8 @@ class ResidentAutonomyError(RuntimeError):
 
 
 __all__ = [
-    "QueryResidentStatusV1",
     "QueryResidentCapabilitiesV1",
+    "QueryResidentStatusV1",
     "RecordResidentEvidenceCommandV1",
     "ResidentAgiCapabilityV1",
     "ResidentAutonomyError",

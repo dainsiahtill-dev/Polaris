@@ -35,6 +35,7 @@ INSTANCE_WATCHDOG_INTERVAL_ENV = "POLARIS_INSTANCE_WATCHDOG_INTERVAL_SECONDS"
 DEFAULT_WATCHDOG_INTERVAL_SECONDS = 2.0
 PROCESS_TERMINATE_TIMEOUT_SECONDS = 5.0
 PORT_RELEASE_TIMEOUT_SECONDS = 8.0
+BACKEND_IDENTITY_TIMEOUT_SECONDS = 75.0
 
 logger = logging.getLogger(__name__)
 
@@ -88,10 +89,11 @@ def is_port_free(port: int, host: str = DEFAULT_HOST) -> bool:
         return sock.connect_ex((host, port)) != 0
 
 
-def allocate_port(start: int) -> int:
+def allocate_port(start: int, *, excluded_ports: set[int] | None = None) -> int:
+    excluded = excluded_ports or set()
     port = max(1024, int(start))
     while port < 65535:
-        if is_port_free(port):
+        if port not in excluded and is_port_free(port):
             return port
         port += 1
     raise RuntimeError("no free local port available")
@@ -112,10 +114,13 @@ def _choose_instance_port(
     *,
     start: int,
     reserved_max: int,
+    excluded_ports: set[int] | None = None,
 ) -> tuple[int, bool]:
     """Choose an instance port, ignoring requests that collide with reserved ports."""
     port = _coerce_requested_port(requested_port)
     if port is None or port <= reserved_max:
+        if excluded_ports:
+            return allocate_port(start, excluded_ports=excluded_ports), False
         return allocate_port(start), False
     return port, True
 
@@ -360,10 +365,16 @@ class InstanceSupervisor:
 
         instance_dir = self._instance_dir(record.instance_id)
         log_dir = ensure_absolute_dir(instance_dir / "logs")
-        backend_pid = self._start_backend(record, log_dir / "backend.log")
-        record.backend_pid = backend_pid
-        if record.start_frontend:
-            record.frontend_pid = self._start_frontend(record, log_dir / "frontend.log")
+        try:
+            backend_pid = self._start_backend(record, log_dir / "backend.log")
+            record.backend_pid = backend_pid
+            self._wait_for_backend_identity(record)
+            if record.start_frontend:
+                record.frontend_pid = self._start_frontend(record, log_dir / "frontend.log")
+        except Exception:
+            self._terminate_pid(record.frontend_pid)
+            self._terminate_pid(record.backend_pid)
+            raise
         record.status = "running"
         record.last_started_at = utc_timestamp()
         self.registry.save(record)
@@ -380,6 +391,18 @@ class InstanceSupervisor:
             and Path(existing.runtime_root).resolve() == Path(requested.runtime_root).resolve()
             and existing_binding == requested_binding
         )
+
+    def _registered_ports(self, exclude_instance_id: str, *, port_kind: str) -> set[int]:
+        ports: set[int] = set()
+        for record in self.registry.list_records():
+            if record.instance_id == exclude_instance_id:
+                continue
+            if record.status not in {"running", "starting", "observed"}:
+                continue
+            port = record.backend_port if port_kind == "backend" else record.frontend_port
+            if port > 0:
+                ports.add(int(port))
+        return ports
 
     def _terminate_record_processes_for_replacement(self, record: InstanceRecord) -> None:
         if self._pid_looks_like_instance_process(record, record.frontend_pid, process_kind="frontend"):
@@ -472,21 +495,27 @@ class InstanceSupervisor:
         requested_backend_port = request.get("backend_port")
         requested_frontend_port = request.get("frontend_port")
         is_bench_project = kind == "bench_project"
+        excluded_backend_ports = self._registered_ports(instance_id, port_kind="backend")
+        excluded_frontend_ports = self._registered_ports(instance_id, port_kind="frontend")
         backend_port_start = DEFAULT_BACKEND_PORT + 1 if is_bench_project else DEFAULT_BACKEND_PORT
         frontend_port_start = DEFAULT_FRONTEND_PORT + 1 if is_bench_project else DEFAULT_FRONTEND_PORT
         backend_port, backend_requested = _choose_instance_port(
             requested_backend_port,
             start=backend_port_start,
             reserved_max=DEFAULT_BACKEND_PORT if is_bench_project else 0,
+            excluded_ports=excluded_backend_ports,
         )
         frontend_port, frontend_requested = _choose_instance_port(
             requested_frontend_port,
             start=frontend_port_start,
             reserved_max=DEFAULT_FRONTEND_PORT if is_bench_project else 0,
+            excluded_ports=excluded_frontend_ports,
         )
-        if backend_requested and not is_port_free(backend_port):
+        if backend_requested and (backend_port in excluded_backend_ports or not is_port_free(backend_port)):
             raise RuntimeError(f"backend port is already in use: {backend_port}")
-        if request.get("start_frontend", True) and frontend_requested and not is_port_free(frontend_port):
+        if request.get("start_frontend", True) and frontend_requested and (
+            frontend_port in excluded_frontend_ports or not is_port_free(frontend_port)
+        ):
             raise RuntimeError(f"frontend port is already in use: {frontend_port}")
         token = str(request.get("token") or f"polaris-{secrets.token_urlsafe(18)}")
         bench = request.get("bench")
@@ -698,6 +727,46 @@ class InstanceSupervisor:
             self._wait_for_port_free(record.backend_port)
         if record.start_frontend and record.frontend_pid and record.frontend_port > 0:
             self._wait_for_port_free(record.frontend_port)
+
+    @staticmethod
+    def _read_backend_workspace(record: InstanceRecord) -> str | None:
+        request = urllib.request.Request(
+            f"{record.backend_url}/settings",
+            headers={"Authorization": f"Bearer {record.token}"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=1.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        workspace = payload.get("workspace")
+        return str(workspace) if isinstance(workspace, str) and workspace else None
+
+    def _wait_for_backend_identity(
+        self,
+        record: InstanceRecord,
+        *,
+        timeout_seconds: float = BACKEND_IDENTITY_TIMEOUT_SECONDS,
+    ) -> None:
+        deadline = time.monotonic() + timeout_seconds
+        expected_workspace = str(Path(record.workspace).resolve())
+        while time.monotonic() < deadline:
+            observed_workspace = self._read_backend_workspace(record)
+            if observed_workspace:
+                resolved_observed = str(Path(observed_workspace).resolve())
+                if resolved_observed == expected_workspace:
+                    return
+                raise RuntimeError(
+                    "backend identity mismatch: "
+                    f"port {record.backend_port} serves workspace {resolved_observed}, "
+                    f"expected {expected_workspace}"
+                )
+            if record.backend_pid and not is_process_alive(record.backend_pid):
+                raise RuntimeError(f"backend process exited before identity check: {record.backend_pid}")
+            time.sleep(0.2)
+        raise RuntimeError(f"backend identity check timed out for port {record.backend_port}")
 
     @staticmethod
     def _signal_pid(pid: int, sig: signal.Signals) -> None:

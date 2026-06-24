@@ -164,6 +164,7 @@ export function useResident(options: UseResidentOptions = {}) {
     residentExperiments: summary?.experiments ?? [],
     residentImprovements: summary?.improvements ?? [],
     residentCapabilityGraph: summary?.capability_graph ?? null,
+    residentAgiCapabilitySurface: summary?.agi_capability_surface ?? null,
     refresh,
     isActing: (key: string) => actionKey === key,
     start: (mode: string) =>

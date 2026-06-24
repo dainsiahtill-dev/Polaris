@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs.rust_repairs import (
     _apply_deterministic_rust_crate_import_repair,
     _apply_deterministic_rust_dependency_repair,
+    _apply_deterministic_rust_trait_import_repair,
     _apply_deterministic_rust_unresolved_pub_use_repair,
 )
 
@@ -106,3 +107,40 @@ def test_deterministic_rust_unresolved_pub_use_repair_removes_invalid_exports(tm
     assert results
     assert "pub use engine::Engine;" not in repaired
     assert "pub use models::{Ingredient, Recipe};" in repaired
+
+
+def test_deterministic_rust_trait_import_repair_uses_rustc_suggestion(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "kitchen-taste-palette"\n', encoding="utf-8")
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "engine" / "mod.rs").write_text(
+        "pub mod mapper;\n\n"
+        "pub struct Engine {\n"
+        "    generator: mapper::WeightedPaletteGenerator,\n"
+        "}\n\n"
+        "impl Engine {\n"
+        "    pub fn generate(&self) {\n"
+        "        self.generator.generate();\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_rust_trait_import_repair(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task_id="factory-quality-gate:test",
+        artifact_quality_errors=[
+            "error[E0599]: no method named `generate` found for struct `WeightedPaletteGenerator` in the current scope\n"
+            "  --> src/engine/mod.rs:9:24\n"
+            "   |\n"
+            "help: trait `PaletteGenerator` which provides `generate` is implemented but not in scope; perhaps you want to import it\n"
+            "   |\n"
+            "1  + use crate::engine::mapper::PaletteGenerator;\n"
+            "   |\n"
+        ],
+    )
+
+    repaired = (tmp_path / "src" / "engine" / "mod.rs").read_text(encoding="utf-8")
+    assert results
+    assert results[0]["result"]["source_tool"] == "deterministic_rust_trait_import_repair"
+    assert repaired.startswith("use crate::engine::mapper::PaletteGenerator;\n")
+    assert repaired.count("use crate::engine::mapper::PaletteGenerator;") == 1
