@@ -397,8 +397,6 @@ class InstanceSupervisor:
         for record in self.registry.list_records():
             if record.instance_id == exclude_instance_id:
                 continue
-            if record.status not in {"running", "starting", "observed"}:
-                continue
             port = record.backend_port if port_kind == "backend" else record.frontend_port
             if port > 0:
                 ports.add(int(port))

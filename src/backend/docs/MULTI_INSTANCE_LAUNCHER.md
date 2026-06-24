@@ -142,6 +142,13 @@ silently choosing a different port or returning success. Registry records that
 only observe a shared backend and do not own a process pid must not wait for the
 shared main port to become free.
 
+Automatic port allocation must avoid every port already declared by another
+registry record, including stopped internal test records. Operators should
+delete stale internal records before intentionally reusing their ports. After a
+backend process starts, Launcher must verify identity through
+`/settings.workspace` using that instance's token; `/health` alone is not enough
+because it can accidentally hit an older backend still bound to the same port.
+
 ## Bench Boundary
 
 `factory_bench`, L1-L12 catalogs, and benchmark harnesses are internal
