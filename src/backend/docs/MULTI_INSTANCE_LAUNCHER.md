@@ -56,6 +56,11 @@ shared backend in observed mode. That registration is only a test-observation
 surface; it does not prove that the project is running as an isolated production
 instance.
 
+When such an observed bench entry is restarted from the Launcher/API, the
+supervisor must promote it to an isolated instance by allocating fresh backend
+and frontend ports. It must not reuse the shared backend port from the observed
+registration.
+
 ## Startup Paths
 
 Instances may be registered by more than one path:
@@ -66,6 +71,24 @@ Instances may be registered by more than one path:
 
 The registry is the shared discovery mechanism, so an instance started by an
 agent or internal runner is visible in the Launcher UI.
+
+For internal factory_bench pressure tests, the runner supports two Launcher
+instance modes:
+
+- `isolated` (default): start a project-scoped backend/frontend instance and run
+  that project's Factory chain against the instance backend. Use this for
+  parallel multi-agent bench work, because each project gets its own workspace,
+  runtime root, WebSocket stream, and ContextOS surface.
+- `observed`: register a `bench_project` record pointing at the shared backend
+  after switching that backend to the project workspace. This exists only for
+  explicit lightweight observation and backwards-compatible serial testing. It
+  is not safe for multiple concurrent bench agents sharing one backend.
+
+```bash
+python src/backend/scripts/factory_bench/run_factory_bench.py \
+  --project-ids L1-04 \
+  --launcher-instance-mode isolated
+```
 
 Every registry write emits a best-effort runtime.v2 event:
 

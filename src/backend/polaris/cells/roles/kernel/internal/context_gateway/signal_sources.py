@@ -108,7 +108,8 @@ class SignalSourceProvider:
         try:
             from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 
-            task = TaskRuntimeService(str(self._workspace)).get_task(task_id)
+            service = TaskRuntimeService(str(self._workspace))
+            task = service.get_task(task_id)
 
             if not task:
                 return None
@@ -127,11 +128,67 @@ class SignalSourceProvider:
                 else:
                     history.append(f"描述: {desc}...")
 
+            # D-13: 任务依赖图（上游/下游）
+            dep_graph = self._build_dependency_graph(service, task)
+            if dep_graph:
+                history.append("")
+                history.append(dep_graph)
+
             return "\n".join(history)
 
         except (RuntimeError, ValueError) as e:
             logger.debug(f"获取任务历史失败: {e}")
             return None
+
+    def _build_dependency_graph(self, service: Any, task: dict[str, Any]) -> str | None:
+        """构建任务依赖图（上游/下游）。"""
+        task_id = task.get("id")
+        if task_id is None:
+            return None
+
+        # 上游：blocked_by
+        upstream_ids: list[int] = task.get("blocked_by") or task.get("blockedBy") or []
+
+        # 下游：扫描所有任务找 blocked_by 含本 task_id 的
+        downstream: list[dict[str, Any]] = []
+        try:
+            all_tasks = service.list_all()
+            for other in all_tasks:
+                other_dict = other.to_dict()
+                other_blocked_by: list[int] = other_dict.get("blocked_by") or other_dict.get("blockedBy") or []
+                if int(task_id) in other_blocked_by:
+                    downstream.append(other_dict)
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"获取下游任务失败: {e}")
+
+        if not upstream_ids and not downstream:
+            return None
+
+        lines = ["【任务依赖图】"]
+
+        # 渲染上游
+        if upstream_ids:
+            lines.append("上游（必须先完成）:")
+            for dep_id in upstream_ids:
+                dep_task = service.get_task(dep_id)
+                if dep_task:
+                    lines.append(f"  - {dep_id}: {dep_task.get('status', '?')} - {dep_task.get('subject', 'N/A')}")
+                else:
+                    lines.append(f"  - {dep_id}: (不存在)")
+        else:
+            lines.append("上游: 无")
+
+        # 渲染下游
+        if downstream:
+            lines.append("下游（被本任务阻塞）:")
+            for dep_task in downstream:
+                lines.append(
+                    f"  - {dep_task.get('id', '?')}: {dep_task.get('status', '?')} - {dep_task.get('subject', 'N/A')}"
+                )
+        else:
+            lines.append("下游: 无")
+
+        return "\n".join(lines)
 
     def get_blueprint_overview(self, task_id: str) -> str | None:
         """读取本任务最新蓝图概览（ChiefEngineer 角色专属信号的数据源）。
@@ -171,6 +228,64 @@ class SignalSourceProvider:
             return render_verdict_history(result)
         except Exception as exc:  # noqa: BLE001 - 数据源失败必须优雅降级为不注入
             logger.debug(f"获取判定历史失败: {exc}")
+            return None
+
+    def get_file_ownership(self) -> str | None:
+        """读取最近文件修改历史（D-11 并行 Director 文件归属信号的数据源）。
+
+        从 workspace 的 .polaris/runtime/file-edits/events.jsonl 读取最近的写事件，
+        提取文件路径和时间戳。任何失败/缺失 → None（不注入）。
+        """
+        try:
+            import json
+
+            event_file = self._workspace.resolve() / ".polaris" / "runtime" / "file-edits" / "events.jsonl"
+            if not event_file.exists():
+                return None
+
+            # 读取最后 50 行（最近的事件）
+            lines = event_file.read_text(encoding="utf-8").strip().splitlines()
+            if not lines:
+                return None
+
+            recent_lines = lines[-50:] if len(lines) > 50 else lines
+
+            # 解析事件并提取文件路径
+            events: list[dict[str, Any]] = []
+            for line in recent_lines:
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                    payload = event.get("payload") or {}
+                    file_path = payload.get("file_path")
+                    operation = payload.get("operation", "modify")
+                    timestamp = payload.get("timestamp", "")
+                    if file_path:
+                        events.append(
+                            {
+                                "file_path": file_path,
+                                "operation": operation,
+                                "timestamp": timestamp,
+                            }
+                        )
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    continue
+
+            if not events:
+                return None
+
+            # 格式化为人类可读的列表
+            rendered_lines = ["以下文件最近被其他 worker 修改（避免冲突）："]
+            for event in events[-20:]:  # 最多显示 20 个
+                op = event.get("operation", "modify")
+                ts = event.get("timestamp", "")[:19]  # 截取到秒
+                fp = event.get("file_path", "")
+                rendered_lines.append(f"- [{op}] {fp} ({ts})")
+
+            return "\n".join(rendered_lines)
+        except (OSError, RuntimeError, ValueError, TypeError) as e:
+            logger.debug(f"文件归属信号构建失败: {e}")
             return None
 
     def estimate_signal_budget_pressure(self, projection: Any, request: ContextRequest) -> bool:

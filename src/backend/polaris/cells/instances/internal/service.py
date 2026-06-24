@@ -301,7 +301,7 @@ class InstanceSupervisor:
 
     def restart_instance(self, instance_id: str) -> dict[str, Any]:
         record = self._require_record(instance_id)
-        payload = record.to_dict()
+        payload = self._restart_payload(record)
         self.stop_instance(instance_id)
         return self.start_instance(payload)
 
@@ -364,6 +364,28 @@ class InstanceSupervisor:
             bench=bench_payload,
             metadata=metadata_payload,
         )
+
+    @staticmethod
+    def _restart_payload(record: InstanceRecord) -> dict[str, Any]:
+        payload = record.to_dict()
+        backend_binding = record.metadata.get("backend_binding")
+        if record.kind == "bench_project" and backend_binding == "isolated_backend_instance":
+            payload["backend_reload"] = False
+        if backend_binding == "shared_backend_workspace_switch":
+            metadata = dict(record.metadata)
+            metadata["promoted_from_backend_binding"] = "shared_backend_workspace_switch"
+            metadata["backend_binding"] = "isolated_backend_instance"
+            payload.update(
+                {
+                    "backend_port": None,
+                    "frontend_port": None,
+                    "backend_reload": False,
+                    "frontend_vite": True,
+                    "start_frontend": True,
+                    "metadata": metadata,
+                }
+            )
+        return payload
 
     def _start_backend(self, record: InstanceRecord, log_path: Path) -> int:
         backend_root = Path(record.polaris_root) / "src" / "backend"

@@ -52,7 +52,9 @@ function toDirectorPriority(task: PmTask): 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW
 }
 
 function normalizePmTaskId(task: PmTask): string {
-  return String(task.id || '').trim();
+  const raw = String(task.id || '').trim();
+  // Strip backend-generated TASK- prefixes (TASK-1, task_1, task-1, etc.)
+  return raw.replace(/^(?:task[-_])/i, '');
 }
 
 function toStringList(value: unknown): string[] {

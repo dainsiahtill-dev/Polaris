@@ -27,6 +27,8 @@
 - 需要被总控观测的 CLI/Agent/内部测试启动项必须通过 `python -m polaris.delivery.cli.backend serve --register-instance ...` 或 `/v2/instances` 注册。
 - Instance Registry 只是发现/运维视图，不是 PM、Chief Engineer、Director、QA、ContextOS、ReceiptStore 或 Run Ledger 的事实源。
 - `factory_bench` / L1-L12 只属于内部测试态；可以注册 `kind=bench_project` 供总控观测。共享后端注册只能视为可观测测试实例，不能冒充独立生产实例，也不得把 Bench 语义写成生产项目模型。
+- `metadata.backend_binding=shared_backend_workspace_switch` 的 `bench_project` 执行 restart/独立启动时必须分配新 backend/frontend 端口，禁止复用共享 backend 端口。
+- 多 Agent 并行跑 `factory_bench` 时 runner 默认必须是 `isolated`，确保每个项目的 Factory run 打到独立 backend；`observed` 只能显式用于轻量观测和串行兼容测试。
 - Launcher 实时状态只走 runtime.v2 WebSocket `status.instances`，禁止新增 HTTP polling 或文件轮询。
 
 ## 3. 最小必要规则

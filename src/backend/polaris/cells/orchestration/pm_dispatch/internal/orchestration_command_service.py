@@ -384,12 +384,82 @@ def _director_role_entry_metadata(
 
 
 def _director_role_entry_input(task_id: str, task_payload: dict[str, Any] | None) -> str:
+    """Build Director user message with full PM task contract injection (D-09)."""
     payload = task_payload or {}
     title = str(payload.get("title") or payload.get("subject") or task_id).strip() or task_id
     goal = str(payload.get("goal") or payload.get("description") or "").strip()
+
+    # Base message
     if goal and goal != title:
-        return f"Execute PM task {task_id}: {title}\nGoal: {goal}"
-    return f"Execute PM task {task_id}: {title}"
+        base = f"Execute PM task {task_id}: {title}\nGoal: {goal}"
+    else:
+        base = f"Execute PM task {task_id}: {title}"
+
+    # Build PM task contract section (D-09)
+    contract_section = _build_pm_task_contract_section(payload)
+    if contract_section:
+        return f"{base}\n\n{contract_section}"
+    return base
+
+
+def _build_pm_task_contract_section(payload: dict[str, Any]) -> str:
+    """Build structured PM task contract section for Director prompt context (D-09).
+
+    Extracts acceptance_criteria, execution_checklist, target_files, scope_paths,
+    and dependencies from the task payload and formats them as a clear section
+    for the Director's user message.
+
+    Args:
+        payload: PM task payload dict (from pipeline_ports / task board row).
+
+    Returns:
+        Formatted contract section string, or empty string if no structured
+        fields are present.
+    """
+    sections: list[str] = []
+
+    # Acceptance criteria
+    acceptance = payload.get("acceptance_criteria") or []
+    if isinstance(acceptance, list) and acceptance:
+        items = [str(item).strip() for item in acceptance if str(item).strip()]
+        if items:
+            criteria_text = "\n".join(f"- {item}" for item in items)
+            sections.append(f"验收标准:\n{criteria_text}")
+
+    # Execution checklist
+    checklist = payload.get("execution_checklist") or []
+    if isinstance(checklist, list) and checklist:
+        items = [str(item).strip() for item in checklist if str(item).strip()]
+        if items:
+            checklist_text = "\n".join(f"- {item}" for item in items)
+            sections.append(f"执行步骤:\n{checklist_text}")
+
+    # Target files
+    target_files = payload.get("target_files") or []
+    if isinstance(target_files, list) and target_files:
+        files = [str(f).strip() for f in target_files if str(f).strip()]
+        if files:
+            sections.append(f"目标文件: {', '.join(files)}")
+
+    # Scope paths
+    scope_paths = payload.get("scope_paths") or []
+    if isinstance(scope_paths, list) and scope_paths:
+        paths = [str(p).strip() for p in scope_paths if str(p).strip()]
+        if paths:
+            sections.append(f"作用域: {', '.join(paths)}")
+
+    # Dependencies (supports both "dependencies" and "depends_on" keys)
+    dependencies = payload.get("dependencies") or payload.get("depends_on") or []
+    if isinstance(dependencies, list) and dependencies:
+        deps = [str(d).strip() for d in dependencies if str(d).strip()]
+        if deps:
+            sections.append(f"依赖: {', '.join(deps)}")
+
+    if not sections:
+        return ""
+
+    header = "【PM 任务合同】"
+    return f"{header}\n" + "\n".join(sections)
 
 
 @dataclass

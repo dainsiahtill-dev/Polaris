@@ -106,6 +106,8 @@ class ProjectionDictBuilder:
                 "include_scout_anchors": bool(getattr(gateway.policy, "include_scout_anchors", True)),
                 # 施工步骤蓝图（三层裂变 I2）：弱执行者局部上帝视角,默认开启。
                 "include_blueprint_step": bool(getattr(gateway.policy, "include_blueprint_step", True)),
+                # 文件归属信号（D-11）：并行 Director 文件修改历史,默认开启。
+                "include_file_ownership": bool(getattr(gateway.policy, "include_file_ownership", True)),
             },
             get_project_structure=gateway._get_project_structure,
             get_task_history=gateway._get_task_history,
@@ -117,6 +119,8 @@ class ProjectionDictBuilder:
             # verdict_history 同样只走配置注入的数据源，避免 kernel 反向依赖 QA owner Cell。
             get_verdict_history=lambda: gateway._get_verdict_history(str(request.task_id or "")),
             get_blueprint_step=lambda: gateway._get_blueprint_step(request),
+            # file_ownership 读取 workspace 内的 file-edits/events.jsonl（D-11）。
+            get_file_ownership=gateway._get_file_ownership,
         )
         # 跨 turn freshness 记忆（按 task_id）：压力下断流"自上次注入未变化"的 nice-to-have，
         # 把窗口让给即时工具结果。无压力时 budget_pressure=False → 不断流 → 与旧实现逐字节一致。

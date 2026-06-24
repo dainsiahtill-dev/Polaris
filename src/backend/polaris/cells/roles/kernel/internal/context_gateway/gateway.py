@@ -923,6 +923,10 @@ class RoleContextGateway:
         """Backward-compatible delegate to SignalSourceProvider.get_scout_anchors."""
         return self._signal_sources.get_scout_anchors()
 
+    def _get_file_ownership(self) -> str | None:
+        """Backward-compatible delegate to SignalSourceProvider.get_file_ownership."""
+        return self._signal_sources.get_file_ownership()
+
     def _get_task_history(self, task_id: str) -> str | None:
         """Backward-compatible delegate to SignalSourceProvider.get_task_history."""
         return self._signal_sources.get_task_history(task_id)

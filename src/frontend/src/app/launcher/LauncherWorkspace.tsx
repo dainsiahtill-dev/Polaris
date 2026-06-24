@@ -45,6 +45,14 @@ function statusTone(instance: PolarisInstance): 'success' | 'warning' | 'error' 
   return 'default';
 }
 
+function usesSharedBackendBinding(instance: PolarisInstance): boolean {
+  return String(instance.metadata?.backend_binding || '') === 'shared_backend_workspace_switch';
+}
+
+function restartActionLabel(instance: PolarisInstance): string {
+  return usesSharedBackendBinding(instance) ? '独立启动' : '重启';
+}
+
 function basename(path: string): string {
   const normalized = String(path || '').replace(/\\/g, '/').replace(/\/+$/, '');
   return normalized.split('/').filter(Boolean).pop() || normalized || 'workspace';
@@ -345,7 +353,7 @@ export function LauncherWorkspace() {
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => void runAction(instance, 'restart')} disabled={Boolean(actionId)}>
                     <RotateCcw className="h-3.5 w-3.5" />
-                    重启
+                    {restartActionLabel(instance)}
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => void runAction(instance, 'stop')} disabled={Boolean(actionId)}>
                     <Square className="h-3.5 w-3.5" />

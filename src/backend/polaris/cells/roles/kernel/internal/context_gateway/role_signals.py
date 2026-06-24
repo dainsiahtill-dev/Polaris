@@ -88,6 +88,9 @@ class SignalBuildContext:
     get_scout_anchors: Callable[[], str | None] = _none_accessor
     # 三层裂变(I2): 当前 construction_step 的有界蓝图智能(签名/接口/verify)。
     get_blueprint_step: Callable[[], str | None] = _none_accessor
+    # 文件归属信号(D-11): 其他并行 Director 最近修改的文件列表。
+    # 防止并发写覆盖。默认 None-accessor → 不注入。
+    get_file_ownership: Callable[[], str | None] = _none_accessor
 
 
 class RoleContextSignal(Protocol):
@@ -193,7 +196,18 @@ class BlueprintOverviewSignal:
     def build(self, ctx: SignalBuildContext) -> SignalBlock | None:
         overview = ctx.get_blueprint_overview()
         if not overview:
-            return None
+            # D-10: Synthesize minimal guidance from available data when CE hasn't run.
+            fallback = self._build_degraded_fallback(ctx)
+            if fallback is None:
+                return None
+            return SignalBlock(
+                id=self.id,
+                content=fallback,
+                priority=10,
+                level=_NICE_TO_HAVE,
+                freshness_key=_freshness_of(fallback),
+                max_chars=DEFAULT_PER_SIGNAL_CHAR_CAP,
+            )
         content = f"【蓝图/技术架构】\n{overview}"
         return SignalBlock(
             id=self.id,
@@ -203,6 +217,60 @@ class BlueprintOverviewSignal:
             freshness_key=_freshness_of(overview),
             max_chars=DEFAULT_PER_SIGNAL_CHAR_CAP,  # 蓝图可能很大 → 超限自动卸载
         )
+
+    @staticmethod
+    def _build_degraded_fallback(ctx: SignalBuildContext) -> str | None:
+        """Synthesize minimal architectural guidance when CE blueprint is absent.
+
+        Extracts target files and context from task history and project structure
+        so Director still gets basic orientation instead of zero guidance.
+        Returns None only if no useful data is available at all.
+        """
+        lines: list[str] = []
+
+        # Collect target file hints from task history.
+        task_files: list[str] = []
+        if ctx.task_id:
+            history = ctx.get_task_history(ctx.task_id)
+            if history:
+                for line in history.splitlines():
+                    stripped = line.strip()
+                    # Heuristic: lines referencing file paths or "file:" markers.
+                    if any(tok in stripped for tok in (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs")):
+                        task_files.append(stripped)
+
+        # Collect top-level structure hints from project structure.
+        structure_files: list[str] = []
+        structure = ctx.get_project_structure()
+        if structure:
+            for line in structure.splitlines():
+                stripped = line.strip()
+                if any(tok in stripped for tok in (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs")):
+                    structure_files.append(stripped)
+
+        # If nothing useful was extracted, still emit a minimal guidance block.
+        lines.append("【蓝图/技术架构（降级）】")
+        lines.append("无 CE 蓝图可用。基于任务描述和项目结构推断：")
+
+        if task_files:
+            shown = task_files[:8]
+            lines.append("- 任务相关文件:")
+            for f in shown:
+                lines.append(f"    {f}")
+
+        if structure_files:
+            shown = structure_files[:8]
+            lines.append("- 项目关键文件:")
+            for f in shown:
+                lines.append(f"    {f}")
+
+        if not task_files and not structure_files:
+            lines.append("- 目标文件: 无法从现有数据推断")
+
+        lines.append("- 建议: 先读取已有文件理解接口，再实现新功能。")
+        lines.append("- 注意: 此为降级推断，非 CE 权威蓝图。跨文件类型一致性需自行保证。")
+
+        return "\n".join(lines)
 
 
 class BlueprintStepsSignal:
@@ -339,6 +407,41 @@ class ScoutAnchorsSignal:
         )
 
 
+class FileOwnershipSignal:
+    """Director 专属：并行 worker 最近修改的文件归属信号（D-11）。
+
+    role-bound（仅 director）+ flag-gated（``include_file_ownership``，
+    Director 默认 True）。数据经 ``get_file_ownership`` 访问器获取
+    （缺省 None → 不注入）。priority 12，在 verdict_history(11) 之后。
+
+    解决缺陷 D-11：多个并行 Director 同时工作时，彼此不知道对方已修改哪些文件，
+    导致后写覆盖先写、或两个 worker 同时编辑同一文件产生冲突。本信号把近期
+    文件修改历史注入 Director 上下文，使其能感知并规避其他 worker 的产出。
+    """
+
+    id = "file_ownership"
+
+    def applies_to(self, ctx: SignalBuildContext) -> bool:
+        return ctx.role == "director" and bool(ctx.policy_flags.get("include_file_ownership", True))
+
+    def priority(self, ctx: SignalBuildContext) -> int:
+        return 12
+
+    def build(self, ctx: SignalBuildContext) -> SignalBlock | None:
+        ownership = ctx.get_file_ownership()
+        if not ownership:
+            return None
+        content = f"【并行文件归属】\n{ownership}"
+        return SignalBlock(
+            id=self.id,
+            content=content,
+            priority=12,
+            level=_NICE_TO_HAVE,
+            freshness_key=_freshness_of(ownership),
+            max_chars=DEFAULT_PER_SIGNAL_CHAR_CAP,
+        )
+
+
 # 默认注册表：seed（全角色）+ 角色专属（role+flag 双门控，默认 flag 关 → 不影响 baseline）。
 DEFAULT_SIGNAL_PROVIDERS: tuple[RoleContextSignal, ...] = (
     ProjectStructureSignal(),
@@ -348,6 +451,7 @@ DEFAULT_SIGNAL_PROVIDERS: tuple[RoleContextSignal, ...] = (
     BlueprintOverviewSignal(),
     BlueprintStepsSignal(),
     VerdictHistorySignal(),
+    FileOwnershipSignal(),
 )
 
 

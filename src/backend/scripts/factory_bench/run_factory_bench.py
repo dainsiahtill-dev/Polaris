@@ -28,6 +28,8 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid as _uuid
 from collections.abc import Mapping
 from pathlib import Path
@@ -72,6 +74,7 @@ _FIXTURE = Path(__file__).resolve().parent / "projects_v2.json"
 _BACKEND_ROOT = Path("/home/dains/Documents/polaris/src/backend")
 _REPO_ROOT = _BACKEND_ROOT.parent.parent
 FACTORY_BENCH_REQUIRED_LLM_ROLES = ("pm", "chief_engineer", "director", "qa")
+_LAUNCHER_INSTANCE_MODES = {"observed", "isolated"}
 
 
 def _sanitize_run_id(raw: str | None) -> str:
@@ -1486,6 +1489,95 @@ def _register_bench_project_instance(
         return
 
 
+def _default_launcher_instance_mode() -> str:
+    raw = str(os.environ.get("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE") or "isolated").strip().lower()
+    return raw if raw in _LAUNCHER_INSTANCE_MODES else "isolated"
+
+
+def _bench_project_instance_id(*, bench_session_id: str, project_id: str) -> str:
+    raw = f"{bench_session_id}-{project_id}" if bench_session_id else f"factory-bench-{project_id}"
+    try:
+        from polaris.cells.instances.internal.service import sanitize_instance_id
+    except (ImportError, RuntimeError):
+        return re.sub(r"[^A-Za-z0-9_.:-]+", "-", raw).strip("-").lower()[:80] or "factory-bench-project"
+    return sanitize_instance_id(raw)
+
+
+def _wait_backend_health(backend_url: str, token: str, *, timeout_s: float = 45.0) -> bool:
+    deadline = time.time() + max(1.0, float(timeout_s))
+    health_url = f"{str(backend_url or '').rstrip('/')}/health"
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    while time.time() < deadline:
+        try:
+            request = urllib.request.Request(health_url, headers=headers)
+            with urllib.request.urlopen(request, timeout=2.0) as response:
+                if 200 <= int(response.status) < 300:
+                    return True
+        except (urllib.error.URLError, TimeoutError, OSError):
+            time.sleep(0.5)
+    return False
+
+
+def _start_isolated_bench_project_instance(
+    *,
+    bench_session_id: str,
+    project_id: str,
+    project_title: str,
+    level: int,
+    bench_workspace: Path,
+    project_workspace: str,
+    backend_token: str,
+) -> dict[str, Any] | None:
+    """Start a project-scoped Polaris instance for internal factory_bench runs."""
+    try:
+        from polaris.cells.instances.internal.service import InstanceSupervisor, default_polaris_root
+    except (ImportError, RuntimeError):
+        return None
+
+    token = backend_token or _DEFAULT_LOCAL_BACKEND_TOKEN
+    try:
+        instance = InstanceSupervisor().start_instance(
+            {
+                "instance_id": _bench_project_instance_id(
+                    bench_session_id=bench_session_id,
+                    project_id=project_id,
+                ),
+                "name": f"{project_id} {project_title}".strip(),
+                "kind": "bench_project",
+                "polaris_root": str(default_polaris_root()),
+                "workspace": project_workspace,
+                "runtime_root": str((Path(project_workspace) / "runtime").resolve()),
+                "backend_port": None,
+                "frontend_port": None,
+                "token": token,
+                "backend_reload": False,
+                "frontend_vite": True,
+                "start_frontend": True,
+                "bench": {
+                    "session_id": bench_session_id,
+                    "project_id": project_id,
+                    "level": level,
+                    "bench_workspace": str(bench_workspace),
+                    "registration_mode": "factory_bench_runner",
+                },
+                "metadata": {
+                    "registered_by": "factory_bench",
+                    "internal_test_only": True,
+                    "backend_binding": "isolated_backend_instance",
+                    "launcher_instance_mode": "isolated",
+                },
+            }
+        )
+    except (OSError, RuntimeError, ValueError):
+        _logger.debug("factory bench isolated instance start failed", exc_info=True)
+        return None
+    if not _wait_backend_health(str(instance.get("backend_url") or ""), str(instance.get("token") or token)):
+        metadata = instance.get("metadata")
+        if isinstance(metadata, dict):
+            metadata["backend_health"] = "starting"
+    return instance
+
+
 def _bench_gate(gate: str, ok: bool, detail: str) -> dict[str, Any]:
     return {"gate": gate, "ok": bool(ok), "detail": detail}
 
@@ -2504,6 +2596,15 @@ def main() -> int:
         help="seconds for each generated project's dependency/build/entrypoint real-run gate",
     )
     ap.add_argument(
+        "--launcher-instance-mode",
+        choices=tuple(sorted(_LAUNCHER_INSTANCE_MODES)),
+        default=_default_launcher_instance_mode(),
+        help=(
+            "Launcher registration mode: isolated starts a project-scoped Polaris backend/frontend and runs the "
+            "chain against it; observed registers shared-backend bench activity for explicit compatibility only"
+        ),
+    )
+    ap.add_argument(
         "--dry-run",
         action="store_true",
         help="validate projects and generate audit structure without running the chain",
@@ -2675,21 +2776,58 @@ def main() -> int:
         project_title = str(project.get("title") or "")
         workspace.mkdir(parents=True, exist_ok=True)
         project_workspace = str(workspace.resolve())
-        workspace_switch_ok = _push_bench_workspace_to_backend(
-            backend_url=backend_url,
-            workspace=project_workspace,
-            token=backend_token,
-        )
-        _register_bench_project_instance(
-            bench_session_id=bench_session_id,
-            project_id=str(pid),
-            project_title=project_title,
-            level=project_level,
-            bench_workspace=base,
-            project_workspace=project_workspace,
-            backend_url=backend_url,
-            backend_token=backend_token,
-        )
+        project_backend_url = backend_url
+        project_backend_token = backend_token
+        project_backend_audit_context = backend_audit_context
+        launcher_instance_mode = str(args.launcher_instance_mode or "isolated").strip().lower()
+        launcher_instance_meta: dict[str, Any] = {"mode": launcher_instance_mode}
+        if launcher_instance_mode == "isolated":
+            isolated_instance = _start_isolated_bench_project_instance(
+                bench_session_id=bench_session_id,
+                project_id=str(pid),
+                project_title=project_title,
+                level=project_level,
+                bench_workspace=base,
+                project_workspace=project_workspace,
+                backend_token=backend_token,
+            )
+            if isolated_instance:
+                project_backend_url = str(isolated_instance.get("backend_url") or backend_url).rstrip("/")
+                project_backend_token = str(isolated_instance.get("token") or backend_token)
+                project_backend_audit_context = build_bench_backend_audit_context(
+                    project_backend_url,
+                    backend_token=project_backend_token,
+                    workspace=project_workspace,
+                )
+                launcher_instance_meta.update(
+                    {
+                        "ok": True,
+                        "instance_id": isolated_instance.get("instance_id"),
+                        "backend_url": isolated_instance.get("backend_url"),
+                        "frontend_url": isolated_instance.get("frontend_url"),
+                    }
+                )
+                workspace_switch_ok = True
+            else:
+                workspace_switch_ok = False
+                launcher_instance_meta.update({"ok": False, "error": "isolated_instance_start_failed"})
+        else:
+            workspace_switch_ok = _push_bench_workspace_to_backend(
+                backend_url=backend_url,
+                workspace=project_workspace,
+                token=backend_token,
+            )
+            _register_bench_project_instance(
+                bench_session_id=bench_session_id,
+                project_id=str(pid),
+                project_title=project_title,
+                level=project_level,
+                bench_workspace=base,
+                project_workspace=project_workspace,
+                backend_url=backend_url,
+                backend_token=backend_token,
+            )
+            launcher_instance_meta.update({"ok": True, "backend_binding": "shared_backend_workspace_switch"})
         _emit_bench_event(
             workspace=base,
             project_id=pid,
@@ -2702,10 +2840,11 @@ def main() -> int:
                 "workspace": project_workspace,
                 "workspace_path": project_workspace,
                 "project_workspace": project_workspace,
+                "launcher_instance": launcher_instance_meta,
                 "workspace_switch": {
-                    "attempted": bool(backend_url),
+                    "attempted": bool(project_backend_url) and launcher_instance_mode != "isolated",
                     "ok": bool(workspace_switch_ok),
-                    "endpoint": "/settings",
+                    "endpoint": "/settings" if launcher_instance_mode != "isolated" else "instance_supervisor",
                 },
             },
         )
@@ -2765,19 +2904,22 @@ def main() -> int:
                 phase_payload=status_payload,
             )
 
-        if backend_url and not workspace_switch_ok:
-            error = "workspace_switch_failed"
+        if project_backend_url and not workspace_switch_ok:
+            error = (
+                "isolated_instance_start_failed" if launcher_instance_mode == "isolated" else "workspace_switch_failed"
+            )
             run_errors.append(error)
             chain = {
                 "exit_code": -1,
                 "duration_s": 0.0,
                 "error": error,
                 "failure_category": "runtime_environment",
-                "root_cause_signature": "runtime_environment:workspace_switch_failed",
+                "root_cause_signature": f"runtime_environment:{error}",
+                "launcher_instance": launcher_instance_meta,
                 "workspace_switch": {
-                    "attempted": True,
+                    "attempted": launcher_instance_mode != "isolated",
                     "ok": False,
-                    "endpoint": "/settings",
+                    "endpoint": "/settings" if launcher_instance_mode != "isolated" else "instance_supervisor",
                     "workspace": project_workspace,
                 },
             }
@@ -2795,6 +2937,7 @@ def main() -> int:
                     "workspace": project_workspace,
                     "workspace_path": project_workspace,
                     "project_workspace": project_workspace,
+                    "launcher_instance": launcher_instance_meta,
                     "workspace_switch": chain["workspace_switch"],
                 },
             )
@@ -2813,8 +2956,8 @@ def main() -> int:
                     chain = run_factory_chain(
                         project,
                         workspace,
-                        backend_url=backend_url,
-                        backend_token=backend_token,
+                        backend_url=project_backend_url,
+                        backend_token=project_backend_token,
                         timeout_s=args.timeout,
                         log_path=log_path,
                         director_workflow_execution_mode=args.director_workflow_execution_mode,
@@ -2938,7 +3081,7 @@ def main() -> int:
         record["chain_state"] = grade_chain_state(record["chain_results"], chain.get("exit_code"))
         raw_audit_bundle = chain.get("audit_bundle")
         audit_bundle: dict[str, Any] = raw_audit_bundle if isinstance(raw_audit_bundle, dict) else {}
-        record.update(backend_audit_context)
+        record.update(project_backend_audit_context)
         record["run_id"] = run_id
         record["project_id"] = pid
         record["factory_run_id"] = str(chain.get("run_id") or run_id)

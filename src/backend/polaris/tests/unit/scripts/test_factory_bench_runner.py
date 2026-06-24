@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from scripts.factory_bench import run_factory_bench as bench
 from scripts.factory_bench.run_factory_bench import (
     _desktop_backend_info_path,
@@ -35,6 +36,29 @@ from scripts.factory_bench.run_factory_bench import (
 )
 
 _LAST_FACTORY_START_PAYLOAD: dict[str, Any] = {}
+
+
+@pytest.fixture(autouse=True)
+def _isolate_instance_registry(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.setenv("POLARIS_INSTANCE_HOME", str(tmp_path / "instances-home"))
+
+
+def test_default_launcher_instance_mode_is_isolated(monkeypatch: Any) -> None:
+    monkeypatch.delenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", raising=False)
+
+    assert bench._default_launcher_instance_mode() == "isolated"
+
+
+def test_launcher_instance_mode_env_allows_explicit_observed(monkeypatch: Any) -> None:
+    monkeypatch.setenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", "observed")
+
+    assert bench._default_launcher_instance_mode() == "observed"
+
+
+def test_launcher_instance_mode_invalid_env_falls_back_to_isolated(monkeypatch: Any) -> None:
+    monkeypatch.setenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", "shared")
+
+    assert bench._default_launcher_instance_mode() == "isolated"
 
 
 def _record(**overrides: Any) -> dict[str, Any]:
@@ -1457,6 +1481,107 @@ def test_main_run_id_shared_across_projects(monkeypatch: Any, tmp_path: Path) ->
             "audit_path must resolve to the actual written audit file"
         )
     assert len(ids) == 1, "All projects should share the same run_id"
+
+
+def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: Any, tmp_path: Path) -> None:
+    projects = [{"id": "L1-01", "level": 1, "title": "One", "brief": "Build one"}]
+    captured_chain: dict[str, str] = {}
+    backend_context_urls: list[str] = []
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_factory_bench.py",
+            "--project-ids",
+            "L1-01",
+            "--work-dir",
+            str(tmp_path),
+        ],
+    )
+    monkeypatch.setattr(bench, "load_projects", lambda: projects)
+    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
+    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "main-token")
+    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-isolated")
+    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        bench,
+        "_push_bench_workspace_to_backend",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("isolated mode must not switch shared workspace")),
+    )
+    monkeypatch.setattr(
+        bench,
+        "_start_isolated_bench_project_instance",
+        lambda **_kwargs: {
+            "instance_id": "bench-isolated-l1-01",
+            "backend_url": "http://127.0.0.1:60011",
+            "frontend_url": "http://127.0.0.1:60012",
+            "token": "isolated-token",
+        },
+    )
+
+    def _backend_context(url: str, **_kwargs: Any) -> dict[str, Any]:
+        backend_context_urls.append(url)
+        return {
+            "backend_freshness": {"ok": True, "detail": "backend fresh"},
+            "backend_metadata": {"backend_base_url": url},
+        }
+
+    monkeypatch.setattr(bench, "build_bench_backend_audit_context", _backend_context)
+    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(
+        bench,
+        "build_factory_audit_record",
+        lambda **_kwargs: _successful_audit_record(),
+    )
+    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
+    monkeypatch.setattr(
+        bench,
+        "build_real_run_gate",
+        lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
+    )
+    monkeypatch.setattr(
+        bench,
+        "build_llm_route_audit",
+        lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
+    )
+
+    def _chain(
+        _project: dict[str, Any],
+        _workspace: Path,
+        *,
+        backend_url: str,
+        backend_token: str,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        captured_chain["backend_url"] = backend_url
+        captured_chain["backend_token"] = backend_token
+        return {
+            "exit_code": 0,
+            "duration_s": 0.01,
+            "chain_results": {
+                "contract_goal": "Build one",
+                "qa_ran": True,
+                "qa_passed": True,
+                "director": {"total": 1, "successes": 1, "failures": 0},
+            },
+        }
+
+    monkeypatch.setattr(bench, "run_factory_chain", _chain)
+
+    result = bench.main()
+
+    assert result == 0
+    assert captured_chain == {
+        "backend_url": "http://127.0.0.1:60011",
+        "backend_token": "isolated-token",
+    }
+    assert backend_context_urls[-1] == "http://127.0.0.1:60011"
 
 
 def test_main_audit_path_points_to_conflict_when_same_id_reused(monkeypatch: Any, tmp_path: Path) -> None:
