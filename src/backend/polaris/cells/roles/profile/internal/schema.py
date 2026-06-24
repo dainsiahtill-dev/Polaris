@@ -239,6 +239,11 @@ class RoleContextPolicy:
     # 角色专属信号（RoleSignalPlane，默认关 → 不改变历史 baseline；按角色 opt-in）
     # ChiefEngineer 蓝图/技术架构概览
     include_blueprint_overview: bool = False
+    # Director 当前任务蓝图步骤信号
+    include_blueprint_step: bool = True
+    # 仓库身份与 Scout 锚点信号
+    include_repo_identity: bool = True
+    include_scout_anchors: bool = True
     # QA 质量判定/门禁历史概览
     include_verdict_history: bool = False
 
@@ -661,6 +666,11 @@ def profile_to_dict(profile: RoleProfile) -> dict[str, Any]:
             "include_code_snippets": profile.context_policy.include_code_snippets,
             "max_code_lines": profile.context_policy.max_code_lines,
             "include_task_history": profile.context_policy.include_task_history,
+            "include_blueprint_overview": profile.context_policy.include_blueprint_overview,
+            "include_blueprint_step": profile.context_policy.include_blueprint_step,
+            "include_repo_identity": profile.context_policy.include_repo_identity,
+            "include_scout_anchors": profile.context_policy.include_scout_anchors,
+            "include_verdict_history": profile.context_policy.include_verdict_history,
             "compression_strategy": profile.context_policy.compression_strategy,
         },
         "data_policy": {

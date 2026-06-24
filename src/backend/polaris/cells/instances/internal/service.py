@@ -136,7 +136,7 @@ class InstanceRecord:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["backend_alive"] = is_process_alive(self.backend_pid)
-        data["frontend_alive"] = is_process_alive(self.frontend_pid)
+        data["frontend_alive"] = is_process_alive(self.frontend_pid) or self.metadata.get("frontend_health") == "ok"
         return data
 
     @classmethod
@@ -433,8 +433,17 @@ class InstanceSupervisor:
 
     def _with_health(self, record: InstanceRecord) -> InstanceRecord:
         backend_alive = is_process_alive(record.backend_pid)
-        frontend_alive = is_process_alive(record.frontend_pid) if record.start_frontend else True
-        backend_http_ok = self._http_ok(f"{record.backend_url}/health", record.token) if record.backend_url else False
+        backend_http_ok = (
+            (backend_alive if backend_alive else self._http_ok(f"{record.backend_url}/health", record.token))
+            if record.backend_url
+            else False
+        )
+        frontend_pid_alive = is_process_alive(record.frontend_pid)
+        frontend_http_ok = self._http_ok(record.frontend_url, record.token) if record.frontend_url else False
+        if record.start_frontend:
+            frontend_alive = frontend_pid_alive or frontend_http_ok
+        else:
+            frontend_alive = frontend_http_ok if record.frontend_url else True
         if backend_alive and frontend_alive:
             record.status = "running"
         elif backend_http_ok and not record.backend_pid:
@@ -447,6 +456,14 @@ class InstanceSupervisor:
             record.metadata["backend_health"] = "starting"
         else:
             record.metadata["backend_health"] = "stopped"
+        if frontend_http_ok:
+            record.metadata["frontend_health"] = "ok"
+        elif frontend_pid_alive:
+            record.metadata["frontend_health"] = "starting"
+        elif record.frontend_url or record.start_frontend:
+            record.metadata["frontend_health"] = "stopped"
+        else:
+            record.metadata["frontend_health"] = "disabled"
         return record
 
     def _require_record(self, instance_id: str) -> InstanceRecord:

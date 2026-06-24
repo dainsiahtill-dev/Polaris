@@ -158,3 +158,39 @@ def test_external_backend_without_pid_is_observed(tmp_path: Path, monkeypatch: A
 
     assert health["status"] == "observed"
     assert health["metadata"]["backend_health"] == "ok"
+
+
+def test_registered_external_frontend_url_counts_as_alive(tmp_path: Path, monkeypatch: Any) -> None:
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+
+    def fake_http_ok(url: str, _token: str) -> bool:
+        return url in {"http://127.0.0.1:59901/health", "http://127.0.0.1:59902"}
+
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: pid == 61001)
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(fake_http_ok))
+    registry.save(
+        InstanceRecord(
+            instance_id="main",
+            name="Main",
+            kind="development",
+            polaris_root=str(_make_polaris_root(tmp_path)),
+            workspace=str((tmp_path / "workspace").resolve()),
+            runtime_root=str((tmp_path / "runtime").resolve()),
+            backend_port=59901,
+            frontend_port=59902,
+            backend_url="http://127.0.0.1:59901",
+            frontend_url="http://127.0.0.1:59902",
+            token="token",
+            backend_pid=61001,
+            frontend_pid=None,
+            start_frontend=False,
+            status="running",
+        )
+    )
+
+    health = supervisor.health("main")
+
+    assert health["status"] == "running"
+    assert health["frontend_alive"] is True
+    assert health["metadata"]["frontend_health"] == "ok"

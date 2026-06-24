@@ -151,7 +151,7 @@ def _role_ctx_with_assets(role: str, *, flags: dict[str, bool]) -> SignalBuildCo
     )
 
 
-def test_blueprint_signal_only_for_chief_engineer_when_enabled() -> None:
+def test_blueprint_signal_for_chief_engineer_and_director_when_enabled() -> None:
     reg = RoleSignalRegistry()
     flags = {"include_blueprint_overview": True}
     ce = allocate_role_signals(
@@ -162,8 +162,12 @@ def test_blueprint_signal_only_for_chief_engineer_when_enabled() -> None:
     )
     assert "blueprint_overview" in ce.sources
     assert any("【蓝图/技术架构】" in t["content"] for t in ce.turns)
-    # 其它角色即便 flag 开也拿不到（role-bound）
-    assert "blueprint_overview" not in director.sources
+    assert "blueprint_overview" in director.sources
+    # 非工程执行/蓝图角色即便 flag 开也拿不到（role-bound）
+    pm = allocate_role_signals(
+        registry=reg, ctx=_role_ctx_with_assets("pm", flags=flags), receipt_store=ReceiptStore()
+    )
+    assert "blueprint_overview" not in pm.sources
 
 
 def test_verdict_signal_only_for_qa_and_is_must_have() -> None:
