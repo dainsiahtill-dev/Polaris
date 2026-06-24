@@ -143,6 +143,50 @@ describe('getBackendInfo web fallback', () => {
     expect(localStorage.getItem('polaris.baseUrl')).toBeNull();
     expect(localStorage.getItem('polaris.token')).toBeNull();
   });
+
+  it('does not fallback to the default backend for an explicit instance HTTP binding', async () => {
+    window.history.pushState(
+      {},
+      '',
+      '/?instance=bench-l1-01&backend=http://127.0.0.1:50017&token=instance-token',
+    );
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError('connection refused'));
+    vi.stubGlobal('fetch', fetchMock);
+    const { apiFetch } = await import('./api');
+
+    await expect(apiFetch('/settings')).rejects.toThrow('connection refused');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:50017/settings');
+  });
+
+  it('opens WebSocket against the explicit instance backend without probing default backend', async () => {
+    window.history.pushState(
+      {},
+      '',
+      '/?instance=bench-l1-01&backend=http://127.0.0.1:50017&token=instance-token',
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    class MockWebSocket {
+      readonly url: string;
+
+      constructor(url: string) {
+        this.url = url;
+      }
+    }
+
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const { connectWebSocket } = await import('./api');
+
+    const socket = await connectWebSocket();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((socket as unknown as MockWebSocket).url).toBe(
+      'ws://127.0.0.1:50017/v2/ws/runtime?token=instance-token'
+    );
+  });
 });
 
 describe('apiFetch auth token discovery', () => {

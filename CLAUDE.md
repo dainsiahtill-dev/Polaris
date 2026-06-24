@@ -13,7 +13,10 @@
 ## 1) 真实入口路径
 - 桌面入口: `src/electron/main.cjs`
 - 后端入口: `src/backend/server.py` -> `src/backend/polaris/delivery/http/app_factory.py` (FastAPI)
+- 后端实例入口（推荐）: `python -m polaris.delivery.cli.backend serve ...`
 - 前端入口: `src/frontend/src/main.tsx`（Vite 配置: `src/frontend/vite.config.ts`）
+- 多实例总控 UI: `/launcher`（例如 `http://127.0.0.1:5173/launcher`）
+- 实例管理 API: `/v2/instances`（平台发现/运维视图，不是 PM/CE/Director/QA 事实源）
 - PM CLI: `src/backend/polaris/delivery/cli/pm/cli.py`（控制台脚本 `pm`）
 - Director CLI (推荐): `src/backend/polaris/delivery/cli/director/cli_thin.py`（控制台脚本 `director`）
 - Architect CLI: `src/backend/polaris/cells/architect/design/internal/architect_cli.py`
@@ -45,6 +48,26 @@ npm run dev:electron
 
 # 后端单独运行
 python src/backend/server.py --host 127.0.0.1 --port 49977
+
+# 后端实例运行（推荐给 Web/SaaS 开发观测；会注册到 Launcher）
+cd src/backend
+KERNELONE_CONTEXT_ADMIN_ENABLED=1 python -m polaris.delivery.cli.backend serve \
+  --workspace /path/to/workspace \
+  --runtime-root /path/to/workspace/runtime \
+  --port 49977 \
+  --token polaris-local-dev \
+  --reload \
+  --frontend-port 5173 \
+  --register-instance \
+  --instance-id main \
+  --instance-name "Main Polaris Dev" \
+  --kind development
+
+# Web 前端单独运行（绑定当前后端实例）
+VITE_POLARIS_BACKEND_URL=http://127.0.0.1:49977 \
+VITE_POLARIS_BACKEND_TOKEN=polaris-local-dev \
+VITE_POLARIS_INSTANCE_ID=main \
+npm run dev:renderer -- --host 127.0.0.1 --port 5173
 
 # PM CLI (项目管理) - 控制台脚本 pm = polaris.delivery.cli.pm.cli:main
 pm --workspace <repo> --run-director --director-iterations 1
@@ -91,6 +114,10 @@ python scripts/run_factory_e2e_smoke.py --workspace .
 - 变更 Loop / 角色内核时，优先修改 `src/backend/polaris/cells/roles` 与 `src/backend/polaris/kernelone`。
 - 不提交运行时产物: `.polaris/runtime/**`, `playwright-report/**`, `test-results/**`。
 - 验证失败不得标记任务完成（fail-closed）。
+- 多项目并行观测必须用 Instance Registry + `/launcher` 启动或发现多个单-workspace 实例；不要把单个 backend/UI 临时改造成多 workspace 状态拼接层。
+- 需要被总控观测的 Agent/CLI/内部压力测试启动项必须注册实例；Launcher 只读实例发现状态，不能成为 PM、Chief Engineer、Director、QA、ContextOS、ReceiptStore 或 Run Ledger 的事实源。
+- `factory_bench`、L1-L12 和 benchmark harness 只属于内部测试/开发/审计模式，正式产品/生产环境不得出现 Bench 入口、Bench 文案、Bench 专属 UI/API 或 Bench 事实模型。
+- Launcher 实时状态只走 runtime.v2 WebSocket `status.instances`；禁止用 HTTP polling、文件轮询或 Bench session 替代正式实时链路。
 
 ## 6) 常用环境变量
 - `KERNELONE_WORKSPACE`

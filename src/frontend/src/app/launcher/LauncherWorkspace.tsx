@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   ExternalLink,
+  Info,
   Loader2,
   Play,
   RefreshCw,
@@ -10,6 +11,7 @@ import {
   Square,
   TerminalSquare,
   Trash2,
+  X,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { StatusBadge } from '@/app/components/ui/badge';
@@ -52,6 +54,11 @@ function openInstance(instance: PolarisInstance): void {
   window.open(buildInstanceWorkspaceUrl(instance), '_blank', 'noopener,noreferrer');
 }
 
+function formatJson(value: Record<string, unknown>): string {
+  const entries = Object.keys(value || {});
+  return entries.length > 0 ? JSON.stringify(value, null, 2) : '{}';
+}
+
 const defaultForm: StartInstancePayload = {
   kind: 'project',
   workspace: '',
@@ -86,6 +93,7 @@ export function LauncherWorkspace() {
   const [actionId, setActionId] = useState('');
   const [error, setError] = useState('');
   const [logs, setLogs] = useState<LogSelection | null>(null);
+  const [selectedInstanceId, setSelectedInstanceId] = useState('');
   const { subscribeChannels } = useTransportActions();
   const { registerMessageHandler } = useMessageHandler();
   const connection = useConnectionState();
@@ -97,6 +105,10 @@ export function LauncherWorkspace() {
   const benchCount = useMemo(
     () => instances.filter((item) => item.kind === 'bench_project').length,
     [instances],
+  );
+  const selectedInstance = useMemo(
+    () => instances.find((item) => item.instance_id === selectedInstanceId) || null,
+    [instances, selectedInstanceId],
   );
 
   const refresh = useCallback(async () => {
@@ -343,6 +355,10 @@ export function LauncherWorkspace() {
                     <TerminalSquare className="h-3.5 w-3.5" />
                     后端日志
                   </Button>
+                  <Button variant="outline" size="sm" onClick={() => setSelectedInstanceId(instance.instance_id)}>
+                    <Info className="h-3.5 w-3.5" />
+                    详情
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={() => void runAction(instance, 'delete')} disabled={Boolean(actionId)}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
@@ -365,6 +381,84 @@ export function LauncherWorkspace() {
           <pre className="min-h-0 overflow-auto p-3 text-xs leading-relaxed text-slate-300">
             {logs.content || '暂无日志'}
           </pre>
+        </aside>
+      ) : null}
+
+      {selectedInstance ? (
+        <aside className="fixed right-4 top-20 z-40 flex max-h-[calc(100vh-6rem)] w-[min(560px,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-cyan-400/20 bg-slate-950 shadow-2xl">
+          <div className="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h2 className="truncate text-sm font-semibold text-cyan-100">{selectedInstance.name}</h2>
+                <StatusBadge color={statusTone(selectedInstance)} variant="dot">
+                  {selectedInstance.status}
+                </StatusBadge>
+              </div>
+              <p className="mt-1 truncate text-xs text-slate-500">
+                {selectedInstance.instance_id} · {selectedInstance.kind}
+              </p>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => setSelectedInstanceId('')}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="min-h-0 space-y-4 overflow-auto p-4 text-xs">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+                <div className="text-[10px] uppercase text-slate-500">backend health</div>
+                <div className="mt-1 text-sm font-semibold text-cyan-100">
+                  {selectedInstance.backend_alive ? 'alive' : 'offline'}
+                </div>
+                <div className="mt-1 font-mono text-slate-500">{String(selectedInstance.metadata.backend_health || 'unknown')}</div>
+              </div>
+              <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+                <div className="text-[10px] uppercase text-slate-500">frontend health</div>
+                <div className="mt-1 text-sm font-semibold text-cyan-100">
+                  {selectedInstance.frontend_alive ? 'alive' : 'offline'}
+                </div>
+                <div className="mt-1 font-mono text-slate-500">{String(selectedInstance.metadata.frontend_health || 'unknown')}</div>
+              </div>
+            </div>
+
+            <dl className="space-y-2">
+              {[
+                ['workspace', selectedInstance.workspace],
+                ['runtime_root', selectedInstance.runtime_root],
+                ['backend_url', selectedInstance.backend_url],
+                ['frontend_url', selectedInstance.frontend_url || '(backend-only)'],
+                ['open_url', buildInstanceWorkspaceUrl(selectedInstance)],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-md border border-white/10 bg-slate-900/80 p-3">
+                  <dt className="text-[10px] uppercase text-slate-500">{label}</dt>
+                  <dd className="mt-1 break-all font-mono text-slate-200">{value}</dd>
+                </div>
+              ))}
+            </dl>
+
+            <div className="grid grid-cols-2 gap-2">
+              <Button size="sm" onClick={() => openInstance(selectedInstance)}>
+                <ExternalLink className="h-3.5 w-3.5" />
+                打开实例
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => void runAction(selectedInstance, 'frontend-logs')}>
+                <TerminalSquare className="h-3.5 w-3.5" />
+                前端日志
+              </Button>
+            </div>
+
+            <section>
+              <h3 className="text-[11px] font-semibold uppercase text-slate-500">bench metadata</h3>
+              <pre className="mt-2 max-h-40 overflow-auto rounded-md border border-white/10 bg-black/30 p-3 font-mono text-[11px] leading-relaxed text-slate-300">
+                {formatJson(selectedInstance.bench)}
+              </pre>
+            </section>
+            <section>
+              <h3 className="text-[11px] font-semibold uppercase text-slate-500">instance metadata</h3>
+              <pre className="mt-2 max-h-40 overflow-auto rounded-md border border-white/10 bg-black/30 p-3 font-mono text-[11px] leading-relaxed text-slate-300">
+                {formatJson(selectedInstance.metadata)}
+              </pre>
+            </section>
+          </div>
         </aside>
       ) : null}
     </div>

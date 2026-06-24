@@ -83,6 +83,10 @@ function getInstanceId(): string {
   return String(raw || "").trim().replace(/[^a-zA-Z0-9_.:-]/g, "-").slice(0, 120);
 }
 
+function hasIsolatedInstanceBinding(): boolean {
+  return Boolean(getInstanceId() || getUrlBackendUrl() || getEnvBackendUrl());
+}
+
 function storageKey(key: string): string {
   const instanceId = getInstanceId();
   return instanceId ? `${INSTANCE_STORAGE_PREFIX}.${instanceId}.${key}` : key;
@@ -157,6 +161,9 @@ async function isBackendReachable(info: BackendInfo): Promise<boolean> {
 
 async function resolveReachableBackendInfo(info: BackendInfo): Promise<BackendInfo> {
   if (!isViteWebDevMode || !info.baseUrl) {
+    return info;
+  }
+  if (hasIsolatedInstanceBinding()) {
     return info;
   }
   if (await isBackendReachable(info)) {
@@ -285,6 +292,9 @@ export async function apiFetch(
   };
 
   const doFallbackFetch = async (previousInfo: BackendInfo): Promise<Response | null> => {
+    if (hasIsolatedInstanceBinding()) {
+      return null;
+    }
     const fallbackInfo = await getDefaultLocalBackendInfo();
     if (sameBackendInfo(previousInfo, fallbackInfo)) {
       return null;

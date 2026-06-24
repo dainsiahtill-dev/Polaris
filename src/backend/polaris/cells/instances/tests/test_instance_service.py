@@ -92,6 +92,8 @@ def test_start_instance_builds_backend_and_frontend_processes(
     assert backend_call["env"]["KERNELONE_CORS_ORIGINS"].startswith("http://127.0.0.1:59912")
     assert frontend_call["command"][:3] == ["npm", "run", "dev:renderer"]
     assert frontend_call["env"]["VITE_BACKEND_URL"] == "http://127.0.0.1:59911"
+    assert frontend_call["env"]["VITE_POLARIS_BACKEND_URL"] == "http://127.0.0.1:59911"
+    assert frontend_call["env"]["VITE_POLARIS_BACKEND_TOKEN"] == record["token"]
     assert frontend_call["env"]["VITE_POLARIS_INSTANCE_ID"] == "bench-l1-01"
 
 

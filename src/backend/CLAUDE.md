@@ -13,6 +13,14 @@
 
 1. `AGENTS.md`
 2. `docs/AGENT_ARCHITECTURE_STANDARD.md`
+
+## 2. 多实例与 Bench 边界速记
+
+- Polaris 后端实例仍然是单 workspace 绑定；多项目观测通过平台级 Instance Registry + `/launcher` 管理多个独立实例。
+- 需要被总控观测的 CLI/Agent/内部测试启动项必须通过 `python -m polaris.delivery.cli.backend serve --register-instance ...` 或 `/v2/instances` 注册。
+- Instance Registry 只是发现/运维视图，不是 PM、Chief Engineer、Director、QA、ContextOS、ReceiptStore 或 Run Ledger 的事实源。
+- `factory_bench` / L1-L12 只属于内部测试态；可以注册 `kind=bench_project` 供总控观测，但不得把 Bench 语义写成生产项目模型。
+- Launcher 实时状态只走 runtime.v2 WebSocket `status.instances`，禁止新增 HTTP polling 或文件轮询。
 3. `docs/graph/catalog/cells.yaml` 与 `docs/graph/subgraphs/*.yaml`
 4. `docs/FINAL_SPEC.md`
 5. ACGA 2.0 文档

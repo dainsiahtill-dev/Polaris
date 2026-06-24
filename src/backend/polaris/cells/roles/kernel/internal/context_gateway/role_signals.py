@@ -238,16 +238,21 @@ class BlueprintStepsSignal:
 
 
 class VerdictHistorySignal:
-    """QA 专属：质量判定 / 门禁历史概览。
+    """QA + Director：质量判定 / 门禁历史概览。
 
-    role-bound（仅 qa）+ flag-gated（``include_verdict_history``，默认 False）。
-    级别 must-have：质量判定对 QA 是关键资产，压力下也要（必要时卸载）挤入。
+    role-bound（qa 或 director）+ flag-gated（``include_verdict_history``，
+    Director 默认 True 以便从 QA 拒绝反馈中学习）。
     """
 
     id = "verdict_history"
 
+    _DEFAULT_BY_ROLE = {"director": True, "qa": False}
+
     def applies_to(self, ctx: SignalBuildContext) -> bool:
-        return ctx.role == "qa" and bool(ctx.policy_flags.get("include_verdict_history", False))
+        if ctx.role not in ("qa", "director"):
+            return False
+        default = self._DEFAULT_BY_ROLE.get(ctx.role, False)
+        return bool(ctx.policy_flags.get("include_verdict_history", default))
 
     def priority(self, ctx: SignalBuildContext) -> int:
         return 11

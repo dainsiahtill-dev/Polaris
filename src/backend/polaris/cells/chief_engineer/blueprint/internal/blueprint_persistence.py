@@ -28,7 +28,7 @@ class BlueprintPersistence:
             workspace: Root workspace path.
             ensure_directory: Create the blueprint directory immediately when true.
         """
-        self._dir = Path(resolve_logical_path(workspace, "workspace/blueprints"))
+        self._dir = Path(resolve_logical_path(workspace, "runtime/blueprints"))
         if ensure_directory:
             self._dir.mkdir(parents=True, exist_ok=True)
 

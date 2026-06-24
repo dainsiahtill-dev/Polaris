@@ -362,6 +362,7 @@ roles:
       include_blueprint_step: true       # D-15: explicit signal flags
       include_repo_identity: true        # D-15: explicit signal flags
       include_scout_anchors: true        # D-15: explicit signal flags
+      include_verdict_history: true      # D-12: Director learns from QA rejections
       compression_strategy: sliding_window
 
     data_policy:

@@ -123,7 +123,7 @@ class SignalSourceProvider:
             if task.get("description"):
                 desc = task.get("description")
                 if isinstance(desc, str):
-                    history.append(f"描述: {desc[:200]}...")
+                    history.append(f"描述: {desc[:1000]}")
                 else:
                     history.append(f"描述: {desc}...")
 

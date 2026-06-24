@@ -185,6 +185,13 @@ class TaskBlueprintResultV1:
     summary: str = ""
     recommendations: tuple[str, ...] = field(default_factory=tuple)
     risks: tuple[str, ...] = field(default_factory=tuple)
+    # D-05: Rich blueprint fields for Director context injection
+    target_files: tuple[str, ...] = field(default_factory=tuple)
+    acceptance_criteria: tuple[str, ...] = field(default_factory=tuple)
+    execution_checklist: tuple[str, ...] = field(default_factory=tuple)
+    scope_paths: tuple[str, ...] = field(default_factory=tuple)
+    objective: str = ""
+    dependencies: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
@@ -195,6 +202,12 @@ class TaskBlueprintResultV1:
         object.__setattr__(self, "blueprint_hash", str(self.blueprint_hash or "").strip())
         object.__setattr__(self, "recommendations", tuple(str(v) for v in self.recommendations))
         object.__setattr__(self, "risks", tuple(str(v) for v in self.risks))
+        object.__setattr__(self, "target_files", tuple(str(v) for v in self.target_files))
+        object.__setattr__(self, "acceptance_criteria", tuple(str(v) for v in self.acceptance_criteria))
+        object.__setattr__(self, "execution_checklist", tuple(str(v) for v in self.execution_checklist))
+        object.__setattr__(self, "scope_paths", tuple(str(v) for v in self.scope_paths))
+        object.__setattr__(self, "objective", str(self.objective or "").strip())
+        object.__setattr__(self, "dependencies", tuple(str(v) for v in self.dependencies))
 
 
 class ChiefEngineerBlueprintErrorV1(RuntimeError):  # noqa: N818
