@@ -247,6 +247,65 @@ def repair_go_import_subpaths(workspace: Path) -> list[dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 
+def _dedup_within_single_file(go_file: Path) -> bool:
+    """Remove duplicate type/func declarations within a single Go file.
+
+    When the Director generates two copies of ``type Mood int`` in the same
+    file, keep only the first occurrence and comment out subsequent ones.
+    Returns True if the file was modified.
+    """
+    try:
+        text = go_file.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+    _decl_start_re = re.compile(
+        r"^(type\s+\w+[\s{(]|func\s+(?:\([^)]+\)\s+)?\w+\s*[\[(])",
+        re.MULTILINE,
+    )
+
+    seen: dict[str, int] = {}  # declaration prefix → first occurrence line
+    lines = text.split("\n")
+    modified = False
+    skip_until_close = False
+    brace_depth = 0
+
+    for i, line in enumerate(lines):
+        if skip_until_close:
+            brace_depth += line.count("{") - line.count("}")
+            if brace_depth <= 0:
+                skip_until_close = False
+                lines[i] = f"// [dedup-intra] {line.strip()}"
+            else:
+                lines[i] = f"// [dedup-intra] {line.strip()}"
+            modified = True
+            continue
+
+        m = _decl_start_re.match(line)
+        if m:
+            prefix = m.group(0).strip()
+            # Extract the name from the prefix.
+            name_m = re.search(r"(type|func)\s+(?:\([^)]+\)\s+)?(\w+)", prefix)
+            if name_m:
+                name = name_m.group(2)
+                key = f"{name_m.group(1)}_{name}"
+                if key in seen:
+                    # Duplicate! Comment out this declaration.
+                    if "{" in line:
+                        skip_until_close = True
+                        brace_depth = line.count("{") - line.count("}")
+                        if brace_depth <= 0:
+                            skip_until_close = False
+                    lines[i] = f"// [dedup-intra] {line.strip()}"
+                    modified = True
+                else:
+                    seen[key] = i
+
+    if modified:
+        go_file.write_text("\n".join(lines), encoding="utf-8")
+    return modified
+
+
 def repair_go_duplicate_declarations(workspace: Path) -> list[dict[str, str]]:
     """Merge Go files when ``go vet`` reports redeclaration errors.
 
@@ -277,6 +336,33 @@ def repair_go_duplicate_declarations(workspace: Path) -> list[dict[str, str]]:
     if "redeclared" not in stderr and "already declared" not in stderr:
         return []
 
+    repairs: list[dict[str, str]] = []
+
+    # Pass 1: Intra-file dedup (same declaration twice in one file).
+    for go_file in workspace.rglob("*.go"):
+        if go_file.name.endswith("_test.go"):
+            continue
+        if _dedup_within_single_file(go_file):
+            repairs.append({"file": str(go_file.relative_to(workspace)), "action": "intra_file_dedup"})
+
+    # Re-run vet after intra-file dedup to see if cross-file issues remain.
+    if repairs:
+        try:
+            result = subprocess.run(
+                [go_binary, "vet", "./..."],
+                cwd=str(workspace),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            stderr = result.stderr or ""
+            if "redeclared" not in stderr and "already declared" not in stderr:
+                logger.info("Go intra-file dedup resolved all redeclarations: %d file(s)", len(repairs))
+                return repairs
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            pass
+
+    # Pass 2: Cross-file merge (same declaration in different files).
     module = _parse_go_mod_module(workspace)
     pkg_error_re = re.compile(r"^#\s+(\S+)", re.MULTILINE)
 
@@ -292,9 +378,8 @@ def repair_go_duplicate_declarations(workspace: Path) -> list[dict[str, str]]:
             error_pkgs.add(current_pkg)
 
     if not error_pkgs:
-        return []
+        return repairs
 
-    repairs: list[dict[str, str]] = []
     for pkg_path in error_pkgs:
         # Convert module path to directory.
         if module and pkg_path.startswith(f"{module}/"):
