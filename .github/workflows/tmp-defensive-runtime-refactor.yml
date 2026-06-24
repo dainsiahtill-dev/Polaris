@@ -1,0 +1,95 @@
+name: Temporary Defensive Runtime Refactor
+
+on:
+  push:
+    branches:
+      - codex/defensive-runtime-refactor-20260624
+    paths:
+      - .github/workflows/tmp-defensive-runtime-refactor.yml
+      - infrastructure/scripts/apply_defensive_runtime_refactor.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout refactor branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/defensive-runtime-refactor-20260624
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install repository development dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[dev]"
+          python -m pip check
+
+      - name: Apply UTF-8 defensive refactor
+        run: python infrastructure/scripts/apply_defensive_runtime_refactor.py
+
+      - name: Ruff fix, format, and clean recheck
+        run: |
+          FILES=(
+            src/backend/polaris/kernelone/env_flags.py
+            src/backend/polaris/kernelone/tests/test_env_flags.py
+            src/backend/polaris/delivery/http/routers/_shared.py
+            src/backend/polaris/delivery/http/v2/context.py
+            src/backend/polaris/delivery/tests/test_context_admin_endpoints.py
+            src/backend/polaris/tests/integration/delivery/routers/test_factory_bench_router.py
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_repairs.py
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/generic_repairs.py
+            src/backend/polaris/cells/roles/adapters/tests/test_go_repairs.py
+          )
+          python -m ruff check "${FILES[@]}" --fix
+          python -m ruff format "${FILES[@]}"
+          python -m ruff check "${FILES[@]}"
+
+      - name: Strict type check of new foundations
+        run: |
+          PYTHONPATH=src/backend python -m mypy \
+            src/backend/polaris/kernelone/env_flags.py \
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_repairs.py \
+            --strict --ignore-missing-imports
+
+      - name: Focused regression tests
+        run: |
+          PYTHONPATH=src/backend python -m pytest -q \
+            src/backend/polaris/kernelone/tests/test_env_flags.py \
+            src/backend/polaris/cells/roles/adapters/tests/test_go_repairs.py \
+            src/backend/polaris/delivery/tests/test_context_admin_endpoints.py \
+            src/backend/polaris/tests/integration/delivery/routers/test_factory_bench_router.py
+
+      - name: Validate development launcher and defensive invariants
+        run: |
+          node --check infrastructure/scripts/run-dev.js
+          ! grep -n "write_text(" src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_repairs.py
+          ! grep -n "repair_go_module_imports" src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/generic_repairs.py
+          git diff --check
+
+      - name: Commit verified refactor
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            infrastructure/scripts/run-dev.js \
+            src/backend/polaris/kernelone/env_flags.py \
+            src/backend/polaris/kernelone/tests/test_env_flags.py \
+            src/backend/polaris/delivery/http/routers/_shared.py \
+            src/backend/polaris/delivery/http/v2/context.py \
+            src/backend/polaris/delivery/tests/test_context_admin_endpoints.py \
+            src/backend/polaris/tests/integration/delivery/routers/test_factory_bench_router.py \
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/go_repairs.py \
+            src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/generic_repairs.py \
+            src/backend/polaris/cells/roles/adapters/tests/test_go_repairs.py
+          git diff --cached --quiet && { echo "No generated changes to commit"; exit 1; }
+          git commit -m "refactor: enforce defensive runtime gates [skip ci]"
+          git push origin HEAD:codex/defensive-runtime-refactor-20260624
