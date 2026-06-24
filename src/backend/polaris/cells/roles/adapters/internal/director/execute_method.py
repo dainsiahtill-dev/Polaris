@@ -2226,9 +2226,10 @@ def _phase_pre_materialization_quality(
                 write_tool_evidence=write_tool_evidence,
                 primary_llm_summary=primary_llm_summary,
             )
-    # Post-execution Go repair pass: always run Go deterministic repairs
-    # after Director finishes writing files, regardless of quality gate outcome.
-    # This catches import/syntax/dedup issues that QA might not detect.
+    # Post-execution language-specific repair pass: always run deterministic
+    # repairs after Director finishes writing files, regardless of quality gate
+    # outcome. This catches import/syntax/dedup/field issues that QA might not
+    # detect.
     if write_tool_evidence:
         from .deterministic_repairs.generic_repairs import (
             _apply_deterministic_go_module_import_repair,
@@ -2237,7 +2238,30 @@ def _phase_pre_materialization_quality(
         _post_go_repairs = _apply_deterministic_go_module_import_repair(adapter, task_id=target_task_id)
         if _post_go_repairs:
             tool_results.extend(_post_go_repairs)
-            # Re-collect workspace diff after Go repairs
+
+        # Post-execution Rust repair pass: unused imports, missing fields, etc.
+        from .deterministic_repairs.rust_repairs import run_all_rust_post_repairs
+
+        _ws_path = Path(str(getattr(adapter, "workspace", "") or ""))
+        if (_ws_path / "Cargo.toml").is_file():
+            _post_rust_repairs = run_all_rust_post_repairs(_ws_path)
+            for record in _post_rust_repairs:
+                tool_results.append(
+                    {
+                        "tool": "write_file",
+                        "tool_name": "write_file",
+                        "success": True,
+                        "result": {
+                            "ok": True,
+                            "source_tool": "deterministic_rust_post_repair",
+                            "file": record.get("file", ""),
+                            "action": record.get("action", record.get("symbols", "")),
+                        },
+                    }
+                )
+
+        # Re-collect workspace diff after all post-execution repairs
+        if _post_go_repairs or (locals().get("_post_rust_repairs")):
             current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
                 adapter,
                 baseline_files,
@@ -3276,6 +3300,7 @@ from .deterministic_repairs import (  # noqa: E402  (deferred for circular-impor
     _apply_deterministic_runtime_dependency_repair as _apply_deterministic_runtime_dependency_repair,
     _apply_deterministic_rust_crate_import_repair as _apply_deterministic_rust_crate_import_repair,
     _apply_deterministic_rust_dependency_repair as _apply_deterministic_rust_dependency_repair,
+    _apply_deterministic_rust_lib_root_facade_repair as _apply_deterministic_rust_lib_root_facade_repair,
     _apply_deterministic_rust_line_suggestion_repair as _apply_deterministic_rust_line_suggestion_repair,
     _apply_deterministic_rust_missing_lib_target_repair as _apply_deterministic_rust_missing_lib_target_repair,
     _apply_deterministic_rust_trait_import_repair as _apply_deterministic_rust_trait_import_repair,
@@ -3339,6 +3364,7 @@ from .deterministic_repairs import (  # noqa: E402  (deferred for circular-impor
     _typescript_relative_import_without_suffix as _typescript_relative_import_without_suffix,
     repair_rust_crate_imports as repair_rust_crate_imports,
     repair_rust_dependencies as repair_rust_dependencies,
+    repair_rust_lib_root_facade as repair_rust_lib_root_facade,
     repair_rust_line_suggestions as repair_rust_line_suggestions,
     repair_rust_missing_lib_targets as repair_rust_missing_lib_targets,
     repair_rust_trait_imports as repair_rust_trait_imports,

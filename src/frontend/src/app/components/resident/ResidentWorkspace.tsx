@@ -29,9 +29,10 @@ import { ExecutionProgressBar } from './ExecutionProgressBar';
 
 import { useResident } from '@/hooks/useResident';
 import type {
+  ResidentAgiCapabilityPayload,
   ResidentDecisionPayload,
   ResidentGoalPayload,
-  ResidentStatusPayload,
+  ResidentStatusDetailsPayload,
 } from '@/app/types/appContracts';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
@@ -43,10 +44,19 @@ import { cn } from '@/app/components/ui/utils';
 const TAB_OPTIONS = ['overview', 'goals', 'decisions', 'evolution'] as const;
 type AgiTab = (typeof TAB_OPTIONS)[number];
 
+interface CapabilityGovernanceStats {
+  readOnly: number;
+  governedMutation: number;
+  highRisk: number;
+  categories: string[];
+  contractRefs: string[];
+  chainRequired: boolean;
+}
+
 interface ResidentWorkspaceProps {
   workspace: string;
   onBackToMain: () => void;
-  residentSnapshot?: ResidentStatusPayload | null;
+  residentSnapshot?: ResidentStatusDetailsPayload | null;
   initialTab?: AgiTab;
 }
 
@@ -110,6 +120,10 @@ export function ResidentWorkspace({
   const agiCapabilitySurface = resident.residentAgiCapabilitySurface;
   const agiCapabilities = agiCapabilitySurface?.items || [];
   const decisionStats = useMemo(() => buildDecisionStats(resident.decisions), [resident.decisions]);
+  const capabilityGovernance = useMemo(
+    () => buildCapabilityGovernanceStats(agiCapabilities),
+    [agiCapabilities],
+  );
 
   const handleCreateGoal = async () => {
     if (!newGoalTitle.trim()) return;
@@ -374,6 +388,10 @@ export function ResidentWorkspace({
                   <CapabilityMetric label="Runtime" value={agiCapabilitySurface?.runtime_foundation || 'RoleRuntime / ContextOS / TurnEngine'} />
                   <CapabilityMetric label="Capabilities" value={String(agiCapabilitySurface?.count ?? agiCapabilities.length)} />
                 </div>
+                <CapabilityGovernanceMatrix
+                  stats={capabilityGovernance}
+                  runtimeFoundation={agiCapabilitySurface?.runtime_foundation || 'roles.runtime + ContextOS + TurnEngine'}
+                />
                 <div className="mt-3 grid gap-2 lg:grid-cols-2">
                   {agiCapabilities.slice(0, 6).map((capability) => (
                     <div
@@ -684,6 +702,82 @@ function CapabilityMetric({ label, value }: { label: string; value: string }) {
       <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">{label}</div>
       <div className="mt-1 truncate text-xs font-medium text-slate-200" title={value}>
         {value}
+      </div>
+    </div>
+  );
+}
+
+function buildCapabilityGovernanceStats(capabilities: ResidentAgiCapabilityPayload[]): CapabilityGovernanceStats {
+  const categories = new Set<string>();
+  const contractRefs = new Set<string>();
+  let readOnly = 0;
+  let governedMutation = 0;
+  let highRisk = 0;
+  let chainRequired = false;
+
+  for (const capability of capabilities) {
+    const access = String(capability.access || '').toLowerCase();
+    const risk = String(capability.risk_level || '').toLowerCase();
+    const category = String(capability.category || '').trim();
+    const contractRef = String(capability.contract_ref || '').trim();
+
+    if (category) categories.add(category);
+    if (contractRef) contractRefs.add(contractRef);
+    if (access === 'read_only') readOnly += 1;
+    if (access.includes('write') || access.includes('execute')) governedMutation += 1;
+    if (risk === 'high') highRisk += 1;
+    if (access.includes('pm_ce_director') || contractRef.includes('goal_bridge')) chainRequired = true;
+  }
+
+  return {
+    readOnly,
+    governedMutation,
+    highRisk,
+    categories: Array.from(categories).sort(),
+    contractRefs: Array.from(contractRefs).sort(),
+    chainRequired,
+  };
+}
+
+function CapabilityGovernanceMatrix({
+  stats,
+  runtimeFoundation,
+}: {
+  stats: CapabilityGovernanceStats;
+  runtimeFoundation: string;
+}) {
+  const chainLabel = stats.chainRequired ? 'PM → Chief Engineer → Director' : '只读/观察优先';
+  return (
+    <div
+      className="mt-3 rounded-lg border border-cyan-500/15 bg-cyan-500/[0.04] px-3 py-2"
+      data-testid="resident-agi-governance-matrix"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-medium text-cyan-100">能力治理矩阵</div>
+          <div className="mt-0.5 text-[10px] text-slate-500">底座: {runtimeFoundation}</div>
+        </div>
+        <Badge className="border-cyan-500/20 bg-cyan-500/10 text-cyan-200">
+          {chainLabel}
+        </Badge>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        <CapabilityMetric label="Read only" value={String(stats.readOnly)} />
+        <CapabilityMetric label="Governed ops" value={String(stats.governedMutation)} />
+        <CapabilityMetric label="High risk" value={String(stats.highRisk)} />
+        <CapabilityMetric label="Contracts" value={String(stats.contractRefs.length)} />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1" data-testid="resident-agi-governance-tags">
+        {stats.categories.slice(0, 8).map((category) => (
+          <span key={category} className="rounded bg-slate-950/80 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+            {category}
+          </span>
+        ))}
+        {stats.contractRefs.slice(0, 6).map((contractRef) => (
+          <span key={contractRef} className="rounded border border-slate-700 bg-slate-950/50 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+            {contractRef}
+          </span>
+        ))}
       </div>
     </div>
   );
@@ -1018,7 +1112,7 @@ function DecisionItem({
           <div className="rounded border border-slate-800 bg-slate-950/70 px-2 py-1.5">
             <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Handoff</div>
             <div className={cn('mt-1 text-xs font-medium', handoffImpact ? 'text-cyan-300' : 'text-slate-500')}>
-              {handoffImpact ? 'PM -> CE -> Director' : 'none'}
+              {handoffImpact ? 'PM → Chief Engineer → Director' : 'none'}
             </div>
           </div>
         </div>

@@ -81,11 +81,19 @@ def test_final_request_context_audit_counts_tools_and_coverage() -> None:
     messages = [
         {
             "role": "system",
-            "content": "Chief Engineer blueprint with construction_plan and scope_for_apply.",
+            "content": (
+                "Chief Engineer blueprint with construction_plan and scope_for_apply. "
+                "Resident AGI 决策交接 schema_version: resident.agi_decision_trace_signal.v1 "
+                "source_of_truth: workspace/meta/resident/decision_trace.jsonl"
+            ),
         },
         {
             "role": "user",
-            "content": "TASK-1 target_files src/index.ts tests/verify.test.ts retry after stderr exit_code failure",
+            "content": (
+                "TASK-1 target_files src/index.ts tests/verify.test.ts retry after stderr exit_code failure "
+                "Resident AGI 能力面 schema_version: resident.agi_capability_surface.v1 "
+                "runtime_foundation: roles.runtime + ContextOS + TurnEngine"
+            ),
         },
     ]
     ai_request = Mock()
@@ -115,6 +123,8 @@ def test_final_request_context_audit_counts_tools_and_coverage() -> None:
     assert audit["coverage"]["has_pm_contract"] is True
     assert audit["coverage"]["has_target_files"] is True
     assert audit["coverage"]["has_failure_feedback"] is True
+    assert audit["coverage"]["has_resident_agi_decision_trace"] is True
+    assert audit["coverage"]["has_resident_agi_capability_surface"] is True
     assert audit["available_token_headroom"] > 0
     assert "has_workspace_quality_evidence" in audit["context_quality"]["missing_coverage"]
     assert audit["context_quality"]["context_needs_review"] is True
@@ -204,7 +214,11 @@ def test_final_request_context_audit_marks_complete_context_as_reasonable() -> N
             "content": (
                 "TASK-1 acceptance criteria target_files src/index.ts "
                 "Chief Engineer blueprint construction_plan scope_for_apply "
-                "stderr exit_code failed retry factory_workspace_quality npm run build"
+                "stderr exit_code failed retry factory_workspace_quality npm run build "
+                "resident_agi_decision_trace resident.agi_decision_trace_signal.v1 "
+                "workspace/meta/resident/decision_trace.jsonl "
+                "resident_agi_capability_surface resident.agi_capability_surface.v1 "
+                "runtime_foundation: roles.runtime + ContextOS + TurnEngine"
             ),
         },
     ]
@@ -227,6 +241,41 @@ def test_final_request_context_audit_marks_complete_context_as_reasonable() -> N
     assert audit["context_underutilized"] is True
     assert audit["context_quality"]["missing_coverage"] == []
     assert audit["context_quality"]["context_needs_review"] is False
+
+
+def test_final_request_context_audit_tracks_resident_agi_signal_absence() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "TASK-1 acceptance criteria target_files src/index.ts "
+                "Chief Engineer blueprint construction_plan scope_for_apply "
+                "stderr exit_code failed retry factory_workspace_quality npm run build"
+            ),
+        },
+    ]
+    ai_request = Mock()
+    ai_request.context = {"chat_messages": messages}
+    ai_request.options = {"tools": []}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": []},
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    audit = build_final_request_context_audit(prepared=prepared, profile=profile)
+
+    assert audit["coverage"]["has_resident_agi_decision_trace"] is False
+    assert audit["coverage"]["has_resident_agi_capability_surface"] is False
+    assert "has_resident_agi_decision_trace" in audit["context_quality"]["missing_coverage"]
+    assert "has_resident_agi_capability_surface" in audit["context_quality"]["missing_coverage"]
 
 
 def test_llm_caller_keeps_current_user_instruction_as_final_message() -> None:

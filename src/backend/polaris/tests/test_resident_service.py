@@ -146,6 +146,9 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert latest_event["output"]["decision_id"]
     assert latest_event["output"]["verdict"] in {"success", "failure"}
 
+    summary = service.get_status(include_details=False)
+    assert summary["agi_capability_surface"]["schema_version"] == "resident.agi_capability_surface.v1"
+
     detailed = service.get_status(include_details=True)
     capability_surface = detailed["agi_capability_surface"]
     assert capability_surface["schema_version"] == "resident.agi_capability_surface.v1"
@@ -153,6 +156,10 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert capability_surface["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
     assert capability_surface["count"] >= 1
     assert any(item["capability_id"] == "contextos.final_request_audit.read" for item in capability_surface["items"])
+    serialized_capability_surface = json.dumps(capability_surface, ensure_ascii=False)
+    assert "PM -> CE -> Director" not in serialized_capability_surface
+    assert "PM -> Director" not in serialized_capability_surface
+    assert "PM → Chief Engineer → Director" in serialized_capability_surface
 
     reset_resident_services()
     recovered = get_resident_service(str(workspace)).recover()

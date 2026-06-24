@@ -94,6 +94,9 @@ class SignalBuildContext:
     # Resident AGI 平台能力面: AGI 与 PM/CE/Director/QA 走同一 Role/ContextOS
     # 底座,但拥有平台级审计/决策能力。默认 None-accessor → 不注入。
     get_resident_agi_capabilities: Callable[[], str | None] = _none_accessor
+    # Resident AGI 决策交接: CE/Director/QA 消费 AGI/Resident 已记录的治理判断。
+    # 默认 None-accessor → 不注入。
+    get_resident_agi_decision_trace: Callable[[], str | None] = _none_accessor
 
 
 class RoleContextSignal(Protocol):
@@ -479,6 +482,42 @@ class ResidentAgiCapabilitySurfaceSignal:
         )
 
 
+class ResidentAgiDecisionTraceSignal:
+    """CE/Director/QA 专属：Resident AGI 决策交接信号。
+
+    Resident decision trace 是 source of truth；本信号只是把最近的执行相关
+    AGI/Resident 决策投影进同一 Role/ContextOS 请求，让 CE/Director/QA 能消费
+    监督结论、证据引用和禁止绕过的交接边界，避免 AGI 只存在于 UI/审计面板。
+    """
+
+    id = "resident_agi_decision_trace"
+
+    _DEFAULT_BY_ROLE = {"chief_engineer": True, "director": True, "qa": True}
+
+    def applies_to(self, ctx: SignalBuildContext) -> bool:
+        if ctx.role not in self._DEFAULT_BY_ROLE:
+            return False
+        default = self._DEFAULT_BY_ROLE.get(ctx.role, False)
+        return bool(ctx.policy_flags.get("include_resident_agi_decision_trace", default))
+
+    def priority(self, ctx: SignalBuildContext) -> int:
+        return 5
+
+    def build(self, ctx: SignalBuildContext) -> SignalBlock | None:
+        trace = ctx.get_resident_agi_decision_trace()
+        if not trace:
+            return None
+        content = f"【Resident AGI 决策交接】\n{trace}"
+        return SignalBlock(
+            id=self.id,
+            content=content,
+            priority=5,
+            level=_MUST_HAVE,
+            freshness_key=_freshness_of(trace),
+            max_chars=DEFAULT_PER_SIGNAL_CHAR_CAP,
+        )
+
+
 # 默认注册表：seed（全角色）+ 角色专属（role+flag 双门控，默认 flag 关 → 不影响 baseline）。
 DEFAULT_SIGNAL_PROVIDERS: tuple[RoleContextSignal, ...] = (
     ProjectStructureSignal(),
@@ -486,6 +525,7 @@ DEFAULT_SIGNAL_PROVIDERS: tuple[RoleContextSignal, ...] = (
     RepoIdentitySignal(),
     ScoutAnchorsSignal(),
     ResidentAgiCapabilitySurfaceSignal(),
+    ResidentAgiDecisionTraceSignal(),
     BlueprintOverviewSignal(),
     BlueprintStepsSignal(),
     VerdictHistorySignal(),

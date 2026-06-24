@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs.rust_repairs import (
     _apply_deterministic_rust_crate_import_repair,
     _apply_deterministic_rust_dependency_repair,
+    _apply_deterministic_rust_lib_root_facade_repair,
     _apply_deterministic_rust_line_suggestion_repair,
     _apply_deterministic_rust_missing_lib_target_repair,
     _apply_deterministic_rust_trait_import_repair,
@@ -88,6 +89,33 @@ def test_deterministic_rust_crate_import_repair_handles_unlinked_crate_wording(t
     assert "kitchen_flavor_colorizer::" not in repaired
 
 
+def test_deterministic_rust_crate_import_repair_rewrites_bin_to_local_lib_crate(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "flavor-palette-lab"\n\n[lib]\nname = "flavor_palette_lab"\npath = "src/lib.rs"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("pub fn generate_palette_and_plating() {}\n", encoding="utf-8")
+    (tmp_path / "src" / "main.rs").write_text(
+        "use kitchen_color_composer::generate_palette_and_plating;\nfn main() { generate_palette_and_plating(); }\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_rust_crate_import_repair(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task_id="factory-quality-gate:test",
+        artifact_quality_errors=[
+            "error[E0432]: unresolved import `kitchen_color_composer`\n"
+            "use of unresolved module or unlinked crate `kitchen_color_composer`"
+        ],
+    )
+
+    repaired = (tmp_path / "src" / "main.rs").read_text(encoding="utf-8")
+    assert results
+    assert "use flavor_palette_lab::generate_palette_and_plating;" in repaired
+    assert "kitchen_color_composer::" not in repaired
+
+
 def test_deterministic_rust_dependency_repair_adds_serde_and_serde_json(tmp_path: Path) -> None:
     (tmp_path / "Cargo.toml").write_text(
         '[package]\nname = "kitchen-taste-palette"\n\n[dependencies]\n', encoding="utf-8"
@@ -108,6 +136,44 @@ def test_deterministic_rust_dependency_repair_adds_serde_and_serde_json(tmp_path
     assert results
     assert 'serde = { version = "1.0", features = ["derive"] }' in cargo
     assert 'serde_json = "1.0"' in cargo
+
+
+def test_deterministic_rust_lib_root_facade_repair_reconnects_existing_engine_api(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "flavor-palette-lab"\n\n[lib]\nname = "flavor_palette_lab"\npath = "src/lib.rs"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "lib.rs").write_text(
+        "pub struct Recipe;\npub enum Flavor { Sweet }\npub struct Ingredient;\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine" / "mod.rs").write_text(
+        "use crate::lib::Recipe;\npub fn generate_palette_and_plating(_recipe: &Recipe) {}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "main.rs").write_text(
+        "use flavor_palette_lab::lib::{Flavor, Ingredient, Recipe};\n"
+        "use flavor_palette_lab::generate_palette_and_plating;\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_rust_lib_root_facade_repair(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task_id="factory-quality-gate:test",
+        artifact_quality_errors=["AssertionError: lib.rs must expose generate_palette_and_plating API"],
+    )
+
+    lib_rs = (tmp_path / "src" / "lib.rs").read_text(encoding="utf-8")
+    engine_rs = (tmp_path / "src" / "engine" / "mod.rs").read_text(encoding="utf-8")
+    main_rs = (tmp_path / "src" / "main.rs").read_text(encoding="utf-8")
+    assert results
+    assert "pub mod engine;" in lib_rs
+    assert "pub use engine::generate_palette_and_plating;" in lib_rs
+    assert "use crate::Recipe;" in engine_rs
+    assert "use flavor_palette_lab::{Flavor, Ingredient, Recipe};" in main_rs
+    assert "::lib::" not in engine_rs
+    assert "::lib::" not in main_rs
 
 
 def test_deterministic_rust_missing_lib_target_repair_creates_module_facade(tmp_path: Path) -> None:
@@ -169,6 +235,35 @@ def test_deterministic_rust_line_suggestion_repair_applies_rustc_field_hint(tmp_
     assert results
     assert "i.name.eq_ignore_ascii_case(needle)" in repaired
     assert "i.eq_ignore_ascii_case(needle)" not in repaired
+
+
+def test_deterministic_rust_line_suggestion_repair_applies_borrow_hint(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "kitchen-flavor-palette"\n', encoding="utf-8")
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "engine" / "mod.rs").write_text(
+        "fn build() {\n    let palette = flavor_profile_to_palette(recipe.overall_flavor_profile());\n}\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_rust_line_suggestion_repair(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task_id="factory-quality-gate:test",
+        artifact_quality_errors=[
+            "error[E0308]: mismatched types\n"
+            "  --> src/engine/mod.rs:2:45\n"
+            "   |\n"
+            "2 |     let palette = flavor_profile_to_palette(recipe.overall_flavor_profile());\n"
+            "   |                   ------------------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `&FlavorProfile`, found `FlavorProfile`\n"
+            "help: consider borrowing here\n"
+            "   |\n"
+            "2 |     let palette = flavor_profile_to_palette(&recipe.overall_flavor_profile());\n"
+            "   |                                             +\n"
+        ],
+    )
+
+    repaired = (tmp_path / "src" / "engine" / "mod.rs").read_text(encoding="utf-8")
+    assert results
+    assert "flavor_profile_to_palette(&recipe.overall_flavor_profile())" in repaired
 
 
 def test_deterministic_rust_unresolved_pub_use_repair_removes_invalid_exports(tmp_path: Path) -> None:

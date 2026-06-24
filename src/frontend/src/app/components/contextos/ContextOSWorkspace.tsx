@@ -121,6 +121,27 @@ const STATE_STYLES: Record<PipelineState, { dot: string; ring: string; text: str
   },
 };
 
+type FinalRequestCoverageChip = {
+  id: string;
+  label: string;
+  key: string;
+  present: boolean | null;
+  title: string;
+};
+
+const AGI_FINAL_REQUEST_COVERAGE: Array<{ id: string; label: string; key: string }> = [
+  {
+    id: 'resident-agi-decision-trace',
+    label: 'AGI 决策交接',
+    key: 'has_resident_agi_decision_trace',
+  },
+  {
+    id: 'resident-agi-capability-surface',
+    label: 'AGI 能力面',
+    key: 'has_resident_agi_capability_surface',
+  },
+];
+
 function badgeColorForState(state: PipelineState): 'success' | 'error' | 'default' {
   if (state === 'active') return 'success';
   if (state === 'blocked') return 'error';
@@ -191,6 +212,91 @@ function evidencePolicySummary(projection: ControlPlaneProjection): string {
     return `启用 ${required} · 缺 ${policy.missing_required_modalities.join(', ')}`;
   }
   return `启用 ${required}`;
+}
+
+function readAuditCoverage(audit: Record<string, unknown> | null): Record<string, unknown> {
+  if (!audit) return {};
+  const coverage = audit['coverage'];
+  return typeof coverage === 'object' && coverage !== null ? coverage as Record<string, unknown> : {};
+}
+
+function readAuditMissingCoverage(audit: Record<string, unknown> | null): Set<string> {
+  if (!audit) return new Set();
+  const contextQuality = audit['context_quality'];
+  if (typeof contextQuality !== 'object' || contextQuality === null) return new Set();
+  const missing = (contextQuality as Record<string, unknown>)['missing_coverage'];
+  if (!Array.isArray(missing)) return new Set();
+  return new Set(missing.filter((item): item is string => typeof item === 'string'));
+}
+
+function auditFlagValue(value: unknown): boolean | null {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  return null;
+}
+
+function finalRequestAgiCoverageChips(audit: Record<string, unknown> | null): FinalRequestCoverageChip[] {
+  if (!audit) return [];
+  const coverage = readAuditCoverage(audit);
+  const missingCoverage = readAuditMissingCoverage(audit);
+  return AGI_FINAL_REQUEST_COVERAGE.flatMap((item) => {
+    const hasSignal = Object.prototype.hasOwnProperty.call(coverage, item.key) || missingCoverage.has(item.key);
+    if (!hasSignal) return [];
+    const rawValue = coverage[item.key];
+    const present = auditFlagValue(rawValue);
+    const resolved = present ?? (missingCoverage.has(item.key) ? false : null);
+    return [{
+      ...item,
+      present: resolved,
+      title: `${item.key}=${String(rawValue ?? 'n/a')} missing=${String(missingCoverage.has(item.key))}`,
+    }];
+  });
+}
+
+function FinalRequestAgiCoverageBadges({
+  audit,
+  className,
+  compact = false,
+}: {
+  audit: Record<string, unknown> | null;
+  className?: string;
+  compact?: boolean;
+}) {
+  const chips = finalRequestAgiCoverageChips(audit);
+  if (chips.length === 0) return null;
+  return (
+    <div
+      className={cn('flex flex-wrap items-center gap-1', className)}
+      data-testid="contextos-final-request-agi-coverage"
+    >
+      {!compact && (
+        <span className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] text-text-dim">
+          最终请求 AGI 覆盖
+        </span>
+      )}
+      {chips.map((chip) => (
+        <span
+          key={chip.id}
+          data-testid={`contextos-final-request-agi-${chip.id}`}
+          className={cn(
+            'rounded border px-1.5 py-0.5 font-mono text-[9px]',
+            chip.present === true
+              ? 'border-accent-secondary/20 bg-accent-secondary/10 text-accent-secondary'
+              : chip.present === false
+                ? 'border-status-error/20 bg-status-error/10 text-status-error'
+                : 'border-white/[0.08] bg-white/5 text-text-dim',
+          )}
+          title={chip.title}
+        >
+          {chip.label}: {chip.present === true ? '已进入' : chip.present === false ? '缺失' : '未知'}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +501,7 @@ function LlmCallCard({ event }: { event: ContextOSEvent }) {
         <DetailStat label="Context" value={hasContext ? contextOSFormat.tokens(event.contextTokens!) : 'n/a'} tone={hasContext ? 'active' : 'idle'} sub="最终请求上下文" />
         <DetailStat label="Latency" value={event.durationMs !== null ? `${event.durationMs}ms` : 'n/a'} tone={event.durationMs !== null ? 'active' : 'idle'} sub={hasSnapshot ? 'snapshot linked' : 'no snapshot'} />
       </div>
+      <FinalRequestAgiCoverageBadges audit={event.finalRequestContextAudit} className="mt-3" />
     </div>
   );
 }
@@ -971,6 +1078,7 @@ function RoleInternalEventRow({ event }: { event: ContextOSEvent }) {
                   audit
                 </span>
               )}
+              <FinalRequestAgiCoverageBadges audit={event.finalRequestContextAudit} compact />
               {event.durationMs !== null && event.durationMs > 0 && (
                 <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-muted">{event.durationMs}ms</span>
               )}
@@ -1007,6 +1115,8 @@ function formatFinalRequestAuditTitle(audit: Record<string, unknown> | null): st
     ['ce', coverage['has_chief_engineer_blueprint']],
     ['files', coverage['has_target_files']],
     ['feedback', coverage['has_failure_feedback']],
+    ['agi_decision', coverage['has_resident_agi_decision_trace']],
+    ['agi_capability', coverage['has_resident_agi_capability_surface']],
   ].map(([key, value]) => `${key}=${String(value ?? 'n/a')}`);
   return parts.join(' ');
 }

@@ -191,6 +191,7 @@ export interface ResidentStatusPayload {
   runtime?: ResidentRuntimePayload;
   agenda?: ResidentAgendaPayload;
   counts?: Record<string, number>;
+  agi_capability_surface?: ResidentAgiCapabilitySurfacePayload;
 }
 
 export interface ResidentDecisionOptionPayload {
@@ -411,7 +412,6 @@ export interface ResidentStatusDetailsPayload extends ResidentStatusPayload {
   experiments?: ResidentExperimentPayload[];
   improvements?: ResidentImprovementPayload[];
   capability_graph?: ResidentCapabilityGraphPayload;
-  agi_capability_surface?: ResidentAgiCapabilitySurfacePayload;
   // Phase 1.2: Goal Execution Projection (via WebSocket status)
   goal_executions?: GoalExecutionView[];
 }

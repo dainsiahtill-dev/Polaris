@@ -153,6 +153,12 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
         assert materialize_response.status_code == 200
         assert materialize_response.json()["focus"] == "resident_goal_materialization"
 
+        summary_response = client.get("/v2/resident/status", params={"workspace": str(workspace)})
+        assert summary_response.status_code == 200
+        assert summary_response.json()["agi_capability_surface"]["schema_version"] == (
+            "resident.agi_capability_surface.v1"
+        )
+
         status_response = client.get("/v2/resident/status", params={"workspace": str(workspace), "details": True})
         assert status_response.status_code == 200
         payload = status_response.json()

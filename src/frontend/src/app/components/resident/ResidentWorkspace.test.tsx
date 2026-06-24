@@ -131,7 +131,7 @@ const mockResidentState = {
     role_id: 'resident_agi',
     runtime_foundation: 'RoleRuntime / ContextOS / TurnEngine',
     implementation_cell: 'resident.autonomy',
-    count: 2,
+    count: 3,
     items: [
       {
         capability_id: 'contextos.final_request_audit.read',
@@ -146,6 +146,14 @@ const mockResidentState = {
         category: 'run_ledger',
         access: 'read_only',
         contract_ref: 'control_plane.run_ledger',
+      },
+      {
+        capability_id: 'resident.goal_bridge.execute',
+        name: 'Resident governed goal bridge',
+        category: 'controlled_execution',
+        access: 'execute_through_pm_ce_director_chain',
+        contract_ref: 'resident.goal_bridge',
+        risk_level: 'high',
       },
     ],
   },
@@ -192,6 +200,11 @@ describe('ResidentWorkspace', () => {
     expect(screen.getByText('Task decomposition')).toBeInTheDocument();
     expect(screen.getByText('AGI Role 能力面')).toBeInTheDocument();
     expect(screen.getByText('Final provider-request audit')).toBeInTheDocument();
+    expect(screen.getByTestId('resident-agi-governance-matrix')).toHaveTextContent('能力治理矩阵');
+    expect(screen.getByTestId('resident-agi-governance-matrix')).toHaveTextContent('PM → Chief Engineer → Director');
+    expect(screen.getByTestId('resident-agi-governance-matrix')).toHaveTextContent('Governed ops');
+    expect(screen.getByTestId('resident-agi-governance-matrix')).toHaveTextContent('High risk');
+    expect(screen.getByTestId('resident-agi-governance-tags')).toHaveTextContent('resident.goal_bridge');
   });
 
   it('creates a goal from the AGI console', async () => {
@@ -289,7 +302,7 @@ describe('ResidentWorkspace', () => {
     expect(screen.getByText('决策审计面')).toBeInTheDocument();
     expect(screen.getByText('source of truth: decision_trace.jsonl')).toBeInTheDocument();
     expect(screen.getByText('resident.decision_event.v1')).toBeInTheDocument();
-    expect(screen.getByText('PM -> CE -> Director')).toBeInTheDocument();
+    expect(screen.getByText('PM → Chief Engineer → Director')).toBeInTheDocument();
     expect(screen.getByText('validation_passed')).toBeInTheDocument();
     expect(screen.getByText('bounded decomposition')).toBeInTheDocument();
     expect(screen.getByText('score 91%')).toBeInTheDocument();

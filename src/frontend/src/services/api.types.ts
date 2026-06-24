@@ -741,6 +741,7 @@ export interface ResidentStatusPayload {
   runtime?: ResidentRuntimePayload;
   agenda?: ResidentAgendaPayload;
   counts?: Record<string, number>;
+  agi_capability_surface?: ResidentAgiCapabilitySurfacePayload;
 }
 
 export interface ResidentDecisionOptionPayload {
@@ -775,6 +776,31 @@ export interface ResidentDecisionPayload {
   parent_decision_id?: string;
   affected_files?: string[];
   affected_symbols?: string[];
+}
+
+export interface ResidentAgiCapabilityPayload {
+  capability_id?: string;
+  name?: string;
+  category?: string;
+  access?: string;
+  purpose?: string;
+  contract_ref?: string;
+  endpoint?: string;
+  risk_level?: string;
+  guardrails?: string[];
+  evidence_refs?: string[];
+}
+
+export interface ResidentAgiCapabilitySurfacePayload {
+  schema_version?: string;
+  role_id?: string;
+  runtime_foundation?: string;
+  implementation_cell?: string;
+  product_role?: string;
+  unattended_factory_role?: string;
+  categories?: string[];
+  items?: ResidentAgiCapabilityPayload[];
+  count?: number;
 }
 
 export interface ResidentGoalPayload {

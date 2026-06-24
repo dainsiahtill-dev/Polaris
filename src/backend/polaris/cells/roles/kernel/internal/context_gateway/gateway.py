@@ -94,6 +94,7 @@ class ContextGatewayConfig:
     blueprint_overview_provider: Callable[[str, str], Any | None] | None = None
     verdict_history_provider: Callable[[str, str], Any | None] | None = None
     resident_agi_capability_provider: Callable[[str], Any | None] | None = None
+    resident_agi_decision_trace_provider: Callable[[str], Any | None] | None = None
 
 
 class DuplicateStateOwnerError(Exception):
@@ -931,6 +932,10 @@ class RoleContextGateway:
     def _get_resident_agi_capabilities(self) -> str | None:
         """Backward-compatible delegate to SignalSourceProvider.get_resident_agi_capabilities."""
         return self._signal_sources.get_resident_agi_capabilities()
+
+    def _get_resident_agi_decision_trace(self) -> str | None:
+        """Backward-compatible delegate to SignalSourceProvider.get_resident_agi_decision_trace."""
+        return self._signal_sources.get_resident_agi_decision_trace()
 
     def _get_task_history(self, task_id: str) -> str | None:
         """Backward-compatible delegate to SignalSourceProvider.get_task_history."""

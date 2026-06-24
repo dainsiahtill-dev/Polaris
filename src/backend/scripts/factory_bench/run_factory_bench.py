@@ -1561,8 +1561,20 @@ def _bench_session_backend_url(
     return ""
 
 
-def _bench_project_instance_id(*, bench_session_id: str, project_id: str) -> str:
-    raw = f"{bench_session_id}-{project_id}" if bench_session_id else f"factory-bench-{project_id}"
+def _bench_project_instance_id(
+    *,
+    bench_session_id: str,
+    project_id: str,
+    bench_workspace: Path | str | None = None,
+) -> str:
+    if bench_session_id:
+        raw = f"{bench_session_id}-{project_id}"
+    else:
+        workspace_name = Path(str(bench_workspace or "")).name
+        if workspace_name.startswith("factory-bench-"):
+            raw = f"{workspace_name}-{project_id}"
+        else:
+            raw = f"factory-bench-{workspace_name}-{project_id}" if workspace_name else f"factory-bench-{project_id}"
     try:
         from polaris.cells.instances.internal.service import sanitize_instance_id
     except (ImportError, RuntimeError):
@@ -1608,6 +1620,7 @@ def _start_isolated_bench_project_instance(
                 "instance_id": _bench_project_instance_id(
                     bench_session_id=bench_session_id,
                     project_id=project_id,
+                    bench_workspace=bench_workspace,
                 ),
                 "name": f"{project_id} {project_title}".strip(),
                 "kind": "bench_project",

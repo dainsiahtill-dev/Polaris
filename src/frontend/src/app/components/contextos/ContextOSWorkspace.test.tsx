@@ -466,6 +466,66 @@ describe('ContextOSWorkspace', () => {
     expect(screen.getAllByText(/provider usage/).length).toBeGreaterThan(0);
   });
 
+  it('surfaces Resident AGI final request coverage from the audit payload', () => {
+    const agiAuditStream: LogEntry[] = [
+      {
+        id: 'director-agi-audit',
+        timestamp: new Date().toISOString(),
+        level: 'success',
+        source: 'Director',
+        message: 'director call returned with resident agi handoff',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          model: 'qwen3.6-27b-gpu1',
+          promptTokens: 1500,
+          completionTokens: 240,
+          totalTokens: 1740,
+          contextTokens: 2600,
+          durationMs: 1800,
+          final_request_context_audit: {
+            final_request_token_estimate: 2600,
+            message_token_estimate: 2100,
+            tool_schema_token_estimate: 320,
+            coverage: {
+              has_resident_agi_decision_trace: true,
+              has_resident_agi_capability_surface: false,
+            },
+            context_quality: {
+              missing_coverage: ['has_resident_agi_capability_surface'],
+            },
+          },
+        },
+        tags: ['llm_completed'],
+      },
+    ];
+
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmRuntimeState={READY_LLM_WITH_WINDOWS}
+        llmStreamEvents={agiAuditStream}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('contextos-stage-llm'));
+    const llmDetail = screen.getByTestId('contextos-pipeline-detail-llm');
+    expect(llmDetail.textContent).toContain('最终请求 AGI 覆盖');
+    expect(llmDetail.textContent).toContain('AGI 决策交接: 已进入');
+    expect(llmDetail.textContent).toContain('AGI 能力面: 缺失');
+    expect(screen.getByTestId('contextos-final-request-agi-resident-agi-capability-surface')).toHaveAttribute(
+      'title',
+      expect.stringContaining('missing=true'),
+    );
+
+    fireEvent.click(screen.getByTestId('contextos-pipeline-detail-close'));
+    fireEvent.click(screen.getByTestId('contextos-role-director'));
+    const rolePanel = screen.getByTestId('contextos-role-panel-director');
+    expect(rolePanel.textContent).toContain('AGI 决策交接: 已进入');
+    expect(rolePanel.textContent).toContain('AGI 能力面: 缺失');
+  });
+
   it('renders Context Budget against the actual selected role window', () => {
     const usageStats: UsageStats = {
       totals: { prompt_tokens: 16_384, completion_tokens: 1024, total_tokens: 17_408 },

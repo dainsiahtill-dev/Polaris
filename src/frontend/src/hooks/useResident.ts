@@ -11,13 +11,12 @@ import type {
   ResidentGoalStagePayload,
   ResidentImprovementPayload,
   ResidentStatusDetailsPayload,
-  ResidentStatusPayload,
   ResidentSkillPayload,
 } from '@/app/types/appContracts';
 
 interface UseResidentOptions {
   workspace?: string | null;
-  liveResident?: ResidentStatusPayload | null;
+  liveResident?: ResidentStatusDetailsPayload | null;
 }
 
 interface ResidentIdentityPatch {
@@ -42,7 +41,7 @@ interface ResidentGoalDraft {
   risk_score?: number;
 }
 
-function emptyDetails(workspace: string, liveResident?: ResidentStatusPayload | null): ResidentStatusDetailsPayload | null {
+function emptyDetails(workspace: string, liveResident?: ResidentStatusDetailsPayload | null): ResidentStatusDetailsPayload | null {
   if (!liveResident) {
     return null;
   }
@@ -52,13 +51,15 @@ function emptyDetails(workspace: string, liveResident?: ResidentStatusPayload | 
     runtime: liveResident.runtime,
     agenda: liveResident.agenda,
     counts: liveResident.counts,
-    decisions: [],
-    goals: [],
-    insights: [],
-    skills: [],
-    experiments: [],
-    improvements: [],
-    capability_graph: { generated_at: '', capabilities: [], gaps: [] },
+    decisions: liveResident.decisions ?? [],
+    goals: liveResident.goals ?? [],
+    insights: liveResident.insights ?? [],
+    skills: liveResident.skills ?? [],
+    experiments: liveResident.experiments ?? [],
+    improvements: liveResident.improvements ?? [],
+    capability_graph: liveResident.capability_graph ?? { generated_at: '', capabilities: [], gaps: [] },
+    agi_capability_surface: liveResident.agi_capability_surface,
+    goal_executions: liveResident.goal_executions ?? [],
   };
 }
 

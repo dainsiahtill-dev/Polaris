@@ -112,6 +112,10 @@ class ProjectionDictBuilder:
                 "include_resident_agi_capability_surface": bool(
                     getattr(gateway.policy, "include_resident_agi_capability_surface", True)
                 ),
+                # Resident AGI 决策交接：CE/Director/QA 消费 AGI 治理判断,默认按 role provider 控制。
+                "include_resident_agi_decision_trace": bool(
+                    getattr(gateway.policy, "include_resident_agi_decision_trace", True)
+                ),
             },
             get_project_structure=gateway._get_project_structure,
             get_task_history=gateway._get_task_history,
@@ -126,6 +130,7 @@ class ProjectionDictBuilder:
             # file_ownership 读取 workspace 内的 file-edits/events.jsonl（D-11）。
             get_file_ownership=gateway._get_file_ownership,
             get_resident_agi_capabilities=gateway._get_resident_agi_capabilities,
+            get_resident_agi_decision_trace=gateway._get_resident_agi_decision_trace,
         )
         # 跨 turn freshness 记忆（按 task_id）：压力下断流"自上次注入未变化"的 nice-to-have，
         # 把窗口让给即时工具结果。无压力时 budget_pressure=False → 不断流 → 与旧实现逐字节一致。

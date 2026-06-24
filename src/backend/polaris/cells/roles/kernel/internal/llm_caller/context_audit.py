@@ -158,6 +158,28 @@ def _coverage_flags(text: str) -> dict[str, bool]:
                 "real_run_gate",
             )
         ),
+        "has_resident_agi_decision_trace": any(
+            needle in lowered
+            for needle in (
+                "resident_agi_decision_trace",
+                "resident agi 决策交接",
+                "resident agi decision",
+                "resident.agi_decision_trace_signal.v1",
+                "resident.decision_event.v1",
+                "source_of_truth: workspace/meta/resident/decision_trace.jsonl",
+                "workspace/meta/resident/decision_trace.jsonl",
+            )
+        ),
+        "has_resident_agi_capability_surface": any(
+            needle in lowered
+            for needle in (
+                "resident_agi_capability_surface",
+                "resident agi 能力面",
+                "resident.agi_capability_surface.v1",
+                "runtime_foundation: roles.runtime + contextos + turnengine",
+                "embedded_agi_supervisor",
+            )
+        ),
     }
 
 

@@ -39,6 +39,21 @@ _RUST_FIELD_METHOD_LINE_SUGGESTION_RE = re.compile(
     r"^\s*(?P=line)\s+\|\s(?P<code>[^\n]+)",
     re.IGNORECASE | re.MULTILINE | re.DOTALL,
 )
+_RUST_FULL_LINE_SUGGESTION_RE = re.compile(
+    r"^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):\d+.*?"
+    r"help:\s+(?:consider borrowing here|try dereferencing|consider removing the borrow).*?"
+    r"^\s*(?P=line)\s+\|\s(?P<code>[^\n]+)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+_RUST_LIB_ROOT_EXPORT_HINT_RE = re.compile(
+    r"lib\.rs must expose [`'\"]?(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)[`'\"]?(?:\s+API)?",
+    re.IGNORECASE,
+)
+_RUST_ROOT_UNRESOLVED_IMPORT_RE = re.compile(
+    r"unresolved import [`'\"](?P<crate>[A-Za-z_][A-Za-z0-9_]*)::(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)[`'\"]"
+    r".*?no [`'\"](?P=symbol)[`'\"] in the root",
+    re.IGNORECASE | re.DOTALL,
+)
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _KNOWN_RUST_DEPENDENCIES: dict[str, str] = {
     "serde": 'serde = { version = "1.0", features = ["derive"] }',
@@ -119,6 +134,32 @@ def _apply_deterministic_rust_missing_lib_target_repair(
                 "source_tool": "deterministic_rust_missing_lib_target_repair",
                 "file": record["file"],
                 "modules": record["modules"],
+            },
+        }
+        for record in repairs
+    ]
+
+
+def _apply_deterministic_rust_lib_root_facade_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    del task_id
+    workspace = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    repairs = repair_rust_lib_root_facade(workspace, artifact_quality_errors)
+    return [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_rust_lib_root_facade_repair",
+                "file": record["file"],
+                "path_rewrites": record["path_rewrites"],
+                "module_exports": record["module_exports"],
             },
         }
         for record in repairs
@@ -219,12 +260,16 @@ def repair_rust_crate_imports(workspace: Path, artifact_quality_errors: list[str
 
     repairs: list[dict[str, Any]] = []
     declared_dependencies = _declared_rust_dependencies(cargo)
+    has_local_lib = _cargo_declares_local_rust_lib(workspace, cargo)
     for missing_crate in missing_crates:
         if missing_crate == canonical_crate:
             continue
         if missing_crate in declared_dependencies:
             continue
-        if not _rust_crate_names_look_related(missing_crate, canonical_crate):
+        if not _rust_crate_names_look_related(
+            missing_crate,
+            canonical_crate,
+        ) and not (has_local_lib and _rust_crate_prefix_used_in_binary_entrypoint(workspace, missing_crate)):
             continue
         repairs.extend(_replace_rust_crate_prefix(workspace, missing_crate, canonical_crate))
     return repairs
@@ -276,6 +321,39 @@ def repair_rust_missing_lib_targets(workspace: Path, artifact_quality_errors: li
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_text(content, encoding="utf-8")
         repairs.append({"file": str(target_path.relative_to(workspace)), "modules": modules})
+    return repairs
+
+
+def repair_rust_lib_root_facade(workspace: Path, artifact_quality_errors: list[str]) -> list[dict[str, Any]]:
+    if not workspace.is_dir():
+        return []
+    cargo_path = workspace / "Cargo.toml"
+    lib_path = workspace / "src" / "lib.rs"
+    if not cargo_path.is_file() or not lib_path.is_file():
+        return []
+    cargo = _read_cargo_manifest(cargo_path)
+    if not cargo:
+        return []
+    canonical_crate = _canonical_rust_crate_name(cargo)
+    if not canonical_crate:
+        return []
+
+    requested_symbols = _parse_rust_lib_root_export_symbols(artifact_quality_errors, canonical_crate)
+    source_had_lib_root_paths = _rust_workspace_uses_lib_root_path(workspace, canonical_crate)
+    if not requested_symbols and not source_had_lib_root_paths:
+        return []
+
+    repairs: list[dict[str, Any]] = []
+    path_rewrites = _rewrite_rust_lib_root_paths(workspace, canonical_crate)
+    module_exports = _ensure_rust_lib_root_exports(lib_path, workspace, requested_symbols)
+    if path_rewrites or module_exports:
+        repairs.append(
+            {
+                "file": "src/lib.rs",
+                "path_rewrites": path_rewrites,
+                "module_exports": module_exports,
+            }
+        )
     return repairs
 
 
@@ -559,21 +637,135 @@ def _parse_rust_line_suggestions(artifact_quality_errors: list[str]) -> list[tup
     suggestions: list[tuple[str, int, str]] = []
     seen: set[tuple[str, int, str]] = set()
     text = _ANSI_ESCAPE_RE.sub("", "\n".join(str(error or "") for error in artifact_quality_errors))
-    for match in _RUST_FIELD_METHOD_LINE_SUGGESTION_RE.finditer(text):
-        relative_path = str(match.group("path") or "").strip().replace("\\", "/")
-        code = str(match.group("code") or "").rstrip()
-        try:
-            line_number = int(match.group("line"))
-        except (TypeError, ValueError):
-            continue
-        if not relative_path or relative_path.startswith("/") or not code.strip():
-            continue
-        key = (relative_path, line_number, code)
-        if key in seen:
-            continue
-        seen.add(key)
-        suggestions.append(key)
+    for pattern in (_RUST_FIELD_METHOD_LINE_SUGGESTION_RE, _RUST_FULL_LINE_SUGGESTION_RE):
+        for match in pattern.finditer(text):
+            relative_path = str(match.group("path") or "").strip().replace("\\", "/")
+            code = str(match.group("code") or "").rstrip()
+            try:
+                line_number = int(match.group("line"))
+            except (TypeError, ValueError):
+                continue
+            if not relative_path or relative_path.startswith("/") or not code.strip():
+                continue
+            key = (relative_path, line_number, code)
+            if key in seen:
+                continue
+            seen.add(key)
+            suggestions.append(key)
     return suggestions
+
+
+def _parse_rust_lib_root_export_symbols(artifact_quality_errors: list[str], canonical_crate: str) -> list[str]:
+    symbols: list[str] = []
+    seen: set[str] = set()
+    text = _ANSI_ESCAPE_RE.sub("", "\n".join(str(error or "") for error in artifact_quality_errors))
+    for match in _RUST_LIB_ROOT_EXPORT_HINT_RE.finditer(text):
+        symbol = str(match.group("symbol") or "").strip()
+        if symbol and symbol not in seen:
+            seen.add(symbol)
+            symbols.append(symbol)
+    for match in _RUST_ROOT_UNRESOLVED_IMPORT_RE.finditer(text):
+        crate = str(match.group("crate") or "").strip()
+        symbol = str(match.group("symbol") or "").strip()
+        if crate == canonical_crate and symbol and symbol not in seen:
+            seen.add(symbol)
+            symbols.append(symbol)
+    return symbols
+
+
+def _rust_workspace_uses_lib_root_path(workspace: Path, canonical_crate: str) -> bool:
+    crate_lib_pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(canonical_crate)}::lib::")
+    crate_relative_pattern = re.compile(r"(?<![A-Za-z0-9_])crate::lib::")
+    for rust_file in sorted(workspace.rglob("*.rs")):
+        if "target" in rust_file.relative_to(workspace).parts:
+            continue
+        try:
+            text = rust_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if crate_lib_pattern.search(text) or crate_relative_pattern.search(text):
+            return True
+    return False
+
+
+def _rewrite_rust_lib_root_paths(workspace: Path, canonical_crate: str) -> int:
+    crate_lib_pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(canonical_crate)}::lib::")
+    crate_relative_pattern = re.compile(r"(?<![A-Za-z0-9_])crate::lib::")
+    rewrites = 0
+    for rust_file in sorted(workspace.rglob("*.rs")):
+        if "target" in rust_file.relative_to(workspace).parts:
+            continue
+        try:
+            original = rust_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        repaired, crate_count = crate_lib_pattern.subn(f"{canonical_crate}::", original)
+        repaired, relative_count = crate_relative_pattern.subn("crate::", repaired)
+        if repaired == original:
+            continue
+        rust_file.write_text(repaired, encoding="utf-8")
+        rewrites += crate_count + relative_count
+    return rewrites
+
+
+def _ensure_rust_lib_root_exports(lib_path: Path, workspace: Path, requested_symbols: list[str]) -> list[str]:
+    if not requested_symbols:
+        return []
+    try:
+        original = lib_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+
+    repaired = original
+    exports: list[str] = []
+    for symbol in requested_symbols:
+        module = _find_rust_module_exporting_symbol(workspace, symbol)
+        if not module:
+            continue
+        module_decl = f"pub mod {module};"
+        export_decl = f"pub use {module}::{symbol};"
+        if not re.search(rf"(?m)^\s*pub\s+mod\s+{re.escape(module)}\s*;", repaired):
+            repaired = _append_rust_root_decl(repaired, module_decl)
+            exports.append(module_decl)
+        if not re.search(rf"(?m)^\s*pub\s+use\s+{re.escape(module)}::{re.escape(symbol)}\s*;", repaired):
+            repaired = _append_rust_root_decl(repaired, export_decl)
+            exports.append(export_decl)
+    if repaired != original:
+        lib_path.write_text(repaired, encoding="utf-8")
+    return exports
+
+
+def _find_rust_module_exporting_symbol(workspace: Path, symbol: str) -> str:
+    src = workspace / "src"
+    if not src.is_dir():
+        return ""
+    symbol_pattern = re.compile(
+        rf"(?m)^\s*pub\s+(?:async\s+)?(?:fn|struct|enum|trait|type|const|static)\s+{re.escape(symbol)}\b"
+        rf"|^\s*pub\s+use\s+[^;]*\b{re.escape(symbol)}\b",
+    )
+    candidates: list[tuple[str, Path]] = []
+    for child in sorted(src.iterdir(), key=lambda item: item.name):
+        if child.name in {"lib.rs", "main.rs", "bin"}:
+            continue
+        if child.is_file() and child.suffix == ".rs":
+            candidates.append((child.stem, child))
+        elif child.is_dir() and (child / "mod.rs").is_file():
+            candidates.append((child.name, child / "mod.rs"))
+    for module, path in candidates:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", module):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if symbol_pattern.search(text):
+            return module
+    return ""
+
+
+def _append_rust_root_decl(text: str, declaration: str) -> str:
+    suffix = "" if text.endswith("\n") else "\n"
+    return f"{text}{suffix}{declaration}\n"
 
 
 def _insert_rust_use_import(text: str, import_line: str) -> str:
@@ -642,8 +834,252 @@ def _rust_crate_names_look_related(missing: str, canonical: str) -> bool:
     return missing_tokens.issubset(canonical_tokens) or len(overlap) >= 2
 
 
+def _cargo_declares_local_rust_lib(workspace: Path, cargo: dict[str, Any]) -> bool:
+    lib = cargo.get("lib")
+    if isinstance(lib, dict):
+        configured = str(lib.get("path") or "src/lib.rs").strip() or "src/lib.rs"
+        return (workspace / configured).is_file()
+    return (workspace / "src" / "lib.rs").is_file()
+
+
+def _rust_crate_prefix_used_in_binary_entrypoint(workspace: Path, missing_crate: str) -> bool:
+    candidates = [workspace / "src" / "main.rs"]
+    src_bin = workspace / "src" / "bin"
+    if src_bin.is_dir():
+        candidates.extend(sorted(src_bin.glob("*.rs")))
+    pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(missing_crate)}(?=::)")
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if pattern.search(text):
+            return True
+    return False
+
+
 def _crate_name_tokens(name: str) -> set[str]:
     return {token for token in re.split(r"[_\\W]+", name.lower()) if token}
+
+
+def repair_rust_unused_imports(workspace: Path, stderr: str = "") -> list[dict[str, Any]]:
+    """Remove unused imports flagged by cargo check.
+
+    Parses ``warning: unused import: `X``` and comments out or removes the
+    specific import from the use statement on the indicated line.
+    """
+    if not stderr:
+        stderr = _run_cargo_check_stderr(workspace)
+    if not stderr:
+        return []
+
+    unused_re = re.compile(
+        r"warning:\s*unused\s+import:\s*[`'\"](?P<name>[A-Za-z_][A-Za-z0-9_]*)[`'\"].*?"
+        r"^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):\d+",
+        re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    )
+    repairs: list[dict[str, Any]] = []
+    grouped: dict[str, list[tuple[str, int]]] = {}
+    for m in unused_re.finditer(stderr):
+        path = m.group("path").strip()
+        name = m.group("name")
+        line = int(m.group("line"))
+        grouped.setdefault(path, []).append((name, line))
+
+    for rel_path, items in grouped.items():
+        target = (workspace / rel_path).resolve()
+        if not _path_inside_workspace(target, workspace) or not target.is_file():
+            continue
+        try:
+            lines = target.read_text(encoding="utf-8").split("\n")
+        except OSError:
+            continue
+        modified = False
+        for name, line_num in items:
+            idx = line_num - 1
+            if idx < 0 or idx >= len(lines):
+                continue
+            line_text = lines[idx]
+            # Try removing just the name from a multi-import use statement
+            new_line = re.sub(rf",\s*{re.escape(name)}\b", "", line_text)
+            new_line = re.sub(rf"\b{re.escape(name)}\s*,\s*", "", new_line)
+            # If the use statement is now empty or trivial, comment out the line
+            remaining = re.search(r"use\s+(.+?)\s*;", new_line)
+            if remaining and remaining.group(1).strip().strip("{}"):
+                lines[idx] = new_line
+            else:
+                lines[idx] = f"// [repair-unused] {line_text.strip()}"
+            modified = True
+        if modified:
+            target.write_text("\n".join(lines), encoding="utf-8")
+            repairs.append(
+                {
+                    "file": rel_path,
+                    "symbols": [name for name, _ in items],
+                }
+            )
+    if repairs:
+        import logging as _log
+
+        _log.getLogger(__name__).info("Rust unused imports repair: %d file(s)", len(repairs))
+    return repairs
+
+
+def repair_rust_missing_fields(workspace: Path, stderr: str = "") -> list[dict[str, Any]]:
+    """Add missing struct fields referenced in code.
+
+    When code references ``ingredient.intensity`` but the Ingredient struct
+    does not declare an ``intensity`` field, add it with an inferred type.
+    """
+    if not stderr:
+        stderr = _run_cargo_check_stderr(workspace)
+    if not stderr:
+        return []
+
+    field_error_re = re.compile(
+        r"error\[E0609\]:\s*no field [`'\"](?P<field>[A-Za-z_][A-Za-z0-9_]*)[`'\"]"
+        r"\s+on type [`'\"]&?(?P<struct>[A-Za-z_][A-Za-z0-9_]*)[`'\"]",
+        re.IGNORECASE,
+    )
+    seen: set[tuple[str, str]] = set()
+    repairs: list[dict[str, Any]] = []
+
+    for m in field_error_re.finditer(stderr):
+        field_name = m.group("field")
+        struct_name = m.group("struct")
+        key = (struct_name, field_name)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # Find struct definition
+        struct_def_re = re.compile(
+            rf"(pub\s+)?struct\s+{re.escape(struct_name)}\s*\{{(?P<body>[^}}]*)\}}",
+            re.DOTALL,
+        )
+        for rs_file in sorted(workspace.rglob("*.rs")):
+            if "target" in rs_file.relative_to(workspace).parts:
+                continue
+            try:
+                content = rs_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            sm = struct_def_re.search(content)
+            if sm and field_name not in sm.group("body"):
+                # Try to infer type from usage context first
+                field_type = _infer_rust_field_type_from_usage(workspace, field_name) or _infer_rust_field_type(
+                    field_name
+                )
+                new_field = f"    pub {field_name}: {field_type},\n"
+                # Insert before closing brace
+                end = sm.end() - 1  # position of '}'
+                new_content = content[:end] + new_field + content[end:]
+                rs_file.write_text(new_content, encoding="utf-8")
+                repairs.append(
+                    {
+                        "file": str(rs_file.relative_to(workspace)),
+                        "struct": struct_name,
+                        "field": field_name,
+                        "type": field_type,
+                    }
+                )
+                break
+    return repairs
+
+
+def _infer_rust_field_type_from_usage(workspace: Path, field_name: str) -> str | None:
+    """Infer field type from how it's used in function calls.
+
+    If ``x.field_name`` is passed to a function that expects ``f32``,
+    return ``"f32"``. This catches the common case of numeric type mismatches.
+    """
+    # Look for function definitions: fn func_name(..., field_name: TYPE, ...)
+    fn_param_re = re.compile(
+        rf"fn\s+\w+\s*\([^)]*{re.escape(field_name)}\s*:\s*([A-Za-z_][A-Za-z0-9_]*)",
+    )
+    for rs_file in sorted(workspace.rglob("*.rs")):
+        if "target" in rs_file.relative_to(workspace).parts:
+            continue
+        try:
+            content = rs_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        # Check if field_name appears as a function parameter with explicit type
+        m = fn_param_re.search(content)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _infer_rust_field_type(field_name: str) -> str:
+    """Infer a Rust type for a field name based on naming conventions."""
+    lower = field_name.lower()
+    if lower.endswith("_count") or lower in ("count", "num", "index"):
+        return "usize"
+    if lower in ("intensity", "strength", "level", "score", "weight", "ratio", "temperature"):
+        return "f64"
+    if lower.startswith("is_") or lower.startswith("has_") or lower in ("active", "enabled", "visible", "done"):
+        return "bool"
+    if lower.endswith("_id") or lower == "id":
+        return "u64"
+    if lower.endswith("_list") or lower.endswith("_items") or lower.endswith("_vec"):
+        return "Vec<String>"
+    if lower in ("color", "colour", "hex", "palette", "name", "label", "description", "title"):
+        return "String"
+    return "String"
+
+
+def _run_cargo_check_stderr(workspace: Path) -> str:
+    """Run cargo check and return stderr."""
+    if not (workspace / "Cargo.toml").is_file():
+        return ""
+    import shutil
+    import subprocess
+
+    cargo = shutil.which("cargo")
+    if not cargo:
+        return ""
+    try:
+        result = subprocess.run(
+            [cargo, "check", "--quiet", "--message-format=short"],
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        return result.stderr or ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
+    """Run all Rust post-execution repairs in sequence.
+
+    This is the main entry point called from the Director's post-execution
+    repair hook. It runs cargo check once, applies all repair types, then
+    re-runs cargo check for a second pass if needed.
+    """
+    if not (workspace / "Cargo.toml").is_file():
+        return []
+
+    stderr = _run_cargo_check_stderr(workspace)
+    if not stderr or ("error" not in stderr and "warning" not in stderr):
+        return []
+
+    all_repairs: list[dict[str, Any]] = []
+    all_repairs.extend(repair_rust_unused_imports(workspace, stderr))
+    all_repairs.extend(repair_rust_missing_fields(workspace, stderr))
+
+    # Second pass with fresh cargo check output
+    if all_repairs:
+        stderr2 = _run_cargo_check_stderr(workspace)
+        if stderr2 and ("error" in stderr2 or "warning" in stderr2):
+            all_repairs.extend(repair_rust_unused_imports(workspace, stderr2))
+            all_repairs.extend(repair_rust_missing_fields(workspace, stderr2))
+
+    return all_repairs
 
 
 def _replace_rust_crate_prefix(workspace: Path, missing_crate: str, canonical_crate: str) -> list[dict[str, Any]]:

@@ -471,6 +471,7 @@ class ResidentService:
             "identity": self.identity.to_dict(),
             "runtime": self.runtime_state.to_dict(),
             "agenda": self.agenda.to_dict(),
+            "agi_capability_surface": resident_agi_capability_surface_payload(),
             "counts": {
                 "decisions": len(self.storage.load_decisions(limit=1000)),
                 "goals": len(goals),
@@ -486,7 +487,6 @@ class ResidentService:
             payload["skills"] = [item.to_dict() for item in self.storage.load_skills()]
             payload["experiments"] = [item.to_dict() for item in self.storage.load_experiments()]
             payload["improvements"] = [item.to_dict() for item in self.storage.load_improvements()]
-            payload["agi_capability_surface"] = resident_agi_capability_surface_payload()
             graph = self.storage.load_capability_graph()
             payload["capability_graph"] = (
                 graph.to_dict() if graph else {"generated_at": "", "capabilities": [], "gaps": []}

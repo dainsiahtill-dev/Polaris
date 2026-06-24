@@ -372,6 +372,130 @@ class SignalSourceProvider:
         rendered = "\n".join(lines).strip()
         return rendered or None
 
+    def get_resident_agi_decision_trace(self) -> str | None:
+        """读取最近 Resident AGI 决策交接卡（CE/Director/QA 消费）。
+
+        该信号只投影 ``decision_trace.jsonl`` 的摘要，不替代 Resident decision
+        trace 事实源。优先使用配置注入 provider；未注入时通过 resident.autonomy
+        public service 读取最近决策并筛选执行相关的 AGI/Resident 判断。
+        """
+        try:
+            result: Any | None = None
+            provider = self._config.resident_agi_decision_trace_provider
+            if provider is not None:
+                result = provider(str(self._workspace))
+            if result is None:
+                from polaris.cells.resident.autonomy.public.service import (
+                    get_resident_service,
+                )
+
+                decisions = get_resident_service(str(self._workspace)).list_decisions(limit=20)
+                result = [item.to_dict() for item in decisions]
+            if isinstance(result, str):
+                return result.strip() or None
+            if isinstance(result, Mapping):
+                return self._render_resident_agi_decision_trace([result])
+            if isinstance(result, list):
+                rendered_items = [item for item in result if isinstance(item, Mapping)]
+                return self._render_resident_agi_decision_trace(rendered_items)
+            return None
+        except (RuntimeError, ValueError, OSError, TypeError) as e:
+            logger.debug(f"Resident AGI 决策交接构建失败: {e}")
+            return None
+
+    @staticmethod
+    def _render_resident_agi_decision_trace(items: list[Mapping[str, Any]]) -> str | None:
+        """Render recent execution-relevant Resident/AGI decisions."""
+        relevant = [item for item in reversed(items) if SignalSourceProvider._is_resident_agi_decision(item)]
+        if not relevant:
+            return None
+
+        lines = [
+            "schema_version: resident.agi_decision_trace_signal.v1",
+            "source_of_truth: workspace/meta/resident/decision_trace.jsonl",
+            "runtime_projection: runtime/events/resident.decisions.jsonl",
+            "consumer_roles: chief_engineer, director, qa",
+            "rule: decisions guide execution but do not bypass PM -> Chief Engineer -> Director or safety gates.",
+            "",
+            "recent_decisions:",
+        ]
+        for item in relevant[:8]:
+            decision_id = str(item.get("decision_id") or "").strip()
+            actor = str(item.get("actor") or "").strip()
+            stage = str(item.get("stage") or "").strip()
+            verdict = str(item.get("verdict") or "unknown").strip()
+            summary = str(item.get("summary") or "").strip()
+            confidence = item.get("confidence")
+            selected_option = str(item.get("selected_option_id") or "").strip()
+            goal_id = str(item.get("goal_id") or "").strip()
+            task_id = str(item.get("task_id") or "").strip()
+            run_id = str(item.get("run_id") or "").strip()
+            lines.append(
+                f"- {decision_id or '(no-id)'} | actor={actor or '?'} | stage={stage or '?'} | verdict={verdict}"
+            )
+            if summary:
+                lines.append(f"  summary: {summary[:320]}")
+            if isinstance(confidence, (int, float)):
+                lines.append(f"  confidence: {float(confidence):.2f}")
+            if selected_option:
+                lines.append(f"  selected_option: {selected_option}")
+            refs = [value for value in (run_id, task_id, goal_id) if value]
+            if refs:
+                lines.append(f"  refs: {', '.join(refs)}")
+            strategy_tags = SignalSourceProvider._string_list(item.get("strategy_tags"))[:5]
+            if strategy_tags:
+                lines.append(f"  strategy_tags: {', '.join(strategy_tags)}")
+            evidence_refs = SignalSourceProvider._string_list(item.get("evidence_refs"))[:4]
+            if evidence_refs:
+                lines.append(f"  evidence_refs: {', '.join(evidence_refs)}")
+            context_refs = SignalSourceProvider._string_list(item.get("context_refs"))[:4]
+            if context_refs:
+                lines.append(f"  context_refs: {', '.join(context_refs)}")
+
+        rendered = "\n".join(lines).strip()
+        return rendered or None
+
+    @staticmethod
+    def _is_resident_agi_decision(item: Mapping[str, Any]) -> bool:
+        actor = str(item.get("actor") or "").strip().lower()
+        stage = str(item.get("stage") or "").strip().lower()
+        actual = item.get("actual_outcome") if isinstance(item.get("actual_outcome"), Mapping) else {}
+        decision_source = str(actual.get("decision_source") if isinstance(actual, Mapping) else "").strip().lower()
+        strategy_tags = {tag.lower() for tag in SignalSourceProvider._string_list(item.get("strategy_tags"))}
+        haystack = " ".join(
+            [
+                actor,
+                stage,
+                decision_source,
+                " ".join(strategy_tags),
+                " ".join(SignalSourceProvider._string_list(item.get("evidence_refs"))),
+                " ".join(SignalSourceProvider._string_list(item.get("context_refs"))),
+            ]
+        )
+        if actor in {"resident", "resident_agi"}:
+            return True
+        if "resident" in decision_source or "agi" in decision_source:
+            return True
+        if stage.startswith("goal_"):
+            return True
+        return any(
+            token in haystack
+            for token in (
+                "resident_autonomy",
+                "resident_agi",
+                "agi_supervision",
+                "goal_governance",
+                "pm_bridge",
+                "chief_engineer_pre_dispatch_supervision",
+            )
+        )
+
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item).strip()]
+
     def estimate_signal_budget_pressure(self, projection: Any, request: ContextRequest) -> bool:
         """保守预估"角色信号分配阶段是否已处于预算压力"。
 

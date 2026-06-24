@@ -451,6 +451,83 @@ class TestStateFirstContextOSIntegration:
             # Verify emergency truncation was applied
             assert "budget_violation_emergency_truncate" in result.context_sources or result.compression_applied
 
+    @pytest.mark.asyncio
+    async def test_director_context_includes_resident_agi_decision_trace(self, tmp_path):
+        """Director final context should consume recent Resident/AGI decision guidance."""
+        from polaris.cells.resident.autonomy.internal.resident_runtime_service import (
+            get_resident_service,
+            reset_resident_services,
+        )
+        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+        from polaris.kernelone.context.context_os.models_v2 import (
+            ContextOSProjectionV2 as ContextOSProjection,
+            ContextOSSnapshotV2 as ContextOSSnapshot,
+        )
+
+        reset_resident_services()
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+        service = get_resident_service(str(workspace))
+        service._auto_bundle_enabled = False
+        service.record_decision(
+            {
+                "actor": "resident",
+                "stage": "goal_staging",
+                "summary": "Promote governed Resident goal through PM bridge.",
+                "strategy_tags": ["goal_governance", "pm_bridge"],
+                "actual_outcome": {"decision_source": "resident_agi_supervisor"},
+                "verdict": "success",
+                "confidence": 0.86,
+                "evidence_refs": ["workspace/meta/resident/decision_trace.jsonl"],
+            }
+        )
+
+        mock_profile = MagicMock()
+        mock_profile.context_policy = MagicMock()
+        mock_profile.context_policy.max_history_turns = 8
+        mock_profile.context_policy.max_context_tokens = 128000
+        mock_profile.context_policy.include_project_structure = False
+        mock_profile.context_policy.include_task_history = False
+        mock_profile.context_policy.compression_strategy = "truncate"
+        mock_profile.context_domain = None
+        mock_profile.provider_id = "test_provider"
+        mock_profile.model = "test_model"
+        mock_profile.role_id = "director"
+        mock_profile.display_name = "Director"
+
+        gateway = RoleContextGateway(mock_profile, workspace=workspace)
+        mock_snapshot = MagicMock(spec=ContextOSSnapshot)
+        mock_snapshot.budget_plan = MagicMock()
+        mock_snapshot.budget_plan.validation_error = ""
+        mock_projection = MagicMock(spec=ContextOSProjection)
+        mock_projection.head_anchor = ""
+        mock_projection.tail_anchor = ""
+        mock_projection.active_window = ()
+        mock_projection.run_card = MagicMock()
+        mock_projection.run_card.current_goal = "Execute governed task"
+        mock_projection.run_card.open_loops = ()
+        mock_projection.run_card.latest_user_intent = ""
+        mock_projection.run_card.pending_followup_action = ""
+        mock_projection.run_card.last_turn_outcome = ""
+        mock_projection.snapshot = mock_snapshot
+
+        with patch.object(gateway._context_os, "project", return_value=mock_projection):
+            result = await gateway.build_context(
+                ContextRequest(
+                    message="Implement the next governed step",
+                    history=[],
+                    context_os_snapshot=None,
+                )
+            )
+
+        assert "resident_agi_decision_trace" in result.context_sources
+        assert any(
+            "Resident AGI 决策交接" in str(message.get("content") or "")
+            for message in result.messages
+            if isinstance(message, dict)
+        )
+        reset_resident_services()
+
 
 class TestMessagesFromProjection:
     """Test the _messages_from_projection helper."""

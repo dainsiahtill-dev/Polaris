@@ -128,6 +128,37 @@ way to observe AGI decisions without treating the event stream as a second fact
 store. If event projection fails, the decision trace write remains authoritative
 and the failure is logged.
 
+## Decision Consumption
+
+AGI decisions must affect execution through the role/context path, not through a
+parallel runtime. `RoleSignalPlane` now projects recent execution-relevant
+Resident/AGI decisions as `resident_agi_decision_trace`:
+
+- consumer roles: Chief Engineer, Director, QA
+- non-consumer by default: PM, Resident AGI
+- source of truth: `workspace/meta/resident/decision_trace.jsonl`
+- runtime projection reference: `runtime/events/resident.decisions.jsonl`
+- ContextOS traceability: `context_sources` contains `resident_agi_decision_trace`
+
+This lets CE consider AGI architecture/governance decisions, Director implement
+within AGI-approved handoff boundaries, and QA verify whether execution honored
+the recorded decisions. PM remains upstream of this signal by default so AGI
+does not silently rewrite task contracts while they are being created.
+
+## Final Provider Request Audit
+
+The final provider request audit now includes explicit coverage flags for the
+AGI context surfaces:
+
+- `coverage.has_resident_agi_decision_trace`
+- `coverage.has_resident_agi_capability_surface`
+
+These flags are derived from the final provider request messages, not from a
+claim made by intermediate role metadata. If `resident_agi_decision_trace` is
+not actually present in the request sent to the model, the audit marks it as
+missing. This gives ContextOS and runtime audit a direct way to prove whether
+structured AGI guidance reached CE/Director/QA.
+
 ## AGI Capability Surface
 
 The Resident/AGI role needs platform facts, not just prompt prose. Polaris now
@@ -196,7 +227,5 @@ The UI must distinguish:
 1. Add a shared `AgiDecisionRecordV1` or promote `ArchitectureDecisionV1` into a
    role-neutral decision contract.
 2. Add CE architecture Resident/AGI supervisor invocation behind an opt-in runtime flag.
-3. Add frontend UI for decision timeline, evidence, validation status, and
-   accepted/rejected handoff impact.
-4. Add final-provider-request audit fields that show which structured AGI
-   decisions were present in the request context.
+3. Add deeper ContextOS UI affordances that link each AGI decision signal to the
+   stored final provider request snapshot and decision evidence bundle.
