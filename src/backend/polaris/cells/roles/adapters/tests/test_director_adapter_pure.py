@@ -10577,6 +10577,34 @@ class TestQualityRepairMissingTargetContract:
             rotate_after_first_attempt=True,
         ) == ["src/main.ts"]
 
+    def test_materialization_quality_repair_filters_prompt_errors_to_current_scope(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+            _filter_materialization_quality_errors_for_repair_targets,
+        )
+
+        errors = [
+            "Artifact quality scan failed: declared target file missing 'src/engine/mapper.rs'",
+            "Artifact quality scan failed: declared target file missing 'src/engine/palette_generator.rs'",
+            "Artifact quality scan failed: declared target file missing 'src/engine/plating_rules.rs'",
+        ]
+
+        scoped_errors = _filter_materialization_quality_errors_for_repair_targets(
+            errors,
+            ["src/engine/mapper.rs"],
+        )
+        message = _build_materialization_quality_repair_message(
+            original_message="Implement Rust engine modules.",
+            artifact_quality_errors=scoped_errors,
+            changed_files=["index.html", "src/engine/mod.rs"],
+            missing_target_files=["src/engine/mapper.rs"],
+        )
+
+        assert "src/engine/mapper.rs" in message
+        assert "src/engine/palette_generator.rs" not in message
+        assert "src/engine/plating_rules.rs" not in message
+        assert "SINGLE MISSING TARGET REPAIR" in message
+
     def test_repair_message_names_missing_targets_and_hides_changed_paths(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _build_materialization_quality_repair_message,

@@ -1259,12 +1259,16 @@ async def _run_materialization_quality_repair_retry(
     missing_target_set = set(missing_target_files)
     missing_repair_target_files = [path for path in repair_target_files if path in missing_target_set]
     existing_repair_target_files = [path for path in repair_target_files if path not in missing_target_set]
+    prompt_artifact_quality_errors = _filter_materialization_quality_errors_for_repair_targets(
+        artifact_quality_errors,
+        repair_target_files,
+    )
     prompt_safe_artifact_quality_errors = [
-        _format_quality_error_for_repair_prompt(error) for error in repair_quality_errors[:20]
+        _format_quality_error_for_repair_prompt(error) for error in prompt_artifact_quality_errors[:20]
     ]
     repair_message = _build_materialization_quality_repair_message(
         original_message=original_message,
-        artifact_quality_errors=repair_quality_errors,
+        artifact_quality_errors=prompt_artifact_quality_errors,
         changed_files=changed_files,
         missing_target_files=missing_repair_target_files,
         repair_target_files=existing_repair_target_files,
@@ -1477,6 +1481,25 @@ def _select_materialization_quality_repair_target_batch(
             return [missing_target_files[target_index]]
         return [missing_target_files[0]]
     return list(missing_target_files[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT])
+
+
+def _filter_materialization_quality_errors_for_repair_targets(
+    artifact_quality_errors: list[str],
+    repair_target_files: list[str],
+) -> list[str]:
+    """Keep prompt feedback aligned with the currently leased repair scope."""
+
+    normalized_targets = [
+        target for target in (_normalize_declared_task_path(item) for item in repair_target_files) if target
+    ]
+    if not normalized_targets:
+        return list(artifact_quality_errors)
+    filtered = [
+        error
+        for error in artifact_quality_errors
+        if any(target in str(error or "").replace("\\", "/") for target in normalized_targets)
+    ]
+    return filtered or list(artifact_quality_errors)
 
 
 def _should_rotate_materialization_quality_repair_targets(artifact_quality_errors: list[str]) -> bool:

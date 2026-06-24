@@ -1186,8 +1186,12 @@ class MultiLanguageCodeValidator:
         # 尝试自动修复
         fixed_code, fixes = self._fix_rust_hallucinations(code)
 
-        # 括号匹配检查
-        errors = self._check_brackets(fixed_code, ["()", "[]", "{}", "<>"])
+        # Rust uses ``>`` in ordinary syntax that is not bracket pairing:
+        # return arrows (``->``), comparisons, and nested generic bounds. The
+        # pre-write guard is a coarse safety check, not a Rust parser; treating
+        # ``<>`` as brackets false-rejects valid generated Rust before cargo can
+        # perform the authoritative check.
+        errors = self._check_brackets(fixed_code, ["()", "[]", "{}"])
         if errors:
             return SyntaxValidationResult.failure(errors)
 

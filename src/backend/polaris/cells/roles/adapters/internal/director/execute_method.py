@@ -3331,6 +3331,7 @@ from .quality_gate import (  # noqa: E402  (deferred for circular-import safety)
     _director_existing_scope_preflight_enabled as _director_existing_scope_preflight_enabled,
     _evaluate_acceptance_verify_exists as _evaluate_acceptance_verify_exists,
     _extract_successful_write_paths as _extract_successful_write_paths,
+    _filter_materialization_quality_errors_for_repair_targets as _filter_materialization_quality_errors_for_repair_targets,
     _first_failing_verify_clause as _first_failing_verify_clause,
     _is_node_runtime_source_path as _is_node_runtime_source_path,
     _is_recoverable_no_write_mutation_contract_error_text as _is_recoverable_no_write_mutation_contract_error_text,

@@ -121,6 +121,7 @@ NO_PROXY="*" no_proxy="*" timeout --kill-after=30s 600s \
   --max-failed 0 \
   --real-run-timeout 120 \
   --launcher-instance-mode isolated \
+  --bench-session-reporting off \
   2>&1 | tee "$WORK_DIR.runner.log" | tail -25
 '
 ```
@@ -128,12 +129,13 @@ NO_PROXY="*" no_proxy="*" timeout --kill-after=30s 600s \
 硬性要求：
 - 必须保留 `set -euo pipefail`，禁止用 `2>&1 | tail` 隐藏 runner 失败退出码。
 - 必须显式传 `--launcher-instance-mode isolated`，即使当前默认也是 isolated。
+- 必须显式传 `--bench-session-reporting off`。isolated 项目的可见性来自 Instance Registry/Launcher 和该项目自己的 backend/runtime.v2；共享主后端 `/v2/factory/bench/sessions` 只是内部兼容观测桥，不是运行依赖，也不得成为并发压测路径。
 - `WORK_DIR` 只能是 `/tmp/factory-bench-*` 或用户明确授权的临时目录；删除前必须做路径 guard。
 - Runner 启动后会在 Launcher 注册 `kind=bench_project` 的内部测试实例，每个项目应有独立 backend/frontend 端口、独立 workspace、独立 `/v2/ws/runtime` 和独立 ContextOS。
 - `timeout` 只会杀 runner；已启动的 isolated backend/frontend 可能继续留在 Launcher 中供观察。异常中断后必须从 Launcher 停止或删除对应测试实例。
 - 禁止手工 `kill`、`pkill`、`lsof -ti :PORT | xargs kill` 或清理不属于自己本次 bench 的端口。停止/删除实例必须优先走 Launcher 或 `/v2/instances/{instance_id}`，并且只操作自己启动的 `instance_id` / `WORK_DIR`。若确需清理孤儿进程，必须先比对 `~/.polaris/instances/registry.json`、进程命令行中的 workspace、backend/frontend port，确认不是其他 Agent 的实例。
 - 禁止手动指定已被占用的 backend/frontend 端口；默认让 `--launcher-instance-mode isolated` 自动分配端口。平台 Supervisor 对显式端口冲突必须 fail-closed，不能抢占或误关已有进程。
-- 如果只是串行调试且明确需要共享 49977，才允许显式 `--launcher-instance-mode observed`；observed 记录只能作为轻量观测，不得用于并发压测或当作独立项目实例。
+- 如果只是串行调试且明确需要共享 49977，才允许显式 `--launcher-instance-mode observed --bench-session-reporting shared`；observed/session 记录只能作为轻量观测，不得用于并发压测或当作独立项目实例。shared session POST 必须短超时、best-effort、失败熔断，不能拖慢或改变 bench 结论。
 
 ### 实时推送硬门禁
 

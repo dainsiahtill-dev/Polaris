@@ -214,6 +214,18 @@ def render_blueprint_overview(result: Any) -> str | None:
     risks = tuple(getattr(result, "risks", ()) or ())
     if risks:
         parts.append("风险:\n" + "\n".join(f"- {k}" for k in risks))
+    # Cross-file coherence guard (language-agnostic, applies to ALL projects).
+    # When Director generates multiple files sharing types/interfaces, it must
+    # define shared types in ONE canonical file and import them elsewhere.
+    # Without this, the LLM re-invents types per file causing conflicts.
+    if len(target_files) > 1:
+        parts.append(
+            "【跨文件一致性约束】\n"
+            "- 共享类型/接口/常量必须只在一个文件中定义，其他文件通过 import 引用\n"
+            "- 禁止在多个文件中重复定义同名类型、函数或常量\n"
+            "- 先写定义共享类型的文件，再写依赖它的文件\n"
+            "- 每个文件的 import/依赖必须使用与定义文件完全一致的类型名"
+        )
     text = "\n".join(parts).strip()
     return text or None
 

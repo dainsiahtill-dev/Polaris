@@ -87,8 +87,14 @@ instance modes:
 ```bash
 python src/backend/scripts/factory_bench/run_factory_bench.py \
   --project-ids L1-04 \
-  --launcher-instance-mode isolated
+  --launcher-instance-mode isolated \
+  --bench-session-reporting off
 ```
+
+In isolated mode, Launcher visibility comes from Instance Registry plus the
+project instance's own runtime.v2 stream. Shared `/v2/factory/bench/sessions`
+POSTs are an internal compatibility observation bridge only; enable them with
+`--bench-session-reporting shared` only for explicit serial debugging.
 
 Every registry write emits a best-effort runtime.v2 event:
 

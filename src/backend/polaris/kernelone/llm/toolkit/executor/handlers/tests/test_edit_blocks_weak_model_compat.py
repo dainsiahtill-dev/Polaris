@@ -870,6 +870,28 @@ def test_write_file_clean_python_passes_syntax(tmp_path: Path) -> None:
     assert result.get("syntax_check") == "passed"
 
 
+def test_write_file_clean_rust_allows_arrows_and_generics(tmp_path: Path) -> None:
+    """Rust pre-write validation must not treat `->` or generics as bracket errors."""
+
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    content = (
+        "use std::collections::HashMap;\n\n"
+        "pub fn labels(items: Vec<String>) -> HashMap<String, String> {\n"
+        "    let mut map = HashMap::<String, String>::new();\n"
+        "    if items.len() > 0 {\n"
+        '        map.insert("count".to_string(), items.len().to_string());\n'
+        "    }\n"
+        "    map\n"
+        "}\n"
+    )
+
+    result = _handle_write_file(ex, file="src/engine/mapper.rs", content=content)
+
+    assert result.get("ok") is True
+    assert "Code syntax validation failed" not in result.get("error", "")
+    assert (tmp_path / "src" / "engine" / "mapper.rs").read_text(encoding="utf-8") == content
+
+
 def test_write_file_broken_python_blocked_by_pre_write_guard(tmp_path: Path) -> None:
     """Division of labor: .py is blocked BEFORE the write by PreWriteGuard
     (ok=False + validation_errors); the post-write gate covers languages the

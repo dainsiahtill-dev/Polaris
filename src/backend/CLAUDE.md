@@ -28,7 +28,7 @@
 - Instance Registry 只是发现/运维视图，不是 PM、Chief Engineer、Director、QA、ContextOS、ReceiptStore 或 Run Ledger 的事实源。
 - `factory_bench` / L1-L12 只属于内部测试态；可以注册 `kind=bench_project` 供总控观测。共享后端注册只能视为可观测测试实例，不能冒充独立生产实例，也不得把 Bench 语义写成生产项目模型。
 - `metadata.backend_binding=shared_backend_workspace_switch` 的 `bench_project` 执行 restart/独立启动时必须分配新 backend/frontend 端口，禁止复用共享 backend 端口。
-- 多 Agent 并行跑 `factory_bench` 时 runner 默认必须是 `isolated`，确保每个项目的 Factory run 打到独立 backend；`observed` 只能显式用于轻量观测和串行兼容测试。
+- 多 Agent 并行跑 `factory_bench` 时 runner 必须显式使用 `--launcher-instance-mode isolated --bench-session-reporting off`，确保每个项目的 Factory run 打到独立 backend；Launcher 可见性来自 Instance Registry 和项目实例自己的 runtime.v2。共享主后端 `/v2/factory/bench/sessions` 只是内部兼容观测桥，只有串行调试时才允许 `--launcher-instance-mode observed --bench-session-reporting shared`。
 - Launcher 实时状态只走 runtime.v2 WebSocket `status.instances`，禁止新增 HTTP polling 或文件轮询。
 
 ## 3. 最小必要规则

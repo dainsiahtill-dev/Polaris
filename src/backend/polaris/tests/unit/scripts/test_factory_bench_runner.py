@@ -42,6 +42,7 @@ _LAST_FACTORY_START_PAYLOAD: dict[str, Any] = {}
 def _isolate_instance_registry(monkeypatch: Any, tmp_path: Path) -> None:
     monkeypatch.setenv("POLARIS_INSTANCE_HOME", str(tmp_path / "instances-home"))
     monkeypatch.setenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", "observed")
+    bench.configure_bench_backend("", "", "")
 
 
 def test_default_launcher_instance_mode_is_isolated(monkeypatch: Any) -> None:
@@ -60,6 +61,51 @@ def test_launcher_instance_mode_invalid_env_falls_back_to_isolated(monkeypatch: 
     monkeypatch.setenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", "shared")
 
     assert bench._default_launcher_instance_mode() == "isolated"
+
+
+def test_default_bench_session_reporting_mode_is_auto(monkeypatch: Any) -> None:
+    monkeypatch.delenv("FACTORY_BENCH_SESSION_REPORTING", raising=False)
+
+    assert bench._default_bench_session_reporting_mode() == "auto"
+
+
+def test_invalid_bench_session_reporting_mode_falls_back_to_auto(monkeypatch: Any) -> None:
+    monkeypatch.setenv("FACTORY_BENCH_SESSION_REPORTING", "enabled")
+
+    assert bench._default_bench_session_reporting_mode() == "auto"
+
+
+def test_isolated_auto_reporting_does_not_use_shared_backend() -> None:
+    assert (
+        bench._bench_session_backend_url(
+            launcher_instance_mode="isolated",
+            bench_session_reporting="auto",
+            backend_url="http://127.0.0.1:49977",
+        )
+        == ""
+    )
+
+
+def test_observed_auto_reporting_uses_shared_backend() -> None:
+    assert (
+        bench._bench_session_backend_url(
+            launcher_instance_mode="observed",
+            bench_session_reporting="auto",
+            backend_url="http://127.0.0.1:49977/",
+        )
+        == "http://127.0.0.1:49977"
+    )
+
+
+def test_shared_reporting_overrides_isolated_default() -> None:
+    assert (
+        bench._bench_session_backend_url(
+            launcher_instance_mode="isolated",
+            bench_session_reporting="shared",
+            backend_url="http://127.0.0.1:49977/",
+        )
+        == "http://127.0.0.1:49977"
+    )
 
 
 def test_bench_observation_posts_use_short_timeout(monkeypatch: Any) -> None:
@@ -553,6 +599,58 @@ def test_bench_session_registration_uses_backend_assigned_id(monkeypatch: Any) -
 
     assert session_id == "bench-generated"
     assert captured["session_id"] is None
+
+
+def test_bench_session_registration_uses_observation_timeout(monkeypatch: Any) -> None:
+    captured: dict[str, Any] = {}
+
+    def _capture_post(_url: str, _body: dict[str, Any], *, timeout_s: float, token: str = "") -> dict[str, Any]:
+        captured["timeout_s"] = timeout_s
+        captured["token"] = token
+        return {"session_id": "bench-generated"}
+
+    monkeypatch.setattr(bench, "_http_post_json", _capture_post)
+
+    session_id = bench._push_bench_session_to_backend(
+        backend_url="http://127.0.0.1:49977",
+        work_dir="/tmp/bench",
+        project_ids=["L1-01"],
+        total=1,
+        token="secret",
+    )
+
+    assert session_id == "bench-generated"
+    assert captured == {
+        "timeout_s": bench._BENCH_OBSERVATION_HTTP_TIMEOUT_S,
+        "token": "secret",
+    }
+
+
+def test_bench_observation_failure_circuit_breaks_followup_posts(monkeypatch: Any) -> None:
+    calls: list[str] = []
+
+    def _failing_post(url: str, _body: dict[str, Any], *, timeout_s: float, token: str = "") -> dict[str, Any] | None:
+        del timeout_s, token
+        calls.append(url)
+        return None
+
+    monkeypatch.setattr(bench, "_http_post_json", _failing_post)
+
+    assert not bench._push_bench_event_to_backend(
+        backend_url="http://127.0.0.1:49977",
+        session_id="bench-test",
+        event_type="project.started",
+        token="token",
+    )
+    assert not bench._push_bench_progress_to_backend(
+        backend_url="http://127.0.0.1:49977",
+        session_id="bench-test",
+        completed=0,
+        failed=0,
+        token="token",
+    )
+
+    assert len(calls) == 1
 
 
 def test_bench_record_counts_do_not_mark_pending_projects_failed() -> None:
@@ -1519,6 +1617,7 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
     monkeypatch.delenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", raising=False)
     projects = [{"id": "L1-01", "level": 1, "title": "One", "brief": "Build one"}]
     captured_chain: dict[str, str] = {}
+    captured_session: dict[str, Any] = {}
     backend_context_urls: list[str] = []
 
     monkeypatch.setattr(
@@ -1535,7 +1634,12 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
     monkeypatch.setattr(bench, "load_projects", lambda: projects)
     monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
     monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "main-token")
-    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-isolated")
+
+    def _capture_session(**kwargs: Any) -> str:
+        captured_session.update(kwargs)
+        return "bench-isolated"
+
+    monkeypatch.setattr(bench, "_ensure_bench_session", _capture_session)
     monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
     monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
     monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
@@ -1614,6 +1718,9 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
         "backend_url": "http://127.0.0.1:60011",
         "backend_token": "isolated-token",
     }
+    assert captured_session["backend_url"] == ""
+    assert captured_session["metadata"]["launcher_instance_mode"] == "isolated"
+    assert captured_session["metadata"]["bench_session_reporting"] == "auto"
     assert backend_context_urls[-1] == "http://127.0.0.1:60011"
 
 

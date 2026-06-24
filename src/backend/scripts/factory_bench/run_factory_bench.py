@@ -75,6 +75,7 @@ _BACKEND_ROOT = Path("/home/dains/Documents/polaris/src/backend")
 _REPO_ROOT = _BACKEND_ROOT.parent.parent
 FACTORY_BENCH_REQUIRED_LLM_ROLES = ("pm", "chief_engineer", "director", "qa")
 _LAUNCHER_INSTANCE_MODES = {"observed", "isolated"}
+_BENCH_SESSION_REPORTING_MODES = {"auto", "shared", "off"}
 
 
 def _sanitize_run_id(raw: str | None) -> str:
@@ -833,11 +834,14 @@ def _resolve_bench_cache_root(workspace: Path) -> str:
         return ""
 
 
-# Module-level state populated by main() so the emit helper can also
-# forward each event to the Factory HTTP backend (Nats-JetStream/WebSocket fanout).
-# Empty values mean "no backend wiring": the helper degrades to local JSONL
-# only and never makes a network call.
+# Module-level state populated by main() so the emit helper can optionally
+# forward internal bench events to a shared Factory HTTP observation backend.
+# Empty values mean "no shared observation wiring": the helper degrades to
+# local JSONL only and never makes a network call. This is not the canonical
+# runtime path for isolated project instances; each isolated backend owns its
+# own runtime.v2 stream.
 _BENCH_BACKEND: dict[str, str] = {"backend_url": "", "session_id": "", "token": ""}
+_BENCH_OBSERVATION_CIRCUIT: dict[str, str] = {"disabled_reason": ""}
 
 
 def configure_bench_backend(backend_url: str, session_id: str, token: str = "") -> None:
@@ -845,6 +849,22 @@ def configure_bench_backend(backend_url: str, session_id: str, token: str = "") 
     _BENCH_BACKEND["backend_url"] = backend_url
     _BENCH_BACKEND["session_id"] = session_id
     _BENCH_BACKEND["token"] = token
+    _BENCH_OBSERVATION_CIRCUIT["disabled_reason"] = ""
+
+
+def _bench_observation_disabled() -> bool:
+    return bool(str(_BENCH_OBSERVATION_CIRCUIT.get("disabled_reason") or "").strip())
+
+
+def _disable_bench_observation(reason: str) -> None:
+    if _bench_observation_disabled():
+        return
+    _BENCH_OBSERVATION_CIRCUIT["disabled_reason"] = str(reason or "shared observation failed").strip()
+    print(
+        f"[factory-bench] shared bench observation disabled: {_BENCH_OBSERVATION_CIRCUIT['disabled_reason']}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def _emit_bench_event(
@@ -864,9 +884,10 @@ def _emit_bench_event(
     (resolved via ``latest_run.json``) so the Polaris WS bridge at
     ``/v2/ws/runtime`` can stream it to the ContextOS real-time dashboard.
 
-    Backend path: when main() registered a session, also POSTs the event to
-    ``/v2/factory/bench/sessions/{id}/events`` so the Factory front-end
-    panel can observe through the unified Nats-JetStream/WebSocket runtime path.
+    Shared observation path: when main() explicitly wired a shared bench
+    session, POSTs the event to ``/v2/factory/bench/sessions/{id}/events``.
+    This bridge is internal-test-only and best-effort. It must never be
+    treated as the isolated project's runtime source of truth.
 
     Returns True if at least one of the two paths succeeded; False only when
     neither produced a record (e.g. local path has no run_id and backend
@@ -920,13 +941,13 @@ def _emit_bench_event(
                             flush=True,
                         )
 
-    # --- Factory HTTP backend push: canonical real-time path. Runs
-    # independently of cache_root so the Factory panel sees every event
-    # even when the bench is run against a plain parent work_dir.
+    # --- Shared Factory HTTP observation push. Runs independently of cache_root
+    # when explicitly enabled, but remains best-effort and circuit-broken so a
+    # busy main backend cannot stall isolated project execution.
     backend_ok = False
     backend_url = _BENCH_BACKEND.get("backend_url", "")
     backend_sid = _BENCH_BACKEND.get("session_id", "")
-    if backend_url and backend_sid:
+    if backend_url and backend_sid and not _bench_observation_disabled():
         backend_ok = _push_bench_event_to_backend(
             backend_url=backend_url,
             session_id=backend_sid,
@@ -1237,7 +1258,12 @@ def _push_bench_session_to_backend(
     }
     if session_id:
         payload["session_id"] = session_id
-    response = _http_post_json(f"{backend_url}/v2/factory/bench/sessions", payload, token=token)
+    response = _http_post_json(
+        f"{backend_url}/v2/factory/bench/sessions",
+        payload,
+        timeout_s=_BENCH_OBSERVATION_HTTP_TIMEOUT_S,
+        token=token,
+    )
     if not isinstance(response, dict):
         return None
     sid = str(response.get("session_id") or "").strip()
@@ -1302,6 +1328,8 @@ def _push_bench_event_to_backend(
     token: str = "",
 ) -> bool:
     """Append a bench event to the active session on the Factory backend."""
+    if _bench_observation_disabled():
+        return False
     payload: dict[str, Any] = {
         "type": str(event_type),
         "name": name,
@@ -1316,6 +1344,9 @@ def _push_bench_event_to_backend(
         timeout_s=_BENCH_OBSERVATION_HTTP_TIMEOUT_S,
         token=token,
     )
+    if response is None:
+        _disable_bench_observation(f"event POST failed: {event_type}")
+        return False
     return response is not None and bool(response.get("appended", False))
 
 
@@ -1328,6 +1359,8 @@ def _push_bench_complete_to_backend(
     token: str = "",
 ) -> bool:
     """Mark a bench session complete (or failed) on the Factory backend."""
+    if _bench_observation_disabled():
+        return False
     payload: dict[str, Any] = {
         "success": bool(success),
         "summary": dict(summary or {}),
@@ -1338,6 +1371,9 @@ def _push_bench_complete_to_backend(
         timeout_s=_BENCH_OBSERVATION_HTTP_TIMEOUT_S,
         token=token,
     )
+    if response is None:
+        _disable_bench_observation("complete POST failed")
+        return False
     return response is not None and bool(response.get("updated", False))
 
 
@@ -1361,12 +1397,17 @@ def _push_bench_progress_to_backend(
         "completed": int(completed),
         "failed": int(failed),
     }
+    if _bench_observation_disabled():
+        return False
     response = _http_post_json(
         f"{backend_url}/v2/factory/bench/sessions/{session_id}/progress",
         payload,
         timeout_s=_BENCH_OBSERVATION_HTTP_TIMEOUT_S,
         token=token,
     )
+    if response is None:
+        _disable_bench_observation("progress POST failed")
+        return False
     return response is not None and bool(response.get("updated", False))
 
 
@@ -1496,6 +1537,28 @@ def _register_bench_project_instance(
 def _default_launcher_instance_mode() -> str:
     raw = str(os.environ.get("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE") or "isolated").strip().lower()
     return raw if raw in _LAUNCHER_INSTANCE_MODES else "isolated"
+
+
+def _default_bench_session_reporting_mode() -> str:
+    raw = str(os.environ.get("FACTORY_BENCH_SESSION_REPORTING") or "auto").strip().lower()
+    return raw if raw in _BENCH_SESSION_REPORTING_MODES else "auto"
+
+
+def _bench_session_backend_url(
+    *,
+    launcher_instance_mode: str,
+    bench_session_reporting: str,
+    backend_url: str,
+) -> str:
+    reporting = str(bench_session_reporting or "auto").strip().lower()
+    launcher_mode = str(launcher_instance_mode or "isolated").strip().lower()
+    if reporting == "off":
+        return ""
+    if reporting == "shared":
+        return str(backend_url or "").rstrip("/")
+    if launcher_mode == "observed":
+        return str(backend_url or "").rstrip("/")
+    return ""
 
 
 def _bench_project_instance_id(*, bench_session_id: str, project_id: str) -> str:
@@ -2609,6 +2672,15 @@ def main() -> int:
         ),
     )
     ap.add_argument(
+        "--bench-session-reporting",
+        choices=tuple(sorted(_BENCH_SESSION_REPORTING_MODES)),
+        default=_default_bench_session_reporting_mode(),
+        help=(
+            "Internal bench session reporting mode: auto reports only for observed shared-backend runs; "
+            "shared also reports isolated runs to the main backend; off disables shared session POSTs"
+        ),
+    )
+    ap.add_argument(
         "--dry-run",
         action="store_true",
         help="validate projects and generate audit structure without running the chain",
@@ -2713,20 +2785,31 @@ def main() -> int:
     failed = 0
     expected_llm_bindings = resolve_expected_llm_bindings()
     bench_session_id = os.environ.get("FACTORY_BENCH_SESSION_ID") or ""
+    launcher_instance_mode = str(args.launcher_instance_mode or "isolated").strip().lower()
+    bench_session_reporting = str(args.bench_session_reporting or "auto").strip().lower()
     backend_url = _resolve_backend_url()
     backend_token = _resolve_backend_token()
-    bench_session_id = _ensure_bench_session(
+    bench_session_backend_url = _bench_session_backend_url(
+        launcher_instance_mode=launcher_instance_mode,
+        bench_session_reporting=bench_session_reporting,
         backend_url=backend_url,
+    )
+    bench_session_id = _ensure_bench_session(
+        backend_url=bench_session_backend_url,
         work_dir=str(base),
         project_ids=[str(p["id"]) for p in selected],
         total=len(selected),
-        metadata={"levels": sorted({int(p.get("level") or 0) for p in selected})},
+        metadata={
+            "levels": sorted({int(p.get("level") or 0) for p in selected}),
+            "launcher_instance_mode": launcher_instance_mode,
+            "bench_session_reporting": bench_session_reporting,
+        },
         requested_session_id=bench_session_id,
         token=backend_token,
     )
-    configure_bench_backend(backend_url, bench_session_id, backend_token)
+    configure_bench_backend(bench_session_backend_url, bench_session_id, backend_token)
     backend_audit_context = build_bench_backend_audit_context(
-        backend_url,
+        bench_session_backend_url,
         backend_token=backend_token,
         workspace=str(base),
     )
@@ -2736,7 +2819,13 @@ def main() -> int:
         level=0,
         name="run.started",
         summary=f"factory-bench session {bench_session_id or 'local'}: {len(selected)} project(s)",
-        meta={"session_id": bench_session_id, "total": len(selected), "backend_url": bool(backend_url)},
+        meta={
+            "session_id": bench_session_id,
+            "total": len(selected),
+            "launcher_instance_mode": launcher_instance_mode,
+            "bench_session_reporting": bench_session_reporting,
+            "shared_session_backend_url": bool(bench_session_backend_url),
+        },
     )
     use_legacy_chain = False
 
@@ -2783,7 +2872,6 @@ def main() -> int:
         project_backend_url = backend_url
         project_backend_token = backend_token
         project_backend_audit_context = backend_audit_context
-        launcher_instance_mode = str(args.launcher_instance_mode or "isolated").strip().lower()
         launcher_instance_meta: dict[str, Any] = {"mode": launcher_instance_mode}
         if launcher_instance_mode == "isolated":
             isolated_instance = _start_isolated_bench_project_instance(
@@ -2987,9 +3075,9 @@ def main() -> int:
                         "error": reason,
                     },
                 )
-                if backend_url and bench_session_id:
+                if bench_session_backend_url and bench_session_id:
                     _push_bench_complete_to_backend(
-                        backend_url=backend_url,
+                        backend_url=bench_session_backend_url,
                         session_id=bench_session_id,
                         success=False,
                         summary={
@@ -3185,11 +3273,11 @@ def main() -> int:
                 "failure_taxonomy": record["failure_taxonomy"],
             },
         )
-        # Push live counters so the front-end sees ``X/Y 通过`` update
-        # immediately, not only at run.completed.
-        if backend_url and bench_session_id:
+        # Push live counters to the optional shared bench session. Isolated
+        # project instances do not depend on this observation bridge.
+        if bench_session_backend_url and bench_session_id:
             _push_bench_progress_to_backend(
-                backend_url=backend_url,
+                backend_url=bench_session_backend_url,
                 session_id=bench_session_id,
                 completed=sum(1 for r in records if r.get("all_checks_passed")),
                 failed=sum(1 for r in records if not r.get("all_checks_passed")),
@@ -3254,7 +3342,7 @@ def main() -> int:
             "goal_audit": goal_audit,
         },
     )
-    if backend_url and bench_session_id:
+    if bench_session_backend_url and bench_session_id:
         complete_summary = {
             "total": agg["total"],
             "passed": agg["all_checks_passed"],
@@ -3265,7 +3353,7 @@ def main() -> int:
         if run_errors:
             complete_summary["error"] = "; ".join(run_errors)
         _push_bench_complete_to_backend(
-            backend_url=backend_url,
+            backend_url=bench_session_backend_url,
             session_id=bench_session_id,
             success=run_success,
             summary=complete_summary,
