@@ -403,7 +403,8 @@ class InstanceSupervisor:
         requested_backend_port = request.get("backend_port")
         requested_frontend_port = request.get("frontend_port")
         is_isolated_bench = (
-            kind == "bench_project" and str(metadata_payload.get("backend_binding") or "") == "isolated_backend_instance"
+            kind == "bench_project"
+            and str(metadata_payload.get("backend_binding") or "") == "isolated_backend_instance"
         )
         backend_port_start = DEFAULT_BACKEND_PORT + 1 if is_isolated_bench else DEFAULT_BACKEND_PORT
         frontend_port_start = DEFAULT_FRONTEND_PORT + 1 if is_isolated_bench else DEFAULT_FRONTEND_PORT

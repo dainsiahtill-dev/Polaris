@@ -471,9 +471,9 @@ def test_restart_shared_backend_bench_project_promotes_to_isolated_ports(
         return FakeProcess(62000 + len(calls))
 
     def fake_allocate_port(start: int) -> int:
-        if start == instance_service.DEFAULT_BACKEND_PORT:
+        if start == instance_service.DEFAULT_BACKEND_PORT + 1:
             return 60011
-        if start == instance_service.DEFAULT_FRONTEND_PORT:
+        if start == instance_service.DEFAULT_FRONTEND_PORT + 1:
             return 60012
         raise AssertionError(f"unexpected allocation start: {start}")
 

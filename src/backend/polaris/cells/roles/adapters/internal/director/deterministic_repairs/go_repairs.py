@@ -203,6 +203,14 @@ def repair_go_bare_local_imports(workspace: Path) -> list[dict[str, str]]:
             if imp in pkg_dirs or any(imp.startswith(d + "/") for d in pkg_dirs):
                 new_imp = f"{module}/{imp}"
                 repaired = repaired.replace(f'"{imp}"', f'"{new_imp}"')
+            elif "/" not in imp:
+                # Single-segment bare name (e.g., "engine") — match against
+                # package directory basenames (e.g., src/engine → engine).
+                for d in pkg_dirs:
+                    if d.rsplit("/", 1)[-1] == imp:
+                        new_imp = f"{module}/{d}"
+                        repaired = repaired.replace(f'"{imp}"', f'"{new_imp}"')
+                        break
         if repaired != original:
             go_file.write_text(repaired, encoding="utf-8")
             repairs.append(
