@@ -984,24 +984,165 @@ def _read_go_mod_module(workspace: Path) -> str:
     return m.group(1) if m else ""
 
 
+def _repair_go_duplicate_declarations(workspace: Path, go_files: list[str]) -> int:
+    """Merge Go files in the same package when ``go vet`` reports redeclaration errors.
+
+    When the Director generates overlapping type/func/const declarations across
+    multiple files in the same package, Go refuses to compile.  This repair
+    runs ``go vet``, checks for ``redeclared`` errors, and if found, merges all
+    non-test ``.go`` files in the offending package into a single file.
+
+    Returns the number of files modified (merged).
+    """
+    go = _resolve_go_binary()
+    if not go:
+        return 0
+
+    # Run go vet to detect redeclaration errors.
+    try:
+        result = subprocess.run(
+            [go, "vet", "./..."],
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return 0
+
+    stderr = result.stderr or ""
+    if "redeclared" not in stderr and "already declared" not in stderr:
+        return 0  # No duplicate declaration errors.
+
+    import re as _re
+
+    # Parse which packages have redeclaration errors.
+    _pkg_error_re = _re.compile(r"^#\s+(\S+)", _re.MULTILINE)
+    error_pkgs = set()
+    for line in stderr.split("\n"):
+        if "redeclared" in line or "already declared" in line:
+            # Look back for the package header.
+            for m in _pkg_error_re.finditer(stderr[: stderr.index(line)]):
+                error_pkgs.add(m.group(1))
+
+    if not error_pkgs:
+        return 0
+
+    # For each offending package, find its source files and merge.
+    canonical = _read_go_mod_module(workspace)
+    modified = 0
+    for pkg_path in error_pkgs:
+        # Convert module path to directory: ``module/src/models`` → ``src/models``.
+        if canonical and pkg_path.startswith(canonical + "/"):
+            rel_dir = pkg_path[len(canonical) + 1 :]
+        elif "/" in pkg_path:
+            rel_dir = "/".join(pkg_path.split("/")[1:])
+        else:
+            rel_dir = "."
+        pkg_dir = workspace / rel_dir
+        if not pkg_dir.is_dir():
+            continue
+
+        # Collect non-test .go files in this package.
+        src_files = sorted(p for p in pkg_dir.glob("*.go") if not p.name.endswith("_test.go"))
+        if len(src_files) < 2:
+            continue
+
+        # Merge: keep the largest file, append unique content from others.
+        src_files.sort(key=lambda p: p.stat().st_size, reverse=True)
+        owner = src_files[0]
+        owner_text = owner.read_text(encoding="utf-8", errors="replace")
+
+        # Extract the package declaration and imports from owner.
+        _pkg_decl_re = _re.compile(r"^package\s+\w+\s*$", _re.MULTILINE)
+        _import_block_re = _re.compile(r'^import\s*\((.*?)\)|^import\s+"[^"]+"\s*$', _re.MULTILINE | _re.DOTALL)
+        owner_imports = set()
+        for m in _import_block_re.finditer(owner_text):
+            if m.group(1):
+                for line in m.group(1).split("\n"):
+                    line = line.strip()
+                    if line and not line.startswith("//"):
+                        owner_imports.add(line)
+            else:
+                owner_imports.add(m.group(0))
+
+        merged_sections: list[str] = []
+        extra_imports: set[str] = set()
+        files_to_remove: list[Path] = []
+
+        for src in src_files[1:]:
+            text = src.read_text(encoding="utf-8", errors="replace")
+            # Extract imports from this file.
+            for m in _import_block_re.finditer(text):
+                if m.group(1):
+                    for line in m.group(1).split("\n"):
+                        line = line.strip()
+                        if line and not line.startswith("//") and line not in owner_imports:
+                            extra_imports.add(line)
+                else:
+                    imp_line = m.group(0).strip()
+                    if imp_line not in owner_imports:
+                        extra_imports.add(imp_line)
+            # Strip package declaration and imports from the section.
+            section = _pkg_decl_re.sub("", text)
+            section = _import_block_re.sub("", section)
+            section = section.strip()
+            if section:
+                merged_sections.append(f"// --- merged from {src.name} ---\n{section}")
+            files_to_remove.append(src)
+
+        if not merged_sections:
+            continue
+
+        # Rebuild the owner file with merged imports and sections.
+        # Strip old imports from owner.
+        owner_body = _import_block_re.sub("", owner_text)
+        # Remove duplicate blank lines left by import removal.
+        owner_body = _re.sub(r"\n{3,}", "\n\n", owner_body).strip()
+
+        all_imports = sorted(owner_imports | extra_imports)
+        import_block = ""
+        if all_imports:
+            import_lines = "\n".join(f"\t{imp}" for imp in all_imports)
+            import_block = f"\nimport (\n{import_lines}\n)\n"
+
+        # Reconstruct: package + imports + original body + merged sections.
+        pkg_match = _pkg_decl_re.search(owner_text)
+        pkg_decl = pkg_match.group(0) if pkg_match else "package models"
+        owner_body_no_pkg = _pkg_decl_re.sub("", owner_body).strip()
+
+        new_text = f"{pkg_decl}\n{import_block}\n{owner_body_no_pkg}\n\n"
+        new_text += "\n\n".join(merged_sections) + "\n"
+
+        owner.write_text(new_text, encoding="utf-8")
+        for src in files_to_remove:
+            src.unlink()
+            modified += 1
+
+    return modified
+
+
 def _go_command(workspace: Path, go_files: list[str]) -> list[str]:
     go = _resolve_go_binary()
     if not go:
         return []
     if (workspace / "go.mod").is_file():
-        # Even with go.mod present, repair import paths that don't match the
-        # canonical module name (Director cross-file coherence fault).
+        # Even with go.mod present, repair import paths and duplicate
+        # declarations that don't match the canonical module name
+        # (Director cross-file coherence fault).
         canonical = _read_go_mod_module(workspace)
         if canonical:
             _normalize_go_imports(workspace, go_files, canonical)
+        _repair_go_duplicate_declarations(workspace, go_files)
         return [go, "test", "./..."]
     # No go.mod — try to auto-init so ``go test ./...`` works across packages.
     # Without a module file, ``go test file1.go src/engine/engine.go …`` fails
     # with "named files must all be in one directory".
     module_name = _infer_go_module_name(workspace, go_files)
-    # Repair inconsistent import paths before ``go mod init`` so all files
-    # agree on the canonical module name.
+    # Repair inconsistent import paths and duplicate declarations before
+    # ``go mod init`` so all files agree on the canonical module name.
     _normalize_go_imports(workspace, go_files, module_name)
+    _repair_go_duplicate_declarations(workspace, go_files)
     try:
         init_result = subprocess.run(
             [go, "mod", "init", module_name],
