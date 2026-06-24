@@ -128,3 +128,33 @@ def test_instance_update_event_redacts_token(tmp_path: Path, monkeypatch: Any) -
     assert payload["payload"]["instance"]["instance_id"] == "project-a"
     assert "token" not in payload["payload"]["instance"]
     assert "token" not in payload["payload"]["instances"][0]
+
+
+def test_external_backend_without_pid_is_observed(tmp_path: Path, monkeypatch: Any) -> None:
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
+    registry.save(
+        InstanceRecord(
+            instance_id="bench-observed",
+            name="Bench Observed",
+            kind="bench_project",
+            polaris_root=str(_make_polaris_root(tmp_path)),
+            workspace=str((tmp_path / "workspace").resolve()),
+            runtime_root=str((tmp_path / "runtime").resolve()),
+            backend_port=59901,
+            frontend_port=0,
+            backend_url="http://127.0.0.1:59901",
+            frontend_url="",
+            token="token",
+            backend_pid=None,
+            frontend_pid=None,
+            start_frontend=False,
+            status="observed",
+        )
+    )
+
+    health = supervisor.health("bench-observed")
+
+    assert health["status"] == "observed"
+    assert health["metadata"]["backend_health"] == "ok"

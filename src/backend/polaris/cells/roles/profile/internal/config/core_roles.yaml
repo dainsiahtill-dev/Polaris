@@ -322,12 +322,16 @@ roles:
       tool_timeout_seconds: 300
 
     context_policy:
-      max_context_tokens: 8000
+      max_context_tokens: 32000          # D-04: was 8000, starving Director context
       max_history_turns: 15
       include_project_structure: true
       include_code_snippets: true
       max_code_lines: 300
       include_task_history: true
+      include_blueprint_overview: true   # D-01: Director MUST receive CE blueprint
+      include_blueprint_step: true       # D-15: explicit signal flags
+      include_repo_identity: true        # D-15: explicit signal flags
+      include_scout_anchors: true        # D-15: explicit signal flags
       compression_strategy: sliding_window
 
     data_policy:

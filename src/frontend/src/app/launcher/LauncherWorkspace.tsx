@@ -36,8 +36,9 @@ type LogSelection = {
   content: string;
 };
 
-function statusTone(instance: PolarisInstance): 'success' | 'warning' | 'error' | 'default' {
+function statusTone(instance: PolarisInstance): 'success' | 'warning' | 'error' | 'info' | 'default' {
   if (instance.status === 'running' && instance.backend_alive) return 'success';
+  if (instance.status === 'observed') return 'info';
   if (instance.backend_pid || instance.frontend_pid) return 'warning';
   return 'default';
 }

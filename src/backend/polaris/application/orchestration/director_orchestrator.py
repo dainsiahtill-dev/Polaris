@@ -607,6 +607,11 @@ class DirectorOrchestrator:
     def _normalize_task_id(task_id: Any) -> int:
         """Normalize a task identifier to an integer.
 
+        Supports both numeric IDs (``"1"``, ``42``) and PM-format prefixed
+        IDs (``"TASK-1"``, ``"task_42"``).  The ``TASK-`` / ``task_`` prefix
+        is stripped before the numeric check, matching the normalization
+        pattern in :func:`polaris.cells.chief_engineer.blueprint.public.service._normalize_task_token`.
+
         Args:
             task_id: Raw task identifier (usually string or int).
 
@@ -616,7 +621,11 @@ class DirectorOrchestrator:
         Raises:
             ValueError: if the identifier cannot be coerced to an int.
         """
+        import re
+
         token = str(task_id or "").strip()
+        # Strip TASK-N / task_N / task-N prefix (D-03: PM→Director ID bridging)
+        token = re.sub(r"^(task[-_])+", "", token, flags=re.IGNORECASE)
         if not token.isdigit():
             raise ValueError(f"Invalid TaskBoard task id: {task_id}")
         return int(token)

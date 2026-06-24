@@ -1464,8 +1464,8 @@ def _register_bench_project_instance(
         backend_reload=False,
         frontend_vite=bool(frontend_port),
         start_frontend=bool(frontend_port),
-        status="running",
-        backend_pid=os.getpid(),
+        status="observed",
+        backend_pid=None,
         frontend_pid=None,
         bench={
             "session_id": bench_session_id,
