@@ -170,6 +170,51 @@ def repair_go_module_imports(workspace: Path) -> list[dict[str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# Nested import keyword repair
+# ---------------------------------------------------------------------------
+
+_NESTED_IMPORT_RE = re.compile(r"^(\s+)import\s+\"([^\"]+)\"\s*$", re.MULTILINE)
+
+
+def repair_go_nested_import_keyword(workspace: Path) -> list[dict[str, str]]:
+    """Fix ``import "pkg"`` inside ``import (...)`` blocks.
+
+    When the Director generates:
+        import (
+            "errors"
+            import "fmt"   // <-- wrong: extra import keyword
+        )
+
+    This repairs it to:
+        import (
+            "errors"
+            "fmt"
+        )
+    """
+    repairs: list[dict[str, str]] = []
+    for go_file in workspace.rglob("*.go"):
+        if go_file.name.endswith("_test.go"):
+            continue
+        try:
+            original = go_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        repaired = _NESTED_IMPORT_RE.sub(r'\1"\2"', original)
+        if repaired != original:
+            go_file.write_text(repaired, encoding="utf-8")
+            repairs.append(
+                {
+                    "file": str(go_file.relative_to(workspace)),
+                    "before": "import inside import block",
+                    "after": "bare string",
+                }
+            )
+    if repairs:
+        logger.info("Go nested import keyword repair: %d file(s) fixed", len(repairs))
+    return repairs
+
+
+# ---------------------------------------------------------------------------
 # Sub-path hallucination repair
 # ---------------------------------------------------------------------------
 
@@ -260,7 +305,7 @@ def _dedup_within_single_file(go_file: Path) -> bool:
         return False
 
     _decl_start_re = re.compile(
-        r"^(type\s+\w+[\s{(]|func\s+(?:\([^)]+\)\s+)?\w+\s*[\[(])",
+        r"^(type\s+\w+[\s{(]|func\s+(?:\([^)]+\)\s+)?\w+\s*[\[(]|const\s+\w+|var\s+\w+)",
         re.MULTILINE,
     )
 
@@ -285,7 +330,7 @@ def _dedup_within_single_file(go_file: Path) -> bool:
         if m:
             prefix = m.group(0).strip()
             # Extract the name from the prefix.
-            name_m = re.search(r"(type|func)\s+(?:\([^)]+\)\s+)?(\w+)", prefix)
+            name_m = re.search(r"(type|func|const|var)\s+(?:\([^)]+\)\s+)?(\w+)", prefix)
             if name_m:
                 name = name_m.group(2)
                 key = f"{name_m.group(1)}_{name}"

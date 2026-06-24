@@ -33,7 +33,12 @@ from ._common import (
     _find_nearby_declared_target_source,
     _parse_missing_declared_target_files,
 )
-from .go_repairs import repair_go_duplicate_declarations, repair_go_import_subpaths, repair_go_module_imports
+from .go_repairs import (
+    repair_go_duplicate_declarations,
+    repair_go_import_subpaths,
+    repair_go_module_imports,
+    repair_go_nested_import_keyword,
+)
 from .javascript_repairs import (
     _apply_deterministic_javascript_esm_commonjs_entrypoint_repair,
     _apply_deterministic_javascript_missing_export_repair,
@@ -365,6 +370,25 @@ def _apply_deterministic_go_module_import_repair(
     if not go_files:
         return []
     results: list[dict[str, Any]] = []
+
+    # Pass 1: Prefix normalization.
+    # Pass 0: Nested import keyword repair (syntax fix before other passes).
+    nested_repairs = repair_go_nested_import_keyword(workspace)
+    for record in nested_repairs:
+        results.append(
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_go_nested_import_repair",
+                    "file": record["file"],
+                    "before": record["before"],
+                    "after": record["after"],
+                },
+            }
+        )
 
     # Pass 1: Prefix normalization.
     if (workspace / "go.mod").is_file():
