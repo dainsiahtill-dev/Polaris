@@ -290,6 +290,30 @@ export interface ResidentAgiCapabilitySurfacePayload {
   count?: number;
 }
 
+export interface ResidentAgiDecisionTurnRequest {
+  workspace?: string;
+  decision_type?: string;
+  objective: string;
+  run_id?: string;
+  task_id?: string;
+  goal_id?: string;
+  evidence?: Record<string, unknown>;
+  constraints?: string[];
+  candidate_actions?: string[];
+  context_refs?: string[];
+  evidence_refs?: string[];
+  confidence?: number;
+}
+
+export interface ResidentAgiDecisionTurnResponse {
+  ok: boolean;
+  workspace?: string;
+  decision?: Record<string, unknown>;
+  recorded_decision?: ResidentDecisionPayload;
+  role_result?: Record<string, unknown>;
+  error?: string | null;
+}
+
 export interface ResidentGoalPayload {
   goal_id?: string;
   goal_type?: string;

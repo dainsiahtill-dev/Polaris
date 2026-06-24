@@ -196,6 +196,7 @@ const mockResidentState = {
   materializeGoal: vi.fn(async () => null),
   stageGoal: vi.fn(async () => null),
   runGoal: vi.fn(async () => null),
+  runAgiDecision: vi.fn(async () => null),
   extractSkills: vi.fn(async () => null),
   runExperiments: vi.fn(async () => null),
   runImprovements: vi.fn(async () => null),
@@ -341,6 +342,32 @@ describe('ResidentWorkspace', () => {
     expect(screen.getByText('score 91%')).toBeInTheDocument();
     expect(screen.getByText(/evidence refs: runtime\/contracts\/plan.md/)).toBeInTheDocument();
     expect(screen.getByText(/symbols: record_decision/)).toBeInTheDocument();
+  });
+
+  it('runs a governed AGI decision turn from the decisions tab', () => {
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+        initialTab="decisions"
+      />,
+    );
+
+    expect(screen.getByTestId('resident-agi-decision-turn')).toHaveTextContent('AGI 决策回合');
+    fireEvent.change(screen.getByLabelText('AGI 决策目标'), {
+      target: { value: 'Decide whether the current run can proceed.' },
+    });
+    fireEvent.click(screen.getByTestId('resident-run-agi-decision'));
+
+    expect(mockResidentState.runAgiDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision_type: 'platform_supervision',
+        objective: 'Decide whether the current run can proceed.',
+        candidate_actions: ['continue', 'block', 'request_evidence', 'escalate'],
+        evidence_refs: ['runtime/contracts/plan.md'],
+      }),
+    );
   });
 
   it('rejects a pending goal', () => {

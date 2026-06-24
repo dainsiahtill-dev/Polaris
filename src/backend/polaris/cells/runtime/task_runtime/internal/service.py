@@ -75,6 +75,8 @@ class TaskRuntimeService:
             for child in sorted(tasks_dir.iterdir(), key=lambda item: str(item)):
                 if keep_plan and child.name == "plan.json":
                     continue
+                if child.name in {".max_id", ".max_id.lock"}:
+                    continue
                 try:
                     if child.is_dir():
                         shutil.rmtree(child)

@@ -178,7 +178,9 @@ def test_task_runtime_reset_records_clears_rows_sessions_and_events(tmp_path: Pa
 
     assert result["failed_count"] == 0
     assert TaskRuntimeService(str(workspace)).list_task_rows() == []
-    assert not any(Path(resolve_runtime_path(str(workspace), "runtime/tasks")).iterdir())
+    tasks_dir = Path(resolve_runtime_path(str(workspace), "runtime/tasks"))
+    assert not list(tasks_dir.glob("task_*.json"))
+    assert (tasks_dir / ".max_id").is_file()
     assert not taskboard_event_path.exists()
 
 

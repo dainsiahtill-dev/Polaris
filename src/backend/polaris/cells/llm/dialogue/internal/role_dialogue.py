@@ -824,6 +824,21 @@ class RoleOutputParser:
                 "summary": {"type": "string"},
             },
         },
+        "resident_agi": {
+            "type": "object",
+            "required": ["verdict", "rationale", "next_action", "downstream_allowed"],
+            "properties": {
+                "verdict": {
+                    "type": "string",
+                    "enum": ["continue", "block", "escalate", "request_evidence"],
+                },
+                "rationale": {"type": "string"},
+                "evidence_refs": {"type": "array"},
+                "risks": {"type": "array"},
+                "next_action": {"type": "string"},
+                "downstream_allowed": {"type": "boolean"},
+            },
+        },
     }
 
     @classmethod
@@ -942,7 +957,7 @@ class RoleOutputParser:
             return True, {"security_blocked": True}, []
 
         # 根据角色类型选择验证方式
-        if role in ["pm", "chief_engineer", "qa"]:
+        if role in ["pm", "chief_engineer", "qa", "resident_agi"]:
             # 这些角色需要JSON输出
             data, parse_errors = cls.extract_json(text)
             if data is None:
@@ -1025,6 +1040,8 @@ class RoleOutputParser:
                         errors.append(f"Field {field} should be object")
                     elif expected_type == "string" and not isinstance(value, str):
                         errors.append(f"Field {field} should be string")
+                    elif expected_type == "boolean" and not isinstance(value, bool):
+                        errors.append(f"Field {field} should be boolean")
 
                 # Enum conformance: honestly reflect declared enum membership.
                 enum = prop_schema.get("enum")
@@ -1057,6 +1074,8 @@ class RoleOutputQualityChecker:
             return cls._check_director_output(text, parsed_data)
         elif role == "qa":
             return cls._check_qa_output(text, parsed_data)
+        elif role == "resident_agi":
+            return cls._check_resident_agi_output(text, parsed_data)
 
         return score, suggestions
 
@@ -1193,6 +1212,41 @@ class RoleOutputQualityChecker:
         if verdict == "FAIL" and not findings:
             score -= 30
             suggestions.append("FAIL verdict without findings")
+
+        return max(0, score), suggestions
+
+    @classmethod
+    def _check_resident_agi_output(cls, text: str, data: dict | None) -> tuple[float, list[str]]:
+        del text
+        score = 100.0
+        suggestions: list[str] = []
+
+        if not data:
+            return 0, ["Failed to parse output"]
+
+        verdict = data.get("verdict")
+        if verdict not in ["continue", "block", "escalate", "request_evidence"]:
+            score -= 35
+            suggestions.append(f"Invalid verdict: {verdict}")
+
+        rationale = str(data.get("rationale") or "").strip()
+        if len(rationale) < 12:
+            score -= 20
+            suggestions.append("Rationale is too short for an auditable AGI decision")
+
+        evidence_refs = data.get("evidence_refs")
+        if not isinstance(evidence_refs, list) or not evidence_refs:
+            score -= 20
+            suggestions.append("Missing evidence_refs for Resident AGI decision traceability")
+
+        next_action = str(data.get("next_action") or "").strip()
+        if not next_action:
+            score -= 20
+            suggestions.append("Missing next_action")
+
+        if not isinstance(data.get("downstream_allowed"), bool):
+            score -= 20
+            suggestions.append("downstream_allowed must be boolean")
 
         return max(0, score), suggestions
 

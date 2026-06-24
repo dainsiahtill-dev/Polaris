@@ -6,6 +6,8 @@ import type {
   FilePayload,
   LanceDbStatus,
   ResidentAgiCapabilitySurfacePayload,
+  ResidentAgiDecisionTurnRequest,
+  ResidentAgiDecisionTurnResponse,
   ResidentDecisionPayload,
   ResidentExperimentPayload,
   ResidentGoalPayload,
@@ -242,6 +244,18 @@ export const residentService = {
     const suffix = workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
     const res = await apiFetch(`/v2/resident/capabilities${suffix}`);
     return handleResponse(res, 'Failed to load Resident AGI capability surface');
+  },
+
+  async decide(
+    workspace: string,
+    payload: ResidentAgiDecisionTurnRequest,
+  ): Promise<ApiResult<ResidentAgiDecisionTurnResponse>> {
+    const res = await apiFetch('/v2/resident/agi/decide', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace, ...payload }),
+    });
+    return handleResponse(res, 'Failed to run Resident AGI decision turn');
   },
 
   async start(workspace: string, mode: string): Promise<ApiResult<ResidentStatusDetailsPayload>> {

@@ -49,12 +49,14 @@ def test_internal_init_imports_without_error() -> None:
     # Sub-modules are always accessible via the package namespace
     assert hasattr(intern, "ArchitectAdapter")
     assert hasattr(intern, "QAAdapter")
+    assert hasattr(intern, "ResidentAgiAdapter")
     # Adapter classes — direct import (always works regardless of sys.modules state)
     from polaris.cells.roles.adapters.internal import (
         ArchitectAdapter,
         ChiefEngineerAdapter,
         PMAdapter,
         QAAdapter,
+        ResidentAgiAdapter,
         RoleOrchestrationAdapter,
     )
 
@@ -62,6 +64,7 @@ def test_internal_init_imports_without_error() -> None:
     assert ChiefEngineerAdapter is not None
     assert PMAdapter is not None
     assert QAAdapter is not None
+    assert ResidentAgiAdapter is not None
     assert RoleOrchestrationAdapter is not None
 
 
@@ -70,6 +73,7 @@ def test_cell_entry_imports_without_error() -> None:
     from polaris.cells.roles import adapters as cell
 
     assert "PMAdapter" in cell.__all__
+    assert "ResidentAgiAdapter" in cell.__all__
     assert "create_role_adapter" in cell.__all__
     assert "RoleAdapterResultV1" in cell.__all__
 
@@ -183,6 +187,7 @@ def test_get_supported_roles_contains_core_roles() -> None:
     assert all(r == r.lower() for r in roles)
     # pm is the anchor role — always present
     assert "pm" in roles
+    assert "resident_agi" in roles
 
 
 def test_director_graceful_fallback_when_unavailable() -> None:

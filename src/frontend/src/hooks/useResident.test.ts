@@ -1,9 +1,10 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ResidentStatusDetailsPayload } from '@/app/types/appContracts';
 
 const residentServiceMock = vi.hoisted(() => ({
+  decide: vi.fn(),
   getStatus: vi.fn(),
 }));
 
@@ -108,5 +109,47 @@ describe('useResident', () => {
     );
     expect(result.current.decisions[0]?.actor).toBe('ResidentAGI');
     expect(result.current.goals[0]?.goal_id).toBe('goal-1');
+  });
+
+  it('runs a Resident AGI decision turn through the service and refreshes', async () => {
+    residentServiceMock.getStatus.mockResolvedValue({
+      ok: true,
+      data: LIVE_RESIDENT,
+    });
+    residentServiceMock.decide.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ok: true,
+        recorded_decision: {
+          decision_id: 'decision-agi-1',
+          actor: 'resident_agi',
+          verdict: 'success',
+        },
+      },
+    });
+
+    const { result } = renderHook(() =>
+      useResident({
+        workspace: '/tmp/polaris-demo',
+        liveResident: LIVE_RESIDENT,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.status?.workspace).toBe('/tmp/polaris-demo');
+    });
+
+    await act(async () => {
+      await result.current.runAgiDecision({
+        objective: 'Decide whether the run can proceed.',
+        decision_type: 'platform_supervision',
+      });
+    });
+
+    expect(residentServiceMock.decide).toHaveBeenCalledWith('/tmp/polaris-demo', {
+      objective: 'Decide whether the run can proceed.',
+      decision_type: 'platform_supervision',
+    });
+    expect(residentServiceMock.getStatus).toHaveBeenCalledWith('/tmp/polaris-demo', true);
   });
 });

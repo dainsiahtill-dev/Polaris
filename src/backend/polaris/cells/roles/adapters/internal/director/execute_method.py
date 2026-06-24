@@ -2243,6 +2243,7 @@ def _phase_pre_materialization_quality(
         from .deterministic_repairs.rust_repairs import run_all_rust_post_repairs
 
         _ws_path = Path(str(getattr(adapter, "workspace", "") or ""))
+        _post_rust_repairs: list[dict[str, Any]] = []
         if (_ws_path / "Cargo.toml").is_file():
             _post_rust_repairs = run_all_rust_post_repairs(_ws_path)
             for record in _post_rust_repairs:
@@ -2260,8 +2261,29 @@ def _phase_pre_materialization_quality(
                     }
                 )
 
+        # Post-execution C++ repair pass: include path mismatches
+        from .deterministic_repairs.cpp_repairs import run_all_cpp_post_repairs
+
+        _post_cpp_repairs: list[dict[str, str]] = []
+        if any((_ws_path / ext).exists() for ext in ("CMakeLists.txt",)) or any(_ws_path.rglob("*.cpp")):
+            _post_cpp_repairs = run_all_cpp_post_repairs(_ws_path)
+            for record in _post_cpp_repairs:
+                tool_results.append(
+                    {
+                        "tool": "write_file",
+                        "tool_name": "write_file",
+                        "success": True,
+                        "result": {
+                            "ok": True,
+                            "source_tool": "deterministic_cpp_post_repair",
+                            "file": record.get("file", ""),
+                            "action": record.get("action", ""),
+                        },
+                    }
+                )
+
         # Re-collect workspace diff after all post-execution repairs
-        if _post_go_repairs or (locals().get("_post_rust_repairs")):
+        if _post_go_repairs or _post_rust_repairs or _post_cpp_repairs:
             current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
                 adapter,
                 baseline_files,

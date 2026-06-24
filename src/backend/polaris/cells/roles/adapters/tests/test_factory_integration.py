@@ -45,6 +45,14 @@ class TestAdapterFactoryCreation:
         assert adapter is not None
         assert adapter.role_id == "qa"
 
+    def test_factory_creates_resident_agi_adapter(self) -> None:
+        """Test factory creates Resident AGI adapter correctly."""
+        from polaris.cells.roles.adapters.public.service import create_role_adapter
+
+        adapter = create_role_adapter(role_id="resident_agi", workspace=".")
+        assert adapter is not None
+        assert adapter.role_id == "resident_agi"
+
     def test_factory_normalizes_role_id(self) -> None:
         """Test factory normalizes role ID to lowercase."""
         from polaris.cells.roles.adapters.public.service import create_role_adapter
@@ -78,6 +86,7 @@ class TestSupportedRoles:
         assert isinstance(roles, list)
         assert "pm" in roles
         assert "director" in roles
+        assert "resident_agi" in roles
 
     def test_pm_in_supported_roles(self) -> None:
         """Test PM is in supported roles."""

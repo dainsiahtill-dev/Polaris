@@ -103,6 +103,9 @@ export function ResidentWorkspace({
   // New goal form state
   const [newGoalTitle, setNewGoalTitle] = useState('');
   const [newGoalDesc, setNewGoalDesc] = useState('');
+  const [agiDecisionObjective, setAgiDecisionObjective] = useState(
+    '审计当前运行证据，判断是否允许进入下一步。',
+  );
 
   // Identity edit state
   const [editingIdentity, setEditingIdentity] = useState(false);
@@ -142,6 +145,33 @@ export function ResidentWorkspace({
       setNewGoalDesc('');
       setShowNewGoal(false);
     }
+  };
+
+  const handleRunAgiDecision = async () => {
+    const objective = agiDecisionObjective.trim();
+    if (!objective) return;
+    const latestDecision = resident.decisions[0] || null;
+    await resident.runAgiDecision({
+      decision_type: 'platform_supervision',
+      objective,
+      evidence: {
+        workspace,
+        runtime_active: isActive,
+        mode,
+        goal_count: resident.goals.length,
+        decision_count: resident.decisions.length,
+        latest_decision_id: latestDecision?.decision_id || '',
+        latest_verdict: latestDecision?.verdict || '',
+      },
+      constraints: [
+        'preserve_pm_chief_engineer_director_qa_chain',
+        'request_evidence_or_block_when_context_is_insufficient',
+      ],
+      candidate_actions: ['continue', 'block', 'request_evidence', 'escalate'],
+      context_refs: latestDecision?.context_refs || [],
+      evidence_refs: latestDecision?.evidence_refs || [],
+      confidence: latestDecision ? 0.7 : 0.5,
+    });
   };
 
   return (
@@ -558,6 +588,37 @@ export function ResidentWorkspace({
 
         {activeTab === 'decisions' && (
           <div className="space-y-3">
+            <Card className="border-slate-800 bg-slate-900/50" data-testid="resident-agi-decision-turn">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center justify-between gap-2 text-sm text-slate-300">
+                  <span className="flex items-center gap-2">
+                    <Brain className="size-4 text-cyan-400" />
+                    AGI 决策回合
+                  </span>
+                  <Badge className="border-cyan-500/20 bg-cyan-500/10 text-cyan-200">resident_agi</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Textarea
+                  aria-label="AGI 决策目标"
+                  value={agiDecisionObjective}
+                  onChange={(event) => setAgiDecisionObjective(event.target.value)}
+                  className="min-h-20 border-slate-700 bg-slate-950"
+                />
+                <div className="flex items-center justify-end">
+                  <Button
+                    size="sm"
+                    data-testid="resident-run-agi-decision"
+                    disabled={!agiDecisionObjective.trim() || resident.isActing('agi-decide')}
+                    onClick={() => void handleRunAgiDecision()}
+                    className="bg-cyan-500 text-black hover:bg-cyan-400"
+                  >
+                    <Brain className={cn('mr-1 size-3', resident.isActing('agi-decide') && 'animate-pulse')} />
+                    运行决策
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
             <DecisionAuditSummary stats={decisionStats} />
             <div className="space-y-2">
               {resident.decisions.map((decision) => (

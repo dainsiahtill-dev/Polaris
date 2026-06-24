@@ -34,6 +34,7 @@ from ..internal.qa_adapter import (
     QAAdapter,
     _extract_workspace_quality_summary as extract_workspace_quality_summary,
 )
+from ..internal.resident_agi_adapter import ResidentAgiAdapter
 from ..internal.schemas import (
     ROLE_OUTPUT_SCHEMAS,
     BaseToolEnabledOutput,
@@ -64,6 +65,7 @@ def _build_registry() -> dict[str, Callable[[str], BaseRoleAdapter]]:
         "architect": ArchitectAdapter,
         "qa": QAAdapter,
         "chief_engineer": ChiefEngineerAdapter,
+        "resident_agi": ResidentAgiAdapter,
     }
     try:
         from ..internal.director_adapter import DirectorAdapter
@@ -165,6 +167,7 @@ __all__ = [
     "QAAdapter",
     "QAFinding",
     "QAReportOutput",
+    "ResidentAgiAdapter",
     "Task",
     "TaskListOutput",
     "ToolCall",

@@ -606,16 +606,20 @@ async def test_director_cancel_task_fails(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_resident_status(client: AsyncClient) -> None:
-    """Resident status should return service status."""
-    with patch("polaris.delivery.http.v2.resident.get_resident_service") as mock_get_service:
-        mock_service = MagicMock()
-        mock_service.get_status.return_value = {"running": False, "mode": "observe"}
-        mock_get_service.return_value = mock_service
-
+    """Resident status should return the public resident status contract."""
+    with patch(
+        "polaris.delivery.http.v2.resident.query_resident_status",
+        return_value={
+            "runtime": {"active": False, "mode": "observe"},
+            "agi_capability_surface": {"role_id": "resident_agi"},
+        },
+    ) as mock_query:
         response = await client.get("/v2/resident/status")
         assert response.status_code == 200
         data = response.json()
-        assert "running" in data
+        assert data["runtime"]["active"] is False
+        assert data["agi_capability_surface"]["role_id"] == "resident_agi"
+        mock_query.assert_called_once()
 
 
 @pytest.mark.asyncio

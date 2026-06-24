@@ -45,3 +45,44 @@ class TestRoleOutputSchemaEnum:
         # Nested item enums are not enforced by the flat validator, but the call
         # must still parse without raising and return the data.
         assert data is not None
+
+    def test_valid_resident_agi_decision_passes(self) -> None:
+        payload = json.dumps(
+            {
+                "verdict": "continue",
+                "rationale": "Final request audit and gate evidence are sufficient.",
+                "evidence_refs": ["runtime/contexts/abc.json"],
+                "risks": [],
+                "next_action": "run qa",
+                "downstream_allowed": True,
+            }
+        )
+        is_valid, _data, errors = RoleOutputParser.validate_role_output("resident_agi", payload)
+        assert is_valid is True
+        assert errors == []
+
+    def test_invalid_resident_agi_verdict_fails(self) -> None:
+        payload = json.dumps(
+            {
+                "verdict": "maybe",
+                "rationale": "Evidence is unclear.",
+                "next_action": "continue anyway",
+                "downstream_allowed": True,
+            }
+        )
+        is_valid, _data, errors = RoleOutputParser.validate_role_output("resident_agi", payload)
+        assert is_valid is False
+        assert any("verdict" in err and "maybe" in err for err in errors)
+
+    def test_resident_agi_downstream_allowed_must_be_boolean(self) -> None:
+        payload = json.dumps(
+            {
+                "verdict": "block",
+                "rationale": "Required ContextOS evidence is missing.",
+                "next_action": "request evidence",
+                "downstream_allowed": "false",
+            }
+        )
+        is_valid, _data, errors = RoleOutputParser.validate_role_output("resident_agi", payload)
+        assert is_valid is False
+        assert any("downstream_allowed" in err and "boolean" in err for err in errors)

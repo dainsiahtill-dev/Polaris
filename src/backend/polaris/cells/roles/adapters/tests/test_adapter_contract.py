@@ -263,6 +263,9 @@ class TestGetSupportedRoles:
     def test_pm_in_supported_roles(self) -> None:
         assert "pm" in get_supported_roles()
 
+    def test_resident_agi_in_supported_roles(self) -> None:
+        assert "resident_agi" in get_supported_roles()
+
     def test_returns_lowercase(self) -> None:
         roles = get_supported_roles()
         assert all(r == r.lower() for r in roles)

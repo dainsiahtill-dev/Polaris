@@ -10,6 +10,91 @@ from polaris.cells.resident.autonomy.internal.resident_runtime_service import re
 from polaris.delivery.http.app_factory import create_app
 
 
+def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Path, monkeypatch) -> None:
+    test_token = "test-resident-token"
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    captured: dict[str, object] = {}
+
+    class FakeResidentAgiAdapter:
+        async def execute(
+            self,
+            task_id: str,
+            input_data: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            captured["task_id"] = task_id
+            captured["input_data"] = input_data
+            captured["context"] = context
+            return {
+                "success": True,
+                "stage": "resident_agi",
+                "decision_type": "quality_gate_response",
+                "decision": {
+                    "verdict": "continue",
+                    "rationale": "ContextOS and quality gate evidence are sufficient.",
+                    "evidence_refs": ["runtime/contexts/context-1.json"],
+                    "risks": [],
+                    "next_action": "allow QA",
+                    "downstream_allowed": True,
+                },
+                "metadata": {
+                    "role_runtime_entrypoint": "roles.runtime.execute_role_session",
+                },
+                "tool_calls": [],
+                "execution_stats": {"total_tokens": 128},
+            }
+
+    def fake_create_role_adapter(role_id: str, workspace_arg: str) -> FakeResidentAgiAdapter:
+        captured["role_id"] = role_id
+        captured["workspace"] = workspace_arg
+        return FakeResidentAgiAdapter()
+
+    app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
+    with (
+        patch("polaris.delivery.http.v2.resident.create_role_adapter", side_effect=fake_create_role_adapter),
+        TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client,
+    ):
+        response = client.post(
+            "/v2/resident/agi/decide",
+            json={
+                "workspace": str(workspace),
+                "decision_type": "quality_gate_response",
+                "objective": "Decide whether the current run can proceed to QA.",
+                "run_id": "run-agi-1",
+                "task_id": "task-agi-1",
+                "evidence": {"context_snapshot_ref": "runtime/contexts/context-1.json"},
+                "constraints": ["fail closed when evidence is missing"],
+                "candidate_actions": ["continue", "request_evidence"],
+                "context_refs": ["runtime/contexts/context-1.json"],
+                "evidence_refs": ["runtime/gates/qa.json"],
+                "confidence": 0.82,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["decision"]["verdict"] == "continue"
+    assert payload["recorded_decision"]["actor"] == "resident_agi"
+    assert payload["recorded_decision"]["verdict"] == "success"
+    assert payload["recorded_decision"]["actual_outcome"]["agi_verdict"] == "continue"
+    assert payload["recorded_decision"]["actual_outcome"]["role_runtime_entrypoint"] == (
+        "roles.runtime.execute_role_session"
+    )
+    assert "runtime/gates/qa.json" in payload["recorded_decision"]["evidence_refs"]
+    assert captured["role_id"] == "resident_agi"
+    assert captured["workspace"] == str(workspace)
+    assert captured["task_id"] == "task-agi-1"
+    captured_context = captured["context"]
+    assert isinstance(captured_context, dict)
+    captured_metadata = captured_context["metadata"]
+    assert isinstance(captured_metadata, dict)
+    assert captured_metadata["resident_agi_role_runtime_required"] is True
+
+
 def test_resident_api_supports_identity_goals_and_decisions(tmp_path: Path) -> None:
     reset_resident_services()
 

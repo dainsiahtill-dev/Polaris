@@ -176,6 +176,55 @@ def test_deterministic_rust_lib_root_facade_repair_reconnects_existing_engine_ap
     assert "::lib::" not in main_rs
 
 
+def test_deterministic_rust_lib_root_facade_repair_replaces_conflicting_root_exports(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "kitchen-flavor-palette"\n\n[lib]\nname = "kitchen_flavor_palette"\npath = "src/lib.rs"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "lib.rs").write_text(
+        "pub mod models;\npub mod engine;\n"
+        "pub use models::palette::{Palette, PaletteColor};\n"
+        "pub use models::ingredient::{Ingredient, IngredientKind};\n"
+        "pub use models::recipe::{Recipe, RecipeStep};\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine" / "mod.rs").write_text(
+        "pub use mapper::{FlavorProfile, Palette};\n"
+        "pub use plating::{Ingredient, PlatingRule, Recipe};\n"
+        "pub fn generate_palette_and_plating(_recipe: &Recipe) {}\n"
+        "mod mapper { pub struct FlavorProfile; pub struct Palette { pub sweet: u8 } }\n"
+        "mod plating { pub struct Ingredient; pub struct PlatingRule; pub struct Recipe { pub name: String } }\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_rust_lib_root_facade_repair(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task_id="factory-quality-gate:test",
+        artifact_quality_errors=[
+            "error[E0432]: unresolved imports `kitchen_flavor_palette::generate_palette_and_plating`, "
+            "`kitchen_flavor_palette::FlavorProfile`, `kitchen_flavor_palette::PlatingRule`\n"
+            "error[E0609]: no field `sweet` on type `&kitchen_flavor_palette::Palette`\n"
+            "error[E0609]: no field `name` on type `kitchen_flavor_palette::Recipe`\n"
+            "error[E0560]: struct `kitchen_flavor_palette::Ingredient` has no field named `flavor`"
+        ],
+    )
+
+    lib_rs = (tmp_path / "src" / "lib.rs").read_text(encoding="utf-8")
+    assert results
+    assert "pub use engine::generate_palette_and_plating;" in lib_rs
+    assert "pub use engine::FlavorProfile;" in lib_rs
+    assert "pub use engine::PlatingRule;" in lib_rs
+    assert "pub use engine::Palette;" in lib_rs
+    assert "pub use engine::Recipe;" in lib_rs
+    assert "pub use engine::Ingredient;" in lib_rs
+    assert "pub use models::palette::{Palette, PaletteColor};" not in lib_rs
+    assert "pub use models::palette::{PaletteColor};" in lib_rs
+    assert "pub use models::recipe::{Recipe, RecipeStep};" not in lib_rs
+    assert "pub use models::recipe::{RecipeStep};" in lib_rs
+
+
 def test_deterministic_rust_missing_lib_target_repair_creates_module_facade(tmp_path: Path) -> None:
     (tmp_path / "Cargo.toml").write_text(
         '[package]\nname = "kitchen-flavor-palette"\n\n[lib]\nname = "kitchen_flavor_palette"\npath = "src/lib.rs"\n',

@@ -4,6 +4,8 @@ import { toast } from 'sonner';
 import { residentService } from '@/services/api';
 import type {
   GoalExecutionView,
+  ResidentAgiDecisionTurnRequest,
+  ResidentAgiDecisionTurnResponse,
   ResidentDecisionPayload,
   ResidentExperimentPayload,
   ResidentGoalPayload,
@@ -174,6 +176,12 @@ export function useResident(options: UseResidentOptions = {}) {
       runAction('stop', () => residentService.stop(workspace), 'AGI 已停止'),
     tick: () =>
       runAction('tick', () => residentService.tick(workspace, true), 'AGI 已完成一次刷新'),
+    runAgiDecision: (payload: ResidentAgiDecisionTurnRequest) =>
+      runAction<ResidentAgiDecisionTurnResponse>(
+        'agi-decide',
+        () => residentService.decide(workspace, payload),
+        'AGI 决策已记录',
+      ),
     saveIdentity: (payload: ResidentIdentityPatch) =>
       runAction('save-identity', () => residentService.updateIdentity(workspace, payload), 'AGI 身份已更新'),
     createGoal: (payload: ResidentGoalDraft) =>

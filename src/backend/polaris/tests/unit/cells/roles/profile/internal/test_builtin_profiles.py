@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from polaris.cells.roles.profile.internal.builtin_profiles import BUILTIN_PROFILES
 
 
@@ -19,8 +18,8 @@ class TestBuiltinProfilesStructure:
     def test_profiles_is_list(self) -> None:
         assert isinstance(BUILTIN_PROFILES, list)
 
-    def test_has_six_roles(self) -> None:
-        assert len(BUILTIN_PROFILES) == 6
+    def test_has_seven_roles(self) -> None:
+        assert len(BUILTIN_PROFILES) == 7
 
     def test_all_items_are_dicts(self) -> None:
         assert all(isinstance(p, dict) for p in BUILTIN_PROFILES)
@@ -164,6 +163,29 @@ class TestScoutProfile:
 
     def test_max_tool_calls_50(self, scout: dict[str, Any]) -> None:
         assert scout["tool_policy"]["max_tool_calls_per_turn"] == 50
+
+
+class TestResidentAgiProfile:
+    """Tests for the Resident AGI profile."""
+
+    @pytest.fixture
+    def resident_agi(self) -> dict[str, Any]:
+        return next(p for p in BUILTIN_PROFILES if p["role_id"] == "resident_agi")
+
+    def test_allow_code_write_false(self, resident_agi: dict[str, Any]) -> None:
+        assert resident_agi["tool_policy"]["allow_code_write"] is False
+
+    def test_allow_command_execution_false(self, resident_agi: dict[str, Any]) -> None:
+        assert resident_agi["tool_policy"]["allow_command_execution"] is False
+
+    def test_delete_file_blacklisted(self, resident_agi: dict[str, Any]) -> None:
+        assert "delete_file" in resident_agi["tool_policy"]["blacklist"]
+
+    def test_context_window_matches_platform_supervision(self, resident_agi: dict[str, Any]) -> None:
+        assert resident_agi["context_policy"]["max_context_tokens"] == 32000
+
+    def test_output_format_json(self, resident_agi: dict[str, Any]) -> None:
+        assert resident_agi["prompt_policy"]["output_format"] == "json"
 
 
 class TestProfileInvariants:

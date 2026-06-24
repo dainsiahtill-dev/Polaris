@@ -2106,6 +2106,77 @@ class OrchestrationStageExecutor:
             if key in evidence:
                 signal[key] = evidence[key]
 
+    @staticmethod
+    def _architecture_decision_payloads(values: Any) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        source_values = values if isinstance(values, (list, tuple)) else []
+        for item in source_values:
+            if isinstance(item, dict):
+                rows.append(dict(item))
+                continue
+            to_dict = getattr(item, "to_dict", None)
+            if not callable(to_dict):
+                continue
+            try:
+                payload = to_dict()
+            except (TypeError, ValueError):
+                continue
+            if isinstance(payload, dict):
+                rows.append(payload)
+        return rows
+
+    def _ensure_chief_engineer_blueprint_artifact_present(
+        self,
+        *,
+        result: Any,
+        task: dict[str, Any],
+        task_context: dict[str, Any],
+        constraints: dict[str, Any],
+        run_id: str,
+    ) -> bool:
+        blueprint_path = str(getattr(result, "blueprint_path", "") or "").strip()
+        if not blueprint_path or self._artifact_exists(blueprint_path, min_chars=2):
+            return False
+
+        now = datetime.now(timezone.utc).isoformat()
+        blueprint_id = str(getattr(result, "blueprint_id", "") or Path(blueprint_path).stem).strip()
+        payload = {
+            "schema_version": "chief_engineer.blueprint.v1",
+            "role": "chief_engineer",
+            "blueprint_id": blueprint_id,
+            "task_id": str(getattr(result, "task_id", "") or self._task_id(task, 0)).strip(),
+            "run_id": str(run_id or "").strip(),
+            "title": self._task_string(task, "title", "subject", "goal"),
+            "objective": str(getattr(result, "objective", "") or "").strip() or self._task_objective(task),
+            "summary": str(getattr(result, "summary", "") or "").strip(),
+            "status": str(getattr(result, "status", "") or "generated").strip(),
+            "source": "factory_stage_executor.ce_result_artifact_repair",
+            "target_files": list(getattr(result, "target_files", ()) or []),
+            "scope_paths": list(getattr(result, "scope_paths", ()) or []),
+            "acceptance_criteria": list(getattr(result, "acceptance_criteria", ()) or []),
+            "execution_checklist": list(getattr(result, "execution_checklist", ()) or []),
+            "dependencies": list(getattr(result, "dependencies", ()) or []),
+            "architecture_decisions": self._architecture_decision_payloads(
+                getattr(result, "architecture_decisions", ())
+            ),
+            "selected_libraries": list(getattr(result, "selected_libraries", ()) or []),
+            "constraints": dict(constraints),
+            "context": dict(task_context),
+            "pm_task": dict(task),
+            "contract_completeness": {
+                "reconstructed_from_result": True,
+                "physical_artifact_missing_before_repair": True,
+            },
+            "handoff_ready": True,
+            "recommendations": list(getattr(result, "recommendations", ()) or []),
+            "risks": list(getattr(result, "risks", ()) or []),
+            "created_at": now,
+            "updated_at": now,
+            "blueprint_hash": str(getattr(result, "blueprint_hash", "") or "").strip(),
+        }
+        self._write_json_artifact(blueprint_path, payload)
+        return True
+
     async def _execute_chief_engineer_review(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing Chief Engineer review for run %s", run.id)
 
@@ -2139,6 +2210,7 @@ class OrchestrationStageExecutor:
         for index, task in enumerate(pm_tasks, start=1):
             task_id = self._task_id(task, index)
             objective = self._task_objective(task)
+            task_constraints = self._task_blueprint_constraints(task)
             try:
                 task_context = self._task_blueprint_context(task, run_id=run.id, index=index)
                 task_context.update(
@@ -2168,7 +2240,7 @@ class OrchestrationStageExecutor:
                     context=task_context,
                     timeout_seconds=ce_timeout_seconds,
                     metadata={
-                        "constraints": self._task_blueprint_constraints(task),
+                        "constraints": task_constraints,
                         "source": "factory_stage_executor.chief_engineer_review",
                         "cognitive_runtime_mode": "off",
                         "cognitive_runtime_enabled": False,
@@ -2279,7 +2351,7 @@ class OrchestrationStageExecutor:
                         workspace=str(self.workspace),
                         objective=objective,
                         run_id=run.id,
-                        constraints=self._task_blueprint_constraints(task),
+                        constraints=task_constraints,
                         context=task_context,
                     )
                 )
@@ -2305,6 +2377,28 @@ class OrchestrationStageExecutor:
                     }
                 )
                 continue
+
+            repaired_missing_artifact = self._ensure_chief_engineer_blueprint_artifact_present(
+                result=result,
+                task=task,
+                task_context=task_context,
+                constraints=task_constraints,
+                run_id=run.id,
+            )
+            if repaired_missing_artifact:
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.blueprint_artifact_rewritten_from_result",
+                        "severity": "warning",
+                        "detail": (
+                            "CE returned a valid blueprint result but the physical blueprint artifact was missing; "
+                            "rewrote the handoff artifact from structured result fields."
+                        ),
+                        "task_id": task_id,
+                        "blueprint_id": result.blueprint_id,
+                        "blueprint_path": result.blueprint_path,
+                    }
+                )
 
             blueprint_rows.append(
                 {

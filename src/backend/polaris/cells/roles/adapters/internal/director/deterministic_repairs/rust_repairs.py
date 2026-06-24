@@ -54,6 +54,16 @@ _RUST_ROOT_UNRESOLVED_IMPORT_RE = re.compile(
     r".*?no [`'\"](?P=symbol)[`'\"] in the root",
     re.IGNORECASE | re.DOTALL,
 )
+_RUST_ROOT_TYPE_FIELD_MISMATCH_RE = re.compile(
+    r"no field [`'\"][A-Za-z_][A-Za-z0-9_]*[`'\"] on type [`'\"]&?(?P<crate>[A-Za-z_][A-Za-z0-9_]*)::"
+    r"(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)[`'\"]",
+    re.IGNORECASE,
+)
+_RUST_ROOT_STRUCT_FIELD_MISMATCH_RE = re.compile(
+    r"struct [`'\"](?P<crate>[A-Za-z_][A-Za-z0-9_]*)::(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)[`'\"] "
+    r"has no field named",
+    re.IGNORECASE,
+)
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _KNOWN_RUST_DEPENDENCIES: dict[str, str] = {
     "serde": 'serde = { version = "1.0", features = ["derive"] }',
@@ -670,6 +680,18 @@ def _parse_rust_lib_root_export_symbols(artifact_quality_errors: list[str], cano
         if crate == canonical_crate and symbol and symbol not in seen:
             seen.add(symbol)
             symbols.append(symbol)
+    for match in _RUST_ROOT_TYPE_FIELD_MISMATCH_RE.finditer(text):
+        crate = str(match.group("crate") or "").strip()
+        symbol = str(match.group("symbol") or "").strip()
+        if crate == canonical_crate and symbol and symbol not in seen:
+            seen.add(symbol)
+            symbols.append(symbol)
+    for match in _RUST_ROOT_STRUCT_FIELD_MISMATCH_RE.finditer(text):
+        crate = str(match.group("crate") or "").strip()
+        symbol = str(match.group("symbol") or "").strip()
+        if crate == canonical_crate and symbol and symbol not in seen:
+            seen.add(symbol)
+            symbols.append(symbol)
     return symbols
 
 
@@ -722,6 +744,7 @@ def _ensure_rust_lib_root_exports(lib_path: Path, workspace: Path, requested_sym
         module = _find_rust_module_exporting_symbol(workspace, symbol)
         if not module:
             continue
+        repaired = _remove_conflicting_rust_root_symbol_exports(repaired, preferred_module=module, symbol=symbol)
         module_decl = f"pub mod {module};"
         export_decl = f"pub use {module}::{symbol};"
         if not re.search(rf"(?m)^\s*pub\s+mod\s+{re.escape(module)}\s*;", repaired):
@@ -733,6 +756,56 @@ def _ensure_rust_lib_root_exports(lib_path: Path, workspace: Path, requested_sym
     if repaired != original:
         lib_path.write_text(repaired, encoding="utf-8")
     return exports
+
+
+def _remove_conflicting_rust_root_symbol_exports(text: str, *, preferred_module: str, symbol: str) -> str:
+    lines = text.splitlines(keepends=True)
+    repaired: list[str] = []
+    for line in lines:
+        next_line = _remove_conflicting_simple_rust_pub_use(line, preferred_module=preferred_module, symbol=symbol)
+        if next_line is None:
+            continue
+        next_line = _remove_conflicting_grouped_rust_pub_use(
+            next_line,
+            preferred_module=preferred_module,
+            symbol=symbol,
+        )
+        if next_line:
+            repaired.append(next_line)
+    return "".join(repaired)
+
+
+def _remove_conflicting_simple_rust_pub_use(line: str, *, preferred_module: str, symbol: str) -> str | None:
+    match = re.match(
+        r"^(?P<indent>\s*)pub\s+use\s+(?P<path>[A-Za-z_][A-Za-z0-9_:]*)::(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)\s*;\s*(?P<newline>\n?)$",
+        line,
+    )
+    if not match or str(match.group("symbol") or "") != symbol:
+        return line
+    path = str(match.group("path") or "")
+    if path == preferred_module or path.startswith(f"{preferred_module}::"):
+        return line
+    return None
+
+
+def _remove_conflicting_grouped_rust_pub_use(line: str, *, preferred_module: str, symbol: str) -> str:
+    match = re.match(
+        r"^(?P<indent>\s*)pub\s+use\s+(?P<path>[A-Za-z_][A-Za-z0-9_:]*)::\{(?P<body>[^}]+)\}\s*;\s*(?P<newline>\n?)$",
+        line,
+    )
+    if not match:
+        return line
+    path = str(match.group("path") or "")
+    if path == preferred_module or path.startswith(f"{preferred_module}::"):
+        return line
+    items = [item.strip() for item in str(match.group("body") or "").split(",") if item.strip()]
+    filtered = [item for item in items if item.split(" as ", 1)[0].strip() != symbol]
+    if len(filtered) == len(items):
+        return line
+    if not filtered:
+        return ""
+    newline = str(match.group("newline") or "")
+    return f"{match.group('indent')}pub use {path}::{{{', '.join(filtered)}}};{newline}"
 
 
 def _find_rust_module_exporting_symbol(workspace: Path, symbol: str) -> str:

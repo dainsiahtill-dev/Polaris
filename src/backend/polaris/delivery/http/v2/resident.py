@@ -14,6 +14,7 @@ from polaris.cells.resident.autonomy.public.service import (
     query_resident_capabilities,
     query_resident_status,
 )
+from polaris.cells.roles.adapters.public.service import create_role_adapter
 from polaris.delivery.http.dependencies import require_auth
 from pydantic import BaseModel, Field
 
@@ -117,6 +118,45 @@ class GoalRunRequest(ResidentWorkspaceRequest):
     director_iterations: int = Field(default=1, ge=1, le=10)
 
 
+class ResidentAgiDecisionTurnRequest(ResidentWorkspaceRequest):
+    decision_type: str = Field(default="platform_supervision", description="Resident AGI decision category")
+    objective: str = Field(min_length=1, description="Decision objective for the resident_agi role")
+    run_id: str = ""
+    task_id: str = ""
+    goal_id: str = ""
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    constraints: list[str] = Field(default_factory=list)
+    candidate_actions: list[str] = Field(default_factory=list)
+    context_refs: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+def _resident_decision_verdict(agi_verdict: str, *, runtime_success: bool) -> str:
+    if not runtime_success:
+        return "failure"
+    normalized = str(agi_verdict or "").strip().lower()
+    if normalized == "continue":
+        return "success"
+    if normalized in {"block", "escalate", "request_evidence"}:
+        return "blocked"
+    return "unknown"
+
+
+def _resident_agi_decision_summary(
+    *,
+    objective: str,
+    agi_verdict: str,
+    rationale: str,
+    error: str,
+) -> str:
+    verdict = str(agi_verdict or "").strip() or "unknown"
+    detail = str(rationale or error or objective or "").strip()
+    if len(detail) > 180:
+        detail = f"{detail[:177]}..."
+    return f"Resident AGI decision [{verdict}]: {detail}" if detail else f"Resident AGI decision [{verdict}]"
+
+
 @router.get("/status", dependencies=[Depends(require_auth)])
 def resident_status(request: Request, details: bool = False, workspace: str = "") -> dict[str, Any]:
     ws = _resolve_workspace(request, workspace)
@@ -127,6 +167,128 @@ def resident_status(request: Request, details: bool = False, workspace: str = ""
 def resident_capabilities(request: Request, workspace: str = "") -> dict[str, Any]:
     ws = _resolve_workspace(request, workspace)
     return query_resident_capabilities(QueryResidentCapabilitiesV1(workspace=ws or "."))
+
+
+@router.post("/agi/decide", dependencies=[Depends(require_auth)])
+async def resident_agi_decide(request: Request, payload: ResidentAgiDecisionTurnRequest) -> dict[str, Any]:
+    """Run a Resident AGI decision turn through the shared role runtime."""
+
+    ws = _resolve_workspace(request, payload.workspace)
+    adapter = create_role_adapter("resident_agi", ws)
+    input_data = payload.model_dump()
+    runtime_context = {
+        "run_id": payload.run_id,
+        "task_id": payload.task_id,
+        "goal_id": payload.goal_id,
+        "decision_type": payload.decision_type,
+        "context_refs": list(payload.context_refs),
+        "evidence_refs": list(payload.evidence_refs),
+        "metadata": {
+            "source": "resident_api.agi_decide",
+            "resident_agi_role_runtime_required": True,
+            "context_os_expected": True,
+            "turn_engine_expected": True,
+        },
+    }
+
+    try:
+        role_result = await adapter.execute(
+            payload.task_id or "resident-agi-decision",
+            input_data,
+            runtime_context,
+        )
+    except (RuntimeError, ValueError) as exc:
+        logger.error("resident_agi_decide runtime failed: %s", exc)
+        role_result = {
+            "success": False,
+            "stage": "resident_agi",
+            "decision_type": payload.decision_type,
+            "error": str(exc),
+            "decision": {},
+            "metadata": {"role_runtime_entrypoint": "roles.runtime.execute_role_session"},
+        }
+
+    decision = role_result.get("decision") if isinstance(role_result.get("decision"), dict) else {}
+    agi_verdict = str(decision.get("verdict") or "").strip().lower()
+    rationale = str(decision.get("rationale") or "").strip()
+    next_action = str(decision.get("next_action") or "").strip()
+    downstream_allowed = bool(decision.get("downstream_allowed", False))
+    risks = decision.get("risks") if isinstance(decision.get("risks"), list) else []
+    role_metadata = role_result.get("metadata") if isinstance(role_result.get("metadata"), dict) else {}
+    error = str(role_result.get("error") or "").strip()
+    runtime_success = bool(role_result.get("success"))
+    resident_verdict = _resident_decision_verdict(agi_verdict, runtime_success=runtime_success)
+    evidence_refs = list(payload.evidence_refs)
+    decision_evidence_refs_raw = decision.get("evidence_refs")
+    decision_evidence_refs: list[Any] = (
+        decision_evidence_refs_raw if isinstance(decision_evidence_refs_raw, list) else []
+    )
+    for item in decision_evidence_refs:
+        token = str(item or "").strip()
+        if token:
+            evidence_refs.append(token)
+
+    service = get_resident_service(ws)
+    recorded = service.record_decision(
+        {
+            "workspace": ws,
+            "run_id": payload.run_id,
+            "actor": "resident_agi",
+            "stage": payload.decision_type,
+            "goal_id": payload.goal_id,
+            "task_id": payload.task_id,
+            "summary": _resident_agi_decision_summary(
+                objective=payload.objective,
+                agi_verdict=agi_verdict,
+                rationale=rationale,
+                error=error,
+            ),
+            "context_refs": list(payload.context_refs),
+            "options": [
+                {
+                    "option_id": agi_verdict or resident_verdict,
+                    "label": next_action or agi_verdict or resident_verdict,
+                    "rationale": rationale or error,
+                    "strategy_tags": ["resident_agi_turn", payload.decision_type],
+                    "estimated_score": payload.confidence,
+                }
+            ],
+            "selected_option_id": agi_verdict or resident_verdict,
+            "strategy_tags": [
+                "resident_agi_turn",
+                payload.decision_type,
+                agi_verdict or resident_verdict,
+            ],
+            "expected_outcome": {
+                "objective": payload.objective,
+                "candidate_actions": list(payload.candidate_actions),
+                "constraints": list(payload.constraints),
+            },
+            "actual_outcome": {
+                "decision_source": "resident_agi_role_runtime",
+                "role_runtime_entrypoint": role_metadata.get("role_runtime_entrypoint"),
+                "agi_verdict": agi_verdict,
+                "resident_verdict": resident_verdict,
+                "downstream_allowed": downstream_allowed,
+                "next_action": next_action,
+                "rationale": rationale,
+                "risks": risks,
+                "runtime_success": runtime_success,
+                "error": error,
+            },
+            "verdict": resident_verdict,
+            "evidence_refs": evidence_refs,
+            "confidence": payload.confidence,
+        }
+    ).to_dict()
+    return {
+        "ok": runtime_success,
+        "workspace": ws,
+        "decision": decision,
+        "recorded_decision": recorded,
+        "role_result": role_result,
+        "error": error or None,
+    }
 
 
 @router.post("/start", dependencies=[Depends(require_auth)])

@@ -349,7 +349,7 @@ export interface CourtMappingResponse {
 // Role Chat Types
 // ============================================================================
 
-export type RoleChatRole = 'pm' | 'architect' | 'chief_engineer' | 'director' | 'qa';
+export type RoleChatRole = 'pm' | 'architect' | 'chief_engineer' | 'director' | 'qa' | 'resident_agi';
 export type DialogueRole = RoleChatRole;
 
 export interface ChatStatus {
@@ -1269,7 +1269,7 @@ export interface RoleChatRolesResponse {
 // V2 P0 Missing Routes Types
 // ============================================================================
 
-export type UnifiedRole = 'pm' | 'architect' | 'chief_engineer' | 'director' | 'qa' | 'scout';
+export type UnifiedRole = 'pm' | 'architect' | 'chief_engineer' | 'director' | 'qa' | 'scout' | 'resident_agi';
 
 export interface RoleChatRequest {
   message: string;

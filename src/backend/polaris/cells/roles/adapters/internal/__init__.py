@@ -29,6 +29,7 @@ from polaris.cells.roles.adapters.internal.chief_engineer_adapter import (
 from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapter
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
 from polaris.cells.roles.adapters.internal.qa_adapter import QAAdapter
+from polaris.cells.roles.adapters.internal.resident_agi_adapter import ResidentAgiAdapter
 
 # Make classes available as module attributes (not just via `from module import *`)
 RoleOrchestrationAdapter = RoleOrchestrationAdapter
@@ -38,6 +39,7 @@ ChiefEngineerAdapter = ChiefEngineerAdapter
 DirectorAdapter = DirectorAdapter
 PMAdapter = PMAdapter
 QAAdapter = QAAdapter
+ResidentAgiAdapter = ResidentAgiAdapter
 
 __all__ = [
     "ArchitectAdapter",
@@ -46,5 +48,6 @@ __all__ = [
     "DirectorAdapter",
     "PMAdapter",
     "QAAdapter",
+    "ResidentAgiAdapter",
     "RoleOrchestrationAdapter",
 ]

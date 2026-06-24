@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from polaris.cells.chief_engineer.blueprint.public.contracts import TaskBlueprintResultV1
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
     FactoryConfig,
@@ -998,6 +999,56 @@ class TestArtifactStore:
         assert source == ".polaris/plans/latest.plan.json"
         plan = json.loads(executor._artifact_path("tasks/plan.json").read_text(encoding="utf-8"))
         assert plan["tasks"][0]["id"] == "TASK-1"
+
+    def test_ensure_chief_engineer_blueprint_artifact_present_rewrites_missing_result(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        result = TaskBlueprintResultV1(
+            ok=True,
+            task_id="TASK-1",
+            workspace=str(tmp_path),
+            status="generated",
+            blueprint_id="ce_TASK-1_test",
+            blueprint_path="runtime/blueprints/ce_TASK-1_test.json",
+            summary="Blueprint summary",
+            recommendations=("Keep scope tight",),
+            risks=("Missing tests",),
+            target_files=("src/lib.rs",),
+            acceptance_criteria=("cargo test passes",),
+            execution_checklist=("implement module",),
+            scope_paths=("src/lib.rs",),
+            objective="Implement Rust module",
+            dependencies=("TASK-0",),
+        )
+
+        rewrote = executor._ensure_chief_engineer_blueprint_artifact_present(
+            result=result,
+            task={"id": "TASK-1", "title": "Rust module", "goal": "Implement Rust module"},
+            task_context={"task_index": 1},
+            constraints={"acceptance": ["cargo test passes"]},
+            run_id="factory-run",
+        )
+
+        assert rewrote is True
+        payload = json.loads(
+            executor._artifact_path("runtime/blueprints/ce_TASK-1_test.json").read_text(encoding="utf-8")
+        )
+        assert payload["handoff_ready"] is True
+        assert payload["contract_completeness"]["reconstructed_from_result"] is True
+        assert payload["target_files"] == ["src/lib.rs"]
+        assert payload["acceptance_criteria"] == ["cargo test passes"]
+        assert (
+            executor._ensure_chief_engineer_blueprint_artifact_present(
+                result=result,
+                task={},
+                task_context={},
+                constraints={},
+                run_id="factory-run",
+            )
+            is False
+        )
 
     def test_emit_audit_event_appends(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
