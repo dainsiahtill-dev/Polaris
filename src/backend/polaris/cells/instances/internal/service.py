@@ -421,6 +421,8 @@ class InstanceSupervisor:
         env["VITE_POLARIS_BACKEND_URL"] = record.backend_url
         env["VITE_POLARIS_BACKEND_TOKEN"] = record.token
         env["VITE_POLARIS_INSTANCE_ID"] = record.instance_id
+        env["VITE_POLARIS_WORKSPACE"] = record.workspace
+        env["VITE_WORKSPACE"] = record.workspace
         with log_path.open("a", encoding="utf-8") as log:
             process = subprocess.Popen(
                 command,

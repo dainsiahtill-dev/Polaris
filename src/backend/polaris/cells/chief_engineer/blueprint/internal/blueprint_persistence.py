@@ -29,6 +29,8 @@ class BlueprintPersistence:
             ensure_directory: Create the blueprint directory immediately when true.
         """
         self._dir = Path(resolve_logical_path(workspace, "runtime/blueprints"))
+        # D-02/D-17: Also check workspace-local blueprints written by factory bench.
+        self._workspace_dir = Path(workspace) / ".polaris" / "blueprints"
         if ensure_directory:
             self._dir.mkdir(parents=True, exist_ok=True)
 
@@ -45,8 +47,17 @@ class BlueprintPersistence:
             json.dump(data, f, ensure_ascii=False, indent=2)
         tmp.replace(p)
 
+    def _candidate_paths(self, blueprint_id: str) -> list[Path]:
+        """Return candidate file paths: runtime dir first, then workspace fallback."""
+        paths = [self._dir / f"{blueprint_id}.json"]
+        if hasattr(self, "_workspace_dir") and self._workspace_dir.is_dir():
+            paths.append(self._workspace_dir / f"{blueprint_id}.json")
+        return paths
+
     def load(self, blueprint_id: str) -> dict[str, Any] | None:
         """Load a blueprint dictionary from disk.
+
+        Checks runtime dir first, then workspace-local fallback (D-02/D-17).
 
         Args:
             blueprint_id: Unique blueprint identifier.
@@ -54,15 +65,16 @@ class BlueprintPersistence:
         Returns:
             The deserialized blueprint, or None if not found or unreadable.
         """
-        p = self._dir / f"{blueprint_id}.json"
-        if not p.exists():
-            return None
-        try:
-            with open(p, encoding="utf-8") as f:
-                data: dict[str, Any] = json.load(f)
-                return data
-        except (json.JSONDecodeError, OSError, TypeError):
-            return None
+        for p in self._candidate_paths(blueprint_id):
+            if not p.exists():
+                continue
+            try:
+                with open(p, encoding="utf-8") as f:
+                    data: dict[str, Any] = json.load(f)
+                    return data
+            except (json.JSONDecodeError, OSError, TypeError):
+                continue
+        return None
 
     def delete(self, blueprint_id: str) -> bool:
         """Remove a persisted blueprint from disk.
@@ -80,8 +92,14 @@ class BlueprintPersistence:
         return False
 
     def list_all(self) -> list[str]:
-        """Return a list of all persisted blueprint IDs."""
-        return sorted(p.stem for p in self._dir.glob("*.json"))
+        """Return a list of all persisted blueprint IDs.
+
+        Merges IDs from runtime dir and workspace-local fallback (D-02/D-17).
+        """
+        ids: set[str] = {p.stem for p in self._dir.glob("*.json")}
+        if hasattr(self, "_workspace_dir") and self._workspace_dir.is_dir():
+            ids.update(p.stem for p in self._workspace_dir.glob("*.json"))
+        return sorted(ids)
 
     def load_all(self) -> list[dict[str, Any]]:
         """Load and return every persisted blueprint.

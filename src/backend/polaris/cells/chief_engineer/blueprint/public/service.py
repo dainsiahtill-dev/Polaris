@@ -370,6 +370,13 @@ def get_blueprint_status(query: GetBlueprintStatusQueryV1) -> TaskBlueprintResul
         summary=str(payload.get("summary") or "").strip(),
         recommendations=_tuple_from_payload(payload.get("recommendations")),
         risks=_tuple_from_payload(payload.get("risks")),
+        # D-05: Rich blueprint fields for Director context injection
+        target_files=_tuple_from_payload(payload.get("target_files")),
+        acceptance_criteria=_tuple_from_payload(payload.get("acceptance_criteria")),
+        execution_checklist=_tuple_from_payload(payload.get("execution_checklist")),
+        scope_paths=_tuple_from_payload(payload.get("scope_paths")),
+        objective=str(payload.get("objective") or "").strip(),
+        dependencies=_tuple_from_payload(payload.get("dependencies")),
     )
 
 

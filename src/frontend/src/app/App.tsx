@@ -230,6 +230,12 @@ function resolveBenchObservedWorkspace(value: string, baseWorkspace: string): st
   return `${base.replace(/[\\/]+$/, '')}/${normalized.replace(/^\.?[\\/]+/, '')}`;
 }
 
+function readInitialWorkspaceBinding(): string {
+  if (typeof window === 'undefined') return '';
+  const params = new URLSearchParams(window.location.search);
+  return String(params.get('workspace') || params.get('polarisWorkspace') || '').trim();
+}
+
 function AppContent() {
   const workspacePanelRef = useRef<ImperativePanelHandle>(null);
   const terminalPanelRef = useRef<ImperativePanelHandle>(null);
@@ -258,6 +264,7 @@ function AppContent() {
   const internalBenchFlag = String(import.meta.env.VITE_POLARIS_INTERNAL_BENCH ?? '').trim();
   const internalBenchEnabled = internalBenchFlag === '1' || (import.meta.env.DEV && internalBenchFlag !== '0');
   const [progressSnapshot, setProgressSnapshot] = useState<SnapshotPayload | null>(null);
+  const initialWorkspaceBinding = useMemo(() => readInitialWorkspaceBinding(), []);
 
   const handleBenchWorkspaceChange = useCallback(
     (nextWorkspace: string) => {
@@ -285,6 +292,11 @@ function AppContent() {
     },
     [notifyError, settingsWorkspace, updateSettings, workspace],
   );
+
+  useEffect(() => {
+    if (!initialWorkspaceBinding) return;
+    handleBenchWorkspaceChange(initialWorkspaceBinding);
+  }, [handleBenchWorkspaceChange, initialWorkspaceBinding]);
 
   const {
     pmStatus,

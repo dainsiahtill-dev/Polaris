@@ -1,17 +1,8 @@
 import importlib
-import sys
-from pathlib import Path
 
 
 def _load_chief_engineer():
-    repo_root = Path(__file__).resolve().parents[1]
-    scripts_dir = repo_root / "src" / "backend" / "scripts"
-    project_root = repo_root / "src" / "backend"
-    loop_module_dir = project_root / "core" / "polaris_loop"
-    for entry in (str(scripts_dir), str(project_root), str(loop_module_dir)):
-        if entry not in sys.path:
-            sys.path.insert(0, entry)
-    return importlib.import_module("pm.chief_engineer")
+    return importlib.import_module("polaris.delivery.cli.pm.chief_engineer")
 
 
 def test_chief_engineer_analysis_generates_method_level_construction_plan(tmp_path):

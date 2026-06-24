@@ -95,6 +95,8 @@ def test_start_instance_builds_backend_and_frontend_processes(
     assert frontend_call["env"]["VITE_POLARIS_BACKEND_URL"] == "http://127.0.0.1:59911"
     assert frontend_call["env"]["VITE_POLARIS_BACKEND_TOKEN"] == record["token"]
     assert frontend_call["env"]["VITE_POLARIS_INSTANCE_ID"] == "bench-l1-01"
+    assert frontend_call["env"]["VITE_POLARIS_WORKSPACE"] == str((tmp_path / "bench" / "L1-01").resolve())
+    assert frontend_call["env"]["VITE_WORKSPACE"] == str((tmp_path / "bench" / "L1-01").resolve())
 
 
 def test_instance_update_event_redacts_token(tmp_path: Path, monkeypatch: Any) -> None:

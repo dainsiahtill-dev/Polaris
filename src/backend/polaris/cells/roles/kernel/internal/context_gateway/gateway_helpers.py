@@ -186,6 +186,7 @@ def render_blueprint_overview(result: Any) -> str | None:
     """把蓝图状态结果渲染成简洁概览字符串（纯函数，便于单测）。
 
     result 期望具备 ok/summary/recommendations/risks 字段（duck-typed）。
+    D-05: 也渲染 target_files/acceptance_criteria/execution_checklist/objective。
     not ok 或无实质内容 → None（→ 不注入信号）。
     """
     if not getattr(result, "ok", False):
@@ -194,6 +195,19 @@ def render_blueprint_overview(result: Any) -> str | None:
     summary = str(getattr(result, "summary", "") or "").strip()
     if summary:
         parts.append(summary)
+    # D-05: Rich blueprint fields for Director
+    objective = str(getattr(result, "objective", "") or "").strip()
+    if objective:
+        parts.append(f"目标: {objective}")
+    target_files = tuple(getattr(result, "target_files", ()) or ())
+    if target_files:
+        parts.append("目标文件:\n" + "\n".join(f"- {f}" for f in target_files))
+    acceptance_criteria = tuple(getattr(result, "acceptance_criteria", ()) or ())
+    if acceptance_criteria:
+        parts.append("验收标准:\n" + "\n".join(f"- {a}" for a in acceptance_criteria))
+    execution_checklist = tuple(getattr(result, "execution_checklist", ()) or ())
+    if execution_checklist:
+        parts.append("执行步骤:\n" + "\n".join(f"- {e}" for e in execution_checklist))
     recs = tuple(getattr(result, "recommendations", ()) or ())
     if recs:
         parts.append("推荐:\n" + "\n".join(f"- {r}" for r in recs))

@@ -13,14 +13,6 @@
 
 1. `AGENTS.md`
 2. `docs/AGENT_ARCHITECTURE_STANDARD.md`
-
-## 2. 多实例与 Bench 边界速记
-
-- Polaris 后端实例仍然是单 workspace 绑定；多项目观测通过平台级 Instance Registry + `/launcher` 管理多个独立实例。
-- 需要被总控观测的 CLI/Agent/内部测试启动项必须通过 `python -m polaris.delivery.cli.backend serve --register-instance ...` 或 `/v2/instances` 注册。
-- Instance Registry 只是发现/运维视图，不是 PM、Chief Engineer、Director、QA、ContextOS、ReceiptStore 或 Run Ledger 的事实源。
-- `factory_bench` / L1-L12 只属于内部测试态；可以注册 `kind=bench_project` 供总控观测，但不得把 Bench 语义写成生产项目模型。
-- Launcher 实时状态只走 runtime.v2 WebSocket `status.instances`，禁止新增 HTTP polling 或文件轮询。
 3. `docs/graph/catalog/cells.yaml` 与 `docs/graph/subgraphs/*.yaml`
 4. `docs/FINAL_SPEC.md`
 5. ACGA 2.0 文档
@@ -28,21 +20,30 @@
 
 规则：先服从当前 graph，再按 `FINAL_SPEC.md` 判断迁移方向，最后应用 ACGA 2.0 增强规则。
 
-## 2. 最小必要规则
+## 2. 多实例与 Bench 边界速记
 
-### 2.1 Graph / Cell / KernelOne
+- Polaris 后端实例仍然是单 workspace 绑定；多项目观测通过平台级 Instance Registry + `/launcher` 管理多个独立实例。
+- Launcher 打开的实例页面必须携带 `instance` / `backend` / `token` / `workspace` 绑定；后端与前端都必须把该 workspace 绑定传入 API/WebSocket 观测链路，禁止回退到默认主仓 workspace。
+- 需要被总控观测的 CLI/Agent/内部测试启动项必须通过 `python -m polaris.delivery.cli.backend serve --register-instance ...` 或 `/v2/instances` 注册。
+- Instance Registry 只是发现/运维视图，不是 PM、Chief Engineer、Director、QA、ContextOS、ReceiptStore 或 Run Ledger 的事实源。
+- `factory_bench` / L1-L12 只属于内部测试态；可以注册 `kind=bench_project` 供总控观测。共享后端注册只能视为可观测测试实例，不能冒充独立生产实例，也不得把 Bench 语义写成生产项目模型。
+- Launcher 实时状态只走 runtime.v2 WebSocket `status.instances`，禁止新增 HTTP polling 或文件轮询。
+
+## 3. 最小必要规则
+
+### 3.1 Graph / Cell / KernelOne
 
 1. Graph 是唯一架构真相
 2. Cell 是最小自治边界
 3. 先复用公开 Cell 能力，再复用 `KernelOne`，最后才新增实现
 
-### 2.2 Public Contract / Effects / UTF-8
+### 3.2 Public Contract / Effects / UTF-8
 
 1. 跨 Cell 只能走公开契约，禁止直连 `internal/`
 2. 文件、数据库、网络、子进程、LLM、Descriptor、Embedding、Index 都是 effect，必须可审计
 3. 所有文本读写必须显式 UTF-8
 
-### 2.3 归属与旧根冻结
+### 3.3 归属与旧根冻结
 
 规范根目录统一落在 `polaris/` 下。
 

@@ -36,6 +36,26 @@ Each instance owns:
 The Launcher is an operator surface. It is not a runtime fact source for PM,
 Chief Engineer, Director, QA, ContextOS, ReceiptStore, or Run Ledger.
 
+## Workspace Binding
+
+Opening an instance workspace from the Launcher must carry an explicit binding:
+
+- `instance`: registry identifier for observability and diagnostics.
+- `backend`: backend base URL for that instance.
+- `token`: local auth token for that backend.
+- `workspace`: absolute workspace path owned by that backend.
+
+The frontend may receive these values through URL query parameters or
+`VITE_POLARIS_*` environment variables. API clients and the `/v2/ws/runtime`
+WebSocket must consume the same workspace binding. They must not silently fall
+back to the default backend, default workspace, or the Polaris source checkout
+runtime when an explicit instance binding is present.
+
+For internal stress tests, a `kind=bench_project` registry entry may point at a
+shared backend in observed mode. That registration is only a test-observation
+surface; it does not prove that the project is running as an isolated production
+instance.
+
 ## Startup Paths
 
 Instances may be registered by more than one path:

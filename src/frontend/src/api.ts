@@ -74,6 +74,15 @@ function getUrlBackendToken(): string | null {
   return getQueryParam(["token", "backendToken", "polarisToken"]);
 }
 
+function getEnvWorkspace(): string | null {
+  const workspace = import.meta.env.VITE_POLARIS_WORKSPACE || import.meta.env.VITE_WORKSPACE;
+  return typeof workspace === "string" && workspace.trim() ? workspace.trim() : null;
+}
+
+function getUrlWorkspace(): string | null {
+  return getQueryParam(["workspace", "polarisWorkspace"]);
+}
+
 function getInstanceId(): string {
   const raw =
     getQueryParam(["instance", "instanceId", "polarisInstance"]) ||
@@ -84,7 +93,7 @@ function getInstanceId(): string {
 }
 
 function hasIsolatedInstanceBinding(): boolean {
-  return Boolean(getInstanceId() || getUrlBackendUrl() || getEnvBackendUrl());
+  return Boolean(getInstanceId() || getUrlBackendUrl() || getEnvBackendUrl() || getUrlWorkspace() || getEnvWorkspace());
 }
 
 function storageKey(key: string): string {
@@ -387,6 +396,12 @@ export async function connectWebSocket(_forceRefresh = false): Promise<WebSocket
   const wsBaseUrl = info.baseUrl
     ? info.baseUrl.replace(/^http/, "ws")
     : getSameOriginWebSocketBaseUrl();
-  const wsUrl = `${wsBaseUrl}/v2/ws/runtime?token=${encodeURIComponent(info.token || "")}`;
-  return new WebSocket(wsUrl);
+  const wsUrl = new URL(`${wsBaseUrl}/v2/ws/runtime`);
+  wsUrl.searchParams.set("protocol", "runtime.v2");
+  wsUrl.searchParams.set("token", info.token || "");
+  const workspace = getUrlWorkspace() || getEnvWorkspace();
+  if (workspace) {
+    wsUrl.searchParams.set("workspace", workspace);
+  }
+  return new WebSocket(wsUrl.toString());
 }

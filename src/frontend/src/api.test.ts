@@ -68,7 +68,7 @@ describe('getBackendInfo web fallback', () => {
     window.history.pushState(
       {},
       '',
-      '/?instance=bench-l1-01&backend=http://127.0.0.1:50017&token=instance-token',
+      '/?instance=bench-l1-01&backend=http://127.0.0.1:50017&token=instance-token&workspace=%2Ftmp%2FL1-01',
     );
     const { getBackendInfo } = await import('./api');
 
@@ -138,7 +138,7 @@ describe('getBackendInfo web fallback', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:49988/health');
     expect(fetchMock.mock.calls[1][0]).toBe('http://127.0.0.1:49977/health');
     expect((socket as unknown as MockWebSocket).url).toBe(
-      'ws://127.0.0.1:49977/v2/ws/runtime?token=polaris-local-dev'
+      'ws://127.0.0.1:49977/v2/ws/runtime?protocol=runtime.v2&token=polaris-local-dev'
     );
     expect(localStorage.getItem('polaris.baseUrl')).toBeNull();
     expect(localStorage.getItem('polaris.token')).toBeNull();
@@ -148,7 +148,7 @@ describe('getBackendInfo web fallback', () => {
     window.history.pushState(
       {},
       '',
-      '/?instance=bench-l1-01&backend=http://127.0.0.1:50017&token=instance-token',
+      '/?instance=bench-l1-01&backend=http://127.0.0.1:50017&token=instance-token&workspace=%2Ftmp%2FL1-01',
     );
     const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError('connection refused'));
     vi.stubGlobal('fetch', fetchMock);
@@ -164,7 +164,7 @@ describe('getBackendInfo web fallback', () => {
     window.history.pushState(
       {},
       '',
-      '/?instance=bench-l1-01&backend=http://127.0.0.1:50017&token=instance-token',
+      '/?instance=bench-l1-01&backend=http://127.0.0.1:50017&token=instance-token&workspace=%2Ftmp%2FL1-01',
     );
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -184,8 +184,49 @@ describe('getBackendInfo web fallback', () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect((socket as unknown as MockWebSocket).url).toBe(
-      'ws://127.0.0.1:50017/v2/ws/runtime?token=instance-token'
+      'ws://127.0.0.1:50017/v2/ws/runtime?protocol=runtime.v2&token=instance-token&workspace=%2Ftmp%2FL1-01'
     );
+  });
+});
+
+describe('instance workspace URLs', () => {
+  it('carries backend, token, instance id and workspace into opened project pages', async () => {
+    const { buildInstanceWorkspaceUrl } = await import('./services/instances');
+    const url = buildInstanceWorkspaceUrl({
+      schema_version: 1,
+      instance_id: 'bench-l1-01',
+      name: 'L1-01',
+      kind: 'bench_project',
+      polaris_root: '/repo',
+      workspace: '/tmp/factory/L1-01',
+      runtime_root: '/tmp/factory/L1-01/runtime',
+      backend_port: 50017,
+      frontend_port: 5178,
+      backend_url: 'http://127.0.0.1:50017',
+      frontend_url: 'http://127.0.0.1:5178',
+      token: 'instance-token',
+      backend_reload: true,
+      frontend_vite: true,
+      start_frontend: true,
+      status: 'running',
+      backend_pid: 101,
+      frontend_pid: 102,
+      backend_alive: true,
+      frontend_alive: true,
+      created_at: '',
+      updated_at: '',
+      last_started_at: '',
+      last_stopped_at: '',
+      bench: {},
+      metadata: {},
+    });
+
+    const parsed = new URL(url);
+    expect(parsed.origin).toBe('http://127.0.0.1:5178');
+    expect(parsed.searchParams.get('instance')).toBe('bench-l1-01');
+    expect(parsed.searchParams.get('backend')).toBe('http://127.0.0.1:50017');
+    expect(parsed.searchParams.get('workspace')).toBe('/tmp/factory/L1-01');
+    expect(parsed.searchParams.get('token')).toBe('instance-token');
   });
 });
 

@@ -110,9 +110,11 @@ export function buildInstanceWorkspaceUrl(instance: PolarisInstance): string {
   const url = new URL(base);
   url.searchParams.set('instance', instance.instance_id);
   url.searchParams.set('backend', instance.backend_url);
+  if (instance.workspace) {
+    url.searchParams.set('workspace', instance.workspace);
+  }
   if (instance.token) {
     url.searchParams.set('token', instance.token);
   }
   return url.toString();
 }
-
