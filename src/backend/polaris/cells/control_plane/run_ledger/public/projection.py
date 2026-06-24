@@ -401,8 +401,23 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     enabled_modalities: list[str] = []
     required_modalities: list[str] = []
     missing_required_modalities: list[str] = []
+    tool_receipt_count = 0
+    tool_receipt_tools: list[str] = []
+    tool_receipt_hash_deltas: list[dict[str, Any]] = []
     for event in events:
-        if not isinstance(event, dict) or event.get("event_type") != "gate_evaluated":
+        if not isinstance(event, dict):
+            continue
+        event_type = event.get("event_type")
+        if event_type == "tool_receipt":
+            tool_receipt_count += 1
+            receipt_tool = _clean_string(event.get("tool"))
+            if receipt_tool:
+                tool_receipt_tools.append(receipt_tool)
+            delta = event.get("file_hash_delta")
+            if isinstance(delta, dict):
+                tool_receipt_hash_deltas.append(delta)
+            continue
+        if event_type != "gate_evaluated":
             continue
         raw_gate = event.get("gate")
         gate: dict[str, Any] = raw_gate if isinstance(raw_gate, dict) else {}
@@ -511,6 +526,11 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             "enabled_modalities": enabled_modalities,
             "required_modalities": required_modalities,
             "missing_required_modalities": missing_required_modalities,
+        },
+        "tool_receipts": {
+            "count": tool_receipt_count,
+            "tools": list(dict.fromkeys(tool_receipt_tools)),
+            "hash_deltas": tool_receipt_hash_deltas,
         },
     }
 

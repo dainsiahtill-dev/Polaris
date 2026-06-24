@@ -15,8 +15,10 @@ import os
 import time
 import urllib.parse
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.control_plane.run_ledger.public.ledger import RunLedger, stable_hash
 from polaris.kernelone.llm.toolkit.tool_normalization import (
     get_available_tools,
     normalize_tool_arguments,
@@ -548,6 +550,14 @@ class RoleToolGateway:
                 },
             )
 
+            # Append mutation receipt to platform Run Ledger (fire-and-forget)
+            self._append_tool_receipt_to_run_ledger(
+                tool_name=execution_tool,
+                execution_args=execution_args,
+                effect_receipt=effect_receipt if isinstance(effect_receipt, dict) else None,
+                normalized_success=normalized_success,
+            )
+
             # 返回结果
             # error_type/retryable/blocked_tools/loop_break are at top level for direct access
             response = {
@@ -727,6 +737,83 @@ class RoleToolGateway:
         import fnmatch
 
         return fnmatch.fnmatch(tool_name.lower(), pattern.lower())
+
+    def _is_mutation_tool(self, canonical_tool_name: str) -> bool:
+        """Return True for tools that mutate workspace state (write/execute)."""
+        return (
+            self._is_code_write_tool(canonical_tool_name)
+            or self._is_command_execution_tool(canonical_tool_name)
+            or self._is_file_delete_tool(canonical_tool_name)
+        )
+
+    def _append_tool_receipt_to_run_ledger(
+        self,
+        *,
+        tool_name: str,
+        execution_args: dict[str, Any],
+        effect_receipt: dict[str, Any] | None,
+        normalized_success: bool,
+    ) -> None:
+        """Append a tool_receipt event to the platform Run Ledger.
+
+        Fire-and-forget: failures are logged but never break tool execution.
+        Only mutation tools (write/command/delete) produce ledger receipts.
+        """
+        if not normalized_success:
+            return
+        if not self._is_mutation_tool(tool_name):
+            return
+        run_id = str(self._run_id or "").strip()
+        if not run_id:
+            return
+        workspace = str(self.workspace or "").strip()
+        if not workspace:
+            return
+
+        try:
+            # Determine the target path from args
+            target_path = ""
+            for key in ("path", "file", "filepath", "target", "command"):
+                value = execution_args.get(key)
+                if isinstance(value, str) and value.strip():
+                    target_path = value.strip()
+                    break
+
+            event: dict[str, Any] = {
+                "schema_version": 1,
+                "event_type": "tool_receipt",
+                "run_id": run_id,
+                "tool": tool_name,
+                "target_path": target_path,
+                "success": True,
+                "ts": utc_now_iso(),
+            }
+            if self._task_id:
+                event["task_id"] = self._task_id
+            if self._capability_token:
+                event["job_token_id"] = str(
+                    self._capability_token.get("token_id") or ""
+                ).strip()
+            if isinstance(effect_receipt, dict) and effect_receipt:
+                event["effect_receipt"] = effect_receipt
+                # Compute content hash delta if effect_receipt contains file info
+                old_hash = str(effect_receipt.get("old_hash") or "").strip()
+                new_hash = str(effect_receipt.get("new_hash") or "").strip()
+                if new_hash:
+                    event["file_hash_delta"] = {
+                        "old": old_hash,
+                        "new": new_hash,
+                        "changed": old_hash != new_hash,
+                    }
+
+            event["content_id"] = stable_hash(
+                {k: v for k, v in event.items() if k not in {"content_id", "event_id", "recorded_at"}}
+            )
+            event["event_id"] = event["content_id"]
+
+            RunLedger(Path(workspace), run_id=run_id).append_event(event)
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.debug("Run Ledger tool receipt append failed: %s", exc)
 
 
 class ToolGatewayManager:
