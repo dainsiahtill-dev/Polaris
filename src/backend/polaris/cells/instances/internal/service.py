@@ -459,21 +459,22 @@ class InstanceSupervisor:
 
     def _with_health(self, record: InstanceRecord) -> InstanceRecord:
         backend_alive = is_process_alive(record.backend_pid)
-        backend_http_ok = (
-            (backend_alive if backend_alive else self._http_ok(f"{record.backend_url}/health", record.token))
-            if record.backend_url
-            else False
-        )
+        if backend_alive and record.backend_pid in {os.getpid(), os.getppid()}:
+            backend_http_ok = True
+        else:
+            backend_http_ok = self._http_ok(f"{record.backend_url}/health", record.token) if record.backend_url else False
         frontend_pid_alive = is_process_alive(record.frontend_pid)
         frontend_http_ok = self._http_ok(record.frontend_url, record.token) if record.frontend_url else False
         if record.start_frontend:
             frontend_alive = frontend_pid_alive or frontend_http_ok
         else:
             frontend_alive = frontend_http_ok if record.frontend_url else True
-        if backend_alive and frontend_alive:
-            record.status = "running"
-        elif backend_http_ok and not record.backend_pid:
+        if backend_http_ok and not record.backend_pid:
             record.status = "observed"
+        elif backend_http_ok and frontend_alive:
+            record.status = "running"
+        elif backend_alive or frontend_pid_alive:
+            record.status = "starting"
         else:
             record.status = "stopped"
         if backend_http_ok:

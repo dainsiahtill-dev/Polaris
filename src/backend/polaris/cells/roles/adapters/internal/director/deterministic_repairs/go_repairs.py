@@ -341,10 +341,13 @@ def repair_go_import_subpaths(workspace: Path) -> list[dict[str, str]]:
 
 
 def _dedup_within_single_file(go_file: Path) -> bool:
-    """Remove duplicate type/func declarations within a single Go file.
+    """Remove duplicate type/func/const/var declarations within a single Go file.
 
-    When the Director generates two copies of ``type Mood int`` in the same
-    file, keep only the first occurrence and comment out subsequent ones.
+    When the Director generates two conflicting definitions (e.g.
+    ``type Mood int`` with iota constants AND ``type Mood string`` with
+    string constants), this function keeps the first block and comments
+    out the entire second block (type + related constants + methods).
+
     Returns True if the file was modified.
     """
     try:
@@ -357,42 +360,83 @@ def _dedup_within_single_file(go_file: Path) -> bool:
         re.MULTILINE,
     )
 
-    seen: dict[str, int] = {}  # declaration prefix → first occurrence line
+    # Pass 1: Identify all declaration names and find duplicates.
+    seen: dict[str, int] = {}  # key → first occurrence line
+    duplicate_names: set[str] = set()  # names that appear more than once
+
+    for line in text.split("\n"):
+        m = _decl_start_re.match(line)
+        if m:
+            name_m = re.search(r"(type|func|const|var)\s+(?:\([^)]+\)\s+)?(\w+)", m.group(0))
+            if name_m:
+                key = f"{name_m.group(1)}_{name_m.group(2)}"
+                if key in seen:
+                    duplicate_names.add(name_m.group(2))
+                else:
+                    seen[key] = 0
+
+    if not duplicate_names:
+        return False
+
+    # Pass 2: Comment out the SECOND occurrence of each duplicate,
+    # plus all subsequent lines that reference the duplicate name
+    # (constants, methods, etc.) until an unrelated declaration.
     lines = text.split("\n")
     modified = False
     skip_until_close = False
     brace_depth = 0
+    skip_related_name: str | None = None  # When skipping, which name?
+    seen_pass2: set[str] = set()
 
     for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Handle multi-line block comment-out.
         if skip_until_close:
             brace_depth += line.count("{") - line.count("}")
+            lines[i] = f"// [dedup-intra] {stripped}"
+            modified = True
             if brace_depth <= 0:
                 skip_until_close = False
-                lines[i] = f"// [dedup-intra] {line.strip()}"
-            else:
-                lines[i] = f"// [dedup-intra] {line.strip()}"
-            modified = True
+                skip_related_name = None
             continue
 
+        # Check if this is a top-level declaration.
         m = _decl_start_re.match(line)
         if m:
-            prefix = m.group(0).strip()
-            # Extract the name from the prefix.
-            name_m = re.search(r"(type|func|const|var)\s+(?:\([^)]+\)\s+)?(\w+)", prefix)
+            name_m = re.search(r"(type|func|const|var)\s+(?:\([^)]+\)\s+)?(\w+)", m.group(0))
             if name_m:
+                kind = name_m.group(1)
                 name = name_m.group(2)
-                key = f"{name_m.group(1)}_{name}"
-                if key in seen:
-                    # Duplicate! Comment out this declaration.
+                key = f"{kind}_{name}"
+
+                # If we were skipping related lines and hit an unrelated decl, stop.
+                if skip_related_name and name != skip_related_name:
+                    # Check if it's a method on the duplicate type.
+                    recv_m = re.search(r"func\s+\([^)]+\s+\*?(\w+)\)", line)
+                    if not recv_m or recv_m.group(1) != skip_related_name:
+                        skip_related_name = None
+
+                if key in seen_pass2 and name in duplicate_names:
+                    # Second occurrence — comment out this and related lines.
+                    skip_related_name = name
                     if "{" in line:
                         skip_until_close = True
                         brace_depth = line.count("{") - line.count("}")
                         if brace_depth <= 0:
                             skip_until_close = False
-                    lines[i] = f"// [dedup-intra] {line.strip()}"
+                    lines[i] = f"// [dedup-intra] {stripped}"
                     modified = True
                 else:
-                    seen[key] = i
+                    seen_pass2.add(key)
+            continue
+
+        # If we're skipping related lines, comment out lines that reference
+        # the duplicate name (constants, string values, etc.).
+        if skip_related_name and stripped and not stripped.startswith("//") and not stripped.startswith("package"):
+            # Comment out const/var values and method bodies related to the dup.
+            lines[i] = f"// [dedup-intra] {stripped}"
+            modified = True
 
     if modified:
         go_file.write_text("\n".join(lines), encoding="utf-8")

@@ -41,6 +41,7 @@ _LAST_FACTORY_START_PAYLOAD: dict[str, Any] = {}
 @pytest.fixture(autouse=True)
 def _isolate_instance_registry(monkeypatch: Any, tmp_path: Path) -> None:
     monkeypatch.setenv("POLARIS_INSTANCE_HOME", str(tmp_path / "instances-home"))
+    monkeypatch.setenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", "observed")
 
 
 def test_default_launcher_instance_mode_is_isolated(monkeypatch: Any) -> None:
@@ -59,6 +60,37 @@ def test_launcher_instance_mode_invalid_env_falls_back_to_isolated(monkeypatch: 
     monkeypatch.setenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", "shared")
 
     assert bench._default_launcher_instance_mode() == "isolated"
+
+
+def test_bench_observation_posts_use_short_timeout(monkeypatch: Any) -> None:
+    timeouts: list[float] = []
+
+    def _capture_post(_url: str, _body: dict[str, Any], *, timeout_s: float, token: str = "") -> dict[str, Any]:
+        assert token == "token"
+        timeouts.append(timeout_s)
+        return {"appended": True, "updated": True}
+
+    monkeypatch.setattr(bench, "_http_post_json", _capture_post)
+
+    assert bench._push_bench_event_to_backend(
+        backend_url="http://127.0.0.1:49977",
+        session_id="bench-test",
+        event_type="project.started",
+        token="token",
+    )
+    assert bench._push_bench_progress_to_backend(
+        backend_url="http://127.0.0.1:49977",
+        session_id="bench-test",
+        completed=0,
+        failed=0,
+        token="token",
+    )
+    assert bench._push_bench_complete_to_backend(
+        backend_url="http://127.0.0.1:49977",
+        session_id="bench-test",
+        token="token",
+    )
+    assert timeouts == [bench._BENCH_OBSERVATION_HTTP_TIMEOUT_S] * 3
 
 
 def _record(**overrides: Any) -> dict[str, Any]:
@@ -1484,6 +1516,7 @@ def test_main_run_id_shared_across_projects(monkeypatch: Any, tmp_path: Path) ->
 
 
 def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.delenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", raising=False)
     projects = [{"id": "L1-01", "level": 1, "title": "One", "brief": "Build one"}]
     captured_chain: dict[str, str] = {}
     backend_context_urls: list[str] = []

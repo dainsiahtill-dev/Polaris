@@ -99,6 +99,79 @@ def test_start_instance_builds_backend_and_frontend_processes(
     assert frontend_call["env"]["VITE_WORKSPACE"] == str((tmp_path / "bench" / "L1-01").resolve())
 
 
+def test_start_instance_rejects_requested_busy_backend_port(tmp_path: Path, monkeypatch: Any) -> None:
+    root = _make_polaris_root(tmp_path)
+    supervisor = InstanceSupervisor(InstanceRegistry(tmp_path / "instances", publish_events=False))
+    monkeypatch.setattr(
+        instance_service,
+        "is_port_free",
+        lambda port, host=instance_service.DEFAULT_HOST: port != 59911,
+    )
+
+    try:
+        supervisor.start_instance(
+            {
+                "instance_id": "busy-backend",
+                "kind": "bench_project",
+                "polaris_root": str(root),
+                "workspace": str(tmp_path / "bench" / "L1-01"),
+                "backend_port": 59911,
+                "frontend_port": 59912,
+                "start_frontend": True,
+            }
+        )
+    except RuntimeError as exc:
+        assert "backend port is already in use: 59911" in str(exc)
+    else:
+        raise AssertionError("requested busy backend port must fail closed")
+
+
+def test_start_instance_auto_allocates_free_ports_without_claiming_busy_ports(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    calls: list[dict[str, Any]] = []
+
+    class FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+        calls.append({"command": command, **kwargs})
+        return FakeProcess(64000 + len(calls))
+
+    def fake_allocate_port(start: int) -> int:
+        if start == instance_service.DEFAULT_BACKEND_PORT:
+            return 60021
+        if start == instance_service.DEFAULT_FRONTEND_PORT:
+            return 60022
+        raise AssertionError(f"unexpected allocation start: {start}")
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(instance_service, "allocate_port", fake_allocate_port)
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
+    supervisor = InstanceSupervisor(InstanceRegistry(tmp_path / "instances", publish_events=False))
+
+    record = supervisor.start_instance(
+        {
+            "instance_id": "auto-ports",
+            "kind": "bench_project",
+            "polaris_root": str(root),
+            "workspace": str(tmp_path / "bench" / "L1-02"),
+            "backend_port": None,
+            "frontend_port": None,
+            "start_frontend": True,
+        }
+    )
+
+    assert record["backend_port"] == 60021
+    assert record["frontend_port"] == 60022
+    assert calls[0]["command"][calls[0]["command"].index("--port") + 1] == "60021"
+    assert calls[1]["command"][calls[1]["command"].index("--port") + 1] == "60022"
+
+
 def test_instance_update_event_redacts_token(tmp_path: Path, monkeypatch: Any) -> None:
     published: list[dict[str, Any]] = []
 
@@ -147,9 +220,9 @@ def test_external_backend_without_pid_is_observed(tmp_path: Path, monkeypatch: A
             workspace=str((tmp_path / "workspace").resolve()),
             runtime_root=str((tmp_path / "runtime").resolve()),
             backend_port=59901,
-            frontend_port=0,
+            frontend_port=59902,
             backend_url="http://127.0.0.1:59901",
-            frontend_url="",
+            frontend_url="http://127.0.0.1:59902",
             token="token",
             backend_pid=None,
             frontend_pid=None,
@@ -198,6 +271,119 @@ def test_registered_external_frontend_url_counts_as_alive(tmp_path: Path, monkey
     assert health["status"] == "running"
     assert health["frontend_alive"] is True
     assert health["metadata"]["frontend_health"] == "ok"
+
+
+def test_backend_process_without_http_health_is_starting(tmp_path: Path, monkeypatch: Any) -> None:
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: pid == 61001)
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: False))
+    registry.save(
+        InstanceRecord(
+            instance_id="starting-project",
+            name="Starting Project",
+            kind="project",
+            polaris_root=str(_make_polaris_root(tmp_path)),
+            workspace=str((tmp_path / "workspace").resolve()),
+            runtime_root=str((tmp_path / "runtime").resolve()),
+            backend_port=59901,
+            frontend_port=0,
+            backend_url="http://127.0.0.1:59901",
+            frontend_url="",
+            token="token",
+            backend_pid=61001,
+            frontend_pid=None,
+            start_frontend=False,
+            status="running",
+        )
+    )
+
+    health = supervisor.health("starting-project")
+
+    assert health["status"] == "starting"
+    assert health["metadata"]["backend_health"] == "starting"
+
+
+def test_current_backend_process_does_not_http_probe_itself(tmp_path: Path, monkeypatch: Any) -> None:
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    current_pid = 61001
+    http_calls: list[str] = []
+
+    def fake_http_ok(url: str, _token: str) -> bool:
+        http_calls.append(url)
+        return False
+
+    monkeypatch.setattr(instance_service.os, "getpid", lambda: current_pid)
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: pid == current_pid)
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(fake_http_ok))
+    registry.save(
+        InstanceRecord(
+            instance_id="main",
+            name="Main",
+            kind="development",
+            polaris_root=str(_make_polaris_root(tmp_path)),
+            workspace=str((tmp_path / "workspace").resolve()),
+            runtime_root=str((tmp_path / "runtime").resolve()),
+            backend_port=59901,
+            frontend_port=0,
+            backend_url="http://127.0.0.1:59901",
+            frontend_url="",
+            token="token",
+            backend_pid=current_pid,
+            frontend_pid=None,
+            start_frontend=False,
+            status="running",
+        )
+    )
+
+    health = supervisor.health("main")
+
+    assert health["status"] == "running"
+    assert health["metadata"]["backend_health"] == "ok"
+    assert http_calls == []
+
+
+def test_current_backend_reloader_parent_does_not_http_probe_itself(tmp_path: Path, monkeypatch: Any) -> None:
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    current_pid = 61001
+    parent_pid = 61000
+    http_calls: list[str] = []
+
+    def fake_http_ok(url: str, _token: str) -> bool:
+        http_calls.append(url)
+        return False
+
+    monkeypatch.setattr(instance_service.os, "getpid", lambda: current_pid)
+    monkeypatch.setattr(instance_service.os, "getppid", lambda: parent_pid)
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: pid == parent_pid)
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(fake_http_ok))
+    registry.save(
+        InstanceRecord(
+            instance_id="main",
+            name="Main",
+            kind="development",
+            polaris_root=str(_make_polaris_root(tmp_path)),
+            workspace=str((tmp_path / "workspace").resolve()),
+            runtime_root=str((tmp_path / "runtime").resolve()),
+            backend_port=59901,
+            frontend_port=0,
+            backend_url="http://127.0.0.1:59901",
+            frontend_url="",
+            token="token",
+            backend_pid=parent_pid,
+            frontend_pid=None,
+            start_frontend=False,
+            status="running",
+        )
+    )
+
+    health = supervisor.health("main")
+
+    assert health["status"] == "running"
+    assert health["metadata"]["backend_health"] == "ok"
+    assert http_calls == []
 
 
 def test_restart_shared_backend_bench_project_promotes_to_isolated_ports(

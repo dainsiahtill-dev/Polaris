@@ -53,6 +53,19 @@ function restartActionLabel(instance: PolarisInstance): string {
   return usesSharedBackendBinding(instance) ? '独立启动' : '重启';
 }
 
+function isStoppedInternalBench(instance: PolarisInstance): boolean {
+  return (
+    instance.kind === 'bench_project' &&
+    instance.status !== 'running' &&
+    !instance.backend_alive &&
+    Boolean(instance.metadata?.internal_test_only)
+  );
+}
+
+function isBackendReady(instance: PolarisInstance): boolean {
+  return String(instance.metadata?.backend_health || '').trim() === 'ok';
+}
+
 function basename(path: string): string {
   const normalized = String(path || '').replace(/\\/g, '/').replace(/\/+$/, '');
   return normalized.split('/').filter(Boolean).pop() || normalized || 'workspace';
@@ -112,6 +125,10 @@ export function LauncherWorkspace() {
   );
   const benchCount = useMemo(
     () => instances.filter((item) => item.kind === 'bench_project').length,
+    [instances],
+  );
+  const stoppedBenchCount = useMemo(
+    () => instances.filter(isStoppedInternalBench).length,
     [instances],
   );
   const selectedInstance = useMemo(
@@ -196,6 +213,23 @@ export function LauncherWorkspace() {
     setActionId('');
   }, [refresh]);
 
+  const cleanupStoppedBench = useCallback(async () => {
+    const targets = instances.filter(isStoppedInternalBench);
+    if (targets.length === 0) return;
+    setActionId('cleanup-stopped-bench');
+    setError('');
+    const failures: string[] = [];
+    for (const instance of targets) {
+      const result = await deleteInstance(instance.instance_id);
+      if (!result.ok) failures.push(instance.instance_id);
+    }
+    if (failures.length > 0) {
+      setError(`清理失败: ${failures.join(', ')}`);
+    }
+    await refresh();
+    setActionId('');
+  }, [instances, refresh]);
+
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
       <header className="border-b border-cyan-400/20 bg-slate-950/95 px-6 py-4">
@@ -220,6 +254,17 @@ export function LauncherWorkspace() {
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               刷新
             </Button>
+            {stoppedBenchCount > 0 ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void cleanupStoppedBench()}
+                disabled={Boolean(actionId)}
+              >
+                <Trash2 className="h-4 w-4" />
+                清理停止测试({stoppedBenchCount})
+              </Button>
+            ) : null}
           </div>
         </div>
       </header>
@@ -347,9 +392,9 @@ export function LauncherWorkspace() {
                   </div>
                 </dl>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => openInstance(instance)}>
+                  <Button size="sm" onClick={() => openInstance(instance)} disabled={!isBackendReady(instance)}>
                     <ExternalLink className="h-3.5 w-3.5" />
-                    打开
+                    {isBackendReady(instance) ? '打开' : '等待后端'}
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => void runAction(instance, 'restart')} disabled={Boolean(actionId)}>
                     <RotateCcw className="h-3.5 w-3.5" />
@@ -367,7 +412,14 @@ export function LauncherWorkspace() {
                     <Info className="h-3.5 w-3.5" />
                     详情
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => void runAction(instance, 'delete')} disabled={Boolean(actionId)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void runAction(instance, 'delete')}
+                    disabled={Boolean(actionId)}
+                    title="删除实例记录"
+                    aria-label={`删除实例 ${instance.instance_id}`}
+                  >
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>

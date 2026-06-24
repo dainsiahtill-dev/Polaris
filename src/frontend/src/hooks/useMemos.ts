@@ -35,23 +35,30 @@ export function useMemos(options: UseMemosOptions = {}) {
     }
 
     setMemoError(null);
-    const result = await memoService.list(200);
+    try {
+      const result = await memoService.list(200);
 
-    if (result.ok && result.data) {
-      const items = Array.isArray(result.data.items) ? result.data.items : [];
-      setMemoItems(items as MemoItem[]);
-      setMemoSelected((current) => {
-        if (current) {
-          const stillExists = items.find((item) => item.path === current.path);
-          if (stillExists) {
-            return current;
+      if (result.ok && result.data) {
+        const items = Array.isArray(result.data.items) ? result.data.items : [];
+        setMemoItems(items as MemoItem[]);
+        setMemoSelected((current) => {
+          if (current) {
+            const stillExists = items.find((item) => item.path === current.path);
+            if (stillExists) {
+              return current;
+            }
+            return items.length > 0 ? items[0] as MemoItem : null;
           }
           return items.length > 0 ? items[0] as MemoItem : null;
-        }
-        return items.length > 0 ? items[0] as MemoItem : null;
-      });
-    } else {
-      setMemoError(result.error || 'Failed to list memos');
+        });
+      } else {
+        setMemoError(result.error || 'Failed to list memos');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to list memos';
+      setMemoItems([]);
+      setMemoSelected(null);
+      setMemoError(message);
     }
   }, [workspaceReady]);
 
@@ -72,14 +79,21 @@ export function useMemos(options: UseMemosOptions = {}) {
     setMemoLoading(true);
     setMemoError(null);
 
-    const result = await fileService.read(item.path);
+    try {
+      const result = await fileService.read(item.path);
 
-    setMemoLoading(false);
+      setMemoLoading(false);
 
-    if (result.ok && result.data) {
-      setMemoData(result.data);
-    } else {
-      setMemoError(result.error || 'Failed to read memo');
+      if (result.ok && result.data) {
+        setMemoData(result.data);
+      } else {
+        setMemoError(result.error || 'Failed to read memo');
+        setMemoData({ content: '', mtime: '' });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to read memo';
+      setMemoLoading(false);
+      setMemoError(message);
       setMemoData({ content: '', mtime: '' });
     }
   }, [workspace, workspaceReady]);
@@ -98,12 +112,12 @@ export function useMemos(options: UseMemosOptions = {}) {
 
   useEffect(() => {
     if (autoLoad && workspaceReady) {
-      loadMemoList();
+      void loadMemoList();
     }
   }, [autoLoad, workspaceReady, loadMemoList]);
 
   useEffect(() => {
-    loadMemoContent(memoSelected);
+    void loadMemoContent(memoSelected);
   }, [loadMemoContent, memoSelected]);
 
   return {

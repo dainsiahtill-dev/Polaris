@@ -1069,6 +1069,7 @@ def _emit_factory_task_runtime_event(
 _DEFAULT_BACKEND_URL = "http://127.0.0.1:49977"
 _DEFAULT_LOCAL_BACKEND_TOKEN = "polaris-local-dev"
 _BENCH_HTTP_TIMEOUT_S = 10.0  # bumped from 2.0: cold-start 49977 can exceed 2s
+_BENCH_OBSERVATION_HTTP_TIMEOUT_S = 1.5
 
 
 def _resolve_polaris_home(env: Mapping[str, str] | None = None) -> Path:
@@ -1312,6 +1313,7 @@ def _push_bench_event_to_backend(
     response = _http_post_json(
         f"{backend_url}/v2/factory/bench/sessions/{session_id}/events",
         payload,
+        timeout_s=_BENCH_OBSERVATION_HTTP_TIMEOUT_S,
         token=token,
     )
     return response is not None and bool(response.get("appended", False))
@@ -1333,6 +1335,7 @@ def _push_bench_complete_to_backend(
     response = _http_post_json(
         f"{backend_url}/v2/factory/bench/sessions/{session_id}/complete",
         payload,
+        timeout_s=_BENCH_OBSERVATION_HTTP_TIMEOUT_S,
         token=token,
     )
     return response is not None and bool(response.get("updated", False))
@@ -1361,6 +1364,7 @@ def _push_bench_progress_to_backend(
     response = _http_post_json(
         f"{backend_url}/v2/factory/bench/sessions/{session_id}/progress",
         payload,
+        timeout_s=_BENCH_OBSERVATION_HTTP_TIMEOUT_S,
         token=token,
     )
     return response is not None and bool(response.get("updated", False))

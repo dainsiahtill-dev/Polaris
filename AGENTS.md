@@ -97,6 +97,44 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 19. **Observed Bench 独立化启动（强制）**：Instance Registry 中带有 `metadata.backend_binding=shared_backend_workspace_switch` 的 `bench_project` 只是共享后端观测记录；当用户或 Agent 从 Launcher/API 对它执行 restart/独立启动时，Supervisor 必须分配新的 backend/frontend 端口并启动独立实例，禁止复用共享 backend 端口或把 observed 记录伪装为 running。
 20. **factory_bench 并行实例模式（强制）**：多个 Agent 并行跑 `factory_bench` 不得共享同一个 49977 backend 做 workspace switch；runner 默认必须使用 `isolated`，让每个项目先启动独立 Polaris backend/frontend，再把该项目的 Factory run 发到自己的 backend。`--launcher-instance-mode observed` / `FACTORY_BENCH_LAUNCHER_INSTANCE_MODE=observed` 只允许显式用于轻量观测和串行兼容测试。
 
+#### factory_bench 标准启动方式（内部测试态）
+
+其他 Agent/Claude/Codex 执行 L1-L12 压力测试时必须使用以下模式，禁止共享主后端 `49977` 做并发 workspace switch：
+
+```bash
+rtk proxy bash -lc '
+set -euo pipefail
+
+PROJECT_ID=L1-04
+WORK_DIR=/tmp/factory-bench-l1-04-r23
+
+case "$WORK_DIR" in
+  /tmp/factory-bench-*) rm -rf -- "$WORK_DIR" ;;
+  *) echo "unsafe WORK_DIR: $WORK_DIR" >&2; exit 2 ;;
+esac
+
+NO_PROXY="*" no_proxy="*" timeout --kill-after=30s 600s \
+  python src/backend/scripts/factory_bench/run_factory_bench.py \
+  --project-ids "$PROJECT_ID" \
+  --work-dir "$WORK_DIR" \
+  --timeout 540 \
+  --max-failed 0 \
+  --real-run-timeout 120 \
+  --launcher-instance-mode isolated \
+  2>&1 | tee "$WORK_DIR.runner.log" | tail -25
+'
+```
+
+硬性要求：
+- 必须保留 `set -euo pipefail`，禁止用 `2>&1 | tail` 隐藏 runner 失败退出码。
+- 必须显式传 `--launcher-instance-mode isolated`，即使当前默认也是 isolated。
+- `WORK_DIR` 只能是 `/tmp/factory-bench-*` 或用户明确授权的临时目录；删除前必须做路径 guard。
+- Runner 启动后会在 Launcher 注册 `kind=bench_project` 的内部测试实例，每个项目应有独立 backend/frontend 端口、独立 workspace、独立 `/v2/ws/runtime` 和独立 ContextOS。
+- `timeout` 只会杀 runner；已启动的 isolated backend/frontend 可能继续留在 Launcher 中供观察。异常中断后必须从 Launcher 停止或删除对应测试实例。
+- 禁止手工 `kill`、`pkill`、`lsof -ti :PORT | xargs kill` 或清理不属于自己本次 bench 的端口。停止/删除实例必须优先走 Launcher 或 `/v2/instances/{instance_id}`，并且只操作自己启动的 `instance_id` / `WORK_DIR`。若确需清理孤儿进程，必须先比对 `~/.polaris/instances/registry.json`、进程命令行中的 workspace、backend/frontend port，确认不是其他 Agent 的实例。
+- 禁止手动指定已被占用的 backend/frontend 端口；默认让 `--launcher-instance-mode isolated` 自动分配端口。平台 Supervisor 对显式端口冲突必须 fail-closed，不能抢占或误关已有进程。
+- 如果只是串行调试且明确需要共享 49977，才允许显式 `--launcher-instance-mode observed`；observed 记录只能作为轻量观测，不得用于并发压测或当作独立项目实例。
+
 ### 实时推送硬门禁
 
 - 首页主工作区、Factory 工作区、PM/ChiefEngineer/Director 工作区、ContextOS 实时视图必须通过同一套 Nats-JetStream runtime.v2 WebSocket 接收推送。内部 Bench harness 可以消费同一事实流做压力测试和审计，但不得成为正式产品实时链路或生产 UI 的依赖。
