@@ -833,19 +833,36 @@ def _normalize_go_imports(workspace: Path, go_files: list[str], canonical_module
     the common Director failure mode where different files use different
     module-name prefixes (e.g. ``ascii-pet/src/models`` vs
     ``ascii-pet-terminal/src/models``).
-    """
 
-    local_imports = _collect_go_local_imports(workspace, go_files)
+    Scans both *go_files* AND any ``.go`` files on disk under *workspace*
+    to catch files the Director created but didn't declare in the contract.
+    """
+    # Build a comprehensive file list: declared + discovered on disk.
+    all_go: set[str] = set(go_files)
+    try:
+        for p in workspace.rglob("*.go"):
+            rel = str(p.relative_to(workspace))
+            # Skip vendored and hidden directories.
+            if "/." in rel or rel.startswith(".") or "/vendor/" in rel:
+                continue
+            all_go.add(rel)
+    except OSError:
+        pass
+
+    file_list = sorted(all_go)
+    local_imports = _collect_go_local_imports(workspace, file_list)
     if not local_imports:
         return 0
 
     # Identify distinct top-level module prefixes.
     prefixes = {imp.split("/")[0] for _, imp in local_imports}
-    if len(prefixes) <= 1:
+    # Remove the canonical prefix — only non-canonical ones need repair.
+    prefixes.discard(canonical_module)
+    if not prefixes:
         return 0  # Already consistent.
 
     modified = 0
-    for rel in go_files[:40]:
+    for rel in file_list[:80]:
         fpath = workspace / rel
         try:
             text = fpath.read_text(encoding="utf-8", errors="replace")
@@ -853,9 +870,8 @@ def _normalize_go_imports(workspace: Path, go_files: list[str], canonical_module
             continue
         original = text
         for prefix in prefixes:
-            if prefix != canonical_module:
-                # Replace ``"prefix/src/..."`` → ``"canonical_module/src/..."``
-                text = text.replace(f'"{prefix}/', f'"{canonical_module}/')
+            # Replace ``"prefix/..."`` → ``"canonical_module/..."``
+            text = text.replace(f'"{prefix}/', f'"{canonical_module}/')
         if text != original:
             fpath.write_text(text, encoding="utf-8")
             modified += 1
@@ -884,11 +900,31 @@ def _infer_go_module_name(workspace: Path, go_files: list[str]) -> str:
     return max(prefix_counts, key=lambda p: prefix_counts[p])
 
 
+def _read_go_mod_module(workspace: Path) -> str:
+    """Read the module name from ``go.mod``, or return ``""`` if absent."""
+    import re as _re
+
+    go_mod = workspace / "go.mod"
+    if not go_mod.is_file():
+        return ""
+    try:
+        text = go_mod.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    m = _re.search(r"^module\s+(\S+)", text, _re.MULTILINE)
+    return m.group(1) if m else ""
+
+
 def _go_command(workspace: Path, go_files: list[str]) -> list[str]:
     go = _resolve_go_binary()
     if not go:
         return []
     if (workspace / "go.mod").is_file():
+        # Even with go.mod present, repair import paths that don't match the
+        # canonical module name (Director cross-file coherence fault).
+        canonical = _read_go_mod_module(workspace)
+        if canonical:
+            _normalize_go_imports(workspace, go_files, canonical)
         return [go, "test", "./..."]
     # No go.mod — try to auto-init so ``go test ./...`` works across packages.
     # Without a module file, ``go test file1.go src/engine/engine.go …`` fails

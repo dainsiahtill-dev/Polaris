@@ -19,6 +19,7 @@ from polaris.cells.factory.pipeline.internal.bench_gates import (
     _infer_go_module_name,
     _normalize_go_imports,
     _primary_source_language,
+    _read_go_mod_module,
     _resolve_polaris_roots_runtime_dir,
     _script_depends_on_build_output,
     aggregate_goal_audit,
@@ -3283,3 +3284,67 @@ class TestGoVersionOf:
 
         monkeypatch.setattr(bench_gates.subprocess, "run", _raise)
         assert _go_version_of("/fake/go") == (0,)
+
+
+# ---------------------------------------------------------------------------
+# Tests for _read_go_mod_module (F7: go.mod as canonical module authority)
+# ---------------------------------------------------------------------------
+
+
+class TestReadGoModModule:
+    def test_reads_module_name(self, tmp_path: Path) -> None:
+        (tmp_path / "go.mod").write_text("module ascii-pet-terminal\n\ngo 1.23\n", encoding="utf-8")
+        assert _read_go_mod_module(tmp_path) == "ascii-pet-terminal"
+
+    def test_returns_empty_when_no_go_mod(self, tmp_path: Path) -> None:
+        assert _read_go_mod_module(tmp_path) == ""
+
+    def test_handles_malformed_go_mod(self, tmp_path: Path) -> None:
+        (tmp_path / "go.mod").write_text("// comment only\n", encoding="utf-8")
+        assert _read_go_mod_module(tmp_path) == ""
+
+
+# ---------------------------------------------------------------------------
+# Test: normalization discovers undeclared Go files on disk (F7)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_go_imports_discovers_disk_files(tmp_path: Path) -> None:
+    """Files NOT in go_files list but present on disk must be normalized."""
+    (tmp_path / "go.mod").write_text("module myproject\n\ngo 1.23\n", encoding="utf-8")
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    # Declared file with correct import.
+    (tmp_path / "main.go").write_text(
+        'package main\n\nimport "myproject/src/pkg"\n\nfunc main() { _ = pkg.X }\n',
+        encoding="utf-8",
+    )
+    # Undeclared file with wrong prefix.
+    (tmp_path / "src" / "pkg" / "helper.go").write_text(
+        'package pkg\n\nimport "my-proj/src/pkg"\n\nvar X = 1\nvar _ = Y\n',
+        encoding="utf-8",
+    )
+    # Only pass main.go — helper.go is on disk but not declared.
+    modified = _normalize_go_imports(tmp_path, ["main.go"], "myproject")
+    assert modified == 1
+    helper_text = (tmp_path / "src" / "pkg" / "helper.go").read_text(encoding="utf-8")
+    assert '"myproject/src/pkg"' in helper_text
+    assert '"my-proj/' not in helper_text
+
+
+def test_go_command_normalizes_even_with_go_mod(monkeypatch: Any, tmp_path: Path) -> None:
+    """_go_command must normalize imports when go.mod already exists."""
+    (tmp_path / "go.mod").write_text("module canonical\n\ngo 1.23\n", encoding="utf-8")
+    (tmp_path / "main.go").write_text(
+        'package main\n\nimport "wrong-prefix/pkg"\n\nfunc main() {}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "lib.go").write_text("package pkg\n", encoding="utf-8")
+
+    monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: "/usr/local/go/bin/go")
+    cmd = _go_command(tmp_path, ["main.go", "pkg/lib.go"])
+    assert cmd == ["/usr/local/go/bin/go", "test", "./..."]
+    # Verify the import was normalized.
+    main_text = (tmp_path / "main.go").read_text(encoding="utf-8")
+    assert '"canonical/pkg"' in main_text
+    assert '"wrong-prefix/' not in main_text
