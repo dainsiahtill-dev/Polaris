@@ -12,7 +12,13 @@ from polaris.cells.control_plane.verifier_policy.public import (
 )
 from polaris.cells.factory.pipeline.internal import bench_gates
 from polaris.cells.factory.pipeline.internal.bench_gates import (
+    _collect_go_local_imports,
     _command_serves_build_output,
+    _go_command,
+    _go_version_of,
+    _infer_go_module_name,
+    _normalize_go_imports,
+    _primary_source_language,
     _resolve_polaris_roots_runtime_dir,
     _script_depends_on_build_output,
     aggregate_goal_audit,
@@ -933,15 +939,12 @@ def test_real_run_gate_fails_closed_for_required_custom_verifier_when_scripts_di
     assert "KERNELONE_CUSTOM_VERIFIER_SCRIPTS_ENABLED" in gate["user_verifiers"][0]["detail"]
 
 
-def test_real_run_gate_accepts_required_custom_verifier_when_scripts_enabled(
-    monkeypatch: Any, tmp_path: Path
-) -> None:
+def test_real_run_gate_accepts_required_custom_verifier_when_scripts_enabled(monkeypatch: Any, tmp_path: Path) -> None:
     monkeypatch.setenv("KERNELONE_CUSTOM_VERIFIER_SCRIPTS_ENABLED", "1")
     (tmp_path / "index.html").write_text("<html><body><h1>ok</h1></body></html>", encoding="utf-8")
     (tmp_path / "style.css").write_text("body { display: grid; }\n", encoding="utf-8")
     (tmp_path / "verify.py").write_text(
-        "from pathlib import Path\n"
-        "assert '<html>' in Path('index.html').read_text(encoding='utf-8')\n",
+        "from pathlib import Path\nassert '<html>' in Path('index.html').read_text(encoding='utf-8')\n",
         encoding="utf-8",
     )
     update_verifier_policy(
@@ -994,8 +997,16 @@ def test_real_run_gate_executes_go_build_and_cli_entrypoint(monkeypatch: Any, tm
             "timeout_s": timeout_s,
         }
 
+    # Simulate ``go mod init`` succeeding so _go_command returns ``go test ./...``.
+    def fake_subprocess_run(  # type: ignore[no-untyped-def]
+        cmd, **kwargs
+    ):
+        rc = 0 if ("mod" in cmd and "init" in cmd) else 1
+        return subprocess.CompletedProcess(args=cmd, returncode=rc, stdout="", stderr="")
+
     monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
     monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    monkeypatch.setattr(bench_gates.subprocess, "run", fake_subprocess_run)
     record = {"code_files": ["main.go"]}
 
     gate = build_real_run_gate(tmp_path, record, timeout_s=10)
@@ -2990,4 +3001,285 @@ def test_smoke_static_web_playwright_critical_errors_fail(tmp_path: Path) -> Non
 
     # Should fail because of the critical error
     assert result["ok"] is False
-    assert "Uncaught Error: Critical error" in result["detail"]
+    assert "Uncaught Error: Critical error" in str(result["detail"])
+
+
+# ---------------------------------------------------------------------------
+# Tests for _primary_source_language (F2/F3: Go/Rust projects with stray .py)
+# ---------------------------------------------------------------------------
+
+
+class TestPrimarySourceLanguage:
+    """Verify that a Go project with a Python contract test is Go-primary."""
+
+    def test_go_project_with_python_test(self) -> None:
+        files = [
+            "main.go",
+            "src/engine/engine.go",
+            "src/models/pet.go",
+            "tests/test_ascii.py",
+        ]
+        assert _primary_source_language(files) == "go"
+
+    def test_pure_go_project(self) -> None:
+        assert _primary_source_language(["main.go", "lib.go"]) == "go"
+
+    def test_pure_python_project(self) -> None:
+        assert _primary_source_language(["main.py", "utils.py", "tests/test_main.py"]) == "python"
+
+    def test_rust_project_with_python_test(self) -> None:
+        files = ["src/main.rs", "src/lib.rs", "tests/test_contract.py"]
+        assert _primary_source_language(files) == "rust"
+
+    def test_node_project(self) -> None:
+        files = ["index.js", "src/app.js", "src/utils.ts"]
+        assert _primary_source_language(files) == "javascript"
+
+    def test_html_only_project(self) -> None:
+        assert _primary_source_language(["index.html", "style.css"]) == "html"
+
+    def test_empty_project(self) -> None:
+        assert _primary_source_language([]) == ""
+
+    def test_mixed_go_and_python(self) -> None:
+        # Both Go source and real Python source → Python wins by count
+        files = ["main.go", "app.py", "utils.py", "helpers.py"]
+        assert _primary_source_language(files) == "python"
+
+
+# ---------------------------------------------------------------------------
+# Tests for _go_command auto-init (F1: go mod init when no go.mod)
+# ---------------------------------------------------------------------------
+
+
+class TestGoCommandAutoInit:
+    """Verify _go_command auto-inits go.mod when missing."""
+
+    def test_with_go_mod(self, monkeypatch: Any, tmp_path: Path) -> None:
+        (tmp_path / "go.mod").write_text("module test\n", encoding="utf-8")
+        monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: "/usr/local/go/bin/go")
+        cmd = _go_command(tmp_path, ["main.go"])
+        assert cmd == ["/usr/local/go/bin/go", "test", "./..."]
+
+    def test_without_go_mod_init_succeeds(self, monkeypatch: Any, tmp_path: Path) -> None:
+        monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: "/usr/local/go/bin/go")
+        monkeypatch.setattr(
+            bench_gates.subprocess,
+            "run",
+            lambda cmd, **kw: subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr=""),
+        )
+        cmd = _go_command(tmp_path, ["main.go", "src/engine/engine.go"])
+        assert cmd == ["/usr/local/go/bin/go", "test", "./..."]
+
+    def test_without_go_mod_init_fails_vet_fallback(self, monkeypatch: Any, tmp_path: Path) -> None:
+        monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: "/usr/local/go/bin/go")
+        monkeypatch.setattr(
+            bench_gates.subprocess,
+            "run",
+            lambda cmd, **kw: subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="init failed"),
+        )
+        cmd = _go_command(tmp_path, ["main.go", "src/engine/engine.go"])
+        assert cmd == ["/usr/local/go/bin/go", "vet", "main.go"]
+
+    def test_without_go_mod_init_timeout_vet_fallback(self, monkeypatch: Any, tmp_path: Path) -> None:
+        monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: "/usr/local/go/bin/go")
+
+        def _raise_timeout(*args: Any, **kwargs: Any) -> Any:
+            raise subprocess.TimeoutExpired(cmd="go", timeout=15)
+
+        monkeypatch.setattr(bench_gates.subprocess, "run", _raise_timeout)
+        cmd = _go_command(tmp_path, ["main.go"])
+        assert cmd == ["/usr/local/go/bin/go", "vet", "main.go"]
+
+    def test_go_unavailable(self, monkeypatch: Any, tmp_path: Path) -> None:
+        monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: None)
+        cmd = _go_command(tmp_path, ["main.go"])
+        assert cmd == []
+
+
+# ---------------------------------------------------------------------------
+# Test: Go project skips Python test path (F2)
+# ---------------------------------------------------------------------------
+
+
+def test_go_project_skips_python_test_path(monkeypatch: Any, tmp_path: Path) -> None:
+    """A Go project with tests/test_*.py must NOT run python unittest."""
+    (tmp_path / "main.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
+    (tmp_path / "go.mod").write_text("module generated\ngo 1.22\n", encoding="utf-8")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_ascii.py").write_text(
+        "import unittest\nclass T(unittest.TestCase):\n"
+        "    def test_x(self): self.fail('should not run')\n"
+        "if __name__ == '__main__': unittest.main()\n",
+        encoding="utf-8",
+    )
+    commands_run: list[list[str]] = []
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands_run.append(command)
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: "/usr/local/go/bin/go")
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["main.go", "tests/test_ascii.py"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    # No Python commands should have been run.
+    for cmd in commands_run:
+        assert "python" not in str(cmd[0]).lower(), f"Python command leaked: {cmd}"
+    # Go test should have run.
+    assert any("test" in str(c) for c in commands_run)
+    assert gate["requirements"]["build_test_lint_ran"]["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Test: Go project uses Go entrypoint, not Python (F3)
+# ---------------------------------------------------------------------------
+
+
+def test_go_project_uses_go_entrypoint_not_python(monkeypatch: Any, tmp_path: Path) -> None:
+    """A Go project with tests/test_*.py must use go_cli entrypoint."""
+    (tmp_path / "main.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
+    (tmp_path / "go.mod").write_text("module generated\ngo 1.22\n", encoding="utf-8")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_ascii.py").write_text(
+        "import unittest\nif __name__ == '__main__': unittest.main()\n",
+        encoding="utf-8",
+    )
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        is_go_run = any("run" in str(c) for c in command)
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "duration_s": 0.01,
+            "stdout_tail": "usage: app\n" if is_go_run else "",
+            "stderr_tail": "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: "/usr/local/go/bin/go")
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["main.go", "tests/test_ascii.py"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["entrypoint"]["kind"] == "go_cli"
+
+
+# ---------------------------------------------------------------------------
+# Tests for Go import normalization (F4: Director cross-file coherence repair)
+# ---------------------------------------------------------------------------
+
+
+class TestGoImportNormalization:
+    """Verify _normalize_go_imports repairs inconsistent module prefixes."""
+
+    def _write_go_files(self, tmp_path: Path) -> list[str]:
+        go_files = ["main.go", "src/engine/engine.go", "src/models/pet.go"]
+        (tmp_path / "src" / "engine").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "src" / "models").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "main.go").write_text(
+            'package main\n\nimport "my-project/src/engine"\n\nfunc main() { _ = engine.X }\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine" / "engine.go").write_text(
+            'package engine\n\nimport "my-proj/src/models"\n\nvar X = models.Y\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "models" / "pet.go").write_text(
+            "package models\n\nvar Y = 42\n",
+            encoding="utf-8",
+        )
+        return go_files
+
+    def test_collect_local_imports(self, tmp_path: Path) -> None:
+        go_files = self._write_go_files(tmp_path)
+        imports = _collect_go_local_imports(tmp_path, go_files)
+        assert len(imports) == 2
+        assert imports[0][1] == "my-project/src/engine"
+        assert imports[1][1] == "my-proj/src/models"
+
+    def test_infer_module_name_dominant_prefix(self, tmp_path: Path) -> None:
+        go_files = self._write_go_files(tmp_path)
+        # "my-project" appears in main.go (1 import), "my-proj" in engine.go (1 import)
+        # Both have count 1, so max picks whichever is lexicographically last.
+        # The important thing is it returns a valid prefix.
+        name = _infer_go_module_name(tmp_path, go_files)
+        assert name in ("my-project", "my-proj")
+
+    def test_normalize_repairs_inconsistent_imports(self, tmp_path: Path) -> None:
+        go_files = self._write_go_files(tmp_path)
+        modified = _normalize_go_imports(tmp_path, go_files, "my-project")
+        assert modified == 1  # engine.go was modified
+        engine_text = (tmp_path / "src" / "engine" / "engine.go").read_text(encoding="utf-8")
+        assert '"my-project/src/models"' in engine_text
+        assert '"my-proj/src/models"' not in engine_text
+
+    def test_normalize_no_change_when_consistent(self, tmp_path: Path) -> None:
+        (tmp_path / "main.go").write_text(
+            'package main\n\nimport "mymod/pkg"\n\nfunc main() {}\n',
+            encoding="utf-8",
+        )
+        modified = _normalize_go_imports(tmp_path, ["main.go"], "mymod")
+        assert modified == 0
+
+    def test_go_command_auto_init_with_normalization(self, monkeypatch: Any, tmp_path: Path) -> None:
+        go_files = self._write_go_files(tmp_path)
+        monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: "/usr/local/go/bin/go")
+        monkeypatch.setattr(
+            bench_gates.subprocess,
+            "run",
+            lambda cmd, **kw: subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr=""),
+        )
+        cmd = _go_command(tmp_path, go_files)
+        assert cmd == ["/usr/local/go/bin/go", "test", "./..."]
+        # Verify imports were normalized
+        engine_text = (tmp_path / "src" / "engine" / "engine.go").read_text(encoding="utf-8")
+        assert '"my-proj/' not in engine_text
+
+
+# ---------------------------------------------------------------------------
+# Tests for _go_version_of
+# ---------------------------------------------------------------------------
+
+
+class TestGoVersionOf:
+    def test_parses_version_string(self, monkeypatch: Any) -> None:
+        monkeypatch.setattr(
+            bench_gates.subprocess,
+            "run",
+            lambda cmd, **kw: subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="go version go1.23.8 linux/amd64\n", stderr=""
+            ),
+        )
+        assert _go_version_of("/fake/go") == (1, 23, 8)
+
+    def test_handles_failure(self, monkeypatch: Any) -> None:
+        monkeypatch.setattr(
+            bench_gates.subprocess,
+            "run",
+            lambda cmd, **kw: subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="error"),
+        )
+        assert _go_version_of("/fake/go") == (0,)
+
+    def test_handles_timeout(self, monkeypatch: Any) -> None:
+        def _raise(*a: Any, **kw: Any) -> Any:
+            raise subprocess.TimeoutExpired(cmd="go", timeout=5)
+
+        monkeypatch.setattr(bench_gates.subprocess, "run", _raise)
+        assert _go_version_of("/fake/go") == (0,)

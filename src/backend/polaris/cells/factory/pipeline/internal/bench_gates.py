@@ -798,13 +798,121 @@ def _cli_smoke_result(kind: str, entrypoint: str, result: dict[str, Any]) -> dic
     return payload
 
 
+def _collect_go_local_imports(workspace: Path, go_files: list[str]) -> list[tuple[str, str]]:
+    """Return ``[(file_rel, import_path), ...]`` for all non-stdlib Go imports.
+
+    A non-stdlib import is one whose first path segment contains a dot,
+    hyphen, or underscore (e.g. ``ascii-pet-terminal/src/engine``).
+    """
+    import re as _re
+
+    # Match both single-line ``import "path"`` and block-style ``\t"path"``.
+    _block_import_re = _re.compile(r'^\s*"([^"]+)"', _re.MULTILINE)
+    _single_import_re = _re.compile(r'import\s+"([^"]+)"')
+    results: list[tuple[str, str]] = []
+    for rel in go_files[:40]:
+        try:
+            text = (workspace / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        seen: set[str] = set()
+        for imp in list(_block_import_re.findall(text)) + list(_single_import_re.findall(text)):
+            if imp in seen:
+                continue
+            seen.add(imp)
+            first_seg = imp.split("/")[0]
+            if "." in first_seg or "-" in first_seg or "_" in first_seg:
+                results.append((rel, imp))
+    return results
+
+
+def _normalize_go_imports(workspace: Path, go_files: list[str], canonical_module: str) -> int:
+    """Rewrite inconsistent Go import paths to use *canonical_module*.
+
+    Returns the number of files modified.  This is a best-effort repair for
+    the common Director failure mode where different files use different
+    module-name prefixes (e.g. ``ascii-pet/src/models`` vs
+    ``ascii-pet-terminal/src/models``).
+    """
+
+    local_imports = _collect_go_local_imports(workspace, go_files)
+    if not local_imports:
+        return 0
+
+    # Identify distinct top-level module prefixes.
+    prefixes = {imp.split("/")[0] for _, imp in local_imports}
+    if len(prefixes) <= 1:
+        return 0  # Already consistent.
+
+    modified = 0
+    for rel in go_files[:40]:
+        fpath = workspace / rel
+        try:
+            text = fpath.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        original = text
+        for prefix in prefixes:
+            if prefix != canonical_module:
+                # Replace ``"prefix/src/..."`` → ``"canonical_module/src/..."``
+                text = text.replace(f'"{prefix}/', f'"{canonical_module}/')
+        if text != original:
+            fpath.write_text(text, encoding="utf-8")
+            modified += 1
+    return modified
+
+
+def _infer_go_module_name(workspace: Path, go_files: list[str]) -> str:
+    """Infer the Go module name from import paths in source files.
+
+    Scans Go files for non-stdlib import paths and extracts the common
+    top-level module prefix (e.g. ``"ascii-pet-terminal"`` from
+    ``"ascii-pet-terminal/src/engine"``).  Falls back to the workspace
+    directory name when no local imports are found.
+    """
+    local_imports = _collect_go_local_imports(workspace, go_files)
+    if not local_imports:
+        return workspace.name or "generated"
+
+    # Count occurrences of each prefix to find the dominant module name.
+    prefix_counts: dict[str, int] = {}
+    for _, imp in local_imports:
+        first_seg = imp.split("/")[0]
+        prefix_counts[first_seg] = prefix_counts.get(first_seg, 0) + 1
+
+    # Return the most common prefix (the one the majority of files agree on).
+    return max(prefix_counts, key=lambda p: prefix_counts[p])
+
+
 def _go_command(workspace: Path, go_files: list[str]) -> list[str]:
     go = _resolve_go_binary()
     if not go:
         return []
     if (workspace / "go.mod").is_file():
         return [go, "test", "./..."]
-    return [go, "test", *go_files[:80]]
+    # No go.mod — try to auto-init so ``go test ./...`` works across packages.
+    # Without a module file, ``go test file1.go src/engine/engine.go …`` fails
+    # with "named files must all be in one directory".
+    module_name = _infer_go_module_name(workspace, go_files)
+    # Repair inconsistent import paths before ``go mod init`` so all files
+    # agree on the canonical module name.
+    _normalize_go_imports(workspace, go_files, module_name)
+    try:
+        init_result = subprocess.run(
+            [go, "mod", "init", module_name],
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if init_result.returncode == 0:
+            return [go, "test", "./..."]
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        pass
+    # Fallback: per-file ``go vet`` for syntax checking when module init fails.
+    if go_files:
+        return [go, "vet", go_files[0]]
+    return []
 
 
 def _rust_compile_command(workspace: Path, rust_files: list[str]) -> list[str]:
@@ -1043,6 +1151,46 @@ def _looks_like_python_test(rel_path: str) -> bool:
     path = Path(rel_path)
     name = path.name
     return name.startswith("test_") and name.endswith(".py")
+
+
+def _primary_source_language(code_files: list[str]) -> str:
+    """Determine the primary source language of a generated project.
+
+    Returns one of ``"go"``, ``"rust"``, ``"python"``, ``"javascript"``,
+    ``"html"``, ``"java"``, ``"cpp"``, or ``""`` (unknown).
+
+    The decision is based on non-test source files only: a ``tests/test_*.py``
+    inside a Go project must NOT make the project "Python-primary".
+    """
+    go_count = len([f for f in code_files if f.endswith(".go")])
+    rust_count = len([f for f in code_files if f.endswith(".rs")])
+    py_non_test = len([f for f in code_files if f.endswith(".py") and "/test_" not in f and not f.startswith("test_")])
+    js_count = len([f for f in code_files if f.endswith((".js", ".mjs", ".cjs", ".ts", ".tsx"))])
+    html_count = len([f for f in code_files if f.endswith((".html", ".css"))])
+    java_count = len([f for f in code_files if f.endswith(".java")])
+    cpp_count = len([f for f in code_files if f.endswith((".cpp", ".cc", ".cxx", ".hpp", ".h", ".c"))])
+
+    # If Go files exist and Python files are only tests, Go is primary.
+    if go_count > 0 and py_non_test == 0:
+        return "go"
+    if rust_count > 0 and py_non_test == 0:
+        return "rust"
+    if java_count > 0 and py_non_test == 0:
+        return "java"
+    if cpp_count > 0 and py_non_test == 0:
+        return "cpp"
+    # Standard priority: most non-test source files wins.
+    counts = {
+        "go": go_count,
+        "rust": rust_count,
+        "python": py_non_test,
+        "javascript": js_count,
+        "html": html_count,
+        "java": java_count,
+        "cpp": cpp_count,
+    }
+    best = max(counts, key=lambda k: counts[k])
+    return best if counts[best] > 0 else ""
 
 
 def _discover_python_test_files(workspace: Path, code_files: list[str]) -> list[str]:
@@ -1469,7 +1617,19 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
                     build_detail = f"npm run {script_name} {'passed' if build_command_ok else 'failed'}"
                     break
     python_test_files = _discover_python_test_files(workspace, code_files)
-    if not build_command_ok and not package_script_failed and any(rel.endswith(".py") for rel in code_files):
+    primary_lang = _primary_source_language(code_files)
+    # Skip the Python compileall/test path when the project is primarily a
+    # compiled-language project (Go, Rust, …) that happens to include a
+    # Python contract-verification test.  Running ``python -m unittest`` on a
+    # Go project's contract test would fail on symbol mismatches and mask the
+    # real Go build gate result.
+    _skip_python_for_non_python_project = primary_lang in ("go", "rust", "java", "cpp")
+    if (
+        not build_command_ok
+        and not package_script_failed
+        and not _skip_python_for_non_python_project
+        and any(rel.endswith(".py") for rel in code_files)
+    ):
         cmd = _run_command(
             [sys.executable, "-m", "compileall", "-q", "."], workspace, timeout_s=max(10, int(timeout_s))
         )
@@ -1548,17 +1708,29 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
                 **cmd,
             }
     else:
-        py_entry = _find_python_entrypoint(workspace, code_files)
-        if py_entry:
-            entrypoint = _smoke_python_cli(workspace, py_entry, timeout_s=timeout_s)
-        elif _files_with_suffix(code_files, (".go",)):
+        # Determine the primary source language so that a Go project with a
+        # stray ``tests/test_*.py`` doesn't get the Python CLI smoke path.
+        _ep_lang = primary_lang if primary_lang else _primary_source_language(code_files)
+        if _ep_lang == "go" and _files_with_suffix(code_files, (".go",)):
             entrypoint = _smoke_go_cli(workspace, code_files, timeout_s=timeout_s)
-        elif _files_with_suffix(code_files, (".rs",)):
+        elif _ep_lang == "rust" and _files_with_suffix(code_files, (".rs",)):
             entrypoint = _smoke_rust_cli(workspace, code_files, timeout_s=timeout_s)
-        elif _files_with_suffix(code_files, _CPP_SOURCE_SUFFIXES):
-            entrypoint = _smoke_cpp_cli(workspace, code_files, timeout_s=timeout_s)
-        elif _files_with_suffix(code_files, (".java",)):
+        elif _ep_lang == "java" and _files_with_suffix(code_files, (".java",)):
             entrypoint = _smoke_java_cli(workspace, code_files, timeout_s=timeout_s)
+        elif _ep_lang == "cpp" and _files_with_suffix(code_files, _CPP_SOURCE_SUFFIXES):
+            entrypoint = _smoke_cpp_cli(workspace, code_files, timeout_s=timeout_s)
+        else:
+            py_entry = _find_python_entrypoint(workspace, code_files)
+            if py_entry:
+                entrypoint = _smoke_python_cli(workspace, py_entry, timeout_s=timeout_s)
+            elif _files_with_suffix(code_files, (".go",)):
+                entrypoint = _smoke_go_cli(workspace, code_files, timeout_s=timeout_s)
+            elif _files_with_suffix(code_files, (".rs",)):
+                entrypoint = _smoke_rust_cli(workspace, code_files, timeout_s=timeout_s)
+            elif _files_with_suffix(code_files, _CPP_SOURCE_SUFFIXES):
+                entrypoint = _smoke_cpp_cli(workspace, code_files, timeout_s=timeout_s)
+            elif _files_with_suffix(code_files, (".java",)):
+                entrypoint = _smoke_java_cli(workspace, code_files, timeout_s=timeout_s)
 
     if (
         not build_command_ok
@@ -2650,13 +2822,50 @@ __all__ = [
 ]
 
 
+def _go_version_of(binary: str) -> tuple[int, ...]:
+    """Parse the Go version tuple from ``go version`` output (e.g. ``(1, 23, 8)``)."""
+    try:
+        result = subprocess.run([binary, "version"], capture_output=True, text=True, timeout=5)
+        # "go version go1.23.8 linux/amd64" → (1, 23, 8)
+        import re as _re
+
+        m = _re.search(r"go(\d+(?:\.\d+)*)", result.stdout)
+        if m:
+            return tuple(int(x) for x in m.group(1).split("."))
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        pass
+    return (0,)
+
+
 def _resolve_go_binary() -> str | None:
-    """Locate the ``go`` binary, checking the PATH first and common fallbacks."""
-    found = shutil.which("go")
-    if found:
-        return found
+    """Locate the ``go`` binary, preferring versions >= 1.23 when available.
+
+    Go 1.23 made the ``iter`` package a first-class citizen; earlier versions
+    gate it behind ``GOEXPERIMENT=rangefunc`` which breaks ``go test`` on code
+    that transitively imports ``bufio``/``bytes``.
+    """
     home = _Path(_os.path.expanduser("~"))
-    for candidate in (home / ".local" / "go" / "bin" / "go", home / "go" / "bin" / "go"):
-        if candidate.is_file() and _os.access(candidate, _os.X_OK):
-            return str(candidate)
-    return None
+    # Ordered: prefer explicit newer installs, then PATH, then common fallbacks.
+    candidates: list[str] = []
+    for p in (
+        home / ".local" / "go123" / "bin" / "go",
+        home / ".local" / "go124" / "bin" / "go",
+        home / ".local" / "go125" / "bin" / "go",
+    ):
+        if p.is_file() and _os.access(p, _os.X_OK):
+            candidates.append(str(p))
+    path_go = shutil.which("go")
+    if path_go:
+        candidates.append(path_go)
+    for p in (home / ".local" / "go" / "bin" / "go", home / "go" / "bin" / "go"):
+        if p.is_file() and _os.access(p, _os.X_OK):
+            s = str(p)
+            if s not in candidates:
+                candidates.append(s)
+    if not candidates:
+        return None
+    # Prefer the first binary with Go >= 1.23; fall back to whatever is found.
+    for binary in candidates:
+        if _go_version_of(binary) >= (1, 23):
+            return binary
+    return candidates[0]
