@@ -29,6 +29,7 @@ const DEFAULT_BACKEND_TOKEN = "polaris-local-dev";
 const BACKEND_PROBE_TIMEOUT_MS = 2000;
 const STORED_BASE_URL_KEY = "polaris.baseUrl";
 const STORED_TOKEN_KEY = "polaris.token";
+const INSTANCE_STORAGE_PREFIX = "polaris.instances";
 
 let cachedInfo: BackendInfo | null = null;
 
@@ -40,13 +41,51 @@ function getDefaultBackendUrl(): string {
 }
 
 function getEnvBackendUrl(): string | null {
-  const url = import.meta.env.VITE_BACKEND_URL;
+  const url = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_POLARIS_BACKEND_URL;
   return typeof url === "string" && url.trim() ? url.trim().replace(/\/+$/, "") : null;
 }
 
 function getEnvBackendToken(): string | null {
-  const token = import.meta.env.VITE_BACKEND_TOKEN;
+  const token = import.meta.env.VITE_BACKEND_TOKEN || import.meta.env.VITE_POLARIS_BACKEND_TOKEN;
   return typeof token === "string" && token.trim() ? token.trim() : null;
+}
+
+function getQueryParam(names: string[]): string | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  for (const name of names) {
+    const value = params.get(name);
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function normalizeBackendUrl(value: string | null): string | null {
+  return value && value.trim() ? value.trim().replace(/\/+$/, "") : null;
+}
+
+function getUrlBackendUrl(): string | null {
+  return normalizeBackendUrl(getQueryParam(["backend", "backendUrl", "polarisBackend"]));
+}
+
+function getUrlBackendToken(): string | null {
+  return getQueryParam(["token", "backendToken", "polarisToken"]);
+}
+
+function getInstanceId(): string {
+  const raw =
+    getQueryParam(["instance", "instanceId", "polarisInstance"]) ||
+    (typeof import.meta.env.VITE_POLARIS_INSTANCE_ID === "string"
+      ? import.meta.env.VITE_POLARIS_INSTANCE_ID
+      : "");
+  return String(raw || "").trim().replace(/[^a-zA-Z0-9_.:-]/g, "-").slice(0, 120);
+}
+
+function storageKey(key: string): string {
+  const instanceId = getInstanceId();
+  return instanceId ? `${INSTANCE_STORAGE_PREFIX}.${instanceId}.${key}` : key;
 }
 
 const isViteWebDevMode =
@@ -67,11 +106,17 @@ function rememberRecoveredBackend(info: BackendInfo): void {
   if (!isViteWebDevMode || !info.baseUrl) {
     return;
   }
+  const baseUrlKey = storageKey(STORED_BASE_URL_KEY);
+  const tokenKey = storageKey(STORED_TOKEN_KEY);
   if (info.baseUrl === getDefaultBackendUrl()) {
-    localStorage.removeItem(STORED_BASE_URL_KEY);
+    localStorage.removeItem(baseUrlKey);
+  } else {
+    localStorage.setItem(baseUrlKey, info.baseUrl);
   }
   if (info.token === DEFAULT_BACKEND_TOKEN) {
-    localStorage.removeItem(STORED_TOKEN_KEY);
+    localStorage.removeItem(tokenKey);
+  } else if (info.token) {
+    localStorage.setItem(tokenKey, info.token);
   }
 }
 
@@ -134,13 +179,14 @@ export async function getBackendInfo(options: BackendInfoOptions = {}): Promise<
   }
   if (!window.polaris?.getBackendInfo) {
     const devBackend = (window as WindowWithDevBackend).__DEV_BACKEND__;
-    const storedBase = options.ignoreStoredBase ? null : localStorage.getItem(STORED_BASE_URL_KEY);
-    const explicitBase = devBackend?.baseUrl || getEnvBackendUrl() || storedBase;
+    const storedBase = options.ignoreStoredBase ? null : localStorage.getItem(storageKey(STORED_BASE_URL_KEY));
+    const explicitBase = getUrlBackendUrl() || devBackend?.baseUrl || getEnvBackendUrl() || storedBase;
     const fallbackBase = explicitBase || getDefaultBackendUrl();
     const fallbackToken =
+      getUrlBackendToken() ||
       devBackend?.token ||
       getEnvBackendToken() ||
-      (options.ignoreStoredToken ? null : localStorage.getItem(STORED_TOKEN_KEY)) ||
+      (options.ignoreStoredToken ? null : localStorage.getItem(storageKey(STORED_TOKEN_KEY))) ||
       (isViteWebDevMode ? DEFAULT_BACKEND_TOKEN : null);
 
     // Warn if the default dev-only token is being used in Vite web mode.

@@ -213,6 +213,20 @@ def _tuple_from_payload(value: Any) -> tuple[str, ...]:
     return tuple(_string_list(value))
 
 
+def _normalize_task_token(token: str) -> str:
+    """Normalize task identifiers for comparison.
+
+    Strips common prefixes (``TASK-``, ``task-``, ``task_``) so that
+    ``"TASK-1"`` and ``"1"`` compare equal.  This bridges the PM taskboard
+    (numeric IDs) and CE blueprints (``TASK-N`` prefixed IDs).
+    """
+    import re
+
+    t = str(token or "").strip().lower()
+    t = re.sub(r"^(task[-_])+", "", t)
+    return t
+
+
 def _latest_blueprint_for_task(
     persistence: BlueprintPersistence,
     *,
@@ -220,11 +234,14 @@ def _latest_blueprint_for_task(
     run_id: str | None,
 ) -> tuple[str, dict[str, Any]] | None:
     matches: list[tuple[str, str, dict[str, Any]]] = []
+    normalized_query = _normalize_task_token(task_id)
     for blueprint_id in persistence.list_all():
         payload = persistence.load(blueprint_id)
         if not isinstance(payload, dict):
             continue
-        if str(payload.get("task_id") or "").strip() != task_id:
+        stored_task_id = str(payload.get("task_id") or "").strip()
+        # Exact match first, then normalized match for TASK-N ↔ N bridging.
+        if stored_task_id != task_id and _normalize_task_token(stored_task_id) != normalized_query:
             continue
         payload_run_id = str(payload.get("run_id") or "").strip()
         if run_id and payload_run_id != run_id:

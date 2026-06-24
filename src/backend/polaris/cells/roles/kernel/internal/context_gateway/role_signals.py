@@ -164,16 +164,28 @@ class TaskHistorySignal:
 
 
 class BlueprintOverviewSignal:
-    """ChiefEngineer 专属：蓝图 / 技术架构概览。
+    """ChiefEngineer + Director：蓝图 / 技术架构概览。
 
-    role-bound（仅 chief_engineer）+ flag-gated（``include_blueprint_overview``，默认 False）。
+    role-bound（chief_engineer 或 director）+ flag-gated（``include_blueprint_overview``，
+    Director 默认 True，其他角色默认 False）。
     数据经 ``get_blueprint_overview`` 访问器获取（缺省 None → 不注入）。priority 在 seed 之后。
+
+    Director 必须接收 CE 蓝图才能生成跨文件一致的代码。没有蓝图指导，Director 在每个文件
+    里重新发明类型定义，导致 Mood/Spell 等类型重复声明。
     """
 
     id = "blueprint_overview"
 
+    # Director defaults to True because the Director needs the CE blueprint to
+    # generate cross-file coherent code. Without it, the Director re-invents
+    # type definitions in each file, causing redeclaration compile errors.
+    _DEFAULT_BY_ROLE = {"director": True, "chief_engineer": False}
+
     def applies_to(self, ctx: SignalBuildContext) -> bool:
-        return ctx.role == "chief_engineer" and bool(ctx.policy_flags.get("include_blueprint_overview", False))
+        if ctx.role not in ("chief_engineer", "director"):
+            return False
+        default = self._DEFAULT_BY_ROLE.get(ctx.role, False)
+        return bool(ctx.policy_flags.get("include_blueprint_overview", default))
 
     def priority(self, ctx: SignalBuildContext) -> int:
         return 10

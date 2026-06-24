@@ -12,6 +12,7 @@ describe('getBackendInfo web fallback', () => {
   beforeEach(() => {
     vi.resetModules();
     localStorage.clear();
+    window.history.pushState({}, '', '/');
     delete (window as TestWindow).__DEV_BACKEND__;
     delete (window as TestWindow).polaris;
   });
@@ -58,6 +59,36 @@ describe('getBackendInfo web fallback', () => {
     await expect(getBackendInfo()).resolves.toMatchObject({
       baseUrl: 'http://127.0.0.1:49988',
       token: 'custom-token',
+    });
+  });
+
+  it('honors instance URL backend overrides before persisted global settings', async () => {
+    localStorage.setItem('polaris.baseUrl', 'http://127.0.0.1:49988');
+    localStorage.setItem('polaris.token', 'custom-token');
+    window.history.pushState(
+      {},
+      '',
+      '/?instance=bench-l1-01&backend=http://127.0.0.1:50017&token=instance-token',
+    );
+    const { getBackendInfo } = await import('./api');
+
+    await expect(getBackendInfo()).resolves.toMatchObject({
+      baseUrl: 'http://127.0.0.1:50017',
+      token: 'instance-token',
+    });
+  });
+
+  it('uses instance-scoped persisted backend overrides when instance is present', async () => {
+    localStorage.setItem('polaris.baseUrl', 'http://127.0.0.1:49988');
+    localStorage.setItem('polaris.token', 'global-token');
+    localStorage.setItem('polaris.instances.alpha.polaris.baseUrl', 'http://127.0.0.1:50021');
+    localStorage.setItem('polaris.instances.alpha.polaris.token', 'alpha-token');
+    window.history.pushState({}, '', '/?instance=alpha');
+    const { getBackendInfo } = await import('./api');
+
+    await expect(getBackendInfo()).resolves.toMatchObject({
+      baseUrl: 'http://127.0.0.1:50021',
+      token: 'alpha-token',
     });
   });
 
@@ -118,6 +149,7 @@ describe('apiFetch auth token discovery', () => {
   beforeEach(() => {
     vi.resetModules();
     localStorage.clear();
+    window.history.pushState({}, '', '/');
     delete (window as TestWindow).__DEV_BACKEND__;
     delete (window as TestWindow).polaris;
   });

@@ -1413,6 +1413,79 @@ def _push_bench_workspace_to_backend(
     return False
 
 
+def _register_bench_project_instance(
+    *,
+    bench_session_id: str,
+    project_id: str,
+    project_title: str,
+    level: int,
+    bench_workspace: Path,
+    project_workspace: str,
+    backend_url: str,
+    backend_token: str,
+) -> None:
+    """Register bench project activity in the platform instance registry.
+
+    This is discovery metadata for the Launcher only. factory_bench remains an
+    internal stress harness and must not become a production fact source.
+    """
+    try:
+        from polaris.cells.instances.internal.service import (
+            InstanceRecord,
+            InstanceRegistry,
+            default_polaris_root,
+            sanitize_instance_id,
+        )
+    except (ImportError, RuntimeError):
+        return
+
+    parsed_backend = urlparse(backend_url or "")
+    parsed_frontend = urlparse(os.environ.get("FACTORY_BENCH_FRONTEND_URL", ""))
+    backend_port = int(parsed_backend.port or 0)
+    frontend_port = int(parsed_frontend.port or 0)
+    if backend_port <= 0:
+        return
+
+    instance_id = sanitize_instance_id(
+        f"{bench_session_id}-{project_id}" if bench_session_id else f"factory-bench-{project_id}"
+    )
+    record = InstanceRecord(
+        instance_id=instance_id,
+        name=f"{project_id} {project_title}".strip(),
+        kind="bench_project",
+        polaris_root=str(default_polaris_root()),
+        workspace=project_workspace,
+        runtime_root=str((Path(project_workspace) / "runtime").resolve()),
+        backend_port=backend_port,
+        frontend_port=frontend_port,
+        backend_url=backend_url,
+        frontend_url=os.environ.get("FACTORY_BENCH_FRONTEND_URL", ""),
+        token=backend_token,
+        backend_reload=False,
+        frontend_vite=bool(frontend_port),
+        start_frontend=bool(frontend_port),
+        status="running",
+        backend_pid=os.getpid(),
+        frontend_pid=None,
+        bench={
+            "session_id": bench_session_id,
+            "project_id": project_id,
+            "level": level,
+            "bench_workspace": str(bench_workspace),
+            "registration_mode": "factory_bench_runner",
+        },
+        metadata={
+            "registered_by": "factory_bench",
+            "internal_test_only": True,
+            "backend_binding": "shared_backend_workspace_switch",
+        },
+    )
+    try:
+        InstanceRegistry().save(record)
+    except (OSError, RuntimeError, ValueError):
+        return
+
+
 def _bench_gate(gate: str, ok: bool, detail: str) -> dict[str, Any]:
     return {"gate": gate, "ok": bool(ok), "detail": detail}
 
@@ -2606,6 +2679,16 @@ def main() -> int:
             backend_url=backend_url,
             workspace=project_workspace,
             token=backend_token,
+        )
+        _register_bench_project_instance(
+            bench_session_id=bench_session_id,
+            project_id=str(pid),
+            project_title=project_title,
+            level=project_level,
+            bench_workspace=base,
+            project_workspace=project_workspace,
+            backend_url=backend_url,
+            backend_token=backend_token,
         )
         _emit_bench_event(
             workspace=base,

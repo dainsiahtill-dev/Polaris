@@ -33,6 +33,7 @@ import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
 import { RuntimeDiagnosticsWorkspace } from '@/app/components/RuntimeDiagnosticsWorkspace';
 import { ContextOSWorkspace } from '@/app/components/contextos';
 import { WorkspaceFilesPage } from '@/app/components/workspace-files/WorkspaceFilesPage';
+import { LauncherWorkspace } from '@/app/launcher/LauncherWorkspace';
 import { openPath, pickWorkspace } from '@/api';
 import { runtimeService } from '@/services';
 import {
@@ -1556,6 +1557,17 @@ export default function App(): React.ReactElement {
     window.addEventListener('unhandledrejection', handler);
     return () => window.removeEventListener('unhandledrejection', handler);
   }, []);
+
+  const launcherMode =
+    window.location.pathname === '/launcher' ||
+    new URLSearchParams(window.location.search).get('launcher') === '1';
+  if (launcherMode) {
+    return (
+      <RuntimeTransportProvider autoConnect>
+        <LauncherWorkspace />
+      </RuntimeTransportProvider>
+    );
+  }
 
   return (
     <RuntimeTransportProvider autoConnect>
