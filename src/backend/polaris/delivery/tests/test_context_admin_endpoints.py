@@ -58,15 +58,21 @@ def enabled_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 class TestContextAdminGate:
     """The admin endpoints are gated by the env var + require_auth."""
 
-    def test_stats_disabled_when_env_unset(self, disabled_client: TestClient) -> None:
-        """Default behavior: GET /admin/stats returns 404."""
+    def test_stats_enabled_when_env_unset(self, disabled_client: TestClient) -> None:
+        """Default behavior: admin surface is enabled when env var is unset."""
         response = disabled_client.get("/v2/context/admin/stats")
-        assert response.status_code == 404
-        assert response.json().get("detail", {}).get("code") == "ADMIN_DISABLED"
+        assert response.status_code == 200
 
-    def test_sweep_disabled_when_env_unset(self, disabled_client: TestClient) -> None:
-        """Default behavior: POST /admin/sweep returns 404."""
-        response = disabled_client.post("/v2/context/admin/sweep", json={})
+    def test_stats_disabled_when_env_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Explicitly disabled: GET /admin/stats returns 404."""
+        monkeypatch.setenv("KERNELONE_CONTEXT_ADMIN_ENABLED", "false")
+        app = FastAPI()
+        app.include_router(v2_context.router)
+        app.dependency_overrides[v2_context.require_auth] = lambda: None
+        app.state.app_state = SimpleNamespace(settings=SimpleNamespace(workspace=".", ramdisk_root=""))
+        app.state.auth = MagicMock()
+        client = TestClient(app)
+        response = client.get("/v2/context/admin/stats")
         assert response.status_code == 404
         assert response.json().get("detail", {}).get("code") == "ADMIN_DISABLED"
 

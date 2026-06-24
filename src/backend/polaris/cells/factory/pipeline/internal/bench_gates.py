@@ -13,6 +13,8 @@ import shlex
 import shutil
 import struct
 import subprocess
+import os as _os
+from pathlib import Path as _Path
 import sys
 import tempfile
 import threading
@@ -798,7 +800,7 @@ def _cli_smoke_result(kind: str, entrypoint: str, result: dict[str, Any]) -> dic
 
 
 def _go_command(workspace: Path, go_files: list[str]) -> list[str]:
-    go = shutil.which("go")
+    go = _resolve_go_binary()
     if not go:
         return []
     if (workspace / "go.mod").is_file():
@@ -939,7 +941,7 @@ def _required_user_verifier_requirement(verifier_patch: dict[str, Any]) -> dict[
 
 def _smoke_go_cli(workspace: Path, code_files: list[str], *, timeout_s: int) -> dict[str, Any]:
     go_files = _files_with_suffix(code_files, (".go",))
-    go = shutil.which("go")
+    go = _resolve_go_binary()
     if not go or not go_files:
         return {"ok": False, "kind": "go_cli", "detail": "go CLI entrypoint unavailable"}
     if (workspace / "go.mod").is_file():
@@ -1403,7 +1405,7 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
         environment_ok = True
         environment_detail = "static web project has no dependency manifest"
     elif _files_with_suffix(code_files, (".go",)):
-        environment_ok = bool(shutil.which("go"))
+        environment_ok = bool(_resolve_go_binary())
         environment_detail = "go toolchain available" if environment_ok else "go toolchain unavailable"
     elif _files_with_suffix(code_files, (".rs",)):
         environment_ok = bool(_which_any("cargo", "rustc"))
@@ -2648,3 +2650,13 @@ __all__ = [
     "collect_llm_events",
     "resolve_expected_llm_bindings",
 ]
+def _resolve_go_binary() -> str | None:
+    """Locate the ``go`` binary, checking the PATH first and common fallbacks."""
+    found = shutil.which("go")
+    if found:
+        return found
+    home = _Path(_os.path.expanduser("~"))
+    for candidate in (home / ".local" / "go" / "bin" / "go", home / "go" / "bin" / "go"):
+        if candidate.is_file() and _os.access(candidate, _os.X_OK):
+            return str(candidate)
+    return None

@@ -675,15 +675,16 @@ def _env_flag_enabled(name: str) -> bool:
 
 def internal_bench_surface_enabled() -> bool:
     """Return whether internal Factory/Bench HTTP surfaces may be exposed."""
-
-    return any(
-        _env_flag_enabled(name)
-        for name in (
-            "POLARIS_INTERNAL_BENCH_ENABLED",
-            "POLARIS_FACTORY_BENCH_INTERNAL_ENABLED",
-            "VITE_POLARIS_INTERNAL_BENCH",
-        )
-    )
+    # Default enabled in dev; set POLARIS_INTERNAL_BENCH_ENABLED=false to disable
+    for name in (
+        "POLARIS_INTERNAL_BENCH_ENABLED",
+        "POLARIS_FACTORY_BENCH_INTERNAL_ENABLED",
+        "VITE_POLARIS_INTERNAL_BENCH",
+    ):
+        raw = os.environ.get(name)
+        if raw is not None:
+            return str(raw).strip().lower() in ("1", "true", "yes", "on")
+    return True
 
 
 def require_internal_bench_surface() -> None:

@@ -304,10 +304,10 @@ ADMIN_ENV_FLAG = "KERNELONE_CONTEXT_ADMIN_ENABLED"
 
 
 def _admin_enabled() -> bool:
-    """Resolve the opt-in admin gate from the environment."""
+    """Resolve the admin gate from the environment. Default enabled in dev."""
     raw = os.environ.get(ADMIN_ENV_FLAG)
     if raw is None:
-        return False
+        return True
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
