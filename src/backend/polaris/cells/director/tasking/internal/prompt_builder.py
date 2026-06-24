@@ -345,7 +345,13 @@ class PromptBuilder:
         arch_section = "\n".join(f"- {h}" for h in arch_hints) if arch_hints else "- 无全局架构上下文"
         contract_context = self._contract_context_section(task)
 
+        # Language-specific expert guidance based on target file extensions
+        from .language_guidance import build_language_section
+
+        language_section = build_language_section(target_files, str(getattr(task, "workspace", "") or ""))
+
         prompt = f"""You are a software developer implementing a task.
+{language_section}
 
 Task: {task_subject}
 Description: {task_description}

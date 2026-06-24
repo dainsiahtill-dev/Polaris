@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -145,12 +144,12 @@ def test_workspace_acl_missing_hash_returns_404_without_leaking(tmp_path) -> Non
     assert detail.get("code") == "CONTEXT_NOT_FOUND", detail
 
 
-def test_legacy_runtime_context_fallback_reads_exact_hash(tmp_path) -> None:
-    """Legacy Polaris runtime contexts remain viewable by exact hash.
+def test_legacy_runtime_context_is_not_read(tmp_path) -> None:
+    """Old Polaris runtime context locations are no longer readable.
 
-    Factory/bench workers can leave context files under the old Polaris
-    runtime projects root.  The active workspace lookup should remain first,
-    but a missing active file may fall back to the bounded legacy candidate.
+    ContextOS now treats the current KernelOne ``runtime/contexts`` tree as the
+    only snapshot source. A hash that exists only in an old directory must 404
+    instead of silently reviving stale state.
     """
     workspace_a = tmp_path / "workspaceA"
     workspace_a.mkdir()
@@ -171,18 +170,12 @@ def test_legacy_runtime_context_fallback_reads_exact_hash(tmp_path) -> None:
     )
     client = _build_client(str(workspace_a))
 
-    with patch(
-        "polaris.delivery.http.v2.context._legacy_context_file_candidates",
-        return_value=[legacy_file],
-    ):
-        response = client.get(f"/v2/context/{hash_key}")
+    response = client.get(f"/v2/context/{hash_key}")
 
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["hash"] == hash_key
-    assert body["trace_id"] == "trace-legacy"
-    assert body["messages"] == [{"role": "user", "content": "legacy context"}]
-    assert body["storage_source"] == "legacy_runtime"
+    assert response.status_code == 404, response.text
+    detail = response.json().get("detail", {})
+    assert detail.get("code") == "CONTEXT_NOT_FOUND", detail
+    assert legacy_file.is_file()
 
 
 # ----------------------------------------------------------------------------
@@ -201,11 +194,11 @@ def test_validator_runs_before_layout(tmp_path) -> None:
     """
     client = _build_client(str(tmp_path))
 
-    def _explode(_self: Any, _rel: str) -> None:
+    def _explode(_workspace: str) -> None:
         raise ValueError("simulated layout explosion")
 
     with patch(
-        "polaris.delivery.http.v2.context.StorageLayout.resolve_artifact_path",
+        "polaris.delivery.http.v2.context.resolve_storage_roots",
         _explode,
     ):
         response = client.get("/v2/context/ZZZZZZZZZZZZZZZZZZZZZZZZ")

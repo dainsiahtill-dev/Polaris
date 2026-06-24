@@ -172,6 +172,68 @@ def test_start_instance_auto_allocates_free_ports_without_claiming_busy_ports(
     assert calls[1]["command"][calls[1]["command"].index("--port") + 1] == "60022"
 
 
+def test_start_instance_restarts_alive_record_when_workspace_changes(tmp_path: Path, monkeypatch: Any) -> None:
+    root = _make_polaris_root(tmp_path)
+    calls: list[dict[str, Any]] = []
+    terminated: list[int] = []
+
+    class FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+        calls.append({"command": command, **kwargs})
+        return FakeProcess(65000 + len(calls))
+
+    def fake_allocate_port(start: int) -> int:
+        if start == instance_service.DEFAULT_BACKEND_PORT:
+            return 60101 + len(calls)
+        if start == instance_service.DEFAULT_FRONTEND_PORT:
+            return 60201 + len(calls)
+        raise AssertionError(f"unexpected allocation start: {start}")
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(instance_service, "allocate_port", fake_allocate_port)
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
+    monkeypatch.setattr(
+        InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: terminated.append(int(pid or 0)))
+    )
+
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    first = supervisor.start_instance(
+        {
+            "instance_id": "bench-l1-05",
+            "kind": "bench_project",
+            "polaris_root": str(root),
+            "workspace": str(tmp_path / "bench-r01" / "L1-05"),
+            "backend_port": None,
+            "frontend_port": None,
+            "start_frontend": True,
+            "metadata": {"backend_binding": "isolated_backend_instance"},
+        }
+    )
+
+    second = supervisor.start_instance(
+        {
+            "instance_id": "bench-l1-05",
+            "kind": "bench_project",
+            "polaris_root": str(root),
+            "workspace": str(tmp_path / "bench-r02" / "L1-05"),
+            "backend_port": None,
+            "frontend_port": None,
+            "start_frontend": True,
+            "metadata": {"backend_binding": "isolated_backend_instance"},
+        }
+    )
+
+    assert first["workspace"] != second["workspace"]
+    assert second["workspace"] == str((tmp_path / "bench-r02" / "L1-05").resolve())
+    assert terminated == [first["frontend_pid"], first["backend_pid"]]
+    assert len(calls) == 4
+
+
 def test_instance_update_event_redacts_token(tmp_path: Path, monkeypatch: Any) -> None:
     published: list[dict[str, Any]] = []
 

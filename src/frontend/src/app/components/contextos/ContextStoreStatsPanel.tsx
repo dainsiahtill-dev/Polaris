@@ -243,8 +243,7 @@ function ReadyView({ data, sweepPending, sweepError, onTriggerSweep, errorMessag
     : null;
   const enabled = data.config.enabled !== false;
   const primaryStore = data.primary_store ?? null;
-  const legacyStore = data.legacy_store ?? null;
-  const hasStoreBreakdown = Boolean(primaryStore || legacyStore);
+  const hasStoreBreakdown = Boolean(primaryStore);
 
   const filesRatio = useMemo(() => {
     if (!data.config.max_files || data.config.max_files <= 0) return null;
@@ -300,15 +299,9 @@ function ReadyView({ data, sweepPending, sweepError, onTriggerSweep, errorMessag
       {hasStoreBreakdown && (
         <InfoCard title="存储根" entries={[
           {
-            k: 'primary',
+            k: 'current',
             v: primaryStore
               ? `${primaryStore.file_count.toLocaleString()} · ${compactPath(primaryStore.contexts_root)}`
-              : '—',
-          },
-          {
-            k: 'legacy',
-            v: legacyStore
-              ? `${legacyStore.file_count.toLocaleString()} · ${compactPath(legacyStore.contexts_root)}`
               : '—',
           },
         ]} />

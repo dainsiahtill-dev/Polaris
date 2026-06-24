@@ -888,9 +888,9 @@ class TestContextViewerRouter:
         app.state.app_state = type("NS", (), {"settings": type("S", (), {"workspace": ".", "ramdisk_root": ""})})()
         return TestClient(app)
 
-    def test_stats_merge_counts_legacy_nested_factory_contexts(self, tmp_path) -> None:
-        """Stats must count legacy nested factory context files that refs can read."""
-        from polaris.delivery.http.v2.context import _merge_legacy_context_stats
+    def test_stats_response_ignores_nested_legacy_contexts(self, tmp_path) -> None:
+        """Stats must report only the current KernelOne context store."""
+        from polaris.delivery.http.v2.context import _context_stats_response
 
         project_root = tmp_path / "l1-01-3e17e00683ce"
         active_contexts_root = project_root / "runtime" / "contexts"
@@ -901,7 +901,7 @@ class TestContextViewerRouter:
         legacy_file = legacy_contexts_dir / "ab5ec27cf124c2f13f936704"
         legacy_file.write_text('{"messages":[]}', encoding="utf-8")
 
-        merged = _merge_legacy_context_stats(
+        response = _context_stats_response(
             {
                 "workspace": str(tmp_path),
                 "contexts_root": str(active_contexts_root),
@@ -911,25 +911,25 @@ class TestContextViewerRouter:
                 "newest_mtime": None,
                 "config": {},
                 "last_sweep_at": 0.0,
-            }
+            },
+            last_sweep_report=None,
         )
 
-        assert merged["file_count"] == 1
-        assert merged["total_bytes"] == legacy_file.stat().st_size
-        assert merged["oldest_mtime"] is not None
-        assert merged["newest_mtime"] is not None
-        assert merged["primary_store"] == {
+        assert response["file_count"] == 0
+        assert response["total_bytes"] == 0
+        assert response["oldest_mtime"] is None
+        assert response["newest_mtime"] is None
+        assert response["primary_store"] == {
             "contexts_root": str(active_contexts_root),
             "file_count": 0,
             "total_bytes": 0,
             "oldest_mtime": None,
             "newest_mtime": None,
         }
-        assert merged["legacy_store"]["file_count"] == 1
-        assert merged["legacy_store"]["total_bytes"] == legacy_file.stat().st_size
-        assert merged["legacy_store"]["contexts_root"] == str(legacy_contexts_dir.parent)
-        assert merged["config"]["legacy_file_count"] == 1
-        assert str(legacy_contexts_dir.parent) == merged["config"]["legacy_contexts_root"]
+        assert "legacy_store" not in response
+        assert "legacy_file_count" not in response["config"]
+        assert "legacy_contexts_root" not in response["config"]
+        assert legacy_file.is_file()
 
     def test_invalid_hash_returns_400(self, client) -> None:
         """Non-hex or wrong-length hash returns 400."""

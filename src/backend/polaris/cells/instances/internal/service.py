@@ -275,7 +275,15 @@ class InstanceSupervisor:
         record = self._build_record(request)
         existing = self.registry.get(record.instance_id)
         if existing and is_process_alive(existing.backend_pid):
-            return self._with_health(existing).to_dict()
+            if self._record_matches_start_request(existing, record):
+                return self._with_health(existing).to_dict()
+            self._terminate_pid(existing.frontend_pid)
+            self._terminate_pid(existing.backend_pid)
+            existing.frontend_pid = None
+            existing.backend_pid = None
+            existing.status = "stopped"
+            existing.last_stopped_at = utc_timestamp()
+            self.registry.save(existing)
 
         instance_dir = self._instance_dir(record.instance_id)
         log_dir = ensure_absolute_dir(instance_dir / "logs")
@@ -287,6 +295,18 @@ class InstanceSupervisor:
         record.last_started_at = utc_timestamp()
         self.registry.save(record)
         return self._with_health(record).to_dict()
+
+    @staticmethod
+    def _record_matches_start_request(existing: InstanceRecord, requested: InstanceRecord) -> bool:
+        existing_binding = str(existing.metadata.get("backend_binding") or "")
+        requested_binding = str(requested.metadata.get("backend_binding") or "")
+        return (
+            existing.kind == requested.kind
+            and Path(existing.polaris_root).resolve() == Path(requested.polaris_root).resolve()
+            and Path(existing.workspace).resolve() == Path(requested.workspace).resolve()
+            and Path(existing.runtime_root).resolve() == Path(requested.runtime_root).resolve()
+            and existing_binding == requested_binding
+        )
 
     def stop_instance(self, instance_id: str) -> dict[str, Any]:
         record = self._require_record(instance_id)
@@ -462,7 +482,9 @@ class InstanceSupervisor:
         if backend_alive and record.backend_pid in {os.getpid(), os.getppid()}:
             backend_http_ok = True
         else:
-            backend_http_ok = self._http_ok(f"{record.backend_url}/health", record.token) if record.backend_url else False
+            backend_http_ok = (
+                self._http_ok(f"{record.backend_url}/health", record.token) if record.backend_url else False
+            )
         frontend_pid_alive = is_process_alive(record.frontend_pid)
         frontend_http_ok = self._http_ok(record.frontend_url, record.token) if record.frontend_url else False
         if record.start_frontend:
