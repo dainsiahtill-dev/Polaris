@@ -575,10 +575,16 @@ class DirectorOrchestrator:
         description = str(task.get("description") or task.get("goal") or subject).strip()
         metadata_raw = task.get("metadata")
         metadata = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
+        # D-08/D-14: Normalize pm_task_id to canonical int format when possible.
+        raw_pm_task_id = str(metadata.get("pm_task_id") or task_id).strip()
+        try:
+            normalized_pm_id = str(DirectorOrchestrator._normalize_task_id(raw_pm_task_id))
+        except ValueError:
+            normalized_pm_id = raw_pm_task_id
         metadata.update(
             {
                 "task_id": task_id,
-                "pm_task_id": str(metadata.get("pm_task_id") or task_id).strip(),
+                "pm_task_id": normalized_pm_id,
                 "subject": subject,
                 "goal": description,
                 "source": "application.director_orchestrator",
