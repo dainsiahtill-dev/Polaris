@@ -277,12 +277,38 @@ describe('ContextViewerModal', () => {
           detail: {
             code: 'CONTEXT_NOT_FOUND',
             message: 'Context snapshot not found for hash abc',
+            details: {
+              workspace: '/tmp/factory-bench-L1-08-r07/L1-08',
+              searched_paths: [
+                {
+                  source: 'active_runtime_root',
+                  context_path: '/runtime/.polaris/projects/l1-08/runtime/contexts/ab/abc',
+                },
+                {
+                  source: 'kernelone_system_cache',
+                  context_path: '/home/user/.cache/kernelone/.polaris/projects/l1-08/runtime/contexts/ab/abc',
+                },
+              ],
+            },
           },
         }),
       json: async () => ({
         detail: {
           code: 'CONTEXT_NOT_FOUND',
           message: 'Context snapshot not found for hash abc',
+          details: {
+            workspace: '/tmp/factory-bench-L1-08-r07/L1-08',
+            searched_paths: [
+              {
+                source: 'active_runtime_root',
+                context_path: '/runtime/.polaris/projects/l1-08/runtime/contexts/ab/abc',
+              },
+              {
+                source: 'kernelone_system_cache',
+                context_path: '/home/user/.cache/kernelone/.polaris/projects/l1-08/runtime/contexts/ab/abc',
+              },
+            ],
+          },
         },
       }),
     });
@@ -291,6 +317,9 @@ describe('ContextViewerModal', () => {
 
     const missing = await waitFor(() => screen.getByTestId('contextos-viewer-context-missing'));
     expect(missing.textContent).toContain('完整上下文快照不可用');
+    expect(missing.textContent).toContain('workspace: /tmp/factory-bench-L1-08-r07/L1-08');
+    expect(missing.textContent).toContain('已检查 2 个存储位置');
+    expect(missing.textContent).toContain('kernelone_system_cache');
     expect(screen.queryByTestId('contextos-viewer-error')).toBeNull();
     expect(screen.queryByText(/HTTP 404/)).toBeNull();
   });

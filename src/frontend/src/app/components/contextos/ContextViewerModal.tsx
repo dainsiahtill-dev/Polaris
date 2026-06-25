@@ -99,11 +99,22 @@ interface ContextViewerErrorBody {
   detail?: {
     code?: string;
     message?: string;
+    details?: ContextMissingDetails;
   };
   error?: {
     code?: string;
     message?: string;
+    details?: ContextMissingDetails;
   };
+}
+
+interface ContextMissingDetails {
+  context_hash?: string;
+  workspace?: string;
+  searched_paths?: Array<{
+    source?: string;
+    context_path?: string;
+  }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -544,7 +555,7 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
   );
 }
 
-function EmptyState({ reason, testId }: { reason: string; testId?: string }) {
+function EmptyState({ reason, testId, children }: { reason: string; testId?: string; children?: React.ReactNode }) {
   return (
     <div
       className="flex flex-col items-center justify-center gap-2 py-10"
@@ -554,7 +565,39 @@ function EmptyState({ reason, testId }: { reason: string; testId?: string }) {
     >
       <MessageSquare className="h-6 w-6 text-text-dim" aria-hidden="true" />
       <span className="text-sm text-text-muted">{reason}</span>
+      {children}
     </div>
+  );
+}
+
+function ContextMissingState({ details }: { details: ContextMissingDetails | null }) {
+  const searched = Array.isArray(details?.searched_paths) ? details.searched_paths : [];
+  return (
+    <EmptyState
+      reason="完整上下文快照不可用：磁盘中未找到该 hash，可能已被清理或来自旧运行事件"
+      testId="contextos-viewer-context-missing"
+    >
+      {details?.workspace && (
+        <div className="max-w-lg truncate rounded bg-black/20 px-2 py-1 font-mono text-[10px] text-text-dim" title={details.workspace}>
+          workspace: {details.workspace}
+        </div>
+      )}
+      {searched.length > 0 && (
+        <div className="mt-1 w-full max-w-lg space-y-1 rounded border border-white/[0.06] bg-black/20 p-2 text-left">
+          <div className="font-mono text-[10px] text-text-dim">
+            已检查 {searched.length} 个存储位置
+          </div>
+          {searched.slice(0, 3).map((item, index) => (
+            <div key={`${item.source ?? 'source'}-${index}`} className="min-w-0 rounded bg-white/[0.03] px-2 py-1">
+              <div className="font-mono text-[9px] text-accent-secondary">{item.source || 'unknown'}</div>
+              <div className="truncate font-mono text-[9px] text-text-dim" title={item.context_path || ''}>
+                {item.context_path || 'n/a'}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </EmptyState>
   );
 }
 
@@ -601,6 +644,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [contextMissing, setContextMissing] = useState(false);
+  const [contextMissingDetails, setContextMissingDetails] = useState<ContextMissingDetails | null>(null);
   // When the backend returns 403 WORKSPACE_FORBIDDEN we surface a localised
   // "other workspace" empty-state instead of a generic error banner.  The
   // advisory ACL only fires when the caller explicitly names a different
@@ -625,12 +669,14 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
       setLoading(false);
       setError(null);
       setContextMissing(true);
+      setContextMissingDetails(null);
       setWorkspaceForbidden(false);
       return;
     }
     setLoading(true);
     setError(null);
     setContextMissing(false);
+    setContextMissingDetails(null);
     setWorkspaceForbidden(false);
     try {
       const params = new URLSearchParams();
@@ -665,8 +711,10 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
           isContextMissing =
             body?.detail?.code === 'CONTEXT_NOT_FOUND' ||
             body?.error?.code === 'CONTEXT_NOT_FOUND';
+          setContextMissingDetails(body?.detail?.details ?? body?.error?.details ?? null);
         } catch {
           isContextMissing = false;
+          setContextMissingDetails(null);
         }
         if (isContextMissing) {
           setContextMissing(true);
@@ -1007,10 +1055,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
               testId="contextos-viewer-workspace-forbidden"
             />
           ) : contextMissing ? (
-            <EmptyState
-              reason="完整上下文快照不可用：可能尚未落盘、已被清理，或来自旧运行事件"
-              testId="contextos-viewer-context-missing"
-            />
+            <ContextMissingState details={contextMissingDetails} />
           ) : error ? (
             <ErrorState message={error} onRetry={fetchContext} />
           ) : content ? (
