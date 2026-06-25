@@ -515,6 +515,139 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(result.current.processStreamEvents).toHaveLength(0);
   });
 
+  it('drops bench process events that belong to a different workspace', () => {
+    const activeWorkspace = '/tmp/factory-bench-l1-10-r02/L1-10';
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: activeWorkspace, includeInternalBench: true })
+    );
+
+    emitRuntimeMessage({
+      type: 'line',
+      channel: 'event.bench:bench-foreign',
+      text: JSON.stringify({
+        type: 'factory_bench.project.started',
+        actor: 'factory-bench',
+        summary: 'Foreign L1-05 event must not leak',
+        meta: {
+          project_id: 'L1-05',
+          workspace: '/tmp/factory-bench-L1-05-r01/L1-05',
+          project_workspace: '/tmp/factory-bench-L1-05-r01/L1-05',
+        },
+      }),
+    });
+
+    expect(result.current.processStreamEvents).toHaveLength(0);
+
+    emitRuntimeMessage({
+      type: 'line',
+      channel: 'event.bench:bench-active',
+      text: JSON.stringify({
+        type: 'factory_bench.project.started',
+        actor: 'factory-bench',
+        summary: 'Active L1-10 event remains visible',
+        meta: {
+          project_id: 'L1-10',
+          workspace_path: activeWorkspace,
+        },
+      }),
+    });
+
+    expect(result.current.processStreamEvents).toHaveLength(1);
+    expect(result.current.processStreamEvents[0]?.message).toBe('Active L1-10 event remains visible');
+  });
+
+  it('drops dialogue snapshot rows that belong to a different workspace', () => {
+    const activeWorkspace = '/tmp/factory-bench-l1-10-r02/L1-10';
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: activeWorkspace, includeInternalBench: true })
+    );
+
+    emitRuntimeMessage({
+      type: 'snapshot',
+      channel: 'dialogue',
+      lines: [
+        JSON.stringify({
+          event_id: 'dialogue-foreign',
+          speaker: 'Director',
+          text: 'old L1-05 context',
+          meta: {
+            workspace_path: '/tmp/factory-bench-L1-05-r01/L1-05',
+          },
+        }),
+        JSON.stringify({
+          event_id: 'dialogue-active',
+          speaker: 'Director',
+          text: 'active L1-10 context',
+          meta: {
+            workspace: activeWorkspace,
+          },
+        }),
+      ],
+    });
+
+    expect(result.current.dialogueEvents).toHaveLength(1);
+    expect(result.current.dialogueEvents[0]?.eventId).toBe('dialogue-active');
+    expect(result.current.dialogueEvents[0]?.content).toBe('active L1-10 context');
+  });
+
+  it('drops LLM context snapshot refs that belong to a different workspace', () => {
+    const activeWorkspace = '/tmp/factory-bench-l1-10-r02/L1-10';
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: activeWorkspace, includeInternalBench: true })
+    );
+
+    emitRuntimeMessage({
+      type: 'line',
+      channel: 'llm',
+      text: JSON.stringify({
+        schema_version: 2,
+        channel: 'llm',
+        domain: 'llm',
+        workspace: '/tmp/factory-bench-L1-05-r01/L1-05',
+        actor: 'director',
+        raw: {
+          stream_event: 'llm_completed',
+          data: {
+            model: 'qwen3.6-27b',
+            prompt_tokens: 128,
+            completion_tokens: 64,
+            metadata: {
+              context_snapshot_ref: '99d3de73eedeba4206d0dce2',
+            },
+          },
+        },
+      }),
+    });
+
+    expect(result.current.llmStreamEvents).toHaveLength(0);
+
+    emitRuntimeMessage({
+      type: 'line',
+      channel: 'llm',
+      text: JSON.stringify({
+        schema_version: 2,
+        channel: 'llm',
+        domain: 'llm',
+        project_workspace: activeWorkspace,
+        actor: 'director',
+        raw: {
+          stream_event: 'llm_completed',
+          data: {
+            model: 'qwen3.6-27b',
+            prompt_tokens: 128,
+            completion_tokens: 64,
+            metadata: {
+              context_snapshot_ref: 'f0d7634bde21b6fdd3fdfa03',
+            },
+          },
+        },
+      }),
+    });
+
+    expect(result.current.llmStreamEvents).toHaveLength(1);
+    expect(result.current.llmStreamEvents[0]?.meta?.contextSnapshotRef).toBe('f0d7634bde21b6fdd3fdfa03');
+  });
+
   it('parses the canonical journal llm_completed line: real tokens + latency into meta', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace' })

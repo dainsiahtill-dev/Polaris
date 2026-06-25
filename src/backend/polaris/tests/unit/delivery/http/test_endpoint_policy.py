@@ -53,6 +53,8 @@ def test_bootstrap_endpoints_are_loopback_sensitive_not_public() -> None:
 
 def test_factory_control_plane_paths_are_loopback_rate_limit_exempt_only() -> None:
     for path in (
+        "/v2/context/99d3de73eedeba4206d0dce2",
+        "/v2/context/99d3de73eedeba4206d0dce2/final-request",
         "/v2/factory/runs",
         "/v2/factory/runs/factory_123",
         "/v2/factory/runs/factory_123/artifacts",

@@ -21,6 +21,7 @@ _INFRASTRUCTURE_PATHS = frozenset({"/metrics", "/favicon.ico"})
 _LOW_SIGNAL_PATHS = frozenset({"/health", "/metrics", "/favicon.ico"})
 _LOW_SIGNAL_PREFIXES = tuple(f"{path}/" for path in _LOW_SIGNAL_PATHS)
 _LOOPBACK_RATE_LIMIT_EXEMPT_PREFIXES = (
+    "/v2/context",
     "/v2/factory/bench",
     "/v2/factory/runs",
 )

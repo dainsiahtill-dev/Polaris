@@ -114,6 +114,14 @@ function timestampEpoch(value: unknown): number {
   return Number.isFinite(epoch) ? epoch : 0;
 }
 
+function formatTimestampLabel(value: unknown): string {
+  const epoch = timestampEpoch(value);
+  if (!epoch) return '—';
+  const date = new Date(epoch);
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 export function launcherInstanceRecencyEpoch(instance: PolarisInstance): number {
   return (
     timestampEpoch(instance.created_at) ||
@@ -129,6 +137,14 @@ export function sortLauncherInstancesByNewest(instances: PolarisInstance[]): Pol
     if (timeDelta !== 0) return timeDelta;
     return right.instance_id.localeCompare(left.instance_id);
   });
+}
+
+export function launcherInstanceRecencyLabel(instance: PolarisInstance): string {
+  if (timestampEpoch(instance.created_at)) return `创建 ${formatTimestampLabel(instance.created_at)}`;
+  if (timestampEpoch(instance.last_started_at)) return `启动 ${formatTimestampLabel(instance.last_started_at)}`;
+  if (timestampEpoch(instance.updated_at)) return `更新 ${formatTimestampLabel(instance.updated_at)}`;
+  if (timestampEpoch(instance.last_stopped_at)) return `停止 ${formatTimestampLabel(instance.last_stopped_at)}`;
+  return '时间未记录';
 }
 
 export function instanceSubtitle(instance: PolarisInstance): string {
@@ -210,6 +226,9 @@ export function LauncherWorkspace() {
     () => instances.find((item) => item.instance_id === selectedInstanceId) || null,
     [instances, selectedInstanceId],
   );
+  const canStart = Boolean(form.workspace?.trim());
+  const startDisabled = Boolean(actionId) || !canStart;
+  const startTitle = canStart ? '启动新的 Polaris 实例' : '先填写 workspace 路径';
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -355,7 +374,10 @@ export function LauncherWorkspace() {
               <span className="text-[11px] uppercase text-slate-500">workspace</span>
               <input
                 value={form.workspace || ''}
-                onChange={(event) => setForm((prev) => ({ ...prev, workspace: event.target.value }))}
+                onChange={(event) => {
+                  setError('');
+                  setForm((prev) => ({ ...prev, workspace: event.target.value }));
+                }}
                 placeholder="/path/to/project"
                 className="mt-1 w-full rounded-md border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
               />
@@ -364,7 +386,10 @@ export function LauncherWorkspace() {
               <span className="text-[11px] uppercase text-slate-500">name</span>
               <input
                 value={form.name || ''}
-                onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
+                onChange={(event) => {
+                  setError('');
+                  setForm((prev) => ({ ...prev, name: event.target.value }));
+                }}
                 placeholder="默认使用 workspace 名称"
                 className="mt-1 w-full rounded-md border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/60"
               />
@@ -419,9 +444,15 @@ export function LauncherWorkspace() {
                 />
               </label>
             </div>
-            <Button className="w-full" onClick={() => void submitStart()} disabled={Boolean(actionId)}>
+            <Button
+              className="w-full"
+              onClick={() => void submitStart()}
+              disabled={startDisabled}
+              title={startTitle}
+              aria-label="启动 Polaris 实例"
+            >
               {actionId === 'start' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              启动
+              {actionId === 'start' ? '正在启动...' : canStart ? '启动' : '填写 workspace 后启动'}
             </Button>
           </div>
           {error ? (
@@ -436,7 +467,10 @@ export function LauncherWorkspace() {
           data-testid="launcher-instance-panel"
         >
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-            <h2 className="text-sm font-semibold text-slate-100">实例</h2>
+            <div>
+              <h2 className="text-sm font-semibold text-slate-100">实例</h2>
+              <p className="mt-0.5 text-[11px] text-slate-500">最新创建/启动优先</p>
+            </div>
             <span className="text-xs text-slate-500">共 {instances.length} 个</span>
           </div>
           <div
@@ -457,6 +491,13 @@ export function LauncherWorkspace() {
               const isRestarting = actionId === restartingActionId;
               const isDeleting = actionId === deletingActionId;
               const canStop = isLauncherInstanceStoppable(instance);
+              const openable = isLauncherBackendOpenable(instance);
+              const openLabel = openable ? '打开' : instance.status === 'stopped' ? '已停止' : '等待后端';
+              const openTitle = openable
+                ? '打开该实例工作台'
+                : instance.status === 'stopped'
+                  ? '实例已停止，不能打开工作台'
+                  : '后端或前端尚未就绪';
               const stopDisabled = Boolean(actionId) || isCurrentControl || !canStop;
               const stopTitle = isCurrentControl
                 ? '当前控制后端不能自我停止'
@@ -498,11 +539,22 @@ export function LauncherWorkspace() {
                     <dt className="text-[10px] uppercase text-slate-500">workspace</dt>
                     <dd className="mt-1 truncate text-slate-300" title={instance.workspace}>{instance.workspace}</dd>
                   </div>
+                  <div className="col-span-2 rounded-md bg-white/[0.04] px-2 py-2">
+                    <dt className="text-[10px] uppercase text-slate-500">recent</dt>
+                    <dd className="mt-1 font-mono text-[11px] text-slate-300">{launcherInstanceRecencyLabel(instance)}</dd>
+                  </div>
                 </dl>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => openInstance(instance)} disabled={!isLauncherBackendOpenable(instance)}>
+                  <Button
+                    size="sm"
+                    onClick={() => openInstance(instance)}
+                    disabled={!openable}
+                    title={openTitle}
+                    aria-label={`打开实例 ${instance.instance_id}`}
+                    data-testid={`launcher-instance-open-${instance.instance_id}`}
+                  >
                     <ExternalLink className="h-3.5 w-3.5" />
-                    {isLauncherBackendOpenable(instance) ? '打开' : '等待后端'}
+                    {openLabel}
                   </Button>
                   <Button
                     variant="outline"

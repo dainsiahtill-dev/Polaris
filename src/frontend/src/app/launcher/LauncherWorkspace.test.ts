@@ -35,6 +35,7 @@ import {
   isLauncherBackendOpenable,
   isLauncherBackendReady,
   isLauncherInstanceStoppable,
+  launcherInstanceRecencyLabel,
   launcherInstanceStatusTone,
   sortLauncherInstancesByNewest,
 } from './LauncherWorkspace';
@@ -207,6 +208,26 @@ describe('Launcher instance readiness display', () => {
     ]);
   });
 
+  it('formats the visible recency source for instance cards', () => {
+    expect(
+      launcherInstanceRecencyLabel(
+        instance({
+          created_at: '2026-06-25T08:15:00',
+          last_started_at: '2026-06-25T09:15:00',
+        }),
+      ),
+    ).toBe('创建 06-25 08:15');
+    expect(
+      launcherInstanceRecencyLabel(
+        instance({
+          created_at: '',
+          last_started_at: '2026-06-25T09:15:00',
+        }),
+      ),
+    ).toBe('启动 06-25 09:15');
+    expect(launcherInstanceRecencyLabel(instance())).toBe('时间未记录');
+  });
+
   it('adds bench project and work-dir identity to the card subtitle', () => {
     expect(
       instanceSubtitle(
@@ -272,7 +293,24 @@ describe('Launcher instance readiness display', () => {
 
     const newer = await screen.findByText('New Instance');
     const older = await screen.findByText('Old Instance');
+    expect(screen.getByText('最新创建/启动优先')).toBeInTheDocument();
+    expect(screen.getByText(launcherInstanceRecencyLabel(instance({ created_at: '2026-06-25T08:00:00.000Z' })))).toBeInTheDocument();
     expect(newer.compareDocumentPosition(older) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('prevents blank workspace start attempts until the field is filled', async () => {
+    render(createElement(LauncherWorkspace));
+
+    const startButton = await screen.findByRole('button', { name: '启动 Polaris 实例' });
+    expect(startButton).toBeDisabled();
+    expect(startButton).toHaveAttribute('title', '先填写 workspace 路径');
+
+    fireEvent.change(screen.getByPlaceholderText('/path/to/project'), {
+      target: { value: '/tmp/polaris-workspace' },
+    });
+
+    expect(startButton).not.toBeDisabled();
+    expect(startButton).toHaveAttribute('title', '启动新的 Polaris 实例');
   });
 
   it('disables stop for stopped instances', async () => {
@@ -299,6 +337,33 @@ describe('Launcher instance readiness display', () => {
     const stopButton = await screen.findByTestId('launcher-instance-stop-bench-stopped');
     expect(stopButton).toBeDisabled();
     expect(stopButton).toHaveAttribute('title', '实例已停止，停止操作不可用');
+  });
+
+  it('shows a stopped open action as disabled instead of waiting for backend', async () => {
+    mocks.listInstances.mockResolvedValue({
+      ok: true,
+      data: {
+        instances: [
+          instance({
+            instance_id: 'bench-stopped',
+            name: 'Stopped Bench',
+            status: 'stopped',
+            backend_alive: false,
+            frontend_alive: false,
+            backend_pid: null,
+            frontend_pid: null,
+            metadata: { backend_health: 'stopped', frontend_health: 'stopped' },
+          }),
+        ],
+      },
+    });
+
+    render(createElement(LauncherWorkspace));
+
+    const openButton = await screen.findByTestId('launcher-instance-open-bench-stopped');
+    expect(openButton).toBeDisabled();
+    expect(openButton).toHaveTextContent('已停止');
+    expect(openButton).toHaveAttribute('title', '实例已停止，不能打开工作台');
   });
 
   it('shows an immediate stopping state after clicking stop', async () => {

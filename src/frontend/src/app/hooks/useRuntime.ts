@@ -165,6 +165,72 @@ function isRuntimeFactoryOrBenchEventChannel(channel: string): boolean {
   );
 }
 
+const RUNTIME_WORKSPACE_FIELD_NAMES = new Set([
+  'workspace',
+  'workspace_path',
+  'workspacePath',
+  'project_workspace',
+  'projectWorkspace',
+  'project_root',
+  'projectRoot',
+  'polaris_workspace',
+  'polarisWorkspace',
+  'runtime_workspace',
+  'runtimeWorkspace',
+]);
+
+function normalizeRuntimeWorkspacePath(value: unknown): string {
+  const token = Parsing.toStringValue(value).trim();
+  if (!token) return '';
+  return token.replace(/\\/g, '/').replace(/\/+$/g, '');
+}
+
+function collectRuntimeWorkspacePaths(
+  value: unknown,
+  paths: Set<string>,
+  seen: WeakSet<object>,
+  depth = 0,
+): void {
+  if (depth > 5 || !Parsing.isRecord(value)) return;
+  if (seen.has(value)) return;
+  seen.add(value);
+
+  for (const [key, nested] of Object.entries(value)) {
+    if (RUNTIME_WORKSPACE_FIELD_NAMES.has(key)) {
+      const normalized = normalizeRuntimeWorkspacePath(nested);
+      if (normalized) paths.add(normalized);
+    }
+
+    if (Parsing.isRecord(nested)) {
+      collectRuntimeWorkspacePaths(nested, paths, seen, depth + 1);
+    } else if (Array.isArray(nested)) {
+      for (const item of nested.slice(0, 12)) {
+        collectRuntimeWorkspacePaths(item, paths, seen, depth + 1);
+      }
+    }
+  }
+}
+
+function runtimeRecordMatchesWorkspace(raw: unknown, activeWorkspace: string): boolean {
+  const active = normalizeRuntimeWorkspacePath(activeWorkspace);
+  if (!active || !Parsing.isRecord(raw)) return true;
+
+  const candidates = new Set<string>();
+  collectRuntimeWorkspacePaths(raw, candidates, new WeakSet<object>());
+  if (candidates.size === 0) return true;
+  return candidates.has(active);
+}
+
+function runtimeLineMatchesWorkspace(line: string, activeWorkspace: string): boolean {
+  const parsed = Parsing.tryParseJsonObject(line);
+  return parsed ? runtimeRecordMatchesWorkspace(parsed, activeWorkspace) : true;
+}
+
+function isSettingsChangedEvent(raw: Record<string, unknown>): boolean {
+  const eventName = String(raw.event_name || raw.event || raw.name || raw.kind || '').trim().toLowerCase();
+  return eventName === 'settings_changed' || eventName.endsWith('.settings_changed');
+}
+
 // ============================================================================
 // Pure Parsing Functions (moved from useRuntime.ts)
 // ============================================================================
@@ -1520,6 +1586,9 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
         // Handle v2 protocol EVENT message
         if (msgType === 'event' && payload.event) {
           const eventPayload = payload.event as Record<string, unknown>;
+          if (!isSettingsChangedEvent(eventPayload) && !runtimeRecordMatchesWorkspace(eventPayload, workspace)) {
+            return;
+          }
           const eventId = String(eventPayload.event_id || eventPayload.id || '');
 
           if (eventId && seenV2EventIdsRef.current.has(eventId)) {
@@ -1536,6 +1605,10 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
           payload = normalizeRuntimeV2Envelope(eventPayload);
           channel = String(payload.channel || '').trim();
         } else if (isRuntimeV2Envelope(payload)) {
+          const rawPayload = payload as unknown as Record<string, unknown>;
+          if (!isSettingsChangedEvent(rawPayload) && !runtimeRecordMatchesWorkspace(rawPayload, workspace)) {
+            return;
+          }
           payload = normalizeRuntimeV2Envelope(payload as unknown as Record<string, unknown>);
           channel = String(payload.channel || '').trim();
         }
@@ -1717,6 +1790,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               if (!line.trim()) return;
               try {
                 const raw = JSON.parse(line);
+                if (!runtimeRecordMatchesWorkspace(raw, workspace)) return;
                 const normalized = normalizeDialogueEvent(raw);
                 if (normalized) {
                   const eventId = String((raw as { event_id?: string }).event_id || '');
@@ -1736,6 +1810,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               if (!line.trim()) return;
               try {
                 const raw = JSON.parse(line);
+                if (!runtimeRecordMatchesWorkspace(raw, workspace)) return;
                 if (Parsing.isRecord(raw)) mergeTaskLifecycleFromRaw(raw);
                 const log = parseRuntimeEvent(raw);
                 if (log) logs.push(log);
@@ -1748,6 +1823,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
             setExecutionLogs(logs.slice(-100));
           } else if (isLlmStreamChannel(channel)) {
             const llmLogs = payload.lines
+              .filter((line) => runtimeLineMatchesWorkspace(line, workspace))
               .map((line) => parseLlmStreamLine(channel, line))
               .filter((entry): entry is LogEntry => Boolean(entry));
             const uniqueLogs = llmLogs.filter((log) => {
@@ -1777,6 +1853,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
             const processLogs: LogEntry[] = [];
             payload.lines.forEach((line: string) => {
               if (!line.trim()) return;
+              if (!runtimeLineMatchesWorkspace(line, workspace)) return;
               try {
                 const raw = JSON.parse(line);
                 if (Parsing.isRecord(raw)) mergeTaskLifecycleFromRaw(raw);
@@ -1798,6 +1875,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
           if (channel === 'dialogue') {
             try {
               const raw = JSON.parse(payload.text);
+              if (!runtimeRecordMatchesWorkspace(raw, workspace)) return;
               const normalized = normalizeDialogueEvent(raw);
               if (normalized) {
                 const eventId = String((raw as { event_id?: string }).event_id || '');
@@ -1817,6 +1895,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
           } else if (channel === 'runtime_events') {
             try {
               const raw = JSON.parse(payload.text);
+              if (!runtimeRecordMatchesWorkspace(raw, workspace)) return;
               if (Parsing.isRecord(raw)) mergeTaskLifecycleFromRaw(raw);
               const log = parseRuntimeEvent(raw);
               if (log) {
@@ -1847,6 +1926,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               devLogger.warn('[useRuntime] Runtime events line parse error:', err);
             }
           } else if (isLlmStreamChannel(channel)) {
+            if (!runtimeLineMatchesWorkspace(payload.text, workspace)) return;
             const llmLog = parseLlmStreamLine(channel, payload.text);
             if (llmLog) {
               const runScope = resolveLlmLogRunScope(llmLog);
@@ -1869,6 +1949,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               }
             }
           } else if (isProcessStreamChannel(channel) || isRuntimeFactoryOrBenchEventChannel(channel)) {
+            if (!runtimeLineMatchesWorkspace(payload.text, workspace)) return;
             try {
               const raw = JSON.parse(payload.text);
               if (Parsing.isRecord(raw)) mergeTaskLifecycleFromRaw(raw);
@@ -1912,6 +1993,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
       setTasks,
       setWorkers,
       updateTaskProgress,
+      workspace,
     ]
   );
 
