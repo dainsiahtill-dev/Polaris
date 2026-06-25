@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs.rust_repairs import (
     _apply_deterministic_rust_crate_import_repair,
     _apply_deterministic_rust_dependency_repair,
+    _apply_deterministic_rust_derive_repair,
     _apply_deterministic_rust_lib_root_facade_repair,
     _apply_deterministic_rust_line_suggestion_repair,
     _apply_deterministic_rust_missing_lib_target_repair,
@@ -138,6 +139,72 @@ def test_deterministic_rust_dependency_repair_adds_serde_and_serde_json(tmp_path
     assert 'serde_json = "1.0"' in cargo
 
 
+def test_deterministic_rust_derive_repair_adds_serde_derives_to_local_type_file(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "kitchen-flavor-palette"\n', encoding="utf-8")
+    models_dir = tmp_path / "src" / "models"
+    models_dir.mkdir(parents=True)
+    (models_dir / "flavor.rs").write_text(
+        "#[derive(Debug, Clone, PartialEq)]\n"
+        "pub enum FlavorDimension { Sweet }\n\n"
+        "#[derive(Debug, Clone, PartialEq)]\n"
+        "pub struct FlavorNote { pub dimension: FlavorDimension, pub weight: f32 }\n\n"
+        "#[derive(Debug, Clone, Default, PartialEq)]\n"
+        "pub struct FlavorProfile { pub notes: Vec<FlavorNote> }\n",
+        encoding="utf-8",
+    )
+    (models_dir / "ingredient.rs").write_text(
+        "use super::flavor::FlavorProfile;\n\n"
+        "#[derive(Debug, Clone, PartialEq)]\n"
+        "pub struct Ingredient { pub profile: FlavorProfile }\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_rust_derive_repair(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task_id="factory-quality-gate:test",
+        artifact_quality_errors=[
+            "help: the trait `Serialize` is not implemented for `ingredient::Ingredient`\n"
+            " = note: for local types consider adding `#[derive(serde::Serialize)]` "
+            "to your `ingredient::Ingredient` type",
+            "help: the trait `Deserialize<'_>` is not implemented for `flavor::FlavorProfile`\n"
+            " = note: for local types consider adding `#[derive(serde::Deserialize)]` "
+            "to your `flavor::FlavorProfile` type",
+        ],
+    )
+
+    flavor_rs = (models_dir / "flavor.rs").read_text(encoding="utf-8")
+    ingredient_rs = (models_dir / "ingredient.rs").read_text(encoding="utf-8")
+    assert results
+    assert "serde::Deserialize" in flavor_rs
+    assert "serde::Serialize" not in flavor_rs
+    assert flavor_rs.count("serde::Deserialize") == 3
+    assert "serde::Serialize" in ingredient_rs
+    assert "serde::Deserialize" not in ingredient_rs
+
+
+def test_deterministic_rust_derive_repair_removes_eq_from_float_field_types(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "kitchen-flavor-palette"\n', encoding="utf-8")
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "models" / "mod.rs").write_text(
+        "#[derive(Debug, Clone, PartialEq, Eq)]\n"
+        "pub enum DomainError {\n"
+        "    InvalidFlavorWeight { note: String, weight: f32 },\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_rust_derive_repair(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task_id="factory-quality-gate:test",
+        artifact_quality_errors=["error[E0277]: the trait bound `f32: Eq` is not satisfied"],
+    )
+
+    repaired = (tmp_path / "src" / "models" / "mod.rs").read_text(encoding="utf-8")
+    assert results
+    assert "#[derive(Debug, Clone, PartialEq)]" in repaired
+    assert "PartialEq, Eq" not in repaired
+
+
 def test_deterministic_rust_lib_root_facade_repair_reconnects_existing_engine_api(tmp_path: Path) -> None:
     (tmp_path / "Cargo.toml").write_text(
         '[package]\nname = "flavor-palette-lab"\n\n[lib]\nname = "flavor_palette_lab"\npath = "src/lib.rs"\n',
@@ -253,6 +320,52 @@ def test_deterministic_rust_lib_root_facade_repair_replaces_conflicting_root_exp
     assert "pub use engine::Ingredient;" in lib_rs
     assert "pub use models::palette::{Palette, PaletteColor};" not in lib_rs
     assert "pub use models::palette::{PaletteColor};" in lib_rs
+    assert "pub use models::recipe::{Recipe, RecipeStep};" not in lib_rs
+    assert "pub use models::recipe::{RecipeStep};" in lib_rs
+
+
+def test_deterministic_rust_lib_root_facade_repair_expands_root_import_group_companions(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "kitchen-flavor-palette"\n\n[lib]\nname = "kitchen_flavor_palette"\npath = "src/lib.rs"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "src" / "lib.rs").write_text(
+        "pub mod models;\npub mod engine;\n"
+        "pub use models::ingredient::{Ingredient, IngredientKind};\n"
+        "pub use models::recipe::{Recipe, RecipeStep};\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine" / "mod.rs").write_text(
+        "pub use plating::{Ingredient, Recipe};\n"
+        "pub fn generate_palette_and_plating(_recipe: &Recipe) {}\n"
+        "mod plating { pub struct Ingredient; pub struct Recipe; }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "main.rs").write_text(
+        "use kitchen_flavor_palette::{\n    generate_palette_and_plating, Ingredient, Recipe,\n};\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_rust_lib_root_facade_repair(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task_id="factory-quality-gate:test",
+        artifact_quality_errors=[
+            "error[E0432]: unresolved import `kitchen_flavor_palette::generate_palette_and_plating`\n"
+            "no `generate_palette_and_plating` in the root"
+        ],
+    )
+
+    lib_rs = (tmp_path / "src" / "lib.rs").read_text(encoding="utf-8")
+    assert results
+    assert "pub use engine::generate_palette_and_plating;" in lib_rs
+    assert "pub use engine::Ingredient;" in lib_rs
+    assert "pub use engine::Recipe;" in lib_rs
+    assert "pub use models::ingredient::{Ingredient, IngredientKind};" not in lib_rs
+    assert "pub use models::ingredient::{IngredientKind};" in lib_rs
     assert "pub use models::recipe::{Recipe, RecipeStep};" not in lib_rs
     assert "pub use models::recipe::{RecipeStep};" in lib_rs
 

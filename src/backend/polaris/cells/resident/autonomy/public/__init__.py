@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from .contracts import (
+    MaterializeResidentGoalCommandV1,
+    QueryResidentAgiAuditPackV1,
     QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
     RecordResidentEvidenceCommandV1,
@@ -12,6 +14,8 @@ from .contracts import (
     ResidentAutonomyResultV1,
     ResidentCycleCompletedEventV1,
     RunResidentCycleCommandV1,
+    RunResidentGoalCommandV1,
+    StageResidentGoalCommandV1,
 )
 from .service import (
     CapabilityGraph,
@@ -48,10 +52,14 @@ from .service import (
     get_evidence_service,
     get_execution_projection_service,
     get_resident_service,
+    materialize_resident_goal,
+    query_resident_agi_audit_pack,
     query_resident_capabilities,
     record_resident_decision,
     reset_resident_services,
     resident_agi_capability_surface_payload,
+    run_resident_goal,
+    stage_resident_goal,
 )
 
 __all__ = [
@@ -65,7 +73,9 @@ __all__ = [
     "FileChange",
     "GoalGovernor",
     "GoalProposal",
+    "MaterializeResidentGoalCommandV1",
     "PerfEvidence",
+    "QueryResidentAgiAuditPackV1",
     "QueryResidentCapabilitiesV1",
     "QueryResidentStatusV1",
     "RecordResidentEvidenceCommandV1",
@@ -83,11 +93,13 @@ __all__ = [
     "ResidentService",
     "ResidentStorage",
     "RunResidentCycleCommandV1",
+    "RunResidentGoalCommandV1",
     "SelfImprovementLab",
     "SkillFoundry",
     "SkillProposal",
     "SkillProposalStatus",
     "SourceType",
+    "StageResidentGoalCommandV1",
     "StaticAnalysisEvidence",
     "StrategyInsightEngine",
     "TestRunEvidence",
@@ -98,8 +110,12 @@ __all__ = [
     "get_evidence_service",
     "get_execution_projection_service",
     "get_resident_service",
+    "materialize_resident_goal",
+    "query_resident_agi_audit_pack",
     "query_resident_capabilities",
     "record_resident_decision",
     "reset_resident_services",
     "resident_agi_capability_surface_payload",
+    "run_resident_goal",
+    "stage_resident_goal",
 ]

@@ -376,8 +376,8 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
 
 
 __all__ = [
-    "build_resident_agi_capability_surface",
     "build_resident_agi_authority_matrix",
+    "build_resident_agi_capability_surface",
     "build_resident_agi_decision_boundaries",
     "resident_agi_capability_surface_payload",
 ]

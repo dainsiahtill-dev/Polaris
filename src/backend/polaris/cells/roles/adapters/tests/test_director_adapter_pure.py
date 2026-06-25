@@ -9620,6 +9620,30 @@ class TestQualityRepairMissingTargetContract:
 
         assert targets == ["calculator.py", "tests/test_calculator.py"]
 
+    def test_python_runtime_smoke_cli_subcommand_failure_targets_existing_entrypoint(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _python_runtime_smoke_repair_target_files,
+        )
+
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+        (tmp_path / "src" / "engine" / "mod.rs").write_text("pub fn run() {}\n", encoding="utf-8")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_product.py").write_text("import unittest\n", encoding="utf-8")
+
+        targets = _python_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_product.py' "
+                "(returncode=1); tail:\n"
+                "AssertionError: 2 != 0 : unknown subcommand: flavor"
+            ],
+            changed_files=["src/engine/mod.rs", "tests/test_product.py"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/main.rs", "tests/test_product.py"]
+
     def test_python_unittest_discover_result_lines_infer_imported_src_modules(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _python_runtime_smoke_repair_target_files,

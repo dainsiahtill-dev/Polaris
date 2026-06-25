@@ -10,6 +10,7 @@ from polaris.cells.audit.evidence.public.service import (
     EvidenceBundleService,
     create_evidence_bundle_service,
 )
+from polaris.cells.resident.autonomy.internal.agi_audit_pack import build_resident_agi_audit_pack
 from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
     build_resident_agi_authority_matrix,
     build_resident_agi_capability_surface,
@@ -36,6 +37,8 @@ from polaris.cells.resident.autonomy.internal.resident_storage import ResidentPa
 from polaris.cells.resident.autonomy.internal.self_improvement_lab import SelfImprovementLab
 from polaris.cells.resident.autonomy.internal.skill_foundry import SkillFoundry
 from polaris.cells.resident.autonomy.public.contracts import (
+    MaterializeResidentGoalCommandV1,
+    QueryResidentAgiAuditPackV1,
     QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
     RecordResidentEvidenceCommandV1,
@@ -44,6 +47,8 @@ from polaris.cells.resident.autonomy.public.contracts import (
     ResidentAutonomyResultV1,
     ResidentCycleCompletedEventV1,
     RunResidentCycleCommandV1,
+    RunResidentGoalCommandV1,
+    StageResidentGoalCommandV1,
 )
 from polaris.domain.entities.evidence_bundle import (
     EvidenceBundle,
@@ -100,6 +105,45 @@ def query_resident_capabilities(query: QueryResidentCapabilitiesV1) -> dict[str,
     """Handle :class:`QueryResidentCapabilitiesV1` → AGI capability surface."""
     _ = get_resident_service(query.workspace)
     return resident_agi_capability_surface_payload()
+
+
+def query_resident_agi_audit_pack(query: QueryResidentAgiAuditPackV1) -> dict[str, Any]:
+    """Handle :class:`QueryResidentAgiAuditPackV1` → Resident AGI audit pack."""
+
+    status_payload = get_resident_service(query.workspace).get_status(include_details=True)
+    return build_resident_agi_audit_pack(
+        workspace=query.workspace,
+        status_payload=status_payload,
+        decision_limit=query.decision_limit,
+    )
+
+
+def materialize_resident_goal(command: MaterializeResidentGoalCommandV1) -> dict[str, Any] | None:
+    """Handle :class:`MaterializeResidentGoalCommandV1` through the Resident goal bridge."""
+
+    return get_resident_service(command.workspace).materialize_goal(command.goal_id)
+
+
+def stage_resident_goal(command: StageResidentGoalCommandV1) -> dict[str, Any] | None:
+    """Handle :class:`StageResidentGoalCommandV1` through the Resident goal bridge."""
+
+    return get_resident_service(command.workspace).stage_goal(
+        command.goal_id,
+        promote_to_pm_runtime=command.promote_to_pm_runtime,
+        ramdisk_root=command.ramdisk_root,
+    )
+
+
+async def run_resident_goal(command: RunResidentGoalCommandV1) -> dict[str, Any] | None:
+    """Handle :class:`RunResidentGoalCommandV1` through the governed PM bridge."""
+
+    return await get_resident_service(command.workspace).run_goal(
+        command.goal_id,
+        settings=command.settings,
+        run_type=command.run_type,
+        run_director=command.run_director,
+        director_iterations=command.director_iterations,
+    )
 
 
 def _emit_cycle_completed_event(
@@ -194,7 +238,9 @@ __all__ = [
     "FileChange",
     "GoalGovernor",
     "GoalProposal",
+    "MaterializeResidentGoalCommandV1",
     "PerfEvidence",
+    "QueryResidentAgiAuditPackV1",
     "QueryResidentCapabilitiesV1",
     "QueryResidentStatusV1",
     "RecordResidentEvidenceCommandV1",
@@ -211,21 +257,25 @@ __all__ = [
     "ResidentService",
     "ResidentStorage",
     "RunResidentCycleCommandV1",
+    "RunResidentGoalCommandV1",
     "SelfImprovementLab",
     "SkillFoundry",
     "SkillProposal",
     "SkillProposalStatus",
     "SourceType",
+    "StageResidentGoalCommandV1",
     "StaticAnalysisEvidence",
     "StrategyInsightEngine",
     "TestRunEvidence",
-    "build_resident_agi_capability_surface",
     "build_resident_agi_authority_matrix",
+    "build_resident_agi_capability_surface",
     "build_resident_agi_decision_boundaries",
     "create_evidence_bundle_service",
     "get_evidence_service",
     "get_execution_projection_service",
     "get_resident_service",
+    "materialize_resident_goal",
+    "query_resident_agi_audit_pack",
     "query_resident_capabilities",
     "query_resident_status",
     "record_resident_decision",
@@ -233,4 +283,6 @@ __all__ = [
     "reset_resident_services",
     "resident_agi_capability_surface_payload",
     "run_resident_cycle",
+    "run_resident_goal",
+    "stage_resident_goal",
 ]

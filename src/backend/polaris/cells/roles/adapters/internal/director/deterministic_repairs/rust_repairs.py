@@ -64,6 +64,11 @@ _RUST_ROOT_STRUCT_FIELD_MISMATCH_RE = re.compile(
     r"has no field named",
     re.IGNORECASE,
 )
+_RUST_SERDE_DERIVE_SUGGESTION_RE = re.compile(
+    r"consider adding [`'\"]#\[derive\(serde::(?P<trait>Serialize|Deserialize)\)\][`'\"] "
+    r"to your [`'\"](?P<module>[A-Za-z_][A-Za-z0-9_]*)::(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)[`'\"] type",
+    re.IGNORECASE,
+)
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _KNOWN_RUST_DEPENDENCIES: dict[str, str] = {
     "serde": 'serde = { version = "1.0", features = ["derive"] }',
@@ -119,6 +124,32 @@ def _apply_deterministic_rust_dependency_repair(
                 "source_tool": "deterministic_rust_dependency_repair",
                 "file": "Cargo.toml",
                 "packages": record["packages"],
+            },
+        }
+        for record in repairs
+    ]
+
+
+def _apply_deterministic_rust_derive_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    del task_id
+    workspace = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    repairs = repair_rust_derives(workspace, artifact_quality_errors)
+    return [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_rust_derive_repair",
+                "file": record["file"],
+                "serde_derives": record["serde_derives"],
+                "eq_derives_removed": record["eq_derives_removed"],
             },
         }
         for record in repairs
@@ -310,6 +341,54 @@ def repair_rust_dependencies(workspace: Path, artifact_quality_errors: list[str]
     return [{"packages": missing}]
 
 
+def repair_rust_derives(workspace: Path, artifact_quality_errors: list[str]) -> list[dict[str, Any]]:
+    if not workspace.is_dir():
+        return []
+
+    serde_targets = _parse_rust_serde_derive_targets(artifact_quality_errors)
+    repairs_by_path: dict[Path, dict[str, int]] = {}
+    for module, symbol, traits in serde_targets:
+        target_path = _find_rust_file_for_module_symbol(workspace, module, symbol)
+        if target_path is None:
+            continue
+        try:
+            original = target_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        repaired, derive_count = _ensure_rust_file_serde_derives(original, traits)
+        if repaired == original:
+            continue
+        target_path.write_text(repaired, encoding="utf-8")
+        record = repairs_by_path.setdefault(target_path, {"serde_derives": 0, "eq_derives_removed": 0})
+        record["serde_derives"] += derive_count
+
+    if _artifact_errors_include_float_eq_failure(artifact_quality_errors):
+        for rust_file in sorted(workspace.rglob("*.rs")):
+            if "target" in rust_file.relative_to(workspace).parts:
+                continue
+            try:
+                original = rust_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            repaired, removed = _remove_rust_eq_derives_for_float_fields(original)
+            if repaired == original:
+                continue
+            rust_file.write_text(repaired, encoding="utf-8")
+            record = repairs_by_path.setdefault(rust_file, {"serde_derives": 0, "eq_derives_removed": 0})
+            record["eq_derives_removed"] += removed
+
+    repairs: list[dict[str, Any]] = []
+    for path, counts in sorted(repairs_by_path.items(), key=lambda item: item[0].as_posix()):
+        repairs.append(
+            {
+                "file": str(path.relative_to(workspace)),
+                "serde_derives": counts["serde_derives"],
+                "eq_derives_removed": counts["eq_derives_removed"],
+            }
+        )
+    return repairs
+
+
 def repair_rust_missing_lib_targets(workspace: Path, artifact_quality_errors: list[str]) -> list[dict[str, Any]]:
     if not workspace.is_dir():
         return []
@@ -349,6 +428,12 @@ def repair_rust_lib_root_facade(workspace: Path, artifact_quality_errors: list[s
         return []
 
     requested_symbols = _parse_rust_lib_root_export_symbols(artifact_quality_errors, canonical_crate)
+    requested_symbols = _dedupe_rust_symbols(
+        [
+            *requested_symbols,
+            *_expand_rust_root_import_group_symbols(workspace, canonical_crate, requested_symbols),
+        ]
+    )
     source_had_lib_root_paths = _rust_workspace_uses_lib_root_path(workspace, canonical_crate)
     requested_modules = _parse_rust_external_module_imports(artifact_quality_errors, canonical_crate)
     requested_modules = [module for module in requested_modules if _rust_external_module_exists(workspace, module)]
@@ -604,6 +689,143 @@ def _rust_workspace_source_text(workspace: Path) -> str:
     return "\n".join(chunks)
 
 
+def _parse_rust_serde_derive_targets(
+    artifact_quality_errors: list[str],
+) -> list[tuple[str, str, set[str]]]:
+    targets: dict[tuple[str, str], set[str]] = {}
+    text = _ANSI_ESCAPE_RE.sub("", "\n".join(str(error or "") for error in artifact_quality_errors))
+    for match in _RUST_SERDE_DERIVE_SUGGESTION_RE.finditer(text):
+        module = str(match.group("module") or "").strip()
+        symbol = str(match.group("symbol") or "").strip()
+        trait = str(match.group("trait") or "").strip()
+        if not module or not symbol or trait not in {"Serialize", "Deserialize"}:
+            continue
+        targets.setdefault((module, symbol), set()).add(f"serde::{trait}")
+    return [(module, symbol, traits) for (module, symbol), traits in targets.items()]
+
+
+def _find_rust_file_for_module_symbol(workspace: Path, module: str, symbol: str) -> Path | None:
+    src = workspace / "src"
+    if not src.is_dir():
+        return None
+    symbol_pattern = re.compile(
+        rf"(?m)^\s*pub\s+(?:struct|enum|trait|type)\s+{re.escape(symbol)}\b"
+        rf"|^\s*(?:struct|enum|trait|type)\s+{re.escape(symbol)}\b"
+    )
+    candidates: list[Path] = []
+    for rust_file in sorted(src.rglob("*.rs")):
+        if "target" in rust_file.relative_to(workspace).parts:
+            continue
+        if rust_file.stem == module:
+            candidates.insert(0, rust_file)
+        else:
+            candidates.append(rust_file)
+    for rust_file in candidates:
+        try:
+            text = rust_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if symbol_pattern.search(text):
+            return rust_file
+    return None
+
+
+def _ensure_rust_file_serde_derives(text: str, traits: set[str]) -> tuple[str, int]:
+    if not traits:
+        return text, 0
+    lines = text.splitlines(keepends=True)
+    derive_count = 0
+    index = 0
+    while index < len(lines):
+        if not re.match(r"^\s*(?:pub\s+)?(?:struct|enum)\s+[A-Za-z_][A-Za-z0-9_]*\b", lines[index]):
+            index += 1
+            continue
+        derive_index = _rust_existing_derive_line_index(lines, index)
+        if derive_index is None:
+            indent_match = re.match(r"^(\s*)", lines[index])
+            indent = indent_match.group(1) if indent_match else ""
+            lines.insert(index, f"{indent}#[derive({', '.join(sorted(traits))})]\n")
+            derive_count += len(traits)
+            index += 2
+            continue
+        repaired, added = _add_rust_derive_traits_to_line(lines[derive_index], traits)
+        if added:
+            lines[derive_index] = repaired
+            derive_count += added
+        index += 1
+    return "".join(lines), derive_count
+
+
+def _rust_existing_derive_line_index(lines: list[str], item_index: int) -> int | None:
+    index = item_index - 1
+    while index >= 0 and not lines[index].strip():
+        index -= 1
+    if index >= 0 and re.match(r"^\s*#\[derive\([^)]*\)\]\s*$", lines[index]):
+        return index
+    return None
+
+
+def _add_rust_derive_traits_to_line(line: str, traits: set[str]) -> tuple[str, int]:
+    match = re.match(r"^(?P<indent>\s*)#\[derive\((?P<body>[^)]*)\)\](?P<newline>\n?)$", line)
+    if not match:
+        return line, 0
+    items = [item.strip() for item in str(match.group("body") or "").split(",") if item.strip()]
+    added = 0
+    for trait in sorted(traits):
+        short = trait.rsplit("::", 1)[-1]
+        if any(item in (trait, short) or item.endswith(f"::{short}") for item in items):
+            continue
+        items.append(trait)
+        added += 1
+    if not added:
+        return line, 0
+    return f"{match.group('indent')}#[derive({', '.join(items)})]{match.group('newline')}", added
+
+
+def _artifact_errors_include_float_eq_failure(artifact_quality_errors: list[str]) -> bool:
+    text = _ANSI_ESCAPE_RE.sub("", "\n".join(str(error or "") for error in artifact_quality_errors)).lower()
+    return "the trait bound `f32: eq` is not satisfied" in text or "the trait bound `f64: eq` is not satisfied" in text
+
+
+def _remove_rust_eq_derives_for_float_fields(text: str) -> tuple[str, int]:
+    lines = text.splitlines(keepends=True)
+    removed = 0
+    for index, line in enumerate(lines):
+        if "Eq" not in line or not re.match(r"^\s*#\[derive\([^)]*\)\]", line):
+            continue
+        block = _rust_item_block_after_derive(lines, index)
+        if "f32" not in block and "f64" not in block:
+            continue
+        repaired, did_remove = _remove_rust_derive_trait_from_line(line, "Eq")
+        if did_remove:
+            lines[index] = repaired
+            removed += 1
+    return "".join(lines), removed
+
+
+def _rust_item_block_after_derive(lines: list[str], derive_index: int) -> str:
+    item_index = derive_index + 1
+    while item_index < len(lines) and (not lines[item_index].strip() or lines[item_index].lstrip().startswith("///")):
+        item_index += 1
+    end_index = item_index + 1
+    while end_index < len(lines):
+        if re.match(r"^\s*(?:#\[derive\(|pub\s+(?:struct|enum)|(?:struct|enum)\s+)", lines[end_index]):
+            break
+        end_index += 1
+    return "".join(lines[item_index:end_index])
+
+
+def _remove_rust_derive_trait_from_line(line: str, trait: str) -> tuple[str, bool]:
+    match = re.match(r"^(?P<indent>\s*)#\[derive\((?P<body>[^)]*)\)\](?P<newline>\n?)$", line)
+    if not match:
+        return line, False
+    items = [item.strip() for item in str(match.group("body") or "").split(",") if item.strip()]
+    filtered = [item for item in items if item != trait]
+    if len(filtered) == len(items):
+        return line, False
+    return f"{match.group('indent')}#[derive({', '.join(filtered)})]{match.group('newline')}", True
+
+
 def _cargo_dependency_declared(cargo_text: str, package: str) -> bool:
     return bool(re.search(rf"(?m)^\s*{re.escape(package)}\s*=", cargo_text))
 
@@ -703,6 +925,74 @@ def _parse_rust_lib_root_export_symbols(artifact_quality_errors: list[str], cano
         if crate == canonical_crate and symbol and symbol not in seen:
             seen.add(symbol)
             symbols.append(symbol)
+    return symbols
+
+
+def _dedupe_rust_symbols(symbols: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for symbol in symbols:
+        normalized = str(symbol or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
+def _expand_rust_root_import_group_symbols(
+    workspace: Path,
+    canonical_crate: str,
+    requested_symbols: list[str],
+) -> list[str]:
+    requested_modules = {
+        module for symbol in requested_symbols if (module := _find_rust_module_exporting_symbol(workspace, symbol))
+    }
+    if not requested_modules:
+        return []
+
+    grouped_root_import_re = re.compile(
+        rf"use\s+{re.escape(canonical_crate)}::\{{(?P<body>.*?)\}}\s*;",
+        re.DOTALL,
+    )
+    requested_set = set(requested_symbols)
+    companions: list[str] = []
+    seen: set[str] = set()
+    for rust_file in sorted(workspace.rglob("*.rs")):
+        try:
+            relative_parts = rust_file.relative_to(workspace).parts
+        except ValueError:
+            continue
+        if "target" in relative_parts:
+            continue
+        try:
+            text = rust_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for match in grouped_root_import_re.finditer(text):
+            import_symbols = _parse_rust_use_group_symbols(str(match.group("body") or ""))
+            if not requested_set.intersection(import_symbols):
+                continue
+            for symbol in import_symbols:
+                module = _find_rust_module_exporting_symbol(workspace, symbol)
+                if module not in requested_modules or symbol in seen:
+                    continue
+                seen.add(symbol)
+                companions.append(symbol)
+    return companions
+
+
+def _parse_rust_use_group_symbols(body: str) -> list[str]:
+    symbols: list[str] = []
+    for item in body.replace("\n", " ").split(","):
+        token = item.strip()
+        if not token:
+            continue
+        token = token.split(" as ", 1)[0].strip()
+        if "::" in token:
+            token = token.rsplit("::", 1)[-1].strip()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", token):
+            symbols.append(token)
     return symbols
 
 

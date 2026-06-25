@@ -2950,8 +2950,13 @@ cells:
       commands:
         - RunResidentCycleCommandV1
         - RecordResidentEvidenceCommandV1
+        - MaterializeResidentGoalCommandV1
+        - StageResidentGoalCommandV1
+        - RunResidentGoalCommandV1
       queries:
         - QueryResidentStatusV1
+        - QueryResidentCapabilitiesV1
+        - QueryResidentAgiAuditPackV1
       events:
         - ResidentCycleCompletedEventV1
       results:
@@ -2968,14 +2973,19 @@ cells:
       - runtime.projection
       - audit.evidence
       - audit.verdict
+      - control_plane.run_ledger
       - orchestration.pm_dispatch
+      - roles.adapters
+      - roles.runtime
     subgraphs: []
     state_owners:
       - runtime/state/resident/*
       - runtime/resident/*
+      - workspace/meta/resident/*
     effects_allowed:
       - fs.read:workspace/**
       - fs.read:runtime/**
+      - fs.write:workspace/meta/resident/*
       - fs.write:runtime/state/resident/*
       - fs.write:runtime/events/runtime.events.jsonl
       - process.spawn:resident/*
@@ -2984,6 +2994,8 @@ cells:
       tests:
         - tests/test_resident_api.py
         - tests/test_resident_service.py
+        - polaris/cells/roles/adapters/tests/test_resident_agi_adapter_pure.py
+        - polaris/cells/control_plane/run_ledger/tests/test_public_service.py
         - tests/test_resident_evidence_integration.py
         - tests/test_resident_pm_bridge.py
       gaps:

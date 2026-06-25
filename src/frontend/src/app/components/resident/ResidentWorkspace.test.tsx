@@ -76,6 +76,14 @@ const mockResidentState = {
     tick_count: 3,
     last_tick_at: '2026-03-07T00:00:00Z',
   },
+  residentRuntimeEvidence: {
+    schema_version: 'resident.runtime_projection_evidence.v1',
+    realtime_channel: 'runtime.v2.status.snapshot',
+    projection_field: 'snapshot.resident',
+    live_snapshot_available: true,
+    http_details_loaded: true,
+    source: 'runtime.v2_snapshot+http_details',
+  },
   residentIdentity: {
     name: 'Resident AGI Supervisor',
     mission: 'Supervise unattended Polaris development runs with governed evidence.',
@@ -129,6 +137,7 @@ const mockResidentState = {
   residentAgiCapabilitySurface: {
     schema_version: 'resident.agi_capability_surface.v1',
     decision_boundary_schema: 'resident.agi_decision_boundary.v1',
+    authority_matrix_schema: 'resident.agi_authority_matrix.v1',
     role_id: 'resident_agi',
     runtime_foundation: 'RoleRuntime / ContextOS / TurnEngine',
     implementation_cell: 'resident.autonomy',
@@ -141,6 +150,9 @@ const mockResidentState = {
         access: 'execute_through_role_runtime',
         contract_ref: 'resident.agi_decision_turn',
         endpoint: '/v2/resident/agi/decide',
+        risk_level: 'medium',
+        guardrails: ['AGI decisions must use the resident_agi role adapter, never a sidecar runtime.'],
+        evidence_refs: ['resident_agi role_result'],
       },
       {
         capability_id: 'roles.registry.read',
@@ -170,6 +182,8 @@ const mockResidentState = {
         access: 'execute_through_pm_ce_director_chain',
         contract_ref: 'resident.goal_bridge',
         risk_level: 'high',
+        guardrails: ['No shortcut from PM directly to Director.'],
+        evidence_refs: ['PM runtime contract'],
       },
     ],
     decision_boundaries: [
@@ -206,6 +220,36 @@ const mockResidentState = {
         evidence_required: ['decision_trace.jsonl', 'PM runtime contract'],
       },
     ],
+    authority_matrix: {
+      schema_version: 'resident.agi_authority_matrix.v1',
+      runtime_foundation: 'roles.runtime + ContextOS + TurnEngine',
+      role_id: 'resident_agi',
+      chain: 'PM → Chief Engineer → Director',
+      chain_required: true,
+      platform_enforced: true,
+      llm_decision_required: true,
+      platform_hard_rules: ['role.runtime.foundation', 'platform.invariants'],
+      agi_recommendation_boundaries: ['architecture.options', 'quality.response'],
+      governed_execution_boundaries: ['goal.execution'],
+      read_only_capabilities: ['roles.registry.read', 'contextos.final_request_audit.read', 'run_ledger.read'],
+      governed_operation_capabilities: ['resident.agi_decision_turn.execute', 'resident.goal_bridge.execute'],
+      high_risk_capabilities: ['resident.goal_bridge.execute'],
+      canonical_contracts: ['resident.agi_decision_turn', 'resident.goal_bridge', 'roles.runtime'],
+      counts: {
+        platform_hard_rules: 2,
+        agi_recommendations: 2,
+        governed_execution_boundaries: 1,
+        read_only_capabilities: 3,
+        governed_operation_capabilities: 2,
+        high_risk_capabilities: 1,
+        canonical_contracts: 3,
+      },
+      decision_policy: {
+        hard_rules: 'platform_enforced_non_overridable',
+        governed_execution: 'canonical_role_chain_only',
+        code_changes: 'director_authorized_tools_only',
+      },
+    },
   },
   residentAgiAuditPack: {
     schema_version: 'resident.agi_audit_pack.v1',
@@ -229,6 +273,29 @@ const mockResidentState = {
     boundary_summary: {
       schema: 'resident.agi_decision_boundary.v1',
       boundary_ids: ['role.runtime.foundation', 'platform.invariants'],
+    },
+    authority_matrix: {
+      schema_version: 'resident.agi_authority_matrix.v1',
+      runtime_foundation: 'roles.runtime + ContextOS + TurnEngine',
+      role_id: 'resident_agi',
+      chain: 'PM → Chief Engineer → Director',
+      chain_required: true,
+      platform_enforced: true,
+      llm_decision_required: true,
+      counts: {
+        platform_hard_rules: 2,
+        agi_recommendations: 2,
+        governed_execution_boundaries: 1,
+        read_only_capabilities: 3,
+        governed_operation_capabilities: 2,
+        high_risk_capabilities: 1,
+        canonical_contracts: 3,
+      },
+      decision_policy: {
+        hard_rules: 'platform_enforced_non_overridable',
+        governed_execution: 'canonical_role_chain_only',
+        code_changes: 'director_authorized_tools_only',
+      },
     },
     hard_rule_gate: {
       schema_version: 'resident.agi_hard_rule_gate.v1',
@@ -336,17 +403,34 @@ describe('ResidentWorkspace', () => {
 
     expect(screen.getByText('AGI 工作区')).toBeInTheDocument();
     expect(screen.getByText('Resident AGI Supervisor')).toBeInTheDocument();
+    expect(screen.getByTestId('resident-runtime-evidence')).toHaveTextContent(
+      'resident.runtime_projection_evidence.v1',
+    );
+    expect(screen.getByTestId('resident-runtime-evidence')).toHaveTextContent('runtime.v2.status.snapshot');
+    expect(screen.getByTestId('resident-runtime-evidence')).toHaveTextContent('snapshot.resident');
+    expect(screen.getByTestId('resident-runtime-evidence')).toHaveTextContent('runtime.v2_snapshot+http_details');
     expect(screen.getByText('最新元认知')).toBeInTheDocument();
     expect(screen.getByText('Task decomposition')).toBeInTheDocument();
     expect(screen.getByText('AGI Role 能力面')).toBeInTheDocument();
     expect(screen.getByText('Resident AGI role decision turn')).toBeInTheDocument();
     expect(screen.getByText('Canonical role registry')).toBeInTheDocument();
     expect(screen.getByText('Final provider-request audit')).toBeInTheDocument();
+    expect(screen.getByTestId('resident-agi-role-foundation')).toHaveTextContent('resident_agi');
+    expect(screen.getByTestId('resident-agi-role-foundation')).toHaveTextContent('RoleRuntime / ContextOS / TurnEngine');
+    expect(screen.getByTestId('resident-agi-role-foundation')).toHaveTextContent('canonical contract');
+    expect(screen.getByTestId('resident-agi-role-foundation')).toHaveTextContent('PM → Chief Engineer → Director');
     expect(screen.getByTestId('resident-agi-governance-matrix')).toHaveTextContent('能力治理矩阵');
     expect(screen.getByTestId('resident-agi-governance-matrix')).toHaveTextContent('PM → Chief Engineer → Director');
     expect(screen.getByTestId('resident-agi-governance-matrix')).toHaveTextContent('Governed ops');
     expect(screen.getByTestId('resident-agi-governance-matrix')).toHaveTextContent('High risk');
+    expect(screen.getByTestId('resident-agi-authority-matrix')).toHaveTextContent('resident.agi_authority_matrix.v1');
+    expect(screen.getByTestId('resident-agi-authority-matrix')).toHaveTextContent('hard rules 2');
+    expect(screen.getByTestId('resident-agi-authority-matrix')).toHaveTextContent('AGI judgement 2');
     expect(screen.getByTestId('resident-agi-governance-tags')).toHaveTextContent('resident.goal_bridge');
+    expect(screen.getByTestId('resident-agi-governance-tags')).toHaveTextContent('canonical_role_chain_only');
+    expect(screen.getByTestId('resident-agi-governance-tags')).toHaveTextContent('platform_enforced_non_overridable');
+    expect(screen.getByText('risk high')).toBeInTheDocument();
+    expect(screen.getByText('No shortcut from PM directly to Director.')).toBeInTheDocument();
     expect(screen.getByTestId('resident-agi-decision-boundaries')).toHaveTextContent('AGI 决策边界');
     expect(screen.getByTestId('resident-agi-decision-boundaries')).toHaveTextContent('平台硬规则');
     expect(screen.getByTestId('resident-agi-decision-boundaries')).toHaveTextContent('AGI 智能判断');
@@ -356,6 +440,10 @@ describe('ResidentWorkspace', () => {
     expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('AGI 审计包');
     expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('resident.agi_audit_pack.v1');
     expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('Hard gate pass');
+    expect(screen.getByTestId('resident-agi-audit-authority-matrix')).toHaveTextContent(
+      'resident.agi_authority_matrix.v1',
+    );
+    expect(screen.getByTestId('resident-agi-audit-authority-matrix')).toHaveTextContent('governed ops 2');
     expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('hold → request_evidence');
     expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('Run Ledger pending');
     expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('llm override: blocked');
@@ -497,6 +585,8 @@ describe('ResidentWorkspace', () => {
           resident_agi_hard_rule_gate_status: 'pass',
           resident_agi_evidence_gate_status: 'hold',
           resident_agi_evidence_gate_recommended_verdict: 'request_evidence',
+          resident_agi_authority_matrix_schema: 'resident.agi_authority_matrix.v1',
+          resident_agi_chain_required: true,
         }),
       }),
     );

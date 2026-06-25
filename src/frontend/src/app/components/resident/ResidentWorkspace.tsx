@@ -30,6 +30,7 @@ import { ExecutionProgressBar } from './ExecutionProgressBar';
 import { useResident } from '@/hooks/useResident';
 import type {
   ResidentAgiAuditPackPayload,
+  ResidentAgiAuthorityMatrixPayload,
   ResidentAgiCapabilityPayload,
   ResidentAgiDecisionBoundaryPayload,
   ResidentDecisionPayload,
@@ -115,6 +116,7 @@ export function ResidentWorkspace({
 
   const isActive = Boolean(resident.residentRuntime?.active);
   const mode = resident.residentRuntime?.mode || 'observe';
+  const runtimeEvidence = resident.residentRuntimeEvidence;
 
   // Current focus - simplified
   const currentFocus = resident.residentAgenda?.current_focus?.[0] || null;
@@ -124,6 +126,7 @@ export function ResidentWorkspace({
   const capabilities = resident.residentCapabilityGraph?.capabilities || [];
   const agiCapabilitySurface = resident.residentAgiCapabilitySurface;
   const agiAuditPack = resident.residentAgiAuditPack;
+  const agiAuthorityMatrix = agiAuditPack?.authority_matrix || agiCapabilitySurface?.authority_matrix;
   const agiCapabilities = agiCapabilitySurface?.items || [];
   const agiDecisionBoundaries = agiCapabilitySurface?.decision_boundaries || [];
   const decisionStats = useMemo(() => buildDecisionStats(resident.decisions), [resident.decisions]);
@@ -170,6 +173,8 @@ export function ResidentWorkspace({
         resident_agi_hard_rule_gate_status: agiAuditPack?.hard_rule_gate?.status || '',
         resident_agi_evidence_gate_status: agiAuditPack?.evidence_gate?.status || '',
         resident_agi_evidence_gate_recommended_verdict: agiAuditPack?.evidence_gate?.recommended_verdict || '',
+        resident_agi_authority_matrix_schema: agiAuthorityMatrix?.schema_version || '',
+        resident_agi_chain_required: Boolean(agiAuthorityMatrix?.chain_required),
       },
       constraints: [
         'preserve_pm_chief_engineer_director_qa_chain',
@@ -250,6 +255,15 @@ export function ResidentWorkspace({
                 <div className="flex items-center gap-4 text-sm text-slate-400">
                   <span>模式: {mode}</span>
                   <span>上次更新: {formatTime(resident.residentRuntime?.last_tick_at)}</span>
+                </div>
+                <div
+                  className="mt-2 inline-flex max-w-full flex-wrap items-center gap-1 rounded border border-cyan-500/15 bg-slate-950/70 px-2 py-1 font-mono text-[10px] text-cyan-200/80"
+                  data-testid="resident-runtime-evidence"
+                >
+                  <span>{runtimeEvidence?.schema_version || 'resident.runtime_projection_evidence.v1'}</span>
+                  <span>· {runtimeEvidence?.realtime_channel || 'runtime.v2.status.snapshot'}</span>
+                  <span>· {runtimeEvidence?.projection_field || 'snapshot.resident'}</span>
+                  <span>· {runtimeEvidence?.source || 'unavailable'}</span>
                 </div>
               </div>
             ) : (
@@ -430,8 +444,17 @@ export function ResidentWorkspace({
                   <CapabilityMetric label="Runtime" value={agiCapabilitySurface?.runtime_foundation || 'RoleRuntime / ContextOS / TurnEngine'} />
                   <CapabilityMetric label="Capabilities" value={String(agiCapabilitySurface?.count ?? agiCapabilities.length)} />
                 </div>
+                <div
+                  className="mt-3 rounded-lg border border-cyan-500/15 bg-slate-950/70 px-3 py-2 text-xs text-slate-300"
+                  data-testid="resident-agi-role-foundation"
+                >
+                  <span className="font-mono text-cyan-200">resident_agi</span>{' '}
+                  运行在同一 RoleRuntime / ContextOS / TurnEngine 底座上；平台级证据访问更宽，但执行必须服从硬规则、能力目录、
+                  canonical contract 和 PM → Chief Engineer → Director。
+                </div>
                 <CapabilityGovernanceMatrix
                   stats={capabilityGovernance}
+                  authorityMatrix={agiAuthorityMatrix}
                   runtimeFoundation={agiCapabilitySurface?.runtime_foundation || 'roles.runtime + ContextOS + TurnEngine'}
                 />
                 <DecisionBoundaryMatrix
@@ -451,6 +474,28 @@ export function ResidentWorkspace({
                       </div>
                       <div className="mt-1 text-xs text-slate-500">
                         {[capability.category, capability.contract_ref].filter(Boolean).join(' · ')}
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {capability.risk_level && (
+                          <span className={cn(
+                            'rounded border px-1.5 py-0.5 text-[10px]',
+                            capability.risk_level === 'high'
+                              ? 'border-amber-500/20 bg-amber-500/10 text-amber-300'
+                              : 'border-slate-700 bg-slate-900 text-slate-400',
+                          )}>
+                            risk {capability.risk_level}
+                          </span>
+                        )}
+                        {(capability.guardrails || []).slice(0, 1).map((guardrail) => (
+                          <span key={guardrail} className="truncate rounded border border-cyan-700/40 px-1.5 py-0.5 text-[10px] text-cyan-200/80" title={guardrail}>
+                            {guardrail}
+                          </span>
+                        ))}
+                        {(capability.evidence_refs || []).slice(0, 1).map((evidenceRef) => (
+                          <span key={evidenceRef} className="truncate rounded border border-slate-700 px-1.5 py-0.5 font-mono text-[10px] text-slate-400" title={evidenceRef}>
+                            {evidenceRef}
+                          </span>
+                        ))}
                       </div>
                     </div>
                   ))}
@@ -819,12 +864,25 @@ function buildCapabilityGovernanceStats(capabilities: ResidentAgiCapabilityPaylo
 
 function CapabilityGovernanceMatrix({
   stats,
+  authorityMatrix,
   runtimeFoundation,
 }: {
   stats: CapabilityGovernanceStats;
+  authorityMatrix?: ResidentAgiAuthorityMatrixPayload;
   runtimeFoundation: string;
 }) {
-  const chainLabel = stats.chainRequired ? 'PM → Chief Engineer → Director' : '只读/观察优先';
+  const chainLabel = authorityMatrix?.chain_required
+    ? authorityMatrix.chain || 'PM → Chief Engineer → Director'
+    : stats.chainRequired
+      ? 'PM → Chief Engineer → Director'
+      : '只读/观察优先';
+  const counts = authorityMatrix?.counts || {};
+  const readOnly = counts.read_only_capabilities ?? stats.readOnly;
+  const governedOps = counts.governed_operation_capabilities ?? stats.governedMutation;
+  const highRisk = counts.high_risk_capabilities ?? stats.highRisk;
+  const contracts = counts.canonical_contracts ?? stats.contractRefs.length;
+  const contractRefs = authorityMatrix?.canonical_contracts || stats.contractRefs;
+  const policy = authorityMatrix?.decision_policy || {};
   return (
     <div
       className="mt-3 rounded-lg border border-cyan-500/15 bg-cyan-500/[0.04] px-3 py-2"
@@ -833,27 +891,44 @@ function CapabilityGovernanceMatrix({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="text-xs font-medium text-cyan-100">能力治理矩阵</div>
-          <div className="mt-0.5 text-[10px] text-slate-500">底座: {runtimeFoundation}</div>
+          <div className="mt-0.5 text-[10px] text-slate-500">
+            底座: {authorityMatrix?.runtime_foundation || runtimeFoundation}
+          </div>
         </div>
         <Badge className="border-cyan-500/20 bg-cyan-500/10 text-cyan-200">
           {chainLabel}
         </Badge>
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-4">
-        <CapabilityMetric label="Read only" value={String(stats.readOnly)} />
-        <CapabilityMetric label="Governed ops" value={String(stats.governedMutation)} />
-        <CapabilityMetric label="High risk" value={String(stats.highRisk)} />
-        <CapabilityMetric label="Contracts" value={String(stats.contractRefs.length)} />
+        <CapabilityMetric label="Read only" value={String(readOnly)} />
+        <CapabilityMetric label="Governed ops" value={String(governedOps)} />
+        <CapabilityMetric label="High risk" value={String(highRisk)} />
+        <CapabilityMetric label="Contracts" value={String(contracts)} />
       </div>
+      {authorityMatrix && (
+        <div
+          className="mt-2 rounded border border-cyan-500/10 bg-slate-950/50 px-2 py-1 font-mono text-[10px] text-cyan-100/80"
+          data-testid="resident-agi-authority-matrix"
+        >
+          {authorityMatrix.schema_version || 'resident.agi_authority_matrix.v1'} · hard rules{' '}
+          {counts.platform_hard_rules ?? 0} · AGI judgement {counts.agi_recommendations ?? 0} · governed execution{' '}
+          {counts.governed_execution_boundaries ?? 0}
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap gap-1" data-testid="resident-agi-governance-tags">
         {stats.categories.slice(0, 8).map((category) => (
           <span key={category} className="rounded bg-slate-950/80 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
             {category}
           </span>
         ))}
-        {stats.contractRefs.slice(0, 6).map((contractRef) => (
+        {contractRefs.slice(0, 6).map((contractRef) => (
           <span key={contractRef} className="rounded border border-slate-700 bg-slate-950/50 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
             {contractRef}
+          </span>
+        ))}
+        {Object.values(policy).slice(0, 3).map((policyValue) => (
+          <span key={policyValue} className="rounded border border-cyan-700/40 bg-cyan-950/20 px-1.5 py-0.5 font-mono text-[10px] text-cyan-200/80">
+            {policyValue}
           </span>
         ))}
       </div>
@@ -964,6 +1039,8 @@ function AgiAuditPackPanel({ pack }: { pack?: ResidentAgiAuditPackPayload | null
   const evidenceGate = pack.evidence_gate;
   const evidenceGateStatus = String(evidenceGate?.status || 'unknown').toLowerCase();
   const runLedgerSummary = pack.run_ledger_summary;
+  const authorityMatrix = pack.authority_matrix;
+  const authorityCounts = authorityMatrix?.counts || {};
   const capabilityIds = (pack.capability_surface?.items || [])
     .map((capability) => capability.capability_id || '')
     .filter(Boolean);
@@ -996,6 +1073,25 @@ function AgiAuditPackPanel({ pack }: { pack?: ResidentAgiAuditPackPayload | null
         <CapabilityMetric label="Evidence gate" value={evidenceGateStatus} />
         <CapabilityMetric label="Hard checks" value={String(hardRuleGate?.checks?.length ?? 0)} />
       </div>
+      {authorityMatrix && (
+        <div
+          className="mt-2 rounded border border-emerald-500/10 bg-slate-950/70 px-2.5 py-2"
+          data-testid="resident-agi-audit-authority-matrix"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-[10px] uppercase text-slate-500">Authority matrix</div>
+            <Badge className="border-emerald-500/20 bg-emerald-500/10 text-emerald-300">
+              {authorityMatrix.chain_required ? authorityMatrix.chain || 'PM → Chief Engineer → Director' : 'read-only'}
+            </Badge>
+          </div>
+          <div className="mt-1 font-mono text-[10px] text-slate-400">
+            {authorityMatrix.schema_version || 'resident.agi_authority_matrix.v1'} · hard rules{' '}
+            {authorityCounts.platform_hard_rules ?? 0} · AGI judgement{' '}
+            {authorityCounts.agi_recommendations ?? 0} · governed ops{' '}
+            {authorityCounts.governed_operation_capabilities ?? 0}
+          </div>
+        </div>
+      )}
       <div className="mt-2 grid gap-2 lg:grid-cols-2">
         <div className="rounded border border-slate-800 bg-slate-950/70 px-2.5 py-2">
           <div className="text-[10px] uppercase text-slate-500">Execution constraints</div>

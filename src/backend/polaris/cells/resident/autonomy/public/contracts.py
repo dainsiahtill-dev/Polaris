@@ -71,6 +71,57 @@ class QueryResidentCapabilitiesV1:
 
 
 @dataclass(frozen=True)
+class QueryResidentAgiAuditPackV1:
+    workspace: str
+    decision_limit: int = 20
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "decision_limit", max(1, min(int(self.decision_limit), 100)))
+
+
+@dataclass(frozen=True)
+class MaterializeResidentGoalCommandV1:
+    workspace: str
+    goal_id: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "goal_id", _require_non_empty("goal_id", self.goal_id))
+
+
+@dataclass(frozen=True)
+class StageResidentGoalCommandV1:
+    workspace: str
+    goal_id: str
+    promote_to_pm_runtime: bool = False
+    ramdisk_root: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "goal_id", _require_non_empty("goal_id", self.goal_id))
+        object.__setattr__(self, "promote_to_pm_runtime", bool(self.promote_to_pm_runtime))
+        object.__setattr__(self, "ramdisk_root", str(self.ramdisk_root or "").strip())
+
+
+@dataclass(frozen=True)
+class RunResidentGoalCommandV1:
+    workspace: str
+    goal_id: str
+    settings: Any | None = None
+    run_type: str = "pm"
+    run_director: bool = False
+    director_iterations: int = 1
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "goal_id", _require_non_empty("goal_id", self.goal_id))
+        object.__setattr__(self, "run_type", str(self.run_type or "pm").strip() or "pm")
+        object.__setattr__(self, "run_director", bool(self.run_director))
+        object.__setattr__(self, "director_iterations", max(1, min(int(self.director_iterations), 10)))
+
+
+@dataclass(frozen=True)
 class ResidentAgiCapabilityV1:
     capability_id: str
     name: str
@@ -223,6 +274,8 @@ class ResidentAutonomyError(RuntimeError):
 
 
 __all__ = [
+    "MaterializeResidentGoalCommandV1",
+    "QueryResidentAgiAuditPackV1",
     "QueryResidentCapabilitiesV1",
     "QueryResidentStatusV1",
     "RecordResidentEvidenceCommandV1",
@@ -232,4 +285,6 @@ __all__ = [
     "ResidentAutonomyResultV1",
     "ResidentCycleCompletedEventV1",
     "RunResidentCycleCommandV1",
+    "RunResidentGoalCommandV1",
+    "StageResidentGoalCommandV1",
 ]

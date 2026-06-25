@@ -38,4 +38,74 @@ describe('residentService', () => {
       '/v2/resident/agi/audit-pack?workspace=%2Ftmp%2Fpolaris-demo&decision_limit=12',
     );
   });
+
+  it('loads the Resident AGI capability surface from the canonical endpoint', async () => {
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          schema_version: 'resident.agi_capability_surface.v1',
+          authority_matrix_schema: 'resident.agi_authority_matrix.v1',
+          authority_matrix: {
+            schema_version: 'resident.agi_authority_matrix.v1',
+            decision_policy: {
+              governed_execution: 'canonical_role_chain_only',
+            },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await residentService.getCapabilities('/tmp/polaris-demo');
+
+    expect(result.ok).toBe(true);
+    expect(result.data?.authority_matrix?.decision_policy?.governed_execution).toBe(
+      'canonical_role_chain_only',
+    );
+    expect(apiFetchMock).toHaveBeenCalledWith('/v2/resident/capabilities?workspace=%2Ftmp%2Fpolaris-demo');
+  });
+
+  it('posts Resident AGI decisions with audit-pack and governance evidence', async () => {
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          decision: { verdict: 'request_evidence' },
+          audit_pack: { schema_version: 'resident.agi_audit_pack.v1' },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await residentService.decide('/tmp/polaris-demo', {
+      objective: 'Decide whether the run can proceed.',
+      decision_type: 'platform_supervision',
+      include_audit_pack: true,
+      candidate_actions: ['continue', 'block', 'request_evidence', 'escalate'],
+      constraints: ['preserve_pm_chief_engineer_director_qa_chain'],
+      evidence: {
+        resident_agi_authority_matrix_schema: 'resident.agi_authority_matrix.v1',
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/v2/resident/agi/decide',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace: '/tmp/polaris-demo',
+          objective: 'Decide whether the run can proceed.',
+          decision_type: 'platform_supervision',
+          include_audit_pack: true,
+          candidate_actions: ['continue', 'block', 'request_evidence', 'escalate'],
+          constraints: ['preserve_pm_chief_engineer_director_qa_chain'],
+          evidence: {
+            resident_agi_authority_matrix_schema: 'resident.agi_authority_matrix.v1',
+          },
+        }),
+      }),
+    );
+  });
 });

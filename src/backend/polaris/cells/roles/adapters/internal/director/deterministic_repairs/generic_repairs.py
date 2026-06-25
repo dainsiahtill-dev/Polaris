@@ -61,6 +61,7 @@ from .python_repairs import (
 from .rust_repairs import (
     _apply_deterministic_rust_crate_import_repair,
     _apply_deterministic_rust_dependency_repair,
+    _apply_deterministic_rust_derive_repair,
     _apply_deterministic_rust_lib_root_facade_repair,
     _apply_deterministic_rust_line_suggestion_repair,
     _apply_deterministic_rust_missing_lib_target_repair,
@@ -697,6 +698,13 @@ def _apply_deterministic_materialization_quality_repairs(
     )
     results.extend(
         _apply_deterministic_rust_dependency_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_rust_derive_repair(
             adapter,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,

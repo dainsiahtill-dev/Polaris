@@ -93,9 +93,17 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert payload["audit_pack"]["schema_version"] == "resident.agi_audit_pack.v1"
     assert payload["audit_pack"]["role_registry"]["resident_agi_available"] is True
     assert payload["audit_pack"]["hard_rule_gate"]["status"] == "pass"
+    assert payload["audit_pack"]["authority_matrix"]["schema_version"] == "resident.agi_authority_matrix.v1"
+    assert payload["audit_pack"]["authority_matrix"]["chain_required"] is True
     assert payload["audit_pack"]["run_ledger_summary"]["source"] == "run_ledger_projection"
     assert payload["audit_pack"]["evidence_gate"]["status"] == "hold"
     assert payload["recorded_decision"]["actual_outcome"]["resident_agi_evidence_gate"]["status"] == "hold"
+    assert (
+        payload["recorded_decision"]["actual_outcome"]["resident_agi_authority_matrix"]["decision_policy"][
+            "governed_execution"
+        ]
+        == "canonical_role_chain_only"
+    )
     assert "runtime/gates/qa.json" in payload["recorded_decision"]["evidence_refs"]
     assert captured["role_id"] == "resident_agi"
     assert captured["workspace"] == str(workspace)
@@ -106,6 +114,8 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert captured_input["evidence"]["resident_agi_audit_pack_schema"] == "resident.agi_audit_pack.v1"
     assert captured_input["evidence"]["resident_agi_hard_rule_gate_status"] == "pass"
     assert captured_input["evidence"]["resident_agi_evidence_gate_status"] == "hold"
+    assert captured_input["evidence"]["resident_agi_authority_matrix_schema"] == "resident.agi_authority_matrix.v1"
+    assert captured_input["evidence"]["resident_agi_chain_required"] is True
     captured_context = captured["context"]
     assert isinstance(captured_context, dict)
     assert captured_context["resident_agi_audit_pack"]["schema_version"] == "resident.agi_audit_pack.v1"
@@ -114,6 +124,7 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert captured_metadata["resident_agi_role_runtime_required"] is True
     assert captured_metadata["resident_agi_audit_pack_injected"] is True
     assert captured_metadata["resident_agi_hard_rule_gate_status"] == "pass"
+    assert captured_metadata["resident_agi_authority_matrix_schema"] == "resident.agi_authority_matrix.v1"
 
 
 def test_resident_agi_decide_blocks_before_llm_when_hard_gate_fails(
@@ -131,7 +142,10 @@ def test_resident_agi_decide_blocks_before_llm_when_hard_gate_fails(
 
     app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
     with (
-        patch("polaris.delivery.http.v2.resident.get_supported_roles", return_value=["pm", "director"]),
+        patch(
+            "polaris.cells.resident.autonomy.internal.agi_audit_pack.get_supported_roles",
+            return_value=["pm", "director"],
+        ),
         patch("polaris.delivery.http.v2.resident.create_role_adapter", side_effect=fail_create_role_adapter),
         TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client,
     ):
@@ -315,7 +329,10 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
         capabilities = capabilities_response.json()
         assert capabilities["schema_version"] == "resident.agi_capability_surface.v1"
         assert capabilities["decision_boundary_schema"] == "resident.agi_decision_boundary.v1"
+        assert capabilities["authority_matrix_schema"] == "resident.agi_authority_matrix.v1"
         assert capabilities["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
+        assert capabilities["authority_matrix"]["chain"] == "PM → Chief Engineer → Director"
+        assert capabilities["authority_matrix"]["decision_policy"]["code_changes"] == "director_authorized_tools_only"
         assert any(item["capability_id"] == "resident.agi_decision_turn.execute" for item in capabilities["items"])
         assert any(item["capability_id"] == "roles.registry.read" for item in capabilities["items"])
         assert any(item["capability_id"] == "run_ledger.read" for item in capabilities["items"])
@@ -333,6 +350,8 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
         assert audit_pack["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
         assert audit_pack["role_registry"]["resident_agi_available"] is True
         assert audit_pack["hard_rule_gate"]["status"] == "pass"
+        assert audit_pack["authority_matrix"]["schema_version"] == "resident.agi_authority_matrix.v1"
+        assert audit_pack["authority_matrix"]["decision_policy"]["hard_rules"] == "platform_enforced_non_overridable"
         assert audit_pack["run_ledger_summary"]["source"] == "run_ledger_projection"
         assert audit_pack["evidence_gate"]["recommended_verdict"] in {"continue", "request_evidence", "block"}
         assert "resident_agi" in audit_pack["role_registry"]["dialogue_roles"]

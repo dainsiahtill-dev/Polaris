@@ -162,6 +162,49 @@ def test_required_evidence_distinguishes_missing_from_failed() -> None:
     assert missing_projection["evidence_policy"]["failed_required_modalities"] == []
 
 
+def test_read_run_ledger_projection_evidence_policy_failed_is_not_ok(tmp_path: Path) -> None:
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-1",
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "real_run",
+                "gate": {"name": "real_run_gate", "ok": True, "summary": "gate saw evidence"},
+                "job_token": {
+                    "token_id": "token-1",
+                    "run_id": "run-1",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {
+                        "enabled_evidence_modalities": ["command"],
+                        "required_evidence_modalities": ["command"],
+                    },
+                },
+                "physical_evidence": {
+                    "modalities": {
+                        "command": {
+                            "present": True,
+                            "ok": False,
+                            "detail": "pytest failed",
+                        }
+                    }
+                },
+            },
+        )
+    )
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-1")
+    ).projection
+
+    assert projection["ok"] is False
+    assert projection["failed"] == 1
+    assert projection["evidence_policy"]["ok"] is False
+    assert projection["evidence_policy"]["missing_required_modalities"] == []
+    assert projection["evidence_policy"]["failed_required_modalities"] == ["command"]
+
+
 def test_append_run_ledger_event_publishes_control_plane_projection_event(tmp_path: Path, monkeypatch) -> None:
     class FakePublisher:
         def __init__(self) -> None:

@@ -6,21 +6,23 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from polaris.cells.control_plane.run_ledger.public import (
-    ReadRunLedgerProjectionQueryV1,
-    read_run_ledger_projection,
-)
-from polaris.cells.llm.dialogue.public import get_registered_roles
 from polaris.cells.resident.autonomy.public.service import (
+    MaterializeResidentGoalCommandV1,
+    QueryResidentAgiAuditPackV1,
     QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
     ResidentMode,
+    RunResidentGoalCommandV1,
+    StageResidentGoalCommandV1,
     get_resident_service,
+    materialize_resident_goal,
+    query_resident_agi_audit_pack,
     query_resident_capabilities,
     query_resident_status,
-    resident_agi_capability_surface_payload,
+    run_resident_goal,
+    stage_resident_goal,
 )
-from polaris.cells.roles.adapters.public.service import create_role_adapter, get_supported_roles
+from polaris.cells.roles.adapters.public.service import create_role_adapter
 from polaris.delivery.http.dependencies import require_auth
 from pydantic import BaseModel, Field
 
@@ -170,282 +172,6 @@ def _resident_agi_decision_summary(
     return f"Resident AGI decision [{verdict}]: {detail}" if detail else f"Resident AGI decision [{verdict}]"
 
 
-def _resident_agi_role_registry_payload() -> dict[str, Any]:
-    dialogue_roles = sorted({str(role).strip() for role in get_registered_roles() if str(role).strip()})
-    adapter_roles = sorted({str(role).strip() for role in get_supported_roles() if str(role).strip()})
-    required_roles = ("pm", "chief_engineer", "director", "qa", "resident_agi")
-    missing_required_roles = [
-        role for role in required_roles if role not in dialogue_roles or role not in adapter_roles
-    ]
-    return {
-        "schema_version": "resident.agi_role_registry.v1",
-        "source": "llm.dialogue.registry + roles.adapters.registry",
-        "dialogue_roles": dialogue_roles,
-        "adapter_roles": adapter_roles,
-        "required_roles": list(required_roles),
-        "missing_required_roles": missing_required_roles,
-        "resident_agi_available": "resident_agi" in dialogue_roles and "resident_agi" in adapter_roles,
-    }
-
-
-def _resident_agi_boundary_summary(capability_surface: dict[str, Any]) -> dict[str, Any]:
-    boundaries = capability_surface.get("decision_boundaries")
-    boundary_items = boundaries if isinstance(boundaries, list) else []
-    counts: dict[str, int] = {}
-    for item in boundary_items:
-        if not isinstance(item, dict):
-            continue
-        authority = str(item.get("authority") or "unknown").strip() or "unknown"
-        counts[authority] = counts.get(authority, 0) + 1
-    return {
-        "schema": capability_surface.get("decision_boundary_schema") or "resident.agi_decision_boundary.v1",
-        "counts_by_authority": counts,
-        "boundary_ids": [
-            str(item.get("boundary_id") or "").strip()
-            for item in boundary_items
-            if isinstance(item, dict) and str(item.get("boundary_id") or "").strip()
-        ],
-    }
-
-
-def _resident_agi_audit_refs(
-    *,
-    decisions: list[dict[str, Any]],
-    capability_surface: dict[str, Any],
-) -> list[str]:
-    refs: set[str] = set()
-    for decision in decisions:
-        for key in ("context_refs", "evidence_refs", "affected_files", "affected_symbols"):
-            values = decision.get(key)
-            if not isinstance(values, list):
-                continue
-            refs.update(str(value).strip() for value in values if str(value).strip())
-        bundle_id = str(decision.get("evidence_bundle_id") or "").strip()
-        if bundle_id:
-            refs.add(bundle_id)
-
-    capabilities = capability_surface.get("items")
-    if isinstance(capabilities, list):
-        for capability in capabilities:
-            if not isinstance(capability, dict):
-                continue
-            evidence_refs = capability.get("evidence_refs")
-            if isinstance(evidence_refs, list):
-                refs.update(str(value).strip() for value in evidence_refs if str(value).strip())
-    return sorted(refs)
-
-
-def _resident_agi_run_ledger_summary(workspace: str, *, run_id: str = "", max_runs: int = 20) -> dict[str, Any]:
-    """Read the platform Run Ledger projection and return a compact summary."""
-
-    try:
-        projection = read_run_ledger_projection(
-            ReadRunLedgerProjectionQueryV1(
-                workspace=workspace,
-                run_id=run_id,
-                max_runs=max_runs,
-            )
-        ).projection
-    except (RuntimeError, ValueError, OSError) as exc:
-        logger.warning("Resident AGI run ledger summary unavailable: %s", exc)
-        return {
-            "schema_version": "resident.agi_run_ledger_summary.v1",
-            "source": "run_ledger_projection",
-            "available": False,
-            "ok": False,
-            "status": "unavailable",
-            "projected": 0,
-            "total": 0,
-            "failed": 0,
-            "missing": 0,
-            "detail": str(exc),
-            "evidence_policy": {},
-            "evidence_modalities": {},
-        }
-
-    evidence_policy = projection.get("evidence_policy")
-    evidence_modalities = projection.get("evidence_modalities")
-    return {
-        "schema_version": "resident.agi_run_ledger_summary.v1",
-        "source": projection.get("source") or "run_ledger_projection",
-        "available": bool(projection.get("available")),
-        "ok": bool(projection.get("ok")),
-        "status": str(projection.get("status") or ""),
-        "projected": int(projection.get("projected") or 0),
-        "total": int(projection.get("total") or 0),
-        "failed": int(projection.get("failed") or 0),
-        "missing": int(projection.get("missing") or 0),
-        "detail": str(projection.get("detail") or ""),
-        "evidence_policy": evidence_policy if isinstance(evidence_policy, dict) else {},
-        "evidence_modalities": evidence_modalities if isinstance(evidence_modalities, dict) else {},
-    }
-
-
-def _resident_agi_evidence_gate(
-    *,
-    audit_refs: list[str],
-    run_ledger_summary: dict[str, Any],
-) -> dict[str, Any]:
-    context_refs = [item for item in audit_refs if item.startswith("runtime/contexts/")]
-    ledger_available = bool(run_ledger_summary.get("available"))
-    ledger_ok = bool(run_ledger_summary.get("ok"))
-    ledger_failed = int(run_ledger_summary.get("failed") or 0)
-    if ledger_failed > 0:
-        status = "fail"
-        recommended_verdict = "block"
-        reason = "Run Ledger projection contains failed gate evidence."
-    elif ledger_ok and context_refs:
-        status = "pass"
-        recommended_verdict = "continue"
-        reason = "Run Ledger projection and ContextOS snapshot refs are available."
-    elif ledger_available:
-        status = "hold"
-        recommended_verdict = "request_evidence"
-        reason = "Run Ledger projection is available but ContextOS snapshot refs are incomplete."
-    else:
-        status = "hold"
-        recommended_verdict = "request_evidence"
-        reason = "Run Ledger projection is not available yet."
-    return {
-        "schema_version": "resident.agi_evidence_gate.v1",
-        "status": status,
-        "recommended_verdict": recommended_verdict,
-        "reason": reason,
-        "run_ledger_available": ledger_available,
-        "run_ledger_ok": ledger_ok,
-        "context_snapshot_ref_count": len(context_refs),
-        "platform_enforced": False,
-        "llm_decision_required": True,
-    }
-
-
-def _resident_agi_hard_rule_gate(audit_pack: dict[str, Any]) -> dict[str, Any]:
-    """Evaluate non-negotiable platform invariants before AGI judgement."""
-
-    role_registry_raw = audit_pack.get("role_registry")
-    role_registry: dict[str, Any] = role_registry_raw if isinstance(role_registry_raw, dict) else {}
-    capability_surface_raw = audit_pack.get("capability_surface")
-    capability_surface: dict[str, Any] = capability_surface_raw if isinstance(capability_surface_raw, dict) else {}
-    capabilities_raw = capability_surface.get("items")
-    capabilities: list[Any] = capabilities_raw if isinstance(capabilities_raw, list) else []
-    capability_ids = {
-        str(item.get("capability_id") or "").strip()
-        for item in capabilities
-        if isinstance(item, dict) and str(item.get("capability_id") or "").strip()
-    }
-    boundary_summary_raw = audit_pack.get("boundary_summary")
-    boundary_summary: dict[str, Any] = boundary_summary_raw if isinstance(boundary_summary_raw, dict) else {}
-    boundary_ids_raw = boundary_summary.get("boundary_ids")
-    boundary_ids = (
-        {str(item or "").strip() for item in boundary_ids_raw if str(item or "").strip()}
-        if isinstance(boundary_ids_raw, list)
-        else set()
-    )
-    constraints_raw = audit_pack.get("execution_constraints")
-    constraints = [str(item or "").strip() for item in constraints_raw] if isinstance(constraints_raw, list) else []
-
-    checks: list[dict[str, Any]] = [
-        {
-            "check_id": "role_registry.resident_agi_available",
-            "passed": bool(role_registry.get("resident_agi_available")),
-            "detail": "resident_agi must exist in dialogue and adapter registries.",
-        },
-        {
-            "check_id": "capability.resident_agi_decision_turn",
-            "passed": "resident.agi_decision_turn.execute" in capability_ids,
-            "detail": "Resident AGI decisions must have a canonical role-runtime capability.",
-        },
-        {
-            "check_id": "boundary.role_runtime_foundation",
-            "passed": "role.runtime.foundation" in boundary_ids,
-            "detail": "Resident AGI must be tied to the shared RoleRuntime/ContextOS/TurnEngine boundary.",
-        },
-        {
-            "check_id": "topology.pm_ce_director_preserved",
-            "passed": any("PM → Chief Engineer → Director" in item for item in constraints),
-            "detail": "Downstream execution must preserve PM → Chief Engineer → Director.",
-        },
-        {
-            "check_id": "decision_endpoint.canonical",
-            "passed": audit_pack.get("decision_endpoint") == "/v2/resident/agi/decide",
-            "detail": "Resident AGI decisions must enter through the canonical HTTP contract.",
-        },
-    ]
-    failed = [item for item in checks if not item["passed"]]
-    return {
-        "schema_version": "resident.agi_hard_rule_gate.v1",
-        "status": "pass" if not failed else "block",
-        "checks": checks,
-        "failed_check_ids": [str(item["check_id"]) for item in failed],
-        "platform_enforced": True,
-        "llm_override_allowed": False,
-    }
-
-
-def _resident_agi_audit_pack(
-    *,
-    workspace: str,
-    status_payload: dict[str, Any],
-    decision_limit: int,
-) -> dict[str, Any]:
-    capability_surface = status_payload.get("agi_capability_surface")
-    if not isinstance(capability_surface, dict):
-        capability_surface = resident_agi_capability_surface_payload()
-    decisions_raw = status_payload.get("decisions")
-    decisions = [item for item in decisions_raw if isinstance(item, dict)] if isinstance(decisions_raw, list) else []
-    recent_decisions = decisions[:decision_limit]
-    runtime_raw = status_payload.get("runtime")
-    runtime: dict[str, Any] = runtime_raw if isinstance(runtime_raw, dict) else {}
-    counts_raw = status_payload.get("counts")
-    counts: dict[str, Any] = counts_raw if isinstance(counts_raw, dict) else {}
-    run_id = str(status_payload.get("run_id") or "").strip()
-    run_ledger_summary = _resident_agi_run_ledger_summary(workspace, run_id=run_id)
-    evidence_refs = _resident_agi_audit_refs(
-        decisions=recent_decisions,
-        capability_surface=capability_surface,
-    )
-    audit_pack: dict[str, Any] = {
-        "schema_version": "resident.agi_audit_pack.v1",
-        "workspace": workspace,
-        "role_id": "resident_agi",
-        "runtime_foundation": capability_surface.get("runtime_foundation") or "roles.runtime + ContextOS + TurnEngine",
-        "truth_sources": [
-            "resident.status",
-            "resident.agi_capability_surface",
-            "resident.decision_trace",
-            "roles.registry",
-        ],
-        "role_registry": _resident_agi_role_registry_payload(),
-        "runtime_summary": {
-            "active": bool(runtime.get("active")),
-            "mode": runtime.get("mode") or "",
-            "last_tick_at": runtime.get("last_tick_at") or "",
-            "tick_count": runtime.get("tick_count") or 0,
-            "last_error": runtime.get("last_error") or "",
-            "last_summary": runtime.get("last_summary") if isinstance(runtime.get("last_summary"), dict) else {},
-        },
-        "counts": counts,
-        "capability_surface": capability_surface,
-        "boundary_summary": _resident_agi_boundary_summary(capability_surface),
-        "recent_decisions": recent_decisions,
-        "evidence_refs": evidence_refs,
-        "run_ledger_summary": run_ledger_summary,
-        "evidence_gate": _resident_agi_evidence_gate(
-            audit_refs=evidence_refs,
-            run_ledger_summary=run_ledger_summary,
-        ),
-        "execution_constraints": [
-            "AGI decisions must execute as resident_agi role turns.",
-            "Execution-impacting AGI decisions must be recorded in resident.decision_trace.",
-            "Downstream work must preserve PM → Chief Engineer → Director.",
-            "Hard platform invariants cannot be overridden by AGI judgement.",
-        ],
-        "decision_endpoint": "/v2/resident/agi/decide",
-    }
-    audit_pack["hard_rule_gate"] = _resident_agi_hard_rule_gate(audit_pack)
-    return audit_pack
-
-
 @router.get("/status", dependencies=[Depends(require_auth)])
 def resident_status(request: Request, details: bool = False, workspace: str = "") -> dict[str, Any]:
     ws = _resolve_workspace(request, workspace)
@@ -467,12 +193,7 @@ def resident_agi_audit_pack(
     """Return the read-only evidence pack a Resident AGI turn should inspect."""
 
     ws = _resolve_workspace(request, workspace)
-    status_payload = get_resident_service(ws).get_status(include_details=True)
-    return _resident_agi_audit_pack(
-        workspace=ws,
-        status_payload=status_payload,
-        decision_limit=decision_limit,
-    )
+    return query_resident_agi_audit_pack(QueryResidentAgiAuditPackV1(workspace=ws, decision_limit=decision_limit))
 
 
 @router.post("/agi/decide", dependencies=[Depends(require_auth)])
@@ -483,17 +204,19 @@ async def resident_agi_decide(request: Request, payload: ResidentAgiDecisionTurn
     service = get_resident_service(ws)
     audit_pack: dict[str, Any] | None = None
     if payload.include_audit_pack:
-        status_payload = service.get_status(include_details=True)
-        audit_pack = _resident_agi_audit_pack(
-            workspace=ws,
-            status_payload=status_payload,
-            decision_limit=payload.audit_pack_decision_limit,
+        audit_pack = query_resident_agi_audit_pack(
+            QueryResidentAgiAuditPackV1(
+                workspace=ws,
+                decision_limit=payload.audit_pack_decision_limit,
+            )
         )
     input_data = payload.model_dump()
     hard_rule_gate_raw = audit_pack.get("hard_rule_gate") if audit_pack is not None else None
     hard_rule_gate: dict[str, Any] = hard_rule_gate_raw if isinstance(hard_rule_gate_raw, dict) else {}
     evidence_gate_raw = audit_pack.get("evidence_gate") if audit_pack is not None else None
     evidence_gate: dict[str, Any] = evidence_gate_raw if isinstance(evidence_gate_raw, dict) else {}
+    authority_matrix_raw = audit_pack.get("authority_matrix") if audit_pack is not None else None
+    authority_matrix: dict[str, Any] = authority_matrix_raw if isinstance(authority_matrix_raw, dict) else {}
     if audit_pack is not None:
         input_data["resident_agi_audit_pack"] = audit_pack
         evidence = dict(input_data.get("evidence") or {})
@@ -509,6 +232,8 @@ async def resident_agi_decide(request: Request, payload: ResidentAgiDecisionTurn
                 "resident_agi_hard_rule_gate_status": hard_rule_gate.get("status", ""),
                 "resident_agi_evidence_gate_status": evidence_gate.get("status", ""),
                 "resident_agi_evidence_gate_recommended_verdict": evidence_gate.get("recommended_verdict", ""),
+                "resident_agi_authority_matrix_schema": authority_matrix.get("schema_version", ""),
+                "resident_agi_chain_required": bool(authority_matrix.get("chain_required")),
             }
         )
         input_data["evidence"] = evidence
@@ -529,6 +254,7 @@ async def resident_agi_decide(request: Request, payload: ResidentAgiDecisionTurn
             "resident_agi_audit_pack_schema": (audit_pack or {}).get("schema_version", ""),
             "resident_agi_hard_rule_gate_status": hard_rule_gate.get("status", ""),
             "resident_agi_evidence_gate_status": evidence_gate.get("status", ""),
+            "resident_agi_authority_matrix_schema": authority_matrix.get("schema_version", ""),
         },
     }
 
@@ -634,6 +360,7 @@ async def resident_agi_decide(request: Request, payload: ResidentAgiDecisionTurn
                 "resident_agi_audit_pack_evidence_ref_count": len((audit_pack or {}).get("evidence_refs") or []),
                 "resident_agi_hard_rule_gate": hard_rule_gate,
                 "resident_agi_evidence_gate": evidence_gate,
+                "resident_agi_authority_matrix": authority_matrix,
                 "agi_verdict": agi_verdict,
                 "resident_verdict": resident_verdict,
                 "downstream_allowed": downstream_allowed,
@@ -732,9 +459,9 @@ def resident_reject_goal(request: Request, goal_id: str, payload: GoalNotePayloa
 
 @router.post("/goals/{goal_id}/materialize", dependencies=[Depends(require_auth)])
 def resident_materialize_goal(request: Request, goal_id: str, payload: ResidentWorkspaceRequest) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
+    ws = _resolve_workspace(request, payload.workspace)
     try:
-        contract = service.materialize_goal(goal_id)
+        contract = materialize_resident_goal(MaterializeResidentGoalCommandV1(workspace=ws, goal_id=goal_id))
     except ValueError as exc:
         logger.error("resident_materialize_goal failed: %s", exc)
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="internal error") from exc
@@ -745,13 +472,16 @@ def resident_materialize_goal(request: Request, goal_id: str, payload: ResidentW
 
 @router.post("/goals/{goal_id}/stage", dependencies=[Depends(require_auth)])
 def resident_stage_goal(request: Request, goal_id: str, payload: GoalStageRequest) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
+    ws = _resolve_workspace(request, payload.workspace)
     settings = _resolve_settings(request)
     try:
-        staged = service.stage_goal(
-            goal_id,
-            promote_to_pm_runtime=payload.promote_to_pm_runtime,
-            ramdisk_root=str(getattr(settings, "ramdisk_root", "") or ""),
+        staged = stage_resident_goal(
+            StageResidentGoalCommandV1(
+                workspace=ws,
+                goal_id=goal_id,
+                ramdisk_root=str(getattr(settings, "ramdisk_root", "") or ""),
+                promote_to_pm_runtime=payload.promote_to_pm_runtime,
+            )
         )
     except ValueError as exc:
         logger.error("resident_stage_goal failed: %s", exc)
@@ -763,14 +493,17 @@ def resident_stage_goal(request: Request, goal_id: str, payload: GoalStageReques
 
 @router.post("/goals/{goal_id}/run", dependencies=[Depends(require_auth)])
 async def resident_run_goal(request: Request, goal_id: str, payload: GoalRunRequest) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
+    ws = _resolve_workspace(request, payload.workspace)
     try:
-        result = await service.run_goal(
-            goal_id,
-            settings=_resolve_settings(request),
-            run_type=payload.run_type,
-            run_director=payload.run_director,
-            director_iterations=payload.director_iterations,
+        result = await run_resident_goal(
+            RunResidentGoalCommandV1(
+                workspace=ws,
+                goal_id=goal_id,
+                settings=_resolve_settings(request),
+                run_type=payload.run_type,
+                run_director=payload.run_director,
+                director_iterations=payload.director_iterations,
+            )
         )
     except ValueError as exc:
         logger.error("resident_run_goal failed: %s", exc)

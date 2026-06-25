@@ -61,6 +61,7 @@ const LIVE_RESIDENT: ResidentStatusDetailsPayload = {
   },
   agi_capability_surface: {
     schema_version: 'resident.agi_capability_surface.v1',
+    authority_matrix_schema: 'resident.agi_authority_matrix.v1',
     role_id: 'resident_agi',
     runtime_foundation: 'roles.runtime + ContextOS + TurnEngine',
     implementation_cell: 'resident.autonomy',
@@ -74,6 +75,27 @@ const LIVE_RESIDENT: ResidentStatusDetailsPayload = {
         contract_ref: 'roles.final_request_context_audit',
       },
     ],
+    authority_matrix: {
+      schema_version: 'resident.agi_authority_matrix.v1',
+      runtime_foundation: 'roles.runtime + ContextOS + TurnEngine',
+      role_id: 'resident_agi',
+      chain: 'PM → Chief Engineer → Director',
+      chain_required: true,
+      platform_enforced: true,
+      llm_decision_required: true,
+      counts: {
+        platform_hard_rules: 2,
+        agi_recommendations: 2,
+        governed_execution_boundaries: 1,
+        read_only_capabilities: 1,
+        governed_operation_capabilities: 1,
+        high_risk_capabilities: 0,
+        canonical_contracts: 2,
+      },
+      decision_policy: {
+        governed_execution: 'canonical_role_chain_only',
+      },
+    },
   },
 };
 
@@ -93,6 +115,27 @@ const LIVE_AUDIT_PACK = {
   boundary_summary: {
     schema: 'resident.agi_decision_boundary.v1',
     boundary_ids: ['role.runtime.foundation'],
+  },
+  authority_matrix: {
+    schema_version: 'resident.agi_authority_matrix.v1',
+    runtime_foundation: 'roles.runtime + ContextOS + TurnEngine',
+    role_id: 'resident_agi',
+    chain: 'PM → Chief Engineer → Director',
+    chain_required: true,
+    platform_enforced: true,
+    llm_decision_required: true,
+    counts: {
+      platform_hard_rules: 2,
+      agi_recommendations: 2,
+      governed_execution_boundaries: 1,
+      read_only_capabilities: 1,
+      governed_operation_capabilities: 1,
+      high_risk_capabilities: 0,
+      canonical_contracts: 2,
+    },
+    decision_policy: {
+      governed_execution: 'canonical_role_chain_only',
+    },
   },
   run_ledger_summary: {
     schema_version: 'resident.agi_run_ledger_summary.v1',
@@ -147,6 +190,13 @@ describe('useResident', () => {
     expect(result.current.residentAgiCapabilitySurface?.items?.[0]?.capability_id).toBe(
       'contextos.final_request_audit.read',
     );
+    expect(result.current.residentAgiCapabilitySurface?.authority_matrix?.schema_version).toBe(
+      'resident.agi_authority_matrix.v1',
+    );
+    expect(result.current.residentAgiCapabilitySurface?.authority_matrix?.chain_required).toBe(true);
+    expect(result.current.residentRuntimeEvidence.live_snapshot_available).toBe(true);
+    expect(result.current.residentRuntimeEvidence.http_details_loaded).toBe(false);
+    expect(result.current.residentRuntimeEvidence.source).toBe('runtime.v2_snapshot');
     expect(result.current.decisions[0]?.actor).toBe('ResidentAGI');
     expect(result.current.goals[0]?.goal_id).toBe('goal-1');
     expect(residentServiceMock.getAgiAuditPack).not.toHaveBeenCalled();
@@ -186,6 +236,10 @@ describe('useResident', () => {
     expect(result.current.residentAgiAuditPack?.schema_version).toBe('resident.agi_audit_pack.v1');
     expect(result.current.residentAgiAuditPack?.role_registry?.resident_agi_available).toBe(true);
     expect(result.current.residentAgiAuditPack?.evidence_gate?.status).toBe('hold');
+    expect(result.current.residentAgiAuditPack?.authority_matrix?.decision_policy?.governed_execution).toBe(
+      'canonical_role_chain_only',
+    );
+    expect(result.current.residentRuntimeEvidence.source).toBe('runtime.v2_snapshot+http_details');
 
     await act(async () => {
       await result.current.runAgiDecision({

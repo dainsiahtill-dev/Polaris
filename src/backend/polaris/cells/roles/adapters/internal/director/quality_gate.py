@@ -1691,6 +1691,9 @@ def _python_runtime_smoke_repair_target_files(
         if workspace_root is not None and workspace_root.is_dir() and _looks_like_python_test_behavior_failure(text):
             if _looks_like_python_regex_source_quality_failure(text):
                 targets.extend(_changed_source_repair_target_files(changed_files, workspace_root))
+            if _looks_like_cli_subcommand_quality_failure(text):
+                entrypoints = _workspace_cli_entrypoint_repair_target_files(workspace_root)
+                targets.extend(entrypoints or _changed_source_repair_target_files(changed_files, workspace_root))
             failed_test_targets = _python_unittest_failure_test_target_files(text, workspace_root)
             for rel in failed_test_targets:
                 targets.extend(
@@ -1762,6 +1765,19 @@ def _looks_like_python_regex_source_quality_failure(text: str) -> bool:
     return "not found" in token or "read_source(" in token or "src =" in token
 
 
+def _looks_like_cli_subcommand_quality_failure(text: str) -> bool:
+    token = str(text or "").lower()
+    return any(
+        hint in token
+        for hint in (
+            "unknown subcommand",
+            "unrecognized subcommand",
+            "invalid subcommand",
+            "no such subcommand",
+        )
+    )
+
+
 _SOURCE_REPAIR_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".c",
@@ -1779,6 +1795,36 @@ _SOURCE_REPAIR_EXTENSIONS: frozenset[str] = frozenset(
         ".tsx",
     }
 )
+
+
+_CLI_ENTRYPOINT_REPAIR_CANDIDATES: tuple[str, ...] = (
+    "src/main.rs",
+    "main.rs",
+    "src/main.py",
+    "main.py",
+    "src/cli.py",
+    "cli.py",
+    "src/index.js",
+    "index.js",
+    "src/index.ts",
+    "index.ts",
+    "src/main.ts",
+    "main.ts",
+    "cmd/main.go",
+    "main.go",
+)
+
+
+def _workspace_cli_entrypoint_repair_target_files(workspace_root: Path) -> list[str]:
+    try:
+        root = workspace_root.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return []
+    targets: list[str] = []
+    for rel in _CLI_ENTRYPOINT_REPAIR_CANDIDATES:
+        if _workspace_path_exists_case_insensitive(root, rel):
+            targets.append(rel)
+    return _dedupe_preserve_order(targets)
 
 
 def _changed_source_repair_target_files(changed_files: list[str], workspace_root: Path) -> list[str]:

@@ -276,9 +276,37 @@ export interface ResidentAgiDecisionBoundaryPayload {
   contract_refs?: string[];
 }
 
+export interface ResidentAgiAuthorityMatrixPayload {
+  schema_version?: string;
+  runtime_foundation?: string;
+  role_id?: string;
+  chain?: string;
+  chain_required?: boolean;
+  platform_enforced?: boolean;
+  llm_decision_required?: boolean;
+  platform_hard_rules?: string[];
+  agi_recommendation_boundaries?: string[];
+  governed_execution_boundaries?: string[];
+  read_only_capabilities?: string[];
+  governed_operation_capabilities?: string[];
+  high_risk_capabilities?: string[];
+  canonical_contracts?: string[];
+  counts?: {
+    platform_hard_rules?: number;
+    agi_recommendations?: number;
+    governed_execution_boundaries?: number;
+    read_only_capabilities?: number;
+    governed_operation_capabilities?: number;
+    high_risk_capabilities?: number;
+    canonical_contracts?: number;
+  };
+  decision_policy?: Record<string, string>;
+}
+
 export interface ResidentAgiCapabilitySurfacePayload {
   schema_version?: string;
   decision_boundary_schema?: string;
+  authority_matrix_schema?: string;
   role_id?: string;
   runtime_foundation?: string;
   implementation_cell?: string;
@@ -287,6 +315,7 @@ export interface ResidentAgiCapabilitySurfacePayload {
   categories?: string[];
   items?: ResidentAgiCapabilityPayload[];
   decision_boundaries?: ResidentAgiDecisionBoundaryPayload[];
+  authority_matrix?: ResidentAgiAuthorityMatrixPayload;
   count?: number;
 }
 
@@ -310,6 +339,7 @@ export interface ResidentAgiAuditPackPayload {
   runtime_summary?: Record<string, unknown>;
   counts?: Record<string, number>;
   capability_surface?: ResidentAgiCapabilitySurfacePayload;
+  authority_matrix?: ResidentAgiAuthorityMatrixPayload;
   boundary_summary?: {
     schema?: string;
     counts_by_authority?: Record<string, number>;

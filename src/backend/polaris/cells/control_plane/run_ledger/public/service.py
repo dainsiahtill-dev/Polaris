@@ -154,7 +154,7 @@ def _merge_evidence_policy(projects: list[dict[str, Any]]) -> dict[str, Any]:
     missing = list(dict.fromkeys(missing))
     failed = list(dict.fromkeys(failed))
     return {
-        "ok": not missing,
+        "ok": not missing and not failed,
         "enabled_modalities": enabled,
         "required_modalities": required,
         "missing_required_modalities": missing,

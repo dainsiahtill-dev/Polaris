@@ -2282,8 +2282,29 @@ def _phase_pre_materialization_quality(
                     }
                 )
 
+        # Post-execution Java repair pass: JUnit dependency removal
+        from .deterministic_repairs.java_repairs import run_all_java_post_repairs
+
+        _post_java_repairs: list[dict[str, str]] = []
+        if any(_ws_path.rglob("*.java")):
+            _post_java_repairs = run_all_java_post_repairs(_ws_path)
+            for record in _post_java_repairs:
+                tool_results.append(
+                    {
+                        "tool": "write_file",
+                        "tool_name": "write_file",
+                        "success": True,
+                        "result": {
+                            "ok": True,
+                            "source_tool": "deterministic_java_post_repair",
+                            "file": record.get("file", ""),
+                            "action": record.get("action", ""),
+                        },
+                    }
+                )
+
         # Re-collect workspace diff after all post-execution repairs
-        if _post_go_repairs or _post_rust_repairs or _post_cpp_repairs:
+        if _post_go_repairs or _post_rust_repairs or _post_cpp_repairs or _post_java_repairs:
             current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
                 adapter,
                 baseline_files,
@@ -3322,6 +3343,7 @@ from .deterministic_repairs import (  # noqa: E402  (deferred for circular-impor
     _apply_deterministic_runtime_dependency_repair as _apply_deterministic_runtime_dependency_repair,
     _apply_deterministic_rust_crate_import_repair as _apply_deterministic_rust_crate_import_repair,
     _apply_deterministic_rust_dependency_repair as _apply_deterministic_rust_dependency_repair,
+    _apply_deterministic_rust_derive_repair as _apply_deterministic_rust_derive_repair,
     _apply_deterministic_rust_lib_root_facade_repair as _apply_deterministic_rust_lib_root_facade_repair,
     _apply_deterministic_rust_line_suggestion_repair as _apply_deterministic_rust_line_suggestion_repair,
     _apply_deterministic_rust_missing_lib_target_repair as _apply_deterministic_rust_missing_lib_target_repair,

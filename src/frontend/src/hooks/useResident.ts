@@ -75,6 +75,7 @@ export function useResident(options: UseResidentOptions = {}) {
   const [actionKey, setActionKey] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [agiAuditPack, setAgiAuditPack] = useState<ResidentAgiAuditPackPayload | null>(null);
+  const [httpDetailsLoaded, setHttpDetailsLoaded] = useState(false);
 
   // Phase 1.2: Goal Execution Projection (synced from WebSocket status)
   const [goalExecutions, setGoalExecutions] = useState<Map<string, GoalExecutionView>>(new Map());
@@ -83,6 +84,7 @@ export function useResident(options: UseResidentOptions = {}) {
     if (!workspace) {
       setStatus(emptyDetails('', options.liveResident));
       setAgiAuditPack(null);
+      setHttpDetailsLoaded(false);
       setError(null);
       return null;
     }
@@ -92,9 +94,11 @@ export function useResident(options: UseResidentOptions = {}) {
     if (!result.ok || !result.data) {
       const message = result.error || '加载 AGI 状态失败';
       setError(message);
+      setHttpDetailsLoaded(false);
       return null;
     }
     setStatus(result.data);
+    setHttpDetailsLoaded(true);
     const auditPackResult = await residentService.getAgiAuditPack(workspace, 12);
     setAgiAuditPack(auditPackResult.ok && auditPackResult.data ? auditPackResult.data : null);
     setError(null);
@@ -132,6 +136,7 @@ export function useResident(options: UseResidentOptions = {}) {
     if (!workspace) {
       setStatus(emptyDetails('', options.liveResident));
       setAgiAuditPack(null);
+      setHttpDetailsLoaded(false);
       setError(null);
       return;
     }
@@ -155,6 +160,23 @@ export function useResident(options: UseResidentOptions = {}) {
     () => status ?? emptyDetails(workspace, options.liveResident),
     [options.liveResident, status, workspace],
   );
+  const residentRuntimeEvidence = useMemo(
+    () => ({
+      schema_version: 'resident.runtime_projection_evidence.v1',
+      realtime_channel: 'runtime.v2.status.snapshot',
+      projection_field: 'snapshot.resident',
+      live_snapshot_available: Boolean(options.liveResident),
+      http_details_loaded: httpDetailsLoaded,
+      source: options.liveResident
+        ? httpDetailsLoaded
+          ? 'runtime.v2_snapshot+http_details'
+          : 'runtime.v2_snapshot'
+        : httpDetailsLoaded
+          ? 'http_details'
+          : 'unavailable',
+    }),
+    [httpDetailsLoaded, options.liveResident],
+  );
 
   return {
     workspace,
@@ -175,6 +197,7 @@ export function useResident(options: UseResidentOptions = {}) {
     residentCapabilityGraph: summary?.capability_graph ?? null,
     residentAgiCapabilitySurface: summary?.agi_capability_surface ?? null,
     residentAgiAuditPack: agiAuditPack,
+    residentRuntimeEvidence,
     refresh,
     isActing: (key: string) => actionKey === key,
     start: (mode: string) =>
