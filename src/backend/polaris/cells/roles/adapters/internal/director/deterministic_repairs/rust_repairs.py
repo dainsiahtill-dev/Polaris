@@ -1583,22 +1583,25 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
         return []
 
     all_repairs: list[dict[str, Any]] = []
-    # Pass 1: Duplicate module files (E0761) — must run first
+    # Pass 1: Structural fixes first (duplicate modules, missing files)
     all_repairs.extend(repair_rust_duplicate_module_files(workspace))
+    all_repairs.extend(repair_rust_missing_module_files(workspace))
+    all_repairs.extend(repair_rust_missing_binary_entrypoint(workspace))
+    # Pass 2: Code-level fixes
     all_repairs.extend(repair_rust_unused_imports(workspace, stderr))
     all_repairs.extend(repair_rust_missing_fields(workspace, stderr))
     all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr))
-    all_repairs.extend(repair_rust_missing_module_files(workspace))
 
     # Second pass with fresh cargo check output
     if all_repairs:
         stderr2 = _run_cargo_check_stderr(workspace)
         if stderr2 and ("error" in stderr2 or "warning" in stderr2):
             all_repairs.extend(repair_rust_duplicate_module_files(workspace))
+            all_repairs.extend(repair_rust_missing_module_files(workspace))
+            all_repairs.extend(repair_rust_missing_binary_entrypoint(workspace))
             all_repairs.extend(repair_rust_unused_imports(workspace, stderr2))
             all_repairs.extend(repair_rust_missing_fields(workspace, stderr2))
             all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr2))
-            all_repairs.extend(repair_rust_missing_module_files(workspace))
 
     return all_repairs
 
@@ -1628,6 +1631,42 @@ def repair_rust_duplicate_module_files(workspace: Path) -> list[dict[str, Any]]:
                 {
                     "file": str(flat_rs.relative_to(workspace)),
                     "action": f"removed_duplicate_module_{subdir.name}",
+                }
+            )
+    return repairs
+
+
+def repair_rust_missing_binary_entrypoint(workspace: Path) -> list[dict[str, Any]]:
+    """Create stub main.rs when Cargo.toml declares a [[bin]] target but the file is missing."""
+    repairs: list[dict[str, Any]] = []
+    cargo_toml = workspace / "Cargo.toml"
+    if not cargo_toml.is_file():
+        return []
+    try:
+        content = cargo_toml.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    # Find [[bin]] sections with path declarations
+    bin_path_re = re.compile(r'\[\[bin\]\].*?path\s*=\s*"([^"]+)"', re.DOTALL)
+    for match in bin_path_re.finditer(content):
+        bin_path = match.group(1)
+        full_path = workspace / bin_path
+        if not full_path.is_file():
+            # Find the lib crate name to use in the stub
+            lib_name_match = re.search(r'name\s*=\s*"([^"]+)"', content)
+            lib_name = lib_name_match.group(1) if lib_name_match else "app"
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            stub = (
+                f"// Auto-generated binary entry point for {lib_name}\n"
+                f"fn main() {{\n"
+                f'    println!("{lib_name} binary entry point");\n'
+                f"}}\n"
+            )
+            full_path.write_text(stub, encoding="utf-8")
+            repairs.append(
+                {
+                    "file": bin_path,
+                    "action": f"created_missing_binary_{bin_path}",
                 }
             )
     return repairs

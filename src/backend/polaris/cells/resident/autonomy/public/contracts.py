@@ -210,6 +210,8 @@ class QueryResidentAgiEvidenceInterfacesV1:
     interface_ids: tuple[str, ...] = field(default_factory=tuple)
     run_id: str = ""
     task_id: str = ""
+    context_refs: tuple[str, ...] = field(default_factory=tuple)
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
     decision_limit: int = 20
     max_runs: int = 20
 
@@ -227,6 +229,16 @@ class QueryResidentAgiEvidenceInterfacesV1:
         )
         object.__setattr__(self, "run_id", str(self.run_id or "").strip())
         object.__setattr__(self, "task_id", str(self.task_id or "").strip())
+        object.__setattr__(
+            self,
+            "context_refs",
+            tuple(str(item or "").strip() for item in self.context_refs if str(item or "").strip()),
+        )
+        object.__setattr__(
+            self,
+            "evidence_refs",
+            tuple(str(item or "").strip() for item in self.evidence_refs if str(item or "").strip()),
+        )
         object.__setattr__(self, "decision_limit", max(1, min(int(self.decision_limit), 100)))
         object.__setattr__(self, "max_runs", max(1, min(int(self.max_runs), 100)))
 

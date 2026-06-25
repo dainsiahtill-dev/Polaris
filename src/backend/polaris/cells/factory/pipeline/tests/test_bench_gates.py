@@ -182,6 +182,36 @@ def test_failure_taxonomy_prioritizes_event_wait_timeout_over_run_ledger_project
     assert taxonomy["evidence"][1].startswith("secondary_run_ledger:")
 
 
+def test_failure_taxonomy_uses_chain_diagnostics_when_chain_error_missing() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "checks": [],
+        "chain": {"exit_code": -1},
+        "chain_diagnostics": {
+            "chain_non_terminal": True,
+            "chain_non_terminal_target_files_truncated": True,
+            "event_wait_error": {
+                "kind": "runtime_v2_connection_failed",
+                "message": "received 1012 (service restart)",
+            },
+        },
+        "factory_gates": [
+            {
+                "gate": "run_ledger_projection",
+                "ok": False,
+                "detail": "run ledger projection has 1 failed gate(s)",
+            }
+        ],
+        "run_ledger_projection": {"ok": False, "detail": "run ledger projection has 1 failed gate(s)"},
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "runtime_environment"
+    assert taxonomy["root_cause_signature"] == "runtime_environment:event_wait_runtime_v2_connection_failed"
+    assert taxonomy["evidence"][0] == "received 1012 (service restart)"
+
+
 def test_role_tool_failure_taxonomy_does_not_emit_platform_opencode_audit() -> None:
     record: dict[str, Any] = {
         "project_id": "L1-02",

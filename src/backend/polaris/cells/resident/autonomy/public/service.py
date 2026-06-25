@@ -265,6 +265,7 @@ def _resident_agi_runtime_contract_gate(
     role_metadata: dict[str, Any],
     hard_rule_gate: dict[str, Any],
     decision_profile: dict[str, Any],
+    decision_preflight: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Verify that a successful Resident AGI turn returned RoleRuntime receipt evidence."""
 
@@ -275,6 +276,17 @@ def _resident_agi_runtime_contract_gate(
             "passed": False,
             "required": False,
             "reason": "Resident AGI role turn was blocked before runtime execution.",
+            "checks": [],
+            "failed_check_ids": [],
+        }
+    preflight = decision_preflight if isinstance(decision_preflight, dict) else {}
+    if preflight and not bool(preflight.get("passed")):
+        return {
+            "schema_version": "resident.agi_runtime_contract_gate.v1",
+            "status": "preflight_blocked",
+            "passed": False,
+            "required": False,
+            "reason": "Resident AGI role turn was blocked by decision evidence preflight.",
             "checks": [],
             "failed_check_ids": [],
         }
@@ -339,10 +351,23 @@ def _resident_agi_output_contract_gate(
     selected_decision_capability: dict[str, Any],
     hard_rule_gate: dict[str, Any],
     evidence_gate: dict[str, Any],
+    decision_preflight: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate the Resident AGI model output before accepting its decision."""
 
     if hard_rule_gate.get("status") == "block":
+        return {
+            "schema_version": "resident.agi_output_contract_gate.v1",
+            "status": "preflight_blocked",
+            "passed": False,
+            "required": False,
+            "reason": "Resident AGI role turn was blocked before model output validation.",
+            "checks": [],
+            "failed_check_ids": [],
+            "normalized_decision": {},
+        }
+    preflight = decision_preflight if isinstance(decision_preflight, dict) else {}
+    if preflight and not bool(preflight.get("passed")):
         return {
             "schema_version": "resident.agi_output_contract_gate.v1",
             "status": "preflight_blocked",
@@ -836,6 +861,26 @@ def _resident_agi_contextos_final_request_interface(
     return base
 
 
+def _resident_agi_audit_pack_with_current_refs(
+    audit_pack: dict[str, Any],
+    *,
+    context_refs: tuple[str, ...] = (),
+    evidence_refs: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Return an audit pack view that prioritizes refs from the current decision."""
+
+    merged_refs = _merge_non_empty_strings(
+        list(context_refs),
+        list(evidence_refs),
+        audit_pack.get("evidence_refs") if isinstance(audit_pack.get("evidence_refs"), list) else [],
+    )
+    if merged_refs == audit_pack.get("evidence_refs"):
+        return audit_pack
+    payload = dict(audit_pack)
+    payload["evidence_refs"] = merged_refs
+    return payload
+
+
 def _resident_agi_metadata_only_interface(base: dict[str, Any]) -> dict[str, Any]:
     access = str(base.get("access") or "").strip()
     contract_ref = str(base.get("contract_ref") or "").strip()
@@ -869,6 +914,11 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
         workspace=query.workspace,
         status_payload=status_payload,
         decision_limit=query.decision_limit,
+    )
+    audit_pack = _resident_agi_audit_pack_with_current_refs(
+        audit_pack,
+        context_refs=query.context_refs,
+        evidence_refs=query.evidence_refs,
     )
     selected_decision_capability = _resident_agi_select_decision_capability(
         decision_type=query.decision_type,
@@ -951,6 +1001,8 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
         "decision_type": query.decision_type,
         "run_id": query.run_id,
         "task_id": query.task_id,
+        "context_refs": list(query.context_refs),
+        "evidence_refs": list(query.evidence_refs),
         "selected_decision_capability": selected_decision_capability,
         "required_evidence_interfaces": selected_required_interfaces,
         "optional_evidence_interfaces": selected_optional_interfaces,
@@ -976,6 +1028,102 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
             if isinstance(audit_pack.get("hard_rule_gate"), dict)
             else "",
         },
+    }
+
+
+def _resident_agi_required_interface_statuses(evidence_interfaces: dict[str, Any]) -> list[dict[str, Any]]:
+    required_raw = evidence_interfaces.get("required_evidence_interfaces")
+    required_ids = [str(item or "").strip() for item in required_raw] if isinstance(required_raw, list) else []
+    interface_rows_raw = evidence_interfaces.get("interfaces")
+    interface_rows = interface_rows_raw if isinstance(interface_rows_raw, list) else []
+    by_id = {
+        str(item.get("interface_id") or "").strip(): item
+        for item in interface_rows
+        if isinstance(item, dict) and str(item.get("interface_id") or "").strip()
+    }
+    statuses: list[dict[str, Any]] = []
+    for interface_id in required_ids:
+        item = by_id.get(interface_id, {})
+        statuses.append(
+            {
+                "interface_id": interface_id,
+                "status": str(item.get("status") or "missing"),
+                "available": bool(item.get("available")),
+                "source": str(item.get("source") or ""),
+                "gaps": list(item.get("gaps") or []) if isinstance(item.get("gaps"), list) else [],
+                "recommended_next_action": str(item.get("recommended_next_action") or ""),
+            }
+        )
+    return statuses
+
+
+def _resident_agi_decision_preflight(
+    *,
+    command: RunResidentAgiDecisionTurnCommandV1,
+    audit_pack: dict[str, Any],
+    hard_rule_gate: dict[str, Any],
+) -> dict[str, Any]:
+    """Verify required decision evidence before allowing a Resident AGI LLM turn."""
+
+    if hard_rule_gate.get("status") == "block":
+        return {
+            "schema_version": "resident.agi_decision_preflight.v1",
+            "status": "preflight_blocked",
+            "passed": False,
+            "required": False,
+            "reason": "Platform hard-rule gate blocked evidence preflight.",
+            "adapter_execution_allowed": False,
+            "recommended_verdict": "block",
+            "recommended_next_action": "repair_platform_hard_rule_evidence",
+            "missing_required_interface_ids": [],
+            "required_interface_statuses": [],
+            "evidence_interfaces": {},
+        }
+
+    evidence_interfaces = query_resident_agi_evidence_interfaces(
+        QueryResidentAgiEvidenceInterfacesV1(
+            workspace=command.workspace,
+            decision_type=command.decision_type,
+            run_id=command.run_id,
+            task_id=command.task_id,
+            context_refs=command.context_refs,
+            evidence_refs=command.evidence_refs,
+            decision_limit=command.audit_pack_decision_limit,
+        )
+    )
+    summary_raw = evidence_interfaces.get("summary")
+    summary: dict[str, Any] = summary_raw if isinstance(summary_raw, dict) else {}
+    missing_required = [
+        str(item or "").strip()
+        for item in summary.get("missing_required_interface_ids", [])
+        if str(item or "").strip()
+    ]
+    selected_raw = evidence_interfaces.get("selected_decision_capability")
+    selected: dict[str, Any] = selected_raw if isinstance(selected_raw, dict) else {}
+    evidence_gate_raw = audit_pack.get("evidence_gate")
+    evidence_gate: dict[str, Any] = evidence_gate_raw if isinstance(evidence_gate_raw, dict) else {}
+    passed = not missing_required
+    recommended_verdict = "continue" if passed else "request_evidence"
+    recommended_next_action = (
+        "run_resident_agi_judgement" if passed else "request_missing_required_evidence_interfaces"
+    )
+    return {
+        "schema_version": "resident.agi_decision_preflight.v1",
+        "status": "pass" if passed else "block",
+        "passed": passed,
+        "required": True,
+        "reason": "Required Resident AGI evidence interfaces are available."
+        if passed
+        else "Required Resident AGI evidence interfaces are missing or unavailable.",
+        "adapter_execution_allowed": passed,
+        "recommended_verdict": recommended_verdict,
+        "recommended_next_action": recommended_next_action,
+        "selected_decision_capability_id": str(selected.get("decision_id") or ""),
+        "missing_required_interface_ids": missing_required,
+        "required_interface_statuses": _resident_agi_required_interface_statuses(evidence_interfaces),
+        "evidence_gate_status": str(evidence_gate.get("status") or ""),
+        "evidence_gate_recommended_verdict": str(evidence_gate.get("recommended_verdict") or ""),
+        "evidence_interfaces": evidence_interfaces,
     }
 
 

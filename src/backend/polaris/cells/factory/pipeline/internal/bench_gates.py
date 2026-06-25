@@ -2790,6 +2790,7 @@ def _record_has_runtime_environment_failure(record: dict[str, Any]) -> bool:
             "failure_reasons": record.get("failure_reasons"),
             "failure_evidence": record.get("failure_evidence"),
             "chain": record.get("chain"),
+            "chain_diagnostics": record.get("chain_diagnostics"),
             "factory_gates": record.get("factory_gates"),
         },
         ensure_ascii=False,

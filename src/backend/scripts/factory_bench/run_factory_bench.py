@@ -828,6 +828,8 @@ def _non_terminal_chain_diagnostics(
         "backend_url": backend_url,
         "workspace": project_workspace,
         "launcher_instance": dict(launcher_instance),
+        "chain_non_terminal": True,
+        "chain_non_terminal_target_files_truncated": True,
     }
     for key in ("event_wait_error", "last_observed_status", "cancel_response", "cancel_error"):
         value = chain.get(key)
