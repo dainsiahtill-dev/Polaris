@@ -1250,11 +1250,13 @@ def _rust_use_insert_index(lines: list[str]) -> int:
 
 
 def _remove_unresolved_pub_use_symbol(text: str, symbol: str) -> str:
+    """Remove a single symbol from pub use statements (flat or nested groups)."""
     repaired = re.sub(
         rf"(?m)^\s*pub\s+use\s+[A-Za-z_][A-Za-z0-9_:]*::{re.escape(symbol)}\s*;\s*\n?",
         "",
         text,
     )
+    # Flat group: pub use path::{A, B, Symbol};
     group_pattern = re.compile(
         r"(?m)^(?P<prefix>\s*pub\s+use\s+[A-Za-z_][A-Za-z0-9_:]*::\{)(?P<body>[^}]+)(?P<suffix>\}\s*;\s*)$"
     )
@@ -1268,7 +1270,24 @@ def _remove_unresolved_pub_use_symbol(text: str, symbol: str) -> str:
             return ""
         return f"{match.group('prefix')}{', '.join(filtered)}{match.group('suffix')}"
 
-    return group_pattern.sub(replace_group, repaired)
+    repaired = group_pattern.sub(replace_group, repaired)
+
+    # Nested group: pub use path::{sub::{A, Symbol}, sub2::{B}};
+    # Remove the symbol from inner groups, then clean up empty inner groups.
+    # Step 1: Remove ", Symbol" or "Symbol, " or "Symbol" inside braces
+    repaired = re.sub(rf",\s*{re.escape(symbol)}\b", "", repaired)
+    repaired = re.sub(rf"\b{re.escape(symbol)}\s*,\s*", "", repaired)
+    repaired = re.sub(rf"\b{re.escape(symbol)}\b(?=[,\s}}])", "", repaired)
+    # Step 2: Remove empty sub-groups like "ingredient::{}, " or "ingredient::{}"
+    repaired = re.sub(r",\s*\w+::\{\s*\}", "", repaired)
+    repaired = re.sub(r"\w+::\{\s*\}\s*,\s*", "", repaired)
+    repaired = re.sub(r"\w+::\{\s*\}", "", repaired)
+    # Step 3: Remove entirely empty pub use statements
+    repaired = re.sub(r"(?m)^\s*pub\s+use\s+[A-Za-z_][A-Za-z0-9_:]*::\{\s*\}\s*;\s*\n?", "", repaired)
+    # Step 4: Remove pub use with only empty braces left (multi-line)
+    repaired = re.sub(r"pub\s+use\s+[A-Za-z_][A-Za-z0-9_:]*::\{[\s,]*\}\s*;\s*", "", repaired)
+
+    return repaired
 
 
 def _rust_crate_names_look_related(missing: str, canonical: str) -> bool:
@@ -1568,6 +1587,62 @@ def repair_rust_field_rename_suggestions(workspace: Path, stderr: str = "") -> l
     return repairs
 
 
+def repair_rust_wrong_crate_paths(workspace: Path, stderr: str = "") -> list[dict[str, Any]]:
+    """Fix wrong ``crate::X`` import paths using cargo's suggestions.
+
+    When code uses ``use crate::recipe::Recipe`` but the module is at
+    ``crate::models::recipe``, cargo helpfully suggests the correct path.
+    Parse the suggestion and apply it.
+    """
+    if not stderr:
+        stderr = _run_cargo_check_stderr(workspace)
+    if not stderr:
+        return []
+
+    repairs: list[dict[str, Any]] = []
+    error_blocks = re.split(r"(?=error\[E\d+\])", stderr)
+
+    for block in error_blocks:
+        # Also try the simpler format: just the replacement line
+        path_match = re.search(r"--> (?P<path>[^:\n]+\.rs):(?P<line>\d+)", block)
+        if not path_match:
+            continue
+        rel_path = path_match.group("path").strip()
+        line_num = int(path_match.group("line"))
+
+        # Look for cargo's inline suggestion
+        sug_match = re.search(
+            r"help:.*?a similar path exists.*?\n\s*\|\s*\n\s*\d+\s*\|\s*(?P<sug>use\s+[^;]+;)", block, re.DOTALL
+        )
+        if not sug_match:
+            continue
+        suggestion = sug_match.group("sug").strip()
+
+        target = (workspace / rel_path).resolve()
+        if not target.is_file():
+            continue
+        try:
+            lines = target.read_text(encoding="utf-8").split("\n")
+        except OSError:
+            continue
+        idx = line_num - 1
+        if idx < 0 or idx >= len(lines):
+            continue
+        old_line = lines[idx].strip()
+        # Only replace if it's a use statement
+        if not old_line.startswith("use "):
+            continue
+        lines[idx] = suggestion
+        target.write_text("\n".join(lines), encoding="utf-8")
+        repairs.append(
+            {
+                "file": rel_path,
+                "action": f"fixed_crate_path_line_{line_num}",
+            }
+        )
+    return repairs
+
+
 def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
     """Run all Rust post-execution repairs in sequence.
 
@@ -1582,8 +1657,15 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
     if not stderr or ("error" not in stderr and "warning" not in stderr):
         return []
 
+    # Use cargo stderr as artifact_quality_errors for error-driven repairs
+    errors: list[str] = [stderr]
+
     all_repairs: list[dict[str, Any]] = []
-    # Pass 1: Structural fixes first (duplicate modules, missing files)
+    # Pass 0: Dependency & crate-level fixes (must run before code-level)
+    all_repairs.extend(repair_rust_dependencies(workspace, errors))
+    all_repairs.extend(repair_rust_crate_imports(workspace, errors))
+    all_repairs.extend(repair_rust_wrong_crate_paths(workspace, stderr))
+    # Pass 1: Structural fixes (duplicate modules, missing files)
     all_repairs.extend(repair_rust_duplicate_module_files(workspace))
     all_repairs.extend(repair_rust_missing_module_files(workspace))
     all_repairs.extend(repair_rust_missing_binary_entrypoint(workspace))
@@ -1592,11 +1674,20 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
     all_repairs.extend(repair_rust_unused_imports(workspace, stderr))
     all_repairs.extend(repair_rust_missing_fields(workspace, stderr))
     all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr))
+    # Pass 3: Export/path fixes
+    all_repairs.extend(repair_rust_lib_root_facade(workspace, errors))
+    all_repairs.extend(repair_rust_unresolved_pub_uses(workspace, errors))
+    all_repairs.extend(repair_rust_trait_imports(workspace, errors))
+    all_repairs.extend(repair_rust_line_suggestions(workspace, errors))
 
     # Second pass with fresh cargo check output
     if all_repairs:
         stderr2 = _run_cargo_check_stderr(workspace)
         if stderr2 and ("error" in stderr2 or "warning" in stderr2):
+            errors2 = [stderr2]
+            all_repairs.extend(repair_rust_dependencies(workspace, errors2))
+            all_repairs.extend(repair_rust_crate_imports(workspace, errors2))
+            all_repairs.extend(repair_rust_wrong_crate_paths(workspace, stderr2))
             all_repairs.extend(repair_rust_duplicate_module_files(workspace))
             all_repairs.extend(repair_rust_missing_module_files(workspace))
             all_repairs.extend(repair_rust_missing_binary_entrypoint(workspace))
@@ -1604,6 +1695,10 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
             all_repairs.extend(repair_rust_unused_imports(workspace, stderr2))
             all_repairs.extend(repair_rust_missing_fields(workspace, stderr2))
             all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr2))
+            all_repairs.extend(repair_rust_lib_root_facade(workspace, errors2))
+            all_repairs.extend(repair_rust_unresolved_pub_uses(workspace, errors2))
+            all_repairs.extend(repair_rust_trait_imports(workspace, errors2))
+            all_repairs.extend(repair_rust_line_suggestions(workspace, errors2))
 
     return all_repairs
 
