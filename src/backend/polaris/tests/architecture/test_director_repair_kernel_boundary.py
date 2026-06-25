@@ -424,8 +424,11 @@ def test_go_bare_import_string_repair_runs_through_director_runtime_kernel() -> 
     assert "use_editor=False" in source
     assert "run_director_repair" not in source
     assert "RunDirectorRepairCommandV1" not in source
+    assert "plan_director_repair" in bridge_source
+    assert "PlanDirectorRepairCommandV1" in bridge_source
     assert "run_director_repair" in bridge_source
     assert "RunDirectorRepairCommandV1" in bridge_source
+    assert "planning_preflight" in bridge_source
     assert '"write_file"' in bridge_source
     assert '"edit_file"' in bridge_source
     assert "repair_go_bare_import_strings(" not in source
@@ -443,6 +446,18 @@ def test_materialization_quality_repairs_stay_behind_bridge_and_public_boundary(
     assert "_apply_deterministic_materialization_quality_repairs" not in factory_calls
     assert "_apply_deterministic_materialization_quality_repairs" not in factory_source
     assert "apply_deterministic_materialization_quality_repairs" in factory_calls
+
+
+def test_quality_gate_semantic_repairs_stay_behind_bridge() -> None:
+    quality_source = _read_text(QUALITY_GATE_PATH)
+    bridge_source = _read_text(MATERIALIZATION_QUALITY_BRIDGE_PATH)
+
+    assert "run_typescript_semantic_quality_repairs" in quality_source
+    assert "_apply_deterministic_typescript_missing_export_repair" not in quality_source
+    assert "_apply_deterministic_typescript_canvas_scale_return_type_repair" not in quality_source
+    assert "def run_typescript_semantic_quality_repairs(" in bridge_source
+    assert "_apply_deterministic_typescript_missing_export_repair" in bridge_source
+    assert "_apply_deterministic_typescript_canvas_scale_return_type_repair" in bridge_source
 
 
 def test_roles_adapter_repair_summaries_use_runtime_typed_projection_contract() -> None:

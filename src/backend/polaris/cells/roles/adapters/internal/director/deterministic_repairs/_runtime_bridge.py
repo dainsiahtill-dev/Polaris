@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.director.runtime.public import (
+    PlanDirectorRepairCommandV1,
+    RepairAdvisoryV1,
     RunDirectorRepairCommandV1,
+    plan_director_repair,
     run_director_repair,
 )
 
@@ -23,12 +26,34 @@ def run_runtime_repair_with_director_tools(
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str] = (),
     allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisoryV1] = (),
     use_editor: bool = True,
 ) -> list[dict[str, Any]]:
     """Execute a runtime repair while preserving Director as the effect owner."""
 
     if not base_files:
         return []
+
+    planning_preflight = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+            base_files=dict(base_files),
+            advisor_notes=tuple(advisor_notes),
+        )
+    )
+    planning_preflight_payload = planning_preflight.to_dict()
+    if not planning_preflight.ok:
+        if planning_preflight.error_code == "repair_not_planned" or (
+            not planning_preflight.planned and not planning_preflight.error_code
+        ):
+            return []
+        return [
+            _project_failed_planning_preflight(
+                source_tool=source_tool,
+                planning_preflight=planning_preflight_payload,
+            )
+        ]
 
     message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
     executor = executor_factory(
@@ -78,6 +103,7 @@ def run_runtime_repair_with_director_tools(
             artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
             base_files=dict(base_files),
             allowed_paths=tuple(allowed_paths or base_files.keys()),
+            advisor_notes=tuple(advisor_notes),
         ),
         writer=_policy_gated_writer,
         editor=_policy_gated_editor if use_editor else None,
@@ -85,7 +111,13 @@ def run_runtime_repair_with_director_tools(
     if not canonical_result.ok:
         if canonical_result.error_code == "repair_not_planned":
             return []
-        return [_project_failed_repair(source_tool=source_tool, canonical_result=canonical_result)]
+        return [
+            _project_failed_repair(
+                source_tool=source_tool,
+                canonical_result=canonical_result,
+                planning_preflight=planning_preflight_payload,
+            )
+        ]
 
     results: list[dict[str, Any]] = []
     for receipt in canonical_result.receipts:
@@ -115,14 +147,48 @@ def run_runtime_repair_with_director_tools(
                         "after_hash": str(receipt.after_hashes.get(patch_path) or ""),
                         "broadcast_ok": bool(tool_result.get("broadcast_ok")),
                         "director_policy": tool_result.get("director_policy"),
-                        "repair_kernel": _project_receipt_kernel(receipt=receipt, canonical_result=canonical_result),
+                        "repair_kernel": _project_receipt_kernel(
+                            receipt=receipt,
+                            canonical_result=canonical_result,
+                            planning_preflight=planning_preflight_payload,
+                        ),
                     },
                 }
             )
     return results
 
 
-def _project_failed_repair(*, source_tool: str, canonical_result: Any) -> dict[str, Any]:
+def _project_failed_planning_preflight(
+    *,
+    source_tool: str,
+    planning_preflight: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "tool": "director_repair_kernel",
+        "tool_name": "director_repair_kernel",
+        "success": False,
+        "result": {
+            "ok": False,
+            "source_tool": source_tool,
+            "error_code": planning_preflight.get("error_code"),
+            "error_message": planning_preflight.get("error_message"),
+            "repair_kernel": {
+                "owner_cell": "director.runtime",
+                "planning_preflight": dict(planning_preflight),
+                "planning": dict(planning_preflight),
+                "execution_skipped": True,
+                "execution_skip_reason": "planning_preflight_failed",
+            },
+        },
+    }
+
+
+def _project_failed_repair(
+    *,
+    source_tool: str,
+    canonical_result: Any,
+    planning_preflight: dict[str, Any],
+) -> dict[str, Any]:
     return {
         "tool": "director_repair_kernel",
         "tool_name": "director_repair_kernel",
@@ -135,6 +201,7 @@ def _project_failed_repair(*, source_tool: str, canonical_result: Any) -> dict[s
             "repair_kernel": {
                 "owner_cell": "director.runtime",
                 "receipts": [receipt.to_dict() for receipt in canonical_result.receipts],
+                "planning_preflight": dict(planning_preflight),
                 "planning": dict(canonical_result.metadata.get("planning") or {}),
                 "planning_error": dict(canonical_result.metadata.get("planning_error") or {}),
                 "plan_policy": dict(canonical_result.metadata.get("plan_policy") or {}),
@@ -146,7 +213,12 @@ def _project_failed_repair(*, source_tool: str, canonical_result: Any) -> dict[s
     }
 
 
-def _project_receipt_kernel(*, receipt: Any, canonical_result: Any) -> dict[str, Any]:
+def _project_receipt_kernel(
+    *,
+    receipt: Any,
+    canonical_result: Any,
+    planning_preflight: dict[str, Any],
+) -> dict[str, Any]:
     return {
         "owner_cell": "director.runtime",
         "receipt_id": receipt.receipt_id,
@@ -163,6 +235,7 @@ def _project_receipt_kernel(*, receipt: Any, canonical_result: Any) -> dict[str,
         "net_error_reduction": receipt.net_error_reduction,
         "revalidation_evidence": dict(receipt.revalidation_evidence),
         "metadata": dict(receipt.metadata),
+        "planning_preflight": dict(planning_preflight),
         "planning": dict(canonical_result.metadata.get("planning") or {}),
         "plan_policy": dict(canonical_result.metadata.get("plan_policy") or {}),
         "composition_policy": dict(canonical_result.metadata.get("composition_policy") or {}),

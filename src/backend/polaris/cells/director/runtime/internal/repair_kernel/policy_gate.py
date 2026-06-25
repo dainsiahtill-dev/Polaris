@@ -45,7 +45,7 @@ class RepairPolicyGate:
         if plan.mode not in {"commit", "shadow"}:
             reasons.append("unsupported_mode")
         for note in plan.advisor_notes:
-            if note.authoritative:
+            if note.authoritative or bool(note.metadata.get("requested_authoritative")):
                 reasons.append("advisor_note_marked_authoritative")
         if self._rule_activation_count(plan, ctx) >= max(1, ctx.max_rule_activations):
             reasons.append("rule_activation_cycle_breaker")

@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import contextlib
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+
+from polaris.cells.director.runtime.public import RepairAdvisoryV1
 
 from .. import execute_method as _em
 from ..execution_tools import DirectorToolExecutor
@@ -308,6 +311,7 @@ def _apply_deterministic_go_module_import_repair(
     adapter: Any,
     *,
     task_id: str,
+    advisor_notes: Sequence[RepairAdvisoryV1] = (),
 ) -> list[dict[str, Any]]:
     """Repair Go import paths and cross-file coherence issues.
 
@@ -349,6 +353,7 @@ def _apply_deterministic_go_module_import_repair(
             source_tool="deterministic_go_bare_import_string_repair",
             executor_factory=DirectorToolExecutor,
             base_files=base_files,
+            advisor_notes=advisor_notes,
             use_editor=False,
         )
         if any(not bool(item.get("success", False)) for item in bare_import_results):

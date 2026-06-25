@@ -27,6 +27,7 @@ from typing import Any
 from . import execute_method as _em
 from .execution_tools import DirectorToolExecutor
 from .helpers import has_successful_write_tool
+from .materialization_quality_repair_bridge import run_typescript_semantic_quality_repairs
 from .repair_profile_projection import project_repair_kernel_summary
 from .task_scope_paths import (
     _dedupe_preserve_order,
@@ -1259,21 +1260,11 @@ async def _run_materialization_quality_repair_retry(
     missing_target_set = set(missing_target_files)
     missing_repair_target_files = [path for path in repair_target_files if path in missing_target_set]
     existing_repair_target_files = [path for path in repair_target_files if path not in missing_target_set]
-    deterministic_semantic_tool_results: list[dict[str, Any]] = []
-    for repair_fn_name in (
-        "_apply_deterministic_typescript_missing_export_repair",
-        "_apply_deterministic_typescript_canvas_scale_return_type_repair",
-    ):
-        repair_fn = getattr(_em, repair_fn_name, None)
-        if not callable(repair_fn):
-            continue
-        deterministic_semantic_tool_results.extend(
-            repair_fn(
-                adapter,
-                task_id=target_task_id,
-                artifact_quality_errors=repair_quality_errors,
-            )
-        )
+    deterministic_semantic_tool_results = run_typescript_semantic_quality_repairs(
+        adapter,
+        task_id=target_task_id,
+        artifact_quality_errors=repair_quality_errors,
+    )
     if deterministic_semantic_tool_results and has_successful_write_tool(deterministic_semantic_tool_results):
         source_tools: list[str] = []
         for item in deterministic_semantic_tool_results:

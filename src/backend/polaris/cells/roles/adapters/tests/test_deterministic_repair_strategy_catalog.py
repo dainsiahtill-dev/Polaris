@@ -364,6 +364,9 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
     assert summary["repair_kernel"]["stage"] == "materialization_quality_repairs"
     assert summary["repair_kernel"]["receipt_count"] == 0
     assert summary["repair_kernel"]["coverage_report"]["total_diagnostics"] == 1
+    assert summary["coverage_preaudit"]["total_diagnostics"] == 1
+    assert summary["coverage_preaudit"]["uncovered_diagnostic_count"] == 1
+    assert summary["coverage_preaudit"]["rule_discovery_required"] is True
     assert summary["dark_launch_comparison"]["comparison_mode"] == "legacy_projection_self_check"
     assert summary["dark_launch_comparison"]["cutover_ready"] is False
     assert summary["dark_launch_comparison"]["independent_shadow_required"] is True
@@ -381,6 +384,8 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         "repair_kernel_owner": "director.runtime",
         "director_runtime_public_summary_required": True,
         "receipt_count": 0,
+        "coverage_preaudit_uncovered_diagnostic_count": 1,
+        "coverage_preaudit_rule_discovery_required": True,
         "dark_launch_cutover_ready": False,
         "dark_launch_cutover_blockers": [
             "independent_shadow_required",

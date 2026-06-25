@@ -107,21 +107,37 @@ class RepairAdvisorNote:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        requested_authoritative = bool(self.authoritative)
+        metadata = copy_valid_repair_advisory_metadata(self.metadata)
+        if requested_authoritative:
+            metadata = {
+                **metadata,
+                "requested_authoritative": True,
+                "authoritative_request_sanitized": True,
+            }
         object.__setattr__(self, "source", str(self.source or "unknown").strip() or "unknown")
         object.__setattr__(self, "message", str(self.message or "").strip())
+        object.__setattr__(self, "authoritative", False)
         object.__setattr__(
             self,
             "suggested_rules",
             tuple(copy_valid_repair_advisory_suggested_rules(self.suggested_rules)),
         )
-        object.__setattr__(self, "metadata", copy_valid_repair_advisory_metadata(self.metadata))
+        object.__setattr__(self, "metadata", metadata)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "source": self.source,
             "message": self.message,
             "confidence": float(self.confidence),
-            "authoritative": bool(self.authoritative),
+            "advisory_only": True,
+            "authoritative": False,
+            "director_runtime_remains_authoritative": True,
+            "agi_execution_authority": False,
+            "writes_allowed": False,
+            "registration_allowed": False,
+            "authoritative_receipts_allowed": False,
+            "suggested_rules_are_advisory_only": True,
             "suggested_rules": [dict(item) for item in self.suggested_rules],
             "metadata": _dict_copy(self.metadata),
         }

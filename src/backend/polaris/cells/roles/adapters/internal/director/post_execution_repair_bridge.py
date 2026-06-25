@@ -78,6 +78,12 @@ def run_post_execution_language_repairs(
                 task_id=task_id,
                 advisor_notes=runtime_advisor_notes,
             )
+        if step.step_id == "go.module_import":
+            return _run_go_post_repairs(
+                adapter,
+                task_id=task_id,
+                advisor_notes=runtime_advisor_notes,
+            )
         if step.step_id == "java.post_execution":
             return _run_java_post_repairs(
                 adapter,
@@ -332,10 +338,21 @@ def _run_remaining_cpp_legacy_post_repairs(workspace: Path) -> list[dict[str, st
     return repairs
 
 
-def _run_go_post_repairs(adapter: Any, *, task_id: str) -> list[dict[str, Any]]:
+def _run_go_post_repairs(
+    adapter: Any,
+    *,
+    task_id: str,
+    advisor_notes: RuntimeAdvisorNotes = (),
+) -> list[dict[str, Any]]:
     from .deterministic_repairs.generic_repairs import _apply_deterministic_go_module_import_repair
 
-    return list(_apply_deterministic_go_module_import_repair(adapter, task_id=task_id))
+    return list(
+        _apply_deterministic_go_module_import_repair(
+            adapter,
+            task_id=task_id,
+            advisor_notes=advisor_notes,
+        )
+    )
 
 
 def _run_rust_post_repairs(

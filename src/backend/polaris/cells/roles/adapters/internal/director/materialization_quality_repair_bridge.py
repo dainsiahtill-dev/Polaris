@@ -11,8 +11,10 @@ from typing import Any
 from polaris.cells.director.runtime.public.service import (
     CompareDirectorRepairShadowRunV1,
     DirectorRepairMaterializationQualityStepV1,
+    QueryDirectorRepairCoverageV1,
     RepairReceiptV1,
     compare_director_repair_shadow_run,
+    query_director_repair_coverage,
     run_director_materialization_quality_repair_schedule,
 )
 
@@ -41,6 +43,7 @@ def run_materialization_quality_repairs(
     """Run materialization-quality repairs through the migration bridge."""
 
     step_summaries: dict[str, dict[str, Any]] = {}
+    coverage_preaudit = _project_coverage_preaudit(artifact_quality_errors)
 
     def _run_step(step: DirectorRepairMaterializationQualityStepV1) -> list[dict[str, Any]]:
         tool_results = _run_legacy_materialization_quality_repair_step(
@@ -62,8 +65,37 @@ def run_materialization_quality_repairs(
         tool_results=tool_results,
         artifact_quality_errors=artifact_quality_errors,
         ordered_steps=ordered_steps,
+        coverage_preaudit=coverage_preaudit,
     )
     return tool_results, bridged_summary
+
+
+def run_typescript_semantic_quality_repairs(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    """Run TypeScript semantic quality repairs behind the materialization bridge boundary."""
+
+    from .deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_canvas_scale_return_type_repair,
+        _apply_deterministic_typescript_missing_export_repair,
+    )
+
+    results: list[dict[str, Any]] = []
+    for repair_fn in (
+        _apply_deterministic_typescript_missing_export_repair,
+        _apply_deterministic_typescript_canvas_scale_return_type_repair,
+    ):
+        results.extend(
+            repair_fn(
+                adapter,
+                task_id=task_id,
+                artifact_quality_errors=artifact_quality_errors,
+            )
+        )
+    return results
 
 
 def _run_legacy_materialization_quality_repair_step(
@@ -428,6 +460,7 @@ def _annotate_materialization_quality_summary(
     tool_results: list[dict[str, Any]],
     artifact_quality_errors: list[str],
     ordered_steps: tuple[DirectorRepairMaterializationQualityStepV1, ...],
+    coverage_preaudit: dict[str, Any],
 ) -> dict[str, Any]:
     source_tools = _source_tools(tool_results)
     bridged_summary: dict[str, Any] = {
@@ -441,6 +474,7 @@ def _annotate_materialization_quality_summary(
         "source_tools": source_tools,
         "source_tool_profiles": summarize_deterministic_repair_source_tools(source_tools),
         "materialization_quality_step_summaries": step_summaries,
+        "coverage_preaudit": coverage_preaudit,
     }
     repair_kernel = project_repair_kernel_summary(
         stage="materialization_quality_repairs",
@@ -466,6 +500,8 @@ def _annotate_materialization_quality_summary(
         "repair_kernel_owner": "director.runtime",
         "director_runtime_public_summary_required": True,
         "receipt_count": repair_kernel.get("receipt_count", 0),
+        "coverage_preaudit_uncovered_diagnostic_count": coverage_preaudit.get("uncovered_diagnostic_count", 0),
+        "coverage_preaudit_rule_discovery_required": coverage_preaudit.get("rule_discovery_required", False),
         "dark_launch_cutover_ready": bridged_summary["dark_launch_comparison"]["cutover_ready"],
         "dark_launch_cutover_blockers": bridged_summary["dark_launch_comparison"]["cutover_blockers"],
         "coverage_uncovered_diagnostic_count": dict(repair_kernel.get("coverage_report") or {}).get(
@@ -474,6 +510,16 @@ def _annotate_materialization_quality_summary(
         ),
     }
     return bridged_summary
+
+
+def _project_coverage_preaudit(artifact_quality_errors: list[str]) -> dict[str, Any]:
+    """Project read-only rule coverage before any bridge runner writes."""
+
+    return query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(
+            artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+        )
+    ).to_dict()
 
 
 def _project_dark_launch_self_check(
@@ -570,4 +616,7 @@ def _source_tools(tool_results: list[dict[str, Any]]) -> list[str]:
     return source_tools
 
 
-__all__ = ["run_materialization_quality_repairs"]
+__all__ = [
+    "run_materialization_quality_repairs",
+    "run_typescript_semantic_quality_repairs",
+]

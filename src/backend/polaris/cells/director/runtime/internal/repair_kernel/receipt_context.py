@@ -26,7 +26,14 @@ def build_repair_receipt_context(receipts: Sequence[RepairReceipt], *, max_items
                     {
                         "source": note.source,
                         "confidence": note.confidence,
-                        "authoritative": note.authoritative,
+                        "advisory_only": True,
+                        "authoritative": False,
+                        "director_runtime_remains_authoritative": True,
+                        "agi_execution_authority": False,
+                        "writes_allowed": False,
+                        "registration_allowed": False,
+                        "authoritative_receipts_allowed": False,
+                        "suggested_rules_are_advisory_only": True,
                     }
                     for note in receipt.advisor_notes
                 ],
@@ -42,4 +49,7 @@ def build_repair_receipt_context(receipts: Sequence[RepairReceipt], *, max_items
         "agi_advisory_supported": True,
         "agi_advisory_active": False,
         "agi_advisory_authoritative": False,
+        "agi_advisory_writes_allowed": False,
+        "agi_advisory_registration_allowed": False,
+        "agi_advisory_authoritative_receipts_allowed": False,
     }

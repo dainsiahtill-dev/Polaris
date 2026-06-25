@@ -2558,6 +2558,7 @@ def test_go_bare_import_string_repair_uses_director_runtime_kernel(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from polaris.cells.director.runtime.public import RepairAdvisoryV1
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import generic_repairs
 
     target = tmp_path / "cmd" / "app" / "main.go"
@@ -2603,7 +2604,17 @@ def test_go_bare_import_string_repair_uses_director_runtime_kernel(
     monkeypatch.setattr(generic_repairs, "repair_go_duplicate_declarations", lambda workspace: [])
 
     adapter = FakeAdapter()
-    results = generic_repairs._apply_deterministic_go_module_import_repair(adapter, task_id="task-go")
+    results = generic_repairs._apply_deterministic_go_module_import_repair(
+        adapter,
+        task_id="task-go",
+        advisor_notes=(
+            RepairAdvisoryV1(
+                advisor_source="resident_agi",
+                message="Go bare imports are a recurring bench pattern.",
+                confidence=0.6,
+            ),
+        ),
+    )
 
     assert writes == [("write_file", "task-go", "cmd/app/main.go")]
     assert 'import "fmt"' in target.read_text(encoding="utf-8")
@@ -2613,7 +2624,47 @@ def test_go_bare_import_string_repair_uses_director_runtime_kernel(
     assert result["file"] == "cmd/app/main.go"
     assert result["repair_kernel"]["owner_cell"] == "director.runtime"
     assert result["repair_kernel"]["status"] == "applied"
+    assert result["repair_kernel"]["planning_preflight"]["planned"] is True
+    assert result["repair_kernel"]["planning_preflight"]["source_tool"] == "deterministic_go_bare_import_string_repair"
+    assert result["repair_kernel"]["planning"]["advisor_notes"][0]["advisor_source"] == "resident_agi"
+    assert result["repair_kernel"]["planning"]["advisor_notes"][0]["authoritative"] is False
     assert adapter.progress[-1] == ("task-go", "executing", "cmd/app/main.go")
+
+
+def test_runtime_bridge_planning_preflight_blocks_unknown_source_tool(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs._runtime_bridge import (
+        run_runtime_repair_with_director_tools,
+    )
+
+    class FakeAdapter:
+        workspace = str(tmp_path)
+        _execution = SimpleNamespace(_message_bus=None)
+
+        def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
+            raise AssertionError("progress must not update when planning preflight fails")
+
+    def executor_factory(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("executor must not be created when planning preflight fails")
+
+    results = run_runtime_repair_with_director_tools(
+        FakeAdapter(),
+        workspace_path=tmp_path,
+        task_id="task-unknown-repair",
+        source_tool="deterministic_future_language_repair",
+        executor_factory=executor_factory,
+        base_files={"src/main.future": "broken\n"},
+        artifact_quality_errors=("future-lang compiler: unknown diagnostic",),
+    )
+
+    assert len(results) == 1
+    assert results[0]["success"] is False
+    result = results[0]["result"]
+    assert result["error_code"] == "unsupported_repair_source_tool"
+    assert result["repair_kernel"]["execution_skipped"] is True
+    assert result["repair_kernel"]["execution_skip_reason"] == "planning_preflight_failed"
+    assert result["repair_kernel"]["planning_preflight"]["planned"] is False
 
 
 def test_cpp_post_include_path_repair_uses_director_runtime_kernel(
@@ -3420,6 +3471,9 @@ def test_materialization_quality_summary_projects_dark_launch_cutover_blocker() 
         step_summaries={},
         tool_results=tool_results,
         artifact_quality_errors=["error[E0432]: unresolved import `serde`"],
+        coverage_preaudit=materialization_quality_repair_bridge._project_coverage_preaudit(
+            ["error[E0432]: unresolved import `serde`"]
+        ),
         ordered_steps=(
             DirectorRepairMaterializationQualityStepV1(
                 step_id="materialization.rust_compiler",
@@ -3433,6 +3487,8 @@ def test_materialization_quality_summary_projects_dark_launch_cutover_blocker() 
     shadow = summary["dark_launch_comparison"]
 
     assert shadow["comparison_mode"] == "legacy_projection_self_check"
+    assert summary["coverage_preaudit"]["total_diagnostics"] == 1
+    assert summary["materialization_quality_bridge"]["coverage_preaudit_uncovered_diagnostic_count"] == 0
     assert shadow["cutover_ready"] is False
     assert "independent_shadow_required" in shadow["cutover_blockers"]
     assert shadow["independent_shadow_required"] is True

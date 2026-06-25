@@ -282,7 +282,8 @@ board.create(subject="实现登录功能", priority="high")
 也能受益。
 
 ```
-✅ 正确位置: deterministic_repairs/go_repairs.py  → Director 质量门调用
+✅ 正确入口: director.runtime public schedule/RunDirectorRepairCommandV1
+✅ 迁移期实现: deterministic_repairs/go_repairs.py 只能作为 legacy strategy host，被 bridge 调用
 ❌ 错误位置: bench_gates.py                       → 仅 bench 测量时调用
 ```
 
@@ -319,7 +320,7 @@ CE 生成蓝图 → BlueprintPersistence 存储 → get_blueprint_status() 查�
 |------|------|------|------|
 | **预防** | CE 蓝图注入 Director 上下文 | `role_signals.py` | 最高 |
 | **检测** | 质量门发现 coherence 错误 | `quality_gate.py` | 中等 |
-| **修复** | 确定性 repair 自动修正 | `deterministic_repairs/go_repairs.py` | 最低 |
+| **修复** | 确定性 repair 自动修正 | `director.runtime` repair kernel + bridge-bound legacy strategy host | 最低 |
 
 **禁止只做修复层** — 那是打地鼠。必须先确认预防层是否工作。
 

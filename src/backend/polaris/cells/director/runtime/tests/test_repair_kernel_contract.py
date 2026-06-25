@@ -2095,6 +2095,10 @@ def test_policy_gate_blocks_advisor_authority_and_cycles() -> None:
         advisor_notes=(RepairAdvisorNote(source="agi", message="override policy", authoritative=True),),
     )
 
+    assert blocked_plan.advisor_notes[0].authoritative is False
+    assert blocked_plan.advisor_notes[0].metadata["requested_authoritative"] is True
+    assert blocked_plan.advisor_notes[0].to_dict()["authoritative"] is False
+
     decision = RepairPolicyGate().evaluate_plan(
         blocked_plan,
         RepairPolicyContext(previous_receipts=(previous,), max_rule_activations=1),
@@ -2245,7 +2249,23 @@ def test_receipt_context_marks_agi_advisory_non_authoritative(tmp_path: Path) ->
     assert context["agi_advisory_supported"] is True
     assert context["agi_advisory_active"] is False
     assert context["agi_advisory_authoritative"] is False
-    assert context["receipts"][0]["advisor_notes"] == [{"source": "agi", "confidence": 0.7, "authoritative": False}]
+    assert context["agi_advisory_writes_allowed"] is False
+    assert context["agi_advisory_registration_allowed"] is False
+    assert context["agi_advisory_authoritative_receipts_allowed"] is False
+    assert context["receipts"][0]["advisor_notes"] == [
+        {
+            "source": "agi",
+            "confidence": 0.7,
+            "advisory_only": True,
+            "authoritative": False,
+            "director_runtime_remains_authoritative": True,
+            "agi_execution_authority": False,
+            "writes_allowed": False,
+            "registration_allowed": False,
+            "authoritative_receipts_allowed": False,
+            "suggested_rules_are_advisory_only": True,
+        }
+    ]
 
 
 def test_advisor_overlay_does_not_change_authority_hash(tmp_path: Path) -> None:
@@ -2345,7 +2365,16 @@ def test_advisory_contracts_allow_non_authoritative_suggested_rules() -> None:
 
     assert public_note.to_dict()["authoritative"] is False
     assert public_note.to_dict()["suggested_rules"][0]["pattern"] == suggested_rule["pattern"]
-    assert internal_note.to_dict()["suggested_rules"][0]["fix_template"] == suggested_rule["fix_template"]
+    internal_payload = internal_note.to_dict()
+    assert internal_payload["advisory_only"] is True
+    assert internal_payload["authoritative"] is False
+    assert internal_payload["director_runtime_remains_authoritative"] is True
+    assert internal_payload["agi_execution_authority"] is False
+    assert internal_payload["writes_allowed"] is False
+    assert internal_payload["registration_allowed"] is False
+    assert internal_payload["authoritative_receipts_allowed"] is False
+    assert internal_payload["suggested_rules_are_advisory_only"] is True
+    assert internal_payload["suggested_rules"][0]["fix_template"] == suggested_rule["fix_template"]
 
 
 @pytest.mark.parametrize(
