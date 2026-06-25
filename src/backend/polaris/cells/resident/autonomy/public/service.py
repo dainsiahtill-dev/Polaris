@@ -74,6 +74,7 @@ from polaris.cells.resident.autonomy.public.contracts import (
     MaterializeResidentGoalCommandV1,
     QueryResidentAgiAuditPackV1,
     QueryResidentAgiEvidenceInterfacesV1,
+    QueryResidentAgiHandoffsV1,
     QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
     RecordResidentDecisionCommandV1,
@@ -1376,6 +1377,72 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
     }
 
 
+def _resident_agi_handoff_row(record: DecisionRecord, handoff: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": "resident.agi_handoff_inbox_item.v1",
+        "workspace": record.workspace,
+        "decision_id": record.decision_id,
+        "timestamp": record.timestamp,
+        "run_id": record.run_id,
+        "task_id": record.task_id,
+        "goal_id": record.goal_id,
+        "actor": record.actor,
+        "stage": record.stage,
+        "summary": record.summary,
+        "verdict": record.verdict.value,
+        "evidence_refs": list(record.evidence_refs),
+        "context_refs": list(record.context_refs),
+        "handoff": dict(handoff),
+    }
+
+
+def query_resident_agi_handoffs(query: QueryResidentAgiHandoffsV1) -> dict[str, Any]:
+    """Return Resident AGI handoff inbox items derived from decision_trace."""
+
+    target_role = str(query.target_role or "").strip().lower()
+    status_filter = str(query.handoff_status or "").strip().lower()
+    rows: list[dict[str, Any]] = []
+    status_counts: dict[str, int] = {}
+    target_role_counts: dict[str, int] = {}
+    for record in get_resident_service(query.workspace).list_decisions(limit=query.limit, actor="resident_agi"):
+        outcome = record.actual_outcome if isinstance(record.actual_outcome, dict) else {}
+        handoff_raw = outcome.get("resident_agi_decision_handoff")
+        if not isinstance(handoff_raw, dict):
+            continue
+        handoff = dict(handoff_raw)
+        handoff_status = str(handoff.get("handoff_status") or "unknown").strip().lower() or "unknown"
+        target_roles = [str(item or "").strip() for item in handoff.get("target_roles", []) if str(item or "").strip()]
+        normalized_targets = {item.lower() for item in target_roles}
+        if target_role and target_role not in normalized_targets:
+            continue
+        if status_filter and status_filter != handoff_status:
+            continue
+        status_counts[handoff_status] = status_counts.get(handoff_status, 0) + 1
+        for role in target_roles:
+            role_key = role.lower()
+            target_role_counts[role_key] = target_role_counts.get(role_key, 0) + 1
+        rows.append(_resident_agi_handoff_row(record, handoff))
+
+    return {
+        "schema_version": "resident.agi_handoff_inbox.v1",
+        "workspace": query.workspace,
+        "source": "resident.decision_trace",
+        "role_id": "resident_agi",
+        "target_role": query.target_role,
+        "handoff_status": query.handoff_status,
+        "items": rows,
+        "count": len(rows),
+        "summary": {
+            "total": len(rows),
+            "by_status": dict(sorted(status_counts.items())),
+            "by_target_role": dict(sorted(target_role_counts.items())),
+            "advisory_only": True,
+            "agi_execution_authority": False,
+            "required_chain": "PM → Chief Engineer → Director",
+        },
+    }
+
+
 def _resident_agi_required_interface_statuses(evidence_interfaces: dict[str, Any]) -> list[dict[str, Any]]:
     required_raw = evidence_interfaces.get("required_evidence_interfaces")
     required_ids = [str(item or "").strip() for item in required_raw] if isinstance(required_raw, list) else []
@@ -2379,6 +2446,7 @@ __all__ = [
     "PerfEvidence",
     "QueryResidentAgiAuditPackV1",
     "QueryResidentAgiEvidenceInterfacesV1",
+    "QueryResidentAgiHandoffsV1",
     "QueryResidentCapabilitiesV1",
     "QueryResidentStatusV1",
     "RecordResidentDecisionCommandV1",
@@ -2432,6 +2500,7 @@ __all__ = [
     "publish_resident_status_update",
     "query_resident_agi_audit_pack",
     "query_resident_agi_evidence_interfaces",
+    "query_resident_agi_handoffs",
     "query_resident_capabilities",
     "query_resident_status",
     "record_resident_decision",

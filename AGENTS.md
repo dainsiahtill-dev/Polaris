@@ -100,6 +100,7 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 22. **Launcher 自管理边界（强制）**：当前承载 Launcher API 的后端实例不得通过自己的 `/v2/instances/{id}/stop|restart|delete` 自我停止、自我重启或删除自身 registry 记录；这类操作必须 fail-closed，避免控制面先杀掉自己后无法完成重启/清理。前端必须禁用当前控制实例的 stop/restart/delete，仅允许管理其它独立项目实例；清理 stale bench 只能作用于 `kind=bench_project`、非 running、backend dead 且 `metadata.internal_test_only=true` 的内部测试实例。
 23. **Run Ledger evidence 语义（强制）**：平台级 Run Ledger 投影必须区分“缺少 required evidence”和“required evidence 已存在但失败”。`evidence_policy.missing_required_modalities` 只表示控制面/工具层没有产出该类证据，例如没有命令收据；`evidence_policy.failed_required_modalities` 表示证据真实存在但门禁失败，例如 `npm test`、`go test`、browser smoke 或用户脚本返回失败。UI、ContextOS、QA、Factory 内部测试和主 Agent 审计不得把 failed evidence 继续渲染成 missing evidence；前者是产物/验收失败，后者才是账本或工具链漏记账。任何 resolved/pass 状态都必须同时满足：无缺失 required evidence、无失败 required evidence、门禁 exit code/receipt/hash 证据闭环。
 24. **Director deterministic repairs 收敛边界（强制）**：确定性修复内核唯一归属 `director.runtime`。`src/backend/polaris/cells/director/runtime/internal/repair_kernel/` 是 Cell 私有实现；跨 Cell 只能通过 `polaris.cells.director.runtime.public` 或 `polaris.cells.director.runtime.public.service` 消费。`roles.adapters/internal/director/deterministic_repairs/` 只允许作为迁移期 legacy strategy host，不得重新拥有 repair kernel、strategy catalog、policy gate、receipt contract、PatchComposer 或 AGI advisory contract。禁止恢复 `roles/adapters/internal/director/repair_kernel/**`，禁止恢复 `deterministic_repairs/strategy_catalog.py` 作为事实源，禁止 `roles.adapters` 直接 import `polaris.cells.director.runtime.internal.repair_kernel`。`execute_method.py` 若需要 repair catalog、summary 或 planning，只能走 `director.runtime.public.service`。新增 deterministic repair 必须遵循 `Diagnostic -> Plan -> Compose -> Policy/Execute -> Receipt`，planner/composer 不得直接写文件，commit 写入必须通过 Director policy-gated `write_file` 工具并产出 before/after hash receipt。未来 AGI/Resident 只能作为 non-authoritative advisory：不得写文件、生成 authoritative plan、覆盖 policy、给 success verdict、成为 Run Ledger/ReceiptStore/ContextOS 事实源。
+25. **Repair coverage 先于补规则（强制）**：遇到新的 compiler/verifier diagnostic，不得先在 legacy deterministic function 里临时补 regex。必须先通过 `director.runtime.public.service.query_director_repair_coverage` 或 internal registry 形成 coverage report；`known_rule_matched=false` 是可审计平台缺口，必须记录 diagnostic code/path/message/archetype/phase 建议后再决定是否新增规则。Coverage report 是只读发现层，禁止写文件、禁止隐式自动注册新 source_tool、禁止让 AGI suggested rule 直接成为 authoritative rule。
 
 #### factory_bench 标准启动方式（内部测试态）
 
@@ -618,6 +619,7 @@ OpenCode 并行派工必须满足：
 - 从 `roles.adapters` 直接 import `polaris.cells.director.runtime.internal.repair_kernel`
 
 如需新增规则，先在 `director.runtime` 建 typed diagnostic/plan/composition/receipt 能力，再通过 public service 暴露给 legacy caller；不得把新事实源放回 `roles.adapters`。
+新增规则前必须先补或更新 repair coverage 报告，让 uncovered diagnostic 从 `known_rule_matched=false` 变成明确匹配的 `rule_id/source_tool`。
 
 ### Director 上下文强制审计
 

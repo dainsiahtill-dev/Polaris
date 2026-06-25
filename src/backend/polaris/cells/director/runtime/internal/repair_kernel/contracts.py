@@ -7,7 +7,10 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from .advisory_policy import copy_valid_repair_advisory_metadata
+from .advisory_policy import (
+    copy_valid_repair_advisory_metadata,
+    copy_valid_repair_advisory_suggested_rules,
+)
 
 RepairMode = str
 RepairStatus = str
@@ -100,11 +103,17 @@ class RepairAdvisorNote:
     message: str
     confidence: float = 0.0
     authoritative: bool = False
+    suggested_rules: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source", str(self.source or "unknown").strip() or "unknown")
         object.__setattr__(self, "message", str(self.message or "").strip())
+        object.__setattr__(
+            self,
+            "suggested_rules",
+            tuple(copy_valid_repair_advisory_suggested_rules(self.suggested_rules)),
+        )
         object.__setattr__(self, "metadata", copy_valid_repair_advisory_metadata(self.metadata))
 
     def to_dict(self) -> dict[str, Any]:
@@ -113,6 +122,66 @@ class RepairAdvisorNote:
             "message": self.message,
             "confidence": float(self.confidence),
             "authoritative": bool(self.authoritative),
+            "suggested_rules": [dict(item) for item in self.suggested_rules],
+            "metadata": _dict_copy(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class RepairRevalidationEvidence:
+    """Post-repair verifier evidence tied back to repaired diagnostics."""
+
+    command: tuple[str, ...] = ()
+    exit_code: int | None = None
+    diagnostics_before: tuple[RepairDiagnostic, ...] = ()
+    diagnostics_after: tuple[RepairDiagnostic, ...] = ()
+    resolved_diagnostic_ids: tuple[str, ...] = ()
+    residual_diagnostic_ids: tuple[str, ...] = ()
+    round_number: int | None = None
+    raw_output_ref: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        before = tuple(self.diagnostics_before or ())
+        after = tuple(self.diagnostics_after or ())
+        before_ids = {diagnostic.diagnostic_id for diagnostic in before}
+        after_ids = {diagnostic.diagnostic_id for diagnostic in after}
+        resolved = tuple(self.resolved_diagnostic_ids or tuple(sorted(before_ids - after_ids)))
+        residual = tuple(self.residual_diagnostic_ids or tuple(sorted(after_ids & before_ids)))
+        object.__setattr__(self, "command", _tuple_str(list(self.command)))
+        object.__setattr__(self, "diagnostics_before", before)
+        object.__setattr__(self, "diagnostics_after", after)
+        object.__setattr__(self, "resolved_diagnostic_ids", _tuple_str(list(resolved)))
+        object.__setattr__(self, "residual_diagnostic_ids", _tuple_str(list(residual)))
+        object.__setattr__(self, "round_number", None if self.round_number is None else max(0, int(self.round_number)))
+        object.__setattr__(self, "raw_output_ref", str(self.raw_output_ref or "").strip() or None)
+        object.__setattr__(self, "metadata", _dict_copy(self.metadata))
+
+    @property
+    def errors_before(self) -> int:
+        return len(self.diagnostics_before)
+
+    @property
+    def errors_after(self) -> int:
+        return len(self.diagnostics_after)
+
+    @property
+    def net_error_reduction(self) -> int:
+        return self.errors_before - self.errors_after
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "command": list(self.command),
+            "exit_code": self.exit_code,
+            "round_number": self.round_number,
+            "errors_before": self.errors_before,
+            "errors_after": self.errors_after,
+            "net_error_reduction": self.net_error_reduction,
+            "resolved_diagnostic_ids": list(self.resolved_diagnostic_ids),
+            "residual_diagnostic_ids": list(self.residual_diagnostic_ids),
+            "diagnostics_before": [diagnostic.to_dict() for diagnostic in self.diagnostics_before],
+            "diagnostics_after": [diagnostic.to_dict() for diagnostic in self.diagnostics_after],
+            "raw_output_ref": self.raw_output_ref,
             "metadata": _dict_copy(self.metadata),
         }
 

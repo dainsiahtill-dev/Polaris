@@ -13,6 +13,7 @@ from polaris.cells.resident.autonomy.public.service import (
     MaterializeResidentGoalCommandV1,
     QueryResidentAgiAuditPackV1,
     QueryResidentAgiEvidenceInterfacesV1,
+    QueryResidentAgiHandoffsV1,
     QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
     RecordResidentDecisionCommandV1,
@@ -34,6 +35,7 @@ from polaris.cells.resident.autonomy.public.service import (
     materialize_resident_goal,
     query_resident_agi_audit_pack,
     query_resident_agi_evidence_interfaces,
+    query_resident_agi_handoffs,
     query_resident_capabilities,
     query_resident_status,
     record_resident_decision_entry,
@@ -219,6 +221,27 @@ def resident_agi_evidence_interfaces(
             task_id=task_id,
             decision_limit=decision_limit,
             max_runs=max_runs,
+        )
+    )
+
+
+@router.get("/agi/handoffs", dependencies=[Depends(require_auth)])
+def resident_agi_handoffs(
+    request: Request,
+    workspace: str = "",
+    target_role: str = "",
+    handoff_status: str = "",
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """Return Resident AGI handoff inbox items derived from decision trace."""
+
+    ws = _resolve_workspace(request, workspace)
+    return query_resident_agi_handoffs(
+        QueryResidentAgiHandoffsV1(
+            workspace=ws,
+            target_role=target_role,
+            handoff_status=handoff_status,
+            limit=limit,
         )
     )
 

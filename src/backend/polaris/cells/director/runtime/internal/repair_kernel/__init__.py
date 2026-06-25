@@ -26,6 +26,15 @@ from .executor import TransactionalRepairExecutor
 from .legacy_bridge import build_legacy_repair_kernel_summary
 from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
 from .receipt_context import build_repair_receipt_context
+from .registry import (
+    RepairArchetype,
+    RepairCoverageReport,
+    RepairDiagnosticCoverage,
+    RepairRuleDefinition,
+    RepairRuleRegistry,
+    build_repair_coverage_report,
+    default_repair_rule_registry,
+)
 from .strategy_catalog import (
     KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS,
     DeterministicRepairStrategy,
@@ -50,17 +59,24 @@ __all__ = [
     "PatchComposer",
     "PolicyDecision",
     "RepairAdvisorNote",
+    "RepairArchetype",
+    "RepairCoverageReport",
     "RepairDiagnostic",
+    "RepairDiagnosticCoverage",
     "RepairExecutionResult",
     "RepairOperation",
     "RepairPlan",
     "RepairPolicyContext",
     "RepairPolicyGate",
     "RepairReceipt",
+    "RepairRuleDefinition",
+    "RepairRuleRegistry",
     "TransactionalRepairExecutor",
     "build_legacy_repair_kernel_summary",
+    "build_repair_coverage_report",
     "build_repair_receipt_context",
     "build_typescript_object_literal_comma_plan",
+    "default_repair_rule_registry",
     "describe_deterministic_repair_strategy",
     "deterministic_repair_source_tool_known",
     "deterministic_repair_strategy_catalog",

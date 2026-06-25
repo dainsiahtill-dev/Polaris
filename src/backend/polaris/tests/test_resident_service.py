@@ -24,6 +24,7 @@ from polaris.cells.resident.autonomy.public.service import (
     MaterializeResidentGoalCommandV1,
     QueryResidentAgiAuditPackV1,
     QueryResidentAgiEvidenceInterfacesV1,
+    QueryResidentAgiHandoffsV1,
     RecordResidentDecisionCommandV1,
     RejectResidentGoalCommandV1,
     RunResidentAgiDecisionTurnCommandV1,
@@ -41,6 +42,7 @@ from polaris.cells.resident.autonomy.public.service import (
     materialize_resident_goal,
     query_resident_agi_audit_pack,
     query_resident_agi_evidence_interfaces,
+    query_resident_agi_handoffs,
     record_resident_decision_entry,
     reject_resident_goal,
     run_resident_agi_decision_turn,
@@ -93,6 +95,62 @@ def _decision_payload(
             }
         ]
     return payload
+
+
+def test_resident_agi_handoffs_query_derives_role_inbox_from_decision_trace(tmp_path: Path) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    payload = _decision_payload(
+        run_id="run-handoff",
+        actor="resident_agi",
+        stage="quality_gate_response",
+        summary="Quality gate can proceed through governed handoff.",
+        strategy="resident_agi_turn",
+        verdict="success",
+        task_id="task-handoff",
+        evidence_ref="runtime/gates/quality.json",
+    )
+    payload["actual_outcome"] = {
+        "resident_agi_decision_handoff": {
+            "schema_version": "resident.agi_decision_handoff.v1",
+            "handoff_status": "ready",
+            "target_roles": ["chief_engineer", "director", "qa"],
+            "allowed_actions": ["record_decision_trace", "handoff_to_pm_chief_engineer_director_chain"],
+            "blocked_actions": ["director_tool_execution_by_agi", "pm_to_director_shortcut"],
+            "downstream_allowed": True,
+            "reason": "Quality gate can proceed through governed handoff.",
+            "required_chain": "PM → Chief Engineer → Director",
+            "advisory_only": True,
+            "agi_execution_authority": False,
+        }
+    }
+    recorded = record_resident_decision_entry(
+        RecordResidentDecisionCommandV1(
+            workspace=str(workspace),
+            action="resident_agi_decision_recorded",
+            payload=payload,
+        )
+    )
+
+    inbox = query_resident_agi_handoffs(
+        QueryResidentAgiHandoffsV1(
+            workspace=str(workspace),
+            target_role="director",
+        )
+    )
+
+    assert inbox["schema_version"] == "resident.agi_handoff_inbox.v1"
+    assert inbox["source"] == "resident.decision_trace"
+    assert inbox["count"] == 1
+    assert inbox["summary"]["by_status"] == {"ready": 1}
+    assert inbox["summary"]["by_target_role"]["director"] == 1
+    assert inbox["summary"]["agi_execution_authority"] is False
+    item = inbox["items"][0]
+    assert item["decision_id"] == recorded["decision_id"]
+    assert item["handoff"]["handoff_status"] == "ready"
+    assert item["handoff"]["target_roles"] == ["chief_engineer", "director", "qa"]
+    assert "director_tool_execution_by_agi" in item["handoff"]["blocked_actions"]
 
 
 def test_resident_public_commands_cover_lifecycle_goals_decisions_and_labs(tmp_path: Path) -> None:

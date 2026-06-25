@@ -8,27 +8,35 @@ import pytest
 from polaris.cells.director.runtime.internal.repair_kernel import (
     PatchComposer,
     RepairAdvisorNote,
+    RepairArchetype,
     RepairDiagnostic,
     RepairOperation,
     RepairPlan,
     RepairPolicyContext,
     RepairPolicyGate,
+    RepairRuleDefinition,
+    RepairRuleRegistry,
     TransactionalRepairExecutor,
     build_repair_receipt_context,
     build_typescript_object_literal_comma_plan,
+    default_repair_rule_registry,
     normalize_artifact_quality_errors,
     repair_typescript_object_literal_commas,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy import (
     FORBIDDEN_REPAIR_ADVISORY_METADATA_FIELDS,
+    FORBIDDEN_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import sha256_text
 from polaris.cells.director.runtime.public import (
+    DirectorRepairCoverageReportV1,
     DirectorRepairPlanningResultV1,
+    QueryDirectorRepairCoverageV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
     build_director_repair_kernel_summary,
     plan_director_typescript_object_literal_comma_repair,
+    query_director_repair_coverage,
     query_director_repair_strategy_catalog,
     run_director_typescript_object_literal_comma_repair,
 )
@@ -44,6 +52,70 @@ def test_normalizer_builds_typed_typescript_diagnostic() -> None:
     assert diagnostic.path == "src/app.ts"
     assert diagnostic.line == 3
     assert diagnostic.column == 14
+
+
+def test_repair_rule_registry_reports_known_and_unknown_diagnostic_coverage() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "TypeScript syntax check failed: src/models/Flight.ts(6,5): error TS1005: ',' expected.",
+            "src/app.ts(3,14): error TS9999: Unknown future compiler error.",
+        ]
+    )
+
+    report = default_repair_rule_registry().coverage(diagnostics)
+    payload = report.to_dict()
+
+    assert payload["total_diagnostics"] == 2
+    assert payload["covered_diagnostic_count"] == 1
+    assert payload["uncovered_diagnostic_count"] == 1
+    assert payload["items"][0]["known_rule_matched"] is True
+    assert payload["items"][0]["matched_rule_ids"] == ["typescript.object_literal_missing_comma"]
+    assert payload["items"][0]["archetypes"] == ["object_literal_syntax"]
+    assert payload["items"][0]["phases"] == ["quality_repair"]
+    assert payload["items"][1]["known_rule_matched"] is False
+    assert payload["items"][1]["matched_rule_ids"] == []
+    assert payload["items"][1]["diagnostic_archetype"] == "object_literal_syntax"
+    assert payload["items"][1]["diagnostic_phase"] == "quality_repair"
+    assert payload["items"][1]["diagnostic_language"] == "typescript"
+
+
+def test_repair_rule_registry_rejects_duplicate_rule_ids_and_unknown_source_tool() -> None:
+    rule = RepairRuleDefinition(
+        rule_id="typescript.object_literal_missing_comma",
+        source_tool="deterministic_typescript_return_object_semicolon_repair",
+        language="typescript",
+        phase="quality_repair",
+        archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+        diagnostic_codes=("typescript_ts1005",),
+        message_terms=(",", "expected"),
+    )
+
+    with pytest.raises(ValueError, match="duplicate repair rule_id"):
+        RepairRuleRegistry((rule, rule))
+
+    with pytest.raises(ValueError, match="unregistered repair source_tool"):
+        RepairRuleDefinition(
+            rule_id="typescript.future_rule",
+            source_tool="deterministic_future_repair",
+            language="typescript",
+            phase="quality_repair",
+            archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+            diagnostic_codes=("typescript_ts9999",),
+        )
+
+
+def test_repair_rule_registry_does_not_overmatch_ts1005_without_comma_expected_message() -> None:
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="typescript_ts1005",
+        message="';' expected.",
+        path="src/app.ts",
+        raw="src/app.ts(1,1): error TS1005: ';' expected.",
+    )
+
+    matches = default_repair_rule_registry().match_diagnostic(diagnostic)
+
+    assert matches == ()
 
 
 def test_patch_composer_applies_text_spans_descending() -> None:
@@ -218,6 +290,7 @@ def test_public_typescript_object_literal_comma_planning_surface_builds_summary(
             "message": "check the receipt after deterministic planning",
             "confidence": 0.4,
             "authoritative": False,
+            "suggested_rules": [],
             "metadata": {"evidence_ref": "runtime/receipts/latest.json"},
         }
     ]
@@ -273,6 +346,58 @@ def test_public_typescript_object_literal_comma_run_executes_with_receipt(tmp_pa
     assert result.metadata["plan_policy"]["allowed"] is True
     assert result.metadata["composition_policy"]["allowed"] is True
     assert result.metadata["execution_error"] is None
+
+
+def test_public_repair_run_projects_non_authoritative_advisory_suggested_rules(tmp_path: Path) -> None:
+    relative_path = "src/models/Flight.ts"
+    target = tmp_path / relative_path
+    content = (
+        "export function runFlight() {\n"
+        "  const samples = [];\n"
+        "  const range = 10;\n"
+        "  const maxAltitude = 2;\n"
+        "  const flightTime = 3;\n"
+        "  return { samples, range, maxAltitude, flightTime  landed: undefined as unknown as boolean };\n"
+        "}\n"
+    )
+    suggested_rule = {
+        "name": "rust_borrow_marker_self",
+        "language": "rust",
+        "pattern": r"found `&\\)` near method receiver",
+        "fix_template": "replace `(&)` with `(&self)` only inside Rust impl method receivers",
+        "confidence": 0.83,
+        "evidence": ["src/lib.rs:12: expected one of `self`, `&self`, or `&mut self`"],
+    }
+    advisory = RepairAdvisoryV1(
+        advisor_source="agi",
+        message="suggest a future repair rule; do not execute it",
+        suggested_rules=(suggested_rule,),
+        metadata={"evidence_ref": "runtime/repair-coverage/rust.json"},
+    )
+    target.parent.mkdir(parents=True)
+    target.write_text(content, encoding="utf-8")
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        (tmp_path / path).write_text(updated, encoding="utf-8")
+        return {"ok": True, "file": path, "operation": "modify"}
+
+    result = run_director_typescript_object_literal_comma_repair(
+        workspace=tmp_path,
+        base_files={relative_path: content},
+        artifact_quality_errors=[
+            "TypeScript syntax check failed: src/models/Flight.ts(6,47): error TS1005: ',' expected."
+        ],
+        writer=writer,
+        allowed_paths=(relative_path,),
+        advisor_notes=(advisory,),
+    )
+    receipt_note = result.receipts[0].advisor_notes[0].to_dict()
+
+    assert result.ok is True
+    assert receipt_note["authoritative"] is False
+    assert receipt_note["suggested_rules"][0]["name"] == "rust_borrow_marker_self"
+    assert receipt_note["metadata"] == {"evidence_ref": "runtime/repair-coverage/rust.json"}
+    assert result.metadata["planning"]["advisor_notes"][0]["suggested_rules"][0]["language"] == "rust"
 
 
 def test_patch_composer_fails_closed_on_json_scalar_parent() -> None:
@@ -572,6 +697,52 @@ def test_advisory_contracts_allow_non_authoritative_evidence_refs() -> None:
     assert internal_note.metadata == {"evidence_ref": "runtime/receipts/repair.json"}
 
 
+def test_advisory_contracts_allow_non_authoritative_suggested_rules() -> None:
+    suggested_rule = {
+        "name": "rust_borrow_marker_self",
+        "language": "rust",
+        "pattern": r"found `&\\)` near method receiver",
+        "fix_template": "replace `(&)` with `(&self)` only inside Rust impl method receivers",
+        "confidence": 0.83,
+        "evidence": ["src/lib.rs:12: expected one of `self`, `&self`, or `&mut self`"],
+        "rationale": "LLMs often omit `self` in Rust receiver syntax.",
+    }
+
+    public_note = RepairAdvisoryV1(
+        advisor_source="agi",
+        message="suggest a future Rust syntax repair rule",
+        suggested_rules=(suggested_rule,),
+    )
+    internal_note = RepairAdvisorNote(
+        source="agi",
+        message="suggest a future Rust syntax repair rule",
+        suggested_rules=(suggested_rule,),
+    )
+
+    assert public_note.to_dict()["authoritative"] is False
+    assert public_note.to_dict()["suggested_rules"][0]["pattern"] == suggested_rule["pattern"]
+    assert internal_note.to_dict()["suggested_rules"][0]["fix_template"] == suggested_rule["fix_template"]
+
+
+@pytest.mark.parametrize(
+    "field",
+    sorted(FORBIDDEN_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS),
+)
+def test_advisory_suggested_rules_reject_authoritative_fields(field: str) -> None:
+    with pytest.raises(ValueError, match="forbidden authoritative fields"):
+        RepairAdvisoryV1(
+            advisor_source="agi",
+            message="malicious rule",
+            suggested_rules=(
+                {
+                    "pattern": "x",
+                    "fix_template": "y",
+                    field: "not allowed",
+                },
+            ),
+        )
+
+
 def test_legacy_summary_without_receipts_is_not_authoritative() -> None:
     summary = build_director_repair_kernel_summary(stage="quality", tool_results=[], mode="commit")
 
@@ -609,6 +780,57 @@ def test_public_typescript_comma_planner_returns_composed_patch_projection() -> 
     assert "    range,\n" in payload["composition_summary"]["patches"][0]["content_after"]
     assert payload["composition_summary"]["patches"][0]["before_hash"]
     assert payload["composition_summary"]["patches"][0]["after_hash"]
+
+
+def test_public_repair_coverage_report_exposes_uncovered_diagnostics() -> None:
+    result = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(
+            artifact_quality_errors=(
+                "TypeScript syntax check failed: src/models/Flight.ts(6,5): error TS1005: ',' expected.",
+                "src/app.ts(3,14): error TS9999: Unknown future compiler error.",
+            )
+        )
+    )
+    payload = result.to_dict()
+
+    assert isinstance(result, DirectorRepairCoverageReportV1)
+    assert payload["schema_version"] == "director.repair_coverage_report.v1"
+    assert payload["source"] == "director.runtime.repair_kernel.registry"
+    assert payload["access"] == "read_only"
+    assert payload["owner_cell"] == "director.runtime"
+    assert payload["execution_boundary"] == "read_only_coverage_no_writes"
+    assert payload["agi_execution_authority"] is False
+    assert payload["director_tool_execution_required"] is False
+    assert payload["total_diagnostics"] == 2
+    assert payload["covered_diagnostic_count"] == 1
+    assert payload["uncovered_diagnostic_count"] == 1
+    assert payload["items"][0]["known_rule_matched"] is True
+    assert payload["items"][0]["matched_source_tools"] == ["deterministic_typescript_return_object_semicolon_repair"]
+    assert payload["items"][1]["known_rule_matched"] is False
+    assert payload["items"][1]["diagnostic_language"] == "typescript"
+    assert payload["items"][1]["diagnostic_phase"] == "quality_repair"
+    assert payload["items"][1]["diagnostic_archetype"] == "object_literal_syntax"
+    assert payload["uncovered_diagnostics"][0]["code"] == "typescript_ts9999"
+
+
+def test_public_repair_coverage_suggests_rust_missing_method_self_family() -> None:
+    result = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(
+            artifact_quality_errors=(
+                "Rust syntax check failed: src/lib.rs:12: expected one of `self`, `&self`, or `&mut self`; found `&)`.",
+            )
+        )
+    )
+    payload = result.to_dict()
+    item = payload["items"][0]
+
+    assert payload["covered_diagnostic_count"] == 0
+    assert payload["uncovered_diagnostic_count"] == 1
+    assert item["known_rule_matched"] is False
+    assert item["diagnostic_language"] == "rust"
+    assert item["diagnostic_archetype"] == "missing_method_self"
+    assert item["diagnostic_phase"] == "quality_repair"
+    assert item["suggested_rule_family"] == "missing_method_self"
 
 
 def test_public_strategy_catalog_is_read_only_and_non_agi_authoritative() -> None:

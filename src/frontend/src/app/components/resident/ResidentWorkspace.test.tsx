@@ -912,6 +912,40 @@ const mockResidentState = {
       governed_execute_only: 0,
     },
   },
+  residentAgiHandoffs: {
+    schema_version: "resident.agi_handoff_inbox.v1",
+    workspace: "/tmp/polaris-demo",
+    role_id: "resident_agi",
+    items: [
+      {
+        schema_version: "resident.agi_handoff_inbox_item.v1",
+        decision_id: "decision-handoff-1",
+        summary: "Quality gate can proceed through governed handoff.",
+        verdict: "success",
+        handoff: {
+          schema_version: "resident.agi_decision_handoff.v1",
+          decision_type: "quality_gate_response",
+          decision_capability_id: "quality.gate.response",
+          handoff_status: "ready",
+          target_roles: ["chief_engineer", "director", "qa"],
+          downstream_allowed: true,
+          reason: "Quality gate can proceed through governed handoff.",
+          required_chain: "PM → Chief Engineer → Director",
+          advisory_only: true,
+          agi_execution_authority: false,
+        },
+      },
+    ],
+    count: 1,
+    summary: {
+      total: 1,
+      by_status: { ready: 1 },
+      by_target_role: { chief_engineer: 1, director: 1, qa: 1 },
+      advisory_only: true,
+      agi_execution_authority: false,
+      required_chain: "PM → Chief Engineer → Director",
+    },
+  },
   lastAgiDecisionResult: {
     ok: true,
     workspace: "/tmp/polaris-demo",
@@ -1467,6 +1501,15 @@ describe("ResidentWorkspace", () => {
     expect(
       screen.getByTestId("resident-agi-decision-handoff"),
     ).toHaveTextContent("blocked: director_tool_execution_by_agi");
+    expect(screen.getByTestId("resident-agi-handoff-inbox")).toHaveTextContent(
+      "resident.agi_handoff_inbox.v1",
+    );
+    expect(screen.getByTestId("resident-agi-handoff-inbox")).toHaveTextContent(
+      "1 handoffs",
+    );
+    expect(screen.getByTestId("resident-agi-handoff-inbox")).toHaveTextContent(
+      "chief_engineer → director → qa",
+    );
     expect(
       screen.getByTestId("resident-agi-decision-turn-profile"),
     ).toHaveTextContent("action:request_evidence");

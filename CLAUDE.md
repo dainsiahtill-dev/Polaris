@@ -28,6 +28,8 @@
 
 新增 deterministic repair 必须走 `Diagnostic -> Plan -> Compose -> Policy/Execute -> Receipt`。Planner/Composer 不得直接写文件；commit 写入必须通过 Director policy-gated `write_file` 工具，并在 receipt 中记录 before/after hash、operation ids、rule/source_tool。未来 AGI/Resident 只能作为 non-authoritative advisory：不得写文件、生成 authoritative plan、覆盖 policy、给 success verdict，且不得成为 Run Ledger、ReceiptStore 或 ContextOS 的事实源。
 
+遇到新的 compiler/verifier diagnostic 时，先走 repair coverage，而不是先补 legacy regex。通过 `director.runtime.public.service.query_director_repair_coverage` 或 internal registry 产出 coverage report；`known_rule_matched=false` 是可审计平台缺口。新增规则前必须让 uncovered diagnostic 有明确的 `rule_id/source_tool/archetype/phase` 覆盖。Coverage report 只读：不得写文件、不得隐式自动注册新 `source_tool`、不得让 AGI suggested rule 直接变成 authoritative rule。
+
 Factory/Bench gate 是量具，不做修复。`bench_gates.py` 不得改写 workspace、自动初始化 manifest、删除/重排源码或把测量逻辑伪装成 deterministic repair。
 
 ## 1) 真实入口路径

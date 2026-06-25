@@ -8,6 +8,7 @@ import type {
   ResidentAgiDecisionTurnRequest,
   ResidentAgiDecisionTurnResponse,
   ResidentAgiEvidenceInterfacesPayload,
+  ResidentAgiHandoffInboxPayload,
   ResidentDecisionPayload,
   ResidentExperimentPayload,
   ResidentGoalPayload,
@@ -93,6 +94,8 @@ export function useResident(options: UseResidentOptions = {}) {
     useState<ResidentAgiAuditPackPayload | null>(null);
   const [agiEvidenceInterfaces, setAgiEvidenceInterfaces] =
     useState<ResidentAgiEvidenceInterfacesPayload | null>(null);
+  const [agiHandoffs, setAgiHandoffs] =
+    useState<ResidentAgiHandoffInboxPayload | null>(null);
   const [lastAgiDecisionResult, setLastAgiDecisionResult] =
     useState<ResidentAgiDecisionTurnResponse | null>(null);
   const [httpDetailsLoaded, setHttpDetailsLoaded] = useState(false);
@@ -107,6 +110,7 @@ export function useResident(options: UseResidentOptions = {}) {
       setStatus(emptyDetails("", options.liveResident));
       setAgiAuditPack(null);
       setAgiEvidenceInterfaces(null);
+      setAgiHandoffs(null);
       setLastAgiDecisionResult(null);
       setHttpDetailsLoaded(false);
       setError(null);
@@ -139,6 +143,12 @@ export function useResident(options: UseResidentOptions = {}) {
       evidenceInterfacesResult.ok && evidenceInterfacesResult.data
         ? evidenceInterfacesResult.data
         : null,
+    );
+    const handoffsResult = await residentService.getAgiHandoffs(workspace, {
+      limit: 50,
+    });
+    setAgiHandoffs(
+      handoffsResult.ok && handoffsResult.data ? handoffsResult.data : null,
     );
     setError(null);
     return result.data;
@@ -176,6 +186,7 @@ export function useResident(options: UseResidentOptions = {}) {
       setStatus(emptyDetails("", options.liveResident));
       setAgiAuditPack(null);
       setAgiEvidenceInterfaces(null);
+      setAgiHandoffs(null);
       setLastAgiDecisionResult(null);
       setHttpDetailsLoaded(false);
       setError(null);
@@ -240,6 +251,7 @@ export function useResident(options: UseResidentOptions = {}) {
     residentAgiCapabilitySurface: summary?.agi_capability_surface ?? null,
     residentAgiAuditPack: agiAuditPack,
     residentAgiEvidenceInterfaces: agiEvidenceInterfaces,
+    residentAgiHandoffs: agiHandoffs,
     lastAgiDecisionResult,
     residentRuntimeEvidence,
     refresh,

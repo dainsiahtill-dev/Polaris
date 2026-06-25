@@ -1,5 +1,5 @@
-import { apiFetch } from '@/api';
-import { devLogger } from '@/app/utils/devLogger';
+import { apiFetch } from "@/api";
+import { devLogger } from "@/app/utils/devLogger";
 import type {
   BackendSettings,
   BackendStatus,
@@ -10,6 +10,7 @@ import type {
   ResidentAgiDecisionTurnRequest,
   ResidentAgiDecisionTurnResponse,
   ResidentAgiEvidenceInterfacesPayload,
+  ResidentAgiHandoffInboxPayload,
   ResidentDecisionPayload,
   ResidentExperimentPayload,
   ResidentGoalPayload,
@@ -20,9 +21,9 @@ import type {
   ResidentSkillPayload,
   ResidentStatusDetailsPayload,
   SnapshotPayload,
-} from '@/app/types/appContracts';
-import type { LLMStatus } from '@/app/components/llm/types';
-import type { RoleChatRole } from './api.types';
+} from "@/app/types/appContracts";
+import type { LLMStatus } from "@/app/components/llm/types";
+import type { RoleChatRole } from "./api.types";
 
 export interface ApiResult<T> {
   ok: boolean;
@@ -31,24 +32,26 @@ export interface ApiResult<T> {
 }
 
 function normalizeArtifactPath(path: string): string {
-  const normalized = String(path || '').trim().replace(/\\/g, '/');
+  const normalized = String(path || "")
+    .trim()
+    .replace(/\\/g, "/");
   if (!normalized) return normalized;
-  if (normalized === '.polaris/runtime') return 'runtime';
-  if (normalized.startsWith('.polaris/runtime/')) {
-    return `runtime/${normalized.slice('.polaris/runtime/'.length)}`;
+  if (normalized === ".polaris/runtime") return "runtime";
+  if (normalized.startsWith(".polaris/runtime/")) {
+    return `runtime/${normalized.slice(".polaris/runtime/".length)}`;
   }
   return normalized;
 }
 
-function workspaceQuerySuffix(workspace = ''): string {
-  return workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
+function workspaceQuerySuffix(workspace = ""): string {
+  return workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
 }
 
 function extractApiErrorString(value: unknown): string | null {
-  if (typeof value === 'string' && value.trim()) {
+  if (typeof value === "string" && value.trim()) {
     return value.trim();
   }
-  if (!value || typeof value !== 'object') {
+  if (!value || typeof value !== "object") {
     return null;
   }
 
@@ -62,202 +65,257 @@ function extractApiErrorString(value: unknown): string | null {
   );
 }
 
-async function handleResponse<T>(res: Response, fallbackError: string): Promise<ApiResult<T>> {
+async function handleResponse<T>(
+  res: Response,
+  fallbackError: string,
+): Promise<ApiResult<T>> {
   if (!res.ok) {
     let detail = fallbackError;
     try {
-      const payload = await res.json() as unknown;
+      const payload = (await res.json()) as unknown;
       detail = extractApiErrorString(payload) || fallbackError;
     } catch (err) {
-      devLogger.warn('[api] Error parsing error response:', err);
+      devLogger.warn("[api] Error parsing error response:", err);
     }
     return { ok: false, error: detail };
   }
   try {
-    const data = await res.json() as T;
+    const data = (await res.json()) as T;
     return { ok: true, data };
   } catch (err) {
-    devLogger.warn('[api] Failed to parse response:', err);
-    return { ok: false, error: 'Failed to parse response' };
+    devLogger.warn("[api] Failed to parse response:", err);
+    return { ok: false, error: "Failed to parse response" };
   }
 }
 
 function normalizeDirectorStatusPayload(payload: unknown): BackendStatus {
   const raw = payload as Record<string, unknown> | null;
-  if (!raw || typeof raw !== 'object') {
-    return { running: false, pid: null, started_at: null, source: 'none', status: null };
-  }
-
-  if (typeof raw.running === 'boolean') {
+  if (!raw || typeof raw !== "object") {
     return {
-      running: raw.running,
-      pid: typeof raw.pid === 'number' ? raw.pid : null,
-      started_at: typeof raw.started_at === 'number' ? raw.started_at : null,
-      mode: typeof raw.mode === 'string' ? raw.mode : undefined,
-      log_path: typeof raw.log_path === 'string' ? raw.log_path : undefined,
-      source: typeof raw.source === 'string' ? raw.source : undefined,
-      status: typeof raw.status === 'object' && raw.status !== null ? (raw.status as Record<string, unknown>) : null,
+      running: false,
+      pid: null,
+      started_at: null,
+      source: "none",
+      status: null,
     };
   }
 
-  const state = String(raw.state || '').trim().toUpperCase();
+  if (typeof raw.running === "boolean") {
+    return {
+      running: raw.running,
+      pid: typeof raw.pid === "number" ? raw.pid : null,
+      started_at: typeof raw.started_at === "number" ? raw.started_at : null,
+      mode: typeof raw.mode === "string" ? raw.mode : undefined,
+      log_path: typeof raw.log_path === "string" ? raw.log_path : undefined,
+      source: typeof raw.source === "string" ? raw.source : undefined,
+      status:
+        typeof raw.status === "object" && raw.status !== null
+          ? (raw.status as Record<string, unknown>)
+          : null,
+    };
+  }
+
+  const state = String(raw.state || "")
+    .trim()
+    .toUpperCase();
   return {
-    running: state === 'RUNNING',
+    running: state === "RUNNING",
     pid: null,
     started_at: null,
-    mode: 'v2_service',
-    source: 'v2_service',
+    mode: "v2_service",
+    source: "v2_service",
     status: raw,
   };
 }
 
 export const settingsService = {
   async get(): Promise<ApiResult<BackendSettings>> {
-    const res = await apiFetch('/settings');
-    return handleResponse(res, 'Failed to load settings');
+    const res = await apiFetch("/settings");
+    return handleResponse(res, "Failed to load settings");
   },
 
-  async update(updates: Partial<BackendSettings>): Promise<ApiResult<BackendSettings>> {
-    const res = await apiFetch('/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async update(
+    updates: Partial<BackendSettings>,
+  ): Promise<ApiResult<BackendSettings>> {
+    const res = await apiFetch("/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updates),
     });
-    return handleResponse(res, 'Failed to update settings');
+    return handleResponse(res, "Failed to update settings");
   },
 };
 
 export const statusService = {
-  async getPm(workspace = ''): Promise<ApiResult<BackendStatus>> {
-    const res = await apiFetch(`/v2/pm/status${workspaceQuerySuffix(workspace)}`);
-    return handleResponse(res, 'Failed to load PM status');
+  async getPm(workspace = ""): Promise<ApiResult<BackendStatus>> {
+    const res = await apiFetch(
+      `/v2/pm/status${workspaceQuerySuffix(workspace)}`,
+    );
+    return handleResponse(res, "Failed to load PM status");
   },
 
-  async getDirector(workspace = ''): Promise<ApiResult<BackendStatus>> {
-    const res = await apiFetch(`/v2/director/status${workspaceQuerySuffix(workspace)}`);
+  async getDirector(workspace = ""): Promise<ApiResult<BackendStatus>> {
+    const res = await apiFetch(
+      `/v2/director/status${workspaceQuerySuffix(workspace)}`,
+    );
     if (!res.ok) {
-      return handleResponse(res, 'Failed to load Director status');
+      return handleResponse(res, "Failed to load Director status");
     }
     try {
       const payload = await res.json();
       return { ok: true, data: normalizeDirectorStatusPayload(payload) };
     } catch {
-      return { ok: false, error: 'Failed to parse Director status' };
+      return { ok: false, error: "Failed to parse Director status" };
     }
   },
 
-  async getAll(workspace = ''): Promise<{ pm: ApiResult<BackendStatus>; director: ApiResult<BackendStatus> }> {
+  async getAll(
+    workspace = "",
+  ): Promise<{
+    pm: ApiResult<BackendStatus>;
+    director: ApiResult<BackendStatus>;
+  }> {
     const [pmRes, directorRes] = await Promise.all([
       apiFetch(`/v2/pm/status${workspaceQuerySuffix(workspace)}`),
       apiFetch(`/v2/director/status${workspaceQuerySuffix(workspace)}`),
     ]);
     let director: ApiResult<BackendStatus>;
     if (!directorRes.ok) {
-      director = await handleResponse(directorRes, 'Failed to load Director status');
+      director = await handleResponse(
+        directorRes,
+        "Failed to load Director status",
+      );
     } else {
       try {
         const payload = await directorRes.json();
         director = { ok: true, data: normalizeDirectorStatusPayload(payload) };
       } catch {
-        director = { ok: false, error: 'Failed to parse Director status' };
+        director = { ok: false, error: "Failed to parse Director status" };
       }
     }
     return {
-      pm: await handleResponse(pmRes, 'Failed to load PM status'),
+      pm: await handleResponse(pmRes, "Failed to load PM status"),
       director,
     };
   },
 };
 
 export const processService = {
-  async startPm(resume = false, workspace = ''): Promise<ApiResult<void>> {
+  async startPm(resume = false, workspace = ""): Promise<ApiResult<void>> {
     const query = new URLSearchParams();
     if (resume) {
-      query.set('resume', 'true');
+      query.set("resume", "true");
     }
     if (workspace.trim()) {
-      query.set('workspace', workspace);
+      query.set("workspace", workspace);
     }
     const suffix = query.toString();
-    const url = suffix ? `/v2/pm/start?${suffix}` : '/v2/pm/start';
-    const res = await apiFetch(url, { method: 'POST' });
-    return handleResponse(res, 'Failed to start PM');
+    const url = suffix ? `/v2/pm/start?${suffix}` : "/v2/pm/start";
+    const res = await apiFetch(url, { method: "POST" });
+    return handleResponse(res, "Failed to start PM");
   },
 
-  async stopPm(workspace = ''): Promise<ApiResult<void>> {
+  async stopPm(workspace = ""): Promise<ApiResult<void>> {
     const query = new URLSearchParams();
     if (workspace.trim()) {
-      query.set('workspace', workspace);
+      query.set("workspace", workspace);
     }
     const suffix = query.toString();
-    const res = await apiFetch(`/v2/pm/stop${suffix ? `?${suffix}` : ''}`, { method: 'POST' });
-    return handleResponse(res, 'Failed to stop PM');
+    const res = await apiFetch(`/v2/pm/stop${suffix ? `?${suffix}` : ""}`, {
+      method: "POST",
+    });
+    return handleResponse(res, "Failed to stop PM");
   },
 
-  async runPmOnce(workspace = ''): Promise<ApiResult<void>> {
+  async runPmOnce(workspace = ""): Promise<ApiResult<void>> {
     const query = new URLSearchParams();
     if (workspace.trim()) {
-      query.set('workspace', workspace);
+      query.set("workspace", workspace);
     }
     const suffix = query.toString();
-    const res = await apiFetch(`/v2/pm/run_once${suffix ? `?${suffix}` : ''}`, { method: 'POST' });
-    return handleResponse(res, 'PM run once failed');
+    const res = await apiFetch(`/v2/pm/run_once${suffix ? `?${suffix}` : ""}`, {
+      method: "POST",
+    });
+    return handleResponse(res, "PM run once failed");
   },
 
-  async startDirector(workspace = ''): Promise<ApiResult<void>> {
+  async startDirector(workspace = ""): Promise<ApiResult<void>> {
     const query = new URLSearchParams();
     if (workspace.trim()) {
-      query.set('workspace', workspace);
+      query.set("workspace", workspace);
     }
     const suffix = query.toString();
-    const res = await apiFetch(`/v2/director/start${suffix ? `?${suffix}` : ''}`, { method: 'POST' });
-    return handleResponse(res, 'Failed to start Director');
+    const res = await apiFetch(
+      `/v2/director/start${suffix ? `?${suffix}` : ""}`,
+      { method: "POST" },
+    );
+    return handleResponse(res, "Failed to start Director");
   },
 
-  async stopDirector(workspace = ''): Promise<ApiResult<void>> {
+  async stopDirector(workspace = ""): Promise<ApiResult<void>> {
     const query = new URLSearchParams();
     if (workspace.trim()) {
-      query.set('workspace', workspace);
+      query.set("workspace", workspace);
     }
     const suffix = query.toString();
-    const res = await apiFetch(`/v2/director/stop${suffix ? `?${suffix}` : ''}`, { method: 'POST' });
-    return handleResponse(res, 'Failed to stop Director');
+    const res = await apiFetch(
+      `/v2/director/stop${suffix ? `?${suffix}` : ""}`,
+      { method: "POST" },
+    );
+    return handleResponse(res, "Failed to stop Director");
   },
 };
 
 export const snapshotService = {
   async get(): Promise<ApiResult<SnapshotPayload>> {
-    const res = await apiFetch('/state/snapshot');
-    return handleResponse(res, 'Failed to load snapshot');
+    const res = await apiFetch("/state/snapshot");
+    return handleResponse(res, "Failed to load snapshot");
   },
 };
 
 export const residentService = {
-  async getStatus(workspace = '', details = false): Promise<ApiResult<ResidentStatusDetailsPayload>> {
+  async getStatus(
+    workspace = "",
+    details = false,
+  ): Promise<ApiResult<ResidentStatusDetailsPayload>> {
     const query = new URLSearchParams();
-    if (workspace) query.set('workspace', workspace);
-    if (details) query.set('details', 'true');
+    if (workspace) query.set("workspace", workspace);
+    if (details) query.set("details", "true");
     const suffix = query.toString();
-    const res = await apiFetch(`/v2/resident/status${suffix ? `?${suffix}` : ''}`);
-    return handleResponse(res, 'Failed to load Resident status');
+    const res = await apiFetch(
+      `/v2/resident/status${suffix ? `?${suffix}` : ""}`,
+    );
+    return handleResponse(res, "Failed to load Resident status");
   },
 
-  async getCapabilities(workspace = ''): Promise<ApiResult<ResidentAgiCapabilitySurfacePayload>> {
-    const suffix = workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
+  async getCapabilities(
+    workspace = "",
+  ): Promise<ApiResult<ResidentAgiCapabilitySurfacePayload>> {
+    const suffix = workspace
+      ? `?workspace=${encodeURIComponent(workspace)}`
+      : "";
     const res = await apiFetch(`/v2/resident/capabilities${suffix}`);
-    return handleResponse(res, 'Failed to load Resident AGI capability surface');
+    return handleResponse(
+      res,
+      "Failed to load Resident AGI capability surface",
+    );
   },
 
-  async getAgiAuditPack(workspace = '', decisionLimit = 20): Promise<ApiResult<ResidentAgiAuditPackPayload>> {
+  async getAgiAuditPack(
+    workspace = "",
+    decisionLimit = 20,
+  ): Promise<ApiResult<ResidentAgiAuditPackPayload>> {
     const query = new URLSearchParams();
-    if (workspace) query.set('workspace', workspace);
-    query.set('decision_limit', String(decisionLimit));
-    const res = await apiFetch(`/v2/resident/agi/audit-pack?${query.toString()}`);
-    return handleResponse(res, 'Failed to load Resident AGI audit pack');
+    if (workspace) query.set("workspace", workspace);
+    query.set("decision_limit", String(decisionLimit));
+    const res = await apiFetch(
+      `/v2/resident/agi/audit-pack?${query.toString()}`,
+    );
+    return handleResponse(res, "Failed to load Resident AGI audit pack");
   },
 
   async getAgiEvidenceInterfaces(
-    workspace = '',
+    workspace = "",
     options: {
       decisionType?: string;
       interfaceIds?: string[];
@@ -268,115 +326,182 @@ export const residentService = {
     } = {},
   ): Promise<ApiResult<ResidentAgiEvidenceInterfacesPayload>> {
     const query = new URLSearchParams();
-    if (workspace) query.set('workspace', workspace);
-    if (options.decisionType) query.set('decision_type', options.decisionType);
-    if (options.interfaceIds?.length) query.set('interface_ids', options.interfaceIds.join(','));
-    if (options.runId) query.set('run_id', options.runId);
-    if (options.taskId) query.set('task_id', options.taskId);
-    if (options.decisionLimit) query.set('decision_limit', String(options.decisionLimit));
-    if (options.maxRuns) query.set('max_runs', String(options.maxRuns));
-    const res = await apiFetch(`/v2/resident/agi/evidence-interfaces?${query.toString()}`);
-    return handleResponse(res, 'Failed to load Resident AGI evidence interfaces');
+    if (workspace) query.set("workspace", workspace);
+    if (options.decisionType) query.set("decision_type", options.decisionType);
+    if (options.interfaceIds?.length)
+      query.set("interface_ids", options.interfaceIds.join(","));
+    if (options.runId) query.set("run_id", options.runId);
+    if (options.taskId) query.set("task_id", options.taskId);
+    if (options.decisionLimit)
+      query.set("decision_limit", String(options.decisionLimit));
+    if (options.maxRuns) query.set("max_runs", String(options.maxRuns));
+    const res = await apiFetch(
+      `/v2/resident/agi/evidence-interfaces?${query.toString()}`,
+    );
+    return handleResponse(
+      res,
+      "Failed to load Resident AGI evidence interfaces",
+    );
+  },
+
+  async getAgiHandoffs(
+    workspace = "",
+    options: {
+      targetRole?: string;
+      handoffStatus?: string;
+      limit?: number;
+    } = {},
+  ): Promise<ApiResult<ResidentAgiHandoffInboxPayload>> {
+    const query = new URLSearchParams();
+    if (workspace) query.set("workspace", workspace);
+    if (options.targetRole) query.set("target_role", options.targetRole);
+    if (options.handoffStatus)
+      query.set("handoff_status", options.handoffStatus);
+    if (options.limit) query.set("limit", String(options.limit));
+    const res = await apiFetch(`/v2/resident/agi/handoffs?${query.toString()}`);
+    return handleResponse(res, "Failed to load Resident AGI handoffs");
   },
 
   async decide(
     workspace: string,
     payload: ResidentAgiDecisionTurnRequest,
   ): Promise<ApiResult<ResidentAgiDecisionTurnResponse>> {
-    const res = await apiFetch('/v2/resident/agi/decide', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const res = await apiFetch("/v2/resident/agi/decide", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspace, ...payload }),
     });
-    return handleResponse(res, 'Failed to run Resident AGI decision turn');
+    return handleResponse(res, "Failed to run Resident AGI decision turn");
   },
 
-  async start(workspace: string, mode: string): Promise<ApiResult<ResidentStatusDetailsPayload>> {
-    const res = await apiFetch('/v2/resident/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async start(
+    workspace: string,
+    mode: string,
+  ): Promise<ApiResult<ResidentStatusDetailsPayload>> {
+    const res = await apiFetch("/v2/resident/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspace, mode }),
     });
-    return handleResponse(res, 'Failed to start Resident');
+    return handleResponse(res, "Failed to start Resident");
   },
 
-  async stop(workspace: string): Promise<ApiResult<ResidentStatusDetailsPayload>> {
-    const res = await apiFetch('/v2/resident/stop', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async stop(
+    workspace: string,
+  ): Promise<ApiResult<ResidentStatusDetailsPayload>> {
+    const res = await apiFetch("/v2/resident/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspace }),
     });
-    return handleResponse(res, 'Failed to stop Resident');
+    return handleResponse(res, "Failed to stop Resident");
   },
 
-  async tick(workspace: string, force = true): Promise<ApiResult<ResidentStatusDetailsPayload>> {
-    const query = force ? '?force=true' : '';
+  async tick(
+    workspace: string,
+    force = true,
+  ): Promise<ApiResult<ResidentStatusDetailsPayload>> {
+    const query = force ? "?force=true" : "";
     const res = await apiFetch(`/v2/resident/tick${query}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspace }),
     });
-    return handleResponse(res, 'Failed to tick Resident');
+    return handleResponse(res, "Failed to tick Resident");
   },
 
   async updateIdentity(
     workspace: string,
     payload: Partial<ResidentIdentityPayload>,
   ): Promise<ApiResult<ResidentIdentityPayload>> {
-    const res = await apiFetch('/v2/resident/identity', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+    const res = await apiFetch("/v2/resident/identity", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspace, ...payload }),
     });
-    return handleResponse(res, 'Failed to update Resident identity');
+    return handleResponse(res, "Failed to update Resident identity");
   },
 
-  async listGoals(workspace: string, statusFilter = ''): Promise<ApiResult<ResidentGoalPayload[]>> {
+  async listGoals(
+    workspace: string,
+    statusFilter = "",
+  ): Promise<ApiResult<ResidentGoalPayload[]>> {
     const query = new URLSearchParams();
-    if (workspace) query.set('workspace', workspace);
-    if (statusFilter) query.set('status_filter', statusFilter);
+    if (workspace) query.set("workspace", workspace);
+    if (statusFilter) query.set("status_filter", statusFilter);
     const suffix = query.toString();
-    const res = await apiFetch(`/v2/resident/goals${suffix ? `?${suffix}` : ''}`);
-    const parsed = await handleResponse<{ items?: ResidentGoalPayload[] }>(res, 'Failed to list Resident goals');
+    const res = await apiFetch(
+      `/v2/resident/goals${suffix ? `?${suffix}` : ""}`,
+    );
+    const parsed = await handleResponse<{ items?: ResidentGoalPayload[] }>(
+      res,
+      "Failed to list Resident goals",
+    );
     return parsed.ok
-      ? { ok: true, data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [] }
+      ? {
+          ok: true,
+          data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+        }
       : { ok: false, error: parsed.error };
   },
 
-  async createGoal(workspace: string, payload: Partial<ResidentGoalPayload>): Promise<ApiResult<ResidentGoalPayload>> {
-    const res = await apiFetch('/v2/resident/goals', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async createGoal(
+    workspace: string,
+    payload: Partial<ResidentGoalPayload>,
+  ): Promise<ApiResult<ResidentGoalPayload>> {
+    const res = await apiFetch("/v2/resident/goals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspace, ...payload }),
     });
-    return handleResponse(res, 'Failed to create Resident goal');
+    return handleResponse(res, "Failed to create Resident goal");
   },
 
-  async approveGoal(goalId: string, workspace: string, note = ''): Promise<ApiResult<ResidentGoalPayload>> {
-    const res = await apiFetch(`/v2/resident/goals/${encodeURIComponent(goalId)}/approve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspace, note }),
-    });
-    return handleResponse(res, 'Failed to approve Resident goal');
+  async approveGoal(
+    goalId: string,
+    workspace: string,
+    note = "",
+  ): Promise<ApiResult<ResidentGoalPayload>> {
+    const res = await apiFetch(
+      `/v2/resident/goals/${encodeURIComponent(goalId)}/approve`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace, note }),
+      },
+    );
+    return handleResponse(res, "Failed to approve Resident goal");
   },
 
-  async rejectGoal(goalId: string, workspace: string, note = ''): Promise<ApiResult<ResidentGoalPayload>> {
-    const res = await apiFetch(`/v2/resident/goals/${encodeURIComponent(goalId)}/reject`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspace, note }),
-    });
-    return handleResponse(res, 'Failed to reject Resident goal');
+  async rejectGoal(
+    goalId: string,
+    workspace: string,
+    note = "",
+  ): Promise<ApiResult<ResidentGoalPayload>> {
+    const res = await apiFetch(
+      `/v2/resident/goals/${encodeURIComponent(goalId)}/reject`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace, note }),
+      },
+    );
+    return handleResponse(res, "Failed to reject Resident goal");
   },
 
-  async materializeGoal(goalId: string, workspace: string): Promise<ApiResult<Record<string, unknown>>> {
-    const res = await apiFetch(`/v2/resident/goals/${encodeURIComponent(goalId)}/materialize`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspace }),
-    });
-    return handleResponse(res, 'Failed to materialize Resident goal');
+  async materializeGoal(
+    goalId: string,
+    workspace: string,
+  ): Promise<ApiResult<Record<string, unknown>>> {
+    const res = await apiFetch(
+      `/v2/resident/goals/${encodeURIComponent(goalId)}/materialize`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace }),
+      },
+    );
+    return handleResponse(res, "Failed to materialize Resident goal");
   },
 
   async stageGoal(
@@ -384,30 +509,43 @@ export const residentService = {
     workspace: string,
     promoteToPmRuntime = false,
   ): Promise<ApiResult<ResidentGoalStagePayload>> {
-    const res = await apiFetch(`/v2/resident/goals/${encodeURIComponent(goalId)}/stage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspace, promote_to_pm_runtime: promoteToPmRuntime }),
-    });
-    return handleResponse(res, 'Failed to stage Resident goal');
+    const res = await apiFetch(
+      `/v2/resident/goals/${encodeURIComponent(goalId)}/stage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspace,
+          promote_to_pm_runtime: promoteToPmRuntime,
+        }),
+      },
+    );
+    return handleResponse(res, "Failed to stage Resident goal");
   },
 
   async runGoal(
     goalId: string,
     workspace: string,
-    options: { runType?: string; runDirector?: boolean; directorIterations?: number } = {},
+    options: {
+      runType?: string;
+      runDirector?: boolean;
+      directorIterations?: number;
+    } = {},
   ): Promise<ApiResult<ResidentGoalRunPayload>> {
-    const res = await apiFetch(`/v2/resident/goals/${encodeURIComponent(goalId)}/run`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        workspace,
-        run_type: options.runType || 'pm',
-        run_director: options.runDirector ?? true,
-        director_iterations: options.directorIterations ?? 1,
-      }),
-    });
-    return handleResponse(res, 'Failed to run Resident goal through PM');
+    const res = await apiFetch(
+      `/v2/resident/goals/${encodeURIComponent(goalId)}/run`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspace,
+          run_type: options.runType || "pm",
+          run_director: options.runDirector ?? true,
+          director_iterations: options.directorIterations ?? 1,
+        }),
+      },
+    );
+    return handleResponse(res, "Failed to run Resident goal through PM");
   },
 
   async listDecisions(
@@ -415,188 +553,271 @@ export const residentService = {
     options: { limit?: number; actor?: string; verdict?: string } = {},
   ): Promise<ApiResult<ResidentDecisionPayload[]>> {
     const query = new URLSearchParams();
-    if (workspace) query.set('workspace', workspace);
-    if (options.limit) query.set('limit', String(options.limit));
-    if (options.actor) query.set('actor', options.actor);
-    if (options.verdict) query.set('verdict', options.verdict);
+    if (workspace) query.set("workspace", workspace);
+    if (options.limit) query.set("limit", String(options.limit));
+    if (options.actor) query.set("actor", options.actor);
+    if (options.verdict) query.set("verdict", options.verdict);
     const suffix = query.toString();
-    const res = await apiFetch(`/v2/resident/decisions${suffix ? `?${suffix}` : ''}`);
-    const parsed = await handleResponse<{ items?: ResidentDecisionPayload[] }>(res, 'Failed to list Resident decisions');
+    const res = await apiFetch(
+      `/v2/resident/decisions${suffix ? `?${suffix}` : ""}`,
+    );
+    const parsed = await handleResponse<{ items?: ResidentDecisionPayload[] }>(
+      res,
+      "Failed to list Resident decisions",
+    );
     return parsed.ok
-      ? { ok: true, data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [] }
+      ? {
+          ok: true,
+          data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+        }
       : { ok: false, error: parsed.error };
   },
 
-  async listSkills(workspace: string): Promise<ApiResult<ResidentSkillPayload[]>> {
-    const suffix = workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
+  async listSkills(
+    workspace: string,
+  ): Promise<ApiResult<ResidentSkillPayload[]>> {
+    const suffix = workspace
+      ? `?workspace=${encodeURIComponent(workspace)}`
+      : "";
     const res = await apiFetch(`/v2/resident/skills${suffix}`);
-    const parsed = await handleResponse<{ items?: ResidentSkillPayload[] }>(res, 'Failed to list Resident skills');
+    const parsed = await handleResponse<{ items?: ResidentSkillPayload[] }>(
+      res,
+      "Failed to list Resident skills",
+    );
     return parsed.ok
-      ? { ok: true, data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [] }
+      ? {
+          ok: true,
+          data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+        }
       : { ok: false, error: parsed.error };
   },
 
-  async extractSkills(workspace: string): Promise<ApiResult<ResidentSkillPayload[]>> {
-    const res = await apiFetch('/v2/resident/skills/extract', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async extractSkills(
+    workspace: string,
+  ): Promise<ApiResult<ResidentSkillPayload[]>> {
+    const res = await apiFetch("/v2/resident/skills/extract", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspace }),
     });
-    const parsed = await handleResponse<{ items?: ResidentSkillPayload[] }>(res, 'Failed to extract Resident skills');
+    const parsed = await handleResponse<{ items?: ResidentSkillPayload[] }>(
+      res,
+      "Failed to extract Resident skills",
+    );
     return parsed.ok
-      ? { ok: true, data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [] }
+      ? {
+          ok: true,
+          data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+        }
       : { ok: false, error: parsed.error };
   },
 
-  async listExperiments(workspace: string): Promise<ApiResult<ResidentExperimentPayload[]>> {
-    const suffix = workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
+  async listExperiments(
+    workspace: string,
+  ): Promise<ApiResult<ResidentExperimentPayload[]>> {
+    const suffix = workspace
+      ? `?workspace=${encodeURIComponent(workspace)}`
+      : "";
     const res = await apiFetch(`/v2/resident/experiments${suffix}`);
-    const parsed = await handleResponse<{ items?: ResidentExperimentPayload[] }>(res, 'Failed to list Resident experiments');
+    const parsed = await handleResponse<{
+      items?: ResidentExperimentPayload[];
+    }>(res, "Failed to list Resident experiments");
     return parsed.ok
-      ? { ok: true, data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [] }
+      ? {
+          ok: true,
+          data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+        }
       : { ok: false, error: parsed.error };
   },
 
-  async runExperiments(workspace: string): Promise<ApiResult<ResidentExperimentPayload[]>> {
-    const res = await apiFetch('/v2/resident/experiments/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async runExperiments(
+    workspace: string,
+  ): Promise<ApiResult<ResidentExperimentPayload[]>> {
+    const res = await apiFetch("/v2/resident/experiments/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspace }),
     });
-    const parsed = await handleResponse<{ items?: ResidentExperimentPayload[] }>(res, 'Failed to run Resident experiments');
+    const parsed = await handleResponse<{
+      items?: ResidentExperimentPayload[];
+    }>(res, "Failed to run Resident experiments");
     return parsed.ok
-      ? { ok: true, data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [] }
+      ? {
+          ok: true,
+          data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+        }
       : { ok: false, error: parsed.error };
   },
 
-  async listImprovements(workspace: string): Promise<ApiResult<ResidentImprovementPayload[]>> {
-    const suffix = workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
+  async listImprovements(
+    workspace: string,
+  ): Promise<ApiResult<ResidentImprovementPayload[]>> {
+    const suffix = workspace
+      ? `?workspace=${encodeURIComponent(workspace)}`
+      : "";
     const res = await apiFetch(`/v2/resident/improvements${suffix}`);
-    const parsed = await handleResponse<{ items?: ResidentImprovementPayload[] }>(res, 'Failed to list Resident improvements');
+    const parsed = await handleResponse<{
+      items?: ResidentImprovementPayload[];
+    }>(res, "Failed to list Resident improvements");
     return parsed.ok
-      ? { ok: true, data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [] }
+      ? {
+          ok: true,
+          data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+        }
       : { ok: false, error: parsed.error };
   },
 
-  async runImprovements(workspace: string): Promise<ApiResult<ResidentImprovementPayload[]>> {
-    const res = await apiFetch('/v2/resident/improvements/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async runImprovements(
+    workspace: string,
+  ): Promise<ApiResult<ResidentImprovementPayload[]>> {
+    const res = await apiFetch("/v2/resident/improvements/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspace }),
     });
-    const parsed = await handleResponse<{ items?: ResidentImprovementPayload[] }>(res, 'Failed to run Resident improvements');
+    const parsed = await handleResponse<{
+      items?: ResidentImprovementPayload[];
+    }>(res, "Failed to run Resident improvements");
     return parsed.ok
-      ? { ok: true, data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [] }
+      ? {
+          ok: true,
+          data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+        }
       : { ok: false, error: parsed.error };
   },
 
   // Phase 1.2: Goal Execution Projection
-  async getGoalExecution(goalId: string, workspace: string): Promise<ApiResult<import('@/app/types/appContracts').GoalExecutionView>> {
-    const suffix = workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
-    const res = await apiFetch(`/v2/resident/goals/${encodeURIComponent(goalId)}/execution${suffix}`);
-    return handleResponse(res, 'Failed to load goal execution view');
+  async getGoalExecution(
+    goalId: string,
+    workspace: string,
+  ): Promise<ApiResult<import("@/app/types/appContracts").GoalExecutionView>> {
+    const suffix = workspace
+      ? `?workspace=${encodeURIComponent(workspace)}`
+      : "";
+    const res = await apiFetch(
+      `/v2/resident/goals/${encodeURIComponent(goalId)}/execution${suffix}`,
+    );
+    return handleResponse(res, "Failed to load goal execution view");
   },
 
-  async listGoalExecutions(workspace: string): Promise<ApiResult<import('@/app/types/appContracts').GoalExecutionView[]>> {
-    const suffix = workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
+  async listGoalExecutions(
+    workspace: string,
+  ): Promise<
+    ApiResult<import("@/app/types/appContracts").GoalExecutionView[]>
+  > {
+    const suffix = workspace
+      ? `?workspace=${encodeURIComponent(workspace)}`
+      : "";
     const res = await apiFetch(`/v2/resident/goals/execution/bulk${suffix}`);
-    const parsed = await handleResponse<{ items?: import('@/app/types/appContracts').GoalExecutionView[] }>(res, 'Failed to list goal executions');
+    const parsed = await handleResponse<{
+      items?: import("@/app/types/appContracts").GoalExecutionView[];
+    }>(res, "Failed to list goal executions");
     return parsed.ok
-      ? { ok: true, data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [] }
+      ? {
+          ok: true,
+          data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
+        }
       : { ok: false, error: parsed.error };
   },
 };
 
 export const lancedbService = {
   async getStatus(): Promise<ApiResult<LanceDbStatus>> {
-    const res = await apiFetch('/lancedb/status');
-    return handleResponse(res, 'Failed to load LanceDB status');
+    const res = await apiFetch("/lancedb/status");
+    return handleResponse(res, "Failed to load LanceDB status");
   },
 };
 
 export const llmService = {
   async getStatus(): Promise<ApiResult<LLMStatus>> {
-    const res = await apiFetch('/v2/llm/status');
-    return handleResponse(res, 'Failed to load LLM status');
+    const res = await apiFetch("/v2/llm/status");
+    return handleResponse(res, "Failed to load LLM status");
   },
 };
 
 export const fileService = {
-  async read(path: string, tailLines?: number): Promise<ApiResult<FilePayload>> {
+  async read(
+    path: string,
+    tailLines?: number,
+  ): Promise<ApiResult<FilePayload>> {
     const normalizedPath = normalizeArtifactPath(path);
     let url = `/files/read?path=${encodeURIComponent(normalizedPath)}`;
     if (tailLines) {
       url += `&tail_lines=${tailLines}`;
     }
     const res = await apiFetch(url);
-    return handleResponse(res, 'Failed to read file');
+    return handleResponse(res, "Failed to read file");
   },
 
   async readLogTail(path: string, lines = 20): Promise<string> {
     const result = await this.read(path, 200);
-    if (!result.ok || !result.data?.content) return '';
-    const allLines = result.data.content.split('\n');
-    return allLines.slice(-lines).join('\n');
+    if (!result.ok || !result.data?.content) return "";
+    const allLines = result.data.content.split("\n");
+    return allLines.slice(-lines).join("\n");
   },
 };
 
 export const memoService = {
   async list(limit = 200) {
     const res = await apiFetch(`/memos/list?limit=${limit}`);
-    return handleResponse<{ items: Array<{ path: string; name: string; mtime?: string }>; count: number }>(
-      res,
-      'Failed to list memos'
-    );
+    return handleResponse<{
+      items: Array<{ path: string; name: string; mtime?: string }>;
+      count: number;
+    }>(res, "Failed to list memos");
   },
 };
 
 export const runtimeService = {
   async clearDialogue(): Promise<ApiResult<void>> {
-    const res = await apiFetch('/v2/runtime/clear', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scope: 'dialogue' }),
+    const res = await apiFetch("/v2/runtime/clear", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "dialogue" }),
     });
-    return handleResponse(res, '清空对话日志失败');
+    return handleResponse(res, "清空对话日志失败");
   },
 
   async resetTasks(): Promise<ApiResult<void>> {
-    const res = await apiFetch('/runtime/reset-tasks', { method: 'POST' });
-    return handleResponse(res, '重置任务失败');
+    const res = await apiFetch("/runtime/reset-tasks", { method: "POST" });
+    return handleResponse(res, "重置任务失败");
   },
 };
 
 export const ollamaService = {
-  async stopModels(): Promise<ApiResult<{ stopped?: string[]; failed?: Array<{ model: string }> }>> {
-    const res = await apiFetch('/ollama/stop', { method: 'POST' });
-    return handleResponse(res, 'Failed to stop Ollama models');
+  async stopModels(): Promise<
+    ApiResult<{ stopped?: string[]; failed?: Array<{ model: string }> }>
+  > {
+    const res = await apiFetch("/ollama/stop", { method: "POST" });
+    return handleResponse(res, "Failed to stop Ollama models");
   },
 };
 
 export const healthService = {
   async check(): Promise<ApiResult<{ timestamp?: string }>> {
-    const res = await apiFetch('/health');
-    return handleResponse(res, 'Health check failed');
+    const res = await apiFetch("/health");
+    return handleResponse(res, "Health check failed");
   },
 };
 
 export const agentsService = {
   async applyDraft(draftPath: string): Promise<ApiResult<void>> {
-    const res = await apiFetch('/agents/apply', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const res = await apiFetch("/agents/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ draft_path: draftPath }),
     });
-    return handleResponse(res, 'Failed to apply AGENTS draft');
+    return handleResponse(res, "Failed to apply AGENTS draft");
   },
 
-  async saveFeedback(text: string): Promise<ApiResult<{ mtime?: string; cleared?: boolean }>> {
-    const res = await apiFetch('/agents/feedback', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async saveFeedback(
+    text: string,
+  ): Promise<ApiResult<{ mtime?: string; cleared?: boolean }>> {
+    const res = await apiFetch("/agents/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
-    return handleResponse(res, 'Failed to save feedback');
+    return handleResponse(res, "Failed to save feedback");
   },
 };
 
@@ -645,92 +866,133 @@ export type {
   ConversationListResponseV2,
   CreateConversationRequestV2,
   AddConversationMessageRequestV2,
-} from './api.types';
+} from "./api.types";
 
 export const v2Services = {
   // Background Tasks
-  async createTask(command: string, timeout = 300, tier = 'background'): Promise<ApiResult<TaskResponse>> {
-    const res = await apiFetch('/v2/services/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async createTask(
+    command: string,
+    timeout = 300,
+    tier = "background",
+  ): Promise<ApiResult<TaskResponse>> {
+    const res = await apiFetch("/v2/services/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ command, timeout, tier }),
     });
-    return handleResponse(res, 'Failed to create background task');
+    return handleResponse(res, "Failed to create background task");
   },
 
   async getTask(taskId: string): Promise<ApiResult<TaskResponse>> {
     const res = await apiFetch(`/v2/services/tasks/${taskId}`);
-    return handleResponse(res, 'Failed to get task');
+    return handleResponse(res, "Failed to get task");
   },
 
   async listTasks(state?: string): Promise<ApiResult<TaskResponse[]>> {
-    const url = state ? `/v2/services/tasks?state=${state}` : '/v2/services/tasks';
+    const url = state
+      ? `/v2/services/tasks?state=${state}`
+      : "/v2/services/tasks";
     const res = await apiFetch(url);
-    return handleResponse(res, 'Failed to list tasks');
+    return handleResponse(res, "Failed to list tasks");
   },
 
   // Todos
-  async createTodo(content: string, priority = 'medium', tags: string[] = []): Promise<ApiResult<TodoItemResponse>> {
-    const res = await apiFetch('/v2/services/todos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async createTodo(
+    content: string,
+    priority = "medium",
+    tags: string[] = [],
+  ): Promise<ApiResult<TodoItemResponse>> {
+    const res = await apiFetch("/v2/services/todos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content, priority, tags }),
     });
-    return handleResponse(res, 'Failed to create todo');
+    return handleResponse(res, "Failed to create todo");
   },
 
   async listTodos(status?: string): Promise<ApiResult<TodoItemResponse[]>> {
-    const url = status ? `/v2/services/todos?status=${status}` : '/v2/services/todos';
+    const url = status
+      ? `/v2/services/todos?status=${status}`
+      : "/v2/services/todos";
     const res = await apiFetch(url);
-    return handleResponse(res, 'Failed to list todos');
+    return handleResponse(res, "Failed to list todos");
   },
 
-  async getTodoSummary(): Promise<ApiResult<{ summary: Record<string, unknown>; next_action: TodoItemResponse | null }>> {
-    const res = await apiFetch('/v2/services/todos/summary');
-    return handleResponse(res, 'Failed to get todo summary');
+  async getTodoSummary(): Promise<
+    ApiResult<{
+      summary: Record<string, unknown>;
+      next_action: TodoItemResponse | null;
+    }>
+  > {
+    const res = await apiFetch("/v2/services/todos/summary");
+    return handleResponse(res, "Failed to get todo summary");
   },
 
   async markTodoDone(itemId: string): Promise<ApiResult<{ ok: boolean }>> {
-    const res = await apiFetch(`/v2/services/todos/${itemId}/done`, { method: 'POST' });
-    return handleResponse(res, 'Failed to mark todo done');
+    const res = await apiFetch(`/v2/services/todos/${itemId}/done`, {
+      method: "POST",
+    });
+    return handleResponse(res, "Failed to mark todo done");
   },
 
   // Token Budget
   async getTokenStatus(): Promise<ApiResult<TokenStatusResponse>> {
-    const res = await apiFetch('/v2/services/tokens/status');
-    return handleResponse(res, 'Failed to get token status');
+    const res = await apiFetch("/v2/services/tokens/status");
+    return handleResponse(res, "Failed to get token status");
   },
 
-  async recordTokenUsage(tokens: number): Promise<ApiResult<{ ok: boolean; recorded: number; total_used: number; remaining?: number }>> {
-    const res = await apiFetch('/v2/services/tokens/record', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async recordTokenUsage(
+    tokens: number,
+  ): Promise<
+    ApiResult<{
+      ok: boolean;
+      recorded: number;
+      total_used: number;
+      remaining?: number;
+    }>
+  > {
+    const res = await apiFetch("/v2/services/tokens/record", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tokens }),
     });
-    return handleResponse(res, 'Failed to record token usage');
+    return handleResponse(res, "Failed to record token usage");
   },
 
   // Security
-  async checkSecurity(command: string): Promise<ApiResult<{ is_safe: boolean; reason?: string; suggested_alternative?: string }>> {
-    const res = await apiFetch('/v2/services/security/check', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async checkSecurity(
+    command: string,
+  ): Promise<
+    ApiResult<{
+      is_safe: boolean;
+      reason?: string;
+      suggested_alternative?: string;
+    }>
+  > {
+    const res = await apiFetch("/v2/services/security/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ command }),
     });
-    return handleResponse(res, 'Failed to check security');
+    return handleResponse(res, "Failed to check security");
   },
 
   // Transcript
-  async getTranscript(limit = 100, messageType?: string): Promise<ApiResult<Array<Record<string, unknown>>>> {
+  async getTranscript(
+    limit = 100,
+    messageType?: string,
+  ): Promise<ApiResult<Array<Record<string, unknown>>>> {
     let url = `/v2/services/transcript?limit=${limit}`;
     if (messageType) url += `&message_type=${messageType}`;
     const res = await apiFetch(url);
-    return handleResponse(res, 'Failed to get transcript');
+    return handleResponse(res, "Failed to get transcript");
   },
 
-  async getTranscriptSession(): Promise<ApiResult<{ active: boolean; session_id?: string; message_count?: number }>> {
-    const res = await apiFetch('/v2/services/transcript/session');
-    return handleResponse(res, 'Failed to get transcript session');
+  async getTranscriptSession(): Promise<
+    ApiResult<{ active: boolean; session_id?: string; message_count?: number }>
+  > {
+    const res = await apiFetch("/v2/services/transcript/session");
+    return handleResponse(res, "Failed to get transcript session");
   },
 };
 
@@ -740,19 +1002,31 @@ export const v2Services = {
 
 export const roleChatService = {
   /** POST /v2/role/{role}/chat — Non-streaming unified role chat */
-  async chat(role: RoleChatRole, request: import('./api.types').RoleChatRequest, workspace = ''): Promise<ApiResult<import('./api.types').RoleChatResponse>> {
-    const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/chat${workspaceQuerySuffix(workspace)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-    });
-    return handleResponse(res, 'Role chat failed');
+  async chat(
+    role: RoleChatRole,
+    request: import("./api.types").RoleChatRequest,
+    workspace = "",
+  ): Promise<ApiResult<import("./api.types").RoleChatResponse>> {
+    const res = await apiFetch(
+      `/v2/role/${encodeURIComponent(role)}/chat${workspaceQuerySuffix(workspace)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+    return handleResponse(res, "Role chat failed");
   },
 
   /** GET /v2/role/{role}/chat/status — Role chat readiness status */
-  async getStatus(role: RoleChatRole, workspace = ''): Promise<ApiResult<import('./api.types').RoleChatStatusResponse>> {
-    const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/chat/status${workspaceQuerySuffix(workspace)}`);
-    return handleResponse(res, 'Failed to load role chat status');
+  async getStatus(
+    role: RoleChatRole,
+    workspace = "",
+  ): Promise<ApiResult<import("./api.types").RoleChatStatusResponse>> {
+    const res = await apiFetch(
+      `/v2/role/${encodeURIComponent(role)}/chat/status${workspaceQuerySuffix(workspace)}`,
+    );
+    return handleResponse(res, "Failed to load role chat status");
   },
 };
 
@@ -762,24 +1036,38 @@ export const roleChatService = {
 
 export const roleSessionService = {
   /** POST /v2/roles/sessions/{id}/messages — Send a message to a role session */
-  async sendMessage(sessionId: string, request: import('./api.types').SessionMessageRequest): Promise<ApiResult<import('./api.types').SessionMessageResponse>> {
-    const res = await apiFetch(`/v2/roles/sessions/${encodeURIComponent(sessionId)}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-    });
-    return handleResponse(res, 'Failed to send session message');
+  async sendMessage(
+    sessionId: string,
+    request: import("./api.types").SessionMessageRequest,
+  ): Promise<ApiResult<import("./api.types").SessionMessageResponse>> {
+    const res = await apiFetch(
+      `/v2/roles/sessions/${encodeURIComponent(sessionId)}/messages`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+    return handleResponse(res, "Failed to send session message");
   },
 
   /** GET /v2/roles/sessions/{id}/memory — Get session memory (maps to memory search endpoint) */
-  async getMemory(sessionId: string, query?: string, kind?: string, entity?: string, limit = 6): Promise<ApiResult<import('./api.types').SessionMemoryResponse>> {
+  async getMemory(
+    sessionId: string,
+    query?: string,
+    kind?: string,
+    entity?: string,
+    limit = 6,
+  ): Promise<ApiResult<import("./api.types").SessionMemoryResponse>> {
     const params = new URLSearchParams();
-    if (query) params.set('q', query);
-    if (kind) params.set('kind', kind);
-    if (entity) params.set('entity', entity);
-    params.set('limit', String(limit));
-    const res = await apiFetch(`/v2/roles/sessions/${encodeURIComponent(sessionId)}/memory/search?${params}`);
-    return handleResponse(res, 'Failed to load session memory');
+    if (query) params.set("q", query);
+    if (kind) params.set("kind", kind);
+    if (entity) params.set("entity", entity);
+    params.set("limit", String(limit));
+    const res = await apiFetch(
+      `/v2/roles/sessions/${encodeURIComponent(sessionId)}/memory/search?${params}`,
+    );
+    return handleResponse(res, "Failed to load session memory");
   },
 };
 
@@ -793,28 +1081,40 @@ export const roleSessionService = {
 
 export const pmTaskService = {
   /** GET /v2/pm/tasks — List PM tasks */
-  async list(workspace = ''): Promise<ApiResult<import('./api.types').PmTaskListResponse>> {
-    const res = await apiFetch(`/v2/pm/tasks${workspaceQuerySuffix(workspace)}`);
-    return handleResponse(res, 'Failed to list PM tasks');
+  async list(
+    workspace = "",
+  ): Promise<ApiResult<import("./api.types").PmTaskListResponse>> {
+    const res = await apiFetch(
+      `/v2/pm/tasks${workspaceQuerySuffix(workspace)}`,
+    );
+    return handleResponse(res, "Failed to list PM tasks");
   },
 
   /** GET /v2/pm/tasks/{id} — Get PM task detail */
-  async get(id: string, workspace = ''): Promise<ApiResult<import('./api.types').PmTaskDetailResponse>> {
-    const res = await apiFetch(`/v2/pm/tasks/${encodeURIComponent(id)}${workspaceQuerySuffix(workspace)}`);
-    return handleResponse(res, 'Failed to get PM task detail');
+  async get(
+    id: string,
+    workspace = "",
+  ): Promise<ApiResult<import("./api.types").PmTaskDetailResponse>> {
+    const res = await apiFetch(
+      `/v2/pm/tasks/${encodeURIComponent(id)}${workspaceQuerySuffix(workspace)}`,
+    );
+    return handleResponse(res, "Failed to get PM task detail");
   },
 
   /** POST /v2/pm/tasks — Create PM task */
   async create(
-    request: import('./api.types').PmCreateTaskRequest,
-    workspace = '',
-  ): Promise<ApiResult<import('./api.types').PmTaskDetailResponse>> {
-    const res = await apiFetch(`/v2/pm/tasks${workspaceQuerySuffix(workspace)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-    });
-    return handleResponse(res, 'Failed to create PM task');
+    request: import("./api.types").PmCreateTaskRequest,
+    workspace = "",
+  ): Promise<ApiResult<import("./api.types").PmTaskDetailResponse>> {
+    const res = await apiFetch(
+      `/v2/pm/tasks${workspaceQuerySuffix(workspace)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+    return handleResponse(res, "Failed to create PM task");
   },
 };
 
@@ -824,15 +1124,24 @@ export const pmTaskService = {
 
 export const pmRequirementService = {
   /** GET /v2/pm/requirements — List PM requirements */
-  async list(workspace = ''): Promise<ApiResult<import('./api.types').PmRequirementListResponse>> {
-    const res = await apiFetch(`/v2/pm/requirements${workspaceQuerySuffix(workspace)}`);
-    return handleResponse(res, 'Failed to list PM requirements');
+  async list(
+    workspace = "",
+  ): Promise<ApiResult<import("./api.types").PmRequirementListResponse>> {
+    const res = await apiFetch(
+      `/v2/pm/requirements${workspaceQuerySuffix(workspace)}`,
+    );
+    return handleResponse(res, "Failed to list PM requirements");
   },
 
   /** GET /v2/pm/requirements/{id} — Get PM requirement detail */
-  async get(id: string, workspace = ''): Promise<ApiResult<import('./api.types').PmRequirementDetailResponse>> {
-    const res = await apiFetch(`/v2/pm/requirements/${encodeURIComponent(id)}${workspaceQuerySuffix(workspace)}`);
-    return handleResponse(res, 'Failed to get PM requirement detail');
+  async get(
+    id: string,
+    workspace = "",
+  ): Promise<ApiResult<import("./api.types").PmRequirementDetailResponse>> {
+    const res = await apiFetch(
+      `/v2/pm/requirements/${encodeURIComponent(id)}${workspaceQuerySuffix(workspace)}`,
+    );
+    return handleResponse(res, "Failed to get PM requirement detail");
   },
 };
 
@@ -842,43 +1151,51 @@ export const pmRequirementService = {
 
 export const docsInitService = {
   /** POST /v2/docs/init/dialogue — Docs init dialogue */
-  async dialogue(request: import('./api.types').DocsInitDialogueRequest): Promise<ApiResult<import('./api.types').DocsInitDialogueResponse>> {
-    const res = await apiFetch('/v2/docs/init/dialogue', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async dialogue(
+    request: import("./api.types").DocsInitDialogueRequest,
+  ): Promise<ApiResult<import("./api.types").DocsInitDialogueResponse>> {
+    const res = await apiFetch("/v2/docs/init/dialogue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Docs init dialogue failed');
+    return handleResponse(res, "Docs init dialogue failed");
   },
 
   /** POST /v2/docs/init/suggest — Docs init suggest */
-  async suggest(request: import('./api.types').DocsInitSuggestRequest): Promise<ApiResult<import('./api.types').DocsInitSuggestResponse>> {
-    const res = await apiFetch('/v2/docs/init/suggest', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async suggest(
+    request: import("./api.types").DocsInitSuggestRequest,
+  ): Promise<ApiResult<import("./api.types").DocsInitSuggestResponse>> {
+    const res = await apiFetch("/v2/docs/init/suggest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Docs init suggest failed');
+    return handleResponse(res, "Docs init suggest failed");
   },
 
   /** POST /v2/docs/init/preview — Docs init preview */
-  async preview(request: import('./api.types').DocsInitPreviewRequest): Promise<ApiResult<import('./api.types').DocsInitPreviewResponse>> {
-    const res = await apiFetch('/v2/docs/init/preview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async preview(
+    request: import("./api.types").DocsInitPreviewRequest,
+  ): Promise<ApiResult<import("./api.types").DocsInitPreviewResponse>> {
+    const res = await apiFetch("/v2/docs/init/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Docs init preview failed');
+    return handleResponse(res, "Docs init preview failed");
   },
 
   /** POST /v2/docs/init/apply — Docs init apply */
-  async apply(request: import('./api.types').DocsInitApplyRequest): Promise<ApiResult<import('./api.types').DocsInitApplyResponse>> {
-    const res = await apiFetch('/v2/docs/init/apply', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async apply(
+    request: import("./api.types").DocsInitApplyRequest,
+  ): Promise<ApiResult<import("./api.types").DocsInitApplyResponse>> {
+    const res = await apiFetch("/v2/docs/init/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Docs init apply failed');
+    return handleResponse(res, "Docs init apply failed");
   },
 };
 
@@ -888,31 +1205,37 @@ export const docsInitService = {
 
 export const llmConfigService = {
   /** GET /v2/llm/config — Get LLM config */
-  async get(): Promise<ApiResult<import('./api.types').LLMConfigResponse>> {
-    const res = await apiFetch('/v2/llm/config');
-    return handleResponse(res, 'Failed to load LLM config');
+  async get(): Promise<ApiResult<import("./api.types").LLMConfigResponse>> {
+    const res = await apiFetch("/v2/llm/config");
+    return handleResponse(res, "Failed to load LLM config");
   },
 
   /** POST /v2/llm/config/migrate — Migrate LLM config */
-  async migrate(request: import('./api.types').LLMConfigMigrateRequest): Promise<ApiResult<import('./api.types').LLMConfigMigrateResponse>> {
-    const res = await apiFetch('/v2/llm/config/migrate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async migrate(
+    request: import("./api.types").LLMConfigMigrateRequest,
+  ): Promise<ApiResult<import("./api.types").LLMConfigMigrateResponse>> {
+    const res = await apiFetch("/v2/llm/config/migrate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Failed to migrate LLM config');
+    return handleResponse(res, "Failed to migrate LLM config");
   },
 
   /** GET /v2/llm/status — Get LLM status */
-  async getStatus(): Promise<ApiResult<import('./api.types').LLMStatusResponse>> {
-    const res = await apiFetch('/v2/llm/status');
-    return handleResponse(res, 'Failed to load LLM status');
+  async getStatus(): Promise<
+    ApiResult<import("./api.types").LLMStatusResponse>
+  > {
+    const res = await apiFetch("/v2/llm/status");
+    return handleResponse(res, "Failed to load LLM status");
   },
 
   /** GET /v2/llm/providers — List LLM providers */
-  async listProviders(): Promise<ApiResult<import('./api.types').LLMProviderListResponse>> {
-    const res = await apiFetch('/v2/llm/providers');
-    return handleResponse(res, 'Failed to list LLM providers');
+  async listProviders(): Promise<
+    ApiResult<import("./api.types").LLMProviderListResponse>
+  > {
+    const res = await apiFetch("/v2/llm/providers");
+    return handleResponse(res, "Failed to list LLM providers");
   },
 };
 
@@ -922,19 +1245,21 @@ export const llmConfigService = {
 
 export const settingsV2Service = {
   /** GET /v2/settings — Get settings */
-  async get(): Promise<ApiResult<import('./api.types').SettingsV2Response>> {
-    const res = await apiFetch('/v2/settings');
-    return handleResponse(res, 'Failed to load settings');
+  async get(): Promise<ApiResult<import("./api.types").SettingsV2Response>> {
+    const res = await apiFetch("/v2/settings");
+    return handleResponse(res, "Failed to load settings");
   },
 
   /** POST /v2/settings — Update settings */
-  async update(request: import('./api.types').SettingsV2UpdateRequest): Promise<ApiResult<import('./api.types').SettingsV2Response>> {
-    const res = await apiFetch('/v2/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async update(
+    request: import("./api.types").SettingsV2UpdateRequest,
+  ): Promise<ApiResult<import("./api.types").SettingsV2Response>> {
+    const res = await apiFetch("/v2/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Failed to update settings');
+    return handleResponse(res, "Failed to update settings");
   },
 };
 
@@ -944,23 +1269,27 @@ export const settingsV2Service = {
 
 export const agentsV2Service = {
   /** POST /v2/agents/apply — Apply agents */
-  async apply(request: import('./api.types').AgentsApplyRequest): Promise<ApiResult<import('./api.types').AgentsApplyResponse>> {
-    const res = await apiFetch('/v2/agents/apply', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async apply(
+    request: import("./api.types").AgentsApplyRequest,
+  ): Promise<ApiResult<import("./api.types").AgentsApplyResponse>> {
+    const res = await apiFetch("/v2/agents/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Failed to apply agents');
+    return handleResponse(res, "Failed to apply agents");
   },
 
   /** POST /v2/agents/feedback — Agents feedback */
-  async feedback(request: import('./api.types').AgentsFeedbackRequest): Promise<ApiResult<import('./api.types').AgentsFeedbackResponse>> {
-    const res = await apiFetch('/v2/agents/feedback', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async feedback(
+    request: import("./api.types").AgentsFeedbackRequest,
+  ): Promise<ApiResult<import("./api.types").AgentsFeedbackResponse>> {
+    const res = await apiFetch("/v2/agents/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Failed to submit agents feedback');
+    return handleResponse(res, "Failed to submit agents feedback");
   },
 };
 
@@ -970,15 +1299,19 @@ export const agentsV2Service = {
 
 export const roleCacheService = {
   /** GET /v2/role/cache-stats — LLM cache stats */
-  async getStats(): Promise<ApiResult<import('./api.types').RoleCacheStatsResponse>> {
-    const res = await apiFetch('/v2/role/cache-stats');
-    return handleResponse(res, 'Failed to load role cache stats');
+  async getStats(): Promise<
+    ApiResult<import("./api.types").RoleCacheStatsResponse>
+  > {
+    const res = await apiFetch("/v2/role/cache-stats");
+    return handleResponse(res, "Failed to load role cache stats");
   },
 
   /** POST /v2/role/cache-clear — Clear LLM cache */
-  async clear(): Promise<ApiResult<import('./api.types').RoleCacheClearResponse>> {
-    const res = await apiFetch('/v2/role/cache-clear', { method: 'POST' });
-    return handleResponse(res, 'Failed to clear role cache');
+  async clear(): Promise<
+    ApiResult<import("./api.types").RoleCacheClearResponse>
+  > {
+    const res = await apiFetch("/v2/role/cache-clear", { method: "POST" });
+    return handleResponse(res, "Failed to clear role cache");
   },
 };
 
@@ -988,53 +1321,73 @@ export const roleCacheService = {
 
 export const roleChatRolesService = {
   /** GET /v2/role/chat/roles — List supported roles */
-  async list(): Promise<ApiResult<import('./api.types').RoleChatRolesResponse>> {
-    const res = await apiFetch('/v2/role/chat/roles');
-    return handleResponse(res, 'Failed to list supported roles');
+  async list(): Promise<
+    ApiResult<import("./api.types").RoleChatRolesResponse>
+  > {
+    const res = await apiFetch("/v2/role/chat/roles");
+    return handleResponse(res, "Failed to list supported roles");
   },
 };
 
 export const conversationV2Service = {
   /** GET /v2/conversations — List conversations */
-  async list(params?: { role?: string; workspace?: string; limit?: number; offset?: number }): Promise<ApiResult<import('./api.types').ConversationListResponseV2>> {
+  async list(params?: {
+    role?: string;
+    workspace?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<ApiResult<import("./api.types").ConversationListResponseV2>> {
     const searchParams = new URLSearchParams();
-    if (params?.role) searchParams.set('role', params.role);
-    if (params?.workspace) searchParams.set('workspace', params.workspace);
-    if (params?.limit) searchParams.set('limit', String(params.limit));
-    if (params?.offset) searchParams.set('offset', String(params.offset));
+    if (params?.role) searchParams.set("role", params.role);
+    if (params?.workspace) searchParams.set("workspace", params.workspace);
+    if (params?.limit) searchParams.set("limit", String(params.limit));
+    if (params?.offset) searchParams.set("offset", String(params.offset));
     const query = searchParams.toString();
-    const res = await apiFetch(`/v2/conversations${query ? `?${query}` : ''}`);
-    return handleResponse(res, 'Failed to list conversations');
+    const res = await apiFetch(`/v2/conversations${query ? `?${query}` : ""}`);
+    return handleResponse(res, "Failed to list conversations");
   },
 
   /** POST /v2/conversations — Create conversation */
-  async create(request: import('./api.types').CreateConversationRequestV2): Promise<ApiResult<import('./api.types').ConversationV2>> {
-    const res = await apiFetch('/v2/conversations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async create(
+    request: import("./api.types").CreateConversationRequestV2,
+  ): Promise<ApiResult<import("./api.types").ConversationV2>> {
+    const res = await apiFetch("/v2/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Failed to create conversation');
+    return handleResponse(res, "Failed to create conversation");
   },
 
   /** GET /v2/conversations/{id}/messages — Get conversation messages */
-  async getMessages(conversationId: string, params?: { limit?: number; offset?: number }): Promise<ApiResult<import('./api.types').ConversationMessageV2[]>> {
+  async getMessages(
+    conversationId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<ApiResult<import("./api.types").ConversationMessageV2[]>> {
     const searchParams = new URLSearchParams();
-    if (params?.limit) searchParams.set('limit', String(params.limit));
-    if (params?.offset) searchParams.set('offset', String(params.offset));
+    if (params?.limit) searchParams.set("limit", String(params.limit));
+    if (params?.offset) searchParams.set("offset", String(params.offset));
     const query = searchParams.toString();
-    const res = await apiFetch(`/v2/conversations/${encodeURIComponent(conversationId)}/messages${query ? `?${query}` : ''}`);
-    return handleResponse(res, 'Failed to get conversation messages');
+    const res = await apiFetch(
+      `/v2/conversations/${encodeURIComponent(conversationId)}/messages${query ? `?${query}` : ""}`,
+    );
+    return handleResponse(res, "Failed to get conversation messages");
   },
 
   /** POST /v2/conversations/{id}/messages — Add message to conversation */
-  async addMessage(conversationId: string, request: import('./api.types').AddConversationMessageRequestV2): Promise<ApiResult<import('./api.types').ConversationMessageV2>> {
-    const res = await apiFetch(`/v2/conversations/${encodeURIComponent(conversationId)}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-    });
-    return handleResponse(res, 'Failed to add conversation message');
+  async addMessage(
+    conversationId: string,
+    request: import("./api.types").AddConversationMessageRequestV2,
+  ): Promise<ApiResult<import("./api.types").ConversationMessageV2>> {
+    const res = await apiFetch(
+      `/v2/conversations/${encodeURIComponent(conversationId)}/messages`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+    return handleResponse(res, "Failed to add conversation message");
   },
 };
 
@@ -1044,172 +1397,223 @@ export const conversationV2Service = {
 
 export const healthV2Service = {
   /** GET /v2/health — Health check */
-  async check(): Promise<ApiResult<import('./api.types').HealthV2Response>> {
-    const res = await apiFetch('/v2/health');
-    return handleResponse(res, 'Health check failed');
+  async check(): Promise<ApiResult<import("./api.types").HealthV2Response>> {
+    const res = await apiFetch("/v2/health");
+    return handleResponse(res, "Health check failed");
   },
 };
 
 export const readyV2Service = {
   /** GET /v2/ready — Readiness probe */
-  async check(): Promise<ApiResult<import('./api.types').ReadyV2Response>> {
-    const res = await apiFetch('/v2/ready');
-    return handleResponse(res, 'Readiness check failed');
+  async check(): Promise<ApiResult<import("./api.types").ReadyV2Response>> {
+    const res = await apiFetch("/v2/ready");
+    return handleResponse(res, "Readiness check failed");
   },
 };
 
 export const liveV2Service = {
   /** GET /v2/live — Liveness probe */
-  async check(): Promise<ApiResult<import('./api.types').LiveV2Response>> {
-    const res = await apiFetch('/v2/live');
-    return handleResponse(res, 'Liveness check failed');
+  async check(): Promise<ApiResult<import("./api.types").LiveV2Response>> {
+    const res = await apiFetch("/v2/live");
+    return handleResponse(res, "Liveness check failed");
   },
 };
 
 export const stateSnapshotV2Service = {
   /** GET /v2/state/snapshot — State snapshot */
-  async get(): Promise<ApiResult<import('./api.types').StateSnapshotV2Response>> {
-    const res = await apiFetch('/v2/state/snapshot');
-    return handleResponse(res, 'Failed to load state snapshot');
+  async get(): Promise<
+    ApiResult<import("./api.types").StateSnapshotV2Response>
+  > {
+    const res = await apiFetch("/v2/state/snapshot");
+    return handleResponse(res, "Failed to load state snapshot");
   },
 };
 
 export const shutdownV2Service = {
   /** POST /v2/app/shutdown — Shutdown */
-  async shutdown(): Promise<ApiResult<import('./api.types').ShutdownV2Response>> {
-    const res = await apiFetch('/v2/app/shutdown', { method: 'POST' });
-    return handleResponse(res, 'Shutdown failed');
+  async shutdown(): Promise<
+    ApiResult<import("./api.types").ShutdownV2Response>
+  > {
+    const res = await apiFetch("/v2/app/shutdown", { method: "POST" });
+    return handleResponse(res, "Shutdown failed");
   },
 };
 
 export const logsV2Service = {
   /** GET /v2/logs/query — Query logs */
-  async query(params?: { level?: string; channel?: string; limit?: number; offset?: number; start?: string; end?: string }): Promise<ApiResult<import('./api.types').LogsQueryV2Response>> {
+  async query(params?: {
+    level?: string;
+    channel?: string;
+    limit?: number;
+    offset?: number;
+    start?: string;
+    end?: string;
+  }): Promise<ApiResult<import("./api.types").LogsQueryV2Response>> {
     const searchParams = new URLSearchParams();
-    if (params?.level) searchParams.set('level', params.level);
-    if (params?.channel) searchParams.set('channel', params.channel);
-    if (params?.limit) searchParams.set('limit', String(params.limit));
-    if (params?.offset) searchParams.set('offset', String(params.offset));
-    if (params?.start) searchParams.set('start', params.start);
-    if (params?.end) searchParams.set('end', params.end);
+    if (params?.level) searchParams.set("level", params.level);
+    if (params?.channel) searchParams.set("channel", params.channel);
+    if (params?.limit) searchParams.set("limit", String(params.limit));
+    if (params?.offset) searchParams.set("offset", String(params.offset));
+    if (params?.start) searchParams.set("start", params.start);
+    if (params?.end) searchParams.set("end", params.end);
     const query = searchParams.toString();
-    const res = await apiFetch(`/v2/logs/query${query ? `?${query}` : ''}`);
-    return handleResponse(res, 'Failed to query logs');
+    const res = await apiFetch(`/v2/logs/query${query ? `?${query}` : ""}`);
+    return handleResponse(res, "Failed to query logs");
   },
 
   /** POST /v2/logs/user-action — Log user action */
-  async logUserAction(request: import('./api.types').LogUserActionV2Request): Promise<ApiResult<import('./api.types').LogUserActionV2Response>> {
-    const res = await apiFetch('/v2/logs/user-action', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async logUserAction(
+    request: import("./api.types").LogUserActionV2Request,
+  ): Promise<ApiResult<import("./api.types").LogUserActionV2Response>> {
+    const res = await apiFetch("/v2/logs/user-action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Failed to log user action');
+    return handleResponse(res, "Failed to log user action");
   },
 
   /** GET /v2/logs/channels — Log channels */
-  async channels(): Promise<ApiResult<import('./api.types').LogChannelsV2Response>> {
-    const res = await apiFetch('/v2/logs/channels');
-    return handleResponse(res, 'Failed to load log channels');
+  async channels(): Promise<
+    ApiResult<import("./api.types").LogChannelsV2Response>
+  > {
+    const res = await apiFetch("/v2/logs/channels");
+    return handleResponse(res, "Failed to load log channels");
   },
 };
 
 export const lancedbV2Service = {
   /** GET /v2/lancedb/status — LanceDB status */
-  async getStatus(): Promise<ApiResult<import('./api.types').LanceDbStatusV2Response>> {
-    const res = await apiFetch('/v2/lancedb/status');
-    return handleResponse(res, 'Failed to load LanceDB status');
+  async getStatus(): Promise<
+    ApiResult<import("./api.types").LanceDbStatusV2Response>
+  > {
+    const res = await apiFetch("/v2/lancedb/status");
+    return handleResponse(res, "Failed to load LanceDB status");
   },
 };
 
 export const memosV2Service = {
   /** GET /v2/memos/list — List memos */
-  async list(limit = 200): Promise<ApiResult<import('./api.types').MemoListV2Response>> {
+  async list(
+    limit = 200,
+  ): Promise<ApiResult<import("./api.types").MemoListV2Response>> {
     const res = await apiFetch(`/v2/memos/list?limit=${limit}`);
-    return handleResponse(res, 'Failed to list memos');
+    return handleResponse(res, "Failed to list memos");
   },
 };
 
 export const ollamaV2Service = {
   /** POST /v2/ollama/models — List Ollama models */
-  async listModels(request?: import('./api.types').OllamaModelsV2Request): Promise<ApiResult<import('./api.types').OllamaModelsV2Response>> {
-    const res = await apiFetch('/v2/ollama/models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async listModels(
+    request?: import("./api.types").OllamaModelsV2Request,
+  ): Promise<ApiResult<import("./api.types").OllamaModelsV2Response>> {
+    const res = await apiFetch("/v2/ollama/models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request ?? {}),
     });
-    return handleResponse(res, 'Failed to list Ollama models');
+    return handleResponse(res, "Failed to list Ollama models");
   },
 
   /** POST /v2/ollama/stop — Stop Ollama */
-  async stop(): Promise<ApiResult<import('./api.types').OllamaStopV2Response>> {
-    const res = await apiFetch('/v2/ollama/stop', { method: 'POST' });
-    return handleResponse(res, 'Failed to stop Ollama');
+  async stop(): Promise<ApiResult<import("./api.types").OllamaStopV2Response>> {
+    const res = await apiFetch("/v2/ollama/stop", { method: "POST" });
+    return handleResponse(res, "Failed to stop Ollama");
   },
 };
 
 export const memoryV2Service = {
   /** GET /v2/memory/state — Memory state */
-  async getState(): Promise<ApiResult<import('./api.types').MemoryStateV2Response>> {
-    const res = await apiFetch('/v2/memory/state');
-    return handleResponse(res, 'Failed to load memory state');
+  async getState(): Promise<
+    ApiResult<import("./api.types").MemoryStateV2Response>
+  > {
+    const res = await apiFetch("/v2/memory/state");
+    return handleResponse(res, "Failed to load memory state");
   },
 
   /** DELETE /v2/memory/memories/{memory_id} — Delete memory */
-  async deleteMemory(memoryId: string): Promise<ApiResult<import('./api.types').DeleteMemoryV2Response>> {
-    const res = await apiFetch(`/v2/memory/memories/${encodeURIComponent(memoryId)}`, { method: 'DELETE' });
-    return handleResponse(res, 'Failed to delete memory');
+  async deleteMemory(
+    memoryId: string,
+  ): Promise<ApiResult<import("./api.types").DeleteMemoryV2Response>> {
+    const res = await apiFetch(
+      `/v2/memory/memories/${encodeURIComponent(memoryId)}`,
+      { method: "DELETE" },
+    );
+    return handleResponse(res, "Failed to delete memory");
   },
 };
 
 export const roleLlmEventsV2Service = {
   /** GET /v2/role/{role}/llm-events — Role LLM events */
-  async getByRole(role: string, params?: { limit?: number; offset?: number; workspace?: string }): Promise<ApiResult<import('./api.types').RoleLlmEventsV2Response>> {
+  async getByRole(
+    role: string,
+    params?: { limit?: number; offset?: number; workspace?: string },
+  ): Promise<ApiResult<import("./api.types").RoleLlmEventsV2Response>> {
     const searchParams = new URLSearchParams();
-    if (params?.limit) searchParams.set('limit', String(params.limit));
-    if (params?.offset) searchParams.set('offset', String(params.offset));
-    if (params?.workspace) searchParams.set('workspace', params.workspace);
+    if (params?.limit) searchParams.set("limit", String(params.limit));
+    if (params?.offset) searchParams.set("offset", String(params.offset));
+    if (params?.workspace) searchParams.set("workspace", params.workspace);
     const query = searchParams.toString();
-    const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/llm-events${query ? `?${query}` : ''}`);
-    return handleResponse(res, 'Failed to load role LLM events');
+    const res = await apiFetch(
+      `/v2/role/${encodeURIComponent(role)}/llm-events${query ? `?${query}` : ""}`,
+    );
+    return handleResponse(res, "Failed to load role LLM events");
   },
 
   /** GET /v2/role/llm-events — All LLM events */
-  async getAll(params?: { limit?: number; offset?: number; role?: string; workspace?: string }): Promise<ApiResult<import('./api.types').AllLlmEventsV2Response>> {
+  async getAll(params?: {
+    limit?: number;
+    offset?: number;
+    role?: string;
+    workspace?: string;
+  }): Promise<ApiResult<import("./api.types").AllLlmEventsV2Response>> {
     const searchParams = new URLSearchParams();
-    if (params?.limit) searchParams.set('limit', String(params.limit));
-    if (params?.offset) searchParams.set('offset', String(params.offset));
-    if (params?.role) searchParams.set('role', params.role);
-    if (params?.workspace) searchParams.set('workspace', params.workspace);
+    if (params?.limit) searchParams.set("limit", String(params.limit));
+    if (params?.offset) searchParams.set("offset", String(params.offset));
+    if (params?.role) searchParams.set("role", params.role);
+    if (params?.workspace) searchParams.set("workspace", params.workspace);
     const query = searchParams.toString();
-    const res = await apiFetch(`/v2/role/llm-events${query ? `?${query}` : ''}`);
-    return handleResponse(res, 'Failed to load LLM events');
+    const res = await apiFetch(
+      `/v2/role/llm-events${query ? `?${query}` : ""}`,
+    );
+    return handleResponse(res, "Failed to load LLM events");
   },
 };
 
 export const factoryRunV2Service = {
   /** GET /v2/factory/runs/{id}/events — Factory run events */
-  async getEvents(runId: string, params?: { limit?: number; offset?: number }): Promise<ApiResult<import('./api.types').FactoryRunEventsV2Response>> {
+  async getEvents(
+    runId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<ApiResult<import("./api.types").FactoryRunEventsV2Response>> {
     const searchParams = new URLSearchParams();
-    if (params?.limit) searchParams.set('limit', String(params.limit));
-    if (params?.offset) searchParams.set('offset', String(params.offset));
+    if (params?.limit) searchParams.set("limit", String(params.limit));
+    if (params?.offset) searchParams.set("offset", String(params.offset));
     const query = searchParams.toString();
-    const res = await apiFetch(`/v2/factory/runs/${encodeURIComponent(runId)}/events${query ? `?${query}` : ''}`);
-    return handleResponse(res, 'Failed to load factory run events');
+    const res = await apiFetch(
+      `/v2/factory/runs/${encodeURIComponent(runId)}/events${query ? `?${query}` : ""}`,
+    );
+    return handleResponse(res, "Failed to load factory run events");
   },
 
   /** GET /v2/factory/runs/{id}/audit-bundle — Audit bundle */
-  async getAuditBundle(runId: string): Promise<ApiResult<import('./api.types').FactoryRunAuditBundleV2Response>> {
-    const res = await apiFetch(`/v2/factory/runs/${encodeURIComponent(runId)}/audit-bundle`);
-    return handleResponse(res, 'Failed to load factory run audit bundle');
+  async getAuditBundle(
+    runId: string,
+  ): Promise<ApiResult<import("./api.types").FactoryRunAuditBundleV2Response>> {
+    const res = await apiFetch(
+      `/v2/factory/runs/${encodeURIComponent(runId)}/audit-bundle`,
+    );
+    return handleResponse(res, "Failed to load factory run audit bundle");
   },
 };
 
 export const runtimeMigrationV2Service = {
   /** GET /v2/runtime/migration/status — Migration status */
-  async getStatus(): Promise<ApiResult<import('./api.types').RuntimeMigrationStatusV2Response>> {
-    const res = await apiFetch('/v2/runtime/migration/status');
-    return handleResponse(res, 'Failed to load runtime migration status');
+  async getStatus(): Promise<
+    ApiResult<import("./api.types").RuntimeMigrationStatusV2Response>
+  > {
+    const res = await apiFetch("/v2/runtime/migration/status");
+    return handleResponse(res, "Failed to load runtime migration status");
   },
 };
 
@@ -1219,33 +1623,47 @@ export const runtimeMigrationV2Service = {
 
 export const courtService = {
   /** GET /v2/court/topology — Court topology */
-  async getTopology(): Promise<ApiResult<import('./api.types').CourtTopologyResponse>> {
-    const res = await apiFetch('/v2/court/topology');
-    return handleResponse(res, 'Failed to load court topology');
+  async getTopology(): Promise<
+    ApiResult<import("./api.types").CourtTopologyResponse>
+  > {
+    const res = await apiFetch("/v2/court/topology");
+    return handleResponse(res, "Failed to load court topology");
   },
 
   /** GET /v2/court/state — Court state */
-  async getState(): Promise<ApiResult<import('./api.types').CourtStateResponse>> {
-    const res = await apiFetch('/v2/court/state');
-    return handleResponse(res, 'Failed to load court state');
+  async getState(): Promise<
+    ApiResult<import("./api.types").CourtStateResponse>
+  > {
+    const res = await apiFetch("/v2/court/state");
+    return handleResponse(res, "Failed to load court state");
   },
 
   /** GET /v2/court/actors/{role_id} — Court actor */
-  async getActor(roleId: string): Promise<ApiResult<import('./api.types').CourtActorResponse>> {
-    const res = await apiFetch(`/v2/court/actors/${encodeURIComponent(roleId)}`);
-    return handleResponse(res, 'Failed to load court actor');
+  async getActor(
+    roleId: string,
+  ): Promise<ApiResult<import("./api.types").CourtActorResponse>> {
+    const res = await apiFetch(
+      `/v2/court/actors/${encodeURIComponent(roleId)}`,
+    );
+    return handleResponse(res, "Failed to load court actor");
   },
 
   /** GET /v2/court/scenes/{scene_id} — Court scene */
-  async getScene(sceneId: string): Promise<ApiResult<import('./api.types').CourtSceneResponse>> {
-    const res = await apiFetch(`/v2/court/scenes/${encodeURIComponent(sceneId)}`);
-    return handleResponse(res, 'Failed to load court scene');
+  async getScene(
+    sceneId: string,
+  ): Promise<ApiResult<import("./api.types").CourtSceneResponse>> {
+    const res = await apiFetch(
+      `/v2/court/scenes/${encodeURIComponent(sceneId)}`,
+    );
+    return handleResponse(res, "Failed to load court scene");
   },
 
   /** GET /v2/court/mapping — Court mapping */
-  async getMapping(): Promise<ApiResult<import('./api.types').CourtMappingResponse>> {
-    const res = await apiFetch('/v2/court/mapping');
-    return handleResponse(res, 'Failed to load court mapping');
+  async getMapping(): Promise<
+    ApiResult<import("./api.types").CourtMappingResponse>
+  > {
+    const res = await apiFetch("/v2/court/mapping");
+    return handleResponse(res, "Failed to load court mapping");
   },
 };
 
@@ -1255,19 +1673,23 @@ export const courtService = {
 
 export const visionService = {
   /** GET /v2/vision/status — Vision status */
-  async getStatus(): Promise<ApiResult<import('./api.types').VisionStatusResponse>> {
-    const res = await apiFetch('/v2/vision/status');
-    return handleResponse(res, 'Failed to load vision status');
+  async getStatus(): Promise<
+    ApiResult<import("./api.types").VisionStatusResponse>
+  > {
+    const res = await apiFetch("/v2/vision/status");
+    return handleResponse(res, "Failed to load vision status");
   },
 
   /** POST /v2/vision/analyze — Vision analyze */
-  async analyze(request: import('./api.types').VisionAnalyzeRequest): Promise<ApiResult<import('./api.types').VisionAnalyzeResponse>> {
-    const res = await apiFetch('/v2/vision/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async analyze(
+    request: import("./api.types").VisionAnalyzeRequest,
+  ): Promise<ApiResult<import("./api.types").VisionAnalyzeResponse>> {
+    const res = await apiFetch("/v2/vision/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Vision analyze failed');
+    return handleResponse(res, "Vision analyze failed");
   },
 };
 
@@ -1277,25 +1699,31 @@ export const visionService = {
 
 export const schedulerService = {
   /** GET /v2/scheduler/status — Scheduler status */
-  async getStatus(): Promise<ApiResult<import('./api.types').SchedulerStatusResponse>> {
-    const res = await apiFetch('/v2/scheduler/status');
-    return handleResponse(res, 'Failed to load scheduler status');
+  async getStatus(): Promise<
+    ApiResult<import("./api.types").SchedulerStatusResponse>
+  > {
+    const res = await apiFetch("/v2/scheduler/status");
+    return handleResponse(res, "Failed to load scheduler status");
   },
 
   /** POST /v2/scheduler/start — Scheduler start */
-  async start(request?: import('./api.types').SchedulerStartRequest): Promise<ApiResult<import('./api.types').SchedulerStartResponse>> {
-    const res = await apiFetch('/v2/scheduler/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async start(
+    request?: import("./api.types").SchedulerStartRequest,
+  ): Promise<ApiResult<import("./api.types").SchedulerStartResponse>> {
+    const res = await apiFetch("/v2/scheduler/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request ?? {}),
     });
-    return handleResponse(res, 'Failed to start scheduler');
+    return handleResponse(res, "Failed to start scheduler");
   },
 
   /** POST /v2/scheduler/stop — Scheduler stop */
-  async stop(): Promise<ApiResult<import('./api.types').SchedulerStopResponse>> {
-    const res = await apiFetch('/v2/scheduler/stop', { method: 'POST' });
-    return handleResponse(res, 'Failed to stop scheduler');
+  async stop(): Promise<
+    ApiResult<import("./api.types").SchedulerStopResponse>
+  > {
+    const res = await apiFetch("/v2/scheduler/stop", { method: "POST" });
+    return handleResponse(res, "Failed to stop scheduler");
   },
 };
 
@@ -1305,29 +1733,33 @@ export const schedulerService = {
 
 export const codeMapService = {
   /** GET /v2/code_map — Code map */
-  async getMap(): Promise<ApiResult<import('./api.types').CodeMapResponse>> {
-    const res = await apiFetch('/v2/code_map');
-    return handleResponse(res, 'Failed to load code map');
+  async getMap(): Promise<ApiResult<import("./api.types").CodeMapResponse>> {
+    const res = await apiFetch("/v2/code_map");
+    return handleResponse(res, "Failed to load code map");
   },
 
   /** POST /v2/code/index — Code index */
-  async index(request?: import('./api.types').CodeIndexRequest): Promise<ApiResult<import('./api.types').CodeIndexResponse>> {
-    const res = await apiFetch('/v2/code/index', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async index(
+    request?: import("./api.types").CodeIndexRequest,
+  ): Promise<ApiResult<import("./api.types").CodeIndexResponse>> {
+    const res = await apiFetch("/v2/code/index", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request ?? {}),
     });
-    return handleResponse(res, 'Failed to index code');
+    return handleResponse(res, "Failed to index code");
   },
 
   /** POST /v2/code/search — Code search */
-  async search(request: import('./api.types').CodeSearchRequest): Promise<ApiResult<import('./api.types').CodeSearchResponse>> {
-    const res = await apiFetch('/v2/code/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async search(
+    request: import("./api.types").CodeSearchRequest,
+  ): Promise<ApiResult<import("./api.types").CodeSearchResponse>> {
+    const res = await apiFetch("/v2/code/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Code search failed');
+    return handleResponse(res, "Code search failed");
   },
 };
 
@@ -1337,9 +1769,11 @@ export const codeMapService = {
 
 export const mcpService = {
   /** GET /v2/mcp/status — MCP status */
-  async getStatus(): Promise<ApiResult<import('./api.types').McpStatusResponse>> {
-    const res = await apiFetch('/v2/mcp/status');
-    return handleResponse(res, 'Failed to load MCP status');
+  async getStatus(): Promise<
+    ApiResult<import("./api.types").McpStatusResponse>
+  > {
+    const res = await apiFetch("/v2/mcp/status");
+    return handleResponse(res, "Failed to load MCP status");
   },
 };
 
@@ -1349,9 +1783,11 @@ export const mcpService = {
 
 export const directorCapabilitiesService = {
   /** GET /v2/director/capabilities — Director capabilities */
-  async getCapabilities(): Promise<ApiResult<import('./api.types').DirectorCapabilitiesResponse>> {
-    const res = await apiFetch('/v2/director/capabilities');
-    return handleResponse(res, 'Failed to load director capabilities');
+  async getCapabilities(): Promise<
+    ApiResult<import("./api.types").DirectorCapabilitiesResponse>
+  > {
+    const res = await apiFetch("/v2/director/capabilities");
+    return handleResponse(res, "Failed to load director capabilities");
   },
 };
 
@@ -1361,35 +1797,40 @@ export const directorCapabilitiesService = {
 
 export const interviewService = {
   /** POST /v2/llm/interview/ask — Interview ask */
-  async ask(request: import('./api.types').InterviewAskRequest): Promise<ApiResult<import('./api.types').InterviewAskResponse>> {
-    const res = await apiFetch('/v2/llm/interview/ask', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async ask(
+    request: import("./api.types").InterviewAskRequest,
+  ): Promise<ApiResult<import("./api.types").InterviewAskResponse>> {
+    const res = await apiFetch("/v2/llm/interview/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Interview ask failed');
+    return handleResponse(res, "Interview ask failed");
   },
 
   /** POST /v2/llm/interview/save — Interview save */
-  async save(request: import('./api.types').InterviewSaveRequest): Promise<ApiResult<import('./api.types').InterviewSaveResponse>> {
-    const res = await apiFetch('/v2/llm/interview/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async save(
+    request: import("./api.types").InterviewSaveRequest,
+  ): Promise<ApiResult<import("./api.types").InterviewSaveResponse>> {
+    const res = await apiFetch("/v2/llm/interview/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Interview save failed');
+    return handleResponse(res, "Interview save failed");
   },
 
   /** POST /v2/llm/interview/cancel — Interview cancel */
-  async cancel(request?: import('./api.types').InterviewCancelRequest): Promise<ApiResult<import('./api.types').InterviewCancelResponse>> {
-    const res = await apiFetch('/v2/llm/interview/cancel', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async cancel(
+    request?: import("./api.types").InterviewCancelRequest,
+  ): Promise<ApiResult<import("./api.types").InterviewCancelResponse>> {
+    const res = await apiFetch("/v2/llm/interview/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request ?? {}),
     });
-    return handleResponse(res, 'Interview cancel failed');
+    return handleResponse(res, "Interview cancel failed");
   },
-
 };
 
 // ============================================================================
@@ -1398,31 +1839,41 @@ export const interviewService = {
 
 export const llmTestService = {
   /** GET /v2/llm/test — LLM test report */
-  async getReport(): Promise<ApiResult<import('./api.types').LLMTestReportResponse>> {
-    const res = await apiFetch('/v2/llm/test');
-    return handleResponse(res, 'Failed to load LLM test report');
+  async getReport(): Promise<
+    ApiResult<import("./api.types").LLMTestReportResponse>
+  > {
+    const res = await apiFetch("/v2/llm/test");
+    return handleResponse(res, "Failed to load LLM test report");
   },
 
   /** POST /v2/llm/test — Start LLM test */
-  async start(request?: import('./api.types').LLMTestStartRequest): Promise<ApiResult<import('./api.types').LLMTestStartResponse>> {
-    const res = await apiFetch('/v2/llm/test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async start(
+    request?: import("./api.types").LLMTestStartRequest,
+  ): Promise<ApiResult<import("./api.types").LLMTestStartResponse>> {
+    const res = await apiFetch("/v2/llm/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request ?? {}),
     });
-    return handleResponse(res, 'Failed to start LLM test');
+    return handleResponse(res, "Failed to start LLM test");
   },
 
   /** GET /v2/llm/test/{test_run_id} — Test run status */
-  async getRunStatus(testRunId: string): Promise<ApiResult<import('./api.types').LLMTestRunStatusResponse>> {
+  async getRunStatus(
+    testRunId: string,
+  ): Promise<ApiResult<import("./api.types").LLMTestRunStatusResponse>> {
     const res = await apiFetch(`/v2/llm/test/${encodeURIComponent(testRunId)}`);
-    return handleResponse(res, 'Failed to load test run status');
+    return handleResponse(res, "Failed to load test run status");
   },
 
   /** GET /v2/llm/test/{test_run_id}/transcript — Test transcript */
-  async getTranscript(testRunId: string): Promise<ApiResult<import('./api.types').LLMTestTranscriptResponse>> {
-    const res = await apiFetch(`/v2/llm/test/${encodeURIComponent(testRunId)}/transcript`);
-    return handleResponse(res, 'Failed to load test transcript');
+  async getTranscript(
+    testRunId: string,
+  ): Promise<ApiResult<import("./api.types").LLMTestTranscriptResponse>> {
+    const res = await apiFetch(
+      `/v2/llm/test/${encodeURIComponent(testRunId)}/transcript`,
+    );
+    return handleResponse(res, "Failed to load test transcript");
   },
 };
 
@@ -1432,41 +1883,51 @@ export const llmTestService = {
 
 export const permissionsV2Service = {
   /** POST /v2/permissions/v2/check — Check permission */
-  async check(request: import('./api.types').PermissionCheckRequest): Promise<ApiResult<import('./api.types').PermissionCheckResponse>> {
-    const res = await apiFetch('/v2/permissions/v2/check', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async check(
+    request: import("./api.types").PermissionCheckRequest,
+  ): Promise<ApiResult<import("./api.types").PermissionCheckResponse>> {
+    const res = await apiFetch("/v2/permissions/v2/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Permission check failed');
+    return handleResponse(res, "Permission check failed");
   },
 
   /** GET /v2/permissions/v2/effective — Effective permissions */
-  async getEffective(): Promise<ApiResult<import('./api.types').EffectivePermissionsResponse>> {
-    const res = await apiFetch('/v2/permissions/v2/effective');
-    return handleResponse(res, 'Failed to load effective permissions');
+  async getEffective(): Promise<
+    ApiResult<import("./api.types").EffectivePermissionsResponse>
+  > {
+    const res = await apiFetch("/v2/permissions/v2/effective");
+    return handleResponse(res, "Failed to load effective permissions");
   },
 
   /** GET /v2/permissions/v2/roles — Permission roles */
-  async listRoles(): Promise<ApiResult<import('./api.types').PermissionRolesResponse>> {
-    const res = await apiFetch('/v2/permissions/v2/roles');
-    return handleResponse(res, 'Failed to list permission roles');
+  async listRoles(): Promise<
+    ApiResult<import("./api.types").PermissionRolesResponse>
+  > {
+    const res = await apiFetch("/v2/permissions/v2/roles");
+    return handleResponse(res, "Failed to list permission roles");
   },
 
   /** POST /v2/permissions/v2/assign — Assign permission */
-  async assign(request: import('./api.types').PermissionAssignRequest): Promise<ApiResult<import('./api.types').PermissionAssignResponse>> {
-    const res = await apiFetch('/v2/permissions/v2/assign', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  async assign(
+    request: import("./api.types").PermissionAssignRequest,
+  ): Promise<ApiResult<import("./api.types").PermissionAssignResponse>> {
+    const res = await apiFetch("/v2/permissions/v2/assign", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
     });
-    return handleResponse(res, 'Permission assign failed');
+    return handleResponse(res, "Permission assign failed");
   },
 
   /** GET /v2/permissions/v2/policies — Permission policies */
-  async listPolicies(): Promise<ApiResult<import('./api.types').PermissionPoliciesResponse>> {
-    const res = await apiFetch('/v2/permissions/v2/policies');
-    return handleResponse(res, 'Failed to list permission policies');
+  async listPolicies(): Promise<
+    ApiResult<import("./api.types").PermissionPoliciesResponse>
+  > {
+    const res = await apiFetch("/v2/permissions/v2/policies");
+    return handleResponse(res, "Failed to list permission policies");
   },
 };
 
@@ -1476,9 +1937,13 @@ export const permissionsV2Service = {
 
 export const fileV2Service = {
   /** GET /v2/files/read — Read file */
-  async read(path: string): Promise<ApiResult<import('./api.types').FileReadV2Response>> {
-    const res = await apiFetch(`/v2/files/read?path=${encodeURIComponent(path)}`);
-    return handleResponse(res, 'Failed to read file');
+  async read(
+    path: string,
+  ): Promise<ApiResult<import("./api.types").FileReadV2Response>> {
+    const res = await apiFetch(
+      `/v2/files/read?path=${encodeURIComponent(path)}`,
+    );
+    return handleResponse(res, "Failed to read file");
   },
 };
 
@@ -1488,15 +1953,19 @@ export const fileV2Service = {
 
 export const runtimeV2Service = {
   /** POST /v2/runtime/clear — Clear runtime */
-  async clear(): Promise<ApiResult<import('./api.types').RuntimeClearResponse>> {
-    const res = await apiFetch('/v2/runtime/clear', { method: 'POST' });
-    return handleResponse(res, 'Failed to clear runtime');
+  async clear(): Promise<
+    ApiResult<import("./api.types").RuntimeClearResponse>
+  > {
+    const res = await apiFetch("/v2/runtime/clear", { method: "POST" });
+    return handleResponse(res, "Failed to clear runtime");
   },
 
   /** POST /v2/runtime/reset/tasks — Reset tasks */
-  async resetTasks(): Promise<ApiResult<import('./api.types').RuntimeResetTasksResponse>> {
-    const res = await apiFetch('/v2/runtime/reset/tasks', { method: 'POST' });
-    return handleResponse(res, 'Failed to reset tasks');
+  async resetTasks(): Promise<
+    ApiResult<import("./api.types").RuntimeResetTasksResponse>
+  > {
+    const res = await apiFetch("/v2/runtime/reset/tasks", { method: "POST" });
+    return handleResponse(res, "Failed to reset tasks");
   },
 };
 
@@ -1506,14 +1975,20 @@ export const runtimeV2Service = {
 
 export const llmRuntimeStatusService = {
   /** GET /v2/llm/runtime-status — LLM runtime status */
-  async getStatus(): Promise<ApiResult<import('./api.types').LLMRuntimeStatusResponse>> {
-    const res = await apiFetch('/v2/llm/runtime-status');
-    return handleResponse(res, 'Failed to load LLM runtime status');
+  async getStatus(): Promise<
+    ApiResult<import("./api.types").LLMRuntimeStatusResponse>
+  > {
+    const res = await apiFetch("/v2/llm/runtime-status");
+    return handleResponse(res, "Failed to load LLM runtime status");
   },
 
   /** GET /v2/llm/runtime-status/{role_id} — Role runtime status */
-  async getRoleStatus(roleId: string): Promise<ApiResult<import('./api.types').RoleRuntimeStatusResponse>> {
-    const res = await apiFetch(`/v2/llm/runtime-status/${encodeURIComponent(roleId)}`);
-    return handleResponse(res, 'Failed to load role runtime status');
+  async getRoleStatus(
+    roleId: string,
+  ): Promise<ApiResult<import("./api.types").RoleRuntimeStatusResponse>> {
+    const res = await apiFetch(
+      `/v2/llm/runtime-status/${encodeURIComponent(roleId)}`,
+    );
+    return handleResponse(res, "Failed to load role runtime status");
   },
 };

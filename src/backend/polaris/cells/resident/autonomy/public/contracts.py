@@ -244,6 +244,20 @@ class QueryResidentAgiEvidenceInterfacesV1:
 
 
 @dataclass(frozen=True)
+class QueryResidentAgiHandoffsV1:
+    workspace: str
+    target_role: str = ""
+    handoff_status: str = ""
+    limit: int = 50
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "target_role", str(self.target_role or "").strip())
+        object.__setattr__(self, "handoff_status", str(self.handoff_status or "").strip().lower())
+        object.__setattr__(self, "limit", max(1, min(int(self.limit), 200)))
+
+
+@dataclass(frozen=True)
 class RunResidentAgiDecisionTurnCommandV1:
     workspace: str
     objective: str
@@ -691,6 +705,7 @@ __all__ = [
     "MaterializeResidentGoalCommandV1",
     "QueryResidentAgiAuditPackV1",
     "QueryResidentAgiEvidenceInterfacesV1",
+    "QueryResidentAgiHandoffsV1",
     "QueryResidentCapabilitiesV1",
     "QueryResidentStatusV1",
     "RecordResidentDecisionCommandV1",

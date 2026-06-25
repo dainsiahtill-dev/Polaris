@@ -21,6 +21,13 @@ advisory overlay model. Cross-cell callers must use `director.runtime.public`
 or `director.runtime.public.service`; they must not import
 `director.runtime.internal.repair_kernel`.
 
+The first rule-discovery layer is also owned here. `repair_kernel/registry.py`
+defines typed rule metadata and read-only coverage reports so diagnostics can
+surface `known_rule_matched=false` as an auditable platform gap before QA timeout
+or manual log inspection. Cross-cell callers must use
+`query_director_repair_coverage`; coverage reporting is read-only and must not
+write files or register new rules implicitly.
+
 The production deterministic repair strategies are still migrated through
 `roles.adapters/internal/director/deterministic_repairs/` during cutover. That
 directory is a legacy strategy host only: it must not own a repair kernel,

@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy import (
     copy_valid_repair_advisory_metadata,
+    copy_valid_repair_advisory_suggested_rules,
 )
 
 
@@ -54,11 +55,17 @@ class RepairAdvisoryV1:
     advisor_source: str
     message: str
     confidence: float = 0.0
+    suggested_rules: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "advisor_source", _require_non_empty("advisor_source", self.advisor_source))
         object.__setattr__(self, "message", str(self.message or "").strip())
+        object.__setattr__(
+            self,
+            "suggested_rules",
+            tuple(copy_valid_repair_advisory_suggested_rules(self.suggested_rules)),
+        )
         object.__setattr__(self, "metadata", copy_valid_repair_advisory_metadata(self.metadata))
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +76,7 @@ class RepairAdvisoryV1:
             "message": self.message,
             "confidence": float(self.confidence),
             "authoritative": False,
+            "suggested_rules": [dict(item) for item in self.suggested_rules],
             "metadata": dict(self.metadata),
         }
 
@@ -182,6 +190,111 @@ class DirectorRepairStrategyCatalogResultV1:
             "unknown_source_tool_policy": self.unknown_source_tool_policy,
             "items": [dict(item) for item in self.items],
             "summary": dict(self.summary),
+        }
+
+
+@dataclass(frozen=True)
+class QueryDirectorRepairCoverageV1:
+    """Query shape for read-only deterministic repair diagnostic coverage."""
+
+    artifact_quality_errors: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "artifact_quality_errors", _to_tuple_str(list(self.artifact_quality_errors)))
+
+
+@dataclass(frozen=True)
+class DirectorRepairDiagnosticCoverageV1:
+    """Public coverage projection for one repair diagnostic."""
+
+    diagnostic: Mapping[str, Any]
+    known_rule_matched: bool
+    matched_rule_ids: tuple[str, ...] = ()
+    matched_source_tools: tuple[str, ...] = ()
+    archetypes: tuple[str, ...] = ()
+    phases: tuple[str, ...] = ()
+    languages: tuple[str, ...] = ()
+    diagnostic_archetype: str = "unknown"
+    diagnostic_phase: str = "unknown"
+    diagnostic_language: str = "unknown"
+    suggested_rule_family: str = "unknown"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "diagnostic", _to_dict_copy(self.diagnostic))
+        object.__setattr__(self, "known_rule_matched", bool(self.known_rule_matched))
+        object.__setattr__(self, "matched_rule_ids", _to_tuple_str(list(self.matched_rule_ids)))
+        object.__setattr__(self, "matched_source_tools", _to_tuple_str(list(self.matched_source_tools)))
+        object.__setattr__(self, "archetypes", _to_tuple_str(list(self.archetypes)))
+        object.__setattr__(self, "phases", _to_tuple_str(list(self.phases)))
+        object.__setattr__(self, "languages", _to_tuple_str(list(self.languages)))
+        object.__setattr__(self, "diagnostic_archetype", str(self.diagnostic_archetype or "unknown").strip())
+        object.__setattr__(self, "diagnostic_phase", str(self.diagnostic_phase or "unknown").strip())
+        object.__setattr__(self, "diagnostic_language", str(self.diagnostic_language or "unknown").strip())
+        object.__setattr__(self, "suggested_rule_family", str(self.suggested_rule_family or "unknown").strip())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "diagnostic": dict(self.diagnostic),
+            "known_rule_matched": self.known_rule_matched,
+            "matched_rule_ids": list(self.matched_rule_ids),
+            "matched_source_tools": list(self.matched_source_tools),
+            "archetypes": list(self.archetypes),
+            "phases": list(self.phases),
+            "languages": list(self.languages),
+            "diagnostic_archetype": self.diagnostic_archetype,
+            "diagnostic_phase": self.diagnostic_phase,
+            "diagnostic_language": self.diagnostic_language,
+            "suggested_rule_family": self.suggested_rule_family,
+        }
+
+
+@dataclass(frozen=True)
+class DirectorRepairCoverageReportV1:
+    """Public read-only coverage report for repair diagnostics."""
+
+    schema_version: str
+    source: str
+    access: str
+    total_diagnostics: int
+    covered_diagnostic_count: int
+    uncovered_diagnostic_count: int
+    items: tuple[DirectorRepairDiagnosticCoverageV1, ...] = ()
+    owner_cell: str = "director.runtime"
+    execution_boundary: str = "read_only_coverage_no_writes"
+    agi_execution_authority: bool = False
+    director_tool_execution_required: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        object.__setattr__(self, "access", _require_non_empty("access", self.access))
+        object.__setattr__(self, "total_diagnostics", max(0, int(self.total_diagnostics)))
+        object.__setattr__(self, "covered_diagnostic_count", max(0, int(self.covered_diagnostic_count)))
+        object.__setattr__(self, "uncovered_diagnostic_count", max(0, int(self.uncovered_diagnostic_count)))
+        object.__setattr__(self, "items", tuple(self.items or ()))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+        object.__setattr__(self, "agi_execution_authority", False)
+        object.__setattr__(self, "director_tool_execution_required", False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "access": self.access,
+            "owner_cell": self.owner_cell,
+            "execution_boundary": self.execution_boundary,
+            "agi_execution_authority": False,
+            "director_tool_execution_required": False,
+            "total_diagnostics": self.total_diagnostics,
+            "covered_diagnostic_count": self.covered_diagnostic_count,
+            "uncovered_diagnostic_count": self.uncovered_diagnostic_count,
+            "items": [item.to_dict() for item in self.items],
+            "uncovered_diagnostics": [dict(item.diagnostic) for item in self.items if not item.known_rule_matched],
         }
 
 
@@ -409,12 +522,15 @@ class DirectorRuntimeError(RuntimeError):
 __all__ = [
     "DirectorRepairCompositionIssueV1",
     "DirectorRepairCompositionSummaryV1",
+    "DirectorRepairCoverageReportV1",
+    "DirectorRepairDiagnosticCoverageV1",
     "DirectorRepairPatchSummaryV1",
     "DirectorRepairPlanSummaryV1",
     "DirectorRepairPlanningResultV1",
     "DirectorRepairResultV1",
     "DirectorRepairStrategyCatalogResultV1",
     "DirectorRuntimeError",
+    "QueryDirectorRepairCoverageV1",
     "QueryDirectorRepairStrategyCatalogV1",
     "RepairAdvisoryV1",
     "RepairDiagnosticV1",

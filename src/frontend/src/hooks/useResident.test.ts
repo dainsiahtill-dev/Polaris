@@ -7,6 +7,7 @@ const residentServiceMock = vi.hoisted(() => ({
   decide: vi.fn(),
   getAgiAuditPack: vi.fn(),
   getAgiEvidenceInterfaces: vi.fn(),
+  getAgiHandoffs: vi.fn(),
   getStatus: vi.fn(),
 }));
 
@@ -206,6 +207,34 @@ const LIVE_EVIDENCE_INTERFACES = {
   },
 };
 
+const LIVE_HANDOFFS = {
+  schema_version: "resident.agi_handoff_inbox.v1",
+  workspace: "/tmp/polaris-demo",
+  role_id: "resident_agi",
+  items: [
+    {
+      decision_id: "decision-agi-1",
+      summary: "Quality gate handoff",
+      handoff: {
+        schema_version: "resident.agi_decision_handoff.v1",
+        handoff_status: "ready",
+        target_roles: ["chief_engineer", "director", "qa"],
+        downstream_allowed: true,
+        agi_execution_authority: false,
+      },
+    },
+  ],
+  count: 1,
+  summary: {
+    total: 1,
+    by_status: { ready: 1 },
+    by_target_role: { director: 1 },
+    advisory_only: true,
+    agi_execution_authority: false,
+    required_chain: "PM → Chief Engineer → Director",
+  },
+};
+
 describe("useResident", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -223,6 +252,10 @@ describe("useResident", () => {
     residentServiceMock.getAgiEvidenceInterfaces.mockResolvedValue({
       ok: true,
       data: LIVE_EVIDENCE_INTERFACES,
+    });
+    residentServiceMock.getAgiHandoffs.mockResolvedValue({
+      ok: true,
+      data: LIVE_HANDOFFS,
     });
 
     const { result } = renderHook(() =>
@@ -287,6 +320,7 @@ describe("useResident", () => {
     expect(result.current.goals[0]?.goal_id).toBe("goal-1");
     expect(residentServiceMock.getAgiAuditPack).not.toHaveBeenCalled();
     expect(residentServiceMock.getAgiEvidenceInterfaces).not.toHaveBeenCalled();
+    expect(residentServiceMock.getAgiHandoffs).not.toHaveBeenCalled();
   });
 
   it("runs a Resident AGI decision turn through the service and refreshes", async () => {
@@ -344,6 +378,12 @@ describe("useResident", () => {
     expect(
       result.current.residentAgiEvidenceInterfaces?.interfaces?.[1]?.status,
     ).toBe("available");
+    expect(result.current.residentAgiHandoffs?.schema_version).toBe(
+      "resident.agi_handoff_inbox.v1",
+    );
+    expect(
+      result.current.residentAgiHandoffs?.items?.[0]?.handoff?.target_roles,
+    ).toContain("director");
     expect(result.current.residentRuntimeEvidence.realtime_channel).toBe(
       "runtime.v2.status.resident",
     );
@@ -379,6 +419,10 @@ describe("useResident", () => {
         decisionType: "quality_gate_response",
         maxRuns: 20,
       },
+    );
+    expect(residentServiceMock.getAgiHandoffs).toHaveBeenCalledWith(
+      "/tmp/polaris-demo",
+      { limit: 50 },
     );
   });
 });

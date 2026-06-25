@@ -37,6 +37,7 @@ import type {
   ResidentAgiEvidenceInterfaceContractPayload,
   ResidentAgiEvidenceInterfacesPayload,
   ResidentAgiDecisionHandoffPayload,
+  ResidentAgiHandoffInboxPayload,
   ResidentAgiHardcodedRepairStrategyCatalogPayload,
   ResidentAgiDecisionProfilePayload,
   ResidentAgiDecisionBoundaryPayload,
@@ -235,6 +236,7 @@ export function ResidentWorkspace({
   const agiCapabilitySurface = resident.residentAgiCapabilitySurface;
   const agiAuditPack = resident.residentAgiAuditPack;
   const agiEvidenceInterfaces = resident.residentAgiEvidenceInterfaces;
+  const agiHandoffs = resident.residentAgiHandoffs;
   const agiAuthorityMatrix =
     agiAuditPack?.authority_matrix || agiCapabilitySurface?.authority_matrix;
   const agiDecisionProfile = agiAuditPack?.decision_profile;
@@ -1195,6 +1197,7 @@ export function ResidentWorkspace({
                   testId="resident-agi-decision-turn-profile"
                 />
                 <AgiDecisionHandoffPanel handoff={lastAgiDecisionHandoff} />
+                <AgiHandoffInboxPanel inbox={agiHandoffs} />
                 <div className="flex items-center justify-end">
                   <Button
                     size="sm"
@@ -2656,6 +2659,72 @@ function AgiDecisionHandoffPanel({
       <div className="mt-2 font-mono text-[10px] text-slate-500">
         chain: {handoff.required_chain || "PM → Chief Engineer → Director"} ·
         advisory: {handoff.advisory_only === false ? "false" : "true"}
+      </div>
+    </div>
+  );
+}
+
+function AgiHandoffInboxPanel({
+  inbox,
+}: {
+  inbox?: ResidentAgiHandoffInboxPayload | null;
+}) {
+  if (!inbox || (inbox.items || []).length === 0) return null;
+  const items = inbox.items || [];
+  const summary = inbox.summary || {};
+  const byStatus = summary.by_status || {};
+  return (
+    <div
+      className="mt-2 rounded border border-slate-800 bg-slate-950/70 px-2.5 py-2"
+      data-testid="resident-agi-handoff-inbox"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-medium text-slate-100">AGI 交接队列</div>
+          <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+            {inbox.schema_version || "resident.agi_handoff_inbox.v1"}
+          </div>
+        </div>
+        <Badge className="border-slate-700 bg-slate-900 text-slate-300">
+          {items.length} handoffs
+        </Badge>
+      </div>
+      <div className="mt-2 grid gap-2 sm:grid-cols-4">
+        <CapabilityMetric label="Ready" value={String(byStatus.ready ?? 0)} />
+        <CapabilityMetric label="Hold" value={String(byStatus.hold ?? 0)} />
+        <CapabilityMetric
+          label="Blocked"
+          value={String(byStatus.blocked ?? 0)}
+        />
+        <CapabilityMetric
+          label="AGI execute"
+          value={summary.agi_execution_authority ? "allowed" : "blocked"}
+        />
+      </div>
+      <div className="mt-2 space-y-1.5">
+        {items.slice(0, 4).map((item) => {
+          const handoff = item.handoff || {};
+          const targetRoles = handoff.target_roles || [];
+          return (
+            <div
+              key={item.decision_id || item.timestamp}
+              className="rounded border border-slate-800 bg-slate-900/50 px-2 py-1.5"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="truncate text-[11px] font-medium text-slate-200">
+                  {item.summary || handoff.reason || item.decision_id}
+                </span>
+                <span className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+                  {handoff.handoff_status || "hold"}
+                </span>
+              </div>
+              <div className="mt-1 truncate font-mono text-[10px] text-slate-500">
+                {targetRoles.join(" → ") || "resident_agi"} ·{" "}
+                {handoff.required_chain || "PM → Chief Engineer → Director"}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

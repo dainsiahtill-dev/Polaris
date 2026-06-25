@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
 from polaris.cells.director.runtime.internal.repair_kernel.composer import PatchComposer
-from polaris.cells.director.runtime.internal.repair_kernel.contracts import RepairReceipt
+from polaris.cells.director.runtime.internal.repair_kernel.contracts import RepairAdvisorNote, RepairReceipt
 from polaris.cells.director.runtime.internal.repair_kernel.diagnostics import normalize_artifact_quality_errors
 from polaris.cells.director.runtime.internal.repair_kernel.executor import TransactionalRepairExecutor
 from polaris.cells.director.runtime.internal.repair_kernel.legacy_bridge import (
@@ -17,6 +18,7 @@ from polaris.cells.director.runtime.internal.repair_kernel.policy_gate import (
     RepairPolicyContext,
     RepairPolicyGate,
 )
+from polaris.cells.director.runtime.internal.repair_kernel.registry import build_repair_coverage_report
 from polaris.cells.director.runtime.internal.repair_kernel.strategy_catalog import (
     KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS,
     DeterministicRepairStrategy,
@@ -32,11 +34,14 @@ from polaris.cells.director.runtime.internal.repair_kernel.typescript_syntax imp
 from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairCompositionIssueV1,
     DirectorRepairCompositionSummaryV1,
+    DirectorRepairCoverageReportV1,
+    DirectorRepairDiagnosticCoverageV1,
     DirectorRepairPatchSummaryV1,
     DirectorRepairPlanningResultV1,
     DirectorRepairPlanSummaryV1,
     DirectorRepairResultV1,
     DirectorRepairStrategyCatalogResultV1,
+    QueryDirectorRepairCoverageV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
     RepairReceiptV1,
@@ -77,6 +82,37 @@ def query_director_repair_strategy_catalog(
         director_tool_execution_required=True,
         items=tuple(visible_items),
         summary=summary,
+    )
+
+
+def query_director_repair_coverage(query: QueryDirectorRepairCoverageV1) -> DirectorRepairCoverageReportV1:
+    """Return read-only repair-rule coverage for raw artifact-quality errors."""
+
+    diagnostics = normalize_artifact_quality_errors(list(query.artifact_quality_errors))
+    report = build_repair_coverage_report(diagnostics)
+    return DirectorRepairCoverageReportV1(
+        schema_version="director.repair_coverage_report.v1",
+        source="director.runtime.repair_kernel.registry",
+        access="read_only",
+        total_diagnostics=report.total_diagnostics,
+        covered_diagnostic_count=report.covered_diagnostic_count,
+        uncovered_diagnostic_count=report.uncovered_diagnostic_count,
+        items=tuple(
+            DirectorRepairDiagnosticCoverageV1(
+                diagnostic=(coverage_payload := item.to_dict())["diagnostic"],
+                known_rule_matched=item.known_rule_matched,
+                matched_rule_ids=tuple(rule.rule_id for rule in item.matched_rules),
+                matched_source_tools=tuple(rule.source_tool for rule in item.matched_rules),
+                archetypes=tuple(sorted({rule.archetype.value for rule in item.matched_rules})),
+                phases=tuple(sorted({rule.phase for rule in item.matched_rules})),
+                languages=tuple(sorted({rule.language for rule in item.matched_rules})),
+                diagnostic_archetype=str(coverage_payload["diagnostic_archetype"]),
+                diagnostic_phase=str(coverage_payload["diagnostic_phase"]),
+                diagnostic_language=str(coverage_payload["diagnostic_language"]),
+                suggested_rule_family=str(coverage_payload["suggested_rule_family"]),
+            )
+            for item in report.items
+        ),
     )
 
 
@@ -203,6 +239,9 @@ def run_director_typescript_object_literal_comma_repair(
             error_message="No matching TypeScript object-literal comma repair plan.",
             metadata={"planning": planning_result.to_dict()},
         )
+    internal_advisor_notes = _to_internal_advisor_notes(public_advisor_notes)
+    if internal_advisor_notes:
+        plan = replace(plan, advisor_notes=internal_advisor_notes)
 
     composer = PatchComposer()
     composition = composer.compose(normalized_base, plan.operations)
@@ -256,12 +295,26 @@ def _normalize_base_files(base_files: Mapping[str, str]) -> dict[str, str]:
     }
 
 
+def _to_internal_advisor_notes(advisor_notes: Sequence[RepairAdvisoryV1]) -> tuple[RepairAdvisorNote, ...]:
+    return tuple(
+        RepairAdvisorNote(
+            source=note.advisor_source,
+            message=note.message,
+            confidence=note.confidence,
+            suggested_rules=note.suggested_rules,
+            metadata=note.metadata,
+        )
+        for note in advisor_notes
+    )
+
+
 def _to_public_repair_receipt(receipt: RepairReceipt) -> RepairReceiptV1:
     advisor_notes = tuple(
         RepairAdvisoryV1(
             advisor_source=note.source,
             message=note.message,
             confidence=note.confidence,
+            suggested_rules=note.suggested_rules,
             metadata=note.metadata,
         )
         for note in receipt.advisor_notes
@@ -288,6 +341,7 @@ __all__ = [
     "deterministic_repair_source_tool_known",
     "deterministic_repair_strategy_catalog",
     "plan_director_typescript_object_literal_comma_repair",
+    "query_director_repair_coverage",
     "query_director_repair_strategy_catalog",
     "run_director_typescript_object_literal_comma_repair",
     "summarize_deterministic_repair_source_tools",

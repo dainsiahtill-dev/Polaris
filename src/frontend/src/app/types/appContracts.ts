@@ -708,6 +708,42 @@ export interface ResidentAgiDecisionTurnResponse {
   error?: string | null;
 }
 
+export interface ResidentAgiHandoffInboxItemPayload {
+  schema_version?: string;
+  workspace?: string;
+  decision_id?: string;
+  timestamp?: string;
+  run_id?: string;
+  task_id?: string;
+  goal_id?: string;
+  actor?: string;
+  stage?: string;
+  summary?: string;
+  verdict?: string;
+  evidence_refs?: string[];
+  context_refs?: string[];
+  handoff?: ResidentAgiDecisionHandoffPayload;
+}
+
+export interface ResidentAgiHandoffInboxPayload {
+  schema_version?: string;
+  workspace?: string;
+  source?: string;
+  role_id?: string;
+  target_role?: string;
+  handoff_status?: string;
+  items?: ResidentAgiHandoffInboxItemPayload[];
+  count?: number;
+  summary?: {
+    total?: number;
+    by_status?: Record<string, number>;
+    by_target_role?: Record<string, number>;
+    advisory_only?: boolean;
+    agi_execution_authority?: boolean;
+    required_chain?: string;
+  };
+}
+
 export interface ResidentGoalPayload {
   goal_id?: string;
   goal_type?: string;
