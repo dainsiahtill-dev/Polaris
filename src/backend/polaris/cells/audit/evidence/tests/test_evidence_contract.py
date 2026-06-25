@@ -29,7 +29,11 @@ from polaris.cells.audit.evidence.public.contracts import (
     QueryEvidenceEventsV1,
     VerifyEvidenceChainV1,
 )
-from polaris.cells.audit.evidence.public.service import append_evidence_event
+from polaris.cells.audit.evidence.public.service import (
+    append_evidence_event,
+    query_evidence_events,
+    verify_evidence_chain,
+)
 from polaris.cells.audit.evidence.task_service import (
     EvidenceService,
     build_error_evidence,
@@ -171,6 +175,12 @@ class _FakeKernelFs:
             bytes_written=len(line.encode("utf-8")),
         )
 
+    def resolve_path(self, logical_path: str) -> Path:
+        return self.root / logical_path
+
+    def read_text(self, logical_path: str, *, encoding: str = "utf-8") -> str:
+        return (self.root / logical_path).read_text(encoding=encoding)
+
 
 def test_append_evidence_event_public_service_writes_append_only_jsonl_utf8(tmp_path: Path) -> None:
     kernel_fs = _FakeKernelFs(tmp_path)
@@ -198,6 +208,59 @@ def test_append_evidence_event_public_service_writes_append_only_jsonl_utf8(tmp_
     assert record["payload"]["summary"] == "视觉审计记录"
     assert record["workspace"] == str(tmp_path / "workspace")
     assert record["event_id"]
+
+
+def test_query_evidence_events_reads_recent_events_through_public_service(tmp_path: Path) -> None:
+    kernel_fs = _FakeKernelFs(tmp_path)
+    append_evidence_event(
+        AppendEvidenceEventCommandV1(kind="qa.visual_audit", payload={"task_id": "qa-1"}, workspace=str(tmp_path)),
+        kernel_fs=kernel_fs,
+    )
+    append_evidence_event(
+        AppendEvidenceEventCommandV1(kind="director.tool_audit", payload={"task_id": "dir-1"}, workspace=str(tmp_path)),
+        kernel_fs=kernel_fs,
+    )
+
+    result = query_evidence_events(QueryEvidenceEventsV1(limit=1), kernel_fs=kernel_fs)
+
+    assert result.total == 2
+    assert len(result.events) == 1
+    assert result.events[0]["kind"] == "director.tool_audit"
+    assert result.events[0]["payload"] == {"task_id": "dir-1"}
+
+
+def test_verify_evidence_chain_validates_public_append_event_ids(tmp_path: Path) -> None:
+    kernel_fs = _FakeKernelFs(tmp_path)
+    append_evidence_event(
+        AppendEvidenceEventCommandV1(kind="qa.visual_audit", payload={"task_id": "qa-1"}, workspace=str(tmp_path)),
+        kernel_fs=kernel_fs,
+    )
+    append_evidence_event(
+        AppendEvidenceEventCommandV1(kind="director.tool_audit", payload={"task_id": "dir-1"}, workspace=str(tmp_path)),
+        kernel_fs=kernel_fs,
+    )
+
+    result = verify_evidence_chain(VerifyEvidenceChainV1(), kernel_fs=kernel_fs)
+
+    assert result.ok is True
+    assert result.checked_events == 2
+
+
+def test_verify_evidence_chain_detects_tampered_event_payload(tmp_path: Path) -> None:
+    kernel_fs = _FakeKernelFs(tmp_path)
+    event = append_evidence_event(
+        AppendEvidenceEventCommandV1(kind="qa.visual_audit", payload={"task_id": "qa-1"}, workspace=str(tmp_path)),
+        kernel_fs=kernel_fs,
+    )
+    evidence_path = tmp_path / event.receipt_path
+    record = json.loads(evidence_path.read_text(encoding="utf-8"))
+    record["payload"]["task_id"] = "tampered"
+    evidence_path.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    result = verify_evidence_chain(VerifyEvidenceChainV1(), kernel_fs=kernel_fs)
+
+    assert result.ok is False
+    assert result.checked_events == 1
 
 
 # ---------------------------------------------------------------------------

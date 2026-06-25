@@ -21,6 +21,7 @@ from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (
     _normalize_block_input,
     _suggest_similar_paths,
 )
+from polaris.kernelone.tool_execution.code_validator import validate_code_syntax
 
 SAMPLE = """class HttpResponse:
     def __init__(self, content=b""):
@@ -868,6 +869,74 @@ def test_write_file_clean_python_passes_syntax(tmp_path: Path) -> None:
     result = _handle_write_file(ex, file="calc.py", content="def add(a, b):\n    return a + b\n")
     assert result.get("ok") is True
     assert result.get("syntax_check") == "passed"
+
+
+def test_write_file_sanitizes_jsdoc_glob_before_ts_syntax_gate(tmp_path: Path) -> None:
+    """Glob examples like src/**/*.ts contain */ and must not close JSDoc."""
+
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    content = """/**
+ * Verifies source_target_coverage: src/**/*.ts is covered.
+ */
+
+export function main(): string {
+  return "flight";
+}
+"""
+
+    result = _handle_write_file(ex, file="src/verify.ts", content=content)
+
+    assert result.get("ok") is True, result
+    assert result.get("block_comment_glob_sanitized") is True
+    written = (tmp_path / "src" / "verify.ts").read_text(encoding="utf-8")
+    assert "src/** /*.ts" in written
+    assert "src/**/*.ts" not in written
+    assert validate_code_syntax(written, "src/verify.ts").is_valid
+
+
+def test_edit_blocks_sanitizes_jsdoc_glob_before_ts_syntax_gate(tmp_path: Path) -> None:
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    target = tmp_path / "src" / "verify.ts"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        """/**
+ * Verifies source_target_coverage.
+ */
+
+export function main(): string {
+  return "flight";
+}
+""",
+        encoding="utf-8",
+    )
+    blocks = """<<<< SEARCH:src/verify.ts
+ * Verifies source_target_coverage.
+====
+ * Verifies source_target_coverage: src/**/*.ts is covered.
+>>>> REPLACE
+"""
+
+    result = _handle_edit_blocks(ex, blocks=blocks)
+
+    assert result.get("ok") is True, result
+    written = target.read_text(encoding="utf-8")
+    assert "src/** /*.ts" in written
+    assert "src/**/*.ts" not in written
+    assert validate_code_syntax(written, "src/verify.ts").is_valid
+
+
+def test_write_file_does_not_sanitize_glob_outside_jsdoc(tmp_path: Path) -> None:
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    content = """/* normal comment */
+export const pattern = "src/**/*.ts";
+"""
+
+    result = _handle_write_file(ex, file="src/pattern.ts", content=content)
+
+    assert result.get("ok") is True, result
+    assert result.get("block_comment_glob_sanitized") is not True
+    written = (tmp_path / "src" / "pattern.ts").read_text(encoding="utf-8")
+    assert 'export const pattern = "src/**/*.ts";' in written
 
 
 def test_write_file_clean_rust_allows_arrows_and_generics(tmp_path: Path) -> None:

@@ -12,6 +12,8 @@ import os
 from dataclasses import replace
 from typing import Any
 
+from polaris.cells.director.tasking.internal.execution_profile import resolve_director_execution_profile
+
 from ..base import BaseRoleAdapter
 from ..director_execution_backend import (
     DirectorExecutionBackendRequest,
@@ -473,6 +475,12 @@ class DirectorAdapter(BaseRoleAdapter):
 
         context_payload = dict(context) if isinstance(context, dict) else {}
         metadata = self._build_role_runtime_metadata(context_payload, max_retries=max_retries)
+        self._ensure_director_execution_profile(
+            message=message,
+            context=context_payload,
+            metadata=metadata,
+            workspace=str(self.workspace),
+        )
         task_id = self._resolve_runtime_identity_field(
             context_payload,
             metadata,
@@ -561,6 +569,57 @@ class DirectorAdapter(BaseRoleAdapter):
                 "error_message": str(getattr(result, "error_message", "") or ""),
             },
         }
+
+    @staticmethod
+    def _ensure_director_execution_profile(
+        *,
+        message: str,
+        context: dict[str, Any],
+        metadata: dict[str, Any],
+        workspace: str,
+    ) -> dict[str, Any]:
+        existing = context.get("director_execution_profile")
+        if not isinstance(existing, dict):
+            existing = metadata.get("director_execution_profile")
+        if isinstance(existing, dict) and existing:
+            profile_payload = dict(existing)
+        else:
+            profile = resolve_director_execution_profile(
+                subject=str(metadata.get("title") or metadata.get("subject") or message or ""),
+                description=str(
+                    metadata.get("description")
+                    or metadata.get("objective")
+                    or metadata.get("summary")
+                    or context.get("description")
+                    or ""
+                ),
+                metadata=metadata,
+                target_files=DirectorAdapter._metadata_path_list(metadata, context, "target_files"),
+                scope_paths=DirectorAdapter._metadata_path_list(metadata, context, "scope_paths"),
+                workspace=str(workspace or ""),
+            )
+            profile_payload = profile.to_dict()
+        metadata["director_execution_profile"] = profile_payload
+        metadata.setdefault("task_execution_profile", profile_payload)
+        metadata.setdefault("task_execution_profile_source", "director.tasking.resolve_director_execution_profile")
+        context["director_execution_profile"] = profile_payload
+        context.setdefault("task_execution_profile", profile_payload)
+        return profile_payload
+
+    @staticmethod
+    def _metadata_path_list(
+        metadata: dict[str, Any],
+        context: dict[str, Any],
+        key: str,
+    ) -> list[str]:
+        for source in (metadata, context):
+            value = source.get(key)
+            if isinstance(value, str):
+                normalized = value.strip()
+                return [normalized] if normalized else []
+            if isinstance(value, (list, tuple, set)):
+                return [str(item).strip() for item in value if str(item or "").strip()]
+        return []
 
     @staticmethod
     def _build_role_runtime_metadata(context: dict[str, Any], *, max_retries: int) -> dict[str, Any]:

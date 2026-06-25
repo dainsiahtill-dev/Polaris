@@ -133,6 +133,56 @@ def _copy_provider_policy_options(*, override: Any, request_options: dict[str, A
                 request_options[key] = value
 
 
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _sequence_len(value: Any) -> int:
+    return len(value) if isinstance(value, (list, tuple, set)) else 0
+
+
+def _resident_agi_audit_context_from_override(override: Any) -> dict[str, Any]:
+    if not isinstance(override, dict):
+        return {}
+    audit_pack = _mapping(override.get("resident_agi_audit_pack"))
+    capability_surface = _mapping(
+        override.get("resident_agi_capability_surface")
+        or override.get("capability_surface")
+        or audit_pack.get("capability_surface")
+    )
+    decision_contract = _mapping(override.get("resident_agi_decision_contract"))
+    boundary_summary = _mapping(audit_pack.get("boundary_summary") or override.get("resident_agi_boundary_summary"))
+    metadata = _mapping(override.get("metadata"))
+    decision_boundaries = capability_surface.get("decision_boundaries")
+    if not audit_pack and not capability_surface and not decision_contract and not metadata:
+        return {}
+    return {
+        "schema_version": "resident.agi_audit_context.v1",
+        "source": "roles.kernel.llm_caller.context_override",
+        "role_id": "resident_agi",
+        "audit_pack_schema_version": str(audit_pack.get("schema_version") or ""),
+        "decision_contract_schema_version": str(decision_contract.get("schema_version") or ""),
+        "decision_capability_id": str(
+            decision_contract.get("decision_capability_id")
+            or metadata.get("resident_agi_selected_decision_capability")
+            or ""
+        ),
+        "capability_surface_schema_version": str(capability_surface.get("schema_version") or ""),
+        "decision_capability_registry_schema_version": str(
+            _mapping(capability_surface.get("decision_capability_registry")).get("schema_version") or ""
+        ),
+        "decision_boundary_schema": str(
+            capability_surface.get("decision_boundary_schema") or boundary_summary.get("decision_boundary_schema") or ""
+        ),
+        "decision_boundary_count": _sequence_len(decision_boundaries),
+        "role_runtime_required": bool(
+            metadata.get("resident_agi_role_runtime_required")
+            or metadata.get("resident_agi_contextos_required")
+            or metadata.get("resident_agi_turn_engine_required")
+        ),
+    }
+
+
 def _with_projection_capability_profile(context: Any, capability_profile: dict[str, Any]) -> Any:
     """Attach provider-bound capabilities to the control plane before projection."""
     override = getattr(context, "context_override", None)

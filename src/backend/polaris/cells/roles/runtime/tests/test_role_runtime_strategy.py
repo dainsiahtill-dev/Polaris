@@ -223,6 +223,39 @@ class TestRoleRuntimeServiceStrategy:
         assert request.context_override["allowed_provider_types"] == ("ollama",)
         assert request.context_override["llm_provider_policy"]["blocked_provider_types"] == ("openai_compat",)
 
+    def test_build_session_request_preserves_director_execution_profile(self) -> None:
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+        execution_profile = {
+            "schema_version": "task.execution_profile.v1",
+            "source": "director.tasking",
+            "task_type": "write_code",
+            "language": "typescript",
+        }
+        command = ExecuteRoleSessionCommandV1(
+            role="director",
+            session_id="sess-1",
+            workspace="/repo",
+            user_message="write src/app.ts",
+            context={
+                "director_execution_profile": execution_profile,
+                "task_execution_profile": execution_profile,
+            },
+            metadata={
+                "director_execution_profile": execution_profile,
+                "task_execution_profile": execution_profile,
+            },
+        )
+
+        request = RoleRuntimeService._build_session_request(command)
+
+        assert request.context_override is not None
+        assert request.context_override["director_execution_profile"] == execution_profile
+        assert request.context_override["task_execution_profile"] == execution_profile
+        assert request.metadata["director_execution_profile"] == execution_profile
+        assert request.metadata["task_execution_profile"] == execution_profile
+
     def test_build_task_request_copies_provider_policy_to_context_override(self) -> None:
         from polaris.cells.roles.runtime.public.contracts import ExecuteRoleTaskCommandV1
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService

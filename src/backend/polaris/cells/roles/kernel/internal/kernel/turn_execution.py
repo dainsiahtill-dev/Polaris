@@ -111,6 +111,7 @@ async def execute_transaction_kernel_turn(
     """Execute a single turn via TransactionKernel and map to RoleTurnResult."""
     from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
         build_native_tool_schemas,
+        build_tool_filter_audit,
         extract_write_tool_pin_target_files,
         pin_write_tool_file_param_to_targets,
         resolve_from_scratch_write_target,
@@ -173,6 +174,8 @@ async def execute_transaction_kernel_turn(
     write_pin_targets = extract_write_tool_pin_target_files(getattr(request, "context_override", None))
     if write_pin_targets:
         tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, write_pin_targets)
+    tool_filter_original_definitions: list[dict[str, Any]] | None = None
+    tool_filter_reason = ""
     # Prong A (I3-r23): a from-scratch leaf step writes on turn 1. Keep a
     # minimal execution schema so weak Directors still receive schema-backed
     # read/locate tools referenced by the prompt, while mutation gates require
@@ -188,6 +191,8 @@ async def execute_transaction_kernel_turn(
         getattr(request, "context_override", None), str(request.workspace or kernel.workspace or ".")
     )
     if _from_scratch_target:
+        tool_filter_original_definitions = list(tool_definitions)
+        tool_filter_reason = "from_scratch_write_target"
         tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
         logger.info(
             "first-turn minimal execution schema for from-scratch leaf step: target=%s",
@@ -202,6 +207,8 @@ async def execute_transaction_kernel_turn(
             getattr(request, "context_override", None), str(request.workspace or kernel.workspace or ".")
         )
         if _repair_target:
+            tool_filter_original_definitions = list(tool_definitions)
+            tool_filter_reason = "repair_preserve_edit_target"
             tool_definitions = restrict_tool_definitions_to_edit(tool_definitions)
             logger.info(
                 "repair-turn edit-only for existing target: target=%s",
@@ -214,6 +221,8 @@ async def execute_transaction_kernel_turn(
             workspace=str(request.workspace or kernel.workspace or "."),
             tool_definitions=tool_definitions,
         ):
+            tool_filter_original_definitions = list(tool_definitions)
+            tool_filter_reason = "weak_director_slim_tool_schema"
             tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
             logger.info(
                 "weak-director slim tool schema enabled: role=%s model=%s",
@@ -224,6 +233,46 @@ async def execute_transaction_kernel_turn(
         tool_definitions,
         getattr(request, "context_override", None),
     )
+    tool_filter_audit: dict[str, Any] | None = None
+    if tool_filter_original_definitions is not None:
+        tool_filter_audit = build_tool_filter_audit(
+            filter_reason=tool_filter_reason,
+            original_tool_definitions=tool_filter_original_definitions,
+            filtered_tool_definitions=tool_definitions,
+            messages=messages,
+        )
+        if tool_filter_audit.get("status") == "conflict":
+            try:
+                context_gateway.record_projection_outcome(
+                    success=False,
+                    tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                logger.debug("Projection outcome feedback failed after tool-filter conflict", exc_info=True)
+            filter_error_metadata: dict[str, Any] = {"tool_filter_audit": tool_filter_audit}
+            if profile.provider_id:
+                filter_error_metadata["provider_id"] = str(profile.provider_id).strip()
+            if profile.model:
+                filter_error_metadata["model"] = str(profile.model).strip()
+            removed_required = ", ".join(tool_filter_audit.get("removed_prompt_required_tool_names") or [])
+            return RoleTurnResult(
+                content="",
+                error=f"Tool schema filter conflict: removed prompt-required tools: {removed_required}",
+                is_complete=False,
+                profile_version=profile.version,
+                prompt_fingerprint=fingerprint,
+                tool_policy_id=profile.tool_policy.policy_id,
+                execution_stats={
+                    "duration_ms": 0,
+                    "llm_calls": 0,
+                    "tool_calls": 0,
+                    "transaction_kernel": True,
+                    "tool_filter_blocked": True,
+                    "tool_filter_status": "conflict",
+                    **runtime_tool_policy_audit,
+                },
+                metadata=filter_error_metadata,
+            )
 
     try:
         tk_result = await tk.execute(turn_id, messages, tool_definitions)
@@ -293,6 +342,8 @@ async def execute_transaction_kernel_turn(
         metadata["provider_id"] = str(profile.provider_id).strip()
     if profile.model:
         metadata["model"] = str(profile.model).strip()
+    if tool_filter_audit is not None:
+        metadata["tool_filter_audit"] = tool_filter_audit
     context_os_audit_summary = summarize_context_os_audit_from_ledger(ledger)
     if context_os_audit_summary:
         metadata["context_os_audit"] = context_os_audit_summary
@@ -388,6 +439,7 @@ async def execute_transaction_kernel_stream(
     """Stream execution via TransactionKernel (compatibility shim)."""
     from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
         build_native_tool_schemas,
+        build_tool_filter_audit,
         extract_declared_step_target_files,
         pin_write_tool_file_param_to_targets,
         resolve_from_scratch_write_target,
@@ -442,11 +494,15 @@ async def execute_transaction_kernel_stream(
     declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
     if declared_step_targets:
         tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
+    tool_filter_original_definitions: list[dict[str, Any]] | None = None
+    tool_filter_reason = ""
     # Prong A (I3-r23): from-scratch leaf -> minimal execution schema on turn 1.
     _from_scratch_target = resolve_from_scratch_write_target(
         getattr(request, "context_override", None), str(request.workspace or kernel.workspace or ".")
     )
     if _from_scratch_target:
+        tool_filter_original_definitions = list(tool_definitions)
+        tool_filter_reason = "from_scratch_write_target"
         tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
         logger.info(
             "first-turn minimal execution schema for from-scratch leaf step: target=%s",
@@ -461,6 +517,8 @@ async def execute_transaction_kernel_stream(
             getattr(request, "context_override", None), str(request.workspace or kernel.workspace or ".")
         )
         if _repair_target:
+            tool_filter_original_definitions = list(tool_definitions)
+            tool_filter_reason = "repair_preserve_edit_target"
             tool_definitions = restrict_tool_definitions_to_edit(tool_definitions)
             logger.info(
                 "repair-turn edit-only for existing target: target=%s",
@@ -473,6 +531,8 @@ async def execute_transaction_kernel_stream(
             workspace=str(request.workspace or kernel.workspace or "."),
             tool_definitions=tool_definitions,
         ):
+            tool_filter_original_definitions = list(tool_definitions)
+            tool_filter_reason = "weak_director_slim_tool_schema"
             tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
             logger.info(
                 "weak-director slim tool schema enabled: role=%s model=%s",
@@ -483,6 +543,39 @@ async def execute_transaction_kernel_stream(
         tool_definitions,
         getattr(request, "context_override", None),
     )
+    tool_filter_audit: dict[str, Any] | None = None
+    if tool_filter_original_definitions is not None:
+        tool_filter_audit = build_tool_filter_audit(
+            filter_reason=tool_filter_reason,
+            original_tool_definitions=tool_filter_original_definitions,
+            filtered_tool_definitions=tool_definitions,
+            messages=messages,
+        )
+        if tool_filter_audit.get("status") == "conflict":
+            try:
+                context_gateway.record_projection_outcome(
+                    success=False,
+                    tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                logger.debug("Projection outcome feedback failed after stream tool-filter conflict", exc_info=True)
+            removed_required = ", ".join(tool_filter_audit.get("removed_prompt_required_tool_names") or [])
+            error_event: dict[str, Any] = {
+                "type": "error",
+                "error": f"Tool schema filter conflict: removed prompt-required tools: {removed_required}",
+                "error_type": "tool_schema_filter_conflict",
+                "turn_id": turn_id,
+                "metadata": {"tool_filter_audit": tool_filter_audit},
+            }
+            await uep_publisher.publish_stream_event(
+                workspace=kernel.workspace or os.getcwd(),
+                run_id=stream_run_id,
+                role=role,
+                event_type="error",
+                payload=error_event,
+            )
+            yield error_event
+            return
 
     accumulated_content: list[str] = []
     accumulated_thinking: list[str] = []
@@ -597,6 +690,8 @@ async def execute_transaction_kernel_stream(
                 result_metadata["provider_id"] = str(profile.provider_id).strip()
             if profile.model:
                 result_metadata["model"] = str(profile.model).strip()
+            if tool_filter_audit is not None:
+                result_metadata["tool_filter_audit"] = tool_filter_audit
             monitoring_payload = event.monitoring if isinstance(event.monitoring, dict) else {}
             context_os_audit = monitoring_payload.get("context_os_audit")
             if isinstance(context_os_audit, dict):

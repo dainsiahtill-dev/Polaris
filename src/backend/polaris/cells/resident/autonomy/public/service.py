@@ -10,7 +10,10 @@ from uuid import uuid4
 
 from polaris.cells.audit.diagnosis.public import QueryAuditDiagnosisTrailV1, query_audit_diagnosis_trail
 from polaris.cells.audit.evidence.public.service import (
+    AppendEvidenceEventCommandV1,
+    EvidenceAppendedEventV1,
     EvidenceBundleService,
+    append_evidence_event,
     create_evidence_bundle_service,
 )
 from polaris.cells.audit.verdict.public import QueryAuditVerdictV1, query_audit_verdict
@@ -20,7 +23,10 @@ from polaris.cells.context.engine.public import (
     query_final_provider_request_audit,
 )
 from polaris.cells.control_plane.run_ledger.public import (
+    AppendRunLedgerEventCommandV1,
     ReadRunLedgerProjectionQueryV1,
+    RunLedgerAppendResultV1,
+    append_run_ledger_event,
     read_run_ledger_projection,
 )
 from polaris.cells.control_plane.verifier_policy.public import (
@@ -257,6 +263,205 @@ def _resident_agi_decision_summary(
     if len(detail) > 180:
         detail = f"{detail[:177]}..."
     return f"Resident AGI decision [{verdict}]: {detail}" if detail else f"Resident AGI decision [{verdict}]"
+
+
+def _resident_agi_policy_decision(
+    *,
+    agi_verdict: str,
+    resident_verdict: str,
+    runtime_success: bool,
+    downstream_allowed: bool,
+) -> str:
+    """Map a Resident AGI judgement into a control-plane policy decision."""
+
+    normalized_agi = str(agi_verdict or "").strip().lower()
+    normalized_resident = str(resident_verdict or "").strip().lower()
+    if not runtime_success:
+        return "block"
+    if normalized_agi == "continue" and downstream_allowed and normalized_resident == "success":
+        return "allow"
+    if normalized_agi in {"request_evidence", "escalate", "block"}:
+        return normalized_agi
+    if normalized_resident == "success" and downstream_allowed:
+        return "allow"
+    return "block"
+
+
+def _resident_agi_control_run_id(
+    command: RunResidentAgiDecisionTurnCommandV1,
+    recorded: dict[str, Any],
+) -> str:
+    decision_id = str(recorded.get("decision_id") or "").strip()
+    return (
+        str(command.run_id or "").strip()
+        or str(recorded.get("run_id") or "").strip()
+        or (f"resident-agi-{decision_id}" if decision_id else "")
+        or f"resident-agi-{uuid4().hex[:12]}"
+    )
+
+
+def _resident_agi_control_gate_summary(
+    *,
+    policy_decision: str,
+    agi_verdict: str,
+    error: str,
+) -> str:
+    if policy_decision == "allow":
+        return "Resident AGI permitted downstream continuation."
+    if policy_decision == "request_evidence":
+        return "Resident AGI blocked downstream work until required evidence is available."
+    if policy_decision == "escalate":
+        return "Resident AGI escalated the decision before downstream work can continue."
+    if error:
+        return f"Resident AGI blocked downstream work: {error}"
+    return f"Resident AGI blocked downstream work with verdict `{agi_verdict or 'unknown'}`."
+
+
+def _append_resident_agi_control_plane_gate(
+    *,
+    command: RunResidentAgiDecisionTurnCommandV1,
+    recorded: dict[str, Any],
+    audit_pack: dict[str, Any] | None,
+    selected_decision_capability: dict[str, Any],
+    decision_preflight: dict[str, Any],
+    output_contract_gate: dict[str, Any],
+    runtime_contract_gate: dict[str, Any],
+    agi_verdict: str,
+    resident_verdict: str,
+    downstream_allowed: bool,
+    runtime_success: bool,
+    next_action: str,
+    rationale: str,
+    risks: list[Any],
+    error: str,
+    evidence_refs: list[str],
+) -> dict[str, Any]:
+    """Persist Resident AGI judgement as a platform control-plane gate."""
+
+    run_id = _resident_agi_control_run_id(command, recorded)
+    decision_id = str(recorded.get("decision_id") or "").strip()
+    policy_decision = _resident_agi_policy_decision(
+        agi_verdict=agi_verdict,
+        resident_verdict=resident_verdict,
+        runtime_success=runtime_success,
+        downstream_allowed=downstream_allowed,
+    )
+    control_downstream_allowed = policy_decision == "allow"
+    gate_summary = _resident_agi_control_gate_summary(
+        policy_decision=policy_decision,
+        agi_verdict=agi_verdict,
+        error=error,
+    )
+    event: dict[str, Any] = {
+        "schema_version": "resident.agi_control_gate.v1",
+        "event_type": "gate_evaluated",
+        "decision_event_type": "resident_agi_decision_evaluated",
+        "source": "resident.autonomy.public.run_resident_agi_decision_turn",
+        "run_id": run_id,
+        "task_id": command.task_id,
+        "goal_id": command.goal_id,
+        "stage": command.decision_type,
+        "decision_id": decision_id,
+        "decision_type": command.decision_type,
+        "actor": "resident_agi",
+        "gate": {
+            "name": "resident_agi_decision",
+            "ok": control_downstream_allowed,
+            "summary": gate_summary,
+            "policy_decision": policy_decision,
+            "downstream_allowed": control_downstream_allowed,
+            "runtime_success": runtime_success,
+        },
+        "resident_agi_decision": {
+            "agi_verdict": agi_verdict,
+            "resident_verdict": resident_verdict,
+            "policy_decision": policy_decision,
+            "downstream_allowed": control_downstream_allowed,
+            "next_action": next_action,
+            "rationale": rationale,
+            "risks": list(risks),
+            "error": error,
+            "decision_capability_id": str(selected_decision_capability.get("decision_id") or ""),
+        },
+        "contract_gates": {
+            "decision_preflight": decision_preflight,
+            "output_contract_gate": output_contract_gate,
+            "runtime_contract_gate": runtime_contract_gate,
+        },
+        "job_token": {
+            "token_id": f"resident-agi-{decision_id or run_id}",
+            "run_id": run_id,
+            "task_id": command.task_id,
+            "goal_id": command.goal_id,
+            "capability_audit": {"ok": True, "issues": []},
+            "gate_policy": {
+                "enabled_evidence_modalities": [
+                    "resident_decision_trace",
+                    "resident_agi_audit_pack",
+                ],
+                "required_evidence_modalities": [],
+            },
+        },
+        "physical_evidence": {
+            "modalities": {
+                "resident_decision_trace": {
+                    "present": bool(decision_id),
+                    "ok": bool(decision_id),
+                    "detail": "Resident decision trace entry recorded before control-plane gate append.",
+                    "metadata": {"decision_id": decision_id},
+                },
+                "resident_agi_audit_pack": {
+                    "present": audit_pack is not None,
+                    "ok": audit_pack is not None,
+                    "detail": "Resident AGI audit pack was injected into the decision turn.",
+                    "metadata": {"schema_version": (audit_pack or {}).get("schema_version", "")},
+                },
+            },
+            "decision_trace": {
+                "decision_id": decision_id,
+                "evidence_refs": list(evidence_refs),
+            },
+        },
+    }
+    evidence_result: EvidenceAppendedEventV1 = append_evidence_event(
+        AppendEvidenceEventCommandV1(
+            kind="resident_agi.decision_gate",
+            workspace=command.workspace,
+            payload={
+                "run_id": run_id,
+                "decision_id": decision_id,
+                "event": event,
+            },
+            metadata={
+                "source": "resident.autonomy.public.run_resident_agi_decision_turn",
+                "run_id": run_id,
+                "task_id": command.task_id,
+                "goal_id": command.goal_id,
+                "decision_id": decision_id,
+                "decision_type": command.decision_type,
+                "policy_decision": policy_decision,
+            },
+        )
+    )
+    event["physical_evidence"]["decision_trace"]["evidence_event_ref"] = evidence_result.receipt_path
+    ledger_result: RunLedgerAppendResultV1 = append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=command.workspace,
+            run_id=run_id,
+            event=event,
+        )
+    )
+    return {
+        "schema_version": "resident.agi_control_gate_receipt.v1",
+        "persistence_ok": True,
+        "run_id": run_id,
+        "decision_id": decision_id,
+        "policy_decision": policy_decision,
+        "downstream_allowed": control_downstream_allowed,
+        "gate_ok": control_downstream_allowed,
+        "ledger_receipt": dict(ledger_result.receipt),
+        "evidence_receipt_path": evidence_result.receipt_path,
+    }
 
 
 def _resident_agi_runtime_contract_gate(
@@ -1484,11 +1689,30 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
             },
         )
     )
+    control_plane_gate = _append_resident_agi_control_plane_gate(
+        command=command,
+        recorded=recorded,
+        audit_pack=audit_pack,
+        selected_decision_capability=selected_decision_capability,
+        decision_preflight=decision_preflight,
+        output_contract_gate=output_contract_gate,
+        runtime_contract_gate=runtime_contract_gate,
+        agi_verdict=agi_verdict,
+        resident_verdict=resident_verdict,
+        downstream_allowed=downstream_allowed,
+        runtime_success=runtime_success,
+        next_action=next_action,
+        rationale=rationale,
+        risks=risks,
+        error=error,
+        evidence_refs=evidence_refs,
+    )
     return {
         "ok": runtime_success,
         "workspace": command.workspace,
         "decision": decision,
         "recorded_decision": recorded,
+        "control_plane_gate": control_plane_gate,
         "role_result": role_result,
         "audit_pack": audit_pack,
         "selected_decision_capability": selected_decision_capability,

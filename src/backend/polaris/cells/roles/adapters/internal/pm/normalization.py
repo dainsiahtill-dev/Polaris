@@ -97,8 +97,8 @@ def _pm_typescript_factory_contract_missing(contracts: list[dict[str, Any]], dir
     targets = _pm_contract_target_files(contracts)
     lower_targets = {target.lower() for target in targets}
     missing: list[str] = []
-    if len(contracts) < 3:
-        missing.append("task_count>=3")
+    if len(contracts) < 2:
+        missing.append("task_count>=2")
     for required in ("package.json", "tsconfig.json", "index.html", "README.md"):
         if required.lower() not in lower_targets:
             missing.append(required)

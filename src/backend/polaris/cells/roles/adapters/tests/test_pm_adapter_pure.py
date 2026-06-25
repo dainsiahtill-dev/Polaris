@@ -201,12 +201,15 @@ class TestFrontendTestRepairContracts:
         targets = [target for item in contracts for target in item.get("target_files", [])]
         serialized = json.dumps(contracts, ensure_ascii=False)
 
+        assert [item["id"] for item in contracts] == ["TASK-1", "TASK-2"]
         assert "package.json" in targets
         assert "tsconfig.json" in targets
         assert "src/index.ts" in targets
         assert "src/models/MoonPhase.ts" in targets
         assert "src/engine/renderer.ts" in targets
         assert "src/web.ts" in targets
+        assert "src/verify.ts" in contracts[1]["target_files"]
+        assert "tests/verify.test.ts" in contracts[1]["target_files"]
         assert "index.html" in targets
         assert "README.md" in targets
         assert "styles.css" not in targets

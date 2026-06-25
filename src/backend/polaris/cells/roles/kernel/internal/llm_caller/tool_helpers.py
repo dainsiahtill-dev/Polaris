@@ -305,6 +305,137 @@ def _tool_name(definition: Any) -> str:
     return str(definition.get("name") or "").strip()
 
 
+def tool_definition_names(tool_definitions: list[dict[str, Any]] | None) -> list[str]:
+    """Return stable function names from native tool definitions."""
+
+    names: list[str] = []
+    for definition in tool_definitions or []:
+        name = _tool_name(definition)
+        if name:
+            names.append(name)
+    return names
+
+
+def _append_required_tool(required: list[str], tool_name: Any, known_tool_map: dict[str, str]) -> None:
+    normalized = str(tool_name or "").strip().strip("`'\". ").lower()
+    if not normalized:
+        return
+    canonical = known_tool_map.get(normalized, normalized)
+    if canonical not in required:
+        required.append(canonical)
+
+
+def _append_required_tools_from_value(required: list[str], value: Any, known_tool_map: dict[str, str]) -> None:
+    if isinstance(value, str):
+        for item in re.split(r"[,;\s]+", value):
+            _append_required_tool(required, item, known_tool_map)
+        return
+    if isinstance(value, list | tuple | set):
+        for item in value:
+            if isinstance(item, list | tuple | set):
+                _append_required_tools_from_value(required, item, known_tool_map)
+            else:
+                _append_required_tool(required, item, known_tool_map)
+
+
+def _append_required_tools_from_contract(
+    required: list[str],
+    contract: Any,
+    known_tool_map: dict[str, str],
+) -> None:
+    if not isinstance(contract, dict):
+        return
+    _append_required_tools_from_value(required, contract.get("required_tools"), known_tool_map)
+    for key in ("required_tool_groups", "required_any_groups", "ordered_tool_groups"):
+        _append_required_tools_from_value(required, contract.get(key), known_tool_map)
+
+
+_REQUIRED_TOOL_LINE_MARKERS = (
+    "required tool",
+    "contract-required",
+    "must use",
+    "must call",
+    "mandatory tool",
+    "必须使用",
+    "必须调用",
+    "强制使用",
+    "必需工具",
+)
+
+
+def _append_required_tools_from_text(
+    required: list[str],
+    content: Any,
+    known_tool_names: list[str],
+    known_tool_map: dict[str, str],
+) -> None:
+    for line in str(content or "").splitlines():
+        lowered = line.lower()
+        if not any(marker in lowered for marker in _REQUIRED_TOOL_LINE_MARKERS):
+            continue
+        for tool_name in known_tool_names:
+            pattern = rf"(?<![\w.-]){re.escape(tool_name)}(?![\w.-])"
+            if re.search(pattern, line, flags=re.IGNORECASE):
+                _append_required_tool(required, tool_name, known_tool_map)
+
+
+def extract_prompt_required_tool_names(
+    messages: list[dict[str, Any]],
+    known_tool_names: list[str],
+) -> list[str]:
+    """Extract tools that the final prompt/metadata makes mandatory.
+
+    This intentionally stays conservative: it trusts structured
+    ``metadata.tool_contract`` first and only treats text as mandatory when the
+    line uses explicit required/must-call wording.
+    """
+
+    known_tool_map = {name.lower(): name for name in known_tool_names if str(name or "").strip()}
+    required: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        metadata = message.get("metadata")
+        if isinstance(metadata, dict):
+            _append_required_tools_from_contract(required, metadata.get("tool_contract"), known_tool_map)
+            _append_required_tools_from_contract(required, metadata.get("platform_tool_contract"), known_tool_map)
+        _append_required_tools_from_text(required, message.get("content"), known_tool_names, known_tool_map)
+    return required
+
+
+def build_tool_filter_audit(
+    *,
+    filter_reason: str,
+    original_tool_definitions: list[dict[str, Any]],
+    filtered_tool_definitions: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a final-request audit for tool-schema filtering."""
+
+    original_tool_names = tool_definition_names(original_tool_definitions)
+    filtered_tool_names = tool_definition_names(filtered_tool_definitions)
+    filtered_set = {name.lower() for name in filtered_tool_names}
+    removed_tool_names = [name for name in original_tool_names if name.lower() not in filtered_set]
+    prompt_required_tool_names = extract_prompt_required_tool_names(
+        messages,
+        sorted(set(original_tool_names) | set(filtered_tool_names)),
+    )
+    removed_prompt_required_tool_names = [
+        name for name in prompt_required_tool_names if name.lower() not in filtered_set
+    ]
+    return {
+        "schema_version": "roles.kernel.tool_filter_audit.v1",
+        "filter_reason": filter_reason,
+        "status": "conflict" if removed_prompt_required_tool_names else "pass",
+        "original_tool_names": original_tool_names,
+        "filtered_tool_names": filtered_tool_names,
+        "removed_tool_names": removed_tool_names,
+        "prompt_required_tool_names": prompt_required_tool_names,
+        "removed_prompt_required_tool_names": removed_prompt_required_tool_names,
+        "fail_closed": bool(removed_prompt_required_tool_names),
+    }
+
+
 def resolve_from_scratch_write_target(context_override: Any, workspace: str) -> str | None:
     """Return the single target of a FROM-SCRATCH leaf step, else None (I3-r23).
 

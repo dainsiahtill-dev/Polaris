@@ -1631,8 +1631,13 @@ def _start_isolated_bench_project_instance(
     """Start a project-scoped Polaris instance for internal factory_bench runs."""
     try:
         from polaris.cells.instances.internal.service import InstanceSupervisor, default_polaris_root
-    except (ImportError, RuntimeError):
-        return None
+    except (ImportError, RuntimeError) as exc:
+        return {
+            "ok": False,
+            "error": "instance_supervisor_unavailable",
+            "error_type": type(exc).__name__,
+            "error_detail": str(exc),
+        }
 
     token = backend_token or _DEFAULT_LOCAL_BACKEND_TOKEN
     try:
@@ -1669,13 +1674,19 @@ def _start_isolated_bench_project_instance(
                 },
             }
         )
-    except (OSError, RuntimeError, ValueError):
+    except (OSError, RuntimeError, ValueError) as exc:
         _logger.debug("factory bench isolated instance start failed", exc_info=True)
-        return None
+        return {
+            "ok": False,
+            "error": "isolated_instance_start_failed",
+            "error_type": type(exc).__name__,
+            "error_detail": str(exc),
+        }
     if not _wait_backend_health(str(instance.get("backend_url") or ""), str(instance.get("token") or token)):
         metadata = instance.get("metadata")
         if isinstance(metadata, dict):
             metadata["backend_health"] = "starting"
+    instance["ok"] = True
     return instance
 
 
@@ -2939,7 +2950,7 @@ def main() -> int:
                 project_workspace=project_workspace,
                 backend_token=backend_token,
             )
-            if isolated_instance:
+            if isolated_instance and bool(isolated_instance.get("ok", True)):
                 project_backend_url = str(isolated_instance.get("backend_url") or backend_url).rstrip("/")
                 project_backend_token = str(isolated_instance.get("token") or backend_token)
                 project_backend_audit_context = build_bench_backend_audit_context(
@@ -2958,7 +2969,14 @@ def main() -> int:
                 workspace_switch_ok = True
             else:
                 workspace_switch_ok = False
-                launcher_instance_meta.update({"ok": False, "error": "isolated_instance_start_failed"})
+                launcher_instance_meta.update(
+                    {
+                        "ok": False,
+                        "error": str((isolated_instance or {}).get("error") or "isolated_instance_start_failed"),
+                        "error_type": str((isolated_instance or {}).get("error_type") or ""),
+                        "error_detail": str((isolated_instance or {}).get("error_detail") or ""),
+                    }
+                )
         else:
             workspace_switch_ok = _push_bench_workspace_to_backend(
                 backend_url=backend_url,
@@ -3081,7 +3099,7 @@ def main() -> int:
                     "session_id": bench_session_id,
                     "error": error,
                     "failure_category": "runtime_environment",
-                    "root_cause_signature": "runtime_environment:workspace_switch_failed",
+                    "root_cause_signature": f"runtime_environment:{error}",
                     "workspace": project_workspace,
                     "workspace_path": project_workspace,
                     "project_workspace": project_workspace,

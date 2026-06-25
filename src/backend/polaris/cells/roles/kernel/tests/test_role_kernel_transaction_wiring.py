@@ -758,6 +758,99 @@ class TestExecuteTransactionKernelTurn:
         assert mock_execute.await_args is not None
         tool_names = {definition["function"]["name"] for definition in mock_execute.await_args.args[2]}
         assert tool_names == {"write_file", "edit_file", "execute_command"}
+        tool_filter_audit = result.metadata["tool_filter_audit"]
+        assert tool_filter_audit["schema_version"] == "roles.kernel.tool_filter_audit.v1"
+        assert tool_filter_audit["filter_reason"] == "weak_director_slim_tool_schema"
+        assert tool_filter_audit["status"] == "pass"
+        assert tool_filter_audit["original_tool_names"] == [
+            "read_file",
+            "repo_rg",
+            "write_file",
+            "edit_file",
+            "execute_command",
+        ]
+        assert tool_filter_audit["filtered_tool_names"] == ["write_file", "edit_file", "execute_command"]
+        assert tool_filter_audit["removed_tool_names"] == ["read_file", "repo_rg"]
+        assert tool_filter_audit["removed_prompt_required_tool_names"] == []
+
+    @pytest.mark.asyncio
+    async def test_execute_transaction_kernel_turn_blocks_slimming_prompt_required_tool(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(
+            role_id="director",
+            model="qwen3.6-27b-code-gpu0",
+            tool_policy=MagicMock(
+                policy_id="tp1",
+                whitelist=["read_file", "repo_rg", "write_file", "edit_file", "execute_command"],
+            ),
+        )
+        request = _MockRequest(
+            message="[mode:materialize]\nRequired tools (at least once): repo_rg\nCreate the missing target file.",
+            run_id="run_123",
+            context_override={
+                "context_os_snapshot": {},
+                "delivery_mode": "materialize_changes",
+                "tool_contract": {"single_batch": True, "required_tools": ["repo_rg"]},
+            },
+        )
+        fingerprint = _MockFingerprint()
+        mock_execute = AsyncMock(
+            return_value={
+                "turn_id": "turn_abc",
+                "kind": "final_answer",
+                "visible_content": "ok",
+                "metrics": {"duration_ms": 100, "llm_calls": 1, "tool_calls": 0},
+            }
+        )
+        context_gateway = MagicMock(
+            build_context=AsyncMock(
+                return_value=SimpleNamespace(
+                    messages=[{"role": "user", "content": request.message}],
+                    token_estimate=37,
+                    metadata={},
+                )
+            ),
+            record_projection_outcome=MagicMock(return_value={"route_weight": 0.31}),
+        )
+        full_tool_definitions = [
+            {"type": "function", "function": {"name": "read_file"}},
+            {"type": "function", "function": {"name": "repo_rg"}},
+            {"type": "function", "function": {"name": "write_file"}},
+            {"type": "function", "function": {"name": "edit_file"}},
+            {"type": "function", "function": {"name": "execute_command"}},
+        ]
+
+        with (
+            patch.object(kernel, "_create_transaction_kernel", return_value=MagicMock(execute=mock_execute)),
+            patch(
+                "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+                return_value=context_gateway,
+            ),
+            patch(
+                "polaris.cells.roles.kernel.internal.llm_caller.tool_helpers.build_native_tool_schemas",
+                return_value=full_tool_definitions,
+            ),
+        ):
+            result = await kernel._execute_transaction_kernel_turn(
+                role="director",
+                profile=profile,
+                request=request,
+                system_prompt="You are a Director",
+                fingerprint=fingerprint,
+                observer_run_id="run_123",
+                response_schema=None,
+            )
+
+        mock_execute.assert_not_awaited()
+        context_gateway.record_projection_outcome.assert_called_once_with(success=False, tokens_used=37)
+        assert result.is_complete is False
+        assert result.error is not None
+        assert "Tool schema filter conflict" in result.error
+        assert result.execution_stats["tool_filter_blocked"] is True
+        tool_filter_audit = result.metadata["tool_filter_audit"]
+        assert tool_filter_audit["status"] == "conflict"
+        assert tool_filter_audit["prompt_required_tool_names"] == ["repo_rg"]
+        assert tool_filter_audit["removed_prompt_required_tool_names"] == ["repo_rg"]
 
     @pytest.mark.asyncio
     async def test_execute_transaction_kernel_turn_returns_role_turn_result(self) -> None:

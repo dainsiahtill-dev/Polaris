@@ -22,6 +22,8 @@ from polaris.cells.audit.evidence.public.service import (
     create_evidence_bundle_service,
     detect_language,
     get_audit_role_descriptor,
+    query_evidence_events,
+    verify_evidence_chain,
 )
 
 __all__ = [
@@ -44,4 +46,6 @@ __all__ = [
     "create_evidence_bundle_service",
     "detect_language",
     "get_audit_role_descriptor",
+    "query_evidence_events",
+    "verify_evidence_chain",
 ]

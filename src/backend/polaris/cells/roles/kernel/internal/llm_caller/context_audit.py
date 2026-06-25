@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -18,6 +19,18 @@ def _json_chars(value: Any) -> int:
         return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
     except (TypeError, ValueError):
         return len(str(value))
+
+
+def _json_canonical(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _stable_digest(value: Any) -> str:
+    payload = _json_canonical(value).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:24]
 
 
 def _estimate_tokens_from_chars(char_count: int) -> int:
@@ -91,7 +104,96 @@ def _context_window_tokens(prepared: PreparedLLMRequest, profile: Any) -> int:
     return 0
 
 
-def _coverage_flags(text: str) -> dict[str, bool]:
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _bool_value(value: Any, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if normalized in {"0", "false", "no", "off", "disabled"}:
+            return False
+    return default
+
+
+def _resident_agi_audit_context(ai_request: Any) -> dict[str, Any]:
+    context_payload = _request_context(ai_request)
+    raw_context = context_payload.get("resident_agi_audit_context")
+    return dict(raw_context) if isinstance(raw_context, dict) else {}
+
+
+def _resident_agi_coverage_flags(text: str, ai_request: Any | None) -> dict[str, bool]:
+    lowered = text.lower()
+    audit_context = _resident_agi_audit_context(ai_request) if ai_request is not None else {}
+    participation = _mapping(audit_context.get("participation"))
+    enabled = _bool_value(audit_context.get("enabled"), default=bool(audit_context))
+    final_request_participation = _bool_value(
+        participation.get("final_request_audit"),
+        default=enabled,
+    )
+    if not enabled or not final_request_participation:
+        return {}
+    text_flags = {
+        "has_resident_agi_decision_trace": any(
+            needle in lowered
+            for needle in (
+                "resident_agi_decision_trace",
+                "resident agi 决策交接",
+                "resident agi decision",
+                "resident.agi_decision_trace_signal.v1",
+                "resident.decision_event.v1",
+                "source_of_truth: workspace/meta/resident/decision_trace.jsonl",
+                "workspace/meta/resident/decision_trace.jsonl",
+            )
+        ),
+        "has_resident_agi_capability_surface": any(
+            needle in lowered
+            for needle in (
+                "resident_agi_capability_surface",
+                "resident agi 能力面",
+                "resident.agi_capability_surface.v1",
+                "runtime_foundation: roles.runtime + contextos + turnengine",
+                "embedded_agi_supervisor",
+            )
+        ),
+        "has_resident_agi_decision_boundary": any(
+            needle in lowered
+            for needle in (
+                "resident.agi_decision_boundary.v1",
+                "decision_boundary_schema",
+                "decision_boundaries",
+                "platform_hard_rule",
+                "agi_decision_scope",
+                "agi_governed_execution",
+                "agi_recommendation",
+            )
+        ),
+    }
+    return {
+        "has_resident_agi_decision_trace": bool(
+            text_flags["has_resident_agi_decision_trace"]
+            or audit_context.get("decision_contract_schema_version")
+            or audit_context.get("audit_pack_schema_version")
+            or audit_context.get("role_runtime_required")
+        ),
+        "has_resident_agi_capability_surface": bool(
+            text_flags["has_resident_agi_capability_surface"]
+            or audit_context.get("capability_surface_schema_version")
+            or audit_context.get("decision_capability_registry_schema_version")
+        ),
+        "has_resident_agi_decision_boundary": bool(
+            text_flags["has_resident_agi_decision_boundary"]
+            or audit_context.get("decision_boundary_schema")
+            or int(audit_context.get("decision_boundary_count") or 0) > 0
+        ),
+    }
+
+
+def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bool]:
     lowered = text.lower()
     blueprint_absent = any(
         marker in lowered
@@ -133,7 +235,7 @@ def _coverage_flags(text: str) -> dict[str, bool]:
             )
         )
     )
-    return {
+    coverage = {
         "has_pm_contract": any(
             needle in lowered
             for needle in (
@@ -182,41 +284,9 @@ def _coverage_flags(text: str) -> dict[str, bool]:
                 "real_run_gate",
             )
         ),
-        "has_resident_agi_decision_trace": any(
-            needle in lowered
-            for needle in (
-                "resident_agi_decision_trace",
-                "resident agi 决策交接",
-                "resident agi decision",
-                "resident.agi_decision_trace_signal.v1",
-                "resident.decision_event.v1",
-                "source_of_truth: workspace/meta/resident/decision_trace.jsonl",
-                "workspace/meta/resident/decision_trace.jsonl",
-            )
-        ),
-        "has_resident_agi_capability_surface": any(
-            needle in lowered
-            for needle in (
-                "resident_agi_capability_surface",
-                "resident agi 能力面",
-                "resident.agi_capability_surface.v1",
-                "runtime_foundation: roles.runtime + contextos + turnengine",
-                "embedded_agi_supervisor",
-            )
-        ),
-        "has_resident_agi_decision_boundary": any(
-            needle in lowered
-            for needle in (
-                "resident.agi_decision_boundary.v1",
-                "decision_boundary_schema",
-                "decision_boundaries",
-                "platform_hard_rule",
-                "agi_decision_scope",
-                "agi_governed_execution",
-                "agi_recommendation",
-            )
-        ),
     }
+    coverage.update(_resident_agi_coverage_flags(text, ai_request))
+    return coverage
 
 
 def _context_quality_findings(
@@ -277,19 +347,126 @@ def _request_options(ai_request: Any, prepared: PreparedLLMRequest) -> dict[str,
     return dict(raw_prepared_options) if isinstance(raw_prepared_options, dict) else {}
 
 
+def _task_type_value(ai_request: Any) -> str:
+    raw = getattr(ai_request, "task_type", "")
+    value = getattr(raw, "value", raw)
+    return str(value or "").strip()
+
+
+def _request_context(ai_request: Any) -> dict[str, Any]:
+    ctx = getattr(ai_request, "context", None)
+    return ctx if isinstance(ctx, dict) else {}
+
+
+def _execution_profile(ai_request: Any) -> dict[str, Any]:
+    context_payload = _request_context(ai_request)
+    for key in (
+        "director_execution_profile",
+        "task_execution_profile",
+        "execution_profile",
+        "task_runtime_metadata",
+    ):
+        raw_profile = context_payload.get(key)
+        if isinstance(raw_profile, dict):
+            return dict(raw_profile)
+    return {}
+
+
+_EXECUTION_PROFILE_SUMMARY_KEYS = (
+    "schema_version",
+    "source",
+    "dispatch_type",
+    "task_type",
+    "phase",
+    "project_type",
+    "artifact_type",
+    "language",
+    "language_version",
+    "runtime",
+    "framework",
+    "file_role",
+    "task_focus",
+    "sampling_mode",
+    "temperature_phase",
+    "temperature_source",
+    "output_contract_id",
+)
+
+
+def _execution_profile_summary(ai_request: Any) -> dict[str, Any]:
+    profile = _execution_profile(ai_request)
+    if not profile:
+        return {}
+    summary: dict[str, Any] = {
+        key: str(profile.get(key) or "").strip()
+        for key in _EXECUTION_PROFILE_SUMMARY_KEYS
+        if str(profile.get(key) or "").strip()
+    }
+    for key in ("target_files", "quality_gates", "selected_libraries", "architecture_decisions"):
+        value = profile.get(key)
+        if isinstance(value, list):
+            summary[f"{key}_count"] = len(value)
+    return summary
+
+
+def _task_metadata(ai_request: Any) -> dict[str, Any]:
+    context_payload = _request_context(ai_request)
+    for key in ("task_metadata", "canonical_metadata", "metadata"):
+        raw_metadata = context_payload.get(key)
+        if isinstance(raw_metadata, dict):
+            return dict(raw_metadata)
+    return {}
+
+
+def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> dict[str, Any]:
+    context_payload = _request_context(ai_request)
+    options = _request_options(ai_request, prepared)
+    execution_profile = _execution_profile(ai_request)
+    execution_profile_summary = _execution_profile_summary(ai_request)
+    task_metadata = _task_metadata(ai_request)
+    summary: dict[str, Any] = {
+        "schema_version": "llm.request_metadata_summary.v1",
+        "task_type": _task_type_value(ai_request),
+        "role": _non_empty_attr(ai_request, name="role"),
+        "mode": str(context_payload.get("mode") or "").strip(),
+        "native_tool_mode": str(context_payload.get("native_tool_mode") or "").strip(),
+        "response_format_mode": str(context_payload.get("response_format_mode") or "").strip(),
+        "context_keys": sorted(str(key) for key in context_payload),
+        "option_keys": sorted(str(key) for key in options),
+        "temperature": options.get("temperature") if isinstance(options.get("temperature"), (int, float)) else None,
+        "max_tokens": options.get("max_tokens") if isinstance(options.get("max_tokens"), int) else None,
+        "has_execution_profile": bool(execution_profile),
+        "execution_profile_summary": execution_profile_summary,
+        "execution_profile_hash": _stable_digest(execution_profile) if execution_profile else "",
+        "has_task_metadata": bool(task_metadata),
+        "task_metadata_keys": sorted(str(key) for key in task_metadata),
+        "task_metadata_hash": _stable_digest(task_metadata) if task_metadata else "",
+    }
+    summary["has_language_guidance"] = bool(
+        execution_profile_summary.get("language")
+        or execution_profile_summary.get("framework")
+        or execution_profile_summary.get("runtime")
+    )
+    summary["has_output_contract"] = bool(
+        execution_profile_summary.get("output_contract_id")
+        or context_payload.get("response_format_mode")
+        or options.get("response_format")
+    )
+    return summary
+
+
 def _request_sampling_audit(ai_request: Any, prepared: PreparedLLMRequest) -> dict[str, Any]:
     options = _request_options(ai_request, prepared)
-    ctx = getattr(ai_request, "context", None)
-    context_payload = ctx if isinstance(ctx, dict) else {}
-    raw_profile = context_payload.get("director_execution_profile")
-    profile = raw_profile if isinstance(raw_profile, dict) else {}
+    profile = _execution_profile(ai_request)
     temperature = options.get("temperature")
+    max_tokens = options.get("max_tokens")
     return {
         "temperature": temperature if isinstance(temperature, (int, float)) else None,
+        "max_tokens": max_tokens if isinstance(max_tokens, int) else None,
         "temperature_source": str(profile.get("temperature_source") or "request_options"),
         "temperature_phase": str(profile.get("temperature_phase") or ""),
         "sampling_mode": str(profile.get("sampling_mode") or ""),
-        "task_type": str(profile.get("task_type") or ""),
+        "task_type": str(profile.get("task_type") or _task_type_value(ai_request)),
         "phase": str(profile.get("phase") or ""),
         "execution_profile_schema": str(profile.get("schema_version") or ""),
         "execution_profile_source": str(profile.get("source") or ""),
@@ -379,6 +556,7 @@ def build_final_provider_request_snapshot(
     tools = tool_schema_payload if isinstance(tool_schema_payload, list) else []
     messages = _request_messages(ai_request, [dict(item) for item in prepared.messages if isinstance(item, dict)])
     prompt_profile_selection = _prompt_profile_selection(ai_request)
+    request_metadata_summary = _request_metadata_summary(ai_request, prepared)
     return {
         "schema_version": "llm.provider_request_snapshot.v1",
         "source": "roles.kernel.llm_caller.context_audit",
@@ -391,6 +569,9 @@ def build_final_provider_request_snapshot(
         "tools": [_summarize_tool_schema(tool) for tool in tools],
         "tool_choice": _json_safe(tool_choice_payload),
         "response_format": _summarize_response_format(response_format_payload),
+        "sampling": _request_sampling_audit(ai_request, prepared),
+        "request_metadata_summary": request_metadata_summary,
+        "task_type": request_metadata_summary.get("task_type", ""),
         "prompt_profile_selection": prompt_profile_selection,
         "selected_prompt_profile_ids": prompt_profile_selection.get("selected_prompt_profile_ids", []),
         "final_request_context_audit": build_final_request_context_audit_for_request(
@@ -451,6 +632,8 @@ def build_final_request_context_audit_for_request(
     coverage = _coverage_flags(message_text)
     prompt_profile_selection = _prompt_profile_selection(ai_request)
     sampling = _request_sampling_audit(ai_request, prepared)
+    request_metadata_summary = _request_metadata_summary(ai_request, prepared)
+    execution_profile_summary = request_metadata_summary.get("execution_profile_summary", {})
     quality = _context_quality_findings(
         coverage=coverage,
         context_underutilized=context_underutilized,
@@ -476,6 +659,13 @@ def build_final_request_context_audit_for_request(
         "coverage": coverage,
         "context_quality": quality,
         "sampling": sampling,
+        "request_metadata_summary": request_metadata_summary,
+        "execution_profile_summary": execution_profile_summary if isinstance(execution_profile_summary, dict) else {},
+        "execution_profile_hash": request_metadata_summary.get("execution_profile_hash", ""),
+        "task_metadata_hash": request_metadata_summary.get("task_metadata_hash", ""),
+        "has_execution_profile": bool(request_metadata_summary.get("has_execution_profile")),
+        "has_language_guidance": bool(request_metadata_summary.get("has_language_guidance")),
+        "has_output_contract": bool(request_metadata_summary.get("has_output_contract")),
         "prompt_profile_selection": prompt_profile_selection,
         "selected_prompt_profile_ids": prompt_profile_selection.get("selected_prompt_profile_ids", []),
     }

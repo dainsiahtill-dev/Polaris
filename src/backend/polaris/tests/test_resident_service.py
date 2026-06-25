@@ -6,6 +6,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from polaris.cells.audit.evidence.public import QueryEvidenceEventsV1, query_evidence_events
+from polaris.cells.control_plane.run_ledger.public import (
+    ReadRunLedgerProjectionQueryV1,
+    read_run_ledger_projection,
+)
 from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import CommandResult
 from polaris.cells.resident.autonomy.internal.resident_runtime_service import (
     get_resident_service,
@@ -764,6 +769,26 @@ async def test_resident_agi_decision_turn_public_command_uses_role_runtime_contr
     assert result["runtime_contract_gate"]["status"] == "pass"
     assert result["output_contract_gate"]["status"] == "pass"
     assert result["decision_preflight"]["status"] == "pass"
+    control_plane_gate = result["control_plane_gate"]
+    assert control_plane_gate["schema_version"] == "resident.agi_control_gate_receipt.v1"
+    assert control_plane_gate["policy_decision"] == "request_evidence"
+    assert control_plane_gate["gate_ok"] is False
+    assert control_plane_gate["evidence_receipt_path"] == "runtime/evidence/resident_agi.decision_gate.jsonl"
+    ledger_projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=str(workspace),
+            run_id=control_plane_gate["run_id"],
+        )
+    ).projection
+    assert ledger_projection["available"] is True
+    assert ledger_projection["projected"] == 1
+    resident_project = ledger_projection["projects"][0]
+    assert resident_project["gate_count"] == 1
+    assert resident_project["failed_gate_count"] == 1
+    assert resident_project["ok"] is False
+    evidence_query = query_evidence_events(QueryEvidenceEventsV1(limit=10), workspace=str(workspace))
+    assert evidence_query.total == 1
+    assert evidence_query.events[0]["kind"] == "resident_agi.decision_gate"
     assert result["selected_decision_capability"]["decision_id"] == "evidence.interface.selection"
     assert "contextos.final_request_audit.read" in result["required_evidence_interfaces"]
     assert "verifier.execution.execute" in result["optional_evidence_interfaces"]

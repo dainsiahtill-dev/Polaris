@@ -2849,6 +2849,60 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
             "approved_by": "director_adapter",
         }
 
+    def test_director_execution_profile_is_added_to_runtime_context_and_metadata(self, tmp_path: Any) -> None:
+        context = {
+            "task_id": "TASK-1",
+            "run_id": "RUN-1",
+            "target_files": ["src/App.tsx"],
+            "metadata": {
+                "description": "Implement a React TypeScript UI component.",
+                "task_type": "implement",
+            },
+        }
+        metadata = DirectorAdapter._build_role_runtime_metadata(context, max_retries=1)
+
+        profile = DirectorAdapter._ensure_director_execution_profile(
+            message="Implement src/App.tsx",
+            context=context,
+            metadata=metadata,
+            workspace=str(tmp_path),
+        )
+
+        assert profile["schema_version"] == "task.execution_profile.v1"
+        assert profile["task_type"] == "write_code"
+        assert profile["language"] == "typescript"
+        assert profile["framework"] == "react"
+        assert profile["target_files"] == ["src/App.tsx"]
+        assert metadata["director_execution_profile"] == profile
+        assert metadata["task_execution_profile"] == profile
+        assert context["director_execution_profile"] == profile
+        assert context["task_execution_profile"] == profile
+
+    def test_existing_director_execution_profile_is_preserved(self, tmp_path: Any) -> None:
+        existing_profile = {
+            "schema_version": "task.execution_profile.v1",
+            "source": "test",
+            "task_type": "review",
+            "language": "python",
+        }
+        context = {
+            "metadata": {
+                "director_execution_profile": existing_profile,
+            },
+        }
+        metadata = DirectorAdapter._build_role_runtime_metadata(context, max_retries=1)
+
+        profile = DirectorAdapter._ensure_director_execution_profile(
+            message="Implement src/App.tsx",
+            context=context,
+            metadata=metadata,
+            workspace=str(tmp_path),
+        )
+
+        assert profile == existing_profile
+        assert metadata["director_execution_profile"] == existing_profile
+        assert context["director_execution_profile"] == existing_profile
+
     @pytest.mark.asyncio
     async def test_role_runtime_session_promotes_metadata_tool_receipts(
         self,
@@ -2880,6 +2934,11 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
             async def execute_role_session(self, command: ExecuteRoleSessionCommandV1) -> RoleExecutionResultV1:
                 assert command.role == "director"
                 assert command.stream is False
+                profile = command.metadata["director_execution_profile"]
+                assert profile["schema_version"] == "task.execution_profile.v1"
+                assert profile["task_type"] == "write_code"
+                assert command.context["director_execution_profile"] == profile
+                assert command.metadata["task_execution_profile"] == profile
                 return RoleExecutionResultV1(
                     ok=True,
                     status="ok",
@@ -2900,7 +2959,12 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
 
         result = await adapter._invoke_role_runtime_session(
             "write src/app.ts",
-            context={"task_id": "TASK-1", "run_id": "RUN-1"},
+            context={
+                "task_id": "TASK-1",
+                "run_id": "RUN-1",
+                "target_files": ["src/app.ts"],
+                "metadata": {"task_type": "implement"},
+            },
             max_retries=1,
         )
 

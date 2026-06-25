@@ -127,6 +127,9 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     payload = response.json()
     assert payload["ok"] is True
     assert payload["decision"]["verdict"] == "request_evidence"
+    assert payload["control_plane_gate"]["schema_version"] == "resident.agi_control_gate_receipt.v1"
+    assert payload["control_plane_gate"]["policy_decision"] == "request_evidence"
+    assert payload["control_plane_gate"]["gate_ok"] is False
     assert payload["recorded_decision"]["actor"] == "resident_agi"
     assert payload["recorded_decision"]["verdict"] == "blocked"
     assert payload["recorded_decision"]["actual_outcome"]["agi_verdict"] == "request_evidence"

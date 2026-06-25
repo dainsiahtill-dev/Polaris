@@ -82,7 +82,9 @@ def test_current_backend_instance_cannot_stop_restart_or_delete_itself(
         )
     )
     terminated: list[int] = []
-    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: terminated.append(int(pid or 0))))
+    monkeypatch.setattr(
+        InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: terminated.append(int(pid or 0)))
+    )
 
     for operation in (
         lambda: supervisor.stop_instance(record.instance_id),
@@ -481,6 +483,63 @@ def test_start_instance_auto_ports_skip_registered_running_instances(
     assert calls[0]["command"][calls[0]["command"].index("--port") + 1] == str(
         instance_service.DEFAULT_BACKEND_PORT + 2
     )
+
+
+def test_start_instance_retries_auto_backend_port_identity_mismatch(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    calls: list[dict[str, Any]] = []
+
+    class FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+        calls.append({"command": command, **kwargs})
+        return FakeProcess(73000 + len(calls))
+
+    def fake_allocate_port(start: int, *, excluded_ports: set[int] | None = None) -> int:
+        excluded = excluded_ports or set()
+        if start == instance_service.DEFAULT_BACKEND_PORT + 1:
+            return 60023 if 60021 in excluded else 60021
+        if start == instance_service.DEFAULT_FRONTEND_PORT + 1:
+            return 60024 if 60022 in excluded else 60022
+        raise AssertionError(f"unexpected allocation start: {start}")
+
+    def fake_wait_for_backend_identity(_self: InstanceSupervisor, record: InstanceRecord) -> None:
+        if record.backend_port == 60021:
+            raise RuntimeError(
+                f"backend identity mismatch: port 60021 serves workspace /tmp/other, expected {record.workspace}"
+            )
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(instance_service, "allocate_port", fake_allocate_port)
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_backend_identity", fake_wait_for_backend_identity)
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
+
+    record = InstanceSupervisor(InstanceRegistry(tmp_path / "instances", publish_events=False)).start_instance(
+        {
+            "instance_id": "retry-auto-port",
+            "kind": "bench_project",
+            "polaris_root": str(root),
+            "workspace": str(tmp_path / "bench" / "L1-08"),
+            "backend_port": None,
+            "frontend_port": None,
+            "start_frontend": False,
+        }
+    )
+
+    backend_ports = [
+        call["command"][call["command"].index("--port") + 1]
+        for call in calls
+        if call["command"][:3] == [instance_service.sys.executable, "-m", "polaris.delivery.cli.backend"]
+    ]
+    assert backend_ports == ["60021", "60023"]
+    assert record["backend_port"] == 60023
+    assert record["status"] == "running"
 
 
 def test_start_instance_rejects_explicit_registered_backend_port(

@@ -109,6 +109,36 @@ def _coerce_requested_port(value: Any) -> int | None:
     return port if port > 0 else None
 
 
+def _coerce_excluded_ports(value: Any) -> set[int]:
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return set()
+    ports: set[int] = set()
+    for item in value:
+        port = _coerce_requested_port(item)
+        if port is not None:
+            ports.add(port)
+    return ports
+
+
+def _request_uses_auto_port(requested_port: Any, *, reserved_max: int) -> bool:
+    port = _coerce_requested_port(requested_port)
+    return port is None or port <= reserved_max
+
+
+def _is_retryable_auto_port_start_error(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "backend identity mismatch",
+            "backend identity check timed out",
+            "backend process exited before identity check",
+            "address already in use",
+            "port is already in use",
+        )
+    )
+
+
 def _choose_instance_port(
     requested_port: Any,
     *,
@@ -350,35 +380,69 @@ class InstanceSupervisor:
         return [item.to_dict() for item in changed]
 
     def start_instance(self, request: dict[str, Any]) -> dict[str, Any]:
-        record = self._build_record(request)
-        existing = self.registry.get(record.instance_id)
-        if existing and is_process_alive(existing.backend_pid):
-            if self._record_matches_start_request(existing, record):
-                return self._with_health(existing, probe_http=True).to_dict()
-            self._terminate_record_processes_for_replacement(existing)
-            self._wait_for_record_ports_free(existing)
-            existing.frontend_pid = None
-            existing.backend_pid = None
-            existing.status = "stopped"
-            existing.last_stopped_at = utc_timestamp()
-            self.registry.save(existing)
+        kind = str(request.get("kind") or "project")
+        is_bench_project = kind == "bench_project"
+        backend_reserved_max = DEFAULT_BACKEND_PORT if is_bench_project else 0
+        frontend_reserved_max = DEFAULT_FRONTEND_PORT if is_bench_project else 0
+        auto_backend_port = _request_uses_auto_port(request.get("backend_port"), reserved_max=backend_reserved_max)
+        auto_frontend_port = _request_uses_auto_port(request.get("frontend_port"), reserved_max=frontend_reserved_max)
+        max_attempts = 3 if auto_backend_port else 1
+        excluded_backend_ports: set[int] = set()
+        excluded_frontend_ports: set[int] = set()
+        last_error: BaseException | None = None
 
-        instance_dir = self._instance_dir(record.instance_id)
-        log_dir = ensure_absolute_dir(instance_dir / "logs")
-        try:
-            backend_pid = self._start_backend(record, log_dir / "backend.log")
-            record.backend_pid = backend_pid
-            self._wait_for_backend_identity(record)
-            if record.start_frontend:
-                record.frontend_pid = self._start_frontend(record, log_dir / "frontend.log")
-        except Exception:
-            self._terminate_pid(record.frontend_pid)
-            self._terminate_pid(record.backend_pid)
-            raise
-        record.status = "running"
-        record.last_started_at = utc_timestamp()
-        self.registry.save(record)
-        return self._with_health(record, probe_http=True).to_dict()
+        for attempt in range(max_attempts):
+            request_for_attempt = dict(request)
+            if excluded_backend_ports:
+                request_for_attempt["_excluded_backend_ports"] = sorted(excluded_backend_ports)
+            if excluded_frontend_ports:
+                request_for_attempt["_excluded_frontend_ports"] = sorted(excluded_frontend_ports)
+            record = self._build_record(request_for_attempt)
+            existing = self.registry.get(record.instance_id)
+            if existing and is_process_alive(existing.backend_pid):
+                if self._record_matches_start_request(existing, record):
+                    return self._with_health(existing, probe_http=True).to_dict()
+                self._terminate_record_processes_for_replacement(existing)
+                self._wait_for_record_ports_free(existing)
+                existing.frontend_pid = None
+                existing.backend_pid = None
+                existing.status = "stopped"
+                existing.last_stopped_at = utc_timestamp()
+                self.registry.save(existing)
+
+            instance_dir = self._instance_dir(record.instance_id)
+            log_dir = ensure_absolute_dir(instance_dir / "logs")
+            try:
+                backend_pid = self._start_backend(record, log_dir / "backend.log")
+                record.backend_pid = backend_pid
+                self._wait_for_backend_identity(record)
+                if record.start_frontend:
+                    record.frontend_pid = self._start_frontend(record, log_dir / "frontend.log")
+            except Exception as exc:
+                self._terminate_pid(record.frontend_pid)
+                self._terminate_pid(record.backend_pid)
+                last_error = exc
+                if record.backend_port:
+                    excluded_backend_ports.add(int(record.backend_port))
+                if auto_frontend_port and record.frontend_port:
+                    excluded_frontend_ports.add(int(record.frontend_port))
+                if attempt + 1 >= max_attempts or not _is_retryable_auto_port_start_error(exc):
+                    raise
+                logger.warning(
+                    "instance auto-port start retry: instance=%s backend_port=%s frontend_port=%s error=%s",
+                    record.instance_id,
+                    record.backend_port,
+                    record.frontend_port,
+                    exc,
+                )
+                continue
+            record.status = "running"
+            record.last_started_at = utc_timestamp()
+            self.registry.save(record)
+            return self._with_health(record, probe_http=True).to_dict()
+        if last_error is not None:
+            raise RuntimeError(str(last_error)) from last_error
+        raise RuntimeError("instance start failed")
 
     @staticmethod
     def _record_matches_start_request(existing: InstanceRecord, requested: InstanceRecord) -> bool:
@@ -493,8 +557,12 @@ class InstanceSupervisor:
         requested_backend_port = request.get("backend_port")
         requested_frontend_port = request.get("frontend_port")
         is_bench_project = kind == "bench_project"
-        excluded_backend_ports = self._registered_ports(instance_id, port_kind="backend")
-        excluded_frontend_ports = self._registered_ports(instance_id, port_kind="frontend")
+        excluded_backend_ports = self._registered_ports(instance_id, port_kind="backend") | _coerce_excluded_ports(
+            request.get("_excluded_backend_ports")
+        )
+        excluded_frontend_ports = self._registered_ports(instance_id, port_kind="frontend") | _coerce_excluded_ports(
+            request.get("_excluded_frontend_ports")
+        )
         backend_port_start = DEFAULT_BACKEND_PORT + 1 if is_bench_project else DEFAULT_BACKEND_PORT
         frontend_port_start = DEFAULT_FRONTEND_PORT + 1 if is_bench_project else DEFAULT_FRONTEND_PORT
         backend_port, backend_requested = _choose_instance_port(
@@ -511,8 +579,10 @@ class InstanceSupervisor:
         )
         if backend_requested and (backend_port in excluded_backend_ports or not is_port_free(backend_port)):
             raise RuntimeError(f"backend port is already in use: {backend_port}")
-        if request.get("start_frontend", True) and frontend_requested and (
-            frontend_port in excluded_frontend_ports or not is_port_free(frontend_port)
+        if (
+            request.get("start_frontend", True)
+            and frontend_requested
+            and (frontend_port in excluded_frontend_ports or not is_port_free(frontend_port))
         ):
             raise RuntimeError(f"frontend port is already in use: {frontend_port}")
         token = str(request.get("token") or f"polaris-{secrets.token_urlsafe(18)}")

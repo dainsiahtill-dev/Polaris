@@ -384,6 +384,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "tests/verify.test.ts",
                     "README.md",
                 ]
+                delivery_targets = [*visual_targets, *validation_targets]
                 root_contracts = [
                     {
                         "id": "TASK-1",
@@ -418,19 +419,23 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     },
                     {
                         "id": "TASK-2",
-                        "title": f"实现 {domain_label} 模拟流程与 Web 入口",
-                        "goal": f"实现 {domain_label} 的需求流程、状态更新和可打开的浏览器入口。",
+                        "title": f"实现 {domain_label} 模拟流程、Web 入口与验证资产",
+                        "goal": f"实现 {domain_label} 的需求流程、浏览器入口、自动验证与运行说明。",
                         "description": (
-                            f"补齐 src/engine/simulation、src/engine/renderer 和 index.html，让页面与源码共同体现需求关键词：{keyword_summary}。"
+                            "补齐 src/engine/simulation、src/engine/renderer、index.html、"
+                            f"src/verify.ts、测试与 README，让页面、源码和验收脚本共同体现需求关键词：{keyword_summary}。"
                         ),
-                        "scope": visual_targets,
-                        "target_files": visual_targets,
+                        "scope": delivery_targets,
+                        "target_files": delivery_targets,
                         "steps": [
                             "实现 src/engine/simulation.ts 的状态更新或计算流程",
                             "实现 src/engine/renderer.ts，将核心状态渲染为浏览器可见内容",
                             "实现 src/web.ts 或等价浏览器 bootstrap，在 DOM 可用后初始化引擎并绘制首帧",
                             "创建 index.html，包含有效 <html>、HTML5 canvas 与可视化容器",
                             'index.html 不得把 Node-only CLI 入口直接作为 <script type="module"> 引入；必须引用浏览器入口或内联浏览器 bootstrap',
+                            f"实现 src/verify.ts 与 tests/verify.test.ts，覆盖确定性检查：{check_summary}",
+                            "更新 package.json 的 test 脚本，使其运行真实验证而非占位输出",
+                            "编写 README，说明 npm install/build/test/start 与浏览器运行方式",
                             f"在页面或源码中保留验收关键词：{keyword_summary}",
                         ],
                         "acceptance": [
@@ -440,36 +445,13 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                             "HTML 入口引用的脚本/资源在 build 后真实存在并能被浏览器加载",
                             f"源码或页面包含需求关键词：{keyword_summary}",
                             "`npm run build` 通过且浏览器入口引用真实构建产物",
-                        ],
-                        "phase": "implementation",
-                        "depends_on": ["TASK-1"],
-                        "assigned_to": "Director",
-                        "metadata": dict(source_metadata),
-                    },
-                    {
-                        "id": "TASK-3",
-                        "title": f"实现 {domain_label} 验证脚本与 README",
-                        "goal": f"固化 {domain_label} 的自动验收脚本、README 和可复现交付证据。",
-                        "description": (
-                            "实现 src/verify.ts 与 tests/verify.test.ts，验证 TypeScript、"
-                            f"package 脚本、入口文件和 bench 检查：{check_summary}。"
-                        ),
-                        "scope": validation_targets,
-                        "target_files": validation_targets,
-                        "steps": [
-                            f"实现 verify.ts，检查构建产物、入口文件、关键词和确定性检查：{check_summary}",
-                            "实现 tests/verify.test.ts 或等价测试，覆盖核心需求规则",
-                            "更新 package.json 的 test 脚本，使其运行真实验证而非占位输出",
-                            "编写 README，说明 npm install/build/test/start 与浏览器运行方式",
-                        ],
-                        "acceptance": [
                             "`npm run test` 执行真实验证并返回 PASS",
                             f"验证脚本覆盖确定性检查：{check_summary}",
                             "`README.md` 包含安装、构建、测试、启动和浏览器查看步骤",
                             "交付物包含 TypeScript 源码、package.json、index.html、测试与 README",
                         ],
-                        "phase": "verification",
-                        "depends_on": ["TASK-2"],
+                        "phase": "implementation",
+                        "depends_on": ["TASK-1"],
                         "assigned_to": "Director",
                         "metadata": dict(source_metadata),
                     },
