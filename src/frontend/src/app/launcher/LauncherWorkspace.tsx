@@ -62,6 +62,12 @@ export function launcherInstanceStatusTone(instance: PolarisInstance): 'success'
   return 'default';
 }
 
+export function isLauncherInstanceStoppable(instance: PolarisInstance): boolean {
+  if (instance.status === 'stopped') return false;
+  if (instance.status === 'running' || instance.status === 'observed') return true;
+  return Boolean(instance.backend_alive || instance.frontend_alive || instance.backend_pid || instance.frontend_pid);
+}
+
 function usesSharedBackendBinding(instance: PolarisInstance): boolean {
   return String(instance.metadata?.backend_binding || '') === 'shared_backend_workspace_switch';
 }
@@ -417,14 +423,34 @@ export function LauncherWorkspace() {
               </div>
             ) : instances.map((instance) => {
               const isCurrentControl = isCurrentControlInstance(instance);
+              const stoppingActionId = `stop:${instance.instance_id}`;
+              const restartingActionId = `restart:${instance.instance_id}`;
+              const deletingActionId = `delete:${instance.instance_id}`;
+              const isStopping = actionId === stoppingActionId;
+              const isRestarting = actionId === restartingActionId;
+              const isDeleting = actionId === deletingActionId;
+              const canStop = isLauncherInstanceStoppable(instance);
+              const stopDisabled = Boolean(actionId) || isCurrentControl || !canStop;
+              const stopTitle = isCurrentControl
+                ? '当前控制后端不能自我停止'
+                : canStop
+                  ? '停止该 Polaris 实例'
+                  : '实例已停止，停止操作不可用';
+              const statusLabel = isStopping ? 'stopping...' : instance.status;
+              const statusTone = isStopping ? 'warning' : launcherInstanceStatusTone(instance);
               return (
               <article key={instance.instance_id} className="rounded-lg border border-cyan-300/10 bg-slate-950/80 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <h3 className="truncate text-sm font-semibold text-slate-100">{instance.name}</h3>
-                      <StatusBadge color={launcherInstanceStatusTone(instance)} variant="dot" pulse={instance.status === 'running'}>
-                        {instance.status}
+                      <StatusBadge
+                        color={statusTone}
+                        variant="dot"
+                        pulse={instance.status === 'running' || isStopping}
+                        data-testid={`launcher-instance-status-${instance.instance_id}`}
+                      >
+                        {statusLabel}
                       </StatusBadge>
                     </div>
                     <p className="mt-1 truncate text-[11px] uppercase text-slate-500" title={instance.workspace}>
@@ -457,19 +483,22 @@ export function LauncherWorkspace() {
                     onClick={() => void runAction(instance, 'restart')}
                     disabled={Boolean(actionId) || isCurrentControl}
                     title={isCurrentControl ? '当前控制后端不能自我重启' : undefined}
+                    aria-label={`${restartActionLabel(instance)}实例 ${instance.instance_id}`}
                   >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    {restartActionLabel(instance)}
+                    {isRestarting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                    {isRestarting ? '正在重启...' : restartActionLabel(instance)}
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => void runAction(instance, 'stop')}
-                    disabled={Boolean(actionId) || isCurrentControl}
-                    title={isCurrentControl ? '当前控制后端不能自我停止' : undefined}
+                    disabled={stopDisabled}
+                    title={stopTitle}
+                    aria-label={`停止实例 ${instance.instance_id}`}
+                    data-testid={`launcher-instance-stop-${instance.instance_id}`}
                   >
-                    <Square className="h-3.5 w-3.5" />
-                    停止
+                    {isStopping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
+                    {isStopping ? '正在停止中...' : '停止'}
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => void runAction(instance, 'backend-logs')}>
                     <TerminalSquare className="h-3.5 w-3.5" />
@@ -487,7 +516,7 @@ export function LauncherWorkspace() {
                     title={isCurrentControl ? '当前控制后端不能删除自身记录' : '删除实例记录'}
                     aria-label={`删除实例 ${instance.instance_id}`}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                   </Button>
                 </div>
               </article>

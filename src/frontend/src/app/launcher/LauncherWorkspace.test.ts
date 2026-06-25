@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -34,6 +34,7 @@ import {
   isCurrentControlInstance,
   isLauncherBackendOpenable,
   isLauncherBackendReady,
+  isLauncherInstanceStoppable,
   launcherInstanceStatusTone,
 } from './LauncherWorkspace';
 import type { PolarisInstance } from '@/services/instances';
@@ -156,6 +157,32 @@ describe('Launcher instance readiness display', () => {
     ).toBe('error');
   });
 
+  it('only treats live or process-backed instances as stoppable', () => {
+    expect(isLauncherInstanceStoppable(instance())).toBe(true);
+    expect(
+      isLauncherInstanceStoppable(
+        instance({
+          status: 'stopped',
+          backend_alive: false,
+          frontend_alive: false,
+          backend_pid: null,
+          frontend_pid: null,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isLauncherInstanceStoppable(
+        instance({
+          status: 'failed',
+          backend_alive: false,
+          frontend_alive: false,
+          backend_pid: 4321,
+          frontend_pid: null,
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it('adds bench project and work-dir identity to the card subtitle', () => {
     expect(
       instanceSubtitle(
@@ -196,5 +223,66 @@ describe('Launcher instance readiness display', () => {
     expect(screen.getByTestId('launcher-instance-panel')).toHaveClass('overflow-hidden');
     expect(screen.getByTestId('launcher-instance-list')).toHaveClass('overflow-y-auto');
     expect(screen.getByTestId('launcher-instance-list')).toHaveClass('flex-1');
+  });
+
+  it('disables stop for stopped instances', async () => {
+    mocks.listInstances.mockResolvedValue({
+      ok: true,
+      data: {
+        instances: [
+          instance({
+            instance_id: 'bench-stopped',
+            name: 'Stopped Bench',
+            status: 'stopped',
+            backend_alive: false,
+            frontend_alive: false,
+            backend_pid: null,
+            frontend_pid: null,
+            metadata: { backend_health: 'stopped', frontend_health: 'stopped' },
+          }),
+        ],
+      },
+    });
+
+    render(createElement(LauncherWorkspace));
+
+    const stopButton = await screen.findByTestId('launcher-instance-stop-bench-stopped');
+    expect(stopButton).toBeDisabled();
+    expect(stopButton).toHaveAttribute('title', '实例已停止，停止操作不可用');
+  });
+
+  it('shows an immediate stopping state after clicking stop', async () => {
+    let resolveStop: (value: { ok: boolean; data: Record<string, unknown> }) => void = () => {};
+    mocks.noopAction.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStop = resolve;
+        }),
+    );
+    mocks.listInstances.mockResolvedValue({
+      ok: true,
+      data: {
+        instances: [
+          instance({
+            instance_id: 'bench-running',
+            name: 'Running Bench',
+          }),
+        ],
+      },
+    });
+
+    render(createElement(LauncherWorkspace));
+
+    const stopButton = await screen.findByTestId('launcher-instance-stop-bench-running');
+    fireEvent.click(stopButton);
+
+    expect(await screen.findByText('正在停止中...')).toBeInTheDocument();
+    expect(screen.getByTestId('launcher-instance-status-bench-running')).toHaveTextContent('stopping...');
+    expect(stopButton).toBeDisabled();
+
+    resolveStop({ ok: true, data: {} });
+    await waitFor(() => {
+      expect(mocks.noopAction).toHaveBeenCalledWith('bench-running');
+    });
   });
 });
