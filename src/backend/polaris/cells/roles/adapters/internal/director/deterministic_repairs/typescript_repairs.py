@@ -58,10 +58,26 @@ _TS_NO_EXPORTED_MEMBER_NAMED_ERROR_RE = re.compile(
     r"(?:\.\s+Did\s+you\s+mean\s+['\"](?P<suggestion>[^'\"]+)['\"])?",
     re.IGNORECASE,
 )
+_TS_COMMA_EXPECTED_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS1005:\s*"
+    r"['\"`],['\"`]\s+expected",
+    re.IGNORECASE,
+)
 _TS_NUMBER_TO_STRING_ARGUMENT_ERROR_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2345:\s*"
     r"Argument\s+of\s+type\s+'number'\s+is\s+not\s+assignable\s+to\s+parameter\s+of\s+type\s+'string'",
     re.IGNORECASE,
+)
+_TS_NUMBER_TO_FUNCTION_ARGUMENT_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2345:\s*"
+    r"Argument\s+of\s+type\s+'number'\s+is\s+not\s+assignable\s+to\s+parameter\s+of\s+type\s+"
+    r"['\"]\(\s*n\s*:\s*number\s*\)\s*=>\s*number['\"]",
+    re.IGNORECASE,
+)
+_TS_CANVAS_SCALE_RETURN_TYPE_RE = re.compile(
+    r"(export\s+function\s+scaleToCanvas\s*\([\s\S]*?\)\s*:\s*)"
+    r"\{\s*sx\s*:\s*number\s*;\s*sy\s*:\s*number\s*;\s*scale\s*:\s*number\s*;?\s*\}",
+    re.MULTILINE,
 )
 _TS_TOO_FEW_ARGUMENTS_ERROR_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2554:\s*"
@@ -88,10 +104,10 @@ _HTML_TS_MODULE_SCRIPT_ERROR_RE = re.compile(
     r"in\s+(?P<path>\S+);\s+static\s+entrypoints\s+must\s+load\s+JavaScript",
     re.IGNORECASE,
 )
-_TS_NULLABLE_CANVAS_CONTEXT_ARGUMENT_ERROR_RE = re.compile(
+_TS_NULLABLE_ARGUMENT_ERROR_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2345:\s*"
-    r"Argument\s+of\s+type\s+['\"]CanvasRenderingContext2D\s*\|\s*null['\"]\s+is\s+not\s+assignable\s+"
-    r"to\s+parameter\s+of\s+type\s+['\"]CanvasRenderingContext2D['\"]",
+    r"Argument\s+of\s+type\s+['\"](?P<type>[A-Za-z_$][A-Za-z0-9_$]*)\s*\|\s*null['\"]\s+is\s+not\s+assignable\s+"
+    r"to\s+parameter\s+of\s+type\s+['\"](?P=type)['\"]",
     re.IGNORECASE,
 )
 _TS_CANNOT_FIND_TEST_GLOBAL_ERROR_RE = re.compile(
@@ -1188,6 +1204,54 @@ def _apply_deterministic_typescript_number_to_string_argument_repair(
     )
 
 
+def _apply_deterministic_typescript_canvas_scale_return_type_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    if not _parse_typescript_number_to_function_argument_errors(artifact_quality_errors):
+        return []
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired: list[dict[str, str]] = []
+    for path in _iter_typescript_files(workspace_path):
+        if path.name.endswith(".d.ts"):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if "scaleToCanvas" not in text or "sx:" not in text or "sy:" not in text:
+            continue
+        if not re.search(r"sx\s*:\s*\([^)]*number[^)]*\)\s*=>", text):
+            continue
+        if not re.search(r"sy\s*:\s*\([^)]*number[^)]*\)\s*=>", text):
+            continue
+        repaired_text, count = _TS_CANVAS_SCALE_RETURN_TYPE_RE.subn(
+            r"\1{ sx: (n: number) => number; sy: (n: number) => number; scale: number }",
+            text,
+            count=1,
+        )
+        if count <= 0 or repaired_text == text:
+            continue
+        updated_by_path[path] = repaired_text
+        repaired.append({"file": path.relative_to(workspace_path).as_posix(), "kind": "scaleToCanvas"})
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_canvas_scale_return_type_repair",
+        metadata_key="return_types",
+        metadata_value=repaired,
+    )
+
+
 def _apply_deterministic_typescript_too_few_arguments_repair(
     adapter: Any,
     *,
@@ -1564,11 +1628,47 @@ def _strip_typescript_error_module_ref(raw_module: str) -> str:
     return token
 
 
+def _parse_typescript_comma_expected_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for error in errors:
+        for match in _TS_COMMA_EXPECTED_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": str(match.group("file") or "").strip(),
+                "line": str(match.group("line") or "").strip(),
+                "col": str(match.group("col") or "").strip(),
+            }
+            key = (item["file"], item["line"], item["col"])
+            if not item["file"] or not item["line"] or not item["col"] or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
 def _parse_typescript_number_to_string_argument_errors(errors: list[str]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
     for error in errors:
         for match in _TS_NUMBER_TO_STRING_ARGUMENT_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": str(match.group("file") or "").strip(),
+                "line": str(match.group("line") or "").strip(),
+                "col": str(match.group("col") or "").strip(),
+            }
+            key = (item["file"], item["line"], item["col"])
+            if not item["file"] or not item["line"] or not item["col"] or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
+def _parse_typescript_number_to_function_argument_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for error in errors:
+        for match in _TS_NUMBER_TO_FUNCTION_ARGUMENT_ERROR_RE.finditer(str(error or "")):
             item = {
                 "file": str(match.group("file") or "").strip(),
                 "line": str(match.group("line") or "").strip(),
@@ -1624,7 +1724,7 @@ def _parse_typescript_nullable_canvas_context_errors(errors: list[str]) -> list[
                 continue
             seen.add(key)
             parsed.append(item)
-        for match in _TS_NULLABLE_CANVAS_CONTEXT_ARGUMENT_ERROR_RE.finditer(text):
+        for match in _TS_NULLABLE_ARGUMENT_ERROR_RE.finditer(text):
             item = {"file": _normalize_declared_task_path(match.group("file")), "symbol": ""}
             key = (item["file"], item["symbol"])
             if not item["file"] or key in seen:
