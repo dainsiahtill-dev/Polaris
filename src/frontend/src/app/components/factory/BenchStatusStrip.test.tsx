@@ -40,8 +40,14 @@ describe('BenchStatusStrip', () => {
     expect(useFactoryBench).not.toHaveBeenCalled();
   });
 
-  it('renders nothing when no bench session is active', () => {
+  it('does not subscribe to global bench unless explicitly allowed', () => {
     const { container } = render(<BenchStatusStrip enabled />);
+    expect(container.firstChild).toBeNull();
+    expect(useFactoryBench).not.toHaveBeenCalled();
+  });
+
+  it('renders nothing when no bench session is active', () => {
+    const { container } = render(<BenchStatusStrip enabled globalObserver />);
     expect(container.firstChild).toBeNull();
     expect(useFactoryBench).toHaveBeenCalledWith({ autoSelect: 'newest' });
   });
@@ -79,7 +85,7 @@ describe('BenchStatusStrip', () => {
       },
     ];
     mockHookValue.isStreaming = true;
-    render(<BenchStatusStrip enabled />);
+    render(<BenchStatusStrip enabled globalObserver />);
     const strip = screen.getByTestId('bench-status-strip');
     expect(strip.getAttribute('data-bench-session')).toBe('bench-running-1');
     expect(strip.getAttribute('data-bench-status')).toBe('running');
@@ -106,7 +112,7 @@ describe('BenchStatusStrip', () => {
       },
     ];
     mockHookValue.currentSession = mockHookValue.sessions[0];
-    render(<BenchStatusStrip enabled />);
+    render(<BenchStatusStrip enabled globalObserver />);
     const strip = screen.getByTestId('bench-status-strip');
     expect(strip.getAttribute('data-bench-status')).toBe('completed');
   });
@@ -133,7 +139,7 @@ describe('BenchStatusStrip', () => {
       status: 'running',
     };
 
-    render(<BenchStatusStrip enabled />);
+    render(<BenchStatusStrip enabled globalObserver />);
 
     const strip = screen.getByTestId('bench-status-strip');
     expect(strip.getAttribute('data-bench-status')).toBe('cancelled');
@@ -170,7 +176,7 @@ describe('BenchStatusStrip', () => {
     ];
     mockHookValue.currentSession = { ...mockHookValue.sessions[0] };
 
-    render(<BenchStatusStrip enabled />);
+    render(<BenchStatusStrip enabled globalObserver />);
 
     const strip = screen.getByTestId('bench-status-strip');
     expect(strip.getAttribute('data-bench-session')).toBe('bench-newest-failed');
@@ -194,7 +200,7 @@ describe('BenchStatusStrip', () => {
       },
     ];
     mockHookValue.currentSession = mockHookValue.sessions[0];
-    render(<BenchStatusStrip enabled />);
+    render(<BenchStatusStrip enabled globalObserver />);
     const progress = screen.getByTestId('bench-strip-progress');
     // (2 completed + 1 failed) / 4 total = 75%.
     expect(progress.getAttribute('data-progress')).toBe('75');
@@ -217,7 +223,7 @@ describe('BenchStatusStrip', () => {
       },
     ];
     mockHookValue.currentSession = mockHookValue.sessions[0];
-    render(<BenchStatusStrip enabled />);
+    render(<BenchStatusStrip enabled globalObserver />);
     const progress = screen.getByTestId('bench-strip-progress');
     expect(progress.getAttribute('data-progress')).toBe('50');
   });

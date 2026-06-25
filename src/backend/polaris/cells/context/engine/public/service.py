@@ -9,7 +9,6 @@ Architecture (P1-CTX-003 convergence):
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,7 +17,6 @@ from polaris.cells.context.engine.internal.precision_mode import (
     resolve_cost_class,
     route_by_cost_model,
 )
-from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.context.runtime_feature_flags import resolve_context_os_enabled
 from polaris.kernelone.llm.engine.internal.context_hash import validate_context_hash
 from polaris.kernelone.memory.integration import (
@@ -26,8 +24,6 @@ from polaris.kernelone.memory.integration import (
     init_anthropomorphic_modules,
 )
 from polaris.kernelone.memory.schema import PromptContext
-from polaris.kernelone.storage.io_paths import resolve_storage_roots
-from polaris.kernelone.storage.layout import default_kernelone_cache_base, workspace_key
 
 from .contracts import (
     BuildRoleContextCommandV1,
@@ -38,6 +34,7 @@ from .contracts import (
     ResolveRoleContextQueryV1,
     RoleContextResultV1,
 )
+from .snapshot_paths import context_snapshot_candidates
 
 # TYPE_CHECKING block for type annotations only (P1-CTX-003 convergence)
 if TYPE_CHECKING:
@@ -182,32 +179,6 @@ def _context_hash_from_ref(context_snapshot_ref: str) -> str:
     return validate_context_hash(token)
 
 
-def _context_snapshot_candidates(workspace: str, context_hash: str) -> list[tuple[str, Path]]:
-    candidates: list[tuple[str, Path]] = []
-    seen: set[str] = set()
-
-    def add(source: str, runtime_root: str | Path) -> None:
-        file_path = Path(runtime_root) / "contexts" / context_hash[:2] / context_hash
-        path_key = str(file_path)
-        if path_key in seen:
-            return
-        seen.add(path_key)
-        candidates.append((source, file_path))
-
-    add("active_runtime_root", Path(resolve_storage_roots(workspace).runtime_root))
-    add("kernelone_system_cache", _default_kernelone_runtime_root(workspace))
-    return candidates
-
-
-def _default_kernelone_runtime_root(workspace: str) -> Path:
-    workspace_abs = os.path.abspath(os.path.expanduser(str(workspace or os.getcwd())))
-    cache_base = Path(default_kernelone_cache_base())
-    metadata_dir = get_workspace_metadata_dir_name()
-    cache_parts = cache_base.as_posix().split("/")
-    projects_root = cache_base / "projects" if metadata_dir in cache_parts else cache_base / metadata_dir / "projects"
-    return projects_root / workspace_key(workspace_abs) / "runtime"
-
-
 def query_final_provider_request_audit(
     query: QueryFinalProviderRequestAuditV1,
 ) -> FinalProviderRequestAuditResultV1:
@@ -228,7 +199,7 @@ def query_final_provider_request_audit(
 
     storage_source = ""
     file_path: Path | None = None
-    candidates = _context_snapshot_candidates(query.workspace, context_hash)
+    candidates = context_snapshot_candidates(query.workspace, context_hash)
     for candidate_source, candidate_path in candidates:
         if candidate_path.is_file():
             storage_source = candidate_source

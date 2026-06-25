@@ -121,6 +121,12 @@ def _seed_context_with_provider_request(workspace: Path, label: str) -> str:
     )
 
 
+def _write_context_snapshot(runtime_root: Path, hash_key: str, payload: dict) -> None:
+    target = runtime_root / "contexts" / hash_key[:2] / hash_key
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def test_workspace_acl_allows_with_no_header(tmp_path) -> None:
     """No X-ContextOS-Workspace header → reads from active workspace freely."""
     workspace_a = tmp_path / "workspaceA"
@@ -257,6 +263,51 @@ def test_workspace_query_falls_back_to_kernelone_system_cache(
     assert body["messages"] == [{"role": "user", "content": "default-cache-context"}]
 
 
+def test_workspace_query_falls_back_to_registered_instance_runtime_root(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ContextOS must find snapshots under a registered instance runtime root."""
+    workspace_a = tmp_path / "workspaceA"
+    workspace_b = tmp_path / "workspaceB"
+    runtime_root = tmp_path / "instances" / "bench-l1-10" / "runtime"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    hash_key = "abcdefabcdefabcdefabcdef"
+    _write_context_snapshot(
+        runtime_root,
+        hash_key,
+        {
+            "schema_version": 1,
+            "trace_id": "trace-instance",
+            "call_id": "call-instance",
+            "messages": [{"role": "user", "content": "from instance runtime"}],
+            "stored_at": "2026-06-25T07:00:00+00:00",
+        },
+    )
+    monkeypatch.setattr(
+        "polaris.cells.context.engine.public.snapshot_paths.list_instances",
+        lambda: [
+            {
+                "instance_id": "bench-l1-10",
+                "workspace": str(workspace_b),
+                "runtime_root": str(runtime_root),
+                "status": "running",
+                "updated_at": "2026-06-25T07:01:00Z",
+            }
+        ],
+    )
+    client = _build_client(str(workspace_a))
+
+    response = client.get(f"/v2/context/{hash_key}", params={"workspace": str(workspace_b)})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["hash"] == hash_key
+    assert body["storage_source"] == "instance_runtime_root:bench-l1-10"
+    assert body["messages"] == [{"role": "user", "content": "from instance runtime"}]
+
+
 def test_final_request_workspace_query_selects_snapshot_workspace(tmp_path) -> None:
     """The final-request audit endpoint must share the same workspace selector."""
     workspace_a = tmp_path / "workspaceA"
@@ -276,6 +327,66 @@ def test_final_request_workspace_query_selects_snapshot_workspace(tmp_path) -> N
     assert body["context_hash"] == hash_key
     assert body["provider_request"]["provider_id"] == "mock-provider"
     assert body["final_request_context_audit"]["final_request_token_estimate"] == 128
+
+
+def test_final_request_uses_registered_instance_runtime_root(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The final-request endpoint must share instance runtime-root fallback."""
+    workspace_a = tmp_path / "workspaceA"
+    workspace_b = tmp_path / "workspaceB"
+    runtime_root = tmp_path / "instances" / "bench-l1-11" / "runtime"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    hash_key = "1234567890abcdef12345678"
+    _write_context_snapshot(
+        runtime_root,
+        hash_key,
+        {
+            "schema_version": 1,
+            "trace_id": "trace-instance-final",
+            "call_id": "call-instance-final",
+            "messages": [{"role": "system", "content": "Director"}],
+            "stored_at": "2026-06-25T07:10:00+00:00",
+            "provider_request": {
+                "schema_version": "llm.provider_request_snapshot.v1",
+                "role": "director",
+                "provider_id": "qwen",
+                "provider_type": "openai-compatible",
+                "model": "qwen3.6-27b",
+                "tools": [{"type": "function", "name": "write_file"}],
+                "tool_choice": "auto",
+                "response_format": {"type": "json_object"},
+                "final_request_context_audit": {
+                    "schema_version": "llm.final_request_context_audit.v1",
+                    "final_request_token_estimate": 4096,
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "polaris.cells.context.engine.public.snapshot_paths.list_instances",
+        lambda: [
+            {
+                "instance_id": "bench-l1-11",
+                "workspace": str(workspace_b),
+                "runtime_root": str(runtime_root),
+                "status": "running",
+                "updated_at": "2026-06-25T07:11:00Z",
+            }
+        ],
+    )
+    client = _build_client(str(workspace_a))
+
+    response = client.get(f"/v2/context/{hash_key}/final-request", params={"workspace": str(workspace_b)})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["context_hash"] == hash_key
+    assert body["storage_source"] == "instance_runtime_root:bench-l1-11"
+    assert body["provider_request"]["provider_id"] == "qwen"
+    assert body["final_request_context_audit"]["final_request_token_estimate"] == 4096
 
 
 def test_legacy_runtime_context_is_not_read(tmp_path) -> None:
@@ -332,7 +443,7 @@ def test_validator_runs_before_layout(tmp_path) -> None:
         raise ValueError("simulated layout explosion")
 
     with patch(
-        "polaris.delivery.http.v2.context.resolve_storage_roots",
+        "polaris.delivery.http.v2.context.context_snapshot_candidates",
         _explode,
     ):
         response = client.get("/v2/context/ZZZZZZZZZZZZZZZZZZZZZZZZ")

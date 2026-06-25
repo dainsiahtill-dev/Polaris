@@ -51,8 +51,14 @@ describe('BenchPanel', () => {
     expect(useFactoryBench).not.toHaveBeenCalled();
   });
 
-  it('shows the empty-state when no sessions exist', () => {
+  it('does not subscribe to global bench unless explicitly allowed', () => {
     render(<BenchPanel enabled />);
+    expect(screen.queryByTestId('bench-panel')).not.toBeInTheDocument();
+    expect(useFactoryBench).not.toHaveBeenCalled();
+  });
+
+  it('shows the empty-state when no sessions exist', () => {
+    render(<BenchPanel enabled globalObserver />);
     expect(screen.getByTestId('bench-panel')).toBeTruthy();
     expect(screen.getByText(/暂无 bench session/)).toBeTruthy();
     expect(useFactoryBench).toHaveBeenCalledWith({
@@ -63,7 +69,7 @@ describe('BenchPanel', () => {
 
   it('shows error message when hook reports one', () => {
     mockHookValue.error = 'backend offline';
-    render(<BenchPanel enabled />);
+    render(<BenchPanel enabled globalObserver />);
     expect(screen.getByText('backend offline')).toBeTruthy();
   });
 
@@ -108,7 +114,7 @@ describe('BenchPanel', () => {
     mockHookValue.events = mockHookValue.currentSession.events;
     mockHookValue.isStreaming = true;
 
-    render(<BenchPanel enabled />);
+    render(<BenchPanel enabled globalObserver />);
     const panel = screen.getByTestId('bench-panel');
     expect(within(panel).getAllByText('运行中').length).toBeGreaterThan(0);
     // Progress bar reflects 1/2 = 50%.
@@ -134,7 +140,7 @@ describe('BenchPanel', () => {
         metadata: {},
       },
     ];
-    render(<BenchPanel enabled />);
+    render(<BenchPanel enabled globalObserver />);
     expect(screen.getAllByText('已完成').length).toBeGreaterThanOrEqual(1);
   });
 });

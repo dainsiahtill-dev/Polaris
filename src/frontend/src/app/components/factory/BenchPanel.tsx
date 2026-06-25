@@ -36,6 +36,8 @@ import type {
 interface BenchPanelProps {
   className?: string;
   enabled?: boolean;
+  globalObserver?: boolean;
+  bench?: UseFactoryBenchResult;
   onWorkspaceChange?: UseFactoryBenchOptions['onWorkspaceChange'];
 }
 
@@ -96,8 +98,14 @@ function summarizeControlPlane(projection: FactoryBenchControlPlaneProjection | 
   return `${projection.projected}/${projection.total} 投影 · ${projection.failed} 异常`;
 }
 
-export function BenchPanel({ enabled = false, ...props }: BenchPanelProps): JSX.Element | null {
+export function BenchPanel({ enabled = false, globalObserver = false, bench, ...props }: BenchPanelProps): JSX.Element | null {
   if (!enabled) {
+    return null;
+  }
+  if (bench) {
+    return <BenchPanelView {...props} bench={bench} />;
+  }
+  if (!globalObserver) {
     return null;
   }
   return <BenchPanelSubscribed {...props} />;
@@ -105,6 +113,13 @@ export function BenchPanel({ enabled = false, ...props }: BenchPanelProps): JSX.
 
 function BenchPanelSubscribed({ className, onWorkspaceChange }: Omit<BenchPanelProps, 'enabled'>): JSX.Element {
   const bench: UseFactoryBenchResult = useFactoryBench({ autoSelect: 'newest', onWorkspaceChange });
+  return <BenchPanelView className={className} bench={bench} />;
+}
+
+function BenchPanelView({
+  className,
+  bench,
+}: Pick<BenchPanelProps, 'className'> & { bench: UseFactoryBenchResult }): JSX.Element {
   const { sessions, currentSession, events, isStreaming, isLoading, error, refresh, select } = bench;
 
   const progress = useMemo(() => {

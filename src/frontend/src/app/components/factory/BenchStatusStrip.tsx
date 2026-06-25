@@ -23,6 +23,7 @@ import type {
 interface BenchStatusStripProps {
   className?: string;
   enabled?: boolean;
+  globalObserver?: boolean;
   websocketLive?: boolean;
   websocketReconnecting?: boolean;
   websocketAttemptCount?: number;
@@ -74,6 +75,7 @@ function lastBenchEvent(events: FactoryBenchEvent[]): FactoryBenchEvent | null {
 export function BenchStatusStrip({
   bench,
   enabled = false,
+  globalObserver = false,
   ...props
 }: BenchStatusStripProps): JSX.Element | null {
   if (!enabled) {
@@ -81,6 +83,9 @@ export function BenchStatusStrip({
   }
   if (bench) {
     return <BenchStatusStripView {...props} bench={bench} />;
+  }
+  if (!globalObserver) {
+    return null;
   }
   return <BenchStatusStripSubscribed {...props} />;
 }
