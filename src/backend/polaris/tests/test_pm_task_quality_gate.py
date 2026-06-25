@@ -557,6 +557,49 @@ def test_evaluate_pm_task_quality_rejects_director_tasks_with_empty_target_files
     assert (report.get("score") or 100) < 100
 
 
+def test_evaluate_pm_task_quality_accepts_cpp_file_targets() -> None:
+    payload = {
+        "tasks": [
+            {
+                "id": "TASK-1",
+                "title": "实现 C++17 月球明信片生成器",
+                "goal": "交付 C++17 可编译 CLI 入口、领域模型和生成规则",
+                "description": "实现 moon/postcard/stamp/poem 生成逻辑并提供 CMake 构建入口。",
+                "assigned_to": "Director",
+                "scope_paths": [
+                    "CMakeLists.txt",
+                    "src/models/postcard.hpp",
+                    "src/models/postcard.cpp",
+                    "src/main.cpp",
+                ],
+                "target_files": [
+                    "CMakeLists.txt",
+                    "src/models/postcard.hpp",
+                    "src/models/postcard.cpp",
+                    "src/main.cpp",
+                ],
+                "phase": "implementation",
+                "execution_checklist": [
+                    "创建 CMakeLists.txt 并声明 C++17 标准",
+                    "实现 src/models/postcard.hpp 与 src/models/postcard.cpp",
+                    "执行 `cmake -S . -B build && cmake --build build`",
+                ],
+                "acceptance_criteria": [
+                    "verify ./CMakeLists.txt exists, verify ./src/main.cpp exists, and verify ./src/models/postcard.cpp exists",
+                    "`cmake --build build` 或 `g++ -std=c++17` 返回成功",
+                ],
+                "backlog_ref": "TASK-1",
+            }
+        ]
+    }
+
+    report = evaluate_pm_task_quality(payload, docs_stage={})
+
+    issues = "\n".join(report.get("critical_issues") or [])
+    assert report["ok"] is True
+    assert "Director task requires file-level target_files or scope_paths" not in issues
+
+
 def test_evaluate_pm_task_quality_rejects_contract_governance_tasks() -> None:
     payload = {
         "tasks": [

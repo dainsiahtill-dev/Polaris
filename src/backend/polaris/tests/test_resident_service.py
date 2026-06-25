@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -11,14 +12,38 @@ from polaris.cells.resident.autonomy.internal.resident_runtime_service import (
     reset_resident_services,
 )
 from polaris.cells.resident.autonomy.public.service import (
+    ApproveResidentGoalCommandV1,
+    CreateResidentGoalCommandV1,
+    ExtractResidentSkillsCommandV1,
     MaterializeResidentGoalCommandV1,
     QueryResidentAgiAuditPackV1,
+    RecordResidentDecisionCommandV1,
+    RejectResidentGoalCommandV1,
+    RunResidentAgiDecisionTurnCommandV1,
+    RunResidentExperimentsCommandV1,
     RunResidentGoalCommandV1,
+    RunResidentImprovementsCommandV1,
+    RunResidentTickCommandV1,
     StageResidentGoalCommandV1,
+    StartResidentCommandV1,
+    StopResidentCommandV1,
+    UpdateResidentIdentityCommandV1,
+    approve_resident_goal,
+    create_resident_goal,
+    extract_resident_skills,
     materialize_resident_goal,
     query_resident_agi_audit_pack,
+    record_resident_decision_entry,
+    reject_resident_goal,
+    run_resident_agi_decision_turn,
+    run_resident_experiments,
     run_resident_goal,
+    run_resident_improvements,
+    run_resident_tick,
     stage_resident_goal,
+    start_resident,
+    stop_resident,
+    update_resident_identity,
 )
 
 
@@ -60,6 +85,100 @@ def _decision_payload(
             }
         ]
     return payload
+
+
+def test_resident_public_commands_cover_lifecycle_goals_decisions_and_labs(tmp_path: Path) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    started = start_resident(StartResidentCommandV1(workspace=str(workspace), mode="propose"))
+    assert started["runtime"]["active"] is True
+    assert started["runtime"]["mode"] == "propose"
+
+    identity = update_resident_identity(
+        UpdateResidentIdentityCommandV1(
+            workspace=str(workspace),
+            payload={
+                "name": "Resident AGI Supervisor",
+                "mission": "Govern platform-level autonomous development decisions.",
+            },
+        )
+    )
+    assert identity["name"] == "Resident AGI Supervisor"
+
+    recorded = record_resident_decision_entry(
+        RecordResidentDecisionCommandV1(
+            workspace=str(workspace),
+            action="resident_agi_decision_recorded",
+            detail={"decision_type": "platform_supervision"},
+            payload=_decision_payload(
+                run_id="run-public-command-1",
+                actor="resident_agi",
+                stage="platform_supervision",
+                summary="Resident AGI selected evidence-first continuation.",
+                strategy="evidence_first",
+                verdict="success",
+                task_id="TASK-PUBLIC-1",
+                evidence_ref="runtime/contexts/context-1.json",
+            ),
+        )
+    )
+    assert recorded["actor"] == "resident_agi"
+    assert recorded["stage"] == "platform_supervision"
+
+    goal = create_resident_goal(
+        CreateResidentGoalCommandV1(
+            workspace=str(workspace),
+            payload={
+                "goal_type": "maintenance",
+                "title": "Contract-first Resident command coverage",
+                "motivation": "Avoid HTTP-only Resident AGI write paths.",
+                "source": "test",
+                "scope": ["src/backend/polaris/cells/resident/autonomy"],
+                "evidence_refs": ["runtime/contexts/context-1.json"],
+            },
+        )
+    )
+    approved = approve_resident_goal(
+        ApproveResidentGoalCommandV1(workspace=str(workspace), goal_id=goal["goal_id"], note="approved")
+    )
+    assert approved is not None
+    assert approved["status"] == "approved"
+
+    rejected_goal = create_resident_goal(
+        CreateResidentGoalCommandV1(
+            workspace=str(workspace),
+            payload={
+                "goal_type": "maintenance",
+                "title": "Reject command coverage",
+                "motivation": "Exercise the rejection command.",
+                "source": "test",
+                "scope": ["src/backend/polaris/cells/resident/autonomy"],
+            },
+        )
+    )
+    rejected = reject_resident_goal(
+        RejectResidentGoalCommandV1(workspace=str(workspace), goal_id=rejected_goal["goal_id"], note="reject")
+    )
+    assert rejected is not None
+    assert rejected["status"] == "rejected"
+
+    ticked = run_resident_tick(RunResidentTickCommandV1(workspace=str(workspace), force=True))
+    assert ticked["runtime"]["tick_count"] >= 1
+    tick_boundary = ticked["runtime"]["last_summary"]["autonomy_boundary"]
+    assert tick_boundary["schema_version"] == "resident.tick_autonomy_boundary.v1"
+    assert tick_boundary["tick_role"] == "deterministic_evidence_producer"
+    assert tick_boundary["goal_proposal_semantics"] == "pending_proposals_only"
+    assert tick_boundary["agi_judgement_entrypoint"] == "resident_agi_decision_turn"
+    assert tick_boundary["execution_impacting_decision_policy"] == "requires_resident_agi_runtime_contract_gate"
+    assert tick_boundary["sidecar_llm_allowed"] is False
+    assert isinstance(extract_resident_skills(ExtractResidentSkillsCommandV1(workspace=str(workspace))), list)
+    assert isinstance(run_resident_experiments(RunResidentExperimentsCommandV1(workspace=str(workspace))), list)
+    assert isinstance(run_resident_improvements(RunResidentImprovementsCommandV1(workspace=str(workspace))), list)
+
+    stopped = stop_resident(StopResidentCommandV1(workspace=str(workspace)))
+    assert stopped["runtime"]["active"] is False
 
 
 def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> None:
@@ -198,8 +317,27 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
         and item["access"] == "execute_through_role_runtime"
         for item in capability_surface["items"]
     )
+    assert any(item["capability_id"] == "runtime.status_resident.read" for item in capability_surface["items"])
+    assert any(item["capability_id"] == "resident.lifecycle.manage" for item in capability_surface["items"])
+    assert any(item["capability_id"] == "resident.goal_governance.write" for item in capability_surface["items"])
+    assert any(item["capability_id"] == "resident.autonomy_labs.execute" for item in capability_surface["items"])
     assert any(item["capability_id"] == "roles.registry.read" for item in capability_surface["items"])
     assert any(item["capability_id"] == "contextos.final_request_audit.read" for item in capability_surface["items"])
+    capability_ids = {item["capability_id"] for item in capability_surface["items"]}
+    assert {
+        "audit.diagnosis.read",
+        "audit.diagnosis.execute",
+        "audit.verdict.read",
+        "audit.verdict.execute",
+        "context.catalog.search",
+        "context.engine.resolve",
+        "verifier.policy.read",
+        "verifier.execution.execute",
+    } <= capability_ids
+    assert "verifier.execution.execute" in authority_matrix["high_risk_capabilities"]
+    assert "control_plane.verifier_execution" in authority_matrix["canonical_contracts"]
+    assert "audit.diagnosis" in authority_matrix["canonical_contracts"]
+    assert "audit.verdict" in authority_matrix["canonical_contracts"]
     decision_boundaries = capability_surface["decision_boundaries"]
     assert {item["authority"] for item in decision_boundaries} >= {
         "platform_hard_rule",
@@ -208,7 +346,24 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     }
     assert any(item["boundary_id"] == "role.runtime.foundation" for item in decision_boundaries)
     assert any(item["boundary_id"] == "architecture.options" for item in decision_boundaries)
+    assert any(item["boundary_id"] == "audit.interface.selection" for item in decision_boundaries)
     assert any("final_request_context_audit" in item["evidence_required"] for item in decision_boundaries)
+    decision_capabilities = capability_surface["decision_capabilities"]
+    decision_capability_ids = {item["decision_id"] for item in decision_capabilities}
+    assert {
+        "platform.invariant.blocker",
+        "evidence.interface.selection",
+        "architecture.option.selection",
+        "goal.promotion.readiness",
+        "quality.gate.response",
+    } <= decision_capability_ids
+    decision_registry = capability_surface["decision_capability_registry"]
+    assert decision_registry["schema_version"] == "resident.agi_decision_capability_registry.v1"
+    assert "platform.invariant.blocker" in decision_registry["platform_owned_decisions"]
+    assert "evidence.interface.selection" in decision_registry["agi_owned_decisions"]
+    assert "goal.promotion.readiness" in decision_registry["governed_execution_decisions"]
+    assert "verifier.execution.execute" in decision_registry["evidence_interface_ids"]
+    assert "request_evidence" in decision_registry["candidate_actions"]
     serialized_capability_surface = json.dumps(capability_surface, ensure_ascii=False)
     assert "PM -> CE -> Director" not in serialized_capability_surface
     assert "PM -> Director" not in serialized_capability_surface
@@ -217,15 +372,159 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     audit_pack = query_resident_agi_audit_pack(QueryResidentAgiAuditPackV1(workspace=str(workspace), decision_limit=2))
     assert audit_pack["schema_version"] == "resident.agi_audit_pack.v1"
     assert audit_pack["workspace"] == str(workspace)
+    assert "runtime.v2.status.resident" in audit_pack["truth_sources"]
     assert "runtime.v2.snapshot.resident" in audit_pack["truth_sources"]
     assert audit_pack["authority_matrix"]["schema_version"] == "resident.agi_authority_matrix.v1"
     assert audit_pack["hard_rule_gate"]["status"] == "pass"
+    assert audit_pack["autonomy_boundary"]["tick_role"] == "deterministic_evidence_producer"
+    assert audit_pack["autonomy_boundary"]["sidecar_llm_allowed"] is False
+    assert (
+        "Resident tick/labs are deterministic evidence producers, not AGI judgement turns."
+        in audit_pack["execution_constraints"]
+    )
+    decision_profile = audit_pack["decision_profile"]
+    assert decision_profile["schema_version"] == "resident.agi_decision_profile.v1"
+    assert decision_profile["role_id"] == "resident_agi"
+    assert decision_profile["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
+    assert decision_profile["role_turn_allowed"] is True
+    assert decision_profile["downstream_precheck"] in {
+        "ready_for_agi_judgement",
+        "hold_for_evidence",
+        "hold_for_gate_repair",
+    }
+    assert "request_evidence" in decision_profile["candidate_actions"]
+    assert "preserve_pm_chief_engineer_director_qa_chain" in decision_profile["required_constraints"]
+    assert "resident_tick_is_deterministic_evidence_only" in decision_profile["required_constraints"]
+    assert (
+        "execution_impacting_agi_judgement_requires_runtime_contract_gate" in decision_profile["required_constraints"]
+    )
+    assert "AuditDiagnosisResultV1" in decision_profile["required_evidence"]
+    assert "AuditVerdictResultV1" in decision_profile["required_evidence"]
+    assert "control_plane.verifier_execution" in decision_profile["contract_refs"]
+    assert (
+        decision_profile["decision_capability_registry"]["schema_version"]
+        == "resident.agi_decision_capability_registry.v1"
+    )
+    assert "quality.gate.response" in decision_profile["decision_capability_ids"]
+    assert (
+        decision_profile["gate_refs"]["decision_capability_registry"] == "resident.agi_decision_capability_registry.v1"
+    )
+    evidence_recommendations = decision_profile["evidence_interface_recommendations"]
+    assert evidence_recommendations[0]["contract_ref"] == "roles.final_request_context_audit"
+    recommendation_ids = {item["capability_id"] for item in evidence_recommendations}
+    assert {
+        "audit.diagnosis.read",
+        "audit.diagnosis.execute",
+        "audit.verdict.read",
+        "run_ledger.read",
+        "verifier.policy.read",
+        "verifier.execution.execute",
+        "context.catalog.search",
+        "context.engine.resolve",
+    } <= recommendation_ids
+    verifier_execution = next(
+        item for item in evidence_recommendations if item["capability_id"] == "verifier.execution.execute"
+    )
+    assert verifier_execution["recommended_now"] is True
+    assert verifier_execution["reason"] == "Request missing evidence before continuing."
+    assert decision_profile["authority_policy"]["hard_rules"] == "platform_enforced_non_overridable"
+    assert decision_profile["authority_policy"]["governed_execution"] == "canonical_role_chain_only"
+    assert decision_profile["gate_refs"]["autonomy_boundary"] == "resident.tick_autonomy_boundary.v1"
     assert len(audit_pack["recent_decisions"]) == 2
 
     reset_resident_services()
     recovered = get_resident_service(str(workspace)).recover()
     assert recovered["counts"]["decisions"] >= 5
     assert recovered["counts"]["goals"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_resident_agi_decision_turn_public_command_uses_role_runtime_contract(tmp_path: Path) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    captured: dict[str, object] = {}
+
+    class FakeResidentAgiAdapter:
+        async def execute(
+            self,
+            task_id: str,
+            input_data: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            captured["task_id"] = task_id
+            captured["input_data"] = input_data
+            captured["context"] = context
+            return {
+                "success": True,
+                "stage": "resident_agi",
+                "decision_type": "platform_supervision",
+                "decision": {
+                    "verdict": "continue",
+                    "rationale": "Shared RoleRuntime evidence is complete.",
+                    "evidence_refs": ["runtime/contexts/context-public.json"],
+                    "risks": [],
+                    "next_action": "continue governed run",
+                    "downstream_allowed": True,
+                },
+                "metadata": {
+                    "role_runtime_entrypoint": "roles.runtime.execute_role_session",
+                    "context_os_expected": True,
+                    "runtime_fallback_used": False,
+                    "fallback_policy": "fail_closed",
+                },
+            }
+
+    def fake_create_role_adapter(role_id: str, workspace_arg: str) -> FakeResidentAgiAdapter:
+        captured["role_id"] = role_id
+        captured["workspace"] = workspace_arg
+        return FakeResidentAgiAdapter()
+
+    with patch(
+        "polaris.cells.resident.autonomy.public.service.create_role_adapter",
+        side_effect=fake_create_role_adapter,
+    ):
+        result = await run_resident_agi_decision_turn(
+            RunResidentAgiDecisionTurnCommandV1(
+                workspace=str(workspace),
+                decision_type="platform_supervision",
+                objective="Decide whether the Resident AGI can continue.",
+                task_id="resident-agi-public-command",
+                evidence={"source": "service-test"},
+                constraints=("preserve_pm_chief_engineer_director_qa_chain",),
+                candidate_actions=("continue", "request_evidence"),
+                evidence_refs=("runtime/gates/qa.json",),
+            )
+        )
+
+    assert result["ok"] is True
+    assert result["runtime_contract_gate"]["status"] == "pass"
+    assert result["selected_decision_capability"]["decision_id"] == "evidence.interface.selection"
+    assert "run_ledger.read" in result["required_evidence_interfaces"]
+    assert "verifier.execution.execute" in result["optional_evidence_interfaces"]
+    assert result["recorded_decision"]["actor"] == "resident_agi"
+    assert result["recorded_decision"]["expected_outcome"]["decision_capability"]["decision_id"] == (
+        "evidence.interface.selection"
+    )
+    assert "run_ledger.read" in result["recorded_decision"]["expected_outcome"]["required_evidence_interfaces"]
+    assert result["recorded_decision"]["actual_outcome"]["decision_source"] == "resident_agi_role_runtime"
+    assert result["recorded_decision"]["actual_outcome"]["resident_agi_decision_capability"]["decision_id"] == (
+        "evidence.interface.selection"
+    )
+    assert result["recorded_decision"]["actual_outcome"]["resident_agi_runtime_contract_gate"]["passed"] is True
+    assert "runtime/contexts/context-public.json" in result["recorded_decision"]["evidence_refs"]
+    assert captured["role_id"] == "resident_agi"
+    assert captured["workspace"] == str(workspace)
+    captured_context = captured["context"]
+    assert isinstance(captured_context, dict)
+    assert captured_context["metadata"]["source"] == "resident.autonomy.public.run_resident_agi_decision_turn"
+    assert captured_context["metadata"]["context_os_expected"] is True
+    assert captured_context["metadata"]["resident_agi_selected_decision_capability"] == "evidence.interface.selection"
+    assert "run_ledger.read" in captured_context["metadata"]["resident_agi_required_evidence_interfaces"]
+    captured_input = captured["input_data"]
+    assert isinstance(captured_input, dict)
+    assert captured_input["selected_decision_capability"]["decision_id"] == "evidence.interface.selection"
+    assert "verifier.execution.execute" in captured_input["optional_evidence_interfaces"]
 
 
 @pytest.mark.asyncio
@@ -272,3 +571,73 @@ async def test_run_resident_goal_public_command_uses_governed_pm_bridge(tmp_path
     assert result["pm_run"]["run_id"] == "pm-resident-public-001"
     assert result["staging"]["promoted_to_pm_runtime"] is True
     assert result["goal"]["materialization_artifacts"]["pm_run"]["run_id"] == "pm-resident-public-001"
+
+
+def test_public_goal_command_publishes_resident_status_update(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = get_resident_service(str(workspace))
+    goal = service.create_goal_proposal(
+        {
+            "goal_type": "maintenance",
+            "title": "Publish resident status update",
+            "motivation": "Keep Resident AGI runtime.v2 projection live.",
+            "source": "test",
+            "scope": ["src/backend/polaris/cells/resident/autonomy"],
+            "evidence_refs": ["runtime/contexts/context-1.json"],
+        }
+    )
+    assert service.approve_goal(goal.goal_id, note="approved") is not None
+
+    published: list[dict[str, object]] = []
+
+    class FakePublisher:
+        def publish(self, *, subject: str, payload: dict[str, object]) -> bool:
+            published.append({"subject": subject, "payload": payload})
+            return True
+
+    monkeypatch.setenv("KERNELONE_JETSTREAM_PUBLISH", "1")
+    monkeypatch.setattr(
+        "polaris.cells.resident.autonomy.public.service.resolve_storage_roots",
+        lambda workspace_token: SimpleNamespace(workspace_key="workspace-key"),
+    )
+    monkeypatch.setattr(
+        "polaris.cells.resident.autonomy.public.service.get_log_jetstream_publisher",
+        lambda: FakePublisher(),
+    )
+
+    contract = materialize_resident_goal(
+        MaterializeResidentGoalCommandV1(workspace=str(workspace), goal_id=goal.goal_id)
+    )
+
+    assert contract is not None
+    assert len(published) == 1
+    event = published[0]
+    assert event["subject"] == "hp.runtime.workspace-key.status.resident"
+    payload = event["payload"]
+    assert isinstance(payload, dict)
+    assert payload["schema_version"] == "runtime.v2"
+    assert payload["channel"] == "status.resident"
+    assert payload["kind"] == "resident_status_update"
+    meta = payload["meta"]
+    assert isinstance(meta, dict)
+    assert meta == {
+        "source": "resident.autonomy",
+        "role_id": "resident_agi",
+        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+        "channel": "runtime.v2.status.resident",
+    }
+    event_payload = payload["payload"]
+    assert isinstance(event_payload, dict)
+    assert event_payload["action"] == "goal_materialized"
+    assert event_payload["workspace"] == str(workspace)
+    assert event_payload["role_id"] == "resident_agi"
+    resident = event_payload["resident"]
+    assert isinstance(resident, dict)
+    assert resident["workspace"] == str(workspace)
+    assert resident["agi_capability_surface"]["role_id"] == "resident_agi"
+    assert "runtime.v2" in str(meta["channel"])

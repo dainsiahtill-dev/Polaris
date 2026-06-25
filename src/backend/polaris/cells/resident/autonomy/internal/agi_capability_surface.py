@@ -7,6 +7,7 @@ from typing import Any
 from polaris.cells.resident.autonomy.public.contracts import (
     ResidentAgiCapabilityV1,
     ResidentAgiDecisionBoundaryV1,
+    ResidentAgiDecisionCapabilityV1,
 )
 
 
@@ -83,6 +84,56 @@ def build_resident_agi_capability_surface() -> list[ResidentAgiCapabilityV1]:
             evidence_refs=("workspace evidence bundles",),
         ),
         ResidentAgiCapabilityV1(
+            capability_id="audit.diagnosis.read",
+            name="Audit diagnosis trail",
+            category="audit_diagnosis",
+            access="read_only",
+            purpose="Inspect diagnosis trails, failure hops, and triage bundles before deciding remediation.",
+            contract_ref="audit.diagnosis",
+            risk_level="low",
+            guardrails=("Diagnosis trails are evidence; they do not authorize code or state changes by themselves.",),
+            evidence_refs=("QueryAuditDiagnosisTrailV1", "AuditDiagnosisResultV1"),
+        ),
+        ResidentAgiCapabilityV1(
+            capability_id="audit.diagnosis.execute",
+            name="Audit diagnosis runner",
+            category="audit_diagnosis",
+            access="execute_through_audit_contract",
+            purpose="Request a governed audit diagnosis command when existing evidence is insufficient.",
+            contract_ref="audit.diagnosis",
+            risk_level="medium",
+            guardrails=(
+                "Diagnosis execution must use RunAuditDiagnosisCommandV1.",
+                "AGI may use diagnosis output as evidence, but fixes still go through governed roles.",
+            ),
+            evidence_refs=("RunAuditDiagnosisCommandV1", "AuditDiagnosisCompletedEventV1"),
+        ),
+        ResidentAgiCapabilityV1(
+            capability_id="audit.verdict.read",
+            name="Audit verdict read model",
+            category="audit_verdict",
+            access="read_only",
+            purpose="Read independent audit verdict state and artifacts for a run or task.",
+            contract_ref="audit.verdict",
+            risk_level="low",
+            guardrails=("Audit verdicts are read-only evidence for AGI decisions.",),
+            evidence_refs=("QueryAuditVerdictV1", "AuditVerdictResultV1"),
+        ),
+        ResidentAgiCapabilityV1(
+            capability_id="audit.verdict.execute",
+            name="Audit verdict runner",
+            category="audit_verdict",
+            access="execute_through_audit_contract",
+            purpose="Request a governed audit verdict when the current run needs independent review evidence.",
+            contract_ref="audit.verdict",
+            risk_level="medium",
+            guardrails=(
+                "AGI cannot mark failed gates as passed.",
+                "Verdict execution must use RunAuditVerdictCommandV1 and record resulting evidence.",
+            ),
+            evidence_refs=("RunAuditVerdictCommandV1", "AuditVerdictIssuedEventV1"),
+        ),
+        ResidentAgiCapabilityV1(
             capability_id="contextos.final_request_audit.read",
             name="Final provider-request audit",
             category="llm_audit",
@@ -94,6 +145,30 @@ def build_resident_agi_capability_surface() -> list[ResidentAgiCapabilityV1]:
             evidence_refs=("runtime/contexts/<shard>/<hash>",),
         ),
         ResidentAgiCapabilityV1(
+            capability_id="context.catalog.search",
+            name="Context catalog search",
+            category="context_discovery",
+            access="read_only",
+            purpose="Discover relevant public Cells and capability descriptors before choosing evidence or architecture inputs.",
+            contract_ref="context.catalog",
+            risk_level="low",
+            guardrails=(
+                "Catalog search is read-only; discovered Cells must still be called through their public contracts.",
+            ),
+            evidence_refs=("SearchCellsQueryV1", "CellDescriptorV1"),
+        ),
+        ResidentAgiCapabilityV1(
+            capability_id="context.engine.resolve",
+            name="Role context resolver",
+            category="context_discovery",
+            access="read_only",
+            purpose="Resolve graph-constrained context items for a role or objective before AGI judgement.",
+            contract_ref="context.engine",
+            risk_level="low",
+            guardrails=("Resolved context is prompt/evidence material, not execution authority.",),
+            evidence_refs=("ResolveRoleContextQueryV1", "RoleContextResultV1"),
+        ),
+        ResidentAgiCapabilityV1(
             capability_id="run_ledger.read",
             name="Run Ledger projection",
             category="run_ledger",
@@ -103,6 +178,33 @@ def build_resident_agi_capability_surface() -> list[ResidentAgiCapabilityV1]:
             risk_level="low",
             guardrails=("Ledger facts are read-only; writes stay inside canonical runtime services.",),
             evidence_refs=("runtime run ledger projections",),
+        ),
+        ResidentAgiCapabilityV1(
+            capability_id="verifier.policy.read",
+            name="Verifier policy read model",
+            category="verification_policy",
+            access="read_only",
+            purpose="Inspect which optional verifier modalities are enabled or required for the workspace.",
+            contract_ref="control_plane.verifier_policy",
+            risk_level="low",
+            guardrails=(
+                "AGI can read verifier policy; changing required modalities remains a governed platform policy action.",
+            ),
+            evidence_refs=("ReadVerifierPolicyQueryV1", "VerifierPolicyResultV1"),
+        ),
+        ResidentAgiCapabilityV1(
+            capability_id="verifier.execution.execute",
+            name="Verifier execution request",
+            category="verification_policy",
+            access="execute_through_control_plane_contract",
+            purpose="Request enabled verifier providers to produce physical evidence for a decision.",
+            contract_ref="control_plane.verifier_execution",
+            risk_level="high",
+            guardrails=(
+                "Verifier execution must use a policy snapshot and cannot invent required modalities.",
+                "Bench-only verifier assumptions must not become production requirements.",
+            ),
+            evidence_refs=("RunVerifierPolicyCommandV1", "VerifierExecutionResultV1"),
         ),
         ResidentAgiCapabilityV1(
             capability_id="task.execution_profile.read",
@@ -139,6 +241,70 @@ def build_resident_agi_capability_surface() -> list[ResidentAgiCapabilityV1]:
             evidence_refs=("runtime.v2 events",),
         ),
         ResidentAgiCapabilityV1(
+            capability_id="runtime.status_resident.read",
+            name="Resident AGI runtime projection",
+            category="runtime_observation",
+            access="read_only",
+            purpose="Observe Resident AGI state through the dedicated runtime.v2 status.resident projection.",
+            contract_ref="runtime.v2.status.resident",
+            endpoint="/v2/ws/runtime",
+            risk_level="low",
+            guardrails=(
+                "status.resident is an observation channel; state changes still enter through public commands.",
+            ),
+            evidence_refs=("runtime.v2.status.resident", "snapshot.resident"),
+        ),
+        ResidentAgiCapabilityV1(
+            capability_id="resident.lifecycle.manage",
+            name="Resident lifecycle management",
+            category="resident_control",
+            access="write_through_resident_contract",
+            purpose="Start, stop, and tick the embedded Resident AGI supervisor through public commands.",
+            contract_ref="resident.lifecycle.commands",
+            endpoint="/v2/resident/{start|stop|tick}",
+            risk_level="medium",
+            guardrails=(
+                "Lifecycle actions must publish status.resident.",
+                "Tick execution must preserve hard platform gates and evidence traces.",
+            ),
+            evidence_refs=("StartResidentCommandV1", "StopResidentCommandV1", "RunResidentTickCommandV1"),
+        ),
+        ResidentAgiCapabilityV1(
+            capability_id="resident.identity.write",
+            name="Resident identity profile",
+            category="resident_control",
+            access="write_through_resident_contract",
+            purpose="Update the Resident AGI identity and operating profile through the public identity command.",
+            contract_ref="resident.identity.commands",
+            endpoint="/v2/resident/identity",
+            risk_level="medium",
+            guardrails=(
+                "Identity changes must remain scoped to the Resident profile.",
+                "Role identity must remain resident_agi on the shared role runtime.",
+            ),
+            evidence_refs=("UpdateResidentIdentityCommandV1", "workspace/meta/resident/identity.json"),
+        ),
+        ResidentAgiCapabilityV1(
+            capability_id="resident.goal_governance.write",
+            name="Resident goal governance",
+            category="controlled_execution",
+            access="write_through_resident_contract",
+            purpose="Create, approve, reject, materialize, and stage evidence-backed Resident goals.",
+            contract_ref="resident.goal_governance.commands",
+            endpoint="/v2/resident/goals",
+            risk_level="high",
+            guardrails=(
+                "Goal execution remains separate from approval and staging.",
+                "Approved goals must still execute through PM → Chief Engineer → Director.",
+            ),
+            evidence_refs=(
+                "CreateResidentGoalCommandV1",
+                "ApproveResidentGoalCommandV1",
+                "RejectResidentGoalCommandV1",
+                "resident goal artifacts",
+            ),
+        ),
+        ResidentAgiCapabilityV1(
             capability_id="resident.goal_bridge.execute",
             name="Resident governed goal bridge",
             category="controlled_execution",
@@ -153,6 +319,25 @@ def build_resident_agi_capability_surface() -> list[ResidentAgiCapabilityV1]:
                 "Tool/path/security gates still apply.",
             ),
             evidence_refs=("resident goal artifacts", "PM runtime contract"),
+        ),
+        ResidentAgiCapabilityV1(
+            capability_id="resident.autonomy_labs.execute",
+            name="Resident autonomy labs",
+            category="resident_learning",
+            access="execute_through_resident_contract",
+            purpose="Refresh skill extraction, counterfactual experiments, and self-improvement proposals.",
+            contract_ref="resident.autonomy_lab.commands",
+            endpoint="/v2/resident/{skills|experiments|improvements}",
+            risk_level="medium",
+            guardrails=(
+                "Lab outputs are proposals/evidence, not direct code changes.",
+                "Any implementation impact must be promoted through governed goals and role handoff.",
+            ),
+            evidence_refs=(
+                "ExtractResidentSkillsCommandV1",
+                "RunResidentExperimentsCommandV1",
+                "RunResidentImprovementsCommandV1",
+            ),
         ),
     ]
 
@@ -272,7 +457,261 @@ def build_resident_agi_decision_boundaries() -> list[ResidentAgiDecisionBoundary
                 "resident.decision_trace",
             ),
         ),
+        ResidentAgiDecisionBoundaryV1(
+            boundary_id="audit.interface.selection",
+            name="Audit and evidence interface selection",
+            authority="agi_recommendation",
+            platform_hard_rule=(
+                "AGI may request audit, verifier, ContextOS, and catalog evidence only through public Cell contracts; "
+                "it cannot treat missing or failed evidence as passed."
+            ),
+            agi_decision_scope=(
+                "AGI may choose which existing audit interface to query or execute based on task risk, missing evidence, "
+                "and current runtime state."
+            ),
+            evidence_required=(
+                "AuditDiagnosisResultV1",
+                "AuditVerdictResultV1",
+                "VerifierPolicyResultV1",
+                "RoleContextResultV1",
+            ),
+            escalation="Hold or request evidence when the required audit interface is unavailable or policy-disabled.",
+            contract_refs=(
+                "audit.diagnosis",
+                "audit.verdict",
+                "control_plane.verifier_policy",
+                "control_plane.verifier_execution",
+                "context.catalog",
+                "context.engine",
+            ),
+        ),
     ]
+
+
+def build_resident_agi_decision_capabilities() -> list[ResidentAgiDecisionCapabilityV1]:
+    """Return decision types the Resident AGI may judge under evidence contracts."""
+
+    shared_constraints = (
+        "resident_agi_role_runtime_required",
+        "contextos_expected",
+        "turn_engine_expected",
+        "preserve_pm_chief_engineer_director_qa_chain",
+    )
+    return [
+        ResidentAgiDecisionCapabilityV1(
+            decision_id="platform.invariant.blocker",
+            name="Platform invariant enforcement",
+            owner="platform_hard_rule",
+            decision_scope=(
+                "Detect whether non-negotiable platform invariants block AGI judgement before any LLM decision."
+            ),
+            risk_level="high",
+            required_evidence_interfaces=(
+                "roles.registry.read",
+                "contextos.final_request_audit.read",
+                "runtime.status_resident.read",
+            ),
+            candidate_actions=("block", "request_evidence"),
+            hard_constraints=(
+                "hard_platform_invariants_non_overridable",
+                "sidecar_llm_for_resident_agi_forbidden",
+            ),
+            escalation="Fail closed and repair platform evidence before running Resident AGI.",
+            output_contract="resident.agi_hard_rule_gate.v1",
+            contract_refs=(
+                "roles.registry",
+                "roles.final_request_context_audit",
+                "runtime.v2.status.resident",
+            ),
+            llm_decision_required=False,
+            platform_enforced=True,
+        ),
+        ResidentAgiDecisionCapabilityV1(
+            decision_id="evidence.interface.selection",
+            name="Evidence interface selection",
+            owner="resident_agi",
+            decision_scope=(
+                "Choose which audit, verifier, ContextOS, catalog, and Run Ledger interfaces should be queried "
+                "before continuing a platform decision."
+            ),
+            risk_level="medium",
+            required_evidence_interfaces=(
+                "contextos.final_request_audit.read",
+                "run_ledger.read",
+                "audit.diagnosis.read",
+                "audit.verdict.read",
+                "context.catalog.search",
+                "context.engine.resolve",
+                "verifier.policy.read",
+            ),
+            optional_evidence_interfaces=(
+                "audit.diagnosis.execute",
+                "audit.verdict.execute",
+                "verifier.execution.execute",
+            ),
+            candidate_actions=("request_evidence", "block", "escalate", "continue"),
+            hard_constraints=(
+                *shared_constraints,
+                "missing_or_failed_evidence_cannot_be_treated_as_passed",
+                "evidence_execution_must_use_public_cell_contracts",
+            ),
+            escalation="Hold or request governed evidence when required interfaces are unavailable.",
+            contract_refs=(
+                "roles.final_request_context_audit",
+                "control_plane.run_ledger",
+                "audit.diagnosis",
+                "audit.verdict",
+                "context.catalog",
+                "context.engine",
+                "control_plane.verifier_policy",
+                "control_plane.verifier_execution",
+            ),
+        ),
+        ResidentAgiDecisionCapabilityV1(
+            decision_id="architecture.option.selection",
+            name="Architecture option selection",
+            owner="resident_agi",
+            decision_scope=(
+                "Compare architecture, dependency, storage, messaging, and UI options from current project evidence "
+                "without hard-coding future technology choices."
+            ),
+            risk_level="medium",
+            required_evidence_interfaces=(
+                "task.execution_profile.read",
+                "chief_engineer.blueprint.read",
+                "context.catalog.search",
+                "context.engine.resolve",
+            ),
+            optional_evidence_interfaces=(
+                "audit.diagnosis.read",
+                "run_ledger.read",
+            ),
+            candidate_actions=("continue", "request_evidence", "escalate", "block"),
+            hard_constraints=(
+                *shared_constraints,
+                "cell_reuse_first",
+                "kernelone_foundation_first",
+                "architecture_choice_must_match_actual_project_use",
+            ),
+            escalation="Escalate to Chief Engineer blueprint revision for high-risk cross-cell changes.",
+            contract_refs=(
+                "task.execution_profile.v1",
+                "chief_engineer.blueprint",
+                "context.catalog",
+                "context.engine",
+            ),
+        ),
+        ResidentAgiDecisionCapabilityV1(
+            decision_id="goal.promotion.readiness",
+            name="Goal promotion readiness",
+            owner="resident_agi_governed_execution",
+            decision_scope=(
+                "Decide whether a Resident goal is ready to be staged or promoted into the governed PM chain."
+            ),
+            risk_level="high",
+            required_evidence_interfaces=(
+                "resident.decision_trace.read_write",
+                "run_ledger.read",
+                "runtime.events.read",
+            ),
+            optional_evidence_interfaces=(
+                "audit.verdict.read",
+                "contextos.final_request_audit.read",
+            ),
+            candidate_actions=("continue", "request_evidence", "block", "escalate"),
+            hard_constraints=(
+                *shared_constraints,
+                "goal_execution_must_enter_pm_chief_engineer_director_chain",
+                "resident_tick_outputs_are_pending_proposals_only",
+            ),
+            escalation="Hold promotion until PM/CE/Director handoff evidence is present.",
+            contract_refs=(
+                "resident.goal_bridge",
+                "resident.decision_trace",
+                "control_plane.run_ledger",
+                "runtime.v2.websocket",
+            ),
+        ),
+        ResidentAgiDecisionCapabilityV1(
+            decision_id="quality.gate.response",
+            name="Quality gate response",
+            owner="resident_agi",
+            decision_scope=(
+                "Choose whether to block, ask for evidence, escalate, or continue after build/lint/test/audit results."
+            ),
+            risk_level="high",
+            required_evidence_interfaces=(
+                "run_ledger.read",
+                "contextos.final_request_audit.read",
+                "audit.verdict.read",
+            ),
+            optional_evidence_interfaces=(
+                "audit.diagnosis.execute",
+                "verifier.execution.execute",
+            ),
+            candidate_actions=("block", "request_evidence", "escalate", "continue"),
+            hard_constraints=(
+                *shared_constraints,
+                "failed_quality_gate_cannot_be_marked_passed_by_agi",
+                "fixes_must_go_through_governed_roles",
+            ),
+            escalation="Block downstream promotion when gates remain red or evidence is incomplete.",
+            contract_refs=(
+                "control_plane.run_ledger",
+                "roles.final_request_context_audit",
+                "audit.verdict",
+                "audit.diagnosis",
+                "control_plane.verifier_execution",
+            ),
+        ),
+    ]
+
+
+def build_resident_agi_decision_capability_registry(
+    decision_capabilities: list[ResidentAgiDecisionCapabilityV1],
+) -> dict[str, Any]:
+    """Return the machine-readable split between platform and AGI-owned decisions."""
+
+    platform_owned = [item.decision_id for item in decision_capabilities if item.platform_enforced]
+    agi_owned = [
+        item.decision_id
+        for item in decision_capabilities
+        if item.owner == "resident_agi" and not item.platform_enforced
+    ]
+    governed_execution = [
+        item.decision_id for item in decision_capabilities if item.owner == "resident_agi_governed_execution"
+    ]
+    evidence_interface_ids = sorted(
+        {
+            interface_id
+            for item in decision_capabilities
+            for interface_id in (*item.required_evidence_interfaces, *item.optional_evidence_interfaces)
+        }
+    )
+    candidate_actions = sorted({action for item in decision_capabilities for action in item.candidate_actions})
+    return {
+        "schema_version": "resident.agi_decision_capability_registry.v1",
+        "role_id": "resident_agi",
+        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+        "platform_owned_decisions": platform_owned,
+        "agi_owned_decisions": agi_owned,
+        "governed_execution_decisions": governed_execution,
+        "evidence_interface_ids": evidence_interface_ids,
+        "candidate_actions": candidate_actions,
+        "counts": {
+            "decisions": len(decision_capabilities),
+            "platform_owned": len(platform_owned),
+            "agi_owned": len(agi_owned),
+            "governed_execution": len(governed_execution),
+            "evidence_interfaces": len(evidence_interface_ids),
+        },
+        "decision_policy": {
+            "platform_hard_rules": "code_enforced_before_llm",
+            "agi_judgement": "resident_agi_role_turn_with_audit_pack",
+            "governed_execution": "pm_chief_engineer_director_chain_only",
+            "evidence_execution": "public_cell_contracts_only",
+        },
+    }
 
 
 def build_resident_agi_authority_matrix(
@@ -352,12 +791,15 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
 
     capability_items = build_resident_agi_capability_surface()
     decision_boundary_items = build_resident_agi_decision_boundaries()
+    decision_capability_items = build_resident_agi_decision_capabilities()
     items = [item.to_dict() for item in capability_items]
     decision_boundaries = [item.to_dict() for item in decision_boundary_items]
+    decision_capabilities = [item.to_dict() for item in decision_capability_items]
     categories = sorted({str(item["category"]) for item in items})
     return {
         "schema_version": "resident.agi_capability_surface.v1",
         "decision_boundary_schema": "resident.agi_decision_boundary.v1",
+        "decision_capability_schema": "resident.agi_decision_capability.v1",
         "authority_matrix_schema": "resident.agi_authority_matrix.v1",
         "role_id": "resident_agi",
         "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
@@ -367,6 +809,10 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
         "categories": categories,
         "items": items,
         "decision_boundaries": decision_boundaries,
+        "decision_capabilities": decision_capabilities,
+        "decision_capability_registry": build_resident_agi_decision_capability_registry(
+            decision_capability_items,
+        ),
         "authority_matrix": build_resident_agi_authority_matrix(
             capabilities=capability_items,
             decision_boundaries=decision_boundary_items,
@@ -379,5 +825,7 @@ __all__ = [
     "build_resident_agi_authority_matrix",
     "build_resident_agi_capability_surface",
     "build_resident_agi_decision_boundaries",
+    "build_resident_agi_decision_capabilities",
+    "build_resident_agi_decision_capability_registry",
     "resident_agi_capability_surface_payload",
 ]

@@ -1586,6 +1586,7 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
     all_repairs.extend(repair_rust_unused_imports(workspace, stderr))
     all_repairs.extend(repair_rust_missing_fields(workspace, stderr))
     all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr))
+    all_repairs.extend(repair_rust_missing_module_files(workspace))
 
     # Second pass with fresh cargo check output
     if all_repairs:
@@ -1594,8 +1595,48 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
             all_repairs.extend(repair_rust_unused_imports(workspace, stderr2))
             all_repairs.extend(repair_rust_missing_fields(workspace, stderr2))
             all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr2))
+            all_repairs.extend(repair_rust_missing_module_files(workspace))
 
     return all_repairs
+
+
+def repair_rust_missing_module_files(workspace: Path) -> list[dict[str, Any]]:
+    """Create missing module files when ``mod xxx;`` is declared but the file doesn't exist.
+
+    Handles E0583: file not found for module.
+    """
+    repairs: list[dict[str, Any]] = []
+    mod_decl_re = re.compile(r"^\s*(pub\s+)?mod\s+(\w+)\s*;", re.MULTILINE)
+
+    for rs_file in sorted(workspace.rglob("*.rs")):
+        if "target" in rs_file.relative_to(workspace).parts:
+            continue
+        try:
+            content = rs_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        parent_dir = rs_file.parent
+        for match in mod_decl_re.finditer(content):
+            module_name = match.group(2)
+            # Check if the module file exists
+            module_file = parent_dir / f"{module_name}.rs"
+            module_dir = parent_dir / module_name / "mod.rs"
+            if module_file.is_file() or module_dir.is_file():
+                continue  # Module file exists, skip
+            # Create an empty module file
+            module_file.parent.mkdir(parents=True, exist_ok=True)
+            module_file.write_text(
+                f"// Auto-generated stub module: {module_name}\n",
+                encoding="utf-8",
+            )
+            repairs.append(
+                {
+                    "file": str(module_file.relative_to(workspace)),
+                    "action": f"created_missing_module_{module_name}",
+                }
+            )
+    return repairs
 
 
 def _replace_rust_crate_prefix(workspace: Path, missing_crate: str, canonical_crate: str) -> list[dict[str, Any]]:

@@ -14,6 +14,14 @@ _PATH_TOKEN_RE = re.compile(r"(?P<path>[A-Za-z0-9_./-]+\.[A-Za-z0-9_+-]{1,12})")
 _MAX_TEMPLATE_CHARS = 6000
 
 _EXTENSION_LANGUAGE_MAP: dict[str, str] = {
+    ".c": "cpp",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".cxx": "cpp",
+    ".h": "cpp",
+    ".hh": "cpp",
+    ".hpp": "cpp",
+    ".hxx": "cpp",
     ".py": "python",
     ".pyi": "python",
     ".ts": "typescript",
@@ -45,6 +53,7 @@ _SPECIAL_FILE_LANGUAGE_MAP: dict[str, str] = {
     "requirements.txt": "python",
     "cargo.toml": "rust",
     "go.mod": "go",
+    "cmakelists.txt": "cpp",
     "pom.xml": "java",
 }
 
@@ -94,6 +103,11 @@ _LANGUAGE_FOCUS: dict[str, str] = {
     "go": (
         "Use Go engineering standards: small packages, explicit errors, context-aware I/O, "
         "table-driven tests, gofmt-compatible code, and no hidden global mutable state."
+    ),
+    "cpp": (
+        "Use C++17 engineering standards: coherent header/source contracts, source-relative "
+        "quote includes, consistent namespaces across .hpp/.cpp/main, explicit build commands, "
+        "and tests that compile real translation units instead of only checking file presence."
     ),
     "rust": (
         "Use Rust engineering standards: precise ownership, Result-based error flow, small "
@@ -627,6 +641,10 @@ def _infer_language(*, context: dict[str, Any], message: str) -> str:
         "javascript": "javascript",
         "node": "node",
         "golang": "go",
+        "c++": "cpp",
+        "cpp": "cpp",
+        "c++17": "cpp",
+        "cpp_compile": "cpp",
         "rust": "rust",
         "java": "java",
         "shell": "shell",
@@ -858,6 +876,8 @@ def _normalize_language(value: Any) -> str:
         "jsx": "javascript",
         "nodejs": "node",
         "golang": "go",
+        "c++": "cpp",
+        "cxx": "cpp",
         "bash": "shell",
         "sh": "shell",
         "html": "html_css",

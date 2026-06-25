@@ -2469,6 +2469,7 @@ cells:
       errors:
         - ChiefEngineerBlueprintErrorV1
     depends_on:
+      - context.catalog
       - context.engine
       - llm.control_plane
       - policy.permission
@@ -2934,9 +2935,14 @@ cells:
     purpose: >
       Provide long-running resident autonomy capability including goal
       governance, decision traceability, evidence assembly, and
-      self-improvement loops.
+      self-improvement loops. Resident AGI supervision is exposed as a
+      first-class role-runtime audit pack with capability surface, hard-rule
+      gate, evidence gate, decision profile evidence, and runtime-contract
+      receipt checks.
     current_modules:
       - polaris.cells.resident.autonomy.internal.resident_runtime_service
+      - polaris.cells.resident.autonomy.internal.agi_audit_pack
+      - polaris.cells.resident.autonomy.internal.agi_capability_surface
       - polaris.cells.resident.autonomy.internal.goal_governor
       - polaris.cells.resident.autonomy.internal.decision_trace
       - polaris.cells.resident.autonomy.internal.self_improvement_lab
@@ -2949,31 +2955,55 @@ cells:
         - polaris.cells.resident.autonomy.public.contracts
       commands:
         - RunResidentCycleCommandV1
+        - StartResidentCommandV1
+        - StopResidentCommandV1
+        - RunResidentTickCommandV1
+        - UpdateResidentIdentityCommandV1
         - RecordResidentEvidenceCommandV1
+        - RecordResidentDecisionCommandV1
+        - CreateResidentGoalCommandV1
+        - ApproveResidentGoalCommandV1
+        - RejectResidentGoalCommandV1
         - MaterializeResidentGoalCommandV1
         - StageResidentGoalCommandV1
         - RunResidentGoalCommandV1
+        - ExtractResidentSkillsCommandV1
+        - RunResidentExperimentsCommandV1
+        - RunResidentImprovementsCommandV1
       queries:
         - QueryResidentStatusV1
         - QueryResidentCapabilitiesV1
         - QueryResidentAgiAuditPackV1
       events:
         - ResidentCycleCompletedEventV1
+        - runtime.v2.status.resident
       results:
         - ResidentAutonomyResultV1
       errors:
         - ResidentAutonomyErrorV1
+    runtime_projection:
+      publishes:
+        - channel: status.resident
+          subject: hp.runtime.<workspace_key>.status.resident
+          payload: resident_status_update
+          source: resident.autonomy
+      snapshot_field: snapshot.resident
+      full_snapshot_trigger: status.*
     depends_on:
       - context.engine
       - llm.control_plane
+      - llm.dialogue
       - policy.permission
       - policy.workspace_guard
       - runtime.execution_broker
       - runtime.state_owner
       - runtime.projection
+      - audit.diagnosis
       - audit.evidence
       - audit.verdict
       - control_plane.run_ledger
+      - control_plane.verifier_execution
+      - control_plane.verifier_policy
       - orchestration.pm_dispatch
       - roles.adapters
       - roles.runtime

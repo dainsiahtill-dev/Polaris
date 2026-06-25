@@ -44,7 +44,9 @@ class TestChannelConstants:
         assert "log.llm" in V2_CHANNEL_TO_SUBJECT
         assert "event.file_edit" in V2_CHANNEL_TO_SUBJECT
         assert "status.snapshot" in V2_CHANNEL_TO_SUBJECT
+        assert "status.resident" in V2_CHANNEL_TO_SUBJECT
 
     def test_v2_subject_values(self) -> None:
         assert V2_CHANNEL_TO_SUBJECT["log.system"] == "log.system"
         assert V2_CHANNEL_TO_SUBJECT["event.file_edit"] == "event.file_edit"
+        assert V2_CHANNEL_TO_SUBJECT["status.resident"] == "status.resident"

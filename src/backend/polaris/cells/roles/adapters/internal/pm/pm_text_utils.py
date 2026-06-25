@@ -69,6 +69,8 @@ _PM_SCOPE_PATH_ROOTS = {
     "workspace",
 }
 _PM_SCOPE_PATH_FILENAMES = {
+    "CMakeLists.txt",
+    "cmakelists.txt",
     "package.json",
     "README.md",
     "tsconfig.json",
@@ -79,8 +81,17 @@ _PM_SCOPE_PATH_FILENAMES = {
     "pyproject.toml",
 }
 _PM_SCOPE_PATH_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".cpp",
     ".css",
+    ".cxx",
+    ".h",
+    ".hh",
+    ".hpp",
     ".html",
+    ".hxx",
+    ".java",
     ".js",
     ".jsx",
     ".json",
@@ -110,8 +121,10 @@ _PM_DOCUMENTATION_CONTRACT_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 _PM_TEST_AUTHORING_HINT_RE = re.compile(
-    r"(?:编写|创建|实现|新增|补充|添加|完善).{0,24}(?:测试文件|测试用例|单元测试|集成测试|验收脚本|pytest|unittest|\.test\.)|"
-    r"(?:write|create|implement|add).{0,32}(?:test file|unit test|integration test|pytest|unittest|\\.test\\.)",
+    r"(?:编写|创建|实现|新增|补充|添加|完善).{0,64}"
+    r"(?:测试文件|测试用例|单元测试|集成测试|验收脚本|pytest|unittest|tests?/|test_[A-Za-z0-9_]*\.py|\.test\.)|"
+    r"(?:write|create|implement|add).{0,64}"
+    r"(?:test file|unit test|integration test|pytest|unittest|tests?/|test_[A-Za-z0-9_]*\\.py|\\.test\\.)",
     re.IGNORECASE,
 )
 _PM_GENERIC_PRODUCT_TEST_PATHS = frozenset({"tests/test_product.py", "test_product.py"})

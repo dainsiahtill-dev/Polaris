@@ -187,6 +187,9 @@ class TestResidentAgiProfile:
     def test_output_format_json(self, resident_agi: dict[str, Any]) -> None:
         assert resident_agi["prompt_policy"]["output_format"] == "json"
 
+    def test_ccr_retrieve_opt_in_enabled(self, resident_agi: dict[str, Any]) -> None:
+        assert resident_agi["tool_policy"]["ccr_retrieve_opt_in"] is True
+
 
 class TestProfileInvariants:
     """Cross-profile invariant tests."""

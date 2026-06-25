@@ -108,6 +108,38 @@ def test_go_cli_contract_does_not_infer_web_artifact_from_foreign_web_paths(tmp_
     assert audit["inferred_artifact"] == "cli"
 
 
+def test_cpp_contract_language_beats_python_test_file(tmp_path) -> None:
+    appendix, audit = build_prompt_profile_appendix(
+        workspace=str(tmp_path),
+        role_id="director",
+        message=(
+            "PM Task Contract / 任务合同:\n"
+            "任务: 实现 C++17 月球邮局明信片生成器\n"
+            "主语言: cpp\n"
+            "确定性检查: cpp_compile, source_target_coverage:src/**/*.cpp\n"
+            "目标文件: CMakeLists.txt, src/main.cpp, src/engine/generator.cpp, "
+            "src/models/postcard.hpp, tests/test_product.py, README.md\n"
+        ),
+        context_override={
+            "delivery_mode": "materialize_changes",
+            "target_files": [
+                "CMakeLists.txt",
+                "src/main.cpp",
+                "src/engine/generator.cpp",
+                "src/models/postcard.hpp",
+                "tests/test_product.py",
+                "README.md",
+            ],
+        },
+    )
+
+    selected_ids = audit["selected_prompt_profile_ids"]
+    assert "[POLARIS PROMPT PROFILE]" in appendix
+    assert "builtin.language.cpp" in selected_ids
+    assert "builtin.language.python" not in selected_ids
+    assert audit["inferred_language"] == "cpp"
+
+
 def test_user_prompt_profile_can_be_selected_explicitly(tmp_path) -> None:
     profile_dir = tmp_path / ".polaris" / "prompt_profiles"
     profile_dir.mkdir(parents=True)

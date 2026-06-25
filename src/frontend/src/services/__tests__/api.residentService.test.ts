@@ -1,54 +1,57 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiFetchMock = vi.fn();
 
-vi.mock('@/api', () => ({
+vi.mock("@/api", () => ({
   apiFetch: (...args: unknown[]) => apiFetchMock(...args),
 }));
 
-vi.mock('@/app/utils/devLogger', () => ({
+vi.mock("@/app/utils/devLogger", () => ({
   devLogger: {
     warn: vi.fn(),
   },
 }));
 
-import { residentService } from '../api';
+import { residentService } from "../api";
 
-describe('residentService', () => {
+describe("residentService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('loads the Resident AGI audit pack from the read-only endpoint', async () => {
+  it("loads the Resident AGI audit pack from the read-only endpoint", async () => {
     apiFetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          schema_version: 'resident.agi_audit_pack.v1',
-          role_id: 'resident_agi',
+          schema_version: "resident.agi_audit_pack.v1",
+          role_id: "resident_agi",
         }),
         { status: 200 },
       ),
     );
 
-    const result = await residentService.getAgiAuditPack('/tmp/polaris-demo', 12);
+    const result = await residentService.getAgiAuditPack(
+      "/tmp/polaris-demo",
+      12,
+    );
 
     expect(result.ok).toBe(true);
-    expect(result.data?.schema_version).toBe('resident.agi_audit_pack.v1');
+    expect(result.data?.schema_version).toBe("resident.agi_audit_pack.v1");
     expect(apiFetchMock).toHaveBeenCalledWith(
-      '/v2/resident/agi/audit-pack?workspace=%2Ftmp%2Fpolaris-demo&decision_limit=12',
+      "/v2/resident/agi/audit-pack?workspace=%2Ftmp%2Fpolaris-demo&decision_limit=12",
     );
   });
 
-  it('loads the Resident AGI capability surface from the canonical endpoint', async () => {
+  it("loads the Resident AGI capability surface from the canonical endpoint", async () => {
     apiFetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          schema_version: 'resident.agi_capability_surface.v1',
-          authority_matrix_schema: 'resident.agi_authority_matrix.v1',
+          schema_version: "resident.agi_capability_surface.v1",
+          authority_matrix_schema: "resident.agi_authority_matrix.v1",
           authority_matrix: {
-            schema_version: 'resident.agi_authority_matrix.v1',
+            schema_version: "resident.agi_authority_matrix.v1",
             decision_policy: {
-              governed_execution: 'canonical_role_chain_only',
+              governed_execution: "canonical_role_chain_only",
             },
           },
         }),
@@ -56,53 +59,72 @@ describe('residentService', () => {
       ),
     );
 
-    const result = await residentService.getCapabilities('/tmp/polaris-demo');
+    const result = await residentService.getCapabilities("/tmp/polaris-demo");
 
     expect(result.ok).toBe(true);
-    expect(result.data?.authority_matrix?.decision_policy?.governed_execution).toBe(
-      'canonical_role_chain_only',
+    expect(
+      result.data?.authority_matrix?.decision_policy?.governed_execution,
+    ).toBe("canonical_role_chain_only");
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      "/v2/resident/capabilities?workspace=%2Ftmp%2Fpolaris-demo",
     );
-    expect(apiFetchMock).toHaveBeenCalledWith('/v2/resident/capabilities?workspace=%2Ftmp%2Fpolaris-demo');
   });
 
-  it('posts Resident AGI decisions with audit-pack and governance evidence', async () => {
+  it("posts Resident AGI decisions with audit-pack and governance evidence", async () => {
     apiFetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           ok: true,
-          decision: { verdict: 'request_evidence' },
-          audit_pack: { schema_version: 'resident.agi_audit_pack.v1' },
+          decision: { verdict: "request_evidence" },
+          audit_pack: { schema_version: "resident.agi_audit_pack.v1" },
+          runtime_contract_gate: {
+            schema_version: "resident.agi_runtime_contract_gate.v1",
+            status: "pass",
+            passed: true,
+            required: true,
+          },
         }),
         { status: 200 },
       ),
     );
 
-    const result = await residentService.decide('/tmp/polaris-demo', {
-      objective: 'Decide whether the run can proceed.',
-      decision_type: 'platform_supervision',
+    const result = await residentService.decide("/tmp/polaris-demo", {
+      objective: "Decide whether the run can proceed.",
+      decision_type: "platform_supervision",
       include_audit_pack: true,
-      candidate_actions: ['continue', 'block', 'request_evidence', 'escalate'],
-      constraints: ['preserve_pm_chief_engineer_director_qa_chain'],
+      candidate_actions: ["continue", "block", "request_evidence", "escalate"],
+      constraints: ["preserve_pm_chief_engineer_director_qa_chain"],
       evidence: {
-        resident_agi_authority_matrix_schema: 'resident.agi_authority_matrix.v1',
+        resident_agi_authority_matrix_schema:
+          "resident.agi_authority_matrix.v1",
       },
     });
 
     expect(result.ok).toBe(true);
+    expect(result.data?.runtime_contract_gate?.schema_version).toBe(
+      "resident.agi_runtime_contract_gate.v1",
+    );
+    expect(result.data?.runtime_contract_gate?.status).toBe("pass");
     expect(apiFetchMock).toHaveBeenCalledWith(
-      '/v2/resident/agi/decide',
+      "/v2/resident/agi/decide",
       expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          workspace: '/tmp/polaris-demo',
-          objective: 'Decide whether the run can proceed.',
-          decision_type: 'platform_supervision',
+          workspace: "/tmp/polaris-demo",
+          objective: "Decide whether the run can proceed.",
+          decision_type: "platform_supervision",
           include_audit_pack: true,
-          candidate_actions: ['continue', 'block', 'request_evidence', 'escalate'],
-          constraints: ['preserve_pm_chief_engineer_director_qa_chain'],
+          candidate_actions: [
+            "continue",
+            "block",
+            "request_evidence",
+            "escalate",
+          ],
+          constraints: ["preserve_pm_chief_engineer_director_qa_chain"],
           evidence: {
-            resident_agi_authority_matrix_schema: 'resident.agi_authority_matrix.v1',
+            resident_agi_authority_matrix_schema:
+              "resident.agi_authority_matrix.v1",
           },
         }),
       }),

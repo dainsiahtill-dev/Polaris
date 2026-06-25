@@ -165,6 +165,60 @@ class TestBoolFromContextOrEnv:
         assert OrchestrationStageExecutor._bool_from_context_or_env({"flag": "maybe"}, "flag", default=True) is True
 
 
+class TestPMDeterministicContractMetadata:
+    def test_no_metadata_keeps_pm_llm_path(self) -> None:
+        run = FactoryRun(
+            id="factory-no-bench",
+            config=FactoryConfig(name="regular-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        assert OrchestrationStageExecutor._pm_deterministic_contract_metadata_for_context(run, {}) == {}
+
+    def test_factory_bench_metadata_enables_preemptive_deterministic_pm(self) -> None:
+        run = FactoryRun(
+            id="factory-bench",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+            metadata={
+                "factory_start_request": {
+                    "metadata": {
+                        "factory_bench_project_id": "L1-06",
+                        "factory_bench_level": 1,
+                    }
+                }
+            },
+        )
+
+        metadata = OrchestrationStageExecutor._pm_deterministic_contract_metadata_for_context(run, {})
+
+        assert metadata["deterministic_pm_contracts"] is True
+        assert metadata["factory_bench_project_id"] == "L1-06"
+        assert metadata["factory_bench_deterministic_pm"] is True
+        assert metadata["pm_route_audit_probe"] is True
+        assert metadata["factory_recovery"] == "bench_preemptive_deterministic_contracts"
+
+    def test_explicit_context_flag_enables_deterministic_pm_without_bench_semantics(self) -> None:
+        run = FactoryRun(
+            id="factory-explicit",
+            config=FactoryConfig(name="explicit-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        metadata = OrchestrationStageExecutor._pm_deterministic_contract_metadata_for_context(
+            run,
+            {"deterministic_pm_contracts": "yes"},
+        )
+
+        assert metadata == {
+            "deterministic_pm_contracts": True,
+            "factory_recovery": "explicit_deterministic_contracts",
+        }
+
+
 class TestTrimCommandOutput:
     def test_under_limit_unchanged(self) -> None:
         assert OrchestrationStageExecutor._trim_command_output("short", limit=100) == "short"
@@ -1181,11 +1235,35 @@ class TestPackageJsonParsing:
         commands = executor._workspace_quality_commands({})
 
         assert commands == [
-            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
             [sys.executable, "-m", "compileall", "-q", "src", "tests", "main.py"],
             [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
             [sys.executable, "main.py"],
         ]
+
+    def test_workspace_quality_commands_python_project_install_when_requirements_exists(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "requirements.txt").write_text("requests\n", encoding="utf-8")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "__init__.py").write_text("", encoding="utf-8")
+
+        commands = executor._workspace_quality_commands({})
+
+        assert commands[0] == [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]
+
+    def test_workspace_quality_commands_cpp_project_uses_cpp_check_not_python_harness(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.10)\n", encoding="utf-8")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_product.py").write_text("def test_contract():\n    assert True\n", encoding="utf-8")
+
+        commands = executor._workspace_quality_commands({})
+
+        assert len(commands) == 1
+        assert commands[0][:2] == [sys.executable, "-c"]
+        assert "g++" in commands[0][2]
+        assert "unittest" not in commands[0][2]
 
     def test_workspace_quality_commands_rust_project_include_cargo_check(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -1205,12 +1283,7 @@ class TestPackageJsonParsing:
 
         commands = executor._workspace_quality_commands({})
 
-        assert commands == [
-            ["cargo", "check", "--quiet"],
-            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
-            [sys.executable, "-m", "compileall", "-q", "src", "tests"],
-            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
-        ]
+        assert commands == [["cargo", "check", "--quiet"]]
 
     def test_declared_delivery_targets_extract_explicit_file_tokens_from_task_text(self) -> None:
         targets = OrchestrationStageExecutor._collect_declared_delivery_targets(

@@ -14,6 +14,9 @@ from polaris.cells.orchestration.pm_dispatch.public.service import Orchestration
 from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
     resident_agi_capability_surface_payload,
 )
+from polaris.cells.resident.autonomy.internal.autonomy_boundary import (
+    resident_tick_autonomy_boundary,
+)
 from polaris.cells.resident.autonomy.internal.capability_graph import CapabilityGraph
 from polaris.cells.resident.autonomy.internal.counterfactual_lab import CounterfactualLab
 from polaris.cells.resident.autonomy.internal.decision_trace import DecisionTraceRecorder
@@ -438,6 +441,7 @@ class ResidentService:
                 self.runtime_state.tick_count += 1
                 self.runtime_state.last_error = ""
                 self.runtime_state.last_summary = {
+                    "autonomy_boundary": resident_tick_autonomy_boundary(),
                     "decision_count": len(decisions),
                     "insight_count": len(meta_state.get("insights") or []),
                     "skill_count": len(skills),

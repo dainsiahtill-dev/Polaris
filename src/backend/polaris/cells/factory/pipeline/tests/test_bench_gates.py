@@ -676,6 +676,43 @@ def test_real_run_gate_executes_python_build_and_cli_entrypoint(tmp_path: Path) 
     assert gate["entrypoint"]["kind"] == "python_cli"
 
 
+def test_real_run_gate_executes_cpp_multifile_cli_entrypoint(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "src" / "engine"
+    engine_dir.mkdir(parents=True)
+    (engine_dir / "generator.hpp").write_text(
+        "#pragma once\n#include <string>\nnamespace moon_post { std::string build_postcard(); }\n",
+        encoding="utf-8",
+    )
+    (engine_dir / "generator.cpp").write_text(
+        '#include "generator.hpp"\n'
+        "namespace moon_post {\n"
+        'std::string build_postcard() { return "moon postcard stamp poem"; }\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "main.cpp").write_text(
+        '#include "engine/generator.hpp"\n'
+        "#include <iostream>\n"
+        "int main(int argc, char** argv) {\n"
+        '    if (argc > 1 && std::string(argv[1]) == "--help") {\n'
+        '        std::cout << "usage: moon-postcard\\n";\n'
+        "        return 0;\n"
+        "    }\n"
+        '    std::cout << moon_post::build_postcard() << "\\n";\n'
+        "    return 0;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    record = {"code_files": ["src/main.cpp", "src/engine/generator.cpp"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    assert gate["requirements"]["entrypoint_smoke"]["ok"] is True
+    assert gate["entrypoint"]["kind"] == "cpp_cli"
+    assert "src/engine/generator.cpp" in gate["entrypoint"]["compile"]["command"]
+
+
 def test_real_run_gate_executes_python_unittest_suite(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()

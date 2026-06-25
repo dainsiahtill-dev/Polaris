@@ -18,6 +18,9 @@ from polaris.cells.llm.dialogue.public import get_registered_roles
 from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
     resident_agi_capability_surface_payload,
 )
+from polaris.cells.resident.autonomy.internal.autonomy_boundary import (
+    resident_tick_autonomy_boundary,
+)
 from polaris.cells.roles.adapters.public.service import get_supported_roles
 
 logger = logging.getLogger(__name__)
@@ -256,6 +259,221 @@ def resident_agi_hard_rule_gate(audit_pack: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _resident_agi_unique_strings(values: list[Any]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        token = str(value or "").strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        result.append(token)
+    return result
+
+
+def resident_agi_evidence_interface_recommendations(
+    *,
+    capability_surface: dict[str, Any],
+    hard_rule_status: str,
+    evidence_status: str,
+) -> list[dict[str, Any]]:
+    """Return audit/context/verifier interfaces the AGI should consider next."""
+
+    capabilities_raw = capability_surface.get("items")
+    capabilities = capabilities_raw if isinstance(capabilities_raw, list) else []
+    evidence_categories = {
+        "audit_diagnosis",
+        "audit_verdict",
+        "audit_evidence",
+        "context_discovery",
+        "llm_audit",
+        "run_ledger",
+        "verification_policy",
+    }
+    priority_by_contract = {
+        "roles.final_request_context_audit": 10,
+        "control_plane.run_ledger": 20,
+        "audit.diagnosis": 30,
+        "audit.verdict": 40,
+        "control_plane.verifier_policy": 50,
+        "control_plane.verifier_execution": 60,
+        "context.catalog": 70,
+        "context.engine": 80,
+        "audit.evidence.bundle": 90,
+    }
+    recommendations: list[dict[str, Any]] = []
+    for capability in capabilities:
+        if not isinstance(capability, dict):
+            continue
+        category = str(capability.get("category") or "").strip()
+        contract_ref = str(capability.get("contract_ref") or "").strip()
+        if (
+            category not in evidence_categories
+            and not contract_ref.startswith(("audit.", "context.", "control_plane.verifier"))
+            and contract_ref not in {"control_plane.run_ledger", "roles.final_request_context_audit"}
+        ):
+            continue
+
+        access = str(capability.get("access") or "read_only").strip() or "read_only"
+        risk_level = str(capability.get("risk_level") or "low").strip() or "low"
+        should_consider = access == "read_only" or evidence_status in {"fail", "hold"} or hard_rule_status == "block"
+        reason = "Collect read-only decision evidence."
+        if hard_rule_status == "block":
+            reason = "Repair platform hard-rule evidence before AGI judgement."
+        elif evidence_status == "fail":
+            reason = "Investigate failed gate evidence before downstream execution."
+        elif evidence_status == "hold":
+            reason = "Request missing evidence before continuing."
+        elif access != "read_only":
+            reason = "Keep governed execution available only when later evidence becomes insufficient."
+
+        evidence_refs_raw = capability.get("evidence_refs")
+        evidence_refs = evidence_refs_raw if isinstance(evidence_refs_raw, list) else []
+        recommendations.append(
+            {
+                "capability_id": str(capability.get("capability_id") or "").strip(),
+                "name": str(capability.get("name") or "").strip(),
+                "category": category,
+                "contract_ref": contract_ref,
+                "access": access,
+                "risk_level": risk_level,
+                "priority": priority_by_contract.get(contract_ref, 100),
+                "recommended_now": should_consider,
+                "reason": reason,
+                "evidence_refs": [str(item or "").strip() for item in evidence_refs if str(item or "").strip()],
+            }
+        )
+
+    return sorted(
+        recommendations,
+        key=lambda item: (
+            not bool(item.get("recommended_now")),
+            int(item.get("priority") or 100),
+            str(item.get("capability_id") or ""),
+        ),
+    )
+
+
+def resident_agi_decision_profile(audit_pack: dict[str, Any]) -> dict[str, Any]:
+    """Return the machine-readable execution profile for a Resident AGI turn."""
+
+    hard_rule_gate_raw = audit_pack.get("hard_rule_gate")
+    hard_rule_gate: dict[str, Any] = hard_rule_gate_raw if isinstance(hard_rule_gate_raw, dict) else {}
+    evidence_gate_raw = audit_pack.get("evidence_gate")
+    evidence_gate: dict[str, Any] = evidence_gate_raw if isinstance(evidence_gate_raw, dict) else {}
+    authority_matrix_raw = audit_pack.get("authority_matrix")
+    authority_matrix: dict[str, Any] = authority_matrix_raw if isinstance(authority_matrix_raw, dict) else {}
+    capability_surface_raw = audit_pack.get("capability_surface")
+    capability_surface: dict[str, Any] = capability_surface_raw if isinstance(capability_surface_raw, dict) else {}
+    decision_capability_registry_raw = capability_surface.get("decision_capability_registry")
+    decision_capability_registry: dict[str, Any] = (
+        decision_capability_registry_raw if isinstance(decision_capability_registry_raw, dict) else {}
+    )
+    decision_capabilities_raw = capability_surface.get("decision_capabilities")
+    decision_capabilities = decision_capabilities_raw if isinstance(decision_capabilities_raw, list) else []
+    autonomy_boundary_raw = audit_pack.get("autonomy_boundary")
+    autonomy_boundary: dict[str, Any] = autonomy_boundary_raw if isinstance(autonomy_boundary_raw, dict) else {}
+
+    hard_rule_status = str(hard_rule_gate.get("status") or "unknown").strip().lower()
+    evidence_status = str(evidence_gate.get("status") or "unknown").strip().lower()
+    hard_rule_passed = hard_rule_status == "pass"
+    evidence_recommendation = str(evidence_gate.get("recommended_verdict") or "request_evidence").strip()
+    if not hard_rule_passed:
+        recommended_verdict = "block"
+        recommended_next_action = "repair_platform_hard_rule_evidence"
+        downstream_precheck = "blocked_by_platform_hard_rule"
+        candidate_actions = ["block", "request_evidence", "escalate"]
+    elif evidence_status == "pass" and evidence_recommendation == "continue":
+        recommended_verdict = "continue"
+        recommended_next_action = "run_resident_agi_judgement"
+        downstream_precheck = "ready_for_agi_judgement"
+        candidate_actions = ["continue", "block", "request_evidence", "escalate"]
+    elif evidence_status == "fail":
+        recommended_verdict = "block"
+        recommended_next_action = "block_and_repair_failed_gate_evidence"
+        downstream_precheck = "hold_for_gate_repair"
+        candidate_actions = ["block", "request_evidence", "escalate"]
+    else:
+        recommended_verdict = evidence_recommendation or "request_evidence"
+        recommended_next_action = "request_missing_contextos_or_run_ledger_evidence"
+        downstream_precheck = "hold_for_evidence"
+        candidate_actions = ["request_evidence", "block", "escalate"]
+
+    boundaries_raw = capability_surface.get("decision_boundaries")
+    boundaries = boundaries_raw if isinstance(boundaries_raw, list) else []
+    required_evidence: list[Any] = []
+    for boundary in boundaries:
+        if not isinstance(boundary, dict):
+            continue
+        evidence_required = boundary.get("evidence_required")
+        if isinstance(evidence_required, list):
+            required_evidence.extend(evidence_required)
+
+    counts_raw = authority_matrix.get("counts")
+    counts: dict[str, Any] = counts_raw if isinstance(counts_raw, dict) else {}
+    decision_policy_raw = authority_matrix.get("decision_policy")
+    decision_policy: dict[str, Any] = decision_policy_raw if isinstance(decision_policy_raw, dict) else {}
+    canonical_contracts_raw = authority_matrix.get("canonical_contracts")
+    canonical_contracts = canonical_contracts_raw if isinstance(canonical_contracts_raw, list) else []
+    decision_capability_ids = [
+        str(item.get("decision_id") or "").strip()
+        for item in decision_capabilities
+        if isinstance(item, dict) and str(item.get("decision_id") or "").strip()
+    ]
+    evidence_interface_recommendations = resident_agi_evidence_interface_recommendations(
+        capability_surface=capability_surface,
+        hard_rule_status=hard_rule_status,
+        evidence_status=evidence_status,
+    )
+
+    return {
+        "schema_version": "resident.agi_decision_profile.v1",
+        "role_id": "resident_agi",
+        "runtime_foundation": audit_pack.get("runtime_foundation") or "roles.runtime + ContextOS + TurnEngine",
+        "role_turn_allowed": hard_rule_passed,
+        "downstream_precheck": downstream_precheck,
+        "recommended_verdict": recommended_verdict,
+        "recommended_next_action": recommended_next_action,
+        "candidate_actions": candidate_actions,
+        "required_constraints": [
+            "resident_agi_role_runtime_required",
+            "contextos_expected",
+            "turn_engine_expected",
+            "preserve_pm_chief_engineer_director_qa_chain",
+            "hard_platform_invariants_non_overridable",
+            "resident_tick_is_deterministic_evidence_only",
+            "execution_impacting_agi_judgement_requires_runtime_contract_gate",
+        ],
+        "required_evidence": _resident_agi_unique_strings(required_evidence),
+        "evidence_interface_recommendations": evidence_interface_recommendations,
+        "decision_capability_registry": decision_capability_registry,
+        "decision_capability_ids": _resident_agi_unique_strings(decision_capability_ids),
+        "contract_refs": _resident_agi_unique_strings(canonical_contracts),
+        "authority_policy": {
+            "hard_rules": decision_policy.get("hard_rules") or "platform_enforced_non_overridable",
+            "evidence_gates": decision_policy.get("evidence_gates") or "agi_judgement_with_fail_closed_recommendation",
+            "governed_execution": decision_policy.get("governed_execution") or "canonical_role_chain_only",
+            "code_changes": decision_policy.get("code_changes") or "director_authorized_tools_only",
+        },
+        "platform_permission_counts": {
+            "read_only": int(counts.get("read_only_capabilities") or 0),
+            "governed_operations": int(counts.get("governed_operation_capabilities") or 0),
+            "high_risk": int(counts.get("high_risk_capabilities") or 0),
+        },
+        "gate_refs": {
+            "hard_rule_gate": hard_rule_gate.get("schema_version") or "resident.agi_hard_rule_gate.v1",
+            "evidence_gate": evidence_gate.get("schema_version") or "resident.agi_evidence_gate.v1",
+            "authority_matrix": authority_matrix.get("schema_version") or "resident.agi_authority_matrix.v1",
+            "decision_capability_registry": decision_capability_registry.get("schema_version")
+            or "resident.agi_decision_capability_registry.v1",
+            "autonomy_boundary": autonomy_boundary.get("schema_version") or "resident.tick_autonomy_boundary.v1",
+        },
+        "llm_decision_required": True,
+        "llm_override_allowed": False,
+        "audit_pack_schema": audit_pack.get("schema_version") or "resident.agi_audit_pack.v1",
+    }
+
+
 def build_resident_agi_audit_pack(
     *,
     workspace: str,
@@ -276,6 +494,7 @@ def build_resident_agi_audit_pack(
     counts: dict[str, Any] = counts_raw if isinstance(counts_raw, dict) else {}
     run_id = str(status_payload.get("run_id") or "").strip()
     run_ledger_summary = resident_agi_run_ledger_summary(workspace, run_id=run_id)
+    autonomy_boundary = resident_tick_autonomy_boundary()
     evidence_refs = resident_agi_audit_refs(
         decisions=recent_decisions,
         capability_surface=capability_surface,
@@ -289,6 +508,7 @@ def build_resident_agi_audit_pack(
             "resident.status",
             "resident.agi_capability_surface",
             "resident.decision_trace",
+            "runtime.v2.status.resident",
             "runtime.v2.snapshot.resident",
             "roles.registry",
         ],
@@ -303,6 +523,7 @@ def build_resident_agi_audit_pack(
         },
         "counts": counts,
         "capability_surface": capability_surface,
+        "autonomy_boundary": autonomy_boundary,
         "boundary_summary": resident_agi_boundary_summary(capability_surface),
         "authority_matrix": capability_surface.get("authority_matrix")
         if isinstance(capability_surface.get("authority_matrix"), dict)
@@ -316,6 +537,7 @@ def build_resident_agi_audit_pack(
         ),
         "execution_constraints": [
             "AGI decisions must execute as resident_agi role turns.",
+            "Resident tick/labs are deterministic evidence producers, not AGI judgement turns.",
             "Execution-impacting AGI decisions must be recorded in resident.decision_trace.",
             "Downstream work must preserve PM → Chief Engineer → Director.",
             "Hard platform invariants cannot be overridden by AGI judgement.",
@@ -323,6 +545,7 @@ def build_resident_agi_audit_pack(
         "decision_endpoint": "/v2/resident/agi/decide",
     }
     audit_pack["hard_rule_gate"] = resident_agi_hard_rule_gate(audit_pack)
+    audit_pack["decision_profile"] = resident_agi_decision_profile(audit_pack)
     return audit_pack
 
 
@@ -330,7 +553,9 @@ __all__ = [
     "build_resident_agi_audit_pack",
     "resident_agi_audit_refs",
     "resident_agi_boundary_summary",
+    "resident_agi_decision_profile",
     "resident_agi_evidence_gate",
+    "resident_agi_evidence_interface_recommendations",
     "resident_agi_hard_rule_gate",
     "resident_agi_role_registry_payload",
     "resident_agi_run_ledger_summary",

@@ -68,6 +68,7 @@ V2_CHANNEL_TO_SUBJECT: dict[str, str] = {
     "event.file_edit": "event.file_edit",
     "event.task_trace": "event.task_trace",
     "status.snapshot": "status.snapshot",
+    "status.resident": "status.resident",
     "status.instances": "status.instances",
 }
 

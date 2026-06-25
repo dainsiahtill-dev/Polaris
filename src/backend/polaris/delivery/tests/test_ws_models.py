@@ -155,13 +155,17 @@ class TestV2ChannelToSubject:
         """Test status.snapshot channel mapping."""
         assert V2_CHANNEL_TO_SUBJECT["status.snapshot"] == "status.snapshot"
 
+    def test_contains_status_resident(self) -> None:
+        """Test status.resident channel mapping."""
+        assert V2_CHANNEL_TO_SUBJECT["status.resident"] == "status.resident"
+
     def test_is_dict(self) -> None:
         """Test that V2_CHANNEL_TO_SUBJECT is a dict."""
         assert isinstance(V2_CHANNEL_TO_SUBJECT, dict)
 
     def test_expected_count(self) -> None:
         """Test expected mapping count."""
-        assert len(V2_CHANNEL_TO_SUBJECT) == 6
+        assert len(V2_CHANNEL_TO_SUBJECT) == 8
 
     def test_values_are_strings(self) -> None:
         """Test that all values are strings."""

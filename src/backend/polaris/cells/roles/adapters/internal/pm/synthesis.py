@@ -45,8 +45,41 @@ def _directive_requires_rust_package_contract(directive: str) -> bool:
     )
 
 
+def _directive_requires_cpp_package_contract(directive: str) -> bool:
+    lower = str(directive or "").lower()
+    return any(
+        token in lower
+        for token in (
+            "c++",
+            "cpp",
+            "c++17",
+            ".cpp",
+            ".hpp",
+            "cpp_compile",
+            "source_target_coverage:src/**/*.cpp",
+        )
+    )
+
+
+def _directive_requires_java_package_contract(directive: str) -> bool:
+    lower = str(directive or "").lower()
+    return any(
+        token in lower
+        for token in (
+            "主语言: java",
+            "main language: java",
+            " java ",
+            ".java",
+            "javac",
+            "java_compile",
+            "src/main/java",
+            "source_target_coverage:src/main/java",
+        )
+    )
+
+
 _DETERMINISTIC_CHECK_RE = re.compile(
-    r"(?i)(html|ts_syntax|package_scripts|rust_compile|min_files:\d+|source_target_coverage:[^\s]+|content_any:[A-Za-z0-9_|-]+)"
+    r"(?i)(html|ts_syntax|package_scripts|rust_compile|cpp_compile|java_compile|min_files:\d+|source_target_coverage:[^\s]+|content_any:[A-Za-z0-9_|-]+)"
 )
 _CONTENT_ANY_RE = re.compile(r"(?i)content_any:([A-Za-z0-9_|-]+)")
 
@@ -241,6 +274,17 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             "source_context_redacted": True,
             "source_directive_length": len(str(directive or "")),
         }
+        if _directive_requires_java_package_contract(directive):
+            java_contracts = self._synthesize_java_workspace_contracts(
+                directive=directive,
+                domain_label=str(domain_label),
+                source_metadata=source_metadata,
+            )
+            contracts = [
+                self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(java_contracts)
+            ]
+            return [item for item in contracts if isinstance(item, dict)]
+
         placeholder_repair_contracts = self._synthesize_placeholder_repair_contracts(
             directive=directive,
             source_metadata=source_metadata,
@@ -282,6 +326,17 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             )
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(rust_contracts)
+            ]
+            return [item for item in contracts if isinstance(item, dict)]
+
+        if _directive_requires_cpp_package_contract(directive):
+            cpp_contracts = self._synthesize_cpp_workspace_contracts(
+                directive=directive,
+                domain_label=str(domain_label),
+                source_metadata=source_metadata,
+            )
+            contracts = [
+                self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(cpp_contracts)
             ]
             return [item for item in contracts if isinstance(item, dict)]
 
@@ -743,6 +798,131 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 ],
                 "phase": "verification",
                 "depends_on": ["TASK-2"],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+        ]
+
+    def _synthesize_cpp_workspace_contracts(
+        self,
+        *,
+        directive: str,
+        domain_label: str,
+        source_metadata: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        deterministic_checks = _extract_deterministic_checks_from_directive(directive)
+        content_keywords = _extract_content_any_keywords_from_directive(directive)
+        if not content_keywords:
+            content_keywords = self._extract_domain_keywords(directive, limit=6)
+        keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
+        check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "cpp_compile; C++17"
+        delivery_targets = [
+            "CMakeLists.txt",
+            "src/models/postcard.hpp",
+            "src/models/postcard.cpp",
+            "src/models/stamp.hpp",
+            "src/models/stamp.cpp",
+            "src/engine/generator.hpp",
+            "src/engine/generator.cpp",
+            "src/main.cpp",
+            "tests/test_product.py",
+            "README.md",
+        ]
+        return [
+            {
+                "id": "TASK-1",
+                "title": f"实现 {domain_label} C++17 CLI、领域模型与验收",
+                "goal": f"在工作区根交付 {domain_label} 的完整 CMake/C++17 CLI、领域模型、验证脚本和 README。",
+                "description": (
+                    "创建 CMakeLists.txt、src/models/、src/engine/、src/main.cpp、tests/test_product.py 与 README.md，"
+                    f"确保源码覆盖需求关键词和确定性检查：{keyword_summary}。"
+                ),
+                "scope": delivery_targets,
+                "target_files": delivery_targets,
+                "steps": [
+                    "创建 CMakeLists.txt，声明 C++17 标准、可执行目标和所有 src/**/*.cpp 源文件",
+                    "实现 src/models/postcard.hpp 与 src/models/postcard.cpp 的明信片领域对象",
+                    "实现 src/models/stamp.hpp 与 src/models/stamp.cpp 的邮票或邮戳领域对象",
+                    "实现 src/engine/generator.hpp，声明 postcard generation 公开 API",
+                    "实现 src/engine/generator.cpp，将 moon/postcard/stamp/poem 等需求元素组合为输出文本",
+                    "实现 src/main.cpp，构造示例输入并打印生成的 postcard 或 poem 结果",
+                    "创建 tests/test_product.py，使用 Python unittest 调用 CMake/g++ 或检查 C++ 产物结构",
+                    "编写 README，说明 cmake build、直接 g++ 编译、运行和测试命令",
+                    f"验证脚本覆盖确定性检查：{check_summary}",
+                ],
+                "acceptance": [
+                    "`CMakeLists.txt`、`src/models/`、`src/engine/`、`src/main.cpp`、`tests/test_product.py` 与 `README.md` 存在且非空",
+                    "`src/main.cpp` 存在并可作为 C++17 CLI 入口编译运行",
+                    "`src/engine/` 源码实现 moon -> postcard/stamp/poem 生成规则",
+                    f"源码包含需求关键词：{keyword_summary}",
+                    "`cmake --build build` 或 `g++ -std=c++17` 返回成功",
+                    "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
+                    "`README.md` 包含 C++17 构建、运行和验证步骤",
+                    f"确定性检查进入任务验收：{check_summary}",
+                ],
+                "phase": "implementation",
+                "depends_on": [],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+        ]
+
+    def _synthesize_java_workspace_contracts(
+        self,
+        *,
+        directive: str,
+        domain_label: str,
+        source_metadata: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        deterministic_checks = _extract_deterministic_checks_from_directive(directive)
+        content_keywords = _extract_content_any_keywords_from_directive(directive)
+        if not content_keywords:
+            content_keywords = self._extract_domain_keywords(directive, limit=6)
+        keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
+        check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "java_compile; javac"
+        delivery_targets = [
+            "pom.xml",
+            "src/main/java/polaris/factory/Main.java",
+            "src/main/java/polaris/factory/domain/RhythmMonster.java",
+            "src/main/java/polaris/factory/domain/BeatPattern.java",
+            "src/main/java/polaris/factory/engine/RhythmEngine.java",
+            "src/test/java/polaris/factory/RhythmEngineTest.java",
+            "tests/test_product.py",
+            "README.md",
+        ]
+        return [
+            {
+                "id": "TASK-1",
+                "title": f"实现 {domain_label} Java CLI、领域模型与验收",
+                "goal": f"在工作区根交付 {domain_label} 的完整 Java CLI、领域模型、自包含验证和 README。",
+                "description": (
+                    "创建 src/main/java/、src/test/java/、tests/test_product.py 与 README.md，"
+                    f"确保 Java 源码覆盖需求关键词和确定性检查：{keyword_summary}。"
+                ),
+                "scope": delivery_targets,
+                "target_files": delivery_targets,
+                "steps": [
+                    "创建 pom.xml 或等价 Java 项目元数据，但 java_compile 必须不依赖 Maven/Gradle 才能通过 javac",
+                    "实现 src/main/java/polaris/factory/Main.java，作为可直接 java 运行的 CLI 入口",
+                    "实现 src/main/java/polaris/factory/domain/ 下的领域模型，表达 rhythm、monster、beat、pattern 规则",
+                    "实现 src/main/java/polaris/factory/engine/RhythmEngine.java，计算节奏正确性对怪兽性格和鼓机 pattern 的影响",
+                    "实现 src/test/java/polaris/factory/RhythmEngineTest.java，使用 main/assert 或标准库自包含验证，禁止依赖未声明 JUnit",
+                    "创建 tests/test_product.py，使用 Python unittest 调用 javac/java 或检查 Java 产物结构",
+                    "编写 README，说明 javac 编译、java 运行和测试命令",
+                    f"验证脚本覆盖确定性检查：{check_summary}",
+                ],
+                "acceptance": [
+                    "`src/main/java/`、`src/test/java/`、`tests/test_product.py` 与 `README.md` 存在且非空",
+                    "`src/main/java/polaris/factory/Main.java` 存在并可作为 Java CLI 入口编译运行",
+                    "`src/main/java/` 源码实现 rhythm -> monster/beat/pattern 领域规则",
+                    f"源码包含需求关键词：{keyword_summary}",
+                    "`javac -encoding UTF-8` 对所有 `.java` 文件返回成功",
+                    "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
+                    "`README.md` 包含 Java 编译、运行和验证步骤",
+                    f"确定性检查进入任务验收：{check_summary}",
+                ],
+                "phase": "implementation",
+                "depends_on": [],
                 "assigned_to": "Director",
                 "metadata": dict(source_metadata),
             },

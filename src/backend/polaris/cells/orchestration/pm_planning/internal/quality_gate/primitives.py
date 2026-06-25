@@ -140,6 +140,8 @@ _PM_SCOPE_ROOTS = {
     "workspace",
 }
 _PM_SCOPE_FILENAMES = {
+    "CMakeLists.txt",
+    "cmakelists.txt",
     "package.json",
     "README.md",
     "tsconfig.json",
@@ -150,8 +152,16 @@ _PM_SCOPE_FILENAMES = {
     "pyproject.toml",
 }
 _PM_SCOPE_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".cpp",
     ".css",
+    ".cxx",
+    ".h",
+    ".hh",
+    ".hpp",
     ".html",
+    ".hxx",
     ".js",
     ".jsx",
     ".json",
@@ -281,7 +291,7 @@ def _normalize_path(value: Any) -> str:
         token = token[2:]
     token = token.strip("/")
     token = re.sub(r"/+", "/", token)
-    return token.lower()
+    return token
 
 
 def _canonical_pm_contract_output_path(value: str) -> str:
@@ -383,7 +393,7 @@ def _workspace_relative_path(candidate: Any, workspace_full: Any) -> str:
         relative = raw.replace("\\", "/")
         while relative.startswith("./"):
             relative = relative[2:]
-        return re.sub(r"/+", "/", relative.strip("/")).lower()
+        return re.sub(r"/+", "/", relative.strip("/"))
 
     try:
         resolved = os.path.abspath(raw if os.path.isabs(raw) else os.path.join(workspace_prefix, raw))
@@ -398,7 +408,7 @@ def _workspace_relative_path(candidate: Any, workspace_full: Any) -> str:
         return ""
     if relative == ".":
         return ""
-    return re.sub(r"/+", "/", relative.replace("\\", "/").strip("/")).lower()
+    return re.sub(r"/+", "/", relative.replace("\\", "/").strip("/"))
 
 
 def _is_workspace_bound_concrete_path(candidate: Any, workspace_full: Any) -> bool:

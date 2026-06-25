@@ -411,6 +411,48 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('stage_started');
   });
 
+  it('merges runtime.v2 status.resident envelopes into snapshot.resident', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'EVENT',
+      protocol: 'runtime.v2',
+      cursor: 45,
+      event: {
+        schema_version: 'runtime.v2',
+        event_id: 'resident-status-1',
+        workspace_key: 'test-workspace',
+        run_id: '',
+        channel: 'status.resident',
+        kind: 'resident_status_update',
+        ts: '2026-06-25T08:00:00.000Z',
+        payload: {
+          action: 'resident_tick',
+          resident: {
+            workspace: '/test/workspace',
+            runtime: {
+              active: true,
+              mode: 'propose',
+              tick_count: 4,
+            },
+            agi_capability_surface: {
+              role_id: 'resident_agi',
+              runtime_foundation: 'roles.runtime + ContextOS + TurnEngine',
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.current.snapshot?.resident?.workspace).toBe('/test/workspace');
+    expect(result.current.snapshot?.resident?.runtime?.active).toBe(true);
+    expect(result.current.snapshot?.resident?.runtime?.mode).toBe('propose');
+    expect(result.current.snapshot?.resident?.agi_capability_surface?.role_id).toBe('resident_agi');
+    expect(result.current.executionLogs).toHaveLength(0);
+  });
+
   it('routes runtime.v2 event.bench envelopes into process stream events', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace', includeInternalBench: true })

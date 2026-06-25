@@ -31,6 +31,7 @@ const BASE_RUNTIME_STREAM_CHANNELS = [
   'status.workflow',
   'status.process',
   'status.control_plane',
+  'status.resident',
   'status.snapshot',
   'event.factory',
   'event.file_edit',

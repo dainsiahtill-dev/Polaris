@@ -196,6 +196,8 @@ describe('useResident', () => {
     expect(result.current.residentAgiCapabilitySurface?.authority_matrix?.chain_required).toBe(true);
     expect(result.current.residentRuntimeEvidence.live_snapshot_available).toBe(true);
     expect(result.current.residentRuntimeEvidence.http_details_loaded).toBe(false);
+    expect(result.current.residentRuntimeEvidence.realtime_channel).toBe('runtime.v2.status.resident');
+    expect(result.current.residentRuntimeEvidence.snapshot_channel).toBe('runtime.v2.status.snapshot');
     expect(result.current.residentRuntimeEvidence.source).toBe('runtime.v2_snapshot');
     expect(result.current.decisions[0]?.actor).toBe('ResidentAGI');
     expect(result.current.goals[0]?.goal_id).toBe('goal-1');
@@ -239,6 +241,7 @@ describe('useResident', () => {
     expect(result.current.residentAgiAuditPack?.authority_matrix?.decision_policy?.governed_execution).toBe(
       'canonical_role_chain_only',
     );
+    expect(result.current.residentRuntimeEvidence.realtime_channel).toBe('runtime.v2.status.resident');
     expect(result.current.residentRuntimeEvidence.source).toBe('runtime.v2_snapshot+http_details');
 
     await act(async () => {

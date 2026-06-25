@@ -244,6 +244,14 @@ function normalizeRuntimeV2Envelope(eventPayload: Record<string, unknown>): WebS
   ) {
     return { type: 'line', channel: targetChannel === 'system' ? 'system' : 'process', text: JSON.stringify(mergedPayload) };
   }
+  if (targetChannel.startsWith('status.') && targetChannel !== 'status.snapshot') {
+    return {
+      type: 'status_domain',
+      channel: targetChannel,
+      payload: mergedPayload,
+      timestamp: String(eventPayload.timestamp || eventPayload.ts || envelopePayload?.timestamp || ''),
+    };
+  }
   return { type: 'line', channel: 'runtime_events', text: JSON.stringify(mergedPayload) };
 }
 
@@ -251,6 +259,26 @@ function isRuntimeV2Envelope(payload: WebSocketMessage): boolean {
   const record = payload as unknown as Record<string, unknown>;
   const schemaVersion = String(record.schema_version || '').trim();
   return schemaVersion === 'runtime.v2' || Boolean(record.channel && record.kind && record.payload);
+}
+
+function residentStatusFromDomainPayload(payload: WebSocketMessage): Record<string, unknown> | null {
+  const domainPayload = Parsing.isRecord(payload.payload) ? payload.payload : null;
+  return firstRecord(
+    domainPayload?.resident,
+    domainPayload?.projection,
+    Parsing.isRecord(domainPayload?.payload) ? domainPayload.payload.resident : null,
+  );
+}
+
+function mergeResidentIntoSnapshot(
+  currentSnapshot: SnapshotPayload | null,
+  resident: Record<string, unknown>,
+  timestamp: string,
+): SnapshotPayload {
+  return {
+    ...(currentSnapshot ?? { timestamp: timestamp || new Date().toISOString() }),
+    resident: resident as SnapshotPayload['resident'],
+  };
 }
 
 type RuntimeTaskLifecycleUpdate = {
@@ -1518,6 +1546,15 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
         }
         if (finalMsgType === 'ping') {
           connection.sendCommand({ type: 'PONG' });
+          return;
+        }
+
+        if (finalMsgType === 'status_domain' && channel === 'status.resident') {
+          const resident = residentStatusFromDomainPayload(payload);
+          if (resident) {
+            const currentSnapshot = useRuntimeStore.getState().snapshot;
+            setSnapshot(mergeResidentIntoSnapshot(currentSnapshot, resident, payload.timestamp || ''));
+          }
           return;
         }
 

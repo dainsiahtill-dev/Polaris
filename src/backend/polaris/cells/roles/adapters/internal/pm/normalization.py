@@ -46,6 +46,27 @@ from .pm_text_utils import (
 def _directive_requires_typescript_package_contract(directive: str) -> bool:
     text = str(directive or "")
     lower = text.lower()
+    has_non_typescript_language_contract = any(
+        token in lower
+        for token in (
+            "主语言: java",
+            "main language: java",
+            "java_compile",
+            "src/main/java",
+            "主语言: rust",
+            "main language: rust",
+            "rust_compile",
+            "cargo.toml",
+            "主语言: c++",
+            "main language: c++",
+            "cpp_compile",
+            "c++17",
+            ".cpp",
+            ".hpp",
+        )
+    )
+    if has_non_typescript_language_contract:
+        return False
     has_typescript = "typescript" in lower or "ts_syntax" in lower or ".ts" in lower
     has_package_contract = (
         "package.json" in lower
@@ -185,7 +206,10 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             raw_metadata_value if isinstance(raw_metadata_value, dict) else {}
         )
         inferred_test_target = ""
-        if not raw_metadata_for_test_inference.get("qa_rework_reason") and not drop_generic_product_test_for_documentation:
+        if (
+            not raw_metadata_for_test_inference.get("qa_rework_reason")
+            and not drop_generic_product_test_for_documentation
+        ):
             inferred_test_target = _pm_infer_test_target_file_for_contract(
                 title=title,
                 goal=goal,

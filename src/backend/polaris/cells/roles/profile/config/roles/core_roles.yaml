@@ -632,6 +632,7 @@ roles:
       allow_code_write: false
       allow_command_execution: false
       allow_file_delete: false
+      ccr_retrieve_opt_in: true
       max_tool_calls_per_turn: 60
       tool_timeout_seconds: 180
 

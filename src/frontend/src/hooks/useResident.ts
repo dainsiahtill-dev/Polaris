@@ -163,7 +163,8 @@ export function useResident(options: UseResidentOptions = {}) {
   const residentRuntimeEvidence = useMemo(
     () => ({
       schema_version: 'resident.runtime_projection_evidence.v1',
-      realtime_channel: 'runtime.v2.status.snapshot',
+      realtime_channel: 'runtime.v2.status.resident',
+      snapshot_channel: 'runtime.v2.status.snapshot',
       projection_field: 'snapshot.resident',
       live_snapshot_available: Boolean(options.liveResident),
       http_details_loaded: httpDetailsLoaded,

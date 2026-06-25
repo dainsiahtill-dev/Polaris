@@ -239,13 +239,14 @@ describe('useRuntimeConnection', () => {
         'status.workflow',
         'status.process',
         'status.control_plane',
+        'status.resident',
         'status.snapshot',
         'event.factory',
         'event.file_edit',
       ]);
       expect(channels).not.toContain('roles:pm,director,qa');
       expect(subscriptions.map((item: { tailLines?: number }) => item.tailLines)).toEqual([
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
       ]);
     });
 
@@ -273,6 +274,7 @@ describe('useRuntimeConnection', () => {
         'status.workflow',
         'status.process',
         'status.control_plane',
+        'status.resident',
         'status.snapshot',
         'event.factory',
         'event.bench',
@@ -366,6 +368,7 @@ describe('useRuntimeConnection', () => {
           'status.workflow',
           'status.process',
           'status.control_plane',
+          'status.resident',
           'status.snapshot',
           'event.factory',
           'event.file_edit',
@@ -434,6 +437,7 @@ describe('useRuntimeConnection', () => {
           'status.workflow',
           'status.process',
           'status.control_plane',
+          'status.resident',
           'status.snapshot',
           'event.factory',
           'event.file_edit',
@@ -478,6 +482,7 @@ describe('useRuntimeConnection', () => {
             'status.workflow',
             'status.process',
             'status.control_plane',
+            'status.resident',
             'status.snapshot',
             'event.factory',
             'event.file_edit',

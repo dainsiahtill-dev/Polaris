@@ -7,22 +7,45 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from polaris.cells.resident.autonomy.public.service import (
+    ApproveResidentGoalCommandV1,
+    CreateResidentGoalCommandV1,
+    ExtractResidentSkillsCommandV1,
     MaterializeResidentGoalCommandV1,
     QueryResidentAgiAuditPackV1,
     QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
+    RecordResidentDecisionCommandV1,
+    RejectResidentGoalCommandV1,
     ResidentMode,
+    RunResidentAgiDecisionTurnCommandV1,
+    RunResidentExperimentsCommandV1,
     RunResidentGoalCommandV1,
+    RunResidentImprovementsCommandV1,
+    RunResidentTickCommandV1,
     StageResidentGoalCommandV1,
+    StartResidentCommandV1,
+    StopResidentCommandV1,
+    UpdateResidentIdentityCommandV1,
+    approve_resident_goal,
+    create_resident_goal,
+    extract_resident_skills,
     get_resident_service,
     materialize_resident_goal,
     query_resident_agi_audit_pack,
     query_resident_capabilities,
     query_resident_status,
+    record_resident_decision_entry,
+    reject_resident_goal,
+    run_resident_agi_decision_turn,
+    run_resident_experiments,
     run_resident_goal,
+    run_resident_improvements,
+    run_resident_tick,
     stage_resident_goal,
+    start_resident,
+    stop_resident,
+    update_resident_identity,
 )
-from polaris.cells.roles.adapters.public.service import create_role_adapter
 from polaris.delivery.http.dependencies import require_auth
 from pydantic import BaseModel, Field
 
@@ -145,33 +168,6 @@ class ResidentAgiDecisionTurnRequest(ResidentWorkspaceRequest):
     audit_pack_decision_limit: int = Field(default=12, ge=1, le=100)
 
 
-def _resident_decision_verdict(agi_verdict: str, *, runtime_success: bool) -> str:
-    normalized = str(agi_verdict or "").strip().lower()
-    if not runtime_success and normalized in {"block", "escalate", "request_evidence"}:
-        return "blocked"
-    if not runtime_success:
-        return "failure"
-    if normalized == "continue":
-        return "success"
-    if normalized in {"block", "escalate", "request_evidence"}:
-        return "blocked"
-    return "unknown"
-
-
-def _resident_agi_decision_summary(
-    *,
-    objective: str,
-    agi_verdict: str,
-    rationale: str,
-    error: str,
-) -> str:
-    verdict = str(agi_verdict or "").strip() or "unknown"
-    detail = str(rationale or error or objective or "").strip()
-    if len(detail) > 180:
-        detail = f"{detail[:177]}..."
-    return f"Resident AGI decision [{verdict}]: {detail}" if detail else f"Resident AGI decision [{verdict}]"
-
-
 @router.get("/status", dependencies=[Depends(require_auth)])
 def resident_status(request: Request, details: bool = False, workspace: str = "") -> dict[str, Any]:
     ws = _resolve_workspace(request, workspace)
@@ -201,201 +197,36 @@ async def resident_agi_decide(request: Request, payload: ResidentAgiDecisionTurn
     """Run a Resident AGI decision turn through the shared role runtime."""
 
     ws = _resolve_workspace(request, payload.workspace)
-    service = get_resident_service(ws)
-    audit_pack: dict[str, Any] | None = None
-    if payload.include_audit_pack:
-        audit_pack = query_resident_agi_audit_pack(
-            QueryResidentAgiAuditPackV1(
-                workspace=ws,
-                decision_limit=payload.audit_pack_decision_limit,
-            )
+    return await run_resident_agi_decision_turn(
+        RunResidentAgiDecisionTurnCommandV1(
+            workspace=ws,
+            objective=payload.objective,
+            decision_type=payload.decision_type,
+            run_id=payload.run_id,
+            task_id=payload.task_id,
+            goal_id=payload.goal_id,
+            evidence=payload.evidence,
+            constraints=tuple(payload.constraints),
+            candidate_actions=tuple(payload.candidate_actions),
+            context_refs=tuple(payload.context_refs),
+            evidence_refs=tuple(payload.evidence_refs),
+            confidence=payload.confidence,
+            include_audit_pack=payload.include_audit_pack,
+            audit_pack_decision_limit=payload.audit_pack_decision_limit,
         )
-    input_data = payload.model_dump()
-    hard_rule_gate_raw = audit_pack.get("hard_rule_gate") if audit_pack is not None else None
-    hard_rule_gate: dict[str, Any] = hard_rule_gate_raw if isinstance(hard_rule_gate_raw, dict) else {}
-    evidence_gate_raw = audit_pack.get("evidence_gate") if audit_pack is not None else None
-    evidence_gate: dict[str, Any] = evidence_gate_raw if isinstance(evidence_gate_raw, dict) else {}
-    authority_matrix_raw = audit_pack.get("authority_matrix") if audit_pack is not None else None
-    authority_matrix: dict[str, Any] = authority_matrix_raw if isinstance(authority_matrix_raw, dict) else {}
-    if audit_pack is not None:
-        input_data["resident_agi_audit_pack"] = audit_pack
-        evidence = dict(input_data.get("evidence") or {})
-        role_registry = audit_pack.get("role_registry")
-        resident_agi_available = (
-            bool(role_registry.get("resident_agi_available")) if isinstance(role_registry, dict) else False
-        )
-        evidence.update(
-            {
-                "resident_agi_audit_pack_schema": audit_pack.get("schema_version"),
-                "resident_agi_audit_pack_truth_sources": list(audit_pack.get("truth_sources") or []),
-                "resident_agi_available": resident_agi_available,
-                "resident_agi_hard_rule_gate_status": hard_rule_gate.get("status", ""),
-                "resident_agi_evidence_gate_status": evidence_gate.get("status", ""),
-                "resident_agi_evidence_gate_recommended_verdict": evidence_gate.get("recommended_verdict", ""),
-                "resident_agi_authority_matrix_schema": authority_matrix.get("schema_version", ""),
-                "resident_agi_chain_required": bool(authority_matrix.get("chain_required")),
-            }
-        )
-        input_data["evidence"] = evidence
-    runtime_context = {
-        "run_id": payload.run_id,
-        "task_id": payload.task_id,
-        "goal_id": payload.goal_id,
-        "decision_type": payload.decision_type,
-        "context_refs": list(payload.context_refs),
-        "evidence_refs": list(payload.evidence_refs),
-        "resident_agi_audit_pack": audit_pack or {},
-        "metadata": {
-            "source": "resident_api.agi_decide",
-            "resident_agi_role_runtime_required": True,
-            "context_os_expected": True,
-            "turn_engine_expected": True,
-            "resident_agi_audit_pack_injected": audit_pack is not None,
-            "resident_agi_audit_pack_schema": (audit_pack or {}).get("schema_version", ""),
-            "resident_agi_hard_rule_gate_status": hard_rule_gate.get("status", ""),
-            "resident_agi_evidence_gate_status": evidence_gate.get("status", ""),
-            "resident_agi_authority_matrix_schema": authority_matrix.get("schema_version", ""),
-        },
-    }
-
-    role_result: dict[str, Any]
-    if hard_rule_gate.get("status") == "block":
-        role_result = {
-            "success": False,
-            "stage": "resident_agi",
-            "decision_type": payload.decision_type,
-            "error": "Resident AGI hard-rule gate blocked role execution.",
-            "decision": {
-                "verdict": "block",
-                "rationale": "Platform hard-rule gate failed before LLM judgement.",
-                "evidence_refs": [],
-                "risks": [f"failed hard-rule check: {item}" for item in hard_rule_gate.get("failed_check_ids", [])],
-                "next_action": "repair platform evidence before running Resident AGI",
-                "downstream_allowed": False,
-            },
-            "metadata": {"role_runtime_entrypoint": "roles.runtime.execute_role_session"},
-        }
-    else:
-        adapter = create_role_adapter("resident_agi", ws)
-        try:
-            role_result = await adapter.execute(
-                payload.task_id or "resident-agi-decision",
-                input_data,
-                runtime_context,
-            )
-        except (RuntimeError, ValueError) as exc:
-            logger.error("resident_agi_decide runtime failed: %s", exc)
-            role_result = {
-                "success": False,
-                "stage": "resident_agi",
-                "decision_type": payload.decision_type,
-                "error": str(exc),
-                "decision": {},
-                "metadata": {"role_runtime_entrypoint": "roles.runtime.execute_role_session"},
-            }
-
-    decision_raw = role_result.get("decision")
-    decision: dict[str, Any] = decision_raw if isinstance(decision_raw, dict) else {}
-    agi_verdict = str(decision.get("verdict") or "").strip().lower()
-    rationale = str(decision.get("rationale") or "").strip()
-    next_action = str(decision.get("next_action") or "").strip()
-    downstream_allowed = bool(decision.get("downstream_allowed", False))
-    risks = decision.get("risks") if isinstance(decision.get("risks"), list) else []
-    role_metadata_raw = role_result.get("metadata")
-    role_metadata: dict[str, Any] = role_metadata_raw if isinstance(role_metadata_raw, dict) else {}
-    error = str(role_result.get("error") or "").strip()
-    runtime_success = bool(role_result.get("success"))
-    resident_verdict = _resident_decision_verdict(agi_verdict, runtime_success=runtime_success)
-    evidence_refs = list(payload.evidence_refs)
-    decision_evidence_refs_raw = decision.get("evidence_refs")
-    decision_evidence_refs: list[Any] = (
-        decision_evidence_refs_raw if isinstance(decision_evidence_refs_raw, list) else []
     )
-    for item in decision_evidence_refs:
-        token = str(item or "").strip()
-        if token:
-            evidence_refs.append(token)
-
-    recorded = service.record_decision(
-        {
-            "workspace": ws,
-            "run_id": payload.run_id,
-            "actor": "resident_agi",
-            "stage": payload.decision_type,
-            "goal_id": payload.goal_id,
-            "task_id": payload.task_id,
-            "summary": _resident_agi_decision_summary(
-                objective=payload.objective,
-                agi_verdict=agi_verdict,
-                rationale=rationale,
-                error=error,
-            ),
-            "context_refs": list(payload.context_refs),
-            "options": [
-                {
-                    "option_id": agi_verdict or resident_verdict,
-                    "label": next_action or agi_verdict or resident_verdict,
-                    "rationale": rationale or error,
-                    "strategy_tags": ["resident_agi_turn", payload.decision_type],
-                    "estimated_score": payload.confidence,
-                }
-            ],
-            "selected_option_id": agi_verdict or resident_verdict,
-            "strategy_tags": [
-                "resident_agi_turn",
-                payload.decision_type,
-                agi_verdict or resident_verdict,
-            ],
-            "expected_outcome": {
-                "objective": payload.objective,
-                "candidate_actions": list(payload.candidate_actions),
-                "constraints": list(payload.constraints),
-                "resident_agi_audit_pack_required": payload.include_audit_pack,
-            },
-            "actual_outcome": {
-                "decision_source": "resident_agi_role_runtime",
-                "role_runtime_entrypoint": role_metadata.get("role_runtime_entrypoint"),
-                "resident_agi_audit_pack_injected": audit_pack is not None,
-                "resident_agi_audit_pack_schema": (audit_pack or {}).get("schema_version", ""),
-                "resident_agi_audit_pack_evidence_ref_count": len((audit_pack or {}).get("evidence_refs") or []),
-                "resident_agi_hard_rule_gate": hard_rule_gate,
-                "resident_agi_evidence_gate": evidence_gate,
-                "resident_agi_authority_matrix": authority_matrix,
-                "agi_verdict": agi_verdict,
-                "resident_verdict": resident_verdict,
-                "downstream_allowed": downstream_allowed,
-                "next_action": next_action,
-                "rationale": rationale,
-                "risks": risks,
-                "runtime_success": runtime_success,
-                "error": error,
-            },
-            "verdict": resident_verdict,
-            "evidence_refs": evidence_refs,
-            "confidence": payload.confidence,
-        }
-    ).to_dict()
-    return {
-        "ok": runtime_success,
-        "workspace": ws,
-        "decision": decision,
-        "recorded_decision": recorded,
-        "role_result": role_result,
-        "audit_pack": audit_pack,
-        "error": error or None,
-    }
 
 
 @router.post("/start", dependencies=[Depends(require_auth)])
 def resident_start(request: Request, payload: ResidentStartRequest) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
-    return service.start(payload.mode)
+    ws = _resolve_workspace(request, payload.workspace)
+    return start_resident(StartResidentCommandV1(workspace=ws, mode=payload.mode))
 
 
 @router.post("/stop", dependencies=[Depends(require_auth)])
 def resident_stop(request: Request, payload: ResidentWorkspaceRequest) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
-    return service.stop()
+    ws = _resolve_workspace(request, payload.workspace)
+    return stop_resident(StopResidentCommandV1(workspace=ws))
 
 
 @router.post("/tick", dependencies=[Depends(require_auth)])
@@ -404,8 +235,8 @@ def resident_tick(
     payload: ResidentWorkspaceRequest,
     force: bool = False,
 ) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
-    return service.tick(force=force)
+    ws = _resolve_workspace(request, payload.workspace)
+    return run_resident_tick(RunResidentTickCommandV1(workspace=ws, force=force))
 
 
 @router.get("/identity", dependencies=[Depends(require_auth)])
@@ -416,8 +247,13 @@ def resident_identity(request: Request, workspace: str = "") -> dict[str, Any]:
 
 @router.patch("/identity", dependencies=[Depends(require_auth)])
 def resident_patch_identity(request: Request, payload: ResidentIdentityPatch) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
-    return service.update_identity(payload.model_dump(exclude_none=True))
+    ws = _resolve_workspace(request, payload.workspace)
+    return update_resident_identity(
+        UpdateResidentIdentityCommandV1(
+            workspace=ws,
+            payload=payload.model_dump(exclude_none=True),
+        )
+    )
 
 
 @router.get("/agenda", dependencies=[Depends(require_auth)])
@@ -435,26 +271,26 @@ def resident_goals(request: Request, workspace: str = "", status_filter: str = "
 
 @router.post("/goals", dependencies=[Depends(require_auth)])
 def resident_create_goal(request: Request, payload: GoalProposalPayload) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
-    return service.create_goal_proposal(payload.model_dump()).to_dict()
+    ws = _resolve_workspace(request, payload.workspace)
+    return create_resident_goal(CreateResidentGoalCommandV1(workspace=ws, payload=payload.model_dump()))
 
 
 @router.post("/goals/{goal_id}/approve", dependencies=[Depends(require_auth)])
 def resident_approve_goal(request: Request, goal_id: str, payload: GoalNotePayload) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
-    goal = service.approve_goal(goal_id, note=payload.note)
-    if goal is None:
+    ws = _resolve_workspace(request, payload.workspace)
+    result = approve_resident_goal(ApproveResidentGoalCommandV1(workspace=ws, goal_id=goal_id, note=payload.note))
+    if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="goal not found")
-    return goal.to_dict()
+    return result
 
 
 @router.post("/goals/{goal_id}/reject", dependencies=[Depends(require_auth)])
 def resident_reject_goal(request: Request, goal_id: str, payload: GoalNotePayload) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
-    goal = service.reject_goal(goal_id, note=payload.note)
-    if goal is None:
+    ws = _resolve_workspace(request, payload.workspace)
+    result = reject_resident_goal(RejectResidentGoalCommandV1(workspace=ws, goal_id=goal_id, note=payload.note))
+    if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="goal not found")
-    return goal.to_dict()
+    return result
 
 
 @router.post("/goals/{goal_id}/materialize", dependencies=[Depends(require_auth)])
@@ -576,8 +412,8 @@ def resident_decision_evidence(
 
 @router.post("/decisions", dependencies=[Depends(require_auth)])
 def resident_record_decision(request: Request, payload: DecisionRecordPayload) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
-    return service.record_decision(payload.model_dump()).to_dict()
+    ws = _resolve_workspace(request, payload.workspace)
+    return record_resident_decision_entry(RecordResidentDecisionCommandV1(workspace=ws, payload=payload.model_dump()))
 
 
 @router.get("/skills", dependencies=[Depends(require_auth)])
@@ -589,8 +425,8 @@ def resident_skills(request: Request, workspace: str = "") -> dict[str, Any]:
 
 @router.post("/skills/extract", dependencies=[Depends(require_auth)])
 def resident_extract_skills(request: Request, payload: ResidentWorkspaceRequest) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
-    skills = [item.to_dict() for item in service.run_skill_foundry()]
+    ws = _resolve_workspace(request, payload.workspace)
+    skills = extract_resident_skills(ExtractResidentSkillsCommandV1(workspace=ws))
     return {"items": skills, "count": len(skills)}
 
 
@@ -603,8 +439,8 @@ def resident_experiments(request: Request, workspace: str = "") -> dict[str, Any
 
 @router.post("/experiments/run", dependencies=[Depends(require_auth)])
 def resident_run_experiments(request: Request, payload: ResidentWorkspaceRequest) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
-    experiments = service.run_counterfactual_lab()
+    ws = _resolve_workspace(request, payload.workspace)
+    experiments = run_resident_experiments(RunResidentExperimentsCommandV1(workspace=ws))
     return {"items": experiments, "count": len(experiments)}
 
 
@@ -617,8 +453,8 @@ def resident_improvements(request: Request, workspace: str = "") -> dict[str, An
 
 @router.post("/improvements/run", dependencies=[Depends(require_auth)])
 def resident_run_improvements(request: Request, payload: ResidentWorkspaceRequest) -> dict[str, Any]:
-    service = get_resident_service(_resolve_workspace(request, payload.workspace))
-    improvements = service.run_self_improvement_lab()
+    ws = _resolve_workspace(request, payload.workspace)
+    improvements = run_resident_improvements(RunResidentImprovementsCommandV1(workspace=ws))
     return {"items": improvements, "count": len(improvements)}
 
 

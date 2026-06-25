@@ -1354,10 +1354,22 @@ def _smoke_cpp_cli(workspace: Path, code_files: list[str], *, timeout_s: int) ->
             break
     if not main_rel:
         return {"ok": False, "kind": "cpp_cli", "detail": "no C++ int main entrypoint discovered"}
+    compile_sources: list[str] = []
+    for rel in _files_with_suffix(code_files, _CPP_SOURCE_SUFFIXES):
+        normalized = rel.replace("\\", "/")
+        if normalized.startswith("tests/") or "/tests/" in normalized:
+            continue
+        if rel not in compile_sources:
+            compile_sources.append(rel)
+    if main_rel in compile_sources:
+        compile_sources.remove(main_rel)
+    compile_sources.insert(0, main_rel)
     with tempfile.TemporaryDirectory(prefix="polaris-factory-cpp-") as out_dir:
         binary = str(Path(out_dir) / "app")
         compile_result = _run_command(
-            [compiler, "-std=c++17", main_rel, "-o", binary], workspace, timeout_s=max(10, int(timeout_s))
+            [compiler, "-std=c++17", *compile_sources, "-o", binary],
+            workspace,
+            timeout_s=max(10, int(timeout_s)),
         )
         if not compile_result.get("ok"):
             return {"kind": "cpp_cli", "entrypoint": main_rel, "compile": compile_result, **compile_result}

@@ -31,6 +31,32 @@ async def test_execute_enters_shared_role_runtime(tmp_path: Any, monkeypatch: py
         fake_invoke_role_runtime_first,
     )
 
+    selected_capability = {
+        "decision_id": "quality.gate.response",
+        "name": "Quality gate response",
+        "owner": "resident_agi",
+        "decision_scope": "Choose whether to continue after quality evidence.",
+        "risk_level": "high",
+        "required_evidence_interfaces": [
+            "run_ledger.read",
+            "contextos.final_request_audit.read",
+            "audit.verdict.read",
+        ],
+        "optional_evidence_interfaces": [
+            "audit.diagnosis.execute",
+            "verifier.execution.execute",
+        ],
+        "candidate_actions": ["block", "request_evidence", "escalate", "continue"],
+        "hard_constraints": [
+            "contextos_expected",
+            "turn_engine_expected",
+            "failed_quality_gate_cannot_be_marked_passed_by_agi",
+        ],
+        "output_contract": "resident.agi_decision_turn",
+        "contract_refs": ["control_plane.run_ledger", "audit.verdict"],
+        "llm_decision_required": True,
+        "platform_enforced": False,
+    }
     adapter = ResidentAgiAdapter(workspace=str(tmp_path))
     result = await adapter.execute(
         "task-1",
@@ -43,7 +69,42 @@ async def test_execute_enters_shared_role_runtime(tmp_path: Any, monkeypatch: py
                 "role_id": "resident_agi",
                 "truth_sources": ["resident.status", "roles.registry"],
                 "role_registry": {"resident_agi_available": True},
+                "hard_rule_gate": {"schema_version": "gate.v1", "status": "pass", "passed": True},
+                "evidence_gate": {
+                    "schema_version": "evidence_gate.v1",
+                    "status": "pass",
+                    "recommended_verdict": "continue",
+                },
+                "decision_profile": {
+                    "schema_version": "decision_profile.v1",
+                    "recommended_verdict": "continue",
+                    "recommended_next_action": "run qa",
+                    "role_turn_allowed": True,
+                    "downstream_precheck": "ready",
+                },
+                "capability_surface": {
+                    "decision_capability_registry": {
+                        "schema_version": "resident.agi_decision_capability_registry.v1",
+                        "role_id": "resident_agi",
+                        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+                        "counts": {"decisions": 2},
+                    },
+                    "decision_capabilities": [
+                        selected_capability,
+                        {
+                            "decision_id": "architecture.option.selection",
+                            "name": "Architecture option selection",
+                        },
+                    ],
+                },
             },
+            "selected_decision_capability": selected_capability,
+            "required_evidence_interfaces": [
+                "run_ledger.read",
+                "contextos.final_request_audit.read",
+                "audit.verdict.read",
+            ],
+            "optional_evidence_interfaces": ["audit.diagnosis.execute"],
             "constraints": ["fail closed on missing evidence"],
             "candidate_actions": ["continue", "request_evidence"],
         },
@@ -59,14 +120,28 @@ async def test_execute_enters_shared_role_runtime(tmp_path: Any, monkeypatch: py
     assert captured["validate_output"] is False
     assert captured["max_retries"] == 1
     assert "Do not bypass PM -> Chief Engineer -> Director -> QA" in captured["message"]
+    assert "resident_agi_decision_contract" in captured["message"]
+    assert "quality.gate.response" in captured["message"]
+    assert "run_ledger.read" in captured["message"]
     assert "resident.agi_audit_pack.v1" in captured["message"]
+    assert "architecture.option.selection" not in captured["message"]
+    assert '"resident_agi_audit_pack"' not in captured["message"]
     runtime_context = captured["context"]
     assert runtime_context["run_id"] == "run-1"
     assert runtime_context["decision_type"] == "quality_gate_response"
     assert runtime_context["resident_agi_audit_pack"]["schema_version"] == "resident.agi_audit_pack.v1"
+    assert runtime_context["resident_agi_decision_contract"]["schema_version"] == "resident.agi_decision_contract.v1"
+    assert runtime_context["resident_agi_decision_contract"]["decision_capability_id"] == "quality.gate.response"
+    assert runtime_context["selected_decision_capability"]["decision_id"] == "quality.gate.response"
+    assert runtime_context["required_evidence_interfaces"] == [
+        "run_ledger.read",
+        "contextos.final_request_audit.read",
+        "audit.verdict.read",
+    ]
     assert runtime_context["metadata"]["resident_agi_role_runtime_required"] is True
     assert runtime_context["metadata"]["resident_agi_contextos_required"] is True
     assert runtime_context["metadata"]["resident_agi_turn_engine_required"] is True
+    assert runtime_context["metadata"]["resident_agi_decision_contract_schema"] == "resident.agi_decision_contract.v1"
 
 
 @pytest.mark.asyncio

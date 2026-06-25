@@ -15,6 +15,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -261,6 +262,113 @@ class TestFrontendTestRepairContracts:
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
+    def test_cpp_root_workspace_directive_prefers_cpp_contracts(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+请基于 Architect 阶段产物生成 PM 执行任务合同。
+
+## Original Requirement Excerpt
+# Product Requirements — 月球邮局明信片生成器
+
+## Goal
+- 用 C++17 实现「月球邮局明信片生成器」。创意钩子: 根据月相、邮票和收件人心情生成月球明信片与短诗。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。
+
+## Acceptance Criteria
+- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。
+- 必须提供至少一种真实可执行入口, 且验收脚本可自动发现: CLI 项目提供可直接执行的 main 文件或构建脚本。
+- 附 README.md 说明如何运行。
+- 关键验收维度: 根据月相、邮票和心情生成月球明信片与短诗; 同时验证 C++17 产物结构、入口可运行性和核心领域规则。
+
+## Deterministic Checks
+- cpp_compile
+- min_files:3
+- content_any:moon|postcard|stamp|poem
+- source_target_coverage:src/**/*.cpp
+
+## Language-Specific Runnable Contract (C++17)
+- 必须包含 `src/main.cpp`。
+- 必须包含 `src/models` 或 `include/models` 领域模型。
+- 必须包含 `src/engine` 或 `src/core` 生成逻辑。
+- C++17 编译必须成功。
+""".strip()
+
+        contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+        _normalized, quality = adapter._evaluate_contract_quality(contracts, directive=directive)
+        targets = [target for item in contracts for target in item.get("target_files", [])]
+        serialized = json.dumps(contracts, ensure_ascii=False)
+
+        assert len(contracts) == 1
+        assert "CMakeLists.txt" in targets
+        assert "src/main.cpp" in targets
+        assert "src/engine/generator.cpp" in targets
+        assert "src/models/postcard.cpp" in targets
+        assert "src/models/stamp.hpp" in targets
+        assert "tests/test_product.py" in targets
+        assert "README.md" in targets
+        assert "index.html" not in targets
+        assert "styles.css" not in targets
+        assert "cpp_compile" in serialized
+        assert "C++17" in serialized
+        assert "moon" in serialized
+        assert "postcard" in serialized
+        assert "stamp" in serialized
+        assert "poem" in serialized
+        assert quality["ok"] is True
+        assert (quality.get("score") or 0) >= 80
+
+    def test_java_game_directive_prefers_java_contracts_over_typescript_web(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+请基于 Architect 阶段产物生成 PM 执行任务合同。
+
+## Original Requirement Excerpt
+# Product Requirements — 口袋节奏怪兽
+
+## Goal
+- 用 Java 实现「口袋节奏怪兽」。创意钩子: 节奏正确性会塑造怪兽性格和鼓机 pattern。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。
+
+## Project Metadata
+- 主语言: java
+- 领域: game
+- 项目类型: music_game
+
+## Acceptance Criteria
+- 必须提供至少一种真实可执行入口, 且验收脚本可自动发现: Web/visual/simulation/game 项目提供含 <html> 的 index.html 或等价 HTML 入口; CLI 项目提供 package.json 脚本或可直接执行的 main 文件。
+- 关键验收维度: 节奏正确性会塑造怪兽性格和鼓机 pattern; 同时验证 Java 产物结构、入口可运行性和核心领域规则。
+
+## Deterministic Checks
+- java_compile
+- min_files:3
+- content_any:rhythm|monster|beat|pattern
+
+## Source Tree Structure Contract (MANDATORY)
+- 必须包含 `src/main/java/` 目录, 核心业务逻辑在 `.java` 文件中。
+- 必须包含 `src/test/java/` 下的测试文件。
+""".strip()
+
+        contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+        _normalized, quality = adapter._evaluate_contract_quality(contracts, directive=directive)
+        targets = [target for item in contracts for target in item.get("target_files", [])]
+        serialized = json.dumps(contracts, ensure_ascii=False)
+
+        assert len(contracts) == 1
+        assert "src/main/java/polaris/factory/Main.java" in targets
+        assert "src/main/java/polaris/factory/engine/RhythmEngine.java" in targets
+        assert "src/test/java/polaris/factory/RhythmEngineTest.java" in targets
+        assert "tests/test_product.py" in targets
+        assert "README.md" in targets
+        assert "package.json" not in targets
+        assert "tsconfig.json" not in targets
+        assert "src/index.ts" not in targets
+        assert "java_compile" in serialized
+        assert "javac" in serialized
+        assert "rhythm" in serialized
+        assert "monster" in serialized
+        assert "beat" in serialized
+        assert "pattern" in serialized
+        assert quality["ok"] is True
+        assert (quality.get("score") or 0) >= 80
+
     def test_typescript_web_bad_llm_contract_fails_factory_guard(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         directive = """
@@ -357,6 +465,51 @@ class TestDeterministicContractsFlag:
             input_data={},
             context={"deterministic_pm_contracts": "yes"},
         )
+
+    def test_route_audit_probe_flag_accepts_nested_metadata(self) -> None:
+        assert PMAdapter._pm_route_audit_probe_enabled(
+            input_data={"metadata": {"pm_route_audit_probe": True}},
+            context={},
+        )
+
+    def test_deterministic_pm_invokes_route_probe_without_using_probe_contracts(
+        self,
+        tmp_path: Any,
+        monkeypatch: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        calls: list[dict[str, Any]] = []
+
+        async def fake_call_role_llm(
+            message: str,
+            context: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            calls.append({"message": message, "context": context or {}})
+            return {"response": "PM route probe acknowledged."}
+
+        monkeypatch.setattr(adapter, "_call_role_llm", fake_call_role_llm)
+
+        result = asyncio.run(
+            adapter._run_pm_stage(
+                "pm-route-probe",
+                "Build a C++ postcard generator with tests and README.",
+                {
+                    "metadata": {
+                        "deterministic_pm_contracts": True,
+                        "pm_route_audit_probe": True,
+                    }
+                },
+                {},
+            )
+        )
+
+        assert result["success"] is True
+        assert result["tasks_created"] >= 1
+        assert len(calls) == 1
+        assert calls[0]["context"]["mode"] == "pm_task_contract_route_probe"
+        assert calls[0]["context"]["route_audit_probe"] is True
+        signals = result["quality_gate"]["signals"]
+        assert any(signal["code"] == "pm.contracts.deterministic_route_probe" for signal in signals)
 
 
 # ---------------------------------------------------------------------------

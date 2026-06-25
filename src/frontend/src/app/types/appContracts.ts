@@ -1,5 +1,5 @@
-import type { WorkspaceStatus } from '@/app/components/DocsInitDialog';
-import type { MemoItem } from '@/app/components/MemoPanel';
+import type { WorkspaceStatus } from "@/app/components/DocsInitDialog";
+import type { MemoItem } from "@/app/components/MemoPanel";
 
 export interface BackendSettings {
   workspace: string;
@@ -40,7 +40,7 @@ export interface BackendSettings {
   pm_max_blocked?: number;
   pm_max_same?: number;
   director_iterations?: number;
-  director_execution_mode?: 'serial' | 'parallel' | string;
+  director_execution_mode?: "serial" | "parallel" | string;
   director_max_parallel_tasks?: number;
   director_ready_timeout_seconds?: number;
   director_claim_timeout_seconds?: number;
@@ -71,7 +71,7 @@ export interface BackendStatus {
   started_at: number | null;
   mode?: string;
   log_path?: string;
-  source?: 'handle' | 'status_file' | 'none' | string;
+  source?: "handle" | "status_file" | "none" | string;
   status?: Record<string, unknown> | string | null;
   execution_id?: string | null;
   terminal?: boolean;
@@ -95,7 +95,7 @@ export interface LanceDbStatus {
   version?: string | null;
 }
 
-export type LlmStatus = import('../components/llm/types').LLMStatus;
+export type LlmStatus = import("../components/llm/types").LLMStatus;
 
 export interface AnthroState {
   last_reflection_step: number;
@@ -175,13 +175,26 @@ export interface ResidentAgendaPayload {
   updated_at?: string;
 }
 
+export interface ResidentTickAutonomyBoundaryPayload {
+  schema_version?: string;
+  tick_role?: string;
+  tick_outputs?: string[];
+  goal_proposal_semantics?: string;
+  agi_judgement_entrypoint?: string;
+  agi_judgement_endpoint?: string;
+  execution_impacting_decision_policy?: string;
+  sidecar_llm_allowed?: boolean;
+}
+
 export interface ResidentRuntimePayload {
   active?: boolean;
   mode?: string;
   last_tick_at?: string;
   tick_count?: number;
   last_error?: string;
-  last_summary?: Record<string, unknown>;
+  last_summary?: Record<string, unknown> & {
+    autonomy_boundary?: ResidentTickAutonomyBoundaryPayload;
+  };
   updated_at?: string;
 }
 
@@ -206,7 +219,7 @@ export interface ResidentDecisionOptionPayload {
 export interface GoalExecutionTaskProgress {
   task_id?: string;
   subject?: string;
-  status?: 'pending' | 'in_progress' | 'completed' | 'failed' | 'blocked';
+  status?: "pending" | "in_progress" | "completed" | "failed" | "blocked";
   progress_percent?: number;
   started_at?: string;
   completed_at?: string;
@@ -214,7 +227,7 @@ export interface GoalExecutionTaskProgress {
 
 export interface GoalExecutionView {
   goal_id: string;
-  stage: 'planning' | 'coding' | 'testing' | 'review' | 'completed' | 'unknown';
+  stage: "planning" | "coding" | "testing" | "review" | "completed" | "unknown";
   percent: number;
   current_task?: string;
   eta_minutes?: number;
@@ -276,6 +289,42 @@ export interface ResidentAgiDecisionBoundaryPayload {
   contract_refs?: string[];
 }
 
+export interface ResidentAgiDecisionCapabilityPayload {
+  decision_id?: string;
+  name?: string;
+  owner?: string;
+  decision_scope?: string;
+  risk_level?: string;
+  required_evidence_interfaces?: string[];
+  optional_evidence_interfaces?: string[];
+  candidate_actions?: string[];
+  hard_constraints?: string[];
+  escalation?: string;
+  output_contract?: string;
+  contract_refs?: string[];
+  llm_decision_required?: boolean;
+  platform_enforced?: boolean;
+}
+
+export interface ResidentAgiDecisionCapabilityRegistryPayload {
+  schema_version?: string;
+  role_id?: string;
+  runtime_foundation?: string;
+  platform_owned_decisions?: string[];
+  agi_owned_decisions?: string[];
+  governed_execution_decisions?: string[];
+  evidence_interface_ids?: string[];
+  candidate_actions?: string[];
+  counts?: {
+    decisions?: number;
+    platform_owned?: number;
+    agi_owned?: number;
+    governed_execution?: number;
+    evidence_interfaces?: number;
+  };
+  decision_policy?: Record<string, string>;
+}
+
 export interface ResidentAgiAuthorityMatrixPayload {
   schema_version?: string;
   runtime_foundation?: string;
@@ -315,6 +364,9 @@ export interface ResidentAgiCapabilitySurfacePayload {
   categories?: string[];
   items?: ResidentAgiCapabilityPayload[];
   decision_boundaries?: ResidentAgiDecisionBoundaryPayload[];
+  decision_capability_schema?: string;
+  decision_capabilities?: ResidentAgiDecisionCapabilityPayload[];
+  decision_capability_registry?: ResidentAgiDecisionCapabilityRegistryPayload;
   authority_matrix?: ResidentAgiAuthorityMatrixPayload;
   count?: number;
 }
@@ -329,6 +381,58 @@ export interface ResidentAgiRoleRegistryPayload {
   resident_agi_available?: boolean;
 }
 
+export interface ResidentAgiDecisionProfilePayload {
+  schema_version?: string;
+  role_id?: string;
+  runtime_foundation?: string;
+  role_turn_allowed?: boolean;
+  downstream_precheck?: string;
+  recommended_verdict?: string;
+  recommended_next_action?: string;
+  candidate_actions?: string[];
+  required_constraints?: string[];
+  required_evidence?: string[];
+  evidence_interface_recommendations?: Array<{
+    capability_id?: string;
+    name?: string;
+    category?: string;
+    contract_ref?: string;
+    access?: string;
+    risk_level?: string;
+    priority?: number;
+    recommended_now?: boolean;
+    reason?: string;
+    evidence_refs?: string[];
+  }>;
+  decision_capability_registry?: ResidentAgiDecisionCapabilityRegistryPayload;
+  decision_capability_ids?: string[];
+  contract_refs?: string[];
+  authority_policy?: Record<string, string>;
+  platform_permission_counts?: {
+    read_only?: number;
+    governed_operations?: number;
+    high_risk?: number;
+  };
+  gate_refs?: Record<string, string>;
+  llm_decision_required?: boolean;
+  llm_override_allowed?: boolean;
+  audit_pack_schema?: string;
+}
+
+export interface ResidentAgiRuntimeContractGatePayload {
+  schema_version?: string;
+  status?: string;
+  passed?: boolean;
+  required?: boolean;
+  reason?: string;
+  checks?: Array<{
+    check_id?: string;
+    passed?: boolean;
+    detail?: string;
+  }>;
+  failed_check_ids?: string[];
+}
+
 export interface ResidentAgiAuditPackPayload {
   schema_version?: string;
   workspace?: string;
@@ -339,6 +443,7 @@ export interface ResidentAgiAuditPackPayload {
   runtime_summary?: Record<string, unknown>;
   counts?: Record<string, number>;
   capability_surface?: ResidentAgiCapabilitySurfacePayload;
+  autonomy_boundary?: ResidentTickAutonomyBoundaryPayload;
   authority_matrix?: ResidentAgiAuthorityMatrixPayload;
   boundary_summary?: {
     schema?: string;
@@ -386,6 +491,7 @@ export interface ResidentAgiAuditPackPayload {
   evidence_refs?: string[];
   execution_constraints?: string[];
   decision_endpoint?: string;
+  decision_profile?: ResidentAgiDecisionProfilePayload;
 }
 
 export interface ResidentAgiDecisionTurnRequest {
@@ -412,6 +518,7 @@ export interface ResidentAgiDecisionTurnResponse {
   recorded_decision?: ResidentDecisionPayload;
   role_result?: Record<string, unknown>;
   audit_pack?: ResidentAgiAuditPackPayload | null;
+  runtime_contract_gate?: ResidentAgiRuntimeContractGatePayload;
   error?: string | null;
 }
 
@@ -592,13 +699,13 @@ export interface FilePayload {
 // ============================================================================
 
 export type WebSocketEventType =
-  | 'status'
-  | 'dialogue_event'
-  | 'runtime_event'
-  | 'llm_stream'
-  | 'process_stream'
-  | 'file_edit'
-  | 'task_progress'
-  | 'task_trace'
-  | 'snapshot'
-  | 'line';
+  | "status"
+  | "dialogue_event"
+  | "runtime_event"
+  | "llm_stream"
+  | "process_stream"
+  | "file_edit"
+  | "task_progress"
+  | "task_trace"
+  | "snapshot"
+  | "line";

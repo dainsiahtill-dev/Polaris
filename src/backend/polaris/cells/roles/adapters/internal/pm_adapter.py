@@ -344,6 +344,36 @@ class PMAdapter(
 
             if self._deterministic_pm_contracts_enabled(input_data=input_data, context=context):
                 using_deterministic_contracts = True
+                if self._pm_route_audit_probe_enabled(input_data=input_data, context=context):
+                    probe_message = self._build_deterministic_pm_route_probe_message(directive)
+                    try:
+                        probe_response = await self._call_role_llm(
+                            probe_message,
+                            context={
+                                "mode": "pm_task_contract_route_probe",
+                                "deterministic_pm_contracts": True,
+                                "route_audit_probe": True,
+                            },
+                        )
+                        probe_output = self._response_text(probe_response)
+                        quality_signals.append(
+                            {
+                                "code": "pm.contracts.deterministic_route_probe",
+                                "severity": "info",
+                                "detail": (
+                                    "PM deterministic contract mode emitted a real LLM route audit probe; "
+                                    f"response_chars={len(probe_output)}"
+                                ),
+                            }
+                        )
+                    except (RuntimeError, ValueError) as e:
+                        quality_signals.append(
+                            {
+                                "code": "pm.contracts.deterministic_route_probe_failed",
+                                "severity": "warning",
+                                "detail": str(e),
+                            }
+                        )
                 contracts = self._synthesize_task_contracts_from_directive(
                     directive=directive,
                     projection_hint=projection_hint,
@@ -617,4 +647,33 @@ class PMAdapter(
             context=context,
             validate_output=False,
             max_retries=1,
+        )
+
+    @staticmethod
+    def _pm_route_audit_probe_enabled(
+        *,
+        input_data: dict[str, Any],
+        context: dict[str, Any],
+    ) -> bool:
+        raw_flag = ""
+        if isinstance(input_data, dict):
+            raw_flag = str(input_data.get("pm_route_audit_probe") or "").strip().lower()
+            if not raw_flag:
+                raw_flag = (
+                    str(PMPromptBuildingMixin._metadata_from_input(input_data).get("pm_route_audit_probe") or "")
+                    .strip()
+                    .lower()
+                )
+        if not raw_flag and isinstance(context, dict):
+            raw_flag = str(context.get("pm_route_audit_probe") or "").strip().lower()
+        return raw_flag in {"1", "true", "yes", "on"}
+
+    def _build_deterministic_pm_route_probe_message(self, directive: str) -> str:
+        directive_excerpt = self._compact_text_for_prompt(directive or "No directive provided.", max_chars=1800)
+        return (
+            "PM route audit probe for deterministic contract mode.\n"
+            "Respond with one short sentence confirming you are the PM planning role for this requirement.\n"
+            "Do not produce task JSON, tool calls, implementation code, or project files.\n\n"
+            "Requirement excerpt:\n"
+            f"{directive_excerpt}"
         )

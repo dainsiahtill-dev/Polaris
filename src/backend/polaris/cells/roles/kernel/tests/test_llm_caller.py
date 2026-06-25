@@ -44,6 +44,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import build_native_tool_schemas
+from polaris.cells.roles.profile.public.service import load_core_roles
 from polaris.kernelone.context.contracts import TurnEngineContextResult
 
 
@@ -326,6 +327,26 @@ class TestBuildNativeToolSchemas:
 
         # Floor-inertness: enabling adds EXACTLY the one tool, perturbing nothing else.
         assert on_names - off_names == {"context_retrieve"}
+
+    def test_resident_agi_profile_can_offer_context_retrieve_when_flag_enabled(self, monkeypatch) -> None:
+        """Resident AGI may read pointerized ContextOS evidence only through the gated CCR tool."""
+
+        registry = load_core_roles()
+        profile = registry.get_profile_or_raise("resident_agi")
+
+        monkeypatch.delenv("KERNELONE_CCR_RETRIEVE", raising=False)
+        off_schemas = build_native_tool_schemas(profile)
+        off_names = {
+            str((item.get("function") or {}).get("name") or "") for item in off_schemas if isinstance(item, dict)
+        }
+        assert "context_retrieve" not in off_names
+
+        monkeypatch.setenv("KERNELONE_CCR_RETRIEVE", "1")
+        on_schemas = build_native_tool_schemas(profile)
+        on_names = {
+            str((item.get("function") or {}).get("name") or "") for item in on_schemas if isinstance(item, dict)
+        }
+        assert "context_retrieve" in on_names
 
     def test_flag_on_without_opt_in_does_not_offer(self, monkeypatch) -> None:
         """Adversarial: env flag ON but role did NOT opt in → context_retrieve is

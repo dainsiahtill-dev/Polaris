@@ -864,6 +864,51 @@ class OrchestrationStageExecutor:
         return helpers.metadata_indicates_execution(metadata)
 
     @staticmethod
+    def _pm_deterministic_contract_metadata_for_context(
+        run: FactoryRun,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build PM run metadata for explicit/internal deterministic contract mode."""
+        metadata_sources: list[dict[str, Any]] = []
+        if isinstance(context, dict):
+            context_metadata = context.get("metadata")
+            if isinstance(context_metadata, dict):
+                metadata_sources.append(context_metadata)
+            metadata_sources.append(context)
+        run_metadata = run.metadata if isinstance(run.metadata, dict) else {}
+        start_request = run_metadata.get("factory_start_request")
+        if isinstance(start_request, dict):
+            start_metadata = start_request.get("metadata")
+            if isinstance(start_metadata, dict):
+                metadata_sources.append(start_metadata)
+
+        explicit_deterministic = any(
+            str(source.get("deterministic_pm_contracts") or "").strip().lower() in {"1", "true", "yes", "on"}
+            for source in metadata_sources
+        )
+        bench_metadata = next(
+            (source for source in metadata_sources if str(source.get("factory_bench_project_id") or "").strip()),
+            {},
+        )
+        if not explicit_deterministic and not bench_metadata:
+            return {}
+
+        result: dict[str, Any] = {"deterministic_pm_contracts": True}
+        if bench_metadata:
+            result.update(
+                {
+                    "factory_bench_project_id": str(bench_metadata.get("factory_bench_project_id") or "").strip(),
+                    "factory_bench_level": bench_metadata.get("factory_bench_level"),
+                    "factory_bench_deterministic_pm": True,
+                    "pm_route_audit_probe": True,
+                    "factory_recovery": "bench_preemptive_deterministic_contracts",
+                }
+            )
+        else:
+            result["factory_recovery"] = "explicit_deterministic_contracts"
+        return result
+
+    @staticmethod
     def _director_dispatch_timeout_seconds(context: dict[str, Any], *, task_count: int) -> int:
         del task_count
         raw_override = context.get("director_dispatch_timeout_seconds")
@@ -1833,13 +1878,17 @@ class OrchestrationStageExecutor:
         reset_summary = TaskRuntimeService(str(self.workspace)).reset_records(keep_plan=True)
 
         service = self._build_orchestration_service(context)
+        pm_run_metadata = self._pm_deterministic_contract_metadata_for_context(run, context)
+        pm_run_options: dict[str, Any] = {
+            "directive": planning_directive,
+            "run_director": False,
+        }
+        if pm_run_metadata:
+            pm_run_options["metadata"] = pm_run_metadata
         command_result = await service.execute_pm_run(
             workspace=str(self.workspace),
             run_type="pm",
-            options={
-                "directive": planning_directive,
-                "run_director": False,
-            },
+            options=pm_run_options,
         )
         final_result = await self._wait_run_completion(
             service,
@@ -1865,6 +1914,16 @@ class OrchestrationStageExecutor:
                 "failed_count": int(cast("int | str", reset_summary.get("failed_count")) or 0),
             }
         ]
+        if pm_run_metadata:
+            stage_signals.append(
+                {
+                    "code": "pm.deterministic_contracts_enabled",
+                    "severity": "info",
+                    "detail": "PM planning was started with deterministic contract metadata.",
+                    "factory_recovery": str(pm_run_metadata.get("factory_recovery") or ""),
+                    "factory_bench_project_id": str(pm_run_metadata.get("factory_bench_project_id") or ""),
+                }
+            )
         if str(final_result.status or "").strip().lower() == "timeout" and not self._artifact_exists(
             "tasks/plan.json", min_chars=1
         ):
@@ -3503,6 +3562,44 @@ class OrchestrationStageExecutor:
             artifact_quality_errors=artifact_quality_errors,
         )
 
+    def _apply_workspace_quality_cpp_post_repairs(self) -> list[dict[str, Any]]:
+        has_cpp_project = any(self.workspace.rglob("*.cpp")) or (self.workspace / "CMakeLists.txt").is_file()
+        if not has_cpp_project:
+            return []
+        try:
+            from polaris.cells.roles.adapters.internal.director.deterministic_repairs.cpp_repairs import (
+                run_all_cpp_post_repairs,
+            )
+
+            repairs = run_all_cpp_post_repairs(self.workspace)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return [
+                {
+                    "tool": "deterministic_cpp_post_repair",
+                    "success": False,
+                    "result": {
+                        "source_tool": "deterministic_cpp_post_repair",
+                        "error": str(exc),
+                    },
+                }
+            ]
+        results: list[dict[str, Any]] = []
+        for record in repairs:
+            file_name = str(record.get("file") or "").strip()
+            action = str(record.get("action") or "cpp_post_repair").strip()
+            results.append(
+                {
+                    "tool": "write_file",
+                    "success": True,
+                    "result": {
+                        "source_tool": f"deterministic_cpp_post_repair:{action}",
+                        "file": file_name,
+                        "operation": "modify",
+                    },
+                }
+            )
+        return results
+
     def _workspace_quality_repair_target_files(self) -> list[str]:
         return self._collect_declared_delivery_targets(self._load_pm_plan_tasks("tasks/plan.json"))
 
@@ -3740,6 +3837,16 @@ class OrchestrationStageExecutor:
                         artifact_quality_errors=repair_errors,
                         repair_attempt=round_index + 1,
                     )
+                cpp_post_repair_results = await asyncio.to_thread(self._apply_workspace_quality_cpp_post_repairs)
+                if cpp_post_repair_results:
+                    round_repair_results.extend(cpp_post_repair_results)
+                    round_summary = dict(round_summary)
+                    round_summary_tools = [
+                        str(item) for item in round_summary.get("source_tools", []) if str(item or "").strip()
+                    ]
+                    if "deterministic_cpp_post_repair" not in round_summary_tools:
+                        round_summary_tools.append("deterministic_cpp_post_repair")
+                    round_summary["source_tools"] = round_summary_tools
                 repair_results.extend(round_repair_results)
                 normalized_round_summary = dict(round_summary)
                 round_source_tools = [

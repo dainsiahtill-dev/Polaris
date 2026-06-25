@@ -140,13 +140,60 @@ class WorkspaceQualityRunner:
         ):
             commands.append(["npm", "run", "start"])
         commands.extend(self._rust_workspace_quality_commands())
-        commands.extend(self._python_workspace_quality_commands(context))
+        cpp_commands = self._cpp_workspace_quality_commands()
+        commands.extend(cpp_commands)
+        if not cpp_commands and not (self.workspace / "Cargo.toml").is_file():
+            commands.extend(self._python_workspace_quality_commands(context))
         return commands
 
     def _rust_workspace_quality_commands(self) -> list[list[str]]:
         if not (self.workspace / "Cargo.toml").is_file():
             return []
         return [["cargo", "check", "--quiet"]]
+
+    def _cpp_workspace_quality_commands(self) -> list[list[str]]:
+        cpp_files = [
+            path
+            for ext in ("*.cpp", "*.cc", "*.cxx", "*.c")
+            for path in self.workspace.rglob(ext)
+            if path.is_file() and "build" not in path.parts and "cmake-build" not in path.parts
+        ]
+        if not cpp_files and not (self.workspace / "CMakeLists.txt").is_file():
+            return []
+
+        script = """
+import pathlib
+import subprocess
+import sys
+
+root = pathlib.Path(".")
+files = sorted(
+    path for ext in ("*.cpp", "*.cc", "*.cxx", "*.c")
+    for path in root.rglob(ext)
+    if path.is_file() and "build" not in path.parts and "cmake-build" not in path.parts
+)
+if not files:
+    print("No C++ translation units found", file=sys.stderr)
+    raise SystemExit(1)
+failed = []
+for path in files:
+    completed = subprocess.run(
+        ["g++", "-std=c++17", "-fsyntax-only", str(path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        failed.append(f"### {path}\\n{completed.stderr or completed.stdout}")
+if failed:
+    print("\\n".join(failed), file=sys.stderr)
+    raise SystemExit(1)
+print(f"C++ syntax check passed for {len(files)} translation unit(s)")
+""".strip()
+        return [[sys.executable, "-c", script]]
 
     def _python_workspace_quality_commands(self, context: dict[str, Any]) -> list[list[str]]:
         """Infer real validation commands for Python-only generated projects."""
@@ -158,7 +205,7 @@ class WorkspaceQualityRunner:
         commands: list[list[str]] = []
         requirements_path = self.workspace / "requirements.txt"
         pyproject_path = self.workspace / "pyproject.toml"
-        if requirements_path.exists() or not pyproject_path.exists():
+        if requirements_path.exists():
             commands.append([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
         elif pyproject_path.exists():
             commands.append([sys.executable, "-m", "pip", "install", "-e", "."])
