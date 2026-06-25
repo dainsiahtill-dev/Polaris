@@ -1743,10 +1743,70 @@ def repair_rust_missing_binary_entrypoint(workspace: Path) -> list[dict[str, Any
 def repair_rust_missing_module_files(workspace: Path) -> list[dict[str, Any]]:
     """Create missing module files when ``mod xxx;`` is declared but the file doesn't exist.
 
-    Handles E0583: file not found for module.
+    Handles E0583: file not found for module. Also scans the workspace for
+    ``use`` statements that import from the new module and creates minimal
+    type stubs for those symbols (struct, enum, type alias, function).
     """
     repairs: list[dict[str, Any]] = []
     mod_decl_re = re.compile(r"^\s*(pub\s+)?mod\s+(\w+)\s*;", re.MULTILINE)
+
+    # Collect all missing modules first (including stub-only files)
+    missing_modules: dict[str, Path] = {}  # module_name → module_file_path
+    for rs_file in sorted(workspace.rglob("*.rs")):
+        if "target" in rs_file.relative_to(workspace).parts:
+            continue
+        try:
+            content = rs_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        # Rust 2018+ module resolution: mod foo; in bar.rs resolves to
+        # bar/foo.rs (sibling directory), NOT the parent of bar.rs.
+        # Exception: mod.rs and main.rs/lib.rs use their own directory.
+        if rs_file.name in ("mod.rs", "main.rs", "lib.rs"):
+            resolve_dir = rs_file.parent
+        else:
+            resolve_dir = rs_file.parent / rs_file.stem
+        for match in mod_decl_re.finditer(content):
+            module_name = match.group(2)
+            # Try flat file first: resolve_dir/module_name.rs
+            module_file = resolve_dir / f"{module_name}.rs"
+            # Also check sibling file: parent/module_name.rs (legacy/fallback)
+            sibling_file = rs_file.parent / f"{module_name}.rs"
+            module_dir = resolve_dir / module_name / "mod.rs"
+            if module_dir.is_file():
+                continue  # Directory module exists
+            # Check both possible locations
+            target_file = module_file
+            if not module_file.is_file() and sibling_file.is_file():
+                target_file = sibling_file
+            elif module_file.is_file():
+                target_file = module_file
+            if target_file.is_file():
+                # Check if it's just a stub (only comments, no real code)
+                try:
+                    existing = target_file.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                code_lines = [
+                    ln
+                    for ln in existing.split("\n")
+                    if ln.strip() and not ln.strip().startswith("//") and not ln.strip().startswith("#")
+                ]
+                if code_lines:
+                    continue  # File has real code, skip
+                # Stub file — will update with type definitions
+            missing_modules[module_name] = target_file
+
+    if not missing_modules:
+        return []
+
+    # For each missing module, scan workspace for use statements that import from it
+    use_grouped_re = re.compile(r"use\s+(?:crate|super)::(?:\w+::)*(\w+)::\{([^}]+)\}")
+    use_single_re = re.compile(r"use\s+(?:crate|super)::(?:\w+::)*(\w+)::(\w+)")
+    # Grouped import with sub-paths: use crate::models::{element::Element, flavor::Flavor}
+    use_nested_grouped_re = re.compile(r"use\s+(?:crate|super)::(\w+)::\{([^}]+)\}")
+
+    module_symbols: dict[str, set[str]] = {name: set() for name in missing_modules}
 
     for rs_file in sorted(workspace.rglob("*.rs")):
         if "target" in rs_file.relative_to(workspace).parts:
@@ -1755,27 +1815,104 @@ def repair_rust_missing_module_files(workspace: Path) -> list[dict[str, Any]]:
             content = rs_file.read_text(encoding="utf-8")
         except OSError:
             continue
+        # Match flat grouped imports: use crate::models::element::{Element, ElementKind};
+        for m in use_grouped_re.finditer(content):
+            mod_name = m.group(1)
+            if mod_name in module_symbols:
+                imported_names = [s.strip() for s in m.group(2).split(",") if s.strip()]
+                # Filter out sub-path items (module::Symbol) — those are handled below
+                module_symbols[mod_name].update(s for s in imported_names if "::" not in s)
+        # Match single imports: use crate::models::element::Element;
+        for m in use_single_re.finditer(content):
+            mod_name = m.group(1)
+            if mod_name in module_symbols:
+                module_symbols[mod_name].add(m.group(2))
+        # Match nested grouped imports: use crate::models::{element::Element, flavor::Flavor}
+        for m in use_nested_grouped_re.finditer(content):
+            _parent_mod = m.group(1)
+            body = m.group(2)
+            for item in body.split(","):
+                item = item.strip()
+                if "::" not in item:
+                    continue
+                parts = item.split("::")
+                sub_mod = parts[0].strip()
+                sub_sym = parts[-1].strip()
+                if sub_mod in module_symbols and sub_sym:
+                    module_symbols[sub_mod].add(sub_sym)
 
-        parent_dir = rs_file.parent
-        for match in mod_decl_re.finditer(content):
-            module_name = match.group(2)
-            # Check if the module file exists
-            module_file = parent_dir / f"{module_name}.rs"
-            module_dir = parent_dir / module_name / "mod.rs"
-            if module_file.is_file() or module_dir.is_file():
-                continue  # Module file exists, skip
-            # Create an empty module file
-            module_file.parent.mkdir(parents=True, exist_ok=True)
-            module_file.write_text(
-                f"// Auto-generated stub module: {module_name}\n",
-                encoding="utf-8",
-            )
-            repairs.append(
-                {
-                    "file": str(module_file.relative_to(workspace)),
-                    "action": f"created_missing_module_{module_name}",
-                }
-            )
+    # Collect all symbols needed across all missing modules
+    all_needed_symbols: set[str] = set()
+    for syms in module_symbols.values():
+        all_needed_symbols.update(syms)
+
+    # Detect enum usage: scan workspace for Symbol::Variant patterns
+    enum_variants: dict[str, set[str]] = {}
+    enum_path_re = re.compile(r"\b([A-Z][A-Za-z0-9_]*)::([A-Z][A-Za-z0-9_]*)\b")
+    # Tokens that are method calls, not enum variants
+    _non_enum_rhs = {
+        "new",
+        "from",
+        "default",
+        "into",
+        "try_from",
+        "try_into",
+        "as_ref",
+        "as_mut",
+        "clone",
+        "copy",
+        "len",
+        "is_empty",
+    }
+    for rs_file in sorted(workspace.rglob("*.rs")):
+        if "target" in rs_file.relative_to(workspace).parts:
+            continue
+        try:
+            content = rs_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for em in enum_path_re.finditer(content):
+            type_name = em.group(1)
+            variant_name = em.group(2)
+            if variant_name.lower() in _non_enum_rhs:
+                continue
+            # Only track symbols we need stubs for
+            if type_name in all_needed_symbols:
+                enum_variants.setdefault(type_name, set()).add(variant_name)
+
+    # Create stub files with type definitions
+    for module_name, module_file in missing_modules.items():
+        module_file.parent.mkdir(parents=True, exist_ok=True)
+        symbols = module_symbols.get(module_name, set())
+        stub_lines: list[str] = [f"// Auto-generated stub module: {module_name}\n"]
+        for sym in sorted(symbols):
+            if sym[0].isupper():
+                if enum_variants.get(sym):
+                    # Generate enum with discovered variants
+                    variants = ", ".join(sorted(enum_variants[sym]))
+                    stub_lines.append("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]")
+                    stub_lines.append(f"pub enum {sym} {{ {variants} }}\n")
+                else:
+                    # Likely a struct/enum/type — create a minimal struct
+                    stub_lines.append("#[derive(Debug, Clone, PartialEq)]")
+                    stub_lines.append(f"pub struct {sym} {{}}\n")
+        if not symbols:
+            stub_lines.append("// No symbols imported from this module yet.\n")
+        new_content = "\n".join(stub_lines)
+        try:
+            existing = module_file.read_text(encoding="utf-8") if module_file.is_file() else ""
+        except OSError:
+            existing = ""
+        if new_content == existing:
+            continue
+        module_file.write_text(new_content, encoding="utf-8")
+        action = f"updated_stub_module_{module_name}" if existing else f"created_missing_module_{module_name}"
+        repairs.append(
+            {
+                "file": str(module_file.relative_to(workspace)),
+                "action": action,
+            }
+        )
     return repairs
 
 
