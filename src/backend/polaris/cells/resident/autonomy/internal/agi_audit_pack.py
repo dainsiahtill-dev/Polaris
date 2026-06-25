@@ -97,6 +97,30 @@ def resident_agi_audit_refs(
     return sorted(refs)
 
 
+def resident_agi_director_repair_contract_payload(capability_surface: dict[str, Any]) -> dict[str, Any]:
+    """Return the AGI-visible boundary for Director hard-coded repairs."""
+
+    catalog_raw = capability_surface.get("hardcoded_repair_strategy_catalog")
+    catalog = catalog_raw if isinstance(catalog_raw, dict) else {}
+    summary_raw = catalog.get("summary")
+    summary = summary_raw if isinstance(summary_raw, dict) else {}
+    return {
+        "schema_version": "resident.agi_director_repair_contract.v1",
+        "owner_cell": catalog.get("owner_cell") or "director.runtime",
+        "source": catalog.get("source") or "director.runtime.repair_kernel.strategy_catalog",
+        "catalog_schema": catalog.get("schema_version") or "director.deterministic_repair_strategy_catalog.v1",
+        "profile_summary_schema": "director.deterministic_repair_profile_summary.v1",
+        "unknown_source_tool_policy": catalog.get("unknown_source_tool_policy") or "fail_closed_high_risk",
+        "execution_boundary": catalog.get("execution_boundary") or "director_authorized_tools_only",
+        "chain": catalog.get("chain") or "PM → Chief Engineer → Director",
+        "agi_advisory": {"active": False, "authoritative": False, "writes_allowed": False},
+        "agi_execution_authority": bool(catalog.get("agi_execution_authority")),
+        "director_tool_execution_required": bool(catalog.get("director_tool_execution_required", True)),
+        "strategy_count": int(summary.get("total") or 0),
+        "summary": summary,
+    }
+
+
 def resident_agi_run_ledger_summary(workspace: str, *, run_id: str = "", max_runs: int = 20) -> dict[str, Any]:
     """Read the platform Run Ledger projection and return a compact summary."""
 
@@ -286,6 +310,7 @@ def resident_agi_evidence_interface_recommendations(
         "audit_verdict",
         "audit_evidence",
         "context_discovery",
+        "director_repair_strategy",
         "llm_audit",
         "run_ledger",
         "verification_policy",
@@ -299,6 +324,7 @@ def resident_agi_evidence_interface_recommendations(
         "control_plane.verifier_execution": 60,
         "context.catalog": 70,
         "context.engine": 80,
+        "director.deterministic_repair_strategy_catalog.v1": 85,
         "audit.evidence.bundle": 90,
     }
     recommendations: list[dict[str, Any]] = []
@@ -310,7 +336,12 @@ def resident_agi_evidence_interface_recommendations(
         if (
             category not in evidence_categories
             and not contract_ref.startswith(("audit.", "context.", "control_plane.verifier"))
-            and contract_ref not in {"control_plane.run_ledger", "roles.final_request_context_audit"}
+            and contract_ref
+            not in {
+                "control_plane.run_ledger",
+                "roles.final_request_context_audit",
+                "director.deterministic_repair_strategy_catalog.v1",
+            }
         ):
             continue
 
@@ -511,6 +542,8 @@ def build_resident_agi_audit_pack(
             "runtime.v2.status.resident",
             "runtime.v2.snapshot.resident",
             "roles.registry",
+            "director.runtime.repair_kernel.strategy_catalog",
+            "director.repair_receipts",
         ],
         "role_registry": resident_agi_role_registry_payload(),
         "runtime_summary": {
@@ -528,6 +561,7 @@ def build_resident_agi_audit_pack(
         "authority_matrix": capability_surface.get("authority_matrix")
         if isinstance(capability_surface.get("authority_matrix"), dict)
         else {},
+        "director_repair_contract": resident_agi_director_repair_contract_payload(capability_surface),
         "recent_decisions": recent_decisions,
         "evidence_refs": evidence_refs,
         "run_ledger_summary": run_ledger_summary,
@@ -554,6 +588,7 @@ __all__ = [
     "resident_agi_audit_refs",
     "resident_agi_boundary_summary",
     "resident_agi_decision_profile",
+    "resident_agi_director_repair_contract_payload",
     "resident_agi_evidence_gate",
     "resident_agi_evidence_interface_recommendations",
     "resident_agi_hard_rule_gate",

@@ -126,6 +126,23 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
+    runtime_context = captured["context"]
+    assert isinstance(runtime_context, dict)
+    assert runtime_context["resident_agi_enabled"] is True
+    assert runtime_context["resident_agi_role_turn_enabled"] is True
+    assert runtime_context["resident_agi_manual_role_turn_requested"] is True
+    assert runtime_context["resident_agi_automatic_participation_enabled"] is False
+    assert runtime_context["resident_agi_participation"]["enabled"] is True
+    assert runtime_context["resident_agi_participation"]["role_turn_enabled"] is True
+    assert runtime_context["resident_agi_participation"]["manual_role_turn_requested"] is True
+    assert runtime_context["resident_agi_participation"]["automatic_participation_enabled"] is False
+    assert runtime_context["resident_agi_participation"]["configured_enabled"] is False
+    assert runtime_context["resident_agi_participation"]["automatic_participation"]["final_request_audit"] is False
+    assert runtime_context["resident_agi_participation"]["participation"]["final_request_audit"] is True
+    assert "final_request_audit" in runtime_context["resident_agi_participation_scopes"]
+    assert payload["resident_agi_participation"]["enabled"] is True
+    assert payload["resident_agi_participation"]["automatic_participation_enabled"] is False
+    assert payload["resident_agi_participation"]["manual_role_turn_requested"] is True
     assert payload["decision"]["verdict"] == "request_evidence"
     assert payload["control_plane_gate"]["schema_version"] == "resident.agi_control_gate_receipt.v1"
     assert payload["control_plane_gate"]["policy_decision"] == "request_evidence"
@@ -143,6 +160,13 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert payload["recorded_decision"]["expected_outcome"]["resident_agi_audit_pack_required"] is True
     assert payload["audit_pack"]["schema_version"] == "resident.agi_audit_pack.v1"
     assert payload["audit_pack"]["role_registry"]["resident_agi_available"] is True
+    assert payload["audit_pack"]["director_repair_contract"]["owner_cell"] == "director.runtime"
+    assert (
+        payload["audit_pack"]["director_repair_contract"]["catalog_schema"]
+        == "director.deterministic_repair_strategy_catalog.v1"
+    )
+    assert payload["audit_pack"]["director_repair_contract"]["agi_execution_authority"] is False
+    assert payload["audit_pack"]["director_repair_contract"]["execution_boundary"] == "director_authorized_tools_only"
     assert payload["audit_pack"]["hard_rule_gate"]["status"] == "pass"
     assert payload["audit_pack"]["authority_matrix"]["schema_version"] == "resident.agi_authority_matrix.v1"
     assert payload["audit_pack"]["authority_matrix"]["chain_required"] is True
@@ -204,6 +228,8 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert captured_input["evidence"]["resident_agi_decision_profile_schema"] == "resident.agi_decision_profile.v1"
     assert captured_input["evidence"]["resident_agi_decision_profile_recommended_verdict"] == "request_evidence"
     assert captured_input["evidence"]["resident_agi_role_turn_allowed"] is True
+    assert captured_input["evidence"]["resident_agi_manual_role_turn_requested"] is True
+    assert captured_input["evidence"]["resident_agi_automatic_participation_enabled"] is False
     assert captured_input["selected_decision_capability"]["decision_id"] == "quality.gate.response"
     assert "run_ledger.read" in captured_input["required_evidence_interfaces"]
     assert "audit.diagnosis.execute" in captured_input["optional_evidence_interfaces"]

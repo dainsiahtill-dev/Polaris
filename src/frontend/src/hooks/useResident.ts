@@ -31,6 +31,12 @@ interface ResidentIdentityPatch {
   values?: string[];
   memory_lineage?: string[];
   capability_profile?: Record<string, number>;
+  resident_agi_participation?: {
+    enabled?: boolean;
+    scopes?: string[];
+    participation?: Record<string, boolean>;
+    custom_scopes_allowed?: boolean;
+  };
 }
 
 interface ResidentGoalDraft {
@@ -63,6 +69,7 @@ function emptyDetails(workspace: string, liveResident?: ResidentStatusDetailsPay
     improvements: liveResident.improvements ?? [],
     capability_graph: liveResident.capability_graph ?? { generated_at: '', capabilities: [], gaps: [] },
     agi_capability_surface: liveResident.agi_capability_surface,
+    agi_participation_policy: liveResident.agi_participation_policy,
     goal_executions: liveResident.goal_executions ?? [],
   };
 }

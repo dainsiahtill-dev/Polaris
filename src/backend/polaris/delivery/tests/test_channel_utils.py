@@ -212,8 +212,15 @@ class TestNormalizeRoles:
         assert normalize_roles("pm,foo,director,bar,qa") == {"pm", "director", "qa"}
 
     def test_unknown_role_not_included(self) -> None:
-        """Test that only pm/director/qa are accepted."""
+        """Test that unsupported roles are filtered out."""
         assert normalize_roles("admin") == set()
+
+    def test_observable_roles_include_resident_agi(self) -> None:
+        """Test runtime observability accepts AGI without TaskMarket coupling."""
+        assert normalize_roles("chief_engineer,resident_agi") == {
+            "chief_engineer",
+            "resident_agi",
+        }
 
 
 class TestResolveCurrentRunId:

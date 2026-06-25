@@ -466,6 +466,25 @@ class RoleId(StrEnum):
         """
         return (cls.PM, cls.DIRECTOR, cls.QA)
 
+    @classmethod
+    def runtime_observable_roles(cls) -> tuple[RoleId, ...]:
+        """Roles accepted by runtime observability filters.
+
+        This is deliberately broader than ``consumer_roles``. Resident AGI,
+        Architect, Chief Engineer, and Scout can be observed or audited through
+        runtime streams without becoming TaskMarket consumers or changing the
+        governed PM -> Chief Engineer -> Director execution chain.
+        """
+        return (
+            cls.PM,
+            cls.ARCHITECT,
+            cls.CHIEF_ENGINEER,
+            cls.DIRECTOR,
+            cls.QA,
+            cls.SCOUT,
+            cls.RESIDENT_AGI,
+        )
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Workflow Task Status - P2-002

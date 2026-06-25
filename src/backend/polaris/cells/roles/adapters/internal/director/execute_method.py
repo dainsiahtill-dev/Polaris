@@ -29,6 +29,11 @@ from polaris.kernelone.quality import (
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
 )
 
+from .deterministic_repairs.strategy_catalog import summarize_deterministic_repair_source_tools
+from .deterministic_repairs.typescript_repairs import (
+    _apply_deterministic_typescript_canvas_scale_return_type_repair as _apply_deterministic_typescript_canvas_scale_return_type_repair,
+    _apply_deterministic_typescript_missing_export_repair as _apply_deterministic_typescript_missing_export_repair,
+)
 from .execution_tools import (
     DirectorToolExecutor as DirectorToolExecutor,
 )
@@ -79,6 +84,39 @@ def _empty_write_content_retry_needed(tool_results: list[dict[str, Any]]) -> boo
     """Return True only when write tools were attempted with blank content."""
     write_summary = _diag_write_results_summary(tool_results)
     return bool(write_summary) and all(content_len <= 0 for _, content_len in write_summary)
+
+
+def _deterministic_repair_source_tools_from_tool_results(tool_results: list[dict[str, Any]]) -> list[str]:
+    """Extract deterministic repair source-tool ids from tool results."""
+
+    source_tools: list[str] = []
+    seen: set[str] = set()
+    for item in tool_results:
+        if not isinstance(item, dict):
+            continue
+        for source in (item, item.get("result"), item.get("payload")):
+            if not isinstance(source, dict):
+                continue
+            source_tool = str(source.get("source_tool") or "").strip()
+            if not source_tool.startswith("deterministic_") or source_tool in seen:
+                continue
+            seen.add(source_tool)
+            source_tools.append(source_tool)
+    return source_tools
+
+
+def _deterministic_repair_profile_summary_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build a compact audit summary for hard-coded Director repair actions."""
+
+    source_tools = _deterministic_repair_source_tools_from_tool_results(tool_results)
+    profiles = summarize_deterministic_repair_source_tools(source_tools)
+    return {
+        "schema_version": "director.deterministic_repair_profile_summary.v1",
+        "source_tools": source_tools,
+        "source_tool_profiles": profiles,
+        "registered": all(bool(profile.get("registered")) for profile in profiles),
+        "count": len(source_tools),
+    }
 
 
 def _artifact_quality_error_signature(errors: list[str]) -> tuple[str, ...]:
@@ -359,6 +397,10 @@ def _task_runtime_finalization_failed_result(
 ) -> dict[str, Any]:
     reason = str(finalize_result.get("reason") or "task_runtime_finalize_rejected")
     detail = str(finalize_result.get("error") or finalize_result.get("detail") or reason)
+    deterministic_tool_results = [item for item in (tool_results or []) if isinstance(item, dict)]
+    deterministic_repair_profile_summary = _deterministic_repair_profile_summary_from_tool_results(
+        deterministic_tool_results
+    )
     signal = {
         "code": "director_task_runtime_finalization_failed",
         "severity": "error",
@@ -371,6 +413,7 @@ def _task_runtime_finalization_failed_result(
         "task_id": target_task_id,
         "tools_executed": len(tool_results or []),
         "tool_results": tool_results or [],
+        "deterministic_repair_profiles": deterministic_repair_profile_summary,
         "error": "director_task_runtime_finalization_failed",
         "error_code": "director_task_runtime_finalization_failed",
         "failure_stage": "director_task_runtime_finalization",
@@ -1524,6 +1567,7 @@ def _phase_finalize_materialization(
     result dict. This is the success/failure epilogue of the standard flow.
     """
     _current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    deterministic_repair_profile_summary = _deterministic_repair_profile_summary_from_tool_results(tool_results)
     reported_affected_files = list(all_affected_files)
     all_affected_files, unmaterialized_affected_files = _adapter_materialized_file_paths(
         adapter,
@@ -1547,6 +1591,7 @@ def _phase_finalize_materialization(
             "adapter_result": {
                 "tools_executed": len(tool_results),
                 "write_tool_evidence": write_tool_evidence,
+                "deterministic_repair_profiles": deterministic_repair_profile_summary,
                 "reported_changed_files": reported_affected_files,
                 "unmaterialized_reported_changed_files": unmaterialized_affected_files,
                 "materialization_mode": materialization_mode,
@@ -1571,6 +1616,7 @@ def _phase_finalize_materialization(
             "root_cause_hint": error,
             "tools_executed": len(tool_results),
             "tool_results": tool_results,
+            "deterministic_repair_profiles": deterministic_repair_profile_summary,
             "changed_files": [],
             "new_files": [],
             "modified_files": [],
@@ -1596,6 +1642,7 @@ def _phase_finalize_materialization(
             "reported_changed_files": reported_affected_files[:40],
             "unmaterialized_reported_changed_files": unmaterialized_affected_files[:40],
             "materialization_mode": materialization_mode,
+            "deterministic_repair_profiles": deterministic_repair_profile_summary,
         }
     }
     if primary_llm_summary is not None:
@@ -1631,6 +1678,7 @@ def _phase_finalize_materialization(
             "direct_fallback": direct_fallback_summary or {},
             "quality_repair": quality_repair_summary or {},
             "quality_repair_attempts": quality_repair_attempts,
+            "deterministic_repair_profiles": deterministic_repair_profile_summary,
         },
         export_handoff=True,
     )
@@ -1662,6 +1710,7 @@ def _phase_finalize_materialization(
         "task_id": target_task_id,
         "tools_executed": len(tool_results),
         "tool_results": tool_results,
+        "deterministic_repair_profiles": deterministic_repair_profile_summary,
         "changed_files": all_affected_files,
         "new_files": new_files,
         "modified_files": modified_files,

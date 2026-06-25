@@ -120,6 +120,30 @@ def _bool_value(value: Any, *, default: bool = False) -> bool:
     return default
 
 
+def _int_value(value: Any, *, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw_items = value.replace(";", ",").split(",")
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        return []
+    result: list[str] = []
+    for item in raw_items:
+        token = str(item or "").strip()
+        if token:
+            result.append(token)
+    return result
+
+
 def _resident_agi_audit_context(ai_request: Any) -> dict[str, Any]:
     context_payload = _request_context(ai_request)
     raw_context = context_payload.get("resident_agi_audit_context")
@@ -188,7 +212,7 @@ def _resident_agi_coverage_flags(text: str, ai_request: Any | None) -> dict[str,
         "has_resident_agi_decision_boundary": bool(
             text_flags["has_resident_agi_decision_boundary"]
             or audit_context.get("decision_boundary_schema")
-            or int(audit_context.get("decision_boundary_count") or 0) > 0
+            or _int_value(audit_context.get("decision_boundary_count")) > 0
         ),
     }
 
@@ -418,12 +442,34 @@ def _task_metadata(ai_request: Any) -> dict[str, Any]:
     return {}
 
 
+def _resident_agi_audit_context_summary(ai_request: Any) -> dict[str, Any]:
+    audit_context = _resident_agi_audit_context(ai_request)
+    if not audit_context:
+        return {}
+    participation = _mapping(audit_context.get("participation"))
+    return {
+        "schema_version": str(audit_context.get("schema_version") or ""),
+        "enabled": _bool_value(audit_context.get("enabled"), default=True),
+        "participation_scopes": _string_list(audit_context.get("participation_scopes")),
+        "participation": {
+            key: _bool_value(value) for key, value in sorted(participation.items()) if isinstance(value, (bool, str))
+        },
+        "audit_pack_schema_version": str(audit_context.get("audit_pack_schema_version") or ""),
+        "decision_contract_schema_version": str(audit_context.get("decision_contract_schema_version") or ""),
+        "capability_surface_schema_version": str(audit_context.get("capability_surface_schema_version") or ""),
+        "decision_boundary_schema": str(audit_context.get("decision_boundary_schema") or ""),
+        "decision_boundary_count": _int_value(audit_context.get("decision_boundary_count")),
+        "decision_capability_id": str(audit_context.get("decision_capability_id") or ""),
+    }
+
+
 def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> dict[str, Any]:
     context_payload = _request_context(ai_request)
     options = _request_options(ai_request, prepared)
     execution_profile = _execution_profile(ai_request)
     execution_profile_summary = _execution_profile_summary(ai_request)
     task_metadata = _task_metadata(ai_request)
+    resident_agi_audit_context = _resident_agi_audit_context_summary(ai_request)
     summary: dict[str, Any] = {
         "schema_version": "llm.request_metadata_summary.v1",
         "task_type": _task_type_value(ai_request),
@@ -441,6 +487,11 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
         "has_task_metadata": bool(task_metadata),
         "task_metadata_keys": sorted(str(key) for key in task_metadata),
         "task_metadata_hash": _stable_digest(task_metadata) if task_metadata else "",
+        "has_resident_agi_audit_context": bool(resident_agi_audit_context),
+        "resident_agi_audit_context": resident_agi_audit_context,
+        "resident_agi_audit_context_hash": _stable_digest(resident_agi_audit_context)
+        if resident_agi_audit_context
+        else "",
     }
     summary["has_language_guidance"] = bool(
         execution_profile_summary.get("language")
@@ -629,7 +680,7 @@ def build_final_request_context_audit_for_request(
         window_tokens >= _UNDERUTILIZED_WINDOW_THRESHOLD
         and final_request_token_estimate < int(window_tokens * _UNDERUTILIZED_RATIO)
     )
-    coverage = _coverage_flags(message_text)
+    coverage = _coverage_flags(message_text, ai_request=ai_request)
     prompt_profile_selection = _prompt_profile_selection(ai_request)
     sampling = _request_sampling_audit(ai_request, prepared)
     request_metadata_summary = _request_metadata_summary(ai_request, prepared)

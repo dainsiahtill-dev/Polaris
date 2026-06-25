@@ -33,6 +33,10 @@ from polaris.cells.control_plane.verifier_policy.public import (
     ReadVerifierPolicyQueryV1,
     read_verifier_policy,
 )
+from polaris.cells.director.runtime.public import (
+    QueryDirectorRepairStrategyCatalogV1,
+    query_director_repair_strategy_catalog,
+)
 from polaris.cells.resident.autonomy.internal.agi_audit_pack import build_resident_agi_audit_pack
 from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
     build_resident_agi_authority_matrix,
@@ -41,6 +45,7 @@ from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
     build_resident_agi_decision_capabilities,
     build_resident_agi_decision_capability_registry,
     resident_agi_capability_surface_payload,
+    resident_agi_participation_policy_payload,
 )
 from polaris.cells.resident.autonomy.internal.capability_graph import CapabilityGraph
 from polaris.cells.resident.autonomy.internal.counterfactual_lab import CounterfactualLab
@@ -236,6 +241,105 @@ def _merge_non_empty_strings(*groups: list[Any] | tuple[Any, ...]) -> list[str]:
             seen.add(token)
             result.append(token)
     return result
+
+
+def _resident_agi_participation_scope_key(value: Any) -> str:
+    return str(value or "").strip().lower().replace(".", "_").replace("-", "_").replace(" ", "_")
+
+
+def _resident_agi_known_participation_scope_keys() -> set[str]:
+    policy = resident_agi_participation_policy_payload()
+    keys: set[str] = set()
+    flags_raw = policy.get("participation_flags")
+    flags = flags_raw if isinstance(flags_raw, list) else []
+    for flag in flags:
+        key = _resident_agi_participation_scope_key(flag)
+        if key:
+            keys.add(key)
+    scopes_raw = policy.get("available_scopes")
+    scopes = scopes_raw if isinstance(scopes_raw, list) else []
+    for scope in scopes:
+        if not isinstance(scope, dict):
+            continue
+        key = _resident_agi_participation_scope_key(scope.get("scope_id"))
+        if key:
+            keys.add(key)
+    return keys
+
+
+def _resident_agi_identity_participation(workspace: str) -> dict[str, Any]:
+    try:
+        participation = get_resident_service(workspace).identity.resident_agi_participation
+    except (RuntimeError, ValueError, OSError) as exc:
+        logger.warning("Resident AGI participation policy unavailable: %s", exc)
+        return {}
+    return participation.to_dict()
+
+
+def _resident_agi_decision_turn_participation(
+    *,
+    command: RunResidentAgiDecisionTurnCommandV1,
+    selected_decision_capability: dict[str, Any],
+) -> dict[str, Any]:
+    configured = _resident_agi_identity_participation(command.workspace)
+    configured_enabled = bool(configured.get("enabled"))
+    configured_scopes_raw = configured.get("scopes")
+    configured_scopes = configured_scopes_raw if isinstance(configured_scopes_raw, list) else []
+    configured_participation_raw = configured.get("participation")
+    configured_participation = configured_participation_raw if isinstance(configured_participation_raw, dict) else {}
+    selected_decision_id = str(selected_decision_capability.get("decision_id") or "").strip()
+    required_role_turn_scopes = (
+        "final_request_audit",
+        "decision_trace",
+        "capability_surface",
+        "decision_boundary",
+    )
+    decision_turn_scopes = _merge_non_empty_strings(
+        tuple(configured_scopes),
+        (
+            *required_role_turn_scopes,
+            command.decision_type,
+            selected_decision_id,
+        ),
+    )
+    configured_flags: dict[str, bool] = {}
+    for key, value in configured_participation.items():
+        normalized = _resident_agi_participation_scope_key(key)
+        if normalized:
+            configured_flags[normalized] = bool(value)
+    normalized_scope_keys = {
+        _resident_agi_participation_scope_key(scope)
+        for scope in decision_turn_scopes
+        if _resident_agi_participation_scope_key(scope)
+    }
+    known_scope_keys = _resident_agi_known_participation_scope_keys()
+    automatic_participation = dict(configured_flags)
+    for key in normalized_scope_keys & known_scope_keys:
+        automatic_participation[key] = configured_enabled
+
+    participation = dict(automatic_participation)
+    for key in normalized_scope_keys & known_scope_keys:
+        participation[key] = True
+    for key in required_role_turn_scopes:
+        participation[key] = True
+    return {
+        "schema_version": "resident.agi_participation.v1",
+        "source": "resident.identity+resident_agi_decision_turn",
+        "semantics": "enabled means this explicit resident_agi role turn is active; automatic_participation_enabled is the user-governed background switch",
+        "enabled": True,
+        "role_turn_enabled": True,
+        "manual_role_turn_requested": True,
+        "automatic_participation_enabled": configured_enabled,
+        "configured_enabled": configured_enabled,
+        "configured_scopes": configured_scopes,
+        "scopes": decision_turn_scopes,
+        "required_role_turn_scopes": list(required_role_turn_scopes),
+        "configured_participation": configured_flags,
+        "automatic_participation": automatic_participation,
+        "participation": participation,
+        "custom_scopes_allowed": bool(configured.get("custom_scopes_allowed", True)),
+        "selected_decision_capability_id": selected_decision_id,
+    }
 
 
 def _resident_decision_verdict(agi_verdict: str, *, runtime_success: bool) -> str:
@@ -842,6 +946,36 @@ def _resident_agi_verifier_policy_interface(
     return base
 
 
+def _resident_agi_director_repair_strategy_catalog_interface(base: dict[str, Any]) -> dict[str, Any]:
+    result = query_director_repair_strategy_catalog(QueryDirectorRepairStrategyCatalogV1())
+    payload = result.to_dict()
+    summary_raw = payload.get("summary")
+    summary = summary_raw if isinstance(summary_raw, dict) else {}
+    base.update(
+        {
+            "available": True,
+            "callable": True,
+            "status": "available",
+            "source": "director.runtime.public.query_director_repair_strategy_catalog",
+            "summary": {
+                **summary,
+                "schema_version": payload.get("schema_version"),
+                "owner_cell": payload.get("owner_cell"),
+                "access": payload.get("access"),
+                "execution_boundary": payload.get("execution_boundary"),
+                "chain": payload.get("chain"),
+                "agi_execution_authority": bool(payload.get("agi_execution_authority")),
+                "director_tool_execution_required": bool(payload.get("director_tool_execution_required")),
+                "unknown_source_tool_policy": payload.get("unknown_source_tool_policy") or "fail_closed_high_risk",
+            },
+            "payload": payload,
+            "gaps": [],
+            "recommended_next_action": "use_director_repair_strategy_catalog_as_read_only_evidence",
+        }
+    )
+    return base
+
+
 def _resident_agi_audit_diagnosis_interface(
     *,
     workspace: str,
@@ -1188,6 +1322,8 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
                 audit_pack=audit_pack,
                 base=base,
             )
+        elif interface_id == "director.deterministic_repair_strategy_catalog.read":
+            item = _resident_agi_director_repair_strategy_catalog_interface(base)
         else:
             item = _resident_agi_metadata_only_interface(base)
         interfaces.append(item)
@@ -1376,6 +1512,10 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         decision_type=command.decision_type,
         audit_pack=audit_pack,
     )
+    resident_agi_participation = _resident_agi_decision_turn_participation(
+        command=command,
+        selected_decision_capability=selected_decision_capability,
+    )
     selected_required_evidence_interfaces = [
         str(item or "").strip()
         for item in selected_decision_capability.get("required_evidence_interfaces", [])
@@ -1405,6 +1545,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
     if audit_pack is not None:
         input_data["resident_agi_audit_pack"] = audit_pack
         input_data["resident_agi_decision_preflight"] = decision_preflight
+        input_data["resident_agi_participation"] = resident_agi_participation
         profile_candidate_actions_raw = decision_profile.get("candidate_actions")
         profile_candidate_actions = (
             profile_candidate_actions_raw if isinstance(profile_candidate_actions_raw, list) else []
@@ -1456,6 +1597,12 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                 "resident_agi_missing_required_interface_ids": list(
                     decision_preflight.get("missing_required_interface_ids") or []
                 ),
+                "resident_agi_manual_role_turn_requested": bool(
+                    resident_agi_participation.get("manual_role_turn_requested")
+                ),
+                "resident_agi_automatic_participation_enabled": bool(
+                    resident_agi_participation.get("automatic_participation_enabled")
+                ),
             }
         )
         input_data["evidence"] = evidence
@@ -1467,6 +1614,14 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         "decision_type": command.decision_type,
         "context_refs": list(command.context_refs),
         "evidence_refs": list(command.evidence_refs),
+        "resident_agi_enabled": bool(resident_agi_participation.get("enabled")),
+        "resident_agi_role_turn_enabled": bool(resident_agi_participation.get("role_turn_enabled")),
+        "resident_agi_manual_role_turn_requested": bool(resident_agi_participation.get("manual_role_turn_requested")),
+        "resident_agi_automatic_participation_enabled": bool(
+            resident_agi_participation.get("automatic_participation_enabled")
+        ),
+        "resident_agi_participation": resident_agi_participation,
+        "resident_agi_participation_scopes": list(resident_agi_participation.get("scopes") or []),
         "resident_agi_audit_pack": audit_pack or {},
         "resident_agi_decision_preflight": decision_preflight,
         "metadata": {
@@ -1488,6 +1643,12 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
             "resident_agi_decision_preflight_passed": bool(decision_preflight.get("passed")),
             "resident_agi_missing_required_interface_ids": list(
                 decision_preflight.get("missing_required_interface_ids") or []
+            ),
+            "resident_agi_manual_role_turn_requested": bool(
+                resident_agi_participation.get("manual_role_turn_requested")
+            ),
+            "resident_agi_automatic_participation_enabled": bool(
+                resident_agi_participation.get("automatic_participation_enabled")
             ),
         },
     }
@@ -1656,6 +1817,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                     "optional_evidence_interfaces": selected_optional_evidence_interfaces,
                     "candidate_actions": effective_candidate_actions,
                     "constraints": effective_constraints,
+                    "resident_agi_participation": resident_agi_participation,
                     "resident_agi_audit_pack_required": True,
                 },
                 "actual_outcome": {
@@ -1669,6 +1831,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                     "resident_agi_authority_matrix": authority_matrix,
                     "resident_agi_decision_profile": decision_profile,
                     "resident_agi_decision_capability": selected_decision_capability,
+                    "resident_agi_participation": resident_agi_participation,
                     "resident_agi_required_evidence_interfaces": selected_required_evidence_interfaces,
                     "resident_agi_optional_evidence_interfaces": selected_optional_evidence_interfaces,
                     "resident_agi_decision_preflight": decision_preflight,
@@ -1716,6 +1879,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         "role_result": role_result,
         "audit_pack": audit_pack,
         "selected_decision_capability": selected_decision_capability,
+        "resident_agi_participation": resident_agi_participation,
         "required_evidence_interfaces": selected_required_evidence_interfaces,
         "optional_evidence_interfaces": selected_optional_evidence_interfaces,
         "decision_preflight": decision_preflight,

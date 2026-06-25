@@ -110,10 +110,24 @@ def test_resident_public_commands_cover_lifecycle_goals_decisions_and_labs(tmp_p
             payload={
                 "name": "Resident AGI Supervisor",
                 "mission": "Govern platform-level autonomous development decisions.",
+                "resident_agi_participation": {
+                    "enabled": True,
+                    "scopes": ["quality_gate_response", "architecture.option.selection"],
+                    "participation": {
+                        "quality_gate_response": True,
+                        "architecture.option.selection": True,
+                    },
+                    "custom_scopes_allowed": True,
+                },
             },
         )
     )
     assert identity["name"] == "Resident AGI Supervisor"
+    assert identity["resident_agi_participation"]["enabled"] is True
+    assert identity["resident_agi_participation"]["scopes"] == [
+        "quality_gate_response",
+        "architecture.option.selection",
+    ]
 
     recorded = record_resident_decision_entry(
         RecordResidentDecisionCommandV1(
@@ -174,6 +188,16 @@ def test_resident_public_commands_cover_lifecycle_goals_decisions_and_labs(tmp_p
 
     ticked = run_resident_tick(RunResidentTickCommandV1(workspace=str(workspace), force=True))
     assert ticked["runtime"]["tick_count"] >= 1
+    assert ticked["agi_participation_policy"]["schema_version"] == "resident.agi_participation_policy.v1"
+    assert "director_repair_strategy_catalog" in ticked["agi_participation_policy"]["participation_flags"]
+    available_scope_ids = {
+        item["scope_id"]
+        for item in ticked["agi_participation_policy"]["available_scopes"]
+        if isinstance(item, dict) and item.get("scope_id")
+    }
+    assert "director_repair_strategy_catalog" in available_scope_ids
+    assert "director_repair_strategy_catalog" in resident_public_service._resident_agi_known_participation_scope_keys()
+    assert ticked["identity"]["resident_agi_participation"]["enabled"] is True
     tick_boundary = ticked["runtime"]["last_summary"]["autonomy_boundary"]
     assert tick_boundary["schema_version"] == "resident.tick_autonomy_boundary.v1"
     assert tick_boundary["tick_role"] == "deterministic_evidence_producer"
@@ -341,9 +365,33 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
         "context.engine.resolve",
         "verifier.policy.read",
         "verifier.execution.execute",
+        "director.deterministic_repair_strategy_catalog.read",
     } <= capability_ids
+    repair_catalog = capability_surface["hardcoded_repair_strategy_catalog"]
+    assert repair_catalog["schema_version"] == "director.deterministic_repair_strategy_catalog.v1"
+    assert repair_catalog["source"] == "director.runtime.repair_kernel.strategy_catalog"
+    assert repair_catalog["access"] == "read_only"
+    assert repair_catalog["agi_execution_authority"] is False
+    assert repair_catalog["director_tool_execution_required"] is True
+    assert repair_catalog["owner_cell"] == "director.runtime"
+    assert repair_catalog["execution_boundary"] == "director_authorized_tools_only"
+    assert repair_catalog["chain"] == "PM → Chief Engineer → Director"
+    assert repair_catalog["unknown_source_tool_policy"] == "fail_closed_high_risk"
+    assert repair_catalog["summary"]["total"] > 0
+    assert repair_catalog["summary"]["returned"] == repair_catalog["summary"]["total"]
+    assert repair_catalog["summary"]["by_concern"]
+    assert repair_catalog["items"]
+    assert {
+        "source_tool",
+        "language",
+        "phase",
+        "concern",
+        "risk_level",
+    } <= set(repair_catalog["items"][0])
     assert "verifier.execution.execute" in authority_matrix["high_risk_capabilities"]
     assert "control_plane.verifier_execution" in authority_matrix["canonical_contracts"]
+    assert "director.deterministic_repair_strategy_catalog.read" in authority_matrix["read_only_capabilities"]
+    assert "director.deterministic_repair_strategy_catalog.v1" in authority_matrix["canonical_contracts"]
     assert "audit.diagnosis" in authority_matrix["canonical_contracts"]
     assert "audit.verdict" in authority_matrix["canonical_contracts"]
     decision_boundaries = capability_surface["decision_boundaries"]
@@ -371,6 +419,7 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert "evidence.interface.selection" in decision_registry["agi_owned_decisions"]
     assert "goal.promotion.readiness" in decision_registry["governed_execution_decisions"]
     assert "verifier.execution.execute" in decision_registry["evidence_interface_ids"]
+    assert "director.deterministic_repair_strategy_catalog.read" in decision_registry["evidence_interface_ids"]
     assert "request_evidence" in decision_registry["candidate_actions"]
     serialized_capability_surface = json.dumps(capability_surface, ensure_ascii=False)
     assert "PM -> CE -> Director" not in serialized_capability_surface
@@ -382,6 +431,18 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert audit_pack["workspace"] == str(workspace)
     assert "runtime.v2.status.resident" in audit_pack["truth_sources"]
     assert "runtime.v2.snapshot.resident" in audit_pack["truth_sources"]
+    assert "director.runtime.repair_kernel.strategy_catalog" in audit_pack["truth_sources"]
+    director_repair_contract = audit_pack["director_repair_contract"]
+    assert director_repair_contract["schema_version"] == "resident.agi_director_repair_contract.v1"
+    assert director_repair_contract["owner_cell"] == "director.runtime"
+    assert director_repair_contract["catalog_schema"] == "director.deterministic_repair_strategy_catalog.v1"
+    assert director_repair_contract["profile_summary_schema"] == "director.deterministic_repair_profile_summary.v1"
+    assert director_repair_contract["unknown_source_tool_policy"] == "fail_closed_high_risk"
+    assert director_repair_contract["execution_boundary"] == "director_authorized_tools_only"
+    assert director_repair_contract["chain"] == "PM → Chief Engineer → Director"
+    assert director_repair_contract["agi_advisory"]["writes_allowed"] is False
+    assert director_repair_contract["agi_execution_authority"] is False
+    assert director_repair_contract["director_tool_execution_required"] is True
     assert audit_pack["authority_matrix"]["schema_version"] == "resident.agi_authority_matrix.v1"
     assert audit_pack["hard_rule_gate"]["status"] == "pass"
     assert audit_pack["autonomy_boundary"]["tick_role"] == "deterministic_evidence_producer"
@@ -408,7 +469,9 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     )
     assert "AuditDiagnosisResultV1" in decision_profile["required_evidence"]
     assert "AuditVerdictResultV1" in decision_profile["required_evidence"]
+    assert "director.deterministic_repair_strategy_catalog.v1" in decision_profile["required_evidence"]
     assert "control_plane.verifier_execution" in decision_profile["contract_refs"]
+    assert "director.deterministic_repair_strategy_catalog.v1" in decision_profile["contract_refs"]
     assert (
         decision_profile["decision_capability_registry"]["schema_version"]
         == "resident.agi_decision_capability_registry.v1"
@@ -427,9 +490,17 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
         "run_ledger.read",
         "verifier.policy.read",
         "verifier.execution.execute",
+        "director.deterministic_repair_strategy_catalog.read",
         "context.catalog.search",
         "context.engine.resolve",
     } <= recommendation_ids
+    repair_recommendation = next(
+        item
+        for item in evidence_recommendations
+        if item["capability_id"] == "director.deterministic_repair_strategy_catalog.read"
+    )
+    assert repair_recommendation["contract_ref"] == "director.deterministic_repair_strategy_catalog.v1"
+    assert repair_recommendation["recommended_now"] is True
     verifier_execution = next(
         item for item in evidence_recommendations if item["capability_id"] == "verifier.execution.execute"
     )
@@ -459,6 +530,7 @@ def test_resident_agi_evidence_interfaces_query_reports_public_facade_status(tmp
                 "run_ledger.read",
                 "verifier.policy.read",
                 "audit.verdict.read",
+                "director.deterministic_repair_strategy_catalog.read",
                 "audit.diagnosis.execute",
             ),
             max_runs=5,
@@ -475,9 +547,62 @@ def test_resident_agi_evidence_interfaces_query_reports_public_facade_status(tmp
     assert by_id["audit.verdict.read"]["source"] == "audit.verdict.public.query_audit_verdict"
     assert by_id["audit.verdict.read"]["status"] == "empty"
     assert by_id["audit.verdict.read"]["callable"] is True
+    repair_catalog = by_id["director.deterministic_repair_strategy_catalog.read"]
+    assert repair_catalog["source"] == "director.runtime.public.query_director_repair_strategy_catalog"
+    assert repair_catalog["status"] == "available"
+    assert repair_catalog["available"] is True
+    assert repair_catalog["callable"] is True
+    assert repair_catalog["summary"]["schema_version"] == "director.deterministic_repair_strategy_catalog.v1"
+    assert repair_catalog["summary"]["owner_cell"] == "director.runtime"
+    assert repair_catalog["summary"]["execution_boundary"] == "director_authorized_tools_only"
+    assert repair_catalog["summary"]["chain"] == "PM → Chief Engineer → Director"
+    assert repair_catalog["summary"]["agi_execution_authority"] is False
+    assert repair_catalog["summary"]["director_tool_execution_required"] is True
+    assert repair_catalog["summary"]["unknown_source_tool_policy"] == "fail_closed_high_risk"
     assert by_id["audit.diagnosis.execute"]["status"] == "governed_execute_only"
     assert payload["summary"]["needs_public_facade"] == 0
     assert payload["summary"]["governed_execute_only"] == 1
+
+
+def test_resident_agi_decision_turn_participation_distinguishes_manual_and_auto_switch(
+    tmp_path: Path,
+) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    update_resident_identity(
+        UpdateResidentIdentityCommandV1(
+            workspace=str(workspace),
+            payload={
+                "resident_agi_participation": {
+                    "enabled": True,
+                    "scopes": ["quality_gate_response"],
+                    "participation": {"quality_gate_response": True},
+                    "custom_scopes_allowed": True,
+                }
+            },
+        )
+    )
+
+    participation = resident_public_service._resident_agi_decision_turn_participation(
+        command=RunResidentAgiDecisionTurnCommandV1(
+            workspace=str(workspace),
+            decision_type="quality_gate_response",
+            objective="check quality gate",
+        ),
+        selected_decision_capability={"decision_id": "quality.gate.response"},
+    )
+
+    assert participation["enabled"] is True
+    assert participation["role_turn_enabled"] is True
+    assert participation["manual_role_turn_requested"] is True
+    assert participation["automatic_participation_enabled"] is True
+    assert participation["configured_enabled"] is True
+    assert participation["configured_scopes"] == ["quality_gate_response"]
+    assert participation["automatic_participation"]["quality_gate_response"] is True
+    assert participation["participation"]["quality_gate_response"] is True
+    assert participation["participation"]["final_request_audit"] is True
+    assert "final_request_audit" in participation["required_role_turn_scopes"]
 
 
 def test_resident_agi_evidence_interfaces_treats_metadata_only_required_as_missing(

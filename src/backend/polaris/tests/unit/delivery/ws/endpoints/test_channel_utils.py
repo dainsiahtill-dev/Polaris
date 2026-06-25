@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from polaris.delivery.ws.endpoints.channel_utils import (
+    RUNTIME_OBSERVABLE_ROLE_TOKENS,
     channel_max_chars,
     is_llm_channel,
     is_process_channel,
@@ -13,6 +14,7 @@ from polaris.delivery.ws.endpoints.channel_utils import (
     resolve_current_run_id,
     wants_role,
 )
+from polaris.kernelone.constants import RoleId
 
 
 class TestIsLlmChannel:
@@ -88,6 +90,16 @@ class TestNormalizeRoles:
 
     def test_case_normalized(self) -> None:
         assert normalize_roles("PM,Director") == {"pm", "director"}
+
+    def test_runtime_observable_roles_include_resident_agi(self) -> None:
+        assert normalize_roles("chief_engineer,resident_agi") == {
+            "chief_engineer",
+            "resident_agi",
+        }
+        assert "resident_agi" in RUNTIME_OBSERVABLE_ROLE_TOKENS
+
+    def test_runtime_observable_roles_do_not_expand_task_consumers(self) -> None:
+        assert RoleId.consumer_roles() == (RoleId.PM, RoleId.DIRECTOR, RoleId.QA)
 
 
 class TestResolveCurrentRunId:

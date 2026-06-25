@@ -170,7 +170,8 @@ cells:
         - polaris.cells.control_plane.verifier_execution.public.service
       commands:
         - RunVerifierPolicyCommandV1
-      queries: []
+      queries:
+        - QueryDirectorRepairStrategyCatalogV1
       events: []
       results:
         - VerifierExecutionResultV1
@@ -2799,11 +2800,18 @@ cells:
     public_contracts:
       modules:
         - polaris.cells.director.runtime.public.contracts
-      commands: []
+      commands:
+        - RunDirectorRepairCommandV1
       queries: []
       events: []
-      results: []
-      errors: []
+      results:
+        - DirectorRepairResultV1
+        - DirectorRepairStrategyCatalogResultV1
+        - RepairDiagnosticV1
+        - RepairReceiptV1
+        - RepairAdvisoryV1
+      errors:
+        - DirectorRuntimeError
     depends_on:
       - kernelone.tools
       - audit.evidence
@@ -2817,7 +2825,10 @@ cells:
       - fs.write:workspace/**
     verification:
       gaps:
-        - 'Migration in progress: implementation resides in director.execution/internal
+        - 'Migration in progress: Repair Kernel contracts and composition primitives
+          now reside in director.runtime/internal/repair_kernel; legacy deterministic
+          strategy functions still reside in roles.adapters/internal/director/deterministic_repairs
+          pending full runtime cutover. Other implementation remains in director.execution/internal
           and polaris/kernelone/tools/ pending Cell extraction.'
 
   - id: director.delivery

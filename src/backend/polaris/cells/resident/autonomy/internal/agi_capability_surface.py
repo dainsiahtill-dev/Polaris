@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from polaris.cells.director.runtime.public import (
+    QueryDirectorRepairStrategyCatalogV1,
+    query_director_repair_strategy_catalog,
+)
 from polaris.cells.resident.autonomy.public.contracts import (
     ResidentAgiCapabilityV1,
     ResidentAgiDecisionBoundaryV1,
@@ -229,6 +233,27 @@ def build_resident_agi_capability_surface() -> list[ResidentAgiCapabilityV1]:
             evidence_refs=("runtime/contracts/chief_engineer.blueprint.json",),
         ),
         ResidentAgiCapabilityV1(
+            capability_id="director.deterministic_repair_strategy_catalog.read",
+            name="Director hard-coded repair strategy catalog",
+            category="director_repair_strategy",
+            access="read_only",
+            purpose=(
+                "Inspect Polaris code-enforced Director repair strategies, language scope, repair phase, "
+                "concern, and risk level before deciding whether AGI should request evidence, retry, or escalate."
+            ),
+            contract_ref="director.deterministic_repair_strategy_catalog.v1",
+            risk_level="low",
+            guardrails=(
+                "Catalog access is read-only and does not authorize AGI to execute repairs.",
+                "Actual code changes remain Director-authorized tool actions behind existing quality gates.",
+                "Unregistered deterministic repair source_tool values are treated as high-risk evidence.",
+            ),
+            evidence_refs=(
+                "director.deterministic_repair_profile_summary.v1",
+                "director.deterministic_repair_strategy_catalog.v1",
+            ),
+        ),
+        ResidentAgiCapabilityV1(
             capability_id="runtime.events.read",
             name="Runtime event stream",
             category="runtime_observation",
@@ -449,11 +474,13 @@ def build_resident_agi_decision_boundaries() -> list[ResidentAgiDecisionBoundary
                 "test/lint/build output",
                 "Run Ledger projection",
                 "ContextOS final request coverage",
+                "director.deterministic_repair_strategy_catalog.v1",
             ),
             escalation="Block promotion and create a remediation decision when gates remain red.",
             contract_refs=(
                 "control_plane.run_ledger",
                 "contextos.final_request_audit",
+                "director.deterministic_repair_strategy_catalog.v1",
                 "resident.decision_trace",
             ),
         ),
@@ -644,6 +671,7 @@ def build_resident_agi_decision_capabilities() -> list[ResidentAgiDecisionCapabi
                 "run_ledger.read",
                 "contextos.final_request_audit.read",
                 "audit.verdict.read",
+                "director.deterministic_repair_strategy_catalog.read",
             ),
             optional_evidence_interfaces=(
                 "audit.diagnosis.execute",
@@ -661,6 +689,7 @@ def build_resident_agi_decision_capabilities() -> list[ResidentAgiDecisionCapabi
                 "roles.final_request_context_audit",
                 "audit.verdict",
                 "audit.diagnosis",
+                "director.deterministic_repair_strategy_catalog.v1",
                 "control_plane.verifier_execution",
             ),
         ),
@@ -711,6 +740,99 @@ def build_resident_agi_decision_capability_registry(
             "governed_execution": "pm_chief_engineer_director_chain_only",
             "evidence_execution": "public_cell_contracts_only",
         },
+    }
+
+
+def resident_agi_participation_policy_payload() -> dict[str, Any]:
+    """Return discoverable Resident AGI participation switches.
+
+    The policy is deliberately extensible: current platform scopes are exposed
+    for UI/defaults, while custom scope ids remain allowed so future AGI
+    capabilities do not require hard-coded platform migrations.
+    """
+
+    decision_capabilities = build_resident_agi_decision_capabilities()
+    decision_boundaries = build_resident_agi_decision_boundaries()
+    base_scopes: list[dict[str, Any]] = [
+        {
+            "scope_id": "final_request_audit",
+            "name": "Final request audit coverage",
+            "category": "llm_audit",
+            "risk_level": "medium",
+            "default_enabled": False,
+        },
+        {
+            "scope_id": "decision_trace",
+            "name": "Resident decision trace handoff",
+            "category": "decision_trace",
+            "risk_level": "medium",
+            "default_enabled": False,
+        },
+        {
+            "scope_id": "capability_surface",
+            "name": "Capability surface visibility",
+            "category": "capability_surface",
+            "risk_level": "low",
+            "default_enabled": False,
+        },
+        {
+            "scope_id": "decision_boundary",
+            "name": "Decision boundary enforcement visibility",
+            "category": "decision_boundary",
+            "risk_level": "medium",
+            "default_enabled": False,
+        },
+        {
+            "scope_id": "director_repair_strategy_catalog",
+            "name": "Director repair strategy catalog visibility",
+            "category": "director_repair_strategy",
+            "risk_level": "low",
+            "default_enabled": False,
+        },
+    ]
+    decision_scopes = [
+        {
+            "scope_id": item.decision_id,
+            "name": item.name,
+            "category": "decision_capability",
+            "risk_level": item.risk_level,
+            "owner": item.owner,
+            "default_enabled": False,
+        }
+        for item in decision_capabilities
+        if item.decision_id
+    ]
+    boundary_scopes = [
+        {
+            "scope_id": item.boundary_id,
+            "name": item.name,
+            "category": "decision_boundary",
+            "authority": item.authority,
+            "risk_level": "high" if item.authority == "platform_hard_rule" else "medium",
+            "default_enabled": False,
+        }
+        for item in decision_boundaries
+        if item.boundary_id
+    ]
+    return {
+        "schema_version": "resident.agi_participation_policy.v1",
+        "role_id": "resident_agi",
+        "source": "resident.autonomy.capability_surface",
+        "enabled_default": False,
+        "custom_scopes_allowed": True,
+        "scope_semantics": "extensible_scope_ids; current ids are recommendations, not a closed enum",
+        "participation_flags": [
+            "final_request_audit",
+            "quality_gate_response",
+            "architecture_option_selection",
+            "evidence_interface_selection",
+            "goal_promotion",
+            "decision_trace",
+            "capability_surface",
+            "decision_boundary",
+            "director_repair_strategy_catalog",
+        ],
+        "available_scopes": [*base_scopes, *decision_scopes, *boundary_scopes],
     }
 
 
@@ -813,12 +935,20 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
         "decision_capability_registry": build_resident_agi_decision_capability_registry(
             decision_capability_items,
         ),
+        "participation_policy": resident_agi_participation_policy_payload(),
+        "hardcoded_repair_strategy_catalog": resident_agi_director_repair_strategy_catalog_payload(),
         "authority_matrix": build_resident_agi_authority_matrix(
             capabilities=capability_items,
             decision_boundaries=decision_boundary_items,
         ),
         "count": len(items),
     }
+
+
+def resident_agi_director_repair_strategy_catalog_payload() -> dict[str, Any]:
+    """Return Director hard-coded repair strategy evidence for AGI judgement."""
+
+    return query_director_repair_strategy_catalog(QueryDirectorRepairStrategyCatalogV1()).to_dict()
 
 
 __all__ = [
@@ -828,4 +958,6 @@ __all__ = [
     "build_resident_agi_decision_capabilities",
     "build_resident_agi_decision_capability_registry",
     "resident_agi_capability_surface_payload",
+    "resident_agi_director_repair_strategy_catalog_payload",
+    "resident_agi_participation_policy_payload",
 ]

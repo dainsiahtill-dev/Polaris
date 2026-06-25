@@ -17,12 +17,14 @@ __all__ = [
     "ImprovementStatus",
     "MetaInsight",
     "ResidentAgenda",
+    "ResidentAgiParticipation",
     "ResidentIdentity",
     "ResidentMode",
     "ResidentRuntimeState",
     "SkillArtifact",
     "SkillProposal",
     "SkillProposalStatus",
+    "coerce_bool",
     "coerce_float",
     "coerce_mapping",
     "coerce_str_list",
@@ -69,6 +71,20 @@ def coerce_mapping(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return {str(key): item for key, item in value.items()}
     return {}
+
+
+def coerce_bool(value: Any, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if token in {"0", "false", "no", "off", "disabled"}:
+            return False
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return bool(value)
+    return default
 
 
 def coerce_float(
@@ -155,6 +171,46 @@ class ImprovementStatus(str, Enum):
 
 
 @dataclass
+class ResidentAgiParticipation:
+    """User-governed Resident AGI participation policy.
+
+    ``scopes`` and ``participation`` intentionally accept extensible string
+    identifiers. The platform exposes recommended current scopes, but future
+    AGI capabilities should not require a schema migration just to be visible.
+    """
+
+    enabled: bool = False
+    scopes: list[str] = field(default_factory=list)
+    participation: dict[str, bool] = field(default_factory=dict)
+    custom_scopes_allowed: bool = True
+    updated_at: str = field(default_factory=utc_now_iso)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _jsonify(self)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ResidentAgiParticipation:
+        flags_raw = coerce_mapping(data.get("participation") or data.get("flags") or {})
+        participation: dict[str, bool] = {}
+        for key, value in flags_raw.items():
+            token = str(key or "").strip()
+            if token:
+                participation[token] = coerce_bool(value)
+        scopes = (
+            coerce_str_list(data.get("scopes"))
+            or coerce_str_list(data.get("participation_scopes"))
+            or coerce_str_list(data.get("participates_in"))
+        )
+        return cls(
+            enabled=coerce_bool(data.get("enabled"), default=False),
+            scopes=scopes,
+            participation=participation,
+            custom_scopes_allowed=coerce_bool(data.get("custom_scopes_allowed"), default=True),
+            updated_at=str(data.get("updated_at") or utc_now_iso()).strip(),
+        )
+
+
+@dataclass
 class DecisionOption:
     option_id: str = field(default_factory=lambda: new_id("option"))
     label: str = ""
@@ -195,6 +251,7 @@ class ResidentIdentity:
     )
     memory_lineage: list[str] = field(default_factory=list)
     capability_profile: dict[str, float] = field(default_factory=dict)
+    resident_agi_participation: ResidentAgiParticipation = field(default_factory=ResidentAgiParticipation)
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
 
@@ -219,6 +276,12 @@ class ResidentIdentity:
             if isinstance(profile_raw, Mapping)
             else {}
         )
+        participation_raw = data.get("resident_agi_participation")
+        resident_agi_participation = (
+            ResidentAgiParticipation.from_dict(participation_raw)
+            if isinstance(participation_raw, Mapping)
+            else ResidentAgiParticipation()
+        )
         default_mission = cls().mission
         return cls(
             resident_id=str(data.get("resident_id") or new_id("resident")).strip(),
@@ -230,6 +293,7 @@ class ResidentIdentity:
             values=coerce_str_list(data.get("values") or []),
             memory_lineage=coerce_str_list(data.get("memory_lineage") or []),
             capability_profile=capability_profile,
+            resident_agi_participation=resident_agi_participation,
             created_at=str(data.get("created_at") or utc_now_iso()).strip(),
             updated_at=str(data.get("updated_at") or utc_now_iso()).strip(),
         )

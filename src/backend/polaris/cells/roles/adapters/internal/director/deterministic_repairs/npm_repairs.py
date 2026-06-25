@@ -123,6 +123,7 @@ def _apply_deterministic_npm_test_script_repair(
         return []
     has_typescript_context = _workspace_has_typescript_context(workspace_path, payload)
     has_node_test_runner_contract = _has_node_test_runner_contract_error(artifact_quality_errors)
+    has_node_runtime_script_mismatch = _has_typescript_node_runtime_script_mismatch(artifact_quality_errors)
     if not has_typescript_context and not has_node_test_runner_contract:
         return []
 
@@ -140,6 +141,12 @@ def _apply_deterministic_npm_test_script_repair(
     scripts_raw = payload.get("scripts")
     scripts: dict[str, Any] = dict(scripts_raw) if isinstance(scripts_raw, dict) else {}
     changed_scripts: dict[str, str] = {}
+    if has_node_runtime_script_mismatch and has_typescript_context:
+        module_kind = _typescript_tsconfig_module_kind(workspace_path)
+        if module_kind in {"", "commonjs"} and str(payload.get("type") or "").lower() == "module":
+            payload["type"] = "commonjs"
+            changed_metadata["type"] = "commonjs"
+
     if "build" not in scripts:
         compile_script = str(scripts.get("compile") or "").strip()
         scripts["build"] = "npm run compile" if compile_script else "tsc"
@@ -178,6 +185,17 @@ def _apply_deterministic_npm_test_script_repair(
                 scripts["test"] = "npm run build"
                 changed_scripts["test"] = "npm run build"
 
+    if has_node_runtime_script_mismatch and has_typescript_context:
+        verify_entrypoint = _compiled_typescript_verify_entrypoint(workspace_path)
+        if verify_entrypoint and _typescript_compiled_entrypoint_is_node_compatible(workspace_path, verify_entrypoint):
+            scripts["verify"] = f"npm run build && node {verify_entrypoint}"
+            scripts["test"] = "npm run verify"
+            changed_scripts["verify"] = str(scripts["verify"])
+            changed_scripts["test"] = "npm run verify"
+        else:
+            scripts["test"] = "npm run build"
+            changed_scripts["test"] = "npm run build"
+
     if "build" in _placeholder_npm_script_names(
         artifact_quality_errors
     ) or "build" in _failure_swallow_npm_script_names(artifact_quality_errors):
@@ -185,13 +203,19 @@ def _apply_deterministic_npm_test_script_repair(
         changed_scripts["build"] = "tsc"
 
     missing_start_entrypoint = _missing_npm_script_entrypoint(artifact_quality_errors, script_name="start")
-    if missing_start_entrypoint or "start" in _placeholder_npm_script_names(artifact_quality_errors):
+    if (
+        missing_start_entrypoint
+        or "start" in _placeholder_npm_script_names(artifact_quality_errors)
+        or (has_node_runtime_script_mismatch and _has_npm_start_runtime_failure(artifact_quality_errors))
+    ):
         entrypoint = _compiled_typescript_entrypoint(
             workspace_path,
             payload,
             fallback=missing_start_entrypoint or "dist/index.js",
         )
-        scripts["start"] = f"npm run build && node {entrypoint}"
+        if has_node_runtime_script_mismatch:
+            entrypoint = _compiled_typescript_node_start_entrypoint(workspace_path, payload)
+        scripts["start"] = f"npm run build && node {entrypoint}" if entrypoint else "npm run build"
         changed_scripts["start"] = str(scripts["start"])
 
     missing_verify_entrypoint = _missing_npm_script_entrypoint(artifact_quality_errors, script_name="verify")
@@ -273,6 +297,7 @@ def _is_repairable_npm_test_script_error(error: Any) -> bool:
         or ("npm package manifest script" in text and "swallows command failures" in text)
         or "test script must use node --test" in text
         or _has_typescript_source_require_module_not_found([text])
+        or _has_typescript_node_runtime_script_mismatch([text])
         or _has_missing_jest_config_script_error([text])
         or _has_package_scaffold_marker_error([text])
     )
@@ -328,6 +353,26 @@ def _has_typescript_source_require_module_not_found(errors: list[str]) -> bool:
         and "cannot find module './src/" in joined
         and ("node -e" in joined or "require('./src/" in joined)
     )
+
+
+def _has_typescript_node_runtime_script_mismatch(errors: list[str]) -> bool:
+    joined = "\n".join(str(error or "") for error in errors).lower()
+    if "workspace validation command failed" not in joined:
+        return False
+    runtime_markers = (
+        "require is not defined in es module scope",
+        "exports is not defined in es module scope",
+        "cannot use import statement outside a module",
+        "failed to load the es module",
+        "referenceerror: document is not defined",
+        "node --import tsx/esm",
+    )
+    return any(marker in joined for marker in runtime_markers)
+
+
+def _has_npm_start_runtime_failure(errors: list[str]) -> bool:
+    joined = "\n".join(str(error or "") for error in errors).lower()
+    return "workspace validation command failed (npm run start)" in joined or "npm run start" in joined
 
 
 def _has_missing_jest_config_script_error(errors: list[str]) -> bool:
@@ -421,6 +466,33 @@ def _compiled_typescript_verify_entrypoint(workspace_path: Path) -> str:
     if (workspace_path / "src" / "main.ts").is_file():
         return "dist/main.js"
     return ""
+
+
+def _compiled_typescript_node_start_entrypoint(workspace_path: Path, payload: dict[str, Any]) -> str:
+    del payload
+    for source_entry in ("src/main.ts", "src/index.ts", "src/verify.ts"):
+        if (workspace_path / source_entry).is_file():
+            return f"dist/{source_entry.removeprefix('src/').removesuffix('.ts')}.js"
+    return ""
+
+
+def _typescript_tsconfig_module_kind(workspace_path: Path) -> str:
+    tsconfig_path = workspace_path / "tsconfig.json"
+    try:
+        payload = json.loads(tsconfig_path.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    compiler_options = payload.get("compilerOptions")
+    if not isinstance(compiler_options, dict):
+        return ""
+    return str(compiler_options.get("module") or "").strip().lower()
+
+
+def _typescript_compiled_entrypoint_is_node_compatible(workspace_path: Path, entrypoint: str) -> bool:
+    module_kind = _typescript_tsconfig_module_kind(workspace_path)
+    return module_kind in {"", "commonjs"} or not str(entrypoint or "").endswith(".js")
 
 
 def _repair_missing_local_script_entrypoint(

@@ -63,6 +63,19 @@ class TestFilterStatusPayloadByRoles:
         assert result["pm_status"] == "active"
         assert result["director_status"] == "idle"
 
+    def test_resident_agi_role_controls_resident_projection(self) -> None:
+        payload = {
+            "pm_status": "active",
+            "director_status": "idle",
+            "resident": {"runtime": {"active": True}},
+        }
+
+        without_agi = filter_status_payload_by_roles(payload, {"pm", "director"})
+        with_agi = filter_status_payload_by_roles(payload, {"resident_agi"})
+
+        assert without_agi["resident"] is None
+        assert with_agi["resident"] == {"runtime": {"active": True}}
+
 
 class TestStreamSignature:
     def test_with_event_id(self) -> None:

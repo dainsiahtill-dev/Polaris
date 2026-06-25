@@ -18,6 +18,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.director.runtime.internal.repair_kernel.legacy_bridge import (
+    build_legacy_repair_kernel_summary,
+)
+
 from .. import execute_method as _em
 from ..execution_tools import DirectorToolExecutor
 from ..helpers import has_successful_write_tool
@@ -68,11 +72,13 @@ from .rust_repairs import (
     _apply_deterministic_rust_trait_import_repair,
     _apply_deterministic_rust_unresolved_pub_use_repair,
 )
+from .strategy_catalog import summarize_deterministic_repair_source_tools
 from .typeorm_repairs import (
     _apply_deterministic_typeorm_model_normalization_repair,
 )
 from .typescript_repairs import (
     _apply_deterministic_html_typescript_module_script_repair,
+    _apply_deterministic_typescript_canvas_scale_return_type_repair,
     _apply_deterministic_typescript_duplicate_object_property_repair,
     _apply_deterministic_typescript_entrypoint_repair,
     _apply_deterministic_typescript_enum_member_separator_repair,
@@ -669,6 +675,13 @@ def _apply_deterministic_materialization_quality_repairs(
         )
     )
     results.extend(
+        _apply_deterministic_typescript_canvas_scale_return_type_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
         _apply_deterministic_typescript_too_few_arguments_repair(
             adapter,
             task_id=task_id,
@@ -828,6 +841,12 @@ def _apply_deterministic_materialization_quality_repairs(
         "tool_results": len(results),
         "write_tool_evidence": has_successful_write_tool(results),
         "source_tools": source_tools,
+        "source_tool_profiles": summarize_deterministic_repair_source_tools(source_tools),
+        "repair_kernel": build_legacy_repair_kernel_summary(
+            stage="deterministic_quality_repair",
+            tool_results=results,
+            artifact_quality_errors=artifact_quality_errors,
+        ),
     }
 
 
@@ -863,6 +882,12 @@ def _apply_deterministic_pre_materialization_declared_target_repairs(
         "tool_results": len(results),
         "write_tool_evidence": has_successful_write_tool(results),
         "source_tools": source_tools,
+        "source_tool_profiles": summarize_deterministic_repair_source_tools(source_tools),
+        "repair_kernel": build_legacy_repair_kernel_summary(
+            stage="deterministic_pre_materialization_declared_target_repair",
+            tool_results=results,
+            artifact_quality_errors=allowed_errors,
+        ),
     }
 
 
@@ -911,6 +936,12 @@ def _apply_deterministic_declared_target_contract_repairs(
         "tool_results": len(results),
         "write_tool_evidence": has_successful_write_tool(results),
         "source_tools": source_tools,
+        "source_tool_profiles": summarize_deterministic_repair_source_tools(source_tools),
+        "repair_kernel": build_legacy_repair_kernel_summary(
+            stage="deterministic_declared_target_contract_repair",
+            tool_results=results,
+            artifact_quality_errors=[],
+        ),
     }
 
 

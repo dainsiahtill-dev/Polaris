@@ -1,13 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RuntimeSocketManager } from './runtimeSocketManager';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { RuntimeSocketManager } from "./runtimeSocketManager";
 
 const mockConnectWebSocket = vi.hoisted(() => vi.fn());
 
-vi.mock('@/api', () => ({
+vi.mock("@/api", () => ({
   connectWebSocket: mockConnectWebSocket,
 }));
 
-vi.mock('@/app/utils/devLogger', () => ({
+vi.mock("@/app/utils/devLogger", () => ({
   devLogger: {
     error: vi.fn(),
     debug: vi.fn(),
@@ -54,20 +54,20 @@ async function flushMicrotasks(): Promise<void> {
 let manager: RuntimeSocketManager;
 let socket: MockSocket;
 
-describe('runtimeSocketManager unsubscribe behavior', () => {
+describe("runtimeSocketManager unsubscribe behavior", () => {
   beforeEach(async () => {
     vi.resetModules();
     socket = createMockSocket();
     mockConnectWebSocket.mockReset();
     mockConnectWebSocket.mockResolvedValue(socket as unknown as WebSocket);
 
-    const runtimeModule = await import('./runtimeSocketManager');
+    const runtimeModule = await import("./runtimeSocketManager");
     manager = runtimeModule.runtimeSocketManager;
 
     manager.start();
     await flushMicrotasks();
     socket.readyState = WebSocket.OPEN;
-    socket.onopen?.(new Event('open'));
+    socket.onopen?.(new Event("open"));
   });
 
   afterEach(() => {
@@ -75,73 +75,81 @@ describe('runtimeSocketManager unsubscribe behavior', () => {
     vi.clearAllMocks();
   });
 
-  it('does not send UNSUBSCRIBE when only part of ref-count is released', () => {
-    manager.subscribeChannels([{ channel: 'llm' }, { channel: 'llm' }]);
+  it("does not send UNSUBSCRIBE when only part of ref-count is released", () => {
+    manager.subscribeChannels([{ channel: "llm" }, { channel: "llm" }]);
     socket.send.mockClear();
 
-    manager.unsubscribeChannels(['llm']);
+    manager.unsubscribeChannels(["llm"]);
 
     expect(socket.send).not.toHaveBeenCalled();
   });
 
-  it('keeps shared runtime.v2 service subscriptions monotonic when ref-count reaches zero', () => {
-    manager.subscribeChannels([{ channel: 'llm' }, { channel: 'llm' }, { channel: 'process' }]);
+  it("keeps shared runtime.v2 service subscriptions monotonic when ref-count reaches zero", () => {
+    manager.subscribeChannels([
+      { channel: "llm" },
+      { channel: "llm" },
+      { channel: "process" },
+    ]);
     socket.send.mockClear();
 
-    manager.unsubscribeChannels(['llm']);
-    manager.unsubscribeChannels(['llm', 'process']);
+    manager.unsubscribeChannels(["llm"]);
+    manager.unsubscribeChannels(["llm", "process"]);
 
     const sentMessages = parseSentMessages(socket);
     expect(sentMessages).toEqual([]);
   });
 
-  it('does not send UNSUBSCRIBE when connection is closed', () => {
-    manager.subscribeChannels([{ channel: 'llm' }]);
+  it("does not send UNSUBSCRIBE when connection is closed", () => {
+    manager.subscribeChannels([{ channel: "llm" }]);
     socket.send.mockClear();
 
     manager.close();
-    manager.unsubscribeChannels(['llm']);
+    manager.unsubscribeChannels(["llm"]);
 
     expect(socket.send).not.toHaveBeenCalled();
   });
 
-  it('updates internal subscribed roles when sending runtime.v2 SUBSCRIBE command', () => {
-    manager.subscribeChannels([{ channel: 'llm' }], ['pm']);
+  it("updates internal subscribed roles when sending runtime.v2 SUBSCRIBE command", () => {
+    manager.subscribeChannels([{ channel: "llm" }], ["pm"]);
 
     manager.send({
-      type: 'SUBSCRIBE',
-      protocol: 'runtime.v2',
-      roles: ['director'],
-      channels: ['llm'],
+      type: "SUBSCRIBE",
+      protocol: "runtime.v2",
+      roles: ["director", "chief_engineer", "resident_agi", "unknown"],
+      channels: ["llm"],
       tail: 100,
       cursor: 0,
     });
 
-    expect((manager as unknown as { subscribedRoles: string[] }).subscribedRoles).toEqual(['director']);
+    expect(
+      (manager as unknown as { subscribedRoles: string[] }).subscribedRoles,
+    ).toEqual(["director", "chief_engineer", "resident_agi"]);
   });
 
-  it('clears internal subscribed roles when runtime.v2 SUBSCRIBE explicitly carries roles=[]', () => {
-    manager.subscribeChannels([{ channel: 'llm' }], ['pm']);
+  it("clears internal subscribed roles when runtime.v2 SUBSCRIBE explicitly carries roles=[]", () => {
+    manager.subscribeChannels([{ channel: "llm" }], ["pm"]);
 
     manager.send({
-      type: 'SUBSCRIBE',
-      protocol: 'runtime.v2',
+      type: "SUBSCRIBE",
+      protocol: "runtime.v2",
       roles: [],
-      channels: ['llm'],
+      channels: ["llm"],
       tail: 100,
       cursor: 0,
     });
 
-    expect((manager as unknown as { subscribedRoles: string[] }).subscribedRoles).toEqual([]);
+    expect(
+      (manager as unknown as { subscribedRoles: string[] }).subscribedRoles,
+    ).toEqual([]);
   });
 
-  it('keeps explicit roles=[] semantics on resubscribe', () => {
-    manager.subscribeChannels([{ channel: 'llm' }], ['director']);
+  it("keeps explicit roles=[] semantics on resubscribe", () => {
+    manager.subscribeChannels([{ channel: "llm" }], ["director"]);
     manager.send({
-      type: 'SUBSCRIBE',
-      protocol: 'runtime.v2',
+      type: "SUBSCRIBE",
+      protocol: "runtime.v2",
       roles: [],
-      channels: ['llm'],
+      channels: ["llm"],
       tail: 100,
       cursor: 0,
     });
@@ -152,9 +160,9 @@ describe('runtimeSocketManager unsubscribe behavior', () => {
     const sentMessages = parseSentMessages(socket);
     expect(sentMessages).toEqual([
       {
-        type: 'SUBSCRIBE',
-        protocol: 'runtime.v2',
-        channels: ['llm'],
+        type: "SUBSCRIBE",
+        protocol: "runtime.v2",
+        channels: ["llm"],
         tail: 0,
         cursor: 0,
         roles: [],
@@ -163,7 +171,7 @@ describe('runtimeSocketManager unsubscribe behavior', () => {
   });
 });
 
-describe('runtimeSocketManager fast-open behavior', () => {
+describe("runtimeSocketManager fast-open behavior", () => {
   beforeEach(async () => {
     vi.resetModules();
     socket = createMockSocket();
@@ -171,7 +179,7 @@ describe('runtimeSocketManager fast-open behavior', () => {
     mockConnectWebSocket.mockReset();
     mockConnectWebSocket.mockResolvedValue(socket as unknown as WebSocket);
 
-    const runtimeModule = await import('./runtimeSocketManager');
+    const runtimeModule = await import("./runtimeSocketManager");
     manager = runtimeModule.runtimeSocketManager;
   });
 
@@ -180,8 +188,8 @@ describe('runtimeSocketManager fast-open behavior', () => {
     vi.clearAllMocks();
   });
 
-  it('subscribes when the WebSocket is already open before handlers are attached', async () => {
-    manager.subscribeChannels([{ channel: 'runtime_events' }], ['pm']);
+  it("subscribes when the WebSocket is already open before handlers are attached", async () => {
+    manager.subscribeChannels([{ channel: "runtime_events" }], ["pm"]);
 
     manager.start();
     await flushMicrotasks();
@@ -189,23 +197,23 @@ describe('runtimeSocketManager fast-open behavior', () => {
     expect(manager.getState().connected).toBe(true);
     const sentMessages = parseSentMessages(socket);
     expect(sentMessages).toContainEqual({
-      type: 'SUBSCRIBE',
-      protocol: 'runtime.v2',
-      channels: ['runtime_events'],
+      type: "SUBSCRIBE",
+      protocol: "runtime.v2",
+      channels: ["runtime_events"],
       tail: 0,
       cursor: 0,
-      roles: ['pm'],
+      roles: ["pm"],
     });
   });
 });
 
-describe('runtimeSocketManager connection coalescing', () => {
+describe("runtimeSocketManager connection coalescing", () => {
   beforeEach(async () => {
     vi.resetModules();
     socket = createMockSocket();
     mockConnectWebSocket.mockReset();
 
-    const runtimeModule = await import('./runtimeSocketManager');
+    const runtimeModule = await import("./runtimeSocketManager");
     manager = runtimeModule.runtimeSocketManager;
   });
 
@@ -214,7 +222,7 @@ describe('runtimeSocketManager connection coalescing', () => {
     vi.clearAllMocks();
   });
 
-  it('does not create a second WebSocket while the first connection is still pending', async () => {
+  it("does not create a second WebSocket while the first connection is still pending", async () => {
     let resolveSocket: ((value: WebSocket) => void) | null = null;
     mockConnectWebSocket.mockReturnValue(
       new Promise<WebSocket>((resolve) => {
@@ -231,7 +239,7 @@ describe('runtimeSocketManager connection coalescing', () => {
     await flushMicrotasks();
 
     socket.readyState = WebSocket.OPEN;
-    socket.onopen?.(new Event('open'));
+    socket.onopen?.(new Event("open"));
     expect(manager.getState().connected).toBe(true);
   });
 });

@@ -23,9 +23,11 @@ public_contracts:
   - RetryDirectorTaskCommandV1
   - ApplyPatchCommandV1
   - RunCommandCommandV1
+  - RunDirectorRepairCommandV1
   queries:
   - GetDirectorTaskStatusQueryV1
   - CheckExecutionModeQueryV1
+  - QueryDirectorRepairStrategyCatalogV1
   events:
   - DirectorTaskStartedEventV1
   - DirectorTaskCompletedEventV1
@@ -35,6 +37,11 @@ public_contracts:
   - PatchApplyResultV1
   - ExecutionModeResultV1
   - CommandExecutionResultV1
+  - DirectorRepairResultV1
+  - DirectorRepairStrategyCatalogResultV1
+  - RepairDiagnosticV1
+  - RepairReceiptV1
+  - RepairAdvisoryV1
   errors:
   - DirectorRuntimeError
   - PatchApplyError

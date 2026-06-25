@@ -54,6 +54,17 @@ describe("residentService", () => {
               governed_execution: "canonical_role_chain_only",
             },
           },
+          hardcoded_repair_strategy_catalog: {
+            schema_version: "director.deterministic_repair_strategy_catalog.v1",
+            source: "director.runtime.repair_kernel.strategy_catalog",
+            agi_execution_authority: false,
+            items: [
+              {
+                source_tool: "deterministic_typescript_missing_export_repair",
+                language: "typescript",
+              },
+            ],
+          },
         }),
         { status: 200 },
       ),
@@ -65,6 +76,12 @@ describe("residentService", () => {
     expect(
       result.data?.authority_matrix?.decision_policy?.governed_execution,
     ).toBe("canonical_role_chain_only");
+    expect(
+      result.data?.hardcoded_repair_strategy_catalog?.items?.[0]?.source_tool,
+    ).toBe("deterministic_typescript_missing_export_repair");
+    expect(
+      result.data?.hardcoded_repair_strategy_catalog?.agi_execution_authority,
+    ).toBe(false);
     expect(apiFetchMock).toHaveBeenCalledWith(
       "/v2/resident/capabilities?workspace=%2Ftmp%2Fpolaris-demo",
     );

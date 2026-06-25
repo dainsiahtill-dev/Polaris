@@ -136,6 +136,26 @@ def test_html5_canvas_prompt_profile_specializes_browser_entrypoint(tmp_path) ->
     assert audit["inferred_artifact"] == "html5_canvas"
 
 
+def test_qa_profile_prefers_html5_canvas_text_over_api_fallback(tmp_path) -> None:
+    appendix, audit = build_prompt_profile_appendix(
+        workspace=str(tmp_path),
+        role_id="qa",
+        message=(
+            "Workspace quality evidence for a TypeScript HTML5 browser project. "
+            "index.html contains <html> and a canvas; API projects may use health checks, "
+            "but this artifact must render a non-empty canvas in the browser."
+        ),
+        context_override={"target_files": ["package.json", "tsconfig.json"]},
+    )
+
+    selected_ids = audit["selected_prompt_profile_ids"]
+    assert "[POLARIS PROMPT PROFILE]" in appendix
+    assert "builtin.language.typescript" in selected_ids
+    assert "builtin.artifact.html5_canvas" in selected_ids
+    assert "builtin.artifact.api" not in selected_ids
+    assert audit["inferred_artifact"] == "html5_canvas"
+
+
 def test_language_inference_prefers_source_contract_over_dist_outputs(tmp_path) -> None:
     _appendix, audit = build_prompt_profile_appendix(
         workspace=str(tmp_path),

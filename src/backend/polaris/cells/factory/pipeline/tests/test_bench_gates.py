@@ -1172,16 +1172,8 @@ def test_real_run_gate_executes_go_build_and_cli_entrypoint(monkeypatch: Any, tm
             "timeout_s": timeout_s,
         }
 
-    # Simulate ``go mod init`` succeeding so _go_command returns ``go test ./...``.
-    def fake_subprocess_run(  # type: ignore[no-untyped-def]
-        cmd, **kwargs
-    ):
-        rc = 0 if ("mod" in cmd and "init" in cmd) else 1
-        return subprocess.CompletedProcess(args=cmd, returncode=rc, stdout="", stderr="")
-
     monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
     monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
-    monkeypatch.setattr(bench_gates.subprocess, "run", fake_subprocess_run)
     record = {"code_files": ["main.go"]}
 
     gate = build_real_run_gate(tmp_path, record, timeout_s=10)
@@ -1190,7 +1182,7 @@ def test_real_run_gate_executes_go_build_and_cli_entrypoint(monkeypatch: Any, tm
     assert gate["requirements"]["environment_prepared"]["detail"] == "go toolchain available"
     assert gate["requirements"]["build_test_lint_ran"]["detail"] == "go test passed"
     assert gate["entrypoint"]["kind"] == "go_cli"
-    assert [command[1] for command in commands] == ["test", "run"]
+    assert [command[1] for command in commands] == ["vet", "run"]
 
 
 def test_real_run_gate_ts_build_before_test_order(monkeypatch: Any, tmp_path: Path) -> None:
@@ -3266,12 +3258,12 @@ class TestPrimarySourceLanguage:
 
 
 # ---------------------------------------------------------------------------
-# Tests for _go_command auto-init (F1: go mod init when no go.mod)
+# Tests for _go_command no-mutation behavior without go.mod
 # ---------------------------------------------------------------------------
 
 
-class TestGoCommandAutoInit:
-    """Verify _go_command auto-inits go.mod when missing."""
+class TestGoCommandNoMutation:
+    """Verify _go_command does not auto-init go.mod when missing."""
 
     def test_with_go_mod(self, monkeypatch: Any, tmp_path: Path) -> None:
         (tmp_path / "go.mod").write_text("module test\n", encoding="utf-8")
@@ -3279,25 +3271,15 @@ class TestGoCommandAutoInit:
         cmd = _go_command(tmp_path, ["main.go"])
         assert cmd == ["/usr/local/go/bin/go", "test", "./..."]
 
-    def test_without_go_mod_init_succeeds(self, monkeypatch: Any, tmp_path: Path) -> None:
+    def test_without_go_mod_uses_vet_fallback(self, monkeypatch: Any, tmp_path: Path) -> None:
         monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: "/usr/local/go/bin/go")
-        monkeypatch.setattr(
-            bench_gates.subprocess,
-            "run",
-            lambda cmd, **kw: subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr=""),
-        )
-        cmd = _go_command(tmp_path, ["main.go", "src/engine/engine.go"])
-        assert cmd == ["/usr/local/go/bin/go", "test", "./..."]
-
-    def test_without_go_mod_init_fails_vet_fallback(self, monkeypatch: Any, tmp_path: Path) -> None:
-        monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: "/usr/local/go/bin/go")
-        monkeypatch.setattr(
-            bench_gates.subprocess,
-            "run",
-            lambda cmd, **kw: subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="init failed"),
-        )
         cmd = _go_command(tmp_path, ["main.go", "src/engine/engine.go"])
         assert cmd == ["/usr/local/go/bin/go", "vet", "main.go"]
+
+    def test_without_go_mod_empty_files_returns_empty(self, monkeypatch: Any, tmp_path: Path) -> None:
+        monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: "/usr/local/go/bin/go")
+        cmd = _go_command(tmp_path, [])
+        assert cmd == []
 
     def test_without_go_mod_init_timeout_vet_fallback(self, monkeypatch: Any, tmp_path: Path) -> None:
         monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: "/usr/local/go/bin/go")
@@ -3400,12 +3382,12 @@ def test_go_project_uses_go_entrypoint_not_python(monkeypatch: Any, tmp_path: Pa
 
 
 # ---------------------------------------------------------------------------
-# Tests for Go import normalization (F4: Director cross-file coherence repair)
+# Tests for Go import normalization detection (Repair Kernel owns mutation)
 # ---------------------------------------------------------------------------
 
 
 class TestGoImportNormalization:
-    """Verify _normalize_go_imports repairs inconsistent module prefixes."""
+    """Verify bench gates do not mutate inconsistent module prefixes."""
 
     def _write_go_files(self, tmp_path: Path) -> list[str]:
         go_files = ["main.go", "src/engine/engine.go", "src/models/pet.go"]
@@ -3442,11 +3424,12 @@ class TestGoImportNormalization:
 
     def test_normalize_repairs_inconsistent_imports(self, tmp_path: Path) -> None:
         go_files = self._write_go_files(tmp_path)
+        before = (tmp_path / "src" / "engine" / "engine.go").read_text(encoding="utf-8")
         modified = _normalize_go_imports(tmp_path, go_files, "my-project")
-        assert modified == 1  # engine.go was modified
+        assert modified == 0
         engine_text = (tmp_path / "src" / "engine" / "engine.go").read_text(encoding="utf-8")
-        assert '"my-project/src/models"' in engine_text
-        assert '"my-proj/src/models"' not in engine_text
+        assert engine_text == before
+        assert '"my-proj/src/models"' in engine_text
 
     def test_normalize_no_change_when_consistent(self, tmp_path: Path) -> None:
         (tmp_path / "main.go").write_text(
@@ -3465,10 +3448,16 @@ class TestGoImportNormalization:
             lambda cmd, **kw: subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr=""),
         )
         cmd = _go_command(tmp_path, go_files)
-        assert cmd == ["/usr/local/go/bin/go", "test", "./..."]
-        # Verify imports were normalized
+        assert cmd == ["/usr/local/go/bin/go", "vet", "main.go"]
+        # Verify imports were not normalized by bench_gates.
         engine_text = (tmp_path / "src" / "engine" / "engine.go").read_text(encoding="utf-8")
-        assert '"my-proj/' not in engine_text
+        assert '"my-proj/src/models"' in engine_text
+
+    def test_bench_gates_source_has_no_workspace_mutation_calls(self) -> None:
+        source = Path(bench_gates.__file__).read_text(encoding="utf-8")
+
+        assert ".write_text(" not in source
+        assert ".unlink(" not in source
 
 
 # ---------------------------------------------------------------------------
@@ -3527,7 +3516,7 @@ class TestReadGoModModule:
 
 
 def test_normalize_go_imports_discovers_disk_files(tmp_path: Path) -> None:
-    """Files NOT in go_files list but present on disk must be normalized."""
+    """Files NOT in go_files list remain untouched by the measurement gate."""
     (tmp_path / "go.mod").write_text("module myproject\n\ngo 1.23\n", encoding="utf-8")
     (tmp_path / "src" / "pkg").mkdir(parents=True)
     # Declared file with correct import.
@@ -3542,14 +3531,13 @@ def test_normalize_go_imports_discovers_disk_files(tmp_path: Path) -> None:
     )
     # Only pass main.go — helper.go is on disk but not declared.
     modified = _normalize_go_imports(tmp_path, ["main.go"], "myproject")
-    assert modified == 1
+    assert modified == 0
     helper_text = (tmp_path / "src" / "pkg" / "helper.go").read_text(encoding="utf-8")
-    assert '"myproject/src/pkg"' in helper_text
-    assert '"my-proj/' not in helper_text
+    assert '"my-proj/src/pkg"' in helper_text
 
 
 def test_go_command_normalizes_even_with_go_mod(monkeypatch: Any, tmp_path: Path) -> None:
-    """_go_command must normalize imports when go.mod already exists."""
+    """_go_command must not normalize imports when go.mod already exists."""
     (tmp_path / "go.mod").write_text("module canonical\n\ngo 1.23\n", encoding="utf-8")
     (tmp_path / "main.go").write_text(
         'package main\n\nimport "wrong-prefix/pkg"\n\nfunc main() {}\n',
@@ -3561,10 +3549,9 @@ def test_go_command_normalizes_even_with_go_mod(monkeypatch: Any, tmp_path: Path
     monkeypatch.setattr(bench_gates, "_resolve_go_binary", lambda: "/usr/local/go/bin/go")
     cmd = _go_command(tmp_path, ["main.go", "pkg/lib.go"])
     assert cmd == ["/usr/local/go/bin/go", "test", "./..."]
-    # Verify the import was normalized.
+    # Verify the import was not normalized.
     main_text = (tmp_path / "main.go").read_text(encoding="utf-8")
-    assert '"canonical/pkg"' in main_text
-    assert '"wrong-prefix/' not in main_text
+    assert '"wrong-prefix/pkg"' in main_text
 
 
 # ---------------------------------------------------------------------------
@@ -3611,8 +3598,8 @@ class TestGoImportSubpathRepair:
             encoding="utf-8",
         )
         modified = _normalize_go_imports(tmp_path, ["main.go", "src/engine/engine.go"], "my-project")
-        assert modified == 1
+        assert modified == 0
         main_text = (tmp_path / "main.go").read_text(encoding="utf-8")
-        assert '"my-project/src/engine"' in main_text
+        assert '"my-project/hallucinated/path/src/engine"' in main_text
         # Comment must NOT be modified.
         assert "// comment about my-project should NOT change" in main_text

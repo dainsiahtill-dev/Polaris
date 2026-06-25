@@ -59,6 +59,8 @@ def filter_status_payload_by_roles(
         filtered["pm_status"] = None
     if "director" not in roles:
         filtered["director_status"] = None
+    if "resident_agi" not in roles:
+        filtered["resident"] = None
     return filtered
 
 

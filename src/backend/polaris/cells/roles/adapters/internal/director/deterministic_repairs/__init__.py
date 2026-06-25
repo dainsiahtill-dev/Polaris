@@ -133,12 +133,21 @@ from .rust_repairs import (
     repair_rust_trait_imports as repair_rust_trait_imports,
     repair_rust_unresolved_pub_uses as repair_rust_unresolved_pub_uses,
 )
+from .strategy_catalog import (
+    KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS as KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS,
+    DeterministicRepairStrategy as DeterministicRepairStrategy,
+    describe_deterministic_repair_strategy as describe_deterministic_repair_strategy,
+    deterministic_repair_source_tool_known as deterministic_repair_source_tool_known,
+    deterministic_repair_strategy_catalog as deterministic_repair_strategy_catalog,
+    summarize_deterministic_repair_source_tools as summarize_deterministic_repair_source_tools,
+)
 from .typeorm_repairs import (
     _apply_deterministic_typeorm_model_normalization_repair as _apply_deterministic_typeorm_model_normalization_repair,
     _normalize_ts_class_field_initialization as _normalize_ts_class_field_initialization,
     _normalize_undeclared_typeorm_model_source as _normalize_undeclared_typeorm_model_source,
 )
 from .typescript_repairs import (
+    _apply_deterministic_typescript_canvas_scale_return_type_repair as _apply_deterministic_typescript_canvas_scale_return_type_repair,
     _apply_deterministic_typescript_entrypoint_repair as _apply_deterministic_typescript_entrypoint_repair,
     _apply_deterministic_typescript_enum_member_separator_repair as _apply_deterministic_typescript_enum_member_separator_repair,
     _apply_deterministic_typescript_escaped_newline_repair as _apply_deterministic_typescript_escaped_newline_repair,
@@ -173,6 +182,7 @@ from .zod_repairs import (
 )
 
 __all__ = [
+    "KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS",
     "_DECLARED_TARGET_FILE_MISSING_ERROR_RE",
     "_KNOWN_DEV_DEPENDENCY_VERSIONS",
     "_KNOWN_RUNTIME_DEPENDENCY_VERSIONS",
@@ -203,6 +213,7 @@ __all__ = [
     "_UNDECLARED_RUNTIME_IMPORT_ERROR_RE",
     "_UNRESOLVED_IMPORT_SYMBOL_ERROR_RE",
     "_UNRESOLVED_RELATIVE_IMPORT_ERROR_RE",
+    "DeterministicRepairStrategy",
     "_apply_deterministic_declared_target_contract_repairs",
     "_apply_deterministic_javascript_esm_commonjs_entrypoint_repair",
     "_apply_deterministic_javascript_missing_export_repair",
@@ -231,6 +242,7 @@ __all__ = [
     "_apply_deterministic_rust_unresolved_pub_use_repair",
     "_apply_deterministic_scaffold_marker_cleanup",
     "_apply_deterministic_typeorm_model_normalization_repair",
+    "_apply_deterministic_typescript_canvas_scale_return_type_repair",
     "_apply_deterministic_typescript_entrypoint_repair",
     "_apply_deterministic_typescript_enum_member_separator_repair",
     "_apply_deterministic_typescript_escaped_newline_repair",
@@ -300,6 +312,9 @@ __all__ = [
     "_typescript_file_declares_runtime_export",
     "_typescript_module_runtime_exports_symbol",
     "_typescript_relative_import_without_suffix",
+    "describe_deterministic_repair_strategy",
+    "deterministic_repair_source_tool_known",
+    "deterministic_repair_strategy_catalog",
     "repair_rust_crate_imports",
     "repair_rust_dependencies",
     "repair_rust_derives",
@@ -308,4 +323,5 @@ __all__ = [
     "repair_rust_missing_lib_targets",
     "repair_rust_trait_imports",
     "repair_rust_unresolved_pub_uses",
+    "summarize_deterministic_repair_source_tools",
 ]

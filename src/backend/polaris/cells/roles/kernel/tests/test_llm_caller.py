@@ -780,6 +780,100 @@ class TestPreparedRequestArchitecture:
         assert prepared.ai_request.context["native_tool_mode"] == "native_tools"
 
     @pytest.mark.asyncio
+    async def test_prepare_llm_request_carries_resident_agi_participation_context(self, monkeypatch) -> None:
+        caller = LLMCaller(workspace="C:/workspace")
+        profile = MockProfile(role_id="resident_agi", model="gpt-5", provider_id="openai")
+        profile.tool_policy = SimpleNamespace(whitelist=[])
+
+        class _FakeGateway:
+            def __init__(self, _profile, _workspace) -> None:
+                pass
+
+            async def build_context(self, _context, *, system_prompt=None):
+                return _turn_context_result("decide")
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",
+            _FakeGateway,
+        )
+
+        prepared = await caller._prepare_llm_request(
+            profile=cast("RoleProfile", profile),
+            system_prompt="system",
+            context=cast(
+                "ContextRequest",
+                SimpleNamespace(
+                    task_id="task-agi-1",
+                    message="decide",
+                    context_override={
+                        "resident_agi_enabled": True,
+                        "resident_agi_participation": {
+                            "enabled": True,
+                            "role_turn_enabled": True,
+                            "manual_role_turn_requested": True,
+                            "automatic_participation_enabled": False,
+                            "configured_enabled": False,
+                            "configured_scopes": ["quality_gate_response"],
+                            "required_role_turn_scopes": ["final_request_audit", "decision_trace"],
+                            "scopes": ["final_request_audit", "quality_gate_response", "evidence.interface.selection"],
+                            "configured_participation": {"architecture_option_selection": False},
+                            "automatic_participation": {
+                                "final_request_audit": False,
+                                "quality_gate_response": False,
+                            },
+                            "participation": {
+                                "final_request_audit": True,
+                                "architecture_option_selection": False,
+                                "evidence_interface_selection": True,
+                            },
+                        },
+                        "resident_agi_audit_pack": {
+                            "schema_version": "resident.agi_audit_pack.v1",
+                            "capability_surface": {
+                                "schema_version": "resident.agi_capability_surface.v1",
+                                "decision_boundary_schema": "resident.agi_decision_boundary.v1",
+                                "decision_boundaries": [{"boundary_id": "role.runtime.foundation"}],
+                                "decision_capability_registry": {
+                                    "schema_version": "resident.agi_decision_capability_registry.v1",
+                                },
+                            },
+                        },
+                        "resident_agi_decision_contract": {
+                            "schema_version": "resident.agi_decision_contract.v1",
+                            "decision_capability_id": "quality.gate.response",
+                        },
+                        "metadata": {"resident_agi_role_runtime_required": True},
+                    },
+                ),
+            ),
+            temperature=0.2,
+            max_tokens=256,
+            stream=False,
+        )
+
+        agi_context = prepared.ai_request.context["resident_agi_audit_context"]
+        assert agi_context["enabled"] is True
+        assert agi_context["role_turn_enabled"] is True
+        assert agi_context["manual_role_turn_requested"] is True
+        assert agi_context["automatic_participation_enabled"] is False
+        assert agi_context["configured_enabled"] is False
+        assert agi_context["configured_scopes"] == ["quality_gate_response"]
+        assert agi_context["required_role_turn_scopes"] == ["final_request_audit", "decision_trace"]
+        assert agi_context["participation_scopes"] == [
+            "final_request_audit",
+            "quality_gate_response",
+            "evidence.interface.selection",
+        ]
+        assert agi_context["participation"]["final_request_audit"] is True
+        assert agi_context["participation"]["architecture_option_selection"] is False
+        assert agi_context["participation"]["evidence_interface_selection"] is True
+        assert agi_context["audit_pack_schema_version"] == "resident.agi_audit_pack.v1"
+        assert agi_context["capability_surface_schema_version"] == "resident.agi_capability_surface.v1"
+        assert agi_context["decision_boundary_schema"] == "resident.agi_decision_boundary.v1"
+        assert agi_context["decision_boundary_count"] == 1
+        assert agi_context["decision_capability_id"] == "quality.gate.response"
+
+    @pytest.mark.asyncio
     async def test_prepare_llm_request_honors_context_timeout_override(self, monkeypatch) -> None:
         caller = LLMCaller(workspace="C:/workspace")
         profile = MockProfile(role_id="director", model="gpt-5", provider_id="openai")

@@ -157,8 +157,44 @@ export interface ResidentIdentityPayload {
   values?: string[];
   memory_lineage?: string[];
   capability_profile?: Record<string, number>;
+  resident_agi_participation?: ResidentAgiParticipationPayload;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface ResidentAgiParticipationPayload {
+  enabled?: boolean;
+  role_turn_enabled?: boolean;
+  manual_role_turn_requested?: boolean;
+  automatic_participation_enabled?: boolean;
+  configured_enabled?: boolean;
+  configured_scopes?: string[];
+  scopes?: string[];
+  required_role_turn_scopes?: string[];
+  configured_participation?: Record<string, boolean>;
+  automatic_participation?: Record<string, boolean>;
+  participation?: Record<string, boolean>;
+  custom_scopes_allowed?: boolean;
+  updated_at?: string;
+}
+
+export interface ResidentAgiParticipationPolicyPayload {
+  schema_version?: string;
+  role_id?: string;
+  source?: string;
+  enabled_default?: boolean;
+  custom_scopes_allowed?: boolean;
+  scope_semantics?: string;
+  participation_flags?: string[];
+  available_scopes?: Array<
+    Record<string, unknown> & {
+      scope_id?: string;
+      name?: string;
+      category?: string;
+      risk_level?: string;
+      default_enabled?: boolean;
+    }
+  >;
 }
 
 export interface ResidentAgendaPayload {
@@ -205,6 +241,7 @@ export interface ResidentStatusPayload {
   agenda?: ResidentAgendaPayload;
   counts?: Record<string, number>;
   agi_capability_surface?: ResidentAgiCapabilitySurfacePayload;
+  agi_participation_policy?: ResidentAgiParticipationPolicyPayload;
 }
 
 export interface ResidentDecisionOptionPayload {
@@ -276,6 +313,36 @@ export interface ResidentAgiCapabilityPayload {
   risk_level?: string;
   guardrails?: string[];
   evidence_refs?: string[];
+}
+
+export interface ResidentAgiHardcodedRepairStrategyPayload {
+  source_tool?: string;
+  language?: string;
+  phase?: string;
+  concern?: string;
+  risk_level?: string;
+  registered?: boolean;
+}
+
+export interface ResidentAgiHardcodedRepairStrategyCatalogPayload {
+  schema_version?: string;
+  source?: string;
+  access?: string;
+  owner_cell?: string;
+  execution_boundary?: string;
+  chain?: string;
+  unknown_source_tool_policy?: string;
+  agi_execution_authority?: boolean;
+  director_tool_execution_required?: boolean;
+  items?: ResidentAgiHardcodedRepairStrategyPayload[];
+  summary?: {
+    total?: number;
+    returned?: number;
+    by_language?: Record<string, number>;
+    by_phase?: Record<string, number>;
+    by_concern?: Record<string, number>;
+    by_risk?: Record<string, number>;
+  };
 }
 
 export interface ResidentAgiDecisionBoundaryPayload {
@@ -367,6 +434,8 @@ export interface ResidentAgiCapabilitySurfacePayload {
   decision_capability_schema?: string;
   decision_capabilities?: ResidentAgiDecisionCapabilityPayload[];
   decision_capability_registry?: ResidentAgiDecisionCapabilityRegistryPayload;
+  participation_policy?: ResidentAgiParticipationPolicyPayload;
+  hardcoded_repair_strategy_catalog?: ResidentAgiHardcodedRepairStrategyCatalogPayload;
   authority_matrix?: ResidentAgiAuthorityMatrixPayload;
   count?: number;
 }
@@ -433,6 +502,26 @@ export interface ResidentAgiRuntimeContractGatePayload {
   failed_check_ids?: string[];
 }
 
+export interface ResidentAgiDirectorRepairContractPayload {
+  schema_version?: string;
+  owner_cell?: string;
+  source?: string;
+  catalog_schema?: string;
+  profile_summary_schema?: string;
+  unknown_source_tool_policy?: string;
+  execution_boundary?: string;
+  chain?: string;
+  agi_advisory?: {
+    active?: boolean;
+    authoritative?: boolean;
+    writes_allowed?: boolean;
+  };
+  agi_execution_authority?: boolean;
+  director_tool_execution_required?: boolean;
+  strategy_count?: number;
+  summary?: Record<string, unknown>;
+}
+
 export interface ResidentAgiAuditPackPayload {
   schema_version?: string;
   workspace?: string;
@@ -445,6 +534,7 @@ export interface ResidentAgiAuditPackPayload {
   capability_surface?: ResidentAgiCapabilitySurfacePayload;
   autonomy_boundary?: ResidentTickAutonomyBoundaryPayload;
   authority_matrix?: ResidentAgiAuthorityMatrixPayload;
+  director_repair_contract?: ResidentAgiDirectorRepairContractPayload;
   boundary_summary?: {
     schema?: string;
     counts_by_authority?: Record<string, number>;
@@ -566,6 +656,7 @@ export interface ResidentAgiDecisionTurnResponse {
   recorded_decision?: ResidentDecisionPayload;
   role_result?: Record<string, unknown>;
   audit_pack?: ResidentAgiAuditPackPayload | null;
+  resident_agi_participation?: ResidentAgiParticipationPayload;
   runtime_contract_gate?: ResidentAgiRuntimeContractGatePayload;
   error?: string | null;
 }

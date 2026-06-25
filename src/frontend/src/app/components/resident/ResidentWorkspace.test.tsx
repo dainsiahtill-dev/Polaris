@@ -271,6 +271,18 @@ const mockResidentState = {
         evidence_refs: ["ResolveRoleContextQueryV1", "RoleContextResultV1"],
       },
       {
+        capability_id: "director.deterministic_repair_strategy_catalog.read",
+        name: "Director hard-coded repair strategy catalog",
+        category: "director_repair_strategy",
+        access: "read_only",
+        contract_ref: "director.deterministic_repair_strategy_catalog.v1",
+        risk_level: "low",
+        evidence_refs: [
+          "director.deterministic_repair_profile_summary.v1",
+          "director.deterministic_repair_strategy_catalog.v1",
+        ],
+      },
+      {
         capability_id: "verifier.policy.read",
         name: "Verifier policy read model",
         category: "verification_policy",
@@ -426,6 +438,7 @@ const mockResidentState = {
         "contextos.final_request_audit.read",
         "run_ledger.read",
         "audit.diagnosis.read",
+        "director.deterministic_repair_strategy_catalog.read",
         "verifier.policy.read",
         "verifier.execution.execute",
       ],
@@ -467,6 +480,7 @@ const mockResidentState = {
         "audit.verdict.read",
         "context.catalog.search",
         "context.engine.resolve",
+        "director.deterministic_repair_strategy_catalog.read",
         "verifier.policy.read",
       ],
       governed_operation_capabilities: [
@@ -488,6 +502,7 @@ const mockResidentState = {
         "audit.verdict",
         "context.catalog",
         "context.engine",
+        "director.deterministic_repair_strategy_catalog.v1",
         "control_plane.verifier_policy",
         "control_plane.verifier_execution",
       ],
@@ -506,6 +521,48 @@ const mockResidentState = {
         code_changes: "director_authorized_tools_only",
       },
     },
+    hardcoded_repair_strategy_catalog: {
+      schema_version: "director.deterministic_repair_strategy_catalog.v1",
+      source: "director.runtime.repair_kernel.strategy_catalog",
+      access: "read_only",
+      owner_cell: "director.runtime",
+      execution_boundary: "director_authorized_tools_only",
+      chain: "PM → Chief Engineer → Director",
+      unknown_source_tool_policy: "fail_closed_high_risk",
+      agi_execution_authority: false,
+      director_tool_execution_required: true,
+      summary: {
+        total: 3,
+        returned: 3,
+        by_language: { typescript: 2, python: 1 },
+        by_phase: { quality_repair: 2, test_contract: 1 },
+        by_concern: { missing_symbol_or_file: 2, module_boundary: 1 },
+        by_risk: { low: 2, medium: 1 },
+      },
+      items: [
+        {
+          source_tool: "deterministic_typescript_missing_export_repair",
+          language: "typescript",
+          phase: "quality_repair",
+          concern: "missing_symbol_or_file",
+          risk_level: "low",
+        },
+        {
+          source_tool: "deterministic_python_unittest_missing_target_repair",
+          language: "python",
+          phase: "test_contract",
+          concern: "missing_symbol_or_file",
+          risk_level: "low",
+        },
+        {
+          source_tool: "deterministic_typescript_reexport_repair",
+          language: "typescript",
+          phase: "quality_repair",
+          concern: "module_boundary",
+          risk_level: "medium",
+        },
+      ],
+    },
   },
   residentAgiAuditPack: {
     schema_version: "resident.agi_audit_pack.v1",
@@ -518,6 +575,8 @@ const mockResidentState = {
       "resident.decision_trace",
       "runtime.v2.status.resident",
       "roles.registry",
+      "director.runtime.repair_kernel.strategy_catalog",
+      "director.repair_receipts",
     ],
     role_registry: {
       schema_version: "resident.agi_role_registry.v1",
@@ -564,6 +623,29 @@ const mockResidentState = {
         hard_rules: "platform_enforced_non_overridable",
         governed_execution: "canonical_role_chain_only",
         code_changes: "director_authorized_tools_only",
+      },
+    },
+    director_repair_contract: {
+      schema_version: "resident.agi_director_repair_contract.v1",
+      owner_cell: "director.runtime",
+      source: "director.runtime.repair_kernel.strategy_catalog",
+      catalog_schema: "director.deterministic_repair_strategy_catalog.v1",
+      profile_summary_schema:
+        "director.deterministic_repair_profile_summary.v1",
+      unknown_source_tool_policy: "fail_closed_high_risk",
+      execution_boundary: "director_authorized_tools_only",
+      chain: "PM → Chief Engineer → Director",
+      agi_advisory: {
+        active: false,
+        authoritative: false,
+        writes_allowed: false,
+      },
+      agi_execution_authority: false,
+      director_tool_execution_required: true,
+      strategy_count: 67,
+      summary: {
+        total: 67,
+        by_language: { typescript: 38, python: 3 },
       },
     },
     hard_rule_gate: {
@@ -906,6 +988,36 @@ describe("ResidentWorkspace", () => {
       screen.getByTestId("resident-agi-governance-tags"),
     ).toHaveTextContent("platform_enforced_non_overridable");
     expect(
+      screen.getByTestId("resident-agi-repair-strategy-catalog"),
+    ).toHaveTextContent("Director 确定性修复策略目录");
+    expect(
+      screen.getByTestId("resident-agi-repair-strategy-catalog"),
+    ).toHaveTextContent("director.deterministic_repair_strategy_catalog.v1");
+    expect(
+      screen.getByTestId("resident-agi-repair-strategy-catalog"),
+    ).toHaveTextContent("director.runtime.repair_kernel.strategy_catalog");
+    expect(
+      screen.getByTestId("resident-agi-repair-strategy-catalog-summary"),
+    ).toHaveTextContent("director_authorized_tools_only");
+    expect(
+      screen.getByTestId("resident-agi-repair-strategy-catalog-summary"),
+    ).toHaveTextContent("PM → Chief Engineer → Director");
+    expect(
+      screen.getByTestId("resident-agi-repair-strategy-catalog-summary"),
+    ).toHaveTextContent("AGI execute: blocked");
+    expect(
+      screen.getByTestId("resident-agi-repair-strategy-catalog-summary"),
+    ).toHaveTextContent("fail_closed_high_risk");
+    expect(
+      screen.getAllByTestId("resident-agi-repair-strategy-catalog-item")[0],
+    ).toHaveTextContent("deterministic_typescript_missing_export_repair");
+    expect(
+      screen.getAllByTestId("resident-agi-repair-strategy-catalog-item")[0],
+    ).toHaveTextContent("typescript");
+    expect(
+      screen.queryByRole("button", { name: /修复|执行/i }),
+    ).not.toBeInTheDocument();
+    expect(
       screen.getByTestId("resident-agi-decision-capability-registry"),
     ).toHaveTextContent("AGI 决策能力注册表");
     expect(
@@ -938,6 +1050,12 @@ describe("ResidentWorkspace", () => {
     expect(
       screen.getByTestId("resident-agi-evidence-interface-matrix"),
     ).toHaveTextContent("Context catalog search");
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-matrix"),
+    ).toHaveTextContent("Director hard-coded repair strategy catalog");
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-matrix"),
+    ).toHaveTextContent("director.deterministic_repair_strategy_catalog.v1");
     expect(
       screen.getByTestId("resident-agi-evidence-interface-matrix"),
     ).toHaveTextContent("Verifier execution request");
@@ -1008,6 +1126,36 @@ describe("ResidentWorkspace", () => {
     expect(
       screen.getByTestId("resident-agi-audit-authority-matrix"),
     ).toHaveTextContent("governed ops 2");
+    expect(
+      screen.getByTestId("resident-agi-director-repair-contract"),
+    ).toHaveTextContent("resident.agi_director_repair_contract.v1");
+    expect(
+      screen.getByTestId("resident-agi-director-repair-contract"),
+    ).toHaveTextContent("director.runtime");
+    expect(
+      screen.getByTestId("resident-agi-director-repair-contract"),
+    ).toHaveTextContent("director_authorized_tools_only");
+    expect(
+      screen.getByTestId("resident-agi-director-repair-contract"),
+    ).toHaveTextContent("PM → Chief Engineer → Director");
+    expect(
+      screen.getByTestId("resident-agi-director-repair-contract"),
+    ).toHaveTextContent("fail_closed_high_risk");
+    expect(
+      screen.getByTestId("resident-agi-director-repair-contract"),
+    ).toHaveTextContent("AGI execute: blocked");
+    expect(
+      screen.getByTestId("resident-agi-director-repair-contract"),
+    ).toHaveTextContent("writes: blocked");
+    expect(
+      screen.getByTestId("resident-agi-director-repair-contract"),
+    ).toHaveTextContent("advisory: inactive");
+    expect(
+      screen.getByTestId("resident-agi-director-repair-contract"),
+    ).toHaveTextContent("director.deterministic_repair_strategy_catalog.v1");
+    expect(
+      screen.getByTestId("resident-agi-director-repair-contract"),
+    ).toHaveTextContent("director.deterministic_repair_profile_summary.v1");
     expect(screen.getByTestId("resident-agi-audit-pack")).toHaveTextContent(
       "hold → request_evidence",
     );
@@ -1329,6 +1477,73 @@ describe("ResidentWorkspace", () => {
     expect(mockResidentState.saveIdentity).toHaveBeenCalledWith({
       name: "Polaris Resident",
       mission: "Keep main green",
+      resident_agi_participation: {
+        enabled: false,
+        scopes: [],
+        participation: {
+          final_request_audit: false,
+          quality_gate_response: false,
+          architecture_option_selection: false,
+          evidence_interface_selection: false,
+          goal_promotion: false,
+          decision_trace: false,
+          capability_surface: false,
+          decision_boundary: false,
+          director_repair_strategy_catalog: false,
+        },
+        custom_scopes_allowed: true,
+      },
     });
+  });
+
+  it("saves dynamic AGI participation scopes from the backend policy", () => {
+    const originalStatus = mockResidentState.status;
+    (mockResidentState as { status: unknown }).status = {
+      agi_participation_policy: {
+        schema_version: "resident.agi_participation_policy.v1",
+        role_id: "resident_agi",
+        participation_flags: ["final_request_audit"],
+        available_scopes: [
+          {
+            scope_id: "goal.promotion.readiness",
+            name: "Goal promotion readiness",
+            category: "decision_capability",
+            risk_level: "high",
+          },
+        ],
+      },
+    };
+
+    try {
+      render(
+        <ResidentWorkspace
+          workspace="X:/Git/polaris"
+          onBackToMain={vi.fn()}
+          residentSnapshot={null}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("resident-edit-identity"));
+      fireEvent.click(screen.getByTestId("resident-agi-participation-enabled"));
+      fireEvent.click(screen.getByLabelText(/Goal promotion readiness/));
+      fireEvent.click(screen.getByTestId("resident-save-identity"));
+
+      expect(mockResidentState.saveIdentity).toHaveBeenCalledWith({
+        name: "Resident AGI Supervisor",
+        mission:
+          "Supervise unattended Polaris development runs with governed evidence.",
+        resident_agi_participation: {
+          enabled: true,
+          scopes: ["goal.promotion.readiness"],
+          participation: {
+            "goal.promotion.readiness": true,
+            final_request_audit: false,
+          },
+          custom_scopes_allowed: true,
+        },
+      });
+    } finally {
+      (mockResidentState as { status: unknown }).status = originalStatus;
+    }
   });
 });

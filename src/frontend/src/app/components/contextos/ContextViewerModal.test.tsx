@@ -36,12 +36,58 @@ function makePayload(overrides: Partial<ViewModelPayload> = {}): ViewModelPayloa
   };
 }
 
-function mockFetchOk(payload: ViewModelPayload) {
+function makeFinalRequestPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    schema_version: 'context.final_provider_request_audit.v1',
+    context_hash: 'abc123abc123abc123abc123',
+    trace_id: 'trace-1',
+    call_id: 'call-1',
+    stored_at: '2026-06-19T00:00:00Z',
+    message_count: 2,
+    role: 'director',
+    provider_id: 'openai',
+    model: 'gpt-5',
+    tools: [{ type: 'function', name: 'read_file', argument_keys: ['path'], required: ['path'] }],
+    tool_choice: 'auto',
+    response_format: { type: 'json_schema', json_schema_name: 'Decision' },
+    provider_request: {
+      schema_version: 'llm.provider_request_snapshot.v1',
+      role: 'director',
+      provider_id: 'openai',
+      model: 'gpt-5',
+      tool_schema_count: 1,
+      tool_choice: 'auto',
+    },
+    final_request_context_audit: {
+      schema_version: 'llm.final_request_context_audit.v1',
+      message_count: 2,
+      tool_schema_count: 1,
+      final_request_token_estimate: 1024,
+      coverage: {
+        has_pm_contract: true,
+        has_chief_engineer_blueprint: true,
+        has_resident_agi_decision_trace: true,
+      },
+      context_quality: {
+        missing_coverage: [],
+      },
+    },
+    ...overrides,
+  };
+}
+
+function mockFetchOk(payload: ViewModelPayload, finalRequest = makeFinalRequestPayload()) {
   mockedApiFetch.mockResolvedValueOnce({
     ok: true,
     status: 200,
     text: async () => JSON.stringify(payload),
     json: async () => payload,
+  });
+  mockedApiFetch.mockResolvedValueOnce({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify(finalRequest),
+    json: async () => finalRequest,
   });
 }
 
@@ -95,6 +141,55 @@ describe('ContextViewerModal', () => {
     });
     expect(mockedApiFetch).toHaveBeenCalledWith(
       '/v2/context/abc123abc123abc123abc123?workspace=%2Ftmp%2Ffactory-bench-l1-04-r23%2FL1-04',
+    );
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      '/v2/context/abc123abc123abc123abc123/final-request?workspace=%2Ftmp%2Ffactory-bench-l1-04-r23%2FL1-04',
+    );
+  });
+
+  it('renders final provider request evidence in a dedicated tab', async () => {
+    const payload = makePayload();
+    mockFetchOk(payload);
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="director" onClose={vi.fn()} />);
+    await waitFor(() => screen.getByTestId('contextos-viewer-tab-final-request'));
+
+    fireEvent.click(screen.getByTestId('contextos-viewer-tab-final-request'));
+
+    await waitFor(() => screen.getByTestId('contextos-final-request-panel'));
+    const panel = screen.getByTestId('contextos-final-request-panel');
+    expect(panel.textContent).toContain('gpt-5');
+    expect(panel.textContent).toContain('openai');
+    expect(panel.textContent).toContain('PASS has_resident_agi_decision_trace');
+    expect(panel.textContent).toContain('"tool_schema_count": 1');
+    expect(mockedApiFetch).toHaveBeenCalledWith('/v2/context/abc123abc123abc123abc123/final-request');
+  });
+
+  it('keeps context messages visible when final provider request evidence is unavailable', async () => {
+    const payload = makePayload();
+    mockedApiFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(payload),
+      json: async () => payload,
+    });
+    mockedApiFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        detail: {
+          code: 'provider_request_missing',
+          message: 'Context snapshot does not include provider_request audit evidence.',
+        },
+      }),
+      text: async () => '',
+    });
+
+    render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="director" onClose={vi.fn()} />);
+    await waitFor(() => screen.getByText('You are a helpful assistant.'));
+    fireEvent.click(screen.getByTestId('contextos-viewer-tab-final-request'));
+    await waitFor(() => screen.getByTestId('contextos-final-request-unavailable'));
+    expect(screen.getByTestId('contextos-final-request-unavailable').textContent).toContain(
+      'Context snapshot does not include provider_request audit evidence.',
     );
   });
 
@@ -265,7 +360,7 @@ describe('ContextViewerModal', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('contextos-viewer-error')).toBeNull();
     });
-    expect(mockedApiFetch).toHaveBeenCalledTimes(2);
+    expect(mockedApiFetch).toHaveBeenCalledTimes(3);
   });
 
   it('renders a context-missing empty state for structured CONTEXT_NOT_FOUND 404', async () => {

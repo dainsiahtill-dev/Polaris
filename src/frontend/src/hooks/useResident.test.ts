@@ -1,7 +1,7 @@
-import { act, renderHook, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ResidentStatusDetailsPayload } from '@/app/types/appContracts';
+import type { ResidentStatusDetailsPayload } from "@/app/types/appContracts";
 
 const residentServiceMock = vi.hoisted(() => ({
   decide: vi.fn(),
@@ -10,31 +10,31 @@ const residentServiceMock = vi.hoisted(() => ({
   getStatus: vi.fn(),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock("sonner", () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
   },
 }));
 
-vi.mock('@/services/api', () => ({
+vi.mock("@/services/api", () => ({
   residentService: residentServiceMock,
 }));
 
-import { useResident } from './useResident';
+import { useResident } from "./useResident";
 
 const LIVE_RESIDENT: ResidentStatusDetailsPayload = {
-  workspace: '/tmp/polaris-demo',
+  workspace: "/tmp/polaris-demo",
   identity: {
-    name: 'Resident AGI Supervisor',
-    mission: 'Govern unattended development decisions.',
+    name: "Resident AGI Supervisor",
+    mission: "Govern unattended development decisions.",
   },
   runtime: {
     active: true,
-    mode: 'observe',
+    mode: "observe",
   },
   agenda: {
-    current_focus: ['audit AGI role handoff'],
+    current_focus: ["audit AGI role handoff"],
   },
   counts: {
     decisions: 1,
@@ -42,45 +42,45 @@ const LIVE_RESIDENT: ResidentStatusDetailsPayload = {
   },
   decisions: [
     {
-      decision_id: 'decision-1',
-      actor: 'ResidentAGI',
-      stage: 'context_handoff',
-      summary: 'Keep AGI decision trace in RoleSignalPlane.',
+      decision_id: "decision-1",
+      actor: "ResidentAGI",
+      stage: "context_handoff",
+      summary: "Keep AGI decision trace in RoleSignalPlane.",
     },
   ],
   goals: [
     {
-      goal_id: 'goal-1',
-      title: 'Harden AGI capability surface',
-      status: 'approved',
+      goal_id: "goal-1",
+      title: "Harden AGI capability surface",
+      status: "approved",
     },
   ],
   capability_graph: {
-    generated_at: '2026-06-25T00:00:00Z',
+    generated_at: "2026-06-25T00:00:00Z",
     capabilities: [],
     gaps: [],
   },
   agi_capability_surface: {
-    schema_version: 'resident.agi_capability_surface.v1',
-    authority_matrix_schema: 'resident.agi_authority_matrix.v1',
-    role_id: 'resident_agi',
-    runtime_foundation: 'roles.runtime + ContextOS + TurnEngine',
-    implementation_cell: 'resident.autonomy',
+    schema_version: "resident.agi_capability_surface.v1",
+    authority_matrix_schema: "resident.agi_authority_matrix.v1",
+    role_id: "resident_agi",
+    runtime_foundation: "roles.runtime + ContextOS + TurnEngine",
+    implementation_cell: "resident.autonomy",
     count: 1,
     items: [
       {
-        capability_id: 'contextos.final_request_audit.read',
-        name: 'Final provider-request audit',
-        category: 'llm_audit',
-        access: 'read_only',
-        contract_ref: 'roles.final_request_context_audit',
+        capability_id: "contextos.final_request_audit.read",
+        name: "Final provider-request audit",
+        category: "llm_audit",
+        access: "read_only",
+        contract_ref: "roles.final_request_context_audit",
       },
     ],
     authority_matrix: {
-      schema_version: 'resident.agi_authority_matrix.v1',
-      runtime_foundation: 'roles.runtime + ContextOS + TurnEngine',
-      role_id: 'resident_agi',
-      chain: 'PM → Chief Engineer → Director',
+      schema_version: "resident.agi_authority_matrix.v1",
+      runtime_foundation: "roles.runtime + ContextOS + TurnEngine",
+      role_id: "resident_agi",
+      chain: "PM → Chief Engineer → Director",
       chain_required: true,
       platform_enforced: true,
       llm_decision_required: true,
@@ -94,34 +94,60 @@ const LIVE_RESIDENT: ResidentStatusDetailsPayload = {
         canonical_contracts: 2,
       },
       decision_policy: {
-        governed_execution: 'canonical_role_chain_only',
+        governed_execution: "canonical_role_chain_only",
       },
+    },
+    hardcoded_repair_strategy_catalog: {
+      schema_version: "director.deterministic_repair_strategy_catalog.v1",
+      source: "director.runtime.repair_kernel.strategy_catalog",
+      access: "read_only",
+      execution_boundary: "director_authorized_tools_only",
+      chain: "PM → Chief Engineer → Director",
+      agi_execution_authority: false,
+      director_tool_execution_required: true,
+      summary: {
+        total: 1,
+        returned: 1,
+        by_language: { typescript: 1 },
+        by_phase: { quality_repair: 1 },
+        by_concern: { missing_symbol_or_file: 1 },
+        by_risk: { low: 1 },
+      },
+      items: [
+        {
+          source_tool: "deterministic_typescript_missing_export_repair",
+          language: "typescript",
+          phase: "quality_repair",
+          concern: "missing_symbol_or_file",
+          risk_level: "low",
+        },
+      ],
     },
   },
 };
 
 const LIVE_AUDIT_PACK = {
-  schema_version: 'resident.agi_audit_pack.v1',
-  workspace: '/tmp/polaris-demo',
-  role_id: 'resident_agi',
-  runtime_foundation: 'roles.runtime + ContextOS + TurnEngine',
+  schema_version: "resident.agi_audit_pack.v1",
+  workspace: "/tmp/polaris-demo",
+  role_id: "resident_agi",
+  runtime_foundation: "roles.runtime + ContextOS + TurnEngine",
   role_registry: {
-    schema_version: 'resident.agi_role_registry.v1',
-    dialogue_roles: ['pm', 'chief_engineer', 'director', 'qa', 'resident_agi'],
-    adapter_roles: ['pm', 'chief_engineer', 'director', 'qa', 'resident_agi'],
-    required_roles: ['pm', 'chief_engineer', 'director', 'qa', 'resident_agi'],
+    schema_version: "resident.agi_role_registry.v1",
+    dialogue_roles: ["pm", "chief_engineer", "director", "qa", "resident_agi"],
+    adapter_roles: ["pm", "chief_engineer", "director", "qa", "resident_agi"],
+    required_roles: ["pm", "chief_engineer", "director", "qa", "resident_agi"],
     missing_required_roles: [],
     resident_agi_available: true,
   },
   boundary_summary: {
-    schema: 'resident.agi_decision_boundary.v1',
-    boundary_ids: ['role.runtime.foundation'],
+    schema: "resident.agi_decision_boundary.v1",
+    boundary_ids: ["role.runtime.foundation"],
   },
   authority_matrix: {
-    schema_version: 'resident.agi_authority_matrix.v1',
-    runtime_foundation: 'roles.runtime + ContextOS + TurnEngine',
-    role_id: 'resident_agi',
-    chain: 'PM → Chief Engineer → Director',
+    schema_version: "resident.agi_authority_matrix.v1",
+    runtime_foundation: "roles.runtime + ContextOS + TurnEngine",
+    role_id: "resident_agi",
+    chain: "PM → Chief Engineer → Director",
     chain_required: true,
     platform_enforced: true,
     llm_decision_required: true,
@@ -135,39 +161,41 @@ const LIVE_AUDIT_PACK = {
       canonical_contracts: 2,
     },
     decision_policy: {
-      governed_execution: 'canonical_role_chain_only',
+      governed_execution: "canonical_role_chain_only",
     },
   },
   run_ledger_summary: {
-    schema_version: 'resident.agi_run_ledger_summary.v1',
-    source: 'run_ledger_projection',
+    schema_version: "resident.agi_run_ledger_summary.v1",
+    source: "run_ledger_projection",
     available: false,
     ok: false,
-    status: 'pending',
+    status: "pending",
   },
   evidence_gate: {
-    schema_version: 'resident.agi_evidence_gate.v1',
-    status: 'hold',
-    recommended_verdict: 'request_evidence',
+    schema_version: "resident.agi_evidence_gate.v1",
+    status: "hold",
+    recommended_verdict: "request_evidence",
   },
   recent_decisions: LIVE_RESIDENT.decisions,
-  evidence_refs: ['runtime/contexts/context-1.json'],
-  execution_constraints: ['Downstream work must preserve PM → Chief Engineer → Director.'],
-  decision_endpoint: '/v2/resident/agi/decide',
+  evidence_refs: ["runtime/contexts/context-1.json"],
+  execution_constraints: [
+    "Downstream work must preserve PM → Chief Engineer → Director.",
+  ],
+  decision_endpoint: "/v2/resident/agi/decide",
 };
 
 const LIVE_EVIDENCE_INTERFACES = {
-  schema_version: 'resident.agi_evidence_interfaces.v1',
-  decision_type: 'quality_gate_response',
+  schema_version: "resident.agi_evidence_interfaces.v1",
+  decision_type: "quality_gate_response",
   interfaces: [
     {
-      interface_id: 'run_ledger.read',
-      status: 'unavailable',
+      interface_id: "run_ledger.read",
+      status: "unavailable",
       callable: true,
     },
     {
-      interface_id: 'verifier.policy.read',
-      status: 'available',
+      interface_id: "verifier.policy.read",
+      status: "available",
       callable: true,
     },
   ],
@@ -178,15 +206,15 @@ const LIVE_EVIDENCE_INTERFACES = {
   },
 };
 
-describe('useResident', () => {
+describe("useResident", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('keeps live AGI capability-surface evidence when detailed refresh is unavailable', async () => {
+  it("keeps live AGI capability-surface evidence when detailed refresh is unavailable", async () => {
     residentServiceMock.getStatus.mockResolvedValueOnce({
       ok: false,
-      error: 'backend offline',
+      error: "backend offline",
     });
     residentServiceMock.getAgiAuditPack.mockResolvedValue({
       ok: true,
@@ -199,40 +227,69 @@ describe('useResident', () => {
 
     const { result } = renderHook(() =>
       useResident({
-        workspace: '/tmp/polaris-demo',
+        workspace: "/tmp/polaris-demo",
         liveResident: LIVE_RESIDENT,
       }),
     );
 
     await waitFor(() => {
-      expect(residentServiceMock.getStatus).toHaveBeenCalledWith('/tmp/polaris-demo', true);
+      expect(residentServiceMock.getStatus).toHaveBeenCalledWith(
+        "/tmp/polaris-demo",
+        true,
+      );
     });
 
-    expect(result.current.error).toBe('backend offline');
+    expect(result.current.error).toBe("backend offline");
     expect(result.current.residentAgiCapabilitySurface?.schema_version).toBe(
-      'resident.agi_capability_surface.v1',
+      "resident.agi_capability_surface.v1",
     );
-    expect(result.current.residentAgiCapabilitySurface?.role_id).toBe('resident_agi');
-    expect(result.current.residentAgiCapabilitySurface?.runtime_foundation).toContain('ContextOS');
-    expect(result.current.residentAgiCapabilitySurface?.items?.[0]?.capability_id).toBe(
-      'contextos.final_request_audit.read',
+    expect(result.current.residentAgiCapabilitySurface?.role_id).toBe(
+      "resident_agi",
     );
-    expect(result.current.residentAgiCapabilitySurface?.authority_matrix?.schema_version).toBe(
-      'resident.agi_authority_matrix.v1',
+    expect(
+      result.current.residentAgiCapabilitySurface?.runtime_foundation,
+    ).toContain("ContextOS");
+    expect(
+      result.current.residentAgiCapabilitySurface?.items?.[0]?.capability_id,
+    ).toBe("contextos.final_request_audit.read");
+    expect(
+      result.current.residentAgiCapabilitySurface
+        ?.hardcoded_repair_strategy_catalog?.items?.[0]?.source_tool,
+    ).toBe("deterministic_typescript_missing_export_repair");
+    expect(
+      result.current.residentAgiCapabilitySurface
+        ?.hardcoded_repair_strategy_catalog?.agi_execution_authority,
+    ).toBe(false);
+    expect(
+      result.current.residentAgiCapabilitySurface?.authority_matrix
+        ?.schema_version,
+    ).toBe("resident.agi_authority_matrix.v1");
+    expect(
+      result.current.residentAgiCapabilitySurface?.authority_matrix
+        ?.chain_required,
+    ).toBe(true);
+    expect(result.current.residentRuntimeEvidence.live_snapshot_available).toBe(
+      true,
     );
-    expect(result.current.residentAgiCapabilitySurface?.authority_matrix?.chain_required).toBe(true);
-    expect(result.current.residentRuntimeEvidence.live_snapshot_available).toBe(true);
-    expect(result.current.residentRuntimeEvidence.http_details_loaded).toBe(false);
-    expect(result.current.residentRuntimeEvidence.realtime_channel).toBe('runtime.v2.status.resident');
-    expect(result.current.residentRuntimeEvidence.snapshot_channel).toBe('runtime.v2.status.snapshot');
-    expect(result.current.residentRuntimeEvidence.source).toBe('runtime.v2_snapshot');
-    expect(result.current.decisions[0]?.actor).toBe('ResidentAGI');
-    expect(result.current.goals[0]?.goal_id).toBe('goal-1');
+    expect(result.current.residentRuntimeEvidence.http_details_loaded).toBe(
+      false,
+    );
+    expect(result.current.residentRuntimeEvidence.realtime_channel).toBe(
+      "runtime.v2.status.resident",
+    );
+    expect(result.current.residentRuntimeEvidence.snapshot_channel).toBe(
+      "runtime.v2.status.snapshot",
+    );
+    expect(result.current.residentRuntimeEvidence.source).toBe(
+      "runtime.v2_snapshot",
+    );
+    expect(result.current.decisions[0]?.actor).toBe("ResidentAGI");
+    expect(result.current.goals[0]?.goal_id).toBe("goal-1");
     expect(residentServiceMock.getAgiAuditPack).not.toHaveBeenCalled();
     expect(residentServiceMock.getAgiEvidenceInterfaces).not.toHaveBeenCalled();
   });
 
-  it('runs a Resident AGI decision turn through the service and refreshes', async () => {
+  it("runs a Resident AGI decision turn through the service and refreshes", async () => {
     residentServiceMock.getStatus.mockResolvedValue({
       ok: true,
       data: LIVE_RESIDENT,
@@ -250,52 +307,78 @@ describe('useResident', () => {
       data: {
         ok: true,
         recorded_decision: {
-          decision_id: 'decision-agi-1',
-          actor: 'resident_agi',
-          verdict: 'success',
+          decision_id: "decision-agi-1",
+          actor: "resident_agi",
+          verdict: "success",
         },
       },
     });
 
     const { result } = renderHook(() =>
       useResident({
-        workspace: '/tmp/polaris-demo',
+        workspace: "/tmp/polaris-demo",
         liveResident: LIVE_RESIDENT,
       }),
     );
 
     await waitFor(() => {
-      expect(result.current.status?.workspace).toBe('/tmp/polaris-demo');
+      expect(result.current.status?.workspace).toBe("/tmp/polaris-demo");
     });
-    expect(result.current.residentAgiAuditPack?.schema_version).toBe('resident.agi_audit_pack.v1');
-    expect(result.current.residentAgiAuditPack?.role_registry?.resident_agi_available).toBe(true);
-    expect(result.current.residentAgiAuditPack?.evidence_gate?.status).toBe('hold');
-    expect(result.current.residentAgiAuditPack?.authority_matrix?.decision_policy?.governed_execution).toBe(
-      'canonical_role_chain_only',
+    expect(result.current.residentAgiAuditPack?.schema_version).toBe(
+      "resident.agi_audit_pack.v1",
     );
+    expect(
+      result.current.residentAgiAuditPack?.role_registry
+        ?.resident_agi_available,
+    ).toBe(true);
+    expect(result.current.residentAgiAuditPack?.evidence_gate?.status).toBe(
+      "hold",
+    );
+    expect(
+      result.current.residentAgiAuditPack?.authority_matrix?.decision_policy
+        ?.governed_execution,
+    ).toBe("canonical_role_chain_only");
     expect(result.current.residentAgiEvidenceInterfaces?.schema_version).toBe(
-      'resident.agi_evidence_interfaces.v1',
+      "resident.agi_evidence_interfaces.v1",
     );
-    expect(result.current.residentAgiEvidenceInterfaces?.interfaces?.[1]?.status).toBe('available');
-    expect(result.current.residentRuntimeEvidence.realtime_channel).toBe('runtime.v2.status.resident');
-    expect(result.current.residentRuntimeEvidence.source).toBe('runtime.v2_snapshot+http_details');
+    expect(
+      result.current.residentAgiEvidenceInterfaces?.interfaces?.[1]?.status,
+    ).toBe("available");
+    expect(result.current.residentRuntimeEvidence.realtime_channel).toBe(
+      "runtime.v2.status.resident",
+    );
+    expect(result.current.residentRuntimeEvidence.source).toBe(
+      "runtime.v2_snapshot+http_details",
+    );
 
     await act(async () => {
       await result.current.runAgiDecision({
-        objective: 'Decide whether the run can proceed.',
-        decision_type: 'platform_supervision',
+        objective: "Decide whether the run can proceed.",
+        decision_type: "platform_supervision",
       });
     });
 
-    expect(residentServiceMock.decide).toHaveBeenCalledWith('/tmp/polaris-demo', {
-      objective: 'Decide whether the run can proceed.',
-      decision_type: 'platform_supervision',
-    });
-    expect(residentServiceMock.getStatus).toHaveBeenCalledWith('/tmp/polaris-demo', true);
-    expect(residentServiceMock.getAgiAuditPack).toHaveBeenCalledWith('/tmp/polaris-demo', 12);
-    expect(residentServiceMock.getAgiEvidenceInterfaces).toHaveBeenCalledWith('/tmp/polaris-demo', {
-      decisionType: 'quality_gate_response',
-      maxRuns: 20,
-    });
+    expect(residentServiceMock.decide).toHaveBeenCalledWith(
+      "/tmp/polaris-demo",
+      {
+        objective: "Decide whether the run can proceed.",
+        decision_type: "platform_supervision",
+      },
+    );
+    expect(residentServiceMock.getStatus).toHaveBeenCalledWith(
+      "/tmp/polaris-demo",
+      true,
+    );
+    expect(residentServiceMock.getAgiAuditPack).toHaveBeenCalledWith(
+      "/tmp/polaris-demo",
+      12,
+    );
+    expect(residentServiceMock.getAgiEvidenceInterfaces).toHaveBeenCalledWith(
+      "/tmp/polaris-demo",
+      {
+        decisionType: "quality_gate_response",
+        maxRuns: 20,
+      },
+    );
   });
 });

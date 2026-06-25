@@ -93,6 +93,7 @@ class ResidentIdentityPatch(BaseModel):
     values: list[str] | None = None
     memory_lineage: list[str] | None = None
     capability_profile: dict[str, float] | None = None
+    resident_agi_participation: dict[str, Any] | None = None
 
 
 class DecisionOptionPayload(BaseModel):

@@ -35,8 +35,10 @@ import type {
   ResidentAgiDecisionCapabilityPayload,
   ResidentAgiDecisionCapabilityRegistryPayload,
   ResidentAgiEvidenceInterfacesPayload,
+  ResidentAgiHardcodedRepairStrategyCatalogPayload,
   ResidentAgiDecisionProfilePayload,
   ResidentAgiDecisionBoundaryPayload,
+  ResidentAgiParticipationPayload,
   ResidentDecisionPayload,
   ResidentGoalPayload,
   ResidentStatusDetailsPayload,
@@ -51,6 +53,7 @@ import {
 import { Input } from "@/app/components/ui/input";
 import { Textarea } from "@/app/components/ui/textarea";
 import { Badge } from "@/app/components/ui/badge";
+import { Switch } from "@/app/components/ui/switch";
 import { cn } from "@/app/components/ui/utils";
 
 const TAB_OPTIONS = ["overview", "goals", "decisions", "evolution"] as const;
@@ -72,15 +75,47 @@ interface ResidentWorkspaceProps {
   initialTab?: AgiTab;
 }
 
+interface AgiParticipationOption {
+  scope: string;
+  label: string;
+  category?: string;
+  riskLevel?: string;
+}
+
 const AGI_EVIDENCE_INTERFACE_CATEGORIES = new Set([
   "audit_diagnosis",
   "audit_verdict",
   "audit_evidence",
   "context_discovery",
+  "director_repair_strategy",
   "llm_audit",
   "run_ledger",
   "verification_policy",
 ]);
+
+const DEFAULT_AGI_PARTICIPATION_FLAGS = [
+  "final_request_audit",
+  "quality_gate_response",
+  "architecture_option_selection",
+  "evidence_interface_selection",
+  "goal_promotion",
+  "decision_trace",
+  "capability_surface",
+  "decision_boundary",
+  "director_repair_strategy_catalog",
+];
+
+const AGI_PARTICIPATION_LABELS: Record<string, string> = {
+  final_request_audit: "最终请求审计",
+  quality_gate_response: "质量门禁响应",
+  architecture_option_selection: "架构选型研判",
+  evidence_interface_selection: "证据接口选择",
+  goal_promotion: "目标推进判断",
+  decision_trace: "决策交接记录",
+  capability_surface: "能力面可见性",
+  decision_boundary: "决策边界审计",
+  director_repair_strategy_catalog: "Director 修复策略目录",
+};
 
 function formatTime(value?: string | null): string {
   if (!value) return "暂无";
@@ -109,6 +144,28 @@ function uniqueStrings(values: Array<string | undefined | null>): string[] {
     result.push(token);
   });
   return result;
+}
+
+function buildAgiParticipationFlags(
+  scopes: string[],
+  knownScopes: string[] = DEFAULT_AGI_PARTICIPATION_FLAGS,
+): Record<string, boolean> {
+  const selected = new Set(scopes);
+  const keys = uniqueStrings([...knownScopes, ...scopes]);
+  return keys.reduce<Record<string, boolean>>((acc, scope) => {
+    acc[scope] = selected.has(scope);
+    return acc;
+  }, {});
+}
+
+function selectedAgiParticipationScopes(
+  participation?: ResidentAgiParticipationPayload | null,
+): string[] {
+  if (!participation) return [];
+  const selectedFromFlags = Object.entries(participation.participation || {})
+    .filter(([, enabled]) => enabled)
+    .map(([scope]) => scope);
+  return uniqueStrings([...(participation.scopes || []), ...selectedFromFlags]);
 }
 
 function GoalStatusBadge({ status }: { status: string }) {
@@ -156,6 +213,10 @@ export function ResidentWorkspace({
   const [editingIdentity, setEditingIdentity] = useState(false);
   const [identityName, setIdentityName] = useState("");
   const [identityMission, setIdentityMission] = useState("");
+  const [agiParticipationEnabled, setAgiParticipationEnabled] = useState(false);
+  const [agiParticipationScopes, setAgiParticipationScopes] = useState<
+    string[]
+  >([]);
 
   const isActive = Boolean(resident.residentRuntime?.active);
   const mode = resident.residentRuntime?.mode || "observe";
@@ -182,10 +243,48 @@ export function ResidentWorkspace({
   const agiCapabilities = agiCapabilitySurface?.items || [];
   const agiDecisionCapabilities =
     agiCapabilitySurface?.decision_capabilities || [];
+  const hardcodedRepairCatalog =
+    agiCapabilitySurface?.hardcoded_repair_strategy_catalog || null;
   const agiDecisionCapabilityRegistry =
     agiCapabilitySurface?.decision_capability_registry ||
     agiDecisionProfile?.decision_capability_registry;
   const agiDecisionBoundaries = agiCapabilitySurface?.decision_boundaries || [];
+  const agiParticipationPolicy =
+    resident.status?.agi_participation_policy ||
+    agiCapabilitySurface?.participation_policy ||
+    null;
+  const agiParticipationOptions = useMemo(() => {
+    const dynamicOptions =
+      agiParticipationPolicy?.available_scopes
+        ?.map((scope): AgiParticipationOption | null => {
+          const scopeId = String(scope.scope_id || "").trim();
+          if (!scopeId) return null;
+          return {
+            scope: scopeId,
+            label:
+              String(scope.name || "").trim() ||
+              AGI_PARTICIPATION_LABELS[scopeId] ||
+              scopeId,
+            category: String(scope.category || "").trim() || undefined,
+            riskLevel: String(scope.risk_level || "").trim() || undefined,
+          };
+        })
+        .filter((scope): scope is AgiParticipationOption => scope !== null) ||
+      [];
+    const flags =
+      agiParticipationPolicy?.participation_flags?.filter(Boolean) ||
+      DEFAULT_AGI_PARTICIPATION_FLAGS;
+    const flagOptions: AgiParticipationOption[] = flags.map((scope) => ({
+      scope,
+      label: AGI_PARTICIPATION_LABELS[scope] || scope,
+    }));
+    const seen = new Set<string>();
+    return [...dynamicOptions, ...flagOptions].filter((option) => {
+      if (seen.has(option.scope)) return false;
+      seen.add(option.scope);
+      return true;
+    });
+  }, [agiParticipationPolicy]);
   const decisionStats = useMemo(
     () => buildDecisionStats(resident.decisions),
     [resident.decisions],
@@ -194,6 +293,14 @@ export function ResidentWorkspace({
     () => buildCapabilityGovernanceStats(agiCapabilities),
     [agiCapabilities],
   );
+
+  const toggleAgiParticipationScope = (scope: string) => {
+    setAgiParticipationScopes((current) =>
+      current.includes(scope)
+        ? current.filter((item) => item !== scope)
+        : [...current, scope],
+    );
+  };
 
   const handleCreateGoal = async () => {
     if (!newGoalTitle.trim()) return;
@@ -503,6 +610,18 @@ export function ResidentWorkspace({
                         setIdentityMission(
                           resident.residentIdentity?.mission || "",
                         );
+                        setAgiParticipationEnabled(
+                          Boolean(
+                            resident.residentIdentity
+                              ?.resident_agi_participation?.enabled,
+                          ),
+                        );
+                        setAgiParticipationScopes(
+                          selectedAgiParticipationScopes(
+                            resident.residentIdentity
+                              ?.resident_agi_participation,
+                          ),
+                        );
                         setEditingIdentity(true);
                       }}
                     >
@@ -527,6 +646,61 @@ export function ResidentWorkspace({
                         placeholder="任务宣言"
                         className="bg-slate-950"
                       />
+                      <div className="rounded border border-slate-800 bg-slate-950/70 p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-xs font-medium text-slate-200">
+                              AGI 自动参与
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              控制 AGI 是否介入平台决策点
+                            </div>
+                          </div>
+                          <Switch
+                            aria-label="AGI 自动参与"
+                            data-testid="resident-agi-participation-enabled"
+                            checked={agiParticipationEnabled}
+                            onCheckedChange={setAgiParticipationEnabled}
+                          />
+                        </div>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          {agiParticipationOptions.map((option) => (
+                            <label
+                              key={option.scope}
+                              className={cn(
+                                "flex items-center gap-2 rounded border border-slate-800 px-2 py-1.5 text-xs",
+                                agiParticipationEnabled
+                                  ? "text-slate-300"
+                                  : "text-slate-600",
+                              )}
+                            >
+                              <input
+                                type="checkbox"
+                                className="size-3 accent-cyan-400"
+                                disabled={!agiParticipationEnabled}
+                                checked={agiParticipationScopes.includes(
+                                  option.scope,
+                                )}
+                                onChange={() =>
+                                  toggleAgiParticipationScope(option.scope)
+                                }
+                              />
+                              <span className="min-w-0">
+                                <span className="block truncate">
+                                  {option.label}
+                                </span>
+                                {(option.category || option.riskLevel) && (
+                                  <span className="block truncate text-[10px] text-slate-500">
+                                    {[option.category, option.riskLevel]
+                                      .filter(Boolean)
+                                      .join(" · ")}
+                                  </span>
+                                )}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
                       <div className="flex gap-2">
                         <Button
                           size="sm"
@@ -536,6 +710,20 @@ export function ResidentWorkspace({
                             await resident.saveIdentity({
                               name: identityName.trim(),
                               mission: identityMission.trim(),
+                              resident_agi_participation: {
+                                enabled: agiParticipationEnabled,
+                                scopes: agiParticipationScopes,
+                                participation: buildAgiParticipationFlags(
+                                  agiParticipationScopes,
+                                  agiParticipationOptions.map(
+                                    (option) => option.scope,
+                                  ),
+                                ),
+                                custom_scopes_allowed:
+                                  resident.residentIdentity
+                                    ?.resident_agi_participation
+                                    ?.custom_scopes_allowed ?? true,
+                              },
                             });
                             setEditingIdentity(false);
                           }}
@@ -561,6 +749,35 @@ export function ResidentWorkspace({
                       <div className="mt-1 text-sm text-slate-400">
                         {resident.residentIdentity?.mission ||
                           "尚未设定任务宣言"}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        <Badge
+                          className={cn(
+                            "border text-xs",
+                            resident.residentIdentity
+                              ?.resident_agi_participation?.enabled
+                              ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-300"
+                              : "border-slate-700 bg-slate-950 text-slate-500",
+                          )}
+                        >
+                          {resident.residentIdentity?.resident_agi_participation
+                            ?.enabled
+                            ? "AGI 参与已开启"
+                            : "AGI 参与未开启"}
+                        </Badge>
+                        {(
+                          resident.residentIdentity?.resident_agi_participation
+                            ?.scopes || []
+                        )
+                          .slice(0, 4)
+                          .map((scope) => (
+                            <Badge
+                              key={scope}
+                              className="border-slate-700 bg-slate-950 text-xs text-slate-300"
+                            >
+                              {AGI_PARTICIPATION_LABELS[scope] || scope}
+                            </Badge>
+                          ))}
                       </div>
                     </>
                   )}
@@ -668,13 +885,18 @@ export function ResidentWorkspace({
                     "roles.runtime + ContextOS + TurnEngine"
                   }
                 />
+                <AgiRepairStrategyCatalogPanel
+                  catalog={hardcodedRepairCatalog}
+                />
                 <AgiDecisionCapabilityRegistry
                   schema={agiCapabilitySurface?.decision_capability_schema}
                   registry={agiDecisionCapabilityRegistry}
                   decisions={agiDecisionCapabilities}
                 />
                 <AgiEvidenceInterfaceMatrix capabilities={agiCapabilities} />
-                <AgiEvidenceInterfaceReadiness payload={agiEvidenceInterfaces} />
+                <AgiEvidenceInterfaceReadiness
+                  payload={agiEvidenceInterfaces}
+                />
                 <DecisionBoundaryMatrix
                   schema={agiCapabilitySurface?.decision_boundary_schema}
                   boundaries={agiDecisionBoundaries}
@@ -1313,6 +1535,153 @@ function CapabilityGovernanceMatrix({
   );
 }
 
+function catalogSummaryEntries(
+  values?: Record<string, number>,
+  limit = 5,
+): Array<[string, number]> {
+  return Object.entries(values || {})
+    .sort(
+      (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+    )
+    .slice(0, limit);
+}
+
+function AgiRepairStrategyCatalogPanel({
+  catalog,
+}: {
+  catalog?: ResidentAgiHardcodedRepairStrategyCatalogPayload | null;
+}) {
+  if (!catalog) return null;
+  const summary = catalog.summary || {};
+  const items = catalog.items || [];
+  const total = summary.total ?? items.length;
+  const executionBoundary =
+    catalog.execution_boundary || "director_authorized_tools_only";
+  const chain = catalog.chain || "PM → Chief Engineer → Director";
+  const agiExecutionAuthority = Boolean(catalog.agi_execution_authority);
+
+  return (
+    <div
+      className="mt-3 rounded-lg border border-amber-500/15 bg-slate-950/60 px-3 py-2"
+      data-testid="resident-agi-repair-strategy-catalog"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-medium text-amber-100">
+            Director 确定性修复策略目录
+          </div>
+          <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+            {catalog.schema_version ||
+              "director.deterministic_repair_strategy_catalog.v1"}{" "}
+            · {catalog.source || "director.runtime.repair_kernel"}
+          </div>
+        </div>
+        <Badge className="border-amber-500/20 bg-amber-500/10 text-amber-200">
+          {total} strategies
+        </Badge>
+      </div>
+      <div
+        className="mt-2 flex flex-wrap gap-1"
+        data-testid="resident-agi-repair-strategy-catalog-summary"
+      >
+        <span className="rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-100">
+          {executionBoundary}
+        </span>
+        <span className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-300">
+          {chain}
+        </span>
+        <span className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+          AGI execute: {agiExecutionAuthority ? "allowed" : "blocked"}
+        </span>
+        <span className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+          {catalog.unknown_source_tool_policy || "fail_closed_high_risk"}
+        </span>
+        {catalog.director_tool_execution_required && (
+          <span className="rounded border border-cyan-700/40 bg-cyan-950/20 px-1.5 py-0.5 font-mono text-[10px] text-cyan-200/80">
+            Director tools required
+          </span>
+        )}
+      </div>
+      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+        <div className="rounded border border-slate-800 bg-slate-900/50 px-2 py-1.5">
+          <div className="text-[10px] text-slate-500">Language</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {catalogSummaryEntries(summary.by_language).map(([key, count]) => (
+              <span
+                key={key}
+                className="rounded bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-300"
+              >
+                {key}:{count}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="rounded border border-slate-800 bg-slate-900/50 px-2 py-1.5">
+          <div className="text-[10px] text-slate-500">Phase</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {catalogSummaryEntries(summary.by_phase).map(([key, count]) => (
+              <span
+                key={key}
+                className="rounded bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-300"
+              >
+                {key}:{count}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="rounded border border-slate-800 bg-slate-900/50 px-2 py-1.5">
+          <div className="text-[10px] text-slate-500">Risk</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {catalogSummaryEntries(summary.by_risk).map(([key, count]) => (
+              <span
+                key={key}
+                className={cn(
+                  "rounded border px-1.5 py-0.5 font-mono text-[10px]",
+                  key === "high"
+                    ? "border-rose-500/20 bg-rose-500/10 text-rose-200"
+                    : "border-slate-700 bg-slate-950 text-slate-300",
+                )}
+              >
+                {key}:{count}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+      {items.length > 0 && (
+        <div className="mt-2 grid gap-2 lg:grid-cols-2">
+          {items.slice(0, 5).map((item) => (
+            <div
+              key={item.source_tool}
+              className="rounded border border-slate-800 bg-slate-900/50 px-2.5 py-2"
+              data-testid="resident-agi-repair-strategy-catalog-item"
+            >
+              <div
+                className="truncate font-mono text-[10px] text-slate-200"
+                title={item.source_tool || ""}
+              >
+                {item.source_tool || "unknown_source_tool"}
+              </div>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {[item.language, item.phase, item.concern, item.risk_level]
+                  .filter(Boolean)
+                  .map((token) => (
+                    <span
+                      key={token}
+                      className="rounded border border-slate-700 bg-slate-950/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-400"
+                    >
+                      {token}
+                    </span>
+                  ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgiDecisionCapabilityRegistry({
   schema,
   registry,
@@ -1431,7 +1800,10 @@ function evidenceInterfaceStatusClass(status?: string): string {
   if (normalized === "metadata_only") {
     return "border-cyan-500/20 bg-cyan-500/10 text-cyan-200";
   }
-  if (normalized === "needs_public_facade" || normalized === "governed_execute_only") {
+  if (
+    normalized === "needs_public_facade" ||
+    normalized === "governed_execute_only"
+  ) {
     return "border-amber-500/20 bg-amber-500/10 text-amber-300";
   }
   return "border-rose-500/20 bg-rose-500/10 text-rose-300";
@@ -1463,14 +1835,27 @@ function AgiEvidenceInterfaceReadiness({
           </div>
         </div>
         <Badge className="border-emerald-500/20 bg-emerald-500/10 text-emerald-300">
-          {summary.available ?? 0}/{summary.total ?? interfaces.length} available
+          {summary.available ?? 0}/{summary.total ?? interfaces.length}{" "}
+          available
         </Badge>
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-4">
-        <CapabilityMetric label="Metadata" value={String(summary.metadata_only ?? 0)} />
-        <CapabilityMetric label="Facade gaps" value={String(summary.needs_public_facade ?? 0)} />
-        <CapabilityMetric label="Governed" value={String(summary.governed_execute_only ?? 0)} />
-        <CapabilityMetric label="Unavailable" value={String(summary.unavailable ?? 0)} />
+        <CapabilityMetric
+          label="Metadata"
+          value={String(summary.metadata_only ?? 0)}
+        />
+        <CapabilityMetric
+          label="Facade gaps"
+          value={String(summary.needs_public_facade ?? 0)}
+        />
+        <CapabilityMetric
+          label="Governed"
+          value={String(summary.governed_execute_only ?? 0)}
+        />
+        <CapabilityMetric
+          label="Unavailable"
+          value={String(summary.unavailable ?? 0)}
+        />
       </div>
       <div className="mt-2 grid gap-2 lg:grid-cols-2">
         {interfaces.map((item) => (
@@ -1757,6 +2142,8 @@ function AgiAuditPackPanel({
   const runLedgerSummary = pack.run_ledger_summary;
   const authorityMatrix = pack.authority_matrix;
   const authorityCounts = authorityMatrix?.counts || {};
+  const directorRepairContract = pack.director_repair_contract;
+  const directorRepairAdvisory = directorRepairContract?.agi_advisory || {};
   const capabilityIds = (pack.capability_surface?.items || [])
     .map((capability) => capability.capability_id || "")
     .filter(Boolean);
@@ -1867,6 +2254,73 @@ function AgiAuditPackPanel({
           </div>
         </div>
       </div>
+      {directorRepairContract && (
+        <div
+          className="mt-2 rounded border border-amber-500/15 bg-amber-500/[0.04] px-2.5 py-2"
+          data-testid="resident-agi-director-repair-contract"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-[10px] uppercase text-slate-500">
+                Director repair contract
+              </div>
+              <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+                {directorRepairContract.schema_version ||
+                  "resident.agi_director_repair_contract.v1"}
+              </div>
+            </div>
+            <Badge className="border-amber-500/20 bg-amber-500/10 text-amber-200">
+              {directorRepairContract.owner_cell || "director.runtime"}
+            </Badge>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1">
+            <span className="rounded border border-amber-500/20 bg-slate-950/70 px-1.5 py-0.5 font-mono text-[10px] text-amber-100">
+              {directorRepairContract.execution_boundary ||
+                "director_authorized_tools_only"}
+            </span>
+            <span className="rounded border border-slate-700 bg-slate-950/70 px-1.5 py-0.5 text-[10px] text-slate-300">
+              {directorRepairContract.chain || "PM → Chief Engineer → Director"}
+            </span>
+            <span className="rounded border border-slate-700 bg-slate-950/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+              {directorRepairContract.unknown_source_tool_policy ||
+                "fail_closed_high_risk"}
+            </span>
+            <span className="rounded border border-slate-700 bg-slate-950/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+              AGI execute:{" "}
+              {directorRepairContract.agi_execution_authority
+                ? "allowed"
+                : "blocked"}
+            </span>
+            <span className="rounded border border-slate-700 bg-slate-950/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+              writes:{" "}
+              {directorRepairAdvisory.writes_allowed ? "allowed" : "blocked"}
+            </span>
+            <span className="rounded border border-slate-700 bg-slate-950/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+              advisory: {directorRepairAdvisory.active ? "active" : "inactive"}
+            </span>
+          </div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            <CapabilityMetric
+              label="Strategies"
+              value={String(directorRepairContract.strategy_count ?? 0)}
+            />
+            <CapabilityMetric
+              label="Catalog"
+              value={
+                directorRepairContract.catalog_schema ||
+                "director.deterministic_repair_strategy_catalog.v1"
+              }
+            />
+            <CapabilityMetric
+              label="Profiles"
+              value={
+                directorRepairContract.profile_summary_schema ||
+                "director.deterministic_repair_profile_summary.v1"
+              }
+            />
+          </div>
+        </div>
+      )}
       <div className="mt-2 rounded border border-slate-800 bg-slate-950/70 px-2.5 py-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-[10px] uppercase text-slate-500">

@@ -53,7 +53,7 @@ export interface ProcessStatus {
   started_at: number | null;
   mode?: string;
   log_path?: string;
-  source?: 'handle' | 'status_file' | 'none' | 'v2_service' | string;
+  source?: "handle" | "status_file" | "none" | "v2_service" | string;
   workspace?: string;
   status?: Record<string, unknown> | string | null;
   execution_id?: string | null;
@@ -167,13 +167,16 @@ export interface FactoryRunStatus {
   current_stage?: string | null;
   last_successful_stage?: string | null;
   progress: number;
-  roles: Record<string, {
-    role: string;
-    status: string;
-    detail?: string;
-    current_task?: string;
-    progress: number;
-  }>;
+  roles: Record<
+    string,
+    {
+      role: string;
+      status: string;
+      detail?: string;
+      current_task?: string;
+      progress: number;
+    }
+  >;
   gates: Array<{
     gate_name: string;
     status: string;
@@ -228,14 +231,19 @@ export interface FactoryAuditEvent {
 
 export interface FactoryStartOptions {
   workspace: string;
-  start_from?: 'auto' | 'architect' | 'pm';
+  start_from?: "auto" | "architect" | "pm";
   directive?: string;
   run_director?: boolean;
   director_iterations?: number;
   loop?: boolean;
 }
 
-export type FactoryControlAction = 'pause' | 'resume' | 'cancel' | 'retry_phase' | 'retry_from_checkpoint';
+export type FactoryControlAction =
+  | "pause"
+  | "resume"
+  | "cancel"
+  | "retry_phase"
+  | "retry_from_checkpoint";
 
 export interface FactoryControlOptions {
   action: FactoryControlAction;
@@ -252,27 +260,27 @@ export interface FactoryRunListResponse {
 // ============================================================================
 
 export type CourtScenePhase =
-  | 'court_audience'
-  | 'draft'
-  | 'decompose'
-  | 'blueprint'
-  | 'build'
-  | 'review'
-  | 'finalize';
+  | "court_audience"
+  | "draft"
+  | "decompose"
+  | "blueprint"
+  | "build"
+  | "review"
+  | "finalize";
 
 export type ActorStatus =
-  | 'offline'
-  | 'idle'
-  | 'thinking'
-  | 'executing'
-  | 'dispatching'
-  | 'reviewing'
-  | 'approving'
-  | 'blocked'
-  | 'success'
-  | 'failed';
+  | "offline"
+  | "idle"
+  | "thinking"
+  | "executing"
+  | "dispatching"
+  | "reviewing"
+  | "approving"
+  | "blocked"
+  | "success"
+  | "failed";
 
-export type RiskLevel = 'none' | 'low' | 'medium' | 'high' | 'critical';
+export type RiskLevel = "none" | "low" | "medium" | "high" | "critical";
 
 export interface CourtEvidenceRef {
   path: string;
@@ -349,7 +357,13 @@ export interface CourtMappingResponse {
 // Role Chat Types
 // ============================================================================
 
-export type RoleChatRole = 'pm' | 'architect' | 'chief_engineer' | 'director' | 'qa' | 'resident_agi';
+export type RoleChatRole =
+  | "pm"
+  | "architect"
+  | "chief_engineer"
+  | "director"
+  | "qa"
+  | "resident_agi";
 export type DialogueRole = RoleChatRole;
 
 export interface ChatStatus {
@@ -371,7 +385,7 @@ export interface ChatMessageRequest {
 }
 
 export interface ChatStreamEvent {
-  type: 'thinking_chunk' | 'content_chunk' | 'complete' | 'error';
+  type: "thinking_chunk" | "content_chunk" | "complete" | "error";
   data?: {
     content?: string;
     response?: string;
@@ -428,7 +442,7 @@ export interface ProviderConfig {
     queryParams?: Record<string, string>;
     bodyFields?: Record<string, unknown>;
   };
-  cli_mode?: 'tui' | 'headless';
+  cli_mode?: "tui" | "headless";
   thinking_extraction?: {
     enabled: boolean;
     patterns: string[];
@@ -464,15 +478,9 @@ export interface LLMStatusResponse {
   factory_required_roles?: string[];
   factory_blocked_roles?: string[];
   factory_unsupported_roles?: string[];
-  roles: Record<string, {
-    provider_id?: string;
-    provider_name?: string;
-    provider_type?: string;
-    model?: string;
-    profile?: string;
-    max_context_tokens?: number | null;
-    max_output_tokens?: number | null;
-    bindings?: Array<{
+  roles: Record<
+    string,
+    {
       provider_id?: string;
       provider_name?: string;
       provider_type?: string;
@@ -480,32 +488,44 @@ export interface LLMStatusResponse {
       profile?: string;
       max_context_tokens?: number | null;
       max_output_tokens?: number | null;
-    }>;
-    ready?: boolean;
-    grade?: string;
-    last_run_id?: string | null;
-    timestamp?: string | null;
-    suites?: Record<string, unknown> | null;
-    runtime_supported?: boolean;
-    readiness_issue?: string;
-    readiness_source?: string;
-    tested_provider_id?: string;
-    tested_model?: string;
-    tested_timestamp?: string | null;
-  }>;
-  providers?: Record<string, {
-    ready?: boolean | null;
-    grade?: string;
-    last_run_id?: string | null;
-    timestamp?: string | null;
-    suites?: Record<string, unknown> | null;
-    name?: string | null;
-    type?: string | null;
-    max_context_tokens?: number | null;
-    max_output_tokens?: number | null;
-    model?: string | null;
-    role?: string | null;
-  }>;
+      bindings?: Array<{
+        provider_id?: string;
+        provider_name?: string;
+        provider_type?: string;
+        model?: string;
+        profile?: string;
+        max_context_tokens?: number | null;
+        max_output_tokens?: number | null;
+      }>;
+      ready?: boolean;
+      grade?: string;
+      last_run_id?: string | null;
+      timestamp?: string | null;
+      suites?: Record<string, unknown> | null;
+      runtime_supported?: boolean;
+      readiness_issue?: string;
+      readiness_source?: string;
+      tested_provider_id?: string;
+      tested_model?: string;
+      tested_timestamp?: string | null;
+    }
+  >;
+  providers?: Record<
+    string,
+    {
+      ready?: boolean | null;
+      grade?: string;
+      last_run_id?: string | null;
+      timestamp?: string | null;
+      suites?: Record<string, unknown> | null;
+      name?: string | null;
+      type?: string | null;
+      max_context_tokens?: number | null;
+      max_output_tokens?: number | null;
+      model?: string | null;
+      role?: string | null;
+    }
+  >;
   last_updated: string;
 }
 
@@ -524,7 +544,7 @@ export interface FileReadOptions {
   tailLines?: number;
 }
 
-export type WorkspaceFileNodeType = 'directory' | 'file';
+export type WorkspaceFileNodeType = "directory" | "file";
 
 export interface WorkspaceFileNode {
   id: string;
@@ -567,7 +587,7 @@ export interface WorkspaceFileTreeResponse {
 
 export interface WorkspaceFileTreeOptions {
   root?: string;
-  scope?: 'workspace' | 'runtime' | 'config';
+  scope?: "workspace" | "runtime" | "config";
   maxDepth?: number;
   maxEntries?: number;
   includeHidden?: boolean;
@@ -631,10 +651,10 @@ export interface BackendSettings {
   pm_max_failures?: number;
   pm_max_blocked?: number;
   pm_max_same?: number;
-  pm_blocked_strategy?: 'skip' | 'manual' | 'degrade_retry' | 'auto';
+  pm_blocked_strategy?: "skip" | "manual" | "degrade_retry" | "auto";
   pm_blocked_degrade_max_retries?: number;
   director_iterations?: number;
-  director_execution_mode?: 'serial' | 'parallel' | string;
+  director_execution_mode?: "serial" | "parallel" | string;
   director_max_parallel_tasks?: number;
   director_ready_timeout_seconds?: number;
   director_claim_timeout_seconds?: number;
@@ -707,8 +727,44 @@ export interface ResidentIdentityPayload {
   values?: string[];
   memory_lineage?: string[];
   capability_profile?: Record<string, number>;
+  resident_agi_participation?: ResidentAgiParticipationPayload;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface ResidentAgiParticipationPayload {
+  enabled?: boolean;
+  role_turn_enabled?: boolean;
+  manual_role_turn_requested?: boolean;
+  automatic_participation_enabled?: boolean;
+  configured_enabled?: boolean;
+  configured_scopes?: string[];
+  scopes?: string[];
+  required_role_turn_scopes?: string[];
+  configured_participation?: Record<string, boolean>;
+  automatic_participation?: Record<string, boolean>;
+  participation?: Record<string, boolean>;
+  custom_scopes_allowed?: boolean;
+  updated_at?: string;
+}
+
+export interface ResidentAgiParticipationPolicyPayload {
+  schema_version?: string;
+  role_id?: string;
+  source?: string;
+  enabled_default?: boolean;
+  custom_scopes_allowed?: boolean;
+  scope_semantics?: string;
+  participation_flags?: string[];
+  available_scopes?: Array<
+    Record<string, unknown> & {
+      scope_id?: string;
+      name?: string;
+      category?: string;
+      risk_level?: string;
+      default_enabled?: boolean;
+    }
+  >;
 }
 
 export interface ResidentAgendaPayload {
@@ -742,6 +798,7 @@ export interface ResidentStatusPayload {
   agenda?: ResidentAgendaPayload;
   counts?: Record<string, number>;
   agi_capability_surface?: ResidentAgiCapabilitySurfacePayload;
+  agi_participation_policy?: ResidentAgiParticipationPolicyPayload;
 }
 
 export interface ResidentDecisionOptionPayload {
@@ -791,6 +848,36 @@ export interface ResidentAgiCapabilityPayload {
   evidence_refs?: string[];
 }
 
+export interface ResidentAgiHardcodedRepairStrategyPayload {
+  source_tool?: string;
+  language?: string;
+  phase?: string;
+  concern?: string;
+  risk_level?: string;
+  registered?: boolean;
+}
+
+export interface ResidentAgiHardcodedRepairStrategyCatalogPayload {
+  schema_version?: string;
+  source?: string;
+  access?: string;
+  owner_cell?: string;
+  execution_boundary?: string;
+  chain?: string;
+  unknown_source_tool_policy?: string;
+  agi_execution_authority?: boolean;
+  director_tool_execution_required?: boolean;
+  items?: ResidentAgiHardcodedRepairStrategyPayload[];
+  summary?: {
+    total?: number;
+    returned?: number;
+    by_language?: Record<string, number>;
+    by_phase?: Record<string, number>;
+    by_concern?: Record<string, number>;
+    by_risk?: Record<string, number>;
+  };
+}
+
 export interface ResidentAgiDecisionBoundaryPayload {
   boundary_id?: string;
   name?: string;
@@ -805,6 +892,7 @@ export interface ResidentAgiDecisionBoundaryPayload {
 export interface ResidentAgiCapabilitySurfacePayload {
   schema_version?: string;
   decision_boundary_schema?: string;
+  authority_matrix_schema?: string;
   role_id?: string;
   runtime_foundation?: string;
   implementation_cell?: string;
@@ -813,7 +901,33 @@ export interface ResidentAgiCapabilitySurfacePayload {
   categories?: string[];
   items?: ResidentAgiCapabilityPayload[];
   decision_boundaries?: ResidentAgiDecisionBoundaryPayload[];
+  decision_capability_schema?: string;
+  decision_capabilities?: Array<Record<string, unknown>>;
+  decision_capability_registry?: Record<string, unknown>;
+  participation_policy?: ResidentAgiParticipationPolicyPayload;
+  hardcoded_repair_strategy_catalog?: ResidentAgiHardcodedRepairStrategyCatalogPayload;
+  authority_matrix?: Record<string, unknown>;
   count?: number;
+}
+
+export interface ResidentAgiDirectorRepairContractPayload {
+  schema_version?: string;
+  owner_cell?: string;
+  source?: string;
+  catalog_schema?: string;
+  profile_summary_schema?: string;
+  unknown_source_tool_policy?: string;
+  execution_boundary?: string;
+  chain?: string;
+  agi_advisory?: {
+    active?: boolean;
+    authoritative?: boolean;
+    writes_allowed?: boolean;
+  };
+  agi_execution_authority?: boolean;
+  director_tool_execution_required?: boolean;
+  strategy_count?: number;
+  summary?: Record<string, unknown>;
 }
 
 export interface ResidentGoalPayload {
@@ -1023,7 +1137,7 @@ export interface DirectorQueuedTask {
 export interface DirectorTaskPayload {
   subject: string;
   description: string;
-  priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  priority: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   timeout_seconds: number;
   metadata: {
     pm_task_id: string;
@@ -1246,11 +1360,14 @@ export interface RoleCacheStatsResponse {
   size?: number;
   entries?: number;
   last_cleared?: string | null;
-  by_role?: Record<string, {
-    hits?: number;
-    misses?: number;
-    entries?: number;
-  }>;
+  by_role?: Record<
+    string,
+    {
+      hits?: number;
+      misses?: number;
+      entries?: number;
+    }
+  >;
 }
 
 export interface RoleCacheClearResponse {
@@ -1269,7 +1386,14 @@ export interface RoleChatRolesResponse {
 // V2 P0 Missing Routes Types
 // ============================================================================
 
-export type UnifiedRole = 'pm' | 'architect' | 'chief_engineer' | 'director' | 'qa' | 'scout' | 'resident_agi';
+export type UnifiedRole =
+  | "pm"
+  | "architect"
+  | "chief_engineer"
+  | "director"
+  | "qa"
+  | "scout"
+  | "resident_agi";
 
 export interface RoleChatRequest {
   message: string;
@@ -1459,7 +1583,12 @@ export interface OllamaModelsV2Request {
 }
 
 export interface OllamaModelsV2Response {
-  models: Array<{ name: string; size?: number; parameter_size?: string; digest?: string }>;
+  models: Array<{
+    name: string;
+    size?: number;
+    parameter_size?: string;
+    digest?: string;
+  }>;
 }
 
 export interface OllamaStopV2Response {
@@ -1810,7 +1939,7 @@ export interface PermissionPolicyItem {
   name: string;
   actions: string[];
   resources: string[];
-  effect: 'allow' | 'deny';
+  effect: "allow" | "deny";
 }
 
 export interface PermissionPoliciesResponse {
@@ -1842,13 +1971,16 @@ export interface RuntimeResetTasksResponse {
 export interface LLMRuntimeStatusResponse {
   ok: boolean;
   overall: string;
-  roles: Record<string, {
-    status: string;
-    provider?: string;
-    model?: string;
-    ready?: boolean;
-    last_error?: string;
-  }>;
+  roles: Record<
+    string,
+    {
+      status: string;
+      provider?: string;
+      model?: string;
+      ready?: boolean;
+      last_error?: string;
+    }
+  >;
 }
 
 export interface RoleRuntimeStatusResponse {

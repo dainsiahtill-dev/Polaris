@@ -24,6 +24,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.director.runtime.internal.repair_kernel.legacy_bridge import (
+    build_legacy_repair_kernel_summary,
+)
+
 from . import execute_method as _em
 from .execution_tools import DirectorToolExecutor
 from .helpers import has_successful_write_tool
@@ -1258,6 +1262,48 @@ async def _run_materialization_quality_repair_retry(
     missing_target_set = set(missing_target_files)
     missing_repair_target_files = [path for path in repair_target_files if path in missing_target_set]
     existing_repair_target_files = [path for path in repair_target_files if path not in missing_target_set]
+    deterministic_semantic_tool_results: list[dict[str, Any]] = []
+    for repair_fn_name in (
+        "_apply_deterministic_typescript_missing_export_repair",
+        "_apply_deterministic_typescript_canvas_scale_return_type_repair",
+    ):
+        repair_fn = getattr(_em, repair_fn_name, None)
+        if not callable(repair_fn):
+            continue
+        deterministic_semantic_tool_results.extend(
+            repair_fn(
+                adapter,
+                task_id=target_task_id,
+                artifact_quality_errors=repair_quality_errors,
+            )
+        )
+    if deterministic_semantic_tool_results and has_successful_write_tool(deterministic_semantic_tool_results):
+        source_tools: list[str] = []
+        for item in deterministic_semantic_tool_results:
+            result = item.get("result")
+            if isinstance(result, dict):
+                source_tools.append(str(result.get("source_tool") or ""))
+        return deterministic_semantic_tool_results, {
+            "stage": "deterministic_semantic_quality_repair",
+            "attempted": True,
+            "attempt": repair_attempt,
+            "success": False,
+            "success_reason": "repair_actions_require_quality_gate_rerun",
+            "tool_results": len(deterministic_semantic_tool_results),
+            "write_tool_evidence": True,
+            "missing_target_files": missing_target_files[:12],
+            "runtime_smoke_target_files": runtime_smoke_target_files[:12],
+            "semantic_quality_target_files": semantic_quality_target_files[:12],
+            "explicit_quality_target_files": explicit_quality_target_files[:12],
+            "repair_target_files": repair_target_files[:12],
+            "rotated_repair_targets": rotate_repair_targets,
+            "source_tools": source_tools,
+            "repair_kernel": build_legacy_repair_kernel_summary(
+                stage="deterministic_semantic_quality_repair",
+                tool_results=deterministic_semantic_tool_results,
+                artifact_quality_errors=repair_quality_errors,
+            ),
+        }
     prompt_artifact_quality_errors = _filter_materialization_quality_errors_for_repair_targets(
         artifact_quality_errors,
         repair_target_files,

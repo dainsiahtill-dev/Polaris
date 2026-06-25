@@ -7,13 +7,19 @@
  * - 订阅角色通道
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRuntimeStore } from './useRuntimeStore';
-import { useRuntimeTransport } from '@/runtime/transport';
-import { useSettings } from '@/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRuntimeStore } from "./useRuntimeStore";
+import { useRuntimeTransport } from "@/runtime/transport";
+import { useSettings } from "@/hooks";
+import type { RuntimeRole } from "@/runtime/transport/runtimeSocketManager";
 
-type RuntimeRole = 'pm' | 'chief_engineer' | 'director' | 'qa';
-const DEFAULT_RUNTIME_ROLES: RuntimeRole[] = ['pm', 'chief_engineer', 'director', 'qa'];
+const DEFAULT_RUNTIME_ROLES: RuntimeRole[] = [
+  "pm",
+  "chief_engineer",
+  "director",
+  "qa",
+  "resident_agi",
+];
 
 interface UseRuntimeConnectionOptions {
   roles?: RuntimeRole[];
@@ -23,20 +29,20 @@ interface UseRuntimeConnectionOptions {
 }
 
 const BASE_RUNTIME_STREAM_CHANNELS = [
-  'system',
-  'process',
-  'llm',
-  'dialogue',
-  'runtime_events',
-  'status.workflow',
-  'status.process',
-  'status.control_plane',
-  'status.resident',
-  'status.snapshot',
-  'event.factory',
-  'event.file_edit',
+  "system",
+  "process",
+  "llm",
+  "dialogue",
+  "runtime_events",
+  "status.workflow",
+  "status.process",
+  "status.control_plane",
+  "status.resident",
+  "status.snapshot",
+  "event.factory",
+  "event.file_edit",
 ] as const;
-const INTERNAL_BENCH_CHANNEL = 'event.bench';
+const INTERNAL_BENCH_CHANNEL = "event.bench";
 const RUNTIME_LIVE_TAIL_LINES = 0;
 
 function runtimeStreamChannels(includeInternalBench = false): string[] {
@@ -47,16 +53,11 @@ function runtimeStreamChannels(includeInternalBench = false): string[] {
   return channels;
 }
 
-function normalizeRoles(
-  input: RuntimeRole[]
-): RuntimeRole[] {
+function normalizeRoles(input: RuntimeRole[]): RuntimeRole[] {
   return Array.from(new Set(input)).sort() as RuntimeRole[];
 }
 
-function areRolesEqual(
-  left: RuntimeRole[],
-  right: RuntimeRole[]
-): boolean {
+function areRolesEqual(left: RuntimeRole[], right: RuntimeRole[]): boolean {
   if (left.length !== right.length) {
     return false;
   }
@@ -68,7 +69,9 @@ function areRolesEqual(
  *
  * 代理到 useRuntimeTransport，同时同步状态到 store
  */
-export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) {
+export function useRuntimeConnection(
+  options: UseRuntimeConnectionOptions = {},
+) {
   const {
     roles = DEFAULT_RUNTIME_ROLES,
     autoConnect = true,
@@ -77,19 +80,20 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
   } = options;
 
   const isWorkspaceControlled = workspaceProp !== undefined;
-  const { settings, load: loadRuntimeSettings } = useSettings({ autoLoad: !isWorkspaceControlled });
-  const workspace = workspaceProp ?? settings?.workspace ?? '';
+  const { settings, load: loadRuntimeSettings } = useSettings({
+    autoLoad: !isWorkspaceControlled,
+  });
+  const workspace = workspaceProp ?? settings?.workspace ?? "";
   const normalizedRoles = useMemo(() => normalizeRoles(roles), [roles]);
   const normalizedRolesSignature = useMemo(
-    () => normalizedRoles.join('|'),
-    [normalizedRoles]
+    () => normalizedRoles.join("|"),
+    [normalizedRoles],
   );
-  const [subscriptionRoles, setSubscriptionRoles] = useState<RuntimeRole[]>(
-    normalizedRoles
-  );
+  const [subscriptionRoles, setSubscriptionRoles] =
+    useState<RuntimeRole[]>(normalizedRoles);
   const subscriptionRolesSignature = useMemo(
-    () => subscriptionRoles.join('|'),
-    [subscriptionRoles]
+    () => subscriptionRoles.join("|"),
+    [subscriptionRoles],
   );
 
   // Store state is a compatibility cache for legacy selectors. The transport
@@ -124,15 +128,24 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
       reconnecting: transportReconnecting,
       attemptCount: transportAttemptCount,
     });
-  }, [transportConnected, transportError, transportReconnecting, transportAttemptCount, setConnectionState]);
+  }, [
+    transportConnected,
+    transportError,
+    transportReconnecting,
+    transportAttemptCount,
+    setConnectionState,
+  ]);
 
   // Subscribe to concrete runtime channels. Roles are sent as metadata on
   // SUBSCRIBE; using a roles:* pseudo-channel would not match v2 log subjects.
   useEffect(() => {
     const channels = runtimeStreamChannels(includeInternalBench);
     const unsubscribe = subscribeChannels(
-      channels.map(channel => ({ channel, tailLines: RUNTIME_LIVE_TAIL_LINES })),
-      rolesRef.current
+      channels.map((channel) => ({
+        channel,
+        tailLines: RUNTIME_LIVE_TAIL_LINES,
+      })),
+      rolesRef.current,
     );
     return () => {
       unsubscribe();
@@ -147,7 +160,7 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
         transportReconnect();
       }
     },
-    [transportReconnect]
+    [transportReconnect],
   );
 
   // Disconnect action
@@ -172,15 +185,15 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
         return normalizedNextRoles;
       });
       sendCommand({
-        type: 'SUBSCRIBE',
-        protocol: 'runtime.v2',
+        type: "SUBSCRIBE",
+        protocol: "runtime.v2",
         roles: normalizedNextRoles,
         tail: RUNTIME_LIVE_TAIL_LINES,
         channels: runtimeStreamChannels(includeInternalBench),
         cursor: getLastCursor(),
       });
     },
-    [includeInternalBench, sendCommand, getLastCursor]
+    [includeInternalBench, sendCommand, getLastCursor],
   );
 
   // Keep effective subscription roles in sync with prop changes.
@@ -269,6 +282,6 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
       transportReconnect,
       registerMessageHandler,
       sendCommand,
-    ]
+    ],
   );
 }

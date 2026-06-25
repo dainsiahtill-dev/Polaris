@@ -15,8 +15,8 @@
  * - Provider pattern: React context exposes state to components
  */
 
-import { connectWebSocket } from '@/api';
-import { devLogger } from '@/app/utils/devLogger';
+import { connectWebSocket } from "@/api";
+import { devLogger } from "@/app/utils/devLogger";
 
 // ============================================================================
 // Configuration
@@ -32,7 +32,7 @@ const CONFIG = {
   batchAckThreshold: 20,
   // Heartbeat settings
   pingIntervalMs: 30000, // send PING every 30s
-  pongTimeoutMs: 10000,  // if no PONG within 10s, reconnect
+  pongTimeoutMs: 10000, // if no PONG within 10s, reconnect
 } as const;
 
 // ============================================================================
@@ -61,13 +61,29 @@ export type ConnectionStateListener = (state: ConnectionState) => void;
 
 // v2 protocol types
 interface V2EventMessage {
-  type: 'EVENT';
-  protocol: 'runtime.v2';
+  type: "EVENT";
+  protocol: "runtime.v2";
   cursor: number;
   event: Record<string, unknown>;
 }
 
-type RuntimeRole = 'pm' | 'chief_engineer' | 'director' | 'qa';
+const RUNTIME_OBSERVABLE_ROLES = [
+  "pm",
+  "architect",
+  "chief_engineer",
+  "director",
+  "qa",
+  "scout",
+  "resident_agi",
+] as const;
+
+type RuntimeRole = (typeof RUNTIME_OBSERVABLE_ROLES)[number];
+
+const RUNTIME_OBSERVABLE_ROLE_SET = new Set<string>(RUNTIME_OBSERVABLE_ROLES);
+
+function isRuntimeRole(value: string): value is RuntimeRole {
+  return RUNTIME_OBSERVABLE_ROLE_SET.has(value);
+}
 
 // ============================================================================
 // RuntimeSocketManager Singleton
@@ -196,7 +212,7 @@ class RuntimeSocketManager {
   private sendPing(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-    this.ws.send(JSON.stringify({ type: 'PING', protocol: 'runtime.v2' }));
+    this.ws.send(JSON.stringify({ type: "PING", protocol: "runtime.v2" }));
 
     // If no PONG within timeout, consider connection dead
     this.pongTimer = setTimeout(() => {
@@ -225,14 +241,18 @@ class RuntimeSocketManager {
   /**
    * Subscribe to channels (ref-counted)
    */
-  subscribeChannels(subscriptions: ChannelSubscription[], roles?: RuntimeRole[]): void {
+  subscribeChannels(
+    subscriptions: ChannelSubscription[],
+    roles?: RuntimeRole[],
+  ): void {
     let needsResubscribe = false;
     let rolesChanged = false;
 
     if (roles !== undefined) {
       const normalizedRoles = Array.from(new Set(roles));
       rolesChanged =
-        !this.hasExplicitRoleFilter || !this.areRolesEqual(this.subscribedRoles, normalizedRoles);
+        !this.hasExplicitRoleFilter ||
+        !this.areRolesEqual(this.subscribedRoles, normalizedRoles);
       this.subscribedRoles = normalizedRoles;
       this.hasExplicitRoleFilter = true;
     }
@@ -278,14 +298,23 @@ class RuntimeSocketManager {
    */
   send(data: unknown): boolean {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      if (typeof data !== 'string' && data && typeof data === 'object' && !Array.isArray(data)) {
+      if (
+        typeof data !== "string" &&
+        data &&
+        typeof data === "object" &&
+        !Array.isArray(data)
+      ) {
         const payload = data as Record<string, unknown>;
-        const msgType = String(payload.type || '').trim().toUpperCase();
-        const protocol = String(payload.protocol || '').trim().toLowerCase();
-        if (msgType === 'SUBSCRIBE' && protocol === 'runtime.v2') {
+        const msgType = String(payload.type || "")
+          .trim()
+          .toUpperCase();
+        const protocol = String(payload.protocol || "")
+          .trim()
+          .toLowerCase();
+        if (msgType === "SUBSCRIBE" && protocol === "runtime.v2") {
           const channels = Array.isArray(payload.channels)
             ? payload.channels
-                .map((value) => String(value || '').trim())
+                .map((value) => String(value || "").trim())
                 .filter((value): value is string => value.length > 0)
             : [];
           if (channels.length > 0) {
@@ -293,18 +322,15 @@ class RuntimeSocketManager {
           }
           if (Array.isArray(payload.roles)) {
             const roles = payload.roles
-              .map((value) => String(value || '').trim())
+              .map((value) => String(value || "").trim())
               .filter((value): value is string => value.length > 0)
-              .filter(
-                (value): value is RuntimeRole =>
-                  value === 'pm' || value === 'chief_engineer' || value === 'director' || value === 'qa'
-              );
+              .filter((value): value is RuntimeRole => isRuntimeRole(value));
             this.subscribedRoles = Array.from(new Set(roles));
             this.hasExplicitRoleFilter = true;
           }
         }
       }
-      this.ws.send(typeof data === 'string' ? data : JSON.stringify(data));
+      this.ws.send(typeof data === "string" ? data : JSON.stringify(data));
       return true;
     }
     return false;
@@ -372,10 +398,10 @@ class RuntimeSocketManager {
       this.lastCursor = maxCursor;
       this.ws.send(
         JSON.stringify({
-          type: 'ACK',
-          protocol: 'runtime.v2',
+          type: "ACK",
+          protocol: "runtime.v2",
           cursor: this.lastCursor,
-        })
+        }),
       );
     }
   }
@@ -411,7 +437,10 @@ class RuntimeSocketManager {
     if (this.connectInFlight) {
       return;
     }
-    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
+    if (
+      this.ws?.readyState === WebSocket.OPEN ||
+      this.ws?.readyState === WebSocket.CONNECTING
+    ) {
       return;
     }
 
@@ -425,7 +454,11 @@ class RuntimeSocketManager {
           socket.close();
           return;
         }
-        if (this.ws && this.ws !== socket && this.ws.readyState !== WebSocket.CLOSED) {
+        if (
+          this.ws &&
+          this.ws !== socket &&
+          this.ws.readyState !== WebSocket.CLOSED
+        ) {
           socket.close();
           return;
         }
@@ -437,10 +470,10 @@ class RuntimeSocketManager {
         this.connectInFlight = false;
         this.updateState({
           reconnecting: false,
-          error: error instanceof Error ? error.message : 'Failed to connect',
+          error: error instanceof Error ? error.message : "Failed to connect",
         });
         this.scheduleReconnect();
-      }
+      },
     );
   }
 
@@ -492,29 +525,29 @@ class RuntimeSocketManager {
     try {
       message = JSON.parse(data);
     } catch {
-      message = { type: 'raw', data };
+      message = { type: "raw", data };
     }
 
     // Handle v2 protocol EVENT message
     const msg = message as Record<string, unknown>;
-    if (msg.type === 'EVENT' && msg.protocol === 'runtime.v2' && msg.event) {
+    if (msg.type === "EVENT" && msg.protocol === "runtime.v2" && msg.event) {
       this.processV2Event({
-        type: 'EVENT',
-        protocol: 'runtime.v2',
-        cursor: typeof msg.cursor === 'number' ? msg.cursor : 0,
+        type: "EVENT",
+        protocol: "runtime.v2",
+        cursor: typeof msg.cursor === "number" ? msg.cursor : 0,
         event: msg.event as Record<string, unknown>,
       });
       return;
     }
 
     // Handle RESYNC_REQUIRED - reset cursor
-    if (msg.type === 'RESYNC_REQUIRED' && msg.protocol === 'runtime.v2') {
-      this.lastCursor = typeof msg.cursor === 'number' ? msg.cursor : 0;
+    if (msg.type === "RESYNC_REQUIRED" && msg.protocol === "runtime.v2") {
+      this.lastCursor = typeof msg.cursor === "number" ? msg.cursor : 0;
       return;
     }
 
     // Handle PONG - heartbeat response
-    if (msg.type === 'PONG') {
+    if (msg.type === "PONG") {
       this.handlePong();
       return;
     }
@@ -526,7 +559,7 @@ class RuntimeSocketManager {
     const msg = message as Record<string, unknown>;
 
     // Get channel from message
-    const channel = typeof msg.channel === 'string' ? msg.channel : undefined;
+    const channel = typeof msg.channel === "string" ? msg.channel : undefined;
 
     // Route to all listeners
     for (const listener of this.messageListeners.values()) {
@@ -537,7 +570,10 @@ class RuntimeSocketManager {
         }
         listener.handler(message);
       } catch (error) {
-        devLogger.error(`[RuntimeSocketManager] Listener ${listener.id} error:`, error);
+        devLogger.error(
+          `[RuntimeSocketManager] Listener ${listener.id} error:`,
+          error,
+        );
       }
     }
   }
@@ -549,15 +585,18 @@ class RuntimeSocketManager {
     if (channelList.length === 0) return;
 
     // Calculate max tail lines across all subscriptions
-    const maxTailLines = Math.max(...Array.from(this.channelTailLines.values()), 0);
+    const maxTailLines = Math.max(
+      ...Array.from(this.channelTailLines.values()),
+      0,
+    );
 
     // Store subscribed channels for reconnection
     this.subscribedChannels = channelList;
 
     // Send v2 protocol subscription
     const payload: Record<string, unknown> = {
-      type: 'SUBSCRIBE',
-      protocol: 'runtime.v2',
+      type: "SUBSCRIBE",
+      protocol: "runtime.v2",
       channels: channelList,
       tail: maxTailLines,
       cursor: this.lastCursor,
@@ -585,7 +624,7 @@ class RuntimeSocketManager {
     if (this.state.attemptCount >= CONFIG.maxRetries) {
       this.updateState({
         reconnecting: false,
-        error: 'Max reconnection attempts reached',
+        error: "Max reconnection attempts reached",
       });
       return;
     }
@@ -600,7 +639,8 @@ class RuntimeSocketManager {
     this.updateState({ attemptCount: attempt, reconnecting: true });
 
     const jitter = Math.random() * CONFIG.jitterMax;
-    const delay = Math.min(CONFIG.baseDelay * 2 ** (attempt - 1), CONFIG.maxDelay) + jitter;
+    const delay =
+      Math.min(CONFIG.baseDelay * 2 ** (attempt - 1), CONFIG.maxDelay) + jitter;
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -622,7 +662,7 @@ class RuntimeSocketManager {
       try {
         listener(stateCopy);
       } catch (error) {
-        devLogger.error('[RuntimeSocketManager] State listener error:', error);
+        devLogger.error("[RuntimeSocketManager] State listener error:", error);
       }
     }
   }
@@ -635,4 +675,5 @@ class RuntimeSocketManager {
 export const runtimeSocketManager = RuntimeSocketManager.getInstance();
 
 // Types re-export for convenience
+export { RUNTIME_OBSERVABLE_ROLES };
 export type { RuntimeRole, RuntimeSocketManager };

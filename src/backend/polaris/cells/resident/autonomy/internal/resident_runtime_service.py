@@ -13,6 +13,7 @@ from polaris.cells.audit.evidence.public.service import create_evidence_bundle_s
 from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
 from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
     resident_agi_capability_surface_payload,
+    resident_agi_participation_policy_payload,
 )
 from polaris.cells.resident.autonomy.internal.autonomy_boundary import (
     resident_tick_autonomy_boundary,
@@ -41,6 +42,7 @@ from polaris.domain.models.resident import (
     GoalProposal,
     ImprovementStatus,
     ResidentAgenda,
+    ResidentAgiParticipation,
     ResidentIdentity,
     ResidentMode,
     ResidentRuntimeState,
@@ -210,6 +212,10 @@ class ResidentService:
                     except (RuntimeError, ValueError):
                         capability_profile[name] = 0.0
                 self.identity.capability_profile = capability_profile
+            if isinstance(payload.get("resident_agi_participation"), Mapping):
+                self.identity.resident_agi_participation = ResidentAgiParticipation.from_dict(
+                    payload.get("resident_agi_participation", {})
+                )
             self.identity.operating_mode = _coerce_mode(
                 payload.get("operating_mode"),
                 self.identity.operating_mode,
@@ -476,6 +482,7 @@ class ResidentService:
             "runtime": self.runtime_state.to_dict(),
             "agenda": self.agenda.to_dict(),
             "agi_capability_surface": resident_agi_capability_surface_payload(),
+            "agi_participation_policy": resident_agi_participation_policy_payload(),
             "counts": {
                 "decisions": len(self.storage.load_decisions(limit=1000)),
                 "goals": len(goals),

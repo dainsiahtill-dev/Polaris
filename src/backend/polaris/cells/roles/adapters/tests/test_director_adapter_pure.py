@@ -33,6 +33,8 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _build_existing_workspace_task_evidence,
     _build_substantive_node_test_script,
     _can_accept_existing_workspace_scope,
+    _deterministic_repair_profile_summary_from_tool_results,
+    _deterministic_repair_source_tools_from_tool_results,
     _director_direct_text_patch_only_enabled,
     _director_existing_scope_preflight_enabled,
     _emit_director_adapter_cognitive_receipt,
@@ -702,6 +704,85 @@ def test_deterministic_npm_script_repair_uses_node_test_for_javascript_contract(
     assert results
     repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
     assert repaired["scripts"]["test"] == "node --test tests/test_basic.js tests/smoke.test.js"
+
+
+def test_deterministic_npm_script_repair_normalizes_typescript_node_runtime_mismatch(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
+        _apply_deterministic_npm_test_script_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("console.log('plane wind angle flight');\n", encoding="utf-8")
+    (tmp_path / "src" / "verify.ts").write_text(
+        "import * as fs from 'node:fs';\n"
+        "function main(): number { return fs.existsSync('index.html') ? 0 : 1; }\n"
+        "if (require.main === module) { process.exit(main()); }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "web.ts").write_text(
+        "document.body.textContent = 'plane wind angle flight';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "index.html").write_text(
+        "<!doctype html><html><body><canvas></canvas></body></html>\n", encoding="utf-8"
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps(
+            {
+                "compilerOptions": {
+                    "target": "ES2020",
+                    "module": "CommonJS",
+                    "outDir": "dist",
+                    "rootDir": "src",
+                },
+                "include": ["src/**/*.ts"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "paper-plane-flight-lab",
+                "version": "1.0.0",
+                "type": "module",
+                "scripts": {
+                    "build": "tsc -p tsconfig.json",
+                    "start": "npm run build && node dist/web.js",
+                    "test": "node --import tsx/esm src/verify.ts",
+                    "verify": "node --import tsx/esm src/verify.ts",
+                },
+                "devDependencies": {"typescript": "^5.4.0", "tsx": "^4.7.0"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_npm_test_script_repair(
+        _make_adapter(tmp_path),
+        task_id="task-ts-runtime",
+        artifact_quality_errors=[
+            "Artifact quality scan failed: workspace validation command failed (npm test): "
+            "ReferenceError: require is not defined in ES module scope",
+            "Artifact quality scan failed: workspace validation command failed (npm run start): "
+            "ReferenceError: document is not defined",
+        ],
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert repaired["type"] == "commonjs"
+    assert repaired["scripts"]["verify"] == "npm run build && node dist/verify.js"
+    assert repaired["scripts"]["test"] == "npm run verify"
+    assert repaired["scripts"]["start"] == "npm run build && node dist/main.js"
+    repaired_errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    assert not any("references missing local entrypoint" in error for error in repaired_errors)
 
 
 def test_deterministic_runtime_dependency_repair_adds_typescript_dev_dependency(tmp_path: Any) -> None:
@@ -1733,6 +1814,39 @@ def test_deterministic_typescript_number_to_string_argument_repair_wraps_argumen
     assert results
     repaired = (tmp_path / "src" / "garden.ts").read_text(encoding="utf-8")
     assert "new Firefly(String(i), width, height)" in repaired
+
+
+def test_deterministic_typescript_canvas_scale_return_type_repair_fixes_sx_sy_functions(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_canvas_scale_return_type_repair,
+    )
+
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "engine" / "simulation.ts").write_text(
+        "export function scaleToCanvas(state: unknown, width: number, height: number): "
+        "{ sx: number; sy: number; scale: number } {\n"
+        "  const scale = Math.min(width, height);\n"
+        "  return { sx: (x: number) => x * scale, sy: (y: number) => y * scale, scale };\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/engine/renderer.ts(178,37): error TS2345: Argument of type 'number' is not assignable "
+        "to parameter of type '(n: number) => number'."
+    ]
+
+    results = _apply_deterministic_typescript_canvas_scale_return_type_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "engine" / "simulation.ts").read_text(encoding="utf-8")
+    assert "{ sx: (n: number) => number; sy: (n: number) => number; scale: number }" in repaired
 
 
 def test_deterministic_typescript_too_few_arguments_repair_adds_trailing_defaults(
@@ -3245,6 +3359,100 @@ class TestBuildDirectorMessage:
         assert "src/main/providers.ts" in msg
 
 
+class TestDeterministicRepairEvidence:
+    """Hard-coded repair evidence must be complete and machine-readable."""
+
+    def test_extracts_deterministic_source_tools_from_all_tool_result_shapes(self) -> None:
+        tool_results = [
+            {"source_tool": "deterministic_patch_residue_cleanup"},
+            {"result": {"source_tool": "deterministic_rust_post_repair"}},
+            {"payload": {"source_tool": "deterministic_future_repair"}},
+            {"result": {"source_tool": "not_deterministic"}},
+            {"result": {"source_tool": "deterministic_rust_post_repair"}},
+        ]
+
+        assert _deterministic_repair_source_tools_from_tool_results(tool_results) == [
+            "deterministic_patch_residue_cleanup",
+            "deterministic_rust_post_repair",
+            "deterministic_future_repair",
+        ]
+        summary = _deterministic_repair_profile_summary_from_tool_results(tool_results)
+        assert summary["schema_version"] == "director.deterministic_repair_profile_summary.v1"
+        assert summary["source_tools"] == [
+            "deterministic_patch_residue_cleanup",
+            "deterministic_rust_post_repair",
+            "deterministic_future_repair",
+        ]
+        assert summary["registered"] is False
+        assert summary["count"] == 3
+        assert summary["source_tool_profiles"][-1]["concern"] == "unregistered"
+
+    def test_finalize_materialization_records_deterministic_profiles_from_all_tool_results(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target = tmp_path / "src" / "app.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("export const ok = true;\n", encoding="utf-8")
+        captured_receipt_payload: dict[str, Any] = {}
+
+        def fake_emit_receipt(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args
+            payload = kwargs.get("payload")
+            captured_receipt_payload.update(payload if isinstance(payload, dict) else {})
+            return {"ok": True, "receipt_id": "receipt-1"}
+
+        monkeypatch.setattr(execute_method_module, "_emit_director_adapter_cognitive_receipt", fake_emit_receipt)
+        adapter = SimpleNamespace(
+            workspace=str(tmp_path),
+            _update_task_progress=MagicMock(),
+        )
+        state = execute_method_module.MaterializationState(
+            current_files={},
+            new_files=[],
+            modified_files=["src/app.ts"],
+            all_affected_files=["src/app.ts"],
+            tool_results=[
+                {"result": {"source_tool": "deterministic_rust_post_repair"}},
+                {"result": {"source_tool": "deterministic_rust_post_repair"}},
+                {"result": {"source_tool": "deterministic_future_repair"}},
+            ],
+        )
+
+        result = execute_method_module._phase_finalize_materialization(
+            adapter,
+            board_claim_applied=False,
+            context={},
+            decision_signals=[],
+            direct_fallback_summary=None,
+            empty_write_content_retry_summary=None,
+            materialization_mode="materialize_changes",
+            primary_llm_summary=None,
+            quality_repair_attempts=[],
+            quality_repair_summary=None,
+            run_id="run-1",
+            semantic_quality_repair_attempts=[],
+            semantic_quality_repair_summary=None,
+            target_task_id="task-1",
+            task={"id": "task-1"},
+            task_claim_session_id="",
+            write_tool_evidence=True,
+            state=state,
+        )
+
+        repair_profiles = result["deterministic_repair_profiles"]
+        assert result["success"] is True
+        assert repair_profiles["source_tools"] == [
+            "deterministic_rust_post_repair",
+            "deterministic_future_repair",
+        ]
+        assert repair_profiles["registered"] is False
+        assert repair_profiles["source_tool_profiles"][0]["language"] == "rust"
+        assert repair_profiles["source_tool_profiles"][1]["risk_level"] == "high"
+        assert captured_receipt_payload["deterministic_repair_profiles"] == repair_profiles
+
+
 class TestDirectorFailureClosure:
     """Runtime failures must fail the claimed task instead of leaving it running."""
 
@@ -3268,6 +3476,13 @@ class TestDirectorFailureClosure:
             target_task_id="task-1",
             requested_outcome="completed",
             finalize_result=finalize_result,
+            tool_results=[
+                {
+                    "result": {
+                        "source_tool": "deterministic_rust_post_repair",
+                    }
+                }
+            ],
         )
 
         assert finalize_result["success"] is False
@@ -3275,6 +3490,7 @@ class TestDirectorFailureClosure:
         assert result["success"] is False
         assert result["error_code"] == "director_task_runtime_finalization_failed"
         assert result["root_cause_hint"] == "task_runtime_terminal_transition_failed"
+        assert result["deterministic_repair_profiles"]["source_tools"] == ["deterministic_rust_post_repair"]
 
     def test_role_response_normalization_keeps_kernel_errors_failed(self) -> None:
         result = _normalize_director_role_response(
@@ -8146,6 +8362,74 @@ class TestQualityRepairMissingTargetContract:
         assert summary["missing_target_files"] == ["src/router.tsx"]
         assert "MISSING TARGET FILES" in adapter.repair_message
         assert "src/router.tsx" in adapter.repair_message
+
+    @pytest.mark.asyncio
+    async def test_quality_repair_uses_deterministic_typescript_semantic_repair_before_llm(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                raise AssertionError("deterministic semantic repair should run before LLM repair")
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "verify.ts").write_text("export const verify = () => true;\n", encoding="utf-8")
+        (tmp_path / "tests" / "verify.test.ts").write_text(
+            "import { runVerification } from '../src/verify.js';\nvoid runVerification;\n",
+            encoding="utf-8",
+        )
+        quality_error = (
+            "Artifact quality scan failed: unresolved import symbol 'runVerification' "
+            "from '../src/verify.js' in tests/verify.test.ts (sibling module does not define it)"
+        )
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["src/verify.ts", "tests/verify.test.ts"]},
+            target_task_id="TASK-2",
+            run_id="run-ts-semantic-repair",
+            context={},
+            original_message="Repair TypeScript verification exports.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[quality_error],
+            changed_files=["src/verify.ts", "tests/verify.test.ts"],
+        )
+
+        assert tool_results
+        assert summary["stage"] == "deterministic_semantic_quality_repair"
+        assert "deterministic_typescript_missing_export_repair" in summary["source_tools"]
+        repaired = (tmp_path / "src" / "verify.ts").read_text(encoding="utf-8")
+        assert "runVerification" in repaired
 
     def test_repair_targets_css_import_exact_path(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

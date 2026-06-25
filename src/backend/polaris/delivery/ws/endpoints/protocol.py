@@ -21,7 +21,7 @@ from polaris.cells.runtime.projection.public.service import (
     build_pm_status_async,
     build_status_payload_sync,
 )
-from polaris.delivery.ws.endpoints.channel_utils import CONSUMER_ROLE_TOKENS
+from polaris.delivery.ws.endpoints.channel_utils import RUNTIME_OBSERVABLE_ROLE_TOKENS
 from polaris.delivery.ws.endpoints.helpers import (
     filter_status_payload_by_roles,
     resolve_runtime_v2_workspace_key,
@@ -106,7 +106,7 @@ async def handle_v2_message(
             roles_filter.clear()
             for value in raw_roles:
                 role_token = str(value or "").strip().lower()
-                if role_token in CONSUMER_ROLE_TOKENS:
+                if role_token in RUNTIME_OBSERVABLE_ROLE_TOKENS:
                     roles_filter.add(role_token)
 
         # Extract subscription params
@@ -159,8 +159,7 @@ async def handle_v2_message(
                 cursor_ref[0] = max(cursor_ref[0], active_consumer_manager.get_current_cursor())
             protocol_activated = True
             logger.info(
-                "v2 protocol subscription updated without consumer restart: "
-                "client_id=%s, channels=%s, cursor=%s",
+                "v2 protocol subscription updated without consumer restart: client_id=%s, channels=%s, cursor=%s",
                 client_id_ref[0],
                 channels_ref[0],
                 cursor_ref[0],
@@ -237,6 +236,7 @@ async def handle_v2_message(
                 "payload": {
                     "client_id": client_id_ref[0],
                     "channels": channels_ref[0],
+                    "roles": sorted(roles_filter),
                     "cursor": cursor_ref[0],
                     "jetstream": consumer_manager_ref[0] is not None and consumer_manager_ref[0].is_connected,
                     # Canonical strategy_receipt context hint (v2 protocol, no legacy equivalent)

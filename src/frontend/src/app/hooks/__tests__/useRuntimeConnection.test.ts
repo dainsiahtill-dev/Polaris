@@ -7,10 +7,10 @@
  * - 重连逻辑
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
-import React from 'react';
-import { useRuntimeConnection } from '../useRuntimeConnection';
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { renderHook, act, waitFor } from "@testing-library/react";
+import React from "react";
+import { useRuntimeConnection } from "../useRuntimeConnection";
 
 const mockSubscribeChannels = vi.hoisted(() => vi.fn(() => vi.fn()));
 const mockSendCommand = vi.hoisted(() => vi.fn());
@@ -25,7 +25,7 @@ const mockTransportState = vi.hoisted(() => ({
 }));
 
 // Mock dependencies
-vi.mock('@/app/hooks/useRuntimeStore', () => ({
+vi.mock("@/app/hooks/useRuntimeStore", () => ({
   useRuntimeStore: vi.fn((selector) => {
     const state = {
       live: false,
@@ -39,7 +39,7 @@ vi.mock('@/app/hooks/useRuntimeStore', () => ({
   }),
 }));
 
-vi.mock('@/runtime/transport', () => ({
+vi.mock("@/runtime/transport", () => ({
   useRuntimeTransport: vi.fn(() => ({
     connected: mockTransportState.connected,
     reconnecting: mockTransportState.reconnecting,
@@ -53,14 +53,14 @@ vi.mock('@/runtime/transport', () => ({
   })),
 }));
 
-vi.mock('@/hooks', () => ({
+vi.mock("@/hooks", () => ({
   useSettings: vi.fn(() => ({
-    settings: { workspace: '/test/workspace' },
+    settings: { workspace: "/test/workspace" },
     load: vi.fn(),
   })),
 }));
 
-describe('useRuntimeConnection', () => {
+describe("useRuntimeConnection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTransportState.connected = false;
@@ -73,10 +73,10 @@ describe('useRuntimeConnection', () => {
     vi.useRealTimers();
   });
 
-  describe('Initial State', () => {
-    it('should initialize with disconnected state', () => {
+  describe("Initial State", () => {
+    it("should initialize with disconnected state", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
       expect(result.current.live).toBe(false);
@@ -84,28 +84,28 @@ describe('useRuntimeConnection', () => {
       expect(result.current.isConnected).toBe(false);
     });
 
-    it('should initialize with null error', () => {
+    it("should initialize with null error", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
       expect(result.current.error).toBeNull();
     });
 
-    it('should initialize with no reconnect attempts', () => {
+    it("should initialize with no reconnect attempts", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
       expect(result.current.reconnecting).toBe(false);
       expect(result.current.attemptCount).toBe(0);
     });
 
-    it('should expose transport connection state when the runtime store cache is stale', () => {
+    it("should expose transport connection state when the runtime store cache is stale", () => {
       mockTransportState.connected = true;
 
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
       expect(result.current.live).toBe(true);
@@ -114,34 +114,34 @@ describe('useRuntimeConnection', () => {
     });
   });
 
-  describe('Connection Actions', () => {
-    it('should return connect function', () => {
+  describe("Connection Actions", () => {
+    it("should return connect function", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
-      expect(typeof result.current.connect).toBe('function');
+      expect(typeof result.current.connect).toBe("function");
     });
 
-    it('should return disconnect function', () => {
+    it("should return disconnect function", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
-      expect(typeof result.current.disconnect).toBe('function');
+      expect(typeof result.current.disconnect).toBe("function");
     });
 
-    it('should return reconnect function', () => {
+    it("should return reconnect function", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
-      expect(typeof result.current.reconnect).toBe('function');
+      expect(typeof result.current.reconnect).toBe("function");
     });
 
-    it('should call disconnect action', () => {
+    it("should call disconnect action", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
       act(() => {
@@ -153,64 +153,68 @@ describe('useRuntimeConnection', () => {
     });
   });
 
-  describe('Subscription Management', () => {
-    it('should provide updateSubscription function', () => {
+  describe("Subscription Management", () => {
+    it("should provide updateSubscription function", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
-      expect(typeof result.current.updateSubscription).toBe('function');
+      expect(typeof result.current.updateSubscription).toBe("function");
     });
   });
 
-  describe('Transport Layer', () => {
-    it('should expose transport layer state', () => {
+  describe("Transport Layer", () => {
+    it("should expose transport layer state", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
-      expect(result.current).toHaveProperty('transportConnected');
-      expect(result.current).toHaveProperty('transportReconnecting');
-      expect(result.current).toHaveProperty('transportError');
-      expect(result.current).toHaveProperty('transportAttemptCount');
+      expect(result.current).toHaveProperty("transportConnected");
+      expect(result.current).toHaveProperty("transportReconnecting");
+      expect(result.current).toHaveProperty("transportError");
+      expect(result.current).toHaveProperty("transportAttemptCount");
     });
 
-    it('should expose transport actions', () => {
+    it("should expose transport actions", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
-      expect(result.current).toHaveProperty('transportReconnect');
-      expect(result.current).toHaveProperty('registerMessageHandler');
-      expect(result.current).toHaveProperty('sendCommand');
-      expect(typeof result.current.transportReconnect).toBe('function');
-      expect(typeof result.current.registerMessageHandler).toBe('function');
-      expect(typeof result.current.sendCommand).toBe('function');
+      expect(result.current).toHaveProperty("transportReconnect");
+      expect(result.current).toHaveProperty("registerMessageHandler");
+      expect(result.current).toHaveProperty("sendCommand");
+      expect(typeof result.current.transportReconnect).toBe("function");
+      expect(typeof result.current.registerMessageHandler).toBe("function");
+      expect(typeof result.current.sendCommand).toBe("function");
     });
   });
 
-  describe('Refs', () => {
-    it('should provide workspaceRef', () => {
+  describe("Refs", () => {
+    it("should provide workspaceRef", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
       expect(result.current.workspaceRef).toBeDefined();
-      expect(result.current.workspaceRef.current).toBe('/test');
+      expect(result.current.workspaceRef.current).toBe("/test");
     });
 
-    it('should provide rolesRef', () => {
+    it("should provide rolesRef", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, roles: ['pm', 'director'], workspace: '/test' })
+        useRuntimeConnection({
+          autoConnect: false,
+          roles: ["pm", "director"],
+          workspace: "/test",
+        }),
       );
 
       expect(result.current.rolesRef).toBeDefined();
-      expect(result.current.rolesRef.current).toEqual(['director', 'pm']);
+      expect(result.current.rolesRef.current).toEqual(["director", "pm"]);
     });
 
-    it('should provide activeRef', () => {
+    it("should provide activeRef", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
       expect(result.current.activeRef).toBeDefined();
@@ -218,10 +222,10 @@ describe('useRuntimeConnection', () => {
     });
   });
 
-  describe('Role Subscription', () => {
-    it('subscribes concrete runtime stream channels instead of a roles pseudo-channel', async () => {
+  describe("Role Subscription", () => {
+    it("subscribes concrete runtime stream channels instead of a roles pseudo-channel", async () => {
       renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
       await waitFor(() => {
@@ -229,34 +233,36 @@ describe('useRuntimeConnection', () => {
       });
 
       const subscriptions = mockSubscribeChannels.mock.calls[0]?.[0] ?? [];
-      const channels = subscriptions.map((item: { channel: string }) => item.channel);
+      const channels = subscriptions.map(
+        (item: { channel: string }) => item.channel,
+      );
       expect(channels).toEqual([
-        'system',
-        'process',
-        'llm',
-        'dialogue',
-        'runtime_events',
-        'status.workflow',
-        'status.process',
-        'status.control_plane',
-        'status.resident',
-        'status.snapshot',
-        'event.factory',
-        'event.file_edit',
+        "system",
+        "process",
+        "llm",
+        "dialogue",
+        "runtime_events",
+        "status.workflow",
+        "status.process",
+        "status.control_plane",
+        "status.resident",
+        "status.snapshot",
+        "event.factory",
+        "event.file_edit",
       ]);
-      expect(channels).not.toContain('roles:pm,director,qa');
-      expect(subscriptions.map((item: { tailLines?: number }) => item.tailLines)).toEqual([
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      ]);
+      expect(channels).not.toContain("roles:pm,director,qa");
+      expect(
+        subscriptions.map((item: { tailLines?: number }) => item.tailLines),
+      ).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     });
 
-    it('subscribes bench events only when internal bench mode is explicitly enabled', async () => {
+    it("subscribes bench events only when internal bench mode is explicitly enabled", async () => {
       renderHook(() =>
         useRuntimeConnection({
           autoConnect: false,
-          workspace: '/test',
+          workspace: "/test",
           includeInternalBench: true,
-        })
+        }),
       );
 
       await waitFor(() => {
@@ -264,27 +270,33 @@ describe('useRuntimeConnection', () => {
       });
 
       const subscriptions = mockSubscribeChannels.mock.calls[0]?.[0] ?? [];
-      const channels = subscriptions.map((item: { channel: string }) => item.channel);
+      const channels = subscriptions.map(
+        (item: { channel: string }) => item.channel,
+      );
       expect(channels).toEqual([
-        'system',
-        'process',
-        'llm',
-        'dialogue',
-        'runtime_events',
-        'status.workflow',
-        'status.process',
-        'status.control_plane',
-        'status.resident',
-        'status.snapshot',
-        'event.factory',
-        'event.bench',
-        'event.file_edit',
+        "system",
+        "process",
+        "llm",
+        "dialogue",
+        "runtime_events",
+        "status.workflow",
+        "status.process",
+        "status.control_plane",
+        "status.resident",
+        "status.snapshot",
+        "event.factory",
+        "event.bench",
+        "event.file_edit",
       ]);
     });
 
-    it('passes roles to transport subscribe request', async () => {
+    it("passes roles to transport subscribe request", async () => {
       renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, roles: ['director'], workspace: '/test' })
+        useRuntimeConnection({
+          autoConnect: false,
+          roles: ["director"],
+          workspace: "/test",
+        }),
       );
 
       await waitFor(() => {
@@ -293,29 +305,30 @@ describe('useRuntimeConnection', () => {
 
       const calls = mockSubscribeChannels.mock.calls;
       const lastCall = calls.at(-1);
-      expect(lastCall?.[1]).toEqual(['director']);
+      expect(lastCall?.[1]).toEqual(["director"]);
     });
 
-    it('does not resubscribe when rerender keeps the same role set', async () => {
+    it("does not resubscribe when rerender keeps the same role set", async () => {
       const unsubscribe = vi.fn();
       mockSubscribeChannels.mockReturnValue(unsubscribe);
 
       const { rerender } = renderHook(
-        ({
-          roles,
-        }: {
-          roles: ('pm' | 'director' | 'qa')[];
-        }) => useRuntimeConnection({ autoConnect: false, roles, workspace: '/test' }),
+        ({ roles }: { roles: ("pm" | "director" | "qa")[] }) =>
+          useRuntimeConnection({
+            autoConnect: false,
+            roles,
+            workspace: "/test",
+          }),
         {
-          initialProps: { roles: ['pm', 'director'] },
-        }
+          initialProps: { roles: ["pm", "director"] },
+        },
       );
 
       await waitFor(() => {
         expect(mockSubscribeChannels).toHaveBeenCalledTimes(1);
       });
 
-      rerender({ roles: ['director', 'pm'] });
+      rerender({ roles: ["director", "pm"] });
 
       await waitFor(() => {
         expect(mockSubscribeChannels).toHaveBeenCalledTimes(1);
@@ -324,62 +337,68 @@ describe('useRuntimeConnection', () => {
       expect(unsubscribe).not.toHaveBeenCalled();
     });
 
-    it('should subscribe to the full PM to CE to Director to QA role chain by default', () => {
+    it("should subscribe to the full observable runtime role set by default", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
-      expect(result.current.rolesRef.current).toEqual(['chief_engineer', 'director', 'pm', 'qa']);
+      expect(result.current.rolesRef.current).toEqual([
+        "chief_engineer",
+        "director",
+        "pm",
+        "qa",
+        "resident_agi",
+      ]);
     });
 
-    it('should respect custom roles', () => {
+    it("should respect custom roles", () => {
       const { result } = renderHook(() =>
         useRuntimeConnection({
           autoConnect: false,
-          roles: ['director'],
-          workspace: '/test',
-        })
+          roles: ["director"],
+          workspace: "/test",
+        }),
       );
 
-      expect(result.current.rolesRef.current).toEqual(['director']);
+      expect(result.current.rolesRef.current).toEqual(["director"]);
     });
 
-    it('updateSubscription should send full v2 SUBSCRIBE payload', async () => {
+    it("updateSubscription should send full v2 SUBSCRIBE payload", async () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
       mockGetLastCursor.mockReturnValueOnce(128);
       act(() => {
-        result.current.updateSubscription(['director', 'qa']);
+        result.current.updateSubscription(["director", "qa"]);
       });
 
       expect(mockSendCommand).toHaveBeenCalledWith({
-        type: 'SUBSCRIBE',
-        protocol: 'runtime.v2',
-        roles: ['director', 'qa'],
+        type: "SUBSCRIBE",
+        protocol: "runtime.v2",
+        roles: ["director", "qa"],
         tail: 0,
         channels: [
-          'system',
-          'process',
-          'llm',
-          'dialogue',
-          'runtime_events',
-          'status.workflow',
-          'status.process',
-          'status.control_plane',
-          'status.resident',
-          'status.snapshot',
-          'event.factory',
-          'event.file_edit',
+          "system",
+          "process",
+          "llm",
+          "dialogue",
+          "runtime_events",
+          "status.workflow",
+          "status.process",
+          "status.control_plane",
+          "status.resident",
+          "status.snapshot",
+          "event.factory",
+          "event.file_edit",
         ],
         cursor: 128,
       });
     });
 
-    it('updateSubscription should persist effective roles across rerender with unchanged props', async () => {
+    it("updateSubscription should persist effective roles across rerender with unchanged props", async () => {
       const { result, rerender } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
       await waitFor(() => {
@@ -387,26 +406,26 @@ describe('useRuntimeConnection', () => {
       });
 
       act(() => {
-        result.current.updateSubscription(['qa', 'director']);
+        result.current.updateSubscription(["qa", "director"]);
       });
 
       await waitFor(() => {
-        expect(result.current.rolesRef.current).toEqual(['director', 'qa']);
+        expect(result.current.rolesRef.current).toEqual(["director", "qa"]);
       });
 
       rerender();
 
       await waitFor(() => {
-        expect(result.current.rolesRef.current).toEqual(['director', 'qa']);
+        expect(result.current.rolesRef.current).toEqual(["director", "qa"]);
       });
     });
 
-    it('updateSubscription should switch roles without triggering unsubscribe cleanup', async () => {
+    it("updateSubscription should switch roles without triggering unsubscribe cleanup", async () => {
       const unsubscribe = vi.fn();
       mockSubscribeChannels.mockReturnValue(unsubscribe);
 
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+        useRuntimeConnection({ autoConnect: false, workspace: "/test" }),
       );
 
       await waitFor(() => {
@@ -414,78 +433,79 @@ describe('useRuntimeConnection', () => {
       });
 
       act(() => {
-        result.current.updateSubscription(['director']);
+        result.current.updateSubscription(["director"]);
       });
 
       await waitFor(() => {
-        expect(result.current.rolesRef.current).toEqual(['director']);
+        expect(result.current.rolesRef.current).toEqual(["director"]);
       });
 
       expect(mockSubscribeChannels).toHaveBeenCalledTimes(1);
       expect(unsubscribe).not.toHaveBeenCalled();
       expect(mockSendCommand).toHaveBeenCalledWith({
-        type: 'SUBSCRIBE',
-        protocol: 'runtime.v2',
-        roles: ['director'],
+        type: "SUBSCRIBE",
+        protocol: "runtime.v2",
+        roles: ["director"],
         tail: 0,
         channels: [
-          'system',
-          'process',
-          'llm',
-          'dialogue',
-          'runtime_events',
-          'status.workflow',
-          'status.process',
-          'status.control_plane',
-          'status.resident',
-          'status.snapshot',
-          'event.factory',
-          'event.file_edit',
+          "system",
+          "process",
+          "llm",
+          "dialogue",
+          "runtime_events",
+          "status.workflow",
+          "status.process",
+          "status.control_plane",
+          "status.resident",
+          "status.snapshot",
+          "event.factory",
+          "event.file_edit",
         ],
         cursor: 0,
       });
     });
 
-    it('role switch via props should avoid unsubscribe/subscribe churn', async () => {
+    it("role switch via props should avoid unsubscribe/subscribe churn", async () => {
       const unsubscribe = vi.fn();
       mockSubscribeChannels.mockReturnValue(unsubscribe);
 
       const { rerender } = renderHook(
-        ({
-          roles,
-        }: {
-          roles: ('pm' | 'director' | 'qa')[];
-        }) => useRuntimeConnection({ autoConnect: false, roles, workspace: '/test' }),
+        ({ roles }: { roles: ("pm" | "director" | "qa")[] }) =>
+          useRuntimeConnection({
+            autoConnect: false,
+            roles,
+            workspace: "/test",
+          }),
         {
-          initialProps: { roles: ['pm', 'director'] },
-        }
+          initialProps: { roles: ["pm", "director"] },
+        },
       );
 
       await waitFor(() => {
         expect(mockSubscribeChannels).toHaveBeenCalledTimes(1);
       });
 
-      rerender({ roles: ['qa'] });
+      rerender({ roles: ["qa"] });
 
       await waitFor(() => {
         expect(mockSendCommand).toHaveBeenCalledWith({
-          type: 'SUBSCRIBE',
-          protocol: 'runtime.v2',
-          roles: ['qa'],
+          type: "SUBSCRIBE",
+          protocol: "runtime.v2",
+          roles: ["qa"],
           tail: 0,
           channels: [
-            'system',
-            'process',
-            'llm',
-            'dialogue',
-            'runtime_events',
-            'status.workflow',
-            'status.process',
-            'status.control_plane',
-            'status.resident',
-            'status.snapshot',
-            'event.factory',
-            'event.file_edit',
+            "system",
+            "process",
+            "llm",
+            "dialogue",
+            "runtime_events",
+            "status.workflow",
+            "status.process",
+            "status.control_plane",
+            "status.resident",
+            "status.snapshot",
+            "event.factory",
+            "event.file_edit",
           ],
           cursor: 0,
         });
@@ -496,21 +516,24 @@ describe('useRuntimeConnection', () => {
     });
   });
 
-  describe('Workspace Handling', () => {
-    it('should use provided workspace', () => {
+  describe("Workspace Handling", () => {
+    it("should use provided workspace", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '/custom/workspace' })
+        useRuntimeConnection({
+          autoConnect: false,
+          workspace: "/custom/workspace",
+        }),
       );
 
-      expect(result.current.workspaceRef.current).toBe('/custom/workspace');
+      expect(result.current.workspaceRef.current).toBe("/custom/workspace");
     });
 
-    it('should handle empty workspace', () => {
+    it("should handle empty workspace", () => {
       const { result } = renderHook(() =>
-        useRuntimeConnection({ autoConnect: false, workspace: '' })
+        useRuntimeConnection({ autoConnect: false, workspace: "" }),
       );
 
-      expect(result.current.workspaceRef.current).toBe('');
+      expect(result.current.workspaceRef.current).toBe("");
     });
   });
 });

@@ -108,6 +108,32 @@ interface ContextViewerErrorBody {
   };
 }
 
+type ViewerTab = 'messages' | 'final-request';
+
+interface FinalProviderRequestPayload {
+  schema_version?: string;
+  context_hash?: string;
+  trace_id?: string | null;
+  call_id?: string | null;
+  stored_at?: string | null;
+  message_count?: number;
+  provider_request?: Record<string, unknown>;
+  provider_request_schema_version?: string;
+  role?: string;
+  provider_id?: string;
+  provider_type?: string;
+  model?: string;
+  tools?: Array<Record<string, unknown>>;
+  tool_choice?: unknown;
+  response_format?: unknown;
+  final_request_context_audit?: Record<string, unknown>;
+}
+
+interface FinalRequestErrorDetails {
+  code?: string;
+  message?: string;
+}
+
 interface ContextMissingDetails {
   context_hash?: string;
   workspace?: string;
@@ -120,6 +146,46 @@ interface ContextMissingDetails {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeFinalProviderRequestPayload(raw: unknown): FinalProviderRequestPayload | null {
+  if (!isRecord(raw)) return null;
+  const providerRequest = isRecord(raw.provider_request) ? raw.provider_request : {};
+  const finalAudit = isRecord(raw.final_request_context_audit) ? raw.final_request_context_audit : {};
+  const tools = Array.isArray(raw.tools)
+    ? raw.tools.filter((item): item is Record<string, unknown> => isRecord(item))
+    : [];
+  return {
+    schema_version: typeof raw.schema_version === 'string' ? raw.schema_version : undefined,
+    context_hash: typeof raw.context_hash === 'string' ? raw.context_hash : undefined,
+    trace_id: typeof raw.trace_id === 'string' ? raw.trace_id : null,
+    call_id: typeof raw.call_id === 'string' ? raw.call_id : null,
+    stored_at: typeof raw.stored_at === 'string' ? raw.stored_at : null,
+    message_count: typeof raw.message_count === 'number' ? raw.message_count : undefined,
+    provider_request: providerRequest,
+    provider_request_schema_version:
+      typeof raw.provider_request_schema_version === 'string' ? raw.provider_request_schema_version : undefined,
+    role: typeof raw.role === 'string' ? raw.role : undefined,
+    provider_id: typeof raw.provider_id === 'string' ? raw.provider_id : undefined,
+    provider_type: typeof raw.provider_type === 'string' ? raw.provider_type : undefined,
+    model: typeof raw.model === 'string' ? raw.model : undefined,
+    tools,
+    tool_choice: raw.tool_choice,
+    response_format: raw.response_format,
+    final_request_context_audit: finalAudit,
+  };
+}
+
+function prettyJson(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? null, null, 2);
+  } catch {
+    return String(value ?? '');
+  }
+}
 
 function roleIcon(role: string) {
   switch (role) {
@@ -601,6 +667,129 @@ function ContextMissingState({ details }: { details: ContextMissingDetails | nul
   );
 }
 
+function FinalRequestPanel({
+  payload,
+  loading,
+  error,
+  onRetry,
+}: {
+  payload: FinalProviderRequestPayload | null;
+  loading: boolean;
+  error: FinalRequestErrorDetails | null;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 rounded border border-white/[0.06] bg-black/20 p-3 text-[11px] text-text-dim">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+        正在读取最终 provider request…
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div
+        className="rounded border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] text-amber-200"
+        data-testid="contextos-final-request-unavailable"
+      >
+        <div className="flex items-center gap-2 font-medium">
+          <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+          最终 provider request 证据不可用
+        </div>
+        <div className="mt-1 text-amber-100/80">{error.message || error.code || 'unknown error'}</div>
+        {error.code && <div className="mt-1 font-mono text-[10px] text-amber-100/60">code: {error.code}</div>}
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 rounded bg-amber-400/15 px-2 py-1 text-[10px] text-amber-100 hover:bg-amber-400/25"
+        >
+          重试
+        </button>
+      </div>
+    );
+  }
+  if (!payload) {
+    return <EmptyState reason="最终 provider request 尚未加载" />;
+  }
+
+  const audit = payload.final_request_context_audit ?? {};
+  const tokenEstimate =
+    typeof audit.final_request_token_estimate === 'number' ? audit.final_request_token_estimate : null;
+  const toolSchemaCount = typeof audit.tool_schema_count === 'number' ? audit.tool_schema_count : payload.tools?.length;
+  const coverage = isRecord(audit.coverage) ? audit.coverage : {};
+  const missingCoverage = isRecord(audit.context_quality) && Array.isArray(audit.context_quality.missing_coverage)
+    ? audit.context_quality.missing_coverage
+    : [];
+
+  return (
+    <div className="space-y-3" data-testid="contextos-final-request-panel">
+      <div className="grid gap-2 sm:grid-cols-2">
+        {[
+          ['role', payload.role || '—'],
+          ['model', payload.model || '—'],
+          ['provider', payload.provider_id || payload.provider_type || '—'],
+          ['tools', String(toolSchemaCount ?? 0)],
+          ['tokens', tokenEstimate === null ? '—' : tokenEstimate.toLocaleString()],
+          ['messages', String(payload.message_count ?? 0)],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded border border-white/[0.06] bg-black/20 px-2 py-1.5">
+            <div className="text-[9px] uppercase tracking-wide text-text-dim">{label}</div>
+            <div className="mt-0.5 truncate font-mono text-[11px] text-text-main" title={value}>
+              {value}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {Object.keys(coverage).length > 0 && (
+        <div className="rounded border border-white/[0.06] bg-black/20 p-2">
+          <div className="mb-2 text-[10px] font-medium text-text-muted">Coverage Flags</div>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(coverage).map(([key, ok]) => (
+              <span
+                key={key}
+                className={cn(
+                  'rounded px-1.5 py-0.5 font-mono text-[9px]',
+                  ok ? 'bg-emerald-500/10 text-emerald-300' : 'bg-red-500/10 text-red-300',
+                )}
+              >
+                {ok ? 'PASS' : 'MISS'} {key}
+              </span>
+            ))}
+          </div>
+          {missingCoverage.length > 0 && (
+            <div className="mt-2 text-[10px] text-red-300">
+              missing: {missingCoverage.map((item) => String(item)).join(', ')}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div>
+        <div className="mb-1 flex items-center gap-1 text-[10px] font-medium text-text-muted">
+          <FileText className="h-3 w-3" aria-hidden="true" />
+          provider_request
+        </div>
+        <CodeBlock
+          segment={{ kind: 'fence', lang: 'json', body: prettyJson(payload.provider_request) }}
+          expanded
+        />
+      </div>
+
+      <div>
+        <div className="mb-1 flex items-center gap-1 text-[10px] font-medium text-text-muted">
+          <Wrench className="h-3 w-3" aria-hidden="true" />
+          final_request_context_audit
+        </div>
+        <CodeBlock
+          segment={{ kind: 'fence', lang: 'json', body: prettyJson(payload.final_request_context_audit) }}
+          expanded
+        />
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Group section — 按角色折叠的分组容器
 // ---------------------------------------------------------------------------
@@ -641,8 +830,11 @@ function GroupSection({ role, count, totalTokens, children }: GroupSectionProps)
 
 export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, workspace, workerId }: ContextViewerModalProps) {
   const [content, setContent] = useState<ContextPayload | null>(null);
+  const [finalRequest, setFinalRequest] = useState<FinalProviderRequestPayload | null>(null);
   const [loading, setLoading] = useState(false);
+  const [finalRequestLoading, setFinalRequestLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [finalRequestError, setFinalRequestError] = useState<FinalRequestErrorDetails | null>(null);
   const [contextMissing, setContextMissing] = useState(false);
   const [contextMissingDetails, setContextMissingDetails] = useState<ContextMissingDetails | null>(null);
   // When the backend returns 403 WORKSPACE_FORBIDDEN we surface a localised
@@ -651,6 +843,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
   // workspace via the ContextOS workspace selector, so this is opt-in —
   // single-tenant desktop flows never see it.
   const [workspaceForbidden, setWorkspaceForbidden] = useState(false);
+  const [activeTab, setActiveTab] = useState<ViewerTab>('messages');
   const [search, setSearch] = useState('');
   const [groupByRole, setGroupByRole] = useState(false);
   const [allExpanded, setAllExpanded] = useState<null | boolean>(null);
@@ -662,30 +855,90 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
   const titleId = 'contextos-viewer-title';
   const descriptionId = 'contextos-viewer-description';
 
+  const buildWorkspaceSuffix = useCallback(() => {
+    const params = new URLSearchParams();
+    const workspaceToken = typeof workspace === 'string' ? workspace.trim() : '';
+    if (workspaceToken) {
+      params.set('workspace', workspaceToken);
+    }
+    const suffix = params.toString();
+    return suffix ? `?${suffix}` : '';
+  }, [workspace]);
+
+  const fetchFinalRequest = useCallback(async (signal?: AbortSignal) => {
+    if (!contextSnapshotRef || !CONTEXT_SNAPSHOT_REF_RE.test(contextSnapshotRef)) {
+      setFinalRequest(null);
+      setFinalRequestLoading(false);
+      setFinalRequestError(null);
+      return;
+    }
+    setFinalRequestLoading(true);
+    setFinalRequestError(null);
+    try {
+      const res = await apiFetch(`/v2/context/${contextSnapshotRef}/final-request${buildWorkspaceSuffix()}`);
+      if (signal?.aborted) return;
+      if (!res.ok) {
+        let errorPayload: ContextViewerErrorBody | null = null;
+        try {
+          errorPayload = (await res.json()) as ContextViewerErrorBody;
+        } catch {
+          errorPayload = null;
+        }
+        const detail = errorPayload?.detail ?? errorPayload?.error;
+        setFinalRequest(null);
+        setFinalRequestError({
+          code: detail?.code || `HTTP_${res.status}`,
+          message: detail?.message || `HTTP ${res.status}`,
+        });
+        return;
+      }
+      const normalized = normalizeFinalProviderRequestPayload(await res.json());
+      if (signal?.aborted) return;
+      if (!normalized) {
+        setFinalRequest(null);
+        setFinalRequestError({
+          code: 'INVALID_FINAL_PROVIDER_REQUEST_AUDIT',
+          message: 'Final provider request audit payload is invalid.',
+        });
+        return;
+      }
+      setFinalRequest(normalized);
+      setFinalRequestError(null);
+    } catch (e) {
+      if ((e as { name?: string })?.name === 'AbortError') return;
+      setFinalRequest(null);
+      setFinalRequestError({ code: 'FINAL_REQUEST_FETCH_FAILED', message: String(e) });
+    } finally {
+      if (!signal?.aborted) {
+        setFinalRequestLoading(false);
+      }
+    }
+  }, [buildWorkspaceSuffix, contextSnapshotRef]);
+
   const fetchContext = useCallback(async (signal?: AbortSignal) => {
     if (!contextSnapshotRef) return;
     if (!CONTEXT_SNAPSHOT_REF_RE.test(contextSnapshotRef)) {
       setContent(null);
+      setFinalRequest(null);
       setLoading(false);
+      setFinalRequestLoading(false);
       setError(null);
+      setFinalRequestError(null);
       setContextMissing(true);
       setContextMissingDetails(null);
       setWorkspaceForbidden(false);
       return;
     }
     setLoading(true);
+    setFinalRequestLoading(false);
+    setFinalRequest(null);
     setError(null);
+    setFinalRequestError(null);
     setContextMissing(false);
     setContextMissingDetails(null);
     setWorkspaceForbidden(false);
     try {
-      const params = new URLSearchParams();
-      const workspaceToken = typeof workspace === 'string' ? workspace.trim() : '';
-      if (workspaceToken) {
-        params.set('workspace', workspaceToken);
-      }
-      const suffix = params.toString();
-      const res = await apiFetch(`/v2/context/${contextSnapshotRef}${suffix ? `?${suffix}` : ''}`);
+      const res = await apiFetch(`/v2/context/${contextSnapshotRef}${buildWorkspaceSuffix()}`);
       // 若请求在 await 期间被取消，response 解析也无意义。
       if (signal?.aborted) return;
       if (res.status === 403) {
@@ -728,6 +981,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
       const data = normalizeViewModelPayload(await res.json());
       if (signal?.aborted) return;
       setContent(data);
+      void fetchFinalRequest(signal);
     } catch (e) {
       // AbortError 静默：组件卸载或 ref 变化导致的取消不应作为错误呈现。
       if ((e as { name?: string })?.name === 'AbortError') return;
@@ -737,7 +991,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
         setLoading(false);
       }
     }
-  }, [contextSnapshotRef, workspace]);
+  }, [buildWorkspaceSuffix, contextSnapshotRef, fetchFinalRequest]);
 
   useEffect(() => {
     if (!contextSnapshotRef) return;
@@ -882,7 +1136,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
     }
   }, []);
 
-  const showCopyAll = !!content && content.messages.length > 0;
+  const showCopyAll = activeTab === 'messages' && !!content && content.messages.length > 0;
 
   // expand-all 控制（作用于 CodeBlock / PlainTextSegment 内部 expand）；
   // 通过 useState 上提 → 一次性下发 props；当前实现把 expanded 完全交给子组件本地，
@@ -943,8 +1197,36 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
           </button>
         </header>
 
+        {content && (
+          <div className="flex items-center gap-1 border-b border-white/[0.05] bg-bg-panel/60 px-4 py-2">
+            {[
+              { key: 'messages' as const, label: '上下文消息', count: content.message_count },
+              { key: 'final-request' as const, label: '最终请求', count: finalRequest?.tools?.length ?? 0 },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                aria-pressed={activeTab === tab.key}
+                data-testid={`contextos-viewer-tab-${tab.key}`}
+                className={cn(
+                  'rounded-md px-2 py-1 text-[11px] transition-colors',
+                  activeTab === tab.key
+                    ? 'bg-accent-secondary/15 text-accent-secondary'
+                    : 'text-text-muted hover:bg-white/5 hover:text-text-main',
+                )}
+              >
+                {tab.label}
+                {tab.key === 'messages' && (
+                  <span className="ml-1 font-mono text-[9px] opacity-70">{tab.count}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Toolbar */}
-        {content && content.messages.length > 0 && (
+        {activeTab === 'messages' && content && content.messages.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.05] bg-bg-panel/40 px-4 py-2">
             <div className="flex flex-1 items-center gap-1 rounded-md border border-white/[0.06] bg-black/20 px-2 py-1">
               <Search className="h-3.5 w-3.5 text-text-dim" aria-hidden="true" />
@@ -1098,8 +1380,14 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
                 </span>
               </div>
 
-              {/* Messages */}
-              {content.messages.length === 0 ? (
+              {activeTab === 'final-request' ? (
+                <FinalRequestPanel
+                  payload={finalRequest}
+                  loading={finalRequestLoading}
+                  error={finalRequestError}
+                  onRetry={() => void fetchFinalRequest()}
+                />
+              ) : content.messages.length === 0 ? (
                 <EmptyState reason="上下文文件无消息内容" />
               ) : filteredMessages.length === 0 ? (
                 <EmptyState reason={`无匹配消息（搜索词：${search}）`} />

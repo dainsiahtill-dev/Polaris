@@ -15,10 +15,13 @@ from polaris.kernelone.constants import RoleId
 
 logger = logging.getLogger(__name__)
 
-#: Valid TaskMarket consumer-role tokens accepted in WS role filters.
-#: Single source of truth (RoleId.consumer_roles()); previously the literal
-#: ``{"pm", "director", "qa"}`` was duplicated across three WS endpoint modules.
-CONSUMER_ROLE_TOKENS: frozenset[str] = frozenset(role.value for role in RoleId.consumer_roles())
+#: Valid role tokens accepted in runtime observability filters.
+#: This is broader than TaskMarket consumers and intentionally includes
+#: ``resident_agi`` for status/audit visibility.
+RUNTIME_OBSERVABLE_ROLE_TOKENS: frozenset[str] = frozenset(role.value for role in RoleId.runtime_observable_roles())
+# Backward-compatible export for older imports. Do not use for new code; this
+# no longer means "TaskMarket consumer".
+CONSUMER_ROLE_TOKENS: frozenset[str] = RUNTIME_OBSERVABLE_ROLE_TOKENS
 
 
 # =============================================================================
@@ -91,7 +94,7 @@ def normalize_roles(roles: str | None) -> set[str]:
     """Normalize comma-separated roles string to a set of role tokens.
 
     Args:
-        roles: Comma-separated roles string (e.g., "pm,director,qa").
+        roles: Comma-separated roles string (e.g., "pm,director,resident_agi").
 
     Returns:
         Set of normalized role tokens.
@@ -101,7 +104,7 @@ def normalize_roles(roles: str | None) -> set[str]:
     normalized: set[str] = set()
     for raw in str(roles).split(","):
         token = raw.strip().lower()
-        if token in CONSUMER_ROLE_TOKENS:
+        if token in RUNTIME_OBSERVABLE_ROLE_TOKENS:
             normalized.add(token)
     return normalized
 
@@ -178,6 +181,8 @@ def resolve_channel_path(workspace: str, cache_root: str, channel: str) -> str:
 
 
 __all__ = [
+    "CONSUMER_ROLE_TOKENS",
+    "RUNTIME_OBSERVABLE_ROLE_TOKENS",
     "channel_max_chars",
     "is_llm_channel",
     "is_process_channel",

@@ -760,7 +760,20 @@ def _infer_artifact(*, context: dict[str, Any], message: str) -> str:
             "视觉",
         )
     )
+    has_html5_canvas_text = has_canvas and any(
+        token in lowered
+        for token in (
+            "index.html",
+            "<html",
+            "html5",
+            "browser",
+            "浏览器",
+            "页面",
+        )
+    )
     if has_web and (has_canvas or has_canvas_entry_path):
+        return "html5_canvas"
+    if has_html5_canvas_text:
         return "html5_canvas"
     if any(token in lowered for token in ("cli", "command line", "命令行")):
         return "cli"
