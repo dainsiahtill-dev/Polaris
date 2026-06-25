@@ -271,8 +271,8 @@ export function LauncherWorkspace() {
   }, [instances, refresh]);
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
-      <header className="border-b border-cyan-400/20 bg-slate-950/95 px-6 py-4">
+    <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-slate-950 text-slate-100">
+      <header className="shrink-0 border-b border-cyan-400/20 bg-slate-950/95 px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-cyan-400/30 bg-cyan-400/10 text-cyan-200">
@@ -309,8 +309,11 @@ export function LauncherWorkspace() {
         </div>
       </header>
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 p-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <section className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
+      <main
+        className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 xl:grid-cols-[360px_minmax(0,1fr)]"
+        data-testid="launcher-scroll-root"
+      >
+        <section className="h-fit rounded-lg border border-white/10 bg-white/[0.035] p-4 xl:sticky xl:top-0">
           <h2 className="text-sm font-semibold text-cyan-100">启动实例</h2>
           <div className="mt-4 space-y-3">
             <label className="block">
@@ -393,11 +396,19 @@ export function LauncherWorkspace() {
           ) : null}
         </section>
 
-        <section className="min-w-0 rounded-lg border border-white/10 bg-white/[0.035]">
-          <div className="border-b border-white/10 px-4 py-3">
+        <section
+          className="flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-lg border border-white/10 bg-white/[0.035]"
+          data-testid="launcher-instance-panel"
+        >
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
             <h2 className="text-sm font-semibold text-slate-100">实例</h2>
+            <span className="text-xs text-slate-500">共 {instances.length} 个</span>
           </div>
-          <div className="grid gap-3 p-4 md:grid-cols-2 2xl:grid-cols-3">
+          <div
+            className="min-h-0 flex-1 overflow-y-auto p-4"
+            data-testid="launcher-instance-list"
+          >
+            <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
             {instances.length === 0 ? (
               <div className="col-span-full rounded-lg border border-dashed border-white/10 p-8 text-center text-sm text-slate-500">
                 暂无实例
@@ -480,6 +491,7 @@ export function LauncherWorkspace() {
               </article>
               );
             })}
+            </div>
           </div>
         </section>
       </main>

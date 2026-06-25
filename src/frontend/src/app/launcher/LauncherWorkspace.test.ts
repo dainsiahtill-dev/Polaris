@@ -1,5 +1,35 @@
-import { describe, expect, it } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { createElement } from 'react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  listInstances: vi.fn(),
+  registerMessageHandler: vi.fn(() => vi.fn()),
+  subscribeChannels: vi.fn(() => vi.fn()),
+  noopAction: vi.fn(),
+}));
+
+vi.mock('@/runtime/transport', () => ({
+  useConnectionState: () => ({ connected: true, reconnecting: false, error: null, attemptCount: 0 }),
+  useMessageHandler: () => ({ registerMessageHandler: mocks.registerMessageHandler }),
+  useTransportActions: () => ({ subscribeChannels: mocks.subscribeChannels }),
+}));
+
+vi.mock('@/services/instances', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/services/instances')>();
+  return {
+    ...actual,
+    listInstances: mocks.listInstances,
+    startInstance: mocks.noopAction,
+    stopInstance: mocks.noopAction,
+    restartInstance: mocks.noopAction,
+    deleteInstance: mocks.noopAction,
+    getInstanceLogs: mocks.noopAction,
+  };
+});
+
 import {
+  LauncherWorkspace,
   instanceSubtitle,
   isCurrentControlInstance,
   isLauncherBackendOpenable,
@@ -39,6 +69,15 @@ function instance(overrides: Partial<PolarisInstance> = {}): PolarisInstance {
     ...overrides,
   };
 }
+
+beforeEach(() => {
+  mocks.listInstances.mockReset();
+  mocks.listInstances.mockResolvedValue({ ok: true, data: { instances: [] } });
+  mocks.noopAction.mockReset();
+  mocks.noopAction.mockResolvedValue({ ok: true, data: {} });
+  mocks.registerMessageHandler.mockClear();
+  mocks.subscribeChannels.mockClear();
+});
 
 describe('Launcher instance readiness display', () => {
   it('treats HTTP health as the backend readiness source', () => {
@@ -118,5 +157,27 @@ describe('Launcher instance readiness display', () => {
     expect(isCurrentControlInstance(instance({ instance_id: 'main' }), 'main')).toBe(true);
     expect(isCurrentControlInstance(instance({ instance_id: 'factory-bench-l1-05' }), 'main')).toBe(false);
     expect(isCurrentControlInstance(instance({ instance_id: 'factory-bench-l1-05' }), 'factory-bench-l1-05')).toBe(true);
+  });
+
+  it('keeps the launcher and instance list scrollable when many instances are registered', async () => {
+    const manyInstances = Array.from({ length: 36 }, (_, index) =>
+      instance({
+        instance_id: `factory-bench-l1-${String(index + 1).padStart(2, '0')}`,
+        name: `L1-${String(index + 1).padStart(2, '0')}`,
+        workspace: `/tmp/factory-bench-l1-${String(index + 1).padStart(2, '0')}/L1-${String(index + 1).padStart(2, '0')}`,
+        backend_port: 49978 + index,
+        frontend_port: 5174 + index,
+      }),
+    );
+    mocks.listInstances.mockResolvedValue({ ok: true, data: { instances: manyInstances } });
+
+    render(createElement(LauncherWorkspace));
+
+    expect(await screen.findByText('L1-36')).toBeInTheDocument();
+    expect(screen.getByText('共 36 个')).toBeInTheDocument();
+    expect(screen.getByTestId('launcher-scroll-root')).toHaveClass('overflow-y-auto');
+    expect(screen.getByTestId('launcher-instance-panel')).toHaveClass('overflow-hidden');
+    expect(screen.getByTestId('launcher-instance-list')).toHaveClass('overflow-y-auto');
+    expect(screen.getByTestId('launcher-instance-list')).toHaveClass('flex-1');
   });
 });
