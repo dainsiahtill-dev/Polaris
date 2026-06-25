@@ -54,8 +54,10 @@ export function isLauncherBackendOpenable(instance: PolarisInstance): boolean {
 }
 
 export function launcherInstanceStatusTone(instance: PolarisInstance): 'success' | 'warning' | 'error' | 'info' | 'default' {
-  if (instance.status === 'running' && isLauncherBackendReady(instance)) return 'success';
+  if (instance.status === 'running' && isLauncherBackendOpenable(instance)) return 'success';
+  if (instance.status === 'running') return 'warning';
   if (instance.status === 'observed') return 'info';
+  if (instance.status === 'failed' || instance.status === 'error') return 'error';
   if (instance.backend_pid || instance.frontend_pid) return 'warning';
   return 'default';
 }

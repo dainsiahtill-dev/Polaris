@@ -86,16 +86,17 @@ describe('Launcher instance readiness display', () => {
     expect(isLauncherBackendReady(instance({ metadata: {} }))).toBe(false);
   });
 
-  it('does not show success for a running process before backend HTTP is ready', () => {
-    const starting = instance({
+  it('shows success for a running projected process that is openable', () => {
+    const running = instance({
       metadata: { backend_health: 'starting', frontend_health: 'ok' },
       backend_alive: true,
     });
 
-    expect(launcherInstanceStatusTone(starting)).toBe('warning');
+    expect(isLauncherBackendOpenable(running)).toBe(true);
+    expect(launcherInstanceStatusTone(running)).toBe('success');
   });
 
-  it('allows opening process-projected running instances without showing HTTP success', () => {
+  it('allows opening process-projected running instances and marks them as success', () => {
     const projected = instance({
       metadata: { backend_health: 'process', frontend_health: 'disabled' },
       backend_alive: true,
@@ -106,10 +107,10 @@ describe('Launcher instance readiness display', () => {
 
     expect(isLauncherBackendReady(projected)).toBe(false);
     expect(isLauncherBackendOpenable(projected)).toBe(true);
-    expect(launcherInstanceStatusTone(projected)).toBe('warning');
+    expect(launcherInstanceStatusTone(projected)).toBe('success');
   });
 
-  it('does not allow opening a dedicated frontend instance before frontend is alive', () => {
+  it('keeps a running dedicated frontend instance in warning state before frontend is alive', () => {
     const noFrontend = instance({
       metadata: { backend_health: 'process', frontend_health: 'stopped' },
       backend_alive: true,
@@ -119,6 +120,7 @@ describe('Launcher instance readiness display', () => {
     });
 
     expect(isLauncherBackendOpenable(noFrontend)).toBe(false);
+    expect(launcherInstanceStatusTone(noFrontend)).toBe('warning');
   });
 
   it('allows opening a main-style instance that uses the shared frontend', () => {
@@ -137,6 +139,21 @@ describe('Launcher instance readiness display', () => {
 
   it('shows success only after running backend health is ok', () => {
     expect(launcherInstanceStatusTone(instance())).toBe('success');
+  });
+
+  it('shows failed instances as error', () => {
+    expect(
+      launcherInstanceStatusTone(
+        instance({
+          status: 'failed',
+          backend_alive: false,
+          frontend_alive: false,
+          backend_pid: null,
+          frontend_pid: null,
+          metadata: { backend_health: 'stopped', frontend_health: 'stopped' },
+        }),
+      ),
+    ).toBe('error');
   });
 
   it('adds bench project and work-dir identity to the card subtitle', () => {
