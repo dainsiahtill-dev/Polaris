@@ -1643,6 +1643,99 @@ def repair_rust_wrong_crate_paths(workspace: Path, stderr: str = "") -> list[dic
     return repairs
 
 
+def repair_rust_incompatible_copy_derives(workspace: Path, stderr: str = "") -> list[dict[str, Any]]:
+    """Remove ``Copy`` derive from structs containing non-Copy fields (String, Vec, etc.)."""
+    if not stderr or "the trait `Copy` cannot be implemented" not in stderr:
+        return []
+
+    copy_error_re = re.compile(
+        r"the trait `Copy` cannot be implemented.*?-->.*?(?P<path>[^:\n]+\.rs):(?P<line>\d+)",
+        re.DOTALL,
+    )
+    repairs: list[dict[str, Any]] = []
+
+    for m in copy_error_re.finditer(stderr):
+        rel_path = m.group("path").strip()
+        line_num = int(m.group("line"))
+        target = (workspace / rel_path).resolve()
+        if not target.is_file():
+            continue
+        try:
+            lines = target.read_text(encoding="utf-8").split("\n")
+        except OSError:
+            continue
+        # Find the derive line (could be above the struct line)
+        for offset in range(0, 5):
+            idx = line_num - 1 - offset
+            if idx < 0 or idx >= len(lines):
+                continue
+            line = lines[idx]
+            if "#[derive(" in line and "Copy" in line:
+                # Remove Copy from the derive list
+                new_line = re.sub(r",\s*Copy\b", "", line)
+                new_line = re.sub(r"\bCopy\s*,\s*", "", new_line)
+                new_line = re.sub(r"\bCopy\b", "", new_line)
+                if new_line != line:
+                    lines[idx] = new_line
+                    target.write_text("\n".join(lines), encoding="utf-8")
+                    repairs.append({"file": rel_path, "action": f"removed_copy_derive_line_{idx + 1}"})
+                break
+    return repairs
+
+
+def repair_rust_method_self_signatures(workspace: Path, stderr: str = "") -> list[dict[str, Any]]:
+    """Fix method signatures where ``&self`` or ``&mut self`` is missing.
+
+    Common LLM mistake: ``pub fn foo(&) -> ...`` instead of ``pub fn foo(&self) -> ...``
+    or ``pub fn bar(&mut) -> ...`` instead of ``pub fn bar(&mut self) -> ...``.
+    """
+    if not stderr:
+        stderr = _run_cargo_check_stderr(workspace)
+    if not stderr:
+        return []
+
+    # Pattern: error: expected parameter name, found `)`
+    # --> file.rs:line:col
+    missing_self_re = re.compile(
+        r"error:\s+expected parameter name.*?-->.*?(?P<path>[^:\n]+\.rs):(?P<line>\d+)",
+        re.DOTALL,
+    )
+
+    repairs: list[dict[str, Any]] = []
+    for m in missing_self_re.finditer(stderr):
+        rel_path = m.group("path").strip()
+        line_num = int(m.group("line"))
+        target = (workspace / rel_path).resolve()
+        if not target.is_file():
+            continue
+        try:
+            lines = target.read_text(encoding="utf-8").split("\n")
+        except OSError:
+            continue
+        idx = line_num - 1
+        if idx < 0 or idx >= len(lines):
+            continue
+        line = lines[idx]
+        fixed = False
+        # Fix (&) → (&self)
+        if re.search(r"\(\s*&\s*\)", line) and "fn " in line:
+            lines[idx] = re.sub(r"\(\s*&\s*\)", "(&self)", line)
+            fixed = True
+        # Fix (&mut) → (&mut self)
+        elif re.search(r"\(\s*&mut\s*\)", line) and "fn " in line:
+            lines[idx] = re.sub(r"\(\s*&mut\s*\)", "(&mut self)", line)
+            fixed = True
+        if fixed:
+            target.write_text("\n".join(lines), encoding="utf-8")
+            repairs.append(
+                {
+                    "file": rel_path,
+                    "action": f"fixed_method_self_signature_line_{line_num}",
+                }
+            )
+    return repairs
+
+
 def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
     """Run all Rust post-execution repairs in sequence.
 
@@ -1665,6 +1758,8 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
     all_repairs.extend(repair_rust_dependencies(workspace, errors))
     all_repairs.extend(repair_rust_crate_imports(workspace, errors))
     all_repairs.extend(repair_rust_wrong_crate_paths(workspace, stderr))
+    all_repairs.extend(repair_rust_method_self_signatures(workspace, stderr))
+    all_repairs.extend(repair_rust_incompatible_copy_derives(workspace, stderr))
     # Pass 1: Structural fixes (duplicate modules, missing files)
     all_repairs.extend(repair_rust_duplicate_module_files(workspace))
     all_repairs.extend(repair_rust_missing_module_files(workspace))
@@ -1688,6 +1783,8 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
             all_repairs.extend(repair_rust_dependencies(workspace, errors2))
             all_repairs.extend(repair_rust_crate_imports(workspace, errors2))
             all_repairs.extend(repair_rust_wrong_crate_paths(workspace, stderr2))
+            all_repairs.extend(repair_rust_method_self_signatures(workspace, stderr2))
+            all_repairs.extend(repair_rust_incompatible_copy_derives(workspace, stderr2))
             all_repairs.extend(repair_rust_duplicate_module_files(workspace))
             all_repairs.extend(repair_rust_missing_module_files(workspace))
             all_repairs.extend(repair_rust_missing_binary_entrypoint(workspace))
