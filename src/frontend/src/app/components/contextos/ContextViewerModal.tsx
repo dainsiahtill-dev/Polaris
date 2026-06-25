@@ -82,6 +82,13 @@ export interface ContextViewerModalProps {
   roleId: string;
   onClose: () => void;
   /**
+   * Workspace that produced the snapshot.  In SaaS/web launcher mode the
+   * viewer can be opened from a control surface that is not the active backend
+   * workspace, so the snapshot read must carry the selected workspace
+   * explicitly instead of relying on backend defaults.
+   */
+  workspace?: string | null;
+  /**
    * Phase 3+：触发此视图的 worker id（仅用于在 header 标注「来自哪个 worker」）。
    * 后端当前按 worker 复用同一份 snapshot 落盘；该字段仅展示用，不影响 hash 解析。
    */
@@ -589,7 +596,7 @@ function GroupSection({ role, count, totalTokens, children }: GroupSectionProps)
 // Main component
 // ---------------------------------------------------------------------------
 
-export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, workerId }: ContextViewerModalProps) {
+export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, workspace, workerId }: ContextViewerModalProps) {
   const [content, setContent] = useState<ContextPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -597,8 +604,8 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worker
   // When the backend returns 403 WORKSPACE_FORBIDDEN we surface a localised
   // "other workspace" empty-state instead of a generic error banner.  The
   // advisory ACL only fires when the caller explicitly names a different
-  // workspace via X-ContextOS-Workspace, so this is opt-in — single-tenant
-  // desktop flows never see it.
+  // workspace via the ContextOS workspace selector, so this is opt-in —
+  // single-tenant desktop flows never see it.
   const [workspaceForbidden, setWorkspaceForbidden] = useState(false);
   const [search, setSearch] = useState('');
   const [groupByRole, setGroupByRole] = useState(false);
@@ -626,7 +633,13 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worker
     setContextMissing(false);
     setWorkspaceForbidden(false);
     try {
-      const res = await apiFetch(`/v2/context/${contextSnapshotRef}`);
+      const params = new URLSearchParams();
+      const workspaceToken = typeof workspace === 'string' ? workspace.trim() : '';
+      if (workspaceToken) {
+        params.set('workspace', workspaceToken);
+      }
+      const suffix = params.toString();
+      const res = await apiFetch(`/v2/context/${contextSnapshotRef}${suffix ? `?${suffix}` : ''}`);
       // 若请求在 await 期间被取消，response 解析也无意义。
       if (signal?.aborted) return;
       if (res.status === 403) {
@@ -676,7 +689,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worker
         setLoading(false);
       }
     }
-  }, [contextSnapshotRef]);
+  }, [contextSnapshotRef, workspace]);
 
   useEffect(() => {
     if (!contextSnapshotRef) return;

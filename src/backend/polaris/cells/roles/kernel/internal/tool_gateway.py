@@ -166,23 +166,29 @@ class RoleToolGateway:
             (是否允许, 拒绝原因)
         """
         requested_tool_name = tool_name
-
-        # 1. 检查白名单（空白名单=禁止所有）—— 必须在别名归一化之前执行 (CLAUDE.md §6.6)
-        if self.policy.whitelist:
-            whitelist_lower = [w.lower() for w in self.policy.whitelist]
-            if requested_tool_name.lower() not in whitelist_lower:
-                allowed = any(
-                    self._match_wildcard(requested_tool_name.lower(), w.lower()) for w in self.policy.whitelist
-                )
-                if not allowed:
-                    return False, self._format_refusal_message(
-                        f"工具 '{requested_tool_name}' 不在角色白名单中", requested_tool_name
-                    )
-
         canonical_tool_name = self._normalize_tool_name(requested_tool_name)
 
+        # 1. 检查白名单（空白名单=禁止所有）。工具别名必须先归一化，再授权。
+        if self.policy.whitelist:
+            whitelist_lower = [self._normalize_tool_name(w).lower() for w in self.policy.whitelist]
+            if canonical_tool_name.lower() not in whitelist_lower:
+                allowed = any(
+                    self._match_wildcard(canonical_tool_name.lower(), self._normalize_tool_name(w).lower())
+                    for w in self.policy.whitelist
+                )
+                if not allowed:
+                    tool_label = (
+                        f"{requested_tool_name} (canonical: {canonical_tool_name})"
+                        if requested_tool_name != canonical_tool_name
+                        else requested_tool_name
+                    )
+                    return False, self._format_refusal_message(
+                        f"工具 '{tool_label}' 不在角色白名单中", requested_tool_name
+                    )
+
         # 2. 检查黑名单
-        if canonical_tool_name in [b.lower() for b in self.policy.blacklist]:
+        blacklist_lower = [self._normalize_tool_name(b).lower() for b in self.policy.blacklist]
+        if canonical_tool_name.lower() in blacklist_lower:
             return False, self._format_refusal_message(
                 f"工具 '{canonical_tool_name}' 在角色黑名单中", requested_tool_name
             )
@@ -404,7 +410,7 @@ class RoleToolGateway:
             tool_args,
             self._run_id,
         )
-        # 1) 白名单拦截必须在映射前：按请求层原始工具名做授权检查 (CLAUDE.md §6.6)
+        # 1) 工具别名先归一化，再进入授权/路径/命令门禁。
         can_execute, reason = self.check_tool_permission(tool_name, tool_args)
         if not can_execute:
             logger.warning(f"[{self.profile.role_id}] 工具调用被拒绝: {tool_name} - {reason}")
@@ -791,9 +797,7 @@ class RoleToolGateway:
             if self._task_id:
                 event["task_id"] = self._task_id
             if self._capability_token:
-                event["job_token_id"] = str(
-                    self._capability_token.get("token_id") or ""
-                ).strip()
+                event["job_token_id"] = str(self._capability_token.get("token_id") or "").strip()
             if isinstance(effect_receipt, dict) and effect_receipt:
                 event["effect_receipt"] = effect_receipt
                 # Compute content hash delta if effect_receipt contains file info

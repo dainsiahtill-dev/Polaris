@@ -133,6 +133,47 @@ def test_final_request_context_audit_counts_tools_and_coverage() -> None:
     assert audit["context_quality"]["context_needs_review"] is True
 
 
+def test_final_request_context_audit_does_not_count_degraded_blueprint_fallback() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "【蓝图/技术架构（降级）】\n"
+                "无 CE 蓝图可用。基于任务描述和项目结构推断。\n"
+                "注意: 此为降级推断，非 CE 权威蓝图。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "TASK-1 target_files src/web.ts acceptance npm run build failed "
+                "stderr src/web.ts(63,20): error TS2345 workspace quality"
+            ),
+        },
+    ]
+    ai_request = Mock()
+    ai_request.context = {"chat_messages": messages}
+    ai_request.options = {}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={},
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    audit = build_final_request_context_audit(prepared=prepared, profile=profile)
+
+    assert audit["coverage"]["has_pm_contract"] is True
+    assert audit["coverage"]["has_chief_engineer_blueprint"] is False
+    assert "has_chief_engineer_blueprint" in audit["context_quality"]["missing_coverage"]
+
+
 def test_final_provider_request_snapshot_summarizes_tools_and_choice() -> None:
     profile = Mock()
     profile.max_context_tokens = 32768

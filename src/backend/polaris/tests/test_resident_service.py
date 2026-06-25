@@ -619,10 +619,86 @@ def test_resident_agi_decision_turn_rejects_disabled_audit_pack(tmp_path: Path) 
 
 @pytest.mark.asyncio
 async def test_resident_agi_decision_turn_public_command_uses_role_runtime_contract(tmp_path: Path) -> None:
+    from polaris.kernelone.llm.engine.executor import AIExecutor
+
     reset_resident_services()
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     captured: dict[str, object] = {}
+    hash_key = AIExecutor._store_context_messages_sync(
+        workspace=str(workspace),
+        messages=[{"role": "system", "content": "You are Resident AGI."}],
+        trace_id="trace-resident-runtime-contract",
+        call_id="call-resident-runtime-contract",
+        provider_request={
+            "schema_version": "llm.provider_request_snapshot.v1",
+            "role": "resident_agi",
+            "provider_id": "mock-provider",
+            "provider_type": "mock",
+            "model": "mock-model",
+            "tool_schema_count": 1,
+            "tools": [{"type": "function", "name": "repo_tree", "argument_keys": [], "required": []}],
+            "tool_choice": "auto",
+            "response_format": {"type": "json_schema", "name": "ResidentAgiDecisionOutputV1"},
+            "final_request_context_audit": {
+                "schema_version": "llm.final_request_context_audit.v1",
+                "final_request_token_estimate": 256,
+                "tool_schema_count": 1,
+            },
+        },
+    )
+    context_ref = f"runtime/contexts/{hash_key[:2]}/{hash_key}"
+
+    def fake_audit_pack(*, workspace: str, status_payload: dict[str, object], decision_limit: int) -> dict[str, object]:
+        return {
+            "schema_version": "resident.agi_audit_pack.v1",
+            "truth_sources": ["resident.status"],
+            "evidence_refs": [],
+            "role_registry": {"resident_agi_available": True},
+            "hard_rule_gate": {"schema_version": "resident.agi_hard_rule_gate.v1", "status": "pass"},
+            "evidence_gate": {
+                "schema_version": "resident.agi_evidence_gate.v1",
+                "status": "pass",
+                "recommended_verdict": "continue",
+            },
+            "authority_matrix": {
+                "schema_version": "resident.agi_authority_matrix.v1",
+                "chain_required": True,
+            },
+            "decision_profile": {
+                "schema_version": "resident.agi_decision_profile.v1",
+                "role_turn_allowed": True,
+                "candidate_actions": ["continue", "request_evidence"],
+                "required_constraints": ["preserve_pm_chief_engineer_director_qa_chain"],
+            },
+            "capability_surface": {
+                "decision_capabilities": [
+                    {
+                        "decision_id": "evidence.interface.selection",
+                        "required_evidence_interfaces": ["contextos.final_request_audit.read"],
+                        "optional_evidence_interfaces": ["verifier.execution.execute"],
+                        "candidate_actions": ["request_evidence"],
+                        "hard_constraints": ["final_provider_request_required"],
+                    }
+                ],
+                "items": [
+                    {
+                        "capability_id": "contextos.final_request_audit.read",
+                        "name": "Final request audit",
+                        "access": "read",
+                        "contract_ref": "roles.final_request_context_audit",
+                        "risk_level": "high",
+                    },
+                    {
+                        "capability_id": "verifier.execution.execute",
+                        "name": "Verifier execution request",
+                        "access": "execute_through_control_plane_contract",
+                        "contract_ref": "control_plane.verifier_execution",
+                        "risk_level": "high",
+                    },
+                ],
+            },
+        }
 
     class FakeResidentAgiAdapter:
         async def execute(
@@ -660,9 +736,15 @@ async def test_resident_agi_decision_turn_public_command_uses_role_runtime_contr
         captured["workspace"] = workspace_arg
         return FakeResidentAgiAdapter()
 
-    with patch(
-        "polaris.cells.resident.autonomy.public.service.create_role_adapter",
-        side_effect=fake_create_role_adapter,
+    with (
+        patch(
+            "polaris.cells.resident.autonomy.public.service.create_role_adapter",
+            side_effect=fake_create_role_adapter,
+        ),
+        patch(
+            "polaris.cells.resident.autonomy.public.service.build_resident_agi_audit_pack",
+            side_effect=fake_audit_pack,
+        ),
     ):
         result = await run_resident_agi_decision_turn(
             RunResidentAgiDecisionTurnCommandV1(
@@ -673,6 +755,7 @@ async def test_resident_agi_decision_turn_public_command_uses_role_runtime_contr
                 evidence={"source": "service-test"},
                 constraints=("preserve_pm_chief_engineer_director_qa_chain",),
                 candidate_actions=("continue", "request_evidence"),
+                context_refs=(context_ref,),
                 evidence_refs=("runtime/gates/qa.json",),
             )
         )
@@ -680,19 +763,24 @@ async def test_resident_agi_decision_turn_public_command_uses_role_runtime_contr
     assert result["ok"] is True
     assert result["runtime_contract_gate"]["status"] == "pass"
     assert result["output_contract_gate"]["status"] == "pass"
+    assert result["decision_preflight"]["status"] == "pass"
     assert result["selected_decision_capability"]["decision_id"] == "evidence.interface.selection"
-    assert "run_ledger.read" in result["required_evidence_interfaces"]
+    assert "contextos.final_request_audit.read" in result["required_evidence_interfaces"]
     assert "verifier.execution.execute" in result["optional_evidence_interfaces"]
     assert result["recorded_decision"]["actor"] == "resident_agi"
     assert result["recorded_decision"]["expected_outcome"]["decision_capability"]["decision_id"] == (
         "evidence.interface.selection"
     )
-    assert "run_ledger.read" in result["recorded_decision"]["expected_outcome"]["required_evidence_interfaces"]
+    assert (
+        "contextos.final_request_audit.read"
+        in (result["recorded_decision"]["expected_outcome"]["required_evidence_interfaces"])
+    )
     assert result["recorded_decision"]["actual_outcome"]["decision_source"] == "resident_agi_role_runtime"
     assert result["recorded_decision"]["actual_outcome"]["resident_agi_decision_capability"]["decision_id"] == (
         "evidence.interface.selection"
     )
     assert result["recorded_decision"]["actual_outcome"]["resident_agi_runtime_contract_gate"]["passed"] is True
+    assert result["recorded_decision"]["actual_outcome"]["resident_agi_decision_preflight"]["passed"] is True
     assert "runtime/contexts/context-public.json" in result["recorded_decision"]["evidence_refs"]
     assert captured["role_id"] == "resident_agi"
     assert captured["workspace"] == str(workspace)
@@ -701,11 +789,54 @@ async def test_resident_agi_decision_turn_public_command_uses_role_runtime_contr
     assert captured_context["metadata"]["source"] == "resident.autonomy.public.run_resident_agi_decision_turn"
     assert captured_context["metadata"]["context_os_expected"] is True
     assert captured_context["metadata"]["resident_agi_selected_decision_capability"] == "evidence.interface.selection"
-    assert "run_ledger.read" in captured_context["metadata"]["resident_agi_required_evidence_interfaces"]
+    assert (
+        "contextos.final_request_audit.read"
+        in (captured_context["metadata"]["resident_agi_required_evidence_interfaces"])
+    )
+    assert captured_context["metadata"]["resident_agi_decision_preflight_passed"] is True
     captured_input = captured["input_data"]
     assert isinstance(captured_input, dict)
     assert captured_input["selected_decision_capability"]["decision_id"] == "evidence.interface.selection"
+    assert captured_input["resident_agi_decision_preflight"]["status"] == "pass"
     assert "verifier.execution.execute" in captured_input["optional_evidence_interfaces"]
+
+
+@pytest.mark.asyncio
+async def test_resident_agi_decision_turn_blocks_before_adapter_when_required_evidence_missing(
+    tmp_path: Path,
+) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    def fail_create_role_adapter(role_id: str, workspace_arg: str) -> object:
+        raise AssertionError(f"adapter should not be created: {role_id} {workspace_arg}")
+
+    with patch(
+        "polaris.cells.resident.autonomy.public.service.create_role_adapter",
+        side_effect=fail_create_role_adapter,
+    ):
+        result = await run_resident_agi_decision_turn(
+            RunResidentAgiDecisionTurnCommandV1(
+                workspace=str(workspace),
+                decision_type="quality_gate_response",
+                objective="Decide whether the current run can proceed without required evidence.",
+                task_id="resident-agi-preflight-block",
+            )
+        )
+
+    assert result["ok"] is False
+    assert result["decision"]["verdict"] == "request_evidence"
+    assert result["decision_preflight"]["schema_version"] == "resident.agi_decision_preflight.v1"
+    assert result["decision_preflight"]["status"] == "block"
+    assert result["decision_preflight"]["passed"] is False
+    assert "run_ledger.read" in result["decision_preflight"]["missing_required_interface_ids"]
+    assert result["runtime_contract_gate"]["status"] == "preflight_blocked"
+    assert result["output_contract_gate"]["status"] == "preflight_blocked"
+    assert result["recorded_decision"]["verdict"] == "blocked"
+    actual_outcome = result["recorded_decision"]["actual_outcome"]
+    assert actual_outcome["resident_agi_decision_preflight"] == result["decision_preflight"]
+    assert actual_outcome["runtime_success"] is False
 
 
 @pytest.mark.asyncio
@@ -713,6 +844,42 @@ async def test_resident_agi_decision_turn_rejects_continue_when_evidence_gate_ho
     reset_resident_services()
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
+
+    def fake_audit_pack(*, workspace: str, status_payload: dict[str, object], decision_limit: int) -> dict[str, object]:
+        return {
+            "schema_version": "resident.agi_audit_pack.v1",
+            "truth_sources": ["resident.status"],
+            "evidence_refs": [],
+            "role_registry": {"resident_agi_available": True},
+            "hard_rule_gate": {"schema_version": "resident.agi_hard_rule_gate.v1", "status": "pass"},
+            "evidence_gate": {
+                "schema_version": "resident.agi_evidence_gate.v1",
+                "status": "hold",
+                "recommended_verdict": "request_evidence",
+            },
+            "authority_matrix": {
+                "schema_version": "resident.agi_authority_matrix.v1",
+                "chain_required": True,
+            },
+            "decision_profile": {
+                "schema_version": "resident.agi_decision_profile.v1",
+                "role_turn_allowed": True,
+                "candidate_actions": ["continue", "request_evidence"],
+                "required_constraints": ["preserve_pm_chief_engineer_director_qa_chain"],
+            },
+            "capability_surface": {
+                "decision_capabilities": [
+                    {
+                        "decision_id": "quality.gate.response",
+                        "required_evidence_interfaces": [],
+                        "optional_evidence_interfaces": [],
+                        "candidate_actions": ["continue", "request_evidence"],
+                        "hard_constraints": ["failed_quality_gate_cannot_be_marked_passed_by_agi"],
+                    }
+                ],
+                "items": [],
+            },
+        }
 
     class FakeResidentAgiAdapter:
         async def execute(
@@ -742,9 +909,15 @@ async def test_resident_agi_decision_turn_rejects_continue_when_evidence_gate_ho
                 },
             }
 
-    with patch(
-        "polaris.cells.resident.autonomy.public.service.create_role_adapter",
-        return_value=FakeResidentAgiAdapter(),
+    with (
+        patch(
+            "polaris.cells.resident.autonomy.public.service.create_role_adapter",
+            return_value=FakeResidentAgiAdapter(),
+        ),
+        patch(
+            "polaris.cells.resident.autonomy.public.service.build_resident_agi_audit_pack",
+            side_effect=fake_audit_pack,
+        ),
     ):
         result = await run_resident_agi_decision_turn(
             RunResidentAgiDecisionTurnCommandV1(
@@ -758,6 +931,7 @@ async def test_resident_agi_decision_turn_rejects_continue_when_evidence_gate_ho
 
     assert result["ok"] is False
     assert result["runtime_contract_gate"]["status"] == "pass"
+    assert result["decision_preflight"]["status"] == "pass"
     assert result["output_contract_gate"]["status"] == "fail"
     assert "evidence_gate.continue_guard" in result["output_contract_gate"]["failed_check_ids"]
     assert "evidence_gate.downstream_guard" in result["output_contract_gate"]["failed_check_ids"]

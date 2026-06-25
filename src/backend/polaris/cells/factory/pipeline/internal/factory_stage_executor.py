@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
 _WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_ENV = "KERNELONE_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS"
-_DEFAULT_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS = 1200.0
+_DEFAULT_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS = 90.0
 _WORKSPACE_QUALITY_REPAIR_SOURCE_SUFFIXES = frozenset(
     {
         ".css",
@@ -629,6 +629,46 @@ class OrchestrationStageExecutor:
                     if str(item or "").strip()
                 ],
             }
+        return json.dumps(compact_payload, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _compact_blueprint_evidence_for_repair(text: str) -> str:
+        try:
+            payload = json.loads(str(text or ""))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return helpers.compact_text_for_prompt(str(text or ""), max_chars=6000)
+        if not isinstance(payload, dict):
+            return helpers.compact_text_for_prompt(str(text or ""), max_chars=6000)
+
+        blueprints: list[dict[str, Any]] = []
+        for item in list(payload.get("blueprints") or [])[:12]:
+            if not isinstance(item, dict):
+                continue
+            compact_item: dict[str, Any] = {}
+            for key in ("task_id", "status", "blueprint_id", "blueprint_path", "summary", "recommendations", "risks"):
+                value = item.get(key)
+                if value not in (None, "", [], {}):
+                    compact_item[key] = value
+            if compact_item:
+                blueprints.append(compact_item)
+
+        compact_payload: dict[str, Any] = {
+            "schema_version": "factory.chief_engineer_review.evidence.v1",
+            "generated_blueprints": int(payload.get("generated_blueprints") or len(blueprints)),
+            "total_tasks": int(payload.get("total_tasks") or len(blueprints)),
+            "blueprints": blueprints,
+        }
+        signals = [
+            {
+                key: item.get(key)
+                for key in ("code", "severity", "detail", "task_id")
+                if isinstance(item, dict) and item.get(key) not in (None, "", [], {})
+            }
+            for item in list(payload.get("signals") or [])[:8]
+            if isinstance(item, dict)
+        ]
+        if signals:
+            compact_payload["signals"] = signals
         return json.dumps(compact_payload, ensure_ascii=False, indent=2)
 
     @staticmethod
@@ -3625,15 +3665,64 @@ class OrchestrationStageExecutor:
                 break
         return changed
 
+    def _workspace_quality_repair_blueprint_evidence(self, *, run_id: str) -> tuple[str, str]:
+        if not run_id:
+            return "", ""
+        for candidate in (
+            f"runtime/state/blueprints/{run_id}.review.json",
+            f"runtime/blueprints/{run_id}.review.json",
+            f"workspace/.polaris/blueprints/{run_id}.review.json",
+            "workspace/.polaris/blueprints/latest.review.json",
+        ):
+            with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+                text = self._read_text_artifact(candidate, min_chars=2)
+            if text:
+                return candidate, self._compact_blueprint_evidence_for_repair(text)
+        return "", ""
+
     def _workspace_quality_repair_original_message(self, *, run_id: str, target_files: list[str]) -> str:
         tasks = self._load_pm_plan_tasks("tasks/plan.json")
-        payload = {
-            "source": "factory_workspace_quality_repair",
-            "factory_run_id": run_id,
-            "target_files": target_files[:80],
-            "pm_tasks": tasks[:20],
-        }
-        return json.dumps(payload, ensure_ascii=False, indent=2)[:12000]
+        lines: list[str] = [
+            "Factory workspace quality repair contract:",
+            "- Delivery mode: materialize changes into the workspace.",
+        ]
+        if target_files:
+            lines.append("- Target files:")
+            lines.extend(f"  - {item}" for item in target_files[:80])
+
+        blueprint_artifact, blueprint_text = self._workspace_quality_repair_blueprint_evidence(run_id=run_id)
+        if blueprint_text:
+            lines.extend(
+                [
+                    "- Chief Engineer blueprint evidence:",
+                    f"  artifact: {blueprint_artifact}",
+                    blueprint_text,
+                ]
+            )
+        else:
+            lines.append("- Chief Engineer blueprint evidence: unavailable for this repair turn.")
+
+        if tasks:
+            lines.append("- PM task contract summary:")
+        for index, task in enumerate(tasks[:20], start=1):
+            title = str(task.get("title") or task.get("id") or f"TASK-{index}").strip()
+            goal = str(task.get("goal") or task.get("description") or "").strip()
+            scope = str(task.get("scope") or "").strip()
+            task_targets = self._task_string_list(task, "target_files", "scope_paths")
+            steps = self._task_string_list(task, "steps")
+            acceptance = self._task_string_list(task, "acceptance", "acceptance_criteria")
+            lines.append(f"  {index}. {title}")
+            if goal:
+                lines.append(f"     goal: {goal}")
+            if scope:
+                lines.append(f"     scope: {scope}")
+            if task_targets:
+                lines.append(f"     targets: {', '.join(task_targets[:16])}")
+            if steps:
+                lines.append(f"     steps: {'; '.join(steps[:4])}")
+            if acceptance:
+                lines.append(f"     acceptance: {'; '.join(acceptance[:4])}")
+        return "\n".join(lines)[:12000]
 
     @staticmethod
     def _workspace_quality_llm_repair_timeout_seconds(context: dict[str, Any]) -> float:
@@ -3664,19 +3753,30 @@ class OrchestrationStageExecutor:
                 "tool_results": 0,
             }
         target_files = self._workspace_quality_repair_target_files()
-        task: dict[str, Any] = {
-            "target_files": target_files or changed_files,
-            "metadata": {"target_files": target_files},
-        }
+        task: dict[str, Any] = {"target_files": target_files or changed_files}
         repair_context = {
-            **dict(context or {}),
-            "run_id": run_id,
+            "delivery_mode": "materialize_changes",
+            "target_files": (target_files or changed_files)[:80],
+            "changed_files": changed_files[:80],
             "factory_workspace_quality_repair": {
-                "run_id": run_id,
                 "changed_files": changed_files[:80],
                 "target_files": target_files[:80],
             },
         }
+        for key in (
+            "language",
+            "prompt_language",
+            "programming_language",
+            "artifact",
+            "artifact_type",
+            "project_kind",
+            "prompt_profile_ids",
+            "prompt_profiles",
+            "prompt_profile",
+            "prompt_profile_id",
+        ):
+            if key in context:
+                repair_context[key] = context[key]
         try:
             from polaris.cells.roles.adapters.public.service import run_director_materialization_quality_repair
 

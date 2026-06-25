@@ -55,6 +55,7 @@ import { useFactory } from '@/hooks/useFactory';
 import { useFactoryBench } from '@/hooks/useFactoryBench';
 import { getLatestExecutionActivityLog, readEngineRoleDetail } from '@/app/utils/appRuntime';
 import { mergeProcessAndBenchLogs } from '@/app/utils/benchRuntimeLogs';
+import { applyBenchObservedWorkspaceChange } from '@/app/utils/benchWorkspace';
 import { isLancedbExplicitlyBlocked } from '@/app/utils/lancedbGate';
 import { normalizeStartedAtSeconds } from '@/app/utils/runtimeDisplay';
 import { useLlmRuntimeGate } from './hooks/useLlmRuntimeGate';
@@ -218,18 +219,6 @@ function isFactoryRunScopedToBenchWorkDir(run: unknown, benchWorkDir: string): b
   return runWorkspace === normalizedBenchWorkDir || runWorkspace.startsWith(`${normalizedBenchWorkDir}/`);
 }
 
-function isAbsoluteWorkspacePath(value: string): boolean {
-  return value.startsWith('/') || value.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(value);
-}
-
-function resolveBenchObservedWorkspace(value: string, baseWorkspace: string): string {
-  const normalized = String(value || '').trim();
-  if (!normalized || isAbsoluteWorkspacePath(normalized)) return normalized;
-  const base = String(baseWorkspace || '').trim();
-  if (!base || !isAbsoluteWorkspacePath(base)) return normalized;
-  return `${base.replace(/[\\/]+$/, '')}/${normalized.replace(/^\.?[\\/]+/, '')}`;
-}
-
 function readInitialWorkspaceBinding(): string {
   if (typeof window === 'undefined') return '';
   const params = new URLSearchParams(window.location.search);
@@ -259,7 +248,6 @@ function AppContent() {
   const { notifications, remove: removeNotification, error: notifyError } = useNotifications();
   const settingsWorkspace = settings?.workspace || '';
   const [benchObservedWorkspace, setBenchObservedWorkspace] = useState('');
-  const pendingBenchWorkspaceRef = useRef('');
   const workspace = benchObservedWorkspace || settingsWorkspace;
   const internalBenchFlag = String(import.meta.env.VITE_POLARIS_INTERNAL_BENCH ?? '').trim();
   const internalBenchEnabled = internalBenchFlag === '1' || (import.meta.env.DEV && internalBenchFlag !== '0');
@@ -268,29 +256,15 @@ function AppContent() {
 
   const handleBenchWorkspaceChange = useCallback(
     (nextWorkspace: string) => {
-      const normalized = resolveBenchObservedWorkspace(nextWorkspace, settingsWorkspace);
-      if (!normalized || normalized === workspace) return;
-      setProgressSnapshot(null);
-      setBenchObservedWorkspace(normalized);
-      if (pendingBenchWorkspaceRef.current === normalized) return;
-      pendingBenchWorkspaceRef.current = normalized;
-      void (async () => {
-        try {
-          const updated = await updateSettings({ workspace: normalized });
-          const appliedWorkspace = String(updated?.workspace || normalized).trim();
-          if (appliedWorkspace && appliedWorkspace !== normalized) {
-            setBenchObservedWorkspace(appliedWorkspace);
-          }
-        } catch (error) {
-          notifyError(error instanceof Error ? error.message : 'Factory Bench 工作区切换失败');
-        } finally {
-          if (pendingBenchWorkspaceRef.current === normalized) {
-            pendingBenchWorkspaceRef.current = '';
-          }
-        }
-      })();
+      applyBenchObservedWorkspaceChange({
+        nextWorkspace,
+        settingsWorkspace,
+        currentWorkspace: workspace,
+        setProgressSnapshot,
+        setBenchObservedWorkspace,
+      });
     },
-    [notifyError, settingsWorkspace, updateSettings, workspace],
+    [settingsWorkspace, workspace],
   );
 
   useEffect(() => {

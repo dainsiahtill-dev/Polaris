@@ -99,6 +99,63 @@ class TestTextShapingHelpers:
         assert summary["repair_attempted"] is True
         assert summary["repair_success"] is False
 
+    def test_workspace_quality_repair_original_message_uses_data_plane_blueprint_summary(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "title": "Build canvas flight entrypoint",
+                        "goal": "Render a paper plane flight canvas.",
+                        "scope": "index.html, src/web.ts",
+                        "target_files": ["index.html", "src/web.ts"],
+                        "steps": ["Create browser bootstrap", "Draw a non-empty first frame"],
+                        "acceptance": ["npm run build passes", "canvas paints pixels"],
+                        "metadata": {"internal": "not prompt data"},
+                    }
+                ]
+            },
+        )
+        executor._write_json_artifact(
+            "runtime/state/blueprints/factory-run.review.json",
+            {
+                "schema_version": "factory.chief_engineer_review.v1",
+                "source": "factory_stage_executor",
+                "factory_run_id": "factory-run",
+                "generated_blueprints": 1,
+                "total_tasks": 1,
+                "blueprints": [
+                    {
+                        "task_id": "TASK-1",
+                        "status": "generated",
+                        "blueprint_id": "ce_TASK-1_test",
+                        "blueprint_path": "runtime/blueprints/ce_TASK-1_test.json",
+                        "summary": "Use src/web.ts as the browser bootstrap for index.html.",
+                        "recommendations": ["Keep DOM canvas code out of the Node CLI entrypoint."],
+                        "risks": ["API drift between renderer and models."],
+                    }
+                ],
+                "metadata": {"internal": "not prompt data"},
+            },
+        )
+
+        message = executor._workspace_quality_repair_original_message(
+            run_id="factory-run",
+            target_files=["index.html", "src/web.ts"],
+        )
+
+        assert "Chief Engineer blueprint evidence" in message
+        assert "ce_TASK-1_test" in message
+        assert "Build canvas flight entrypoint" in message
+        assert "factory_run_id" not in message
+        assert '"metadata"' not in message
+        assert '"source"' not in message
+
     def test_strip_prompt_meta_lines_removes_matching_lines(self) -> None:
         text = "keep this\n这是提示词内容\nalso keep\nsystem prompt here\nfinal"
         result = OrchestrationStageExecutor._strip_prompt_meta_lines(text)

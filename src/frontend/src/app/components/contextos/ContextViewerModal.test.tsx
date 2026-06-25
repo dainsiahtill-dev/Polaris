@@ -79,6 +79,25 @@ describe('ContextViewerModal', () => {
     expect(screen.getByText('You are a helpful assistant.')).toBeTruthy();
   });
 
+  it('passes the selected workspace when loading a context snapshot', async () => {
+    const payload = makePayload();
+    mockFetchOk(payload);
+    render(
+      <ContextViewerModal
+        contextSnapshotRef="abc123abc123abc123abc123"
+        roleId="director"
+        workspace="/tmp/factory-bench-l1-04-r23/L1-04"
+        onClose={vi.fn()}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.queryByTestId('contextos-viewer-loading')).toBeNull();
+    });
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      '/v2/context/abc123abc123abc123abc123?workspace=%2Ftmp%2Ffactory-bench-l1-04-r23%2FL1-04',
+    );
+  });
+
   it('renders meta bar with call/trace/stored_at/message_count/total_chars chips', async () => {
     const payload = makePayload({ total_chars: 12345, message_count: 2 });
     mockFetchOk(payload);

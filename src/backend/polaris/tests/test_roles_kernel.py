@@ -125,6 +125,11 @@ class TestRoleToolGateway:
         # Director允许代码写入
         can_write, _ = gateway.check_tool_permission("write_file")
         assert can_write is True
+        can_create_alias, alias_reason = gateway.check_tool_permission(
+            "create_file",
+            {"path": "src/app.py", "content": "print('ok')\n"},
+        )
+        assert can_create_alias is True, alias_reason
 
         # 但默认禁止删除
         can_delete, _ = gateway.check_tool_permission("delete_file")
@@ -206,13 +211,13 @@ class TestRoleToolGateway:
         assert result["success"] is False
         assert "handler_missing:write_file" in str(result.get("error") or "")
 
-    def test_whitelist_gate_runs_before_llm_mapping(
+    def test_canonical_whitelist_preserves_explicit_repo_read_tool(
         self,
         registry,
         temp_workspace,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """白名单拦截应基于请求层工具名，而非映射后的执行工具名。"""
+        """Canonical auth must preserve explicitly whitelisted read tools."""
         director_profile = registry.get_profile("director")
         gateway = RoleToolGateway(director_profile, temp_workspace)
 
@@ -227,11 +232,43 @@ class TestRoleToolGateway:
 
         monkeypatch.setattr(llm_toolkit_module, "AgentAccelToolExecutor", _FakeExecutor)
 
-        # Director 白名单包含 repo_read_head，不包含 read_file。
-        # 若先映射再拦截会被拒绝；正确行为是先放行 repo_read_head，再允许映射执行。
         result = gateway.execute_tool("repo_read_head", {"file": "src/utils/helpers.py", "n": 50})
         assert result["success"] is True
         assert result["tool"] == "repo_read_head"
+
+    def test_gateway_authorizes_tool_alias_after_canonicalization(
+        self,
+        registry,
+        temp_workspace,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Tool aliases declared by ToolSpecRegistry must authorize through their canonical tool."""
+        director_profile = registry.get_profile("director")
+        gateway = RoleToolGateway(director_profile, temp_workspace)
+
+        class _FakeExecutor:
+            def __init__(self, workspace: str, **_kwargs) -> None:
+                self.workspace = workspace
+
+            def execute(self, tool_name: str, tool_args: dict):
+                return {"ok": True, "result": {"tool": tool_name, "args": tool_args}}
+
+        import polaris.kernelone.llm.toolkit as llm_toolkit_module
+
+        monkeypatch.setattr(llm_toolkit_module, "AgentAccelToolExecutor", _FakeExecutor)
+
+        result = gateway.execute_tool(
+            "create_file",
+            {"path": "src/app.py", "content": "print('ok')\n"},
+        )
+
+        assert result["success"] is True
+        assert result["tool"] == "write_file"
+        assert result["result"]["tool"] == "write_file"
+        assert result["result"]["args"] == {
+            "file": "src/app.py",
+            "content": "print('ok')\n",
+        }
 
     def test_execute_tools_canonicalizes_llm_create_file_before_gateway_auth(
         self,

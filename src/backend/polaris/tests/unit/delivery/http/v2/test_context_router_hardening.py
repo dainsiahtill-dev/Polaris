@@ -204,6 +204,80 @@ def test_workspace_acl_missing_hash_returns_404_without_leaking(tmp_path) -> Non
     assert detail.get("code") == "CONTEXT_NOT_FOUND", detail
 
 
+def test_workspace_query_selects_snapshot_workspace(tmp_path) -> None:
+    """Explicit ?workspace= selects the snapshot store for launcher/web views.
+
+    ContextOS can render events for a workspace that is not the backend's
+    default active workspace.  The hash must be resolved against the selected
+    workspace instead of silently reading the default workspace and returning
+    a false CONTEXT_NOT_FOUND.
+    """
+    workspace_a = tmp_path / "workspaceA"
+    workspace_b = tmp_path / "workspaceB"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    hash_key = _seed_context(workspace_b, "B", "visible-from-selected-workspace")
+    client = _build_client(str(workspace_a))
+
+    response = client.get(f"/v2/context/{hash_key}", params={"workspace": str(workspace_b)})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["hash"] == hash_key
+    assert body["messages"] == [{"role": "user", "content": "visible-from-selected-workspace"}]
+
+
+def test_workspace_query_falls_back_to_kernelone_system_cache(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reader must survive runtime-root override vs default cache split."""
+    from polaris.kernelone.storage.layout import clear_storage_roots_cache
+
+    workspace_a = tmp_path / "workspaceA"
+    workspace_b = tmp_path / "workspaceB"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg-cache"))
+    monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
+    clear_storage_roots_cache()
+    hash_key = _seed_context(workspace_b, "B-default-cache", "default-cache-context")
+
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "server-runtime"))
+    clear_storage_roots_cache()
+    client = _build_client(str(workspace_a))
+
+    response = client.get(f"/v2/context/{hash_key}", params={"workspace": str(workspace_b)})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["hash"] == hash_key
+    assert body["storage_source"] == "kernelone_system_cache"
+    assert body["messages"] == [{"role": "user", "content": "default-cache-context"}]
+
+
+def test_final_request_workspace_query_selects_snapshot_workspace(tmp_path) -> None:
+    """The final-request audit endpoint must share the same workspace selector."""
+    workspace_a = tmp_path / "workspaceA"
+    workspace_b = tmp_path / "workspaceB"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    hash_key = _seed_context_with_provider_request(workspace_b, "provider-request-B")
+    client = _build_client(str(workspace_a))
+
+    response = client.get(
+        f"/v2/context/{hash_key}/final-request",
+        params={"workspace": str(workspace_b)},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["context_hash"] == hash_key
+    assert body["provider_request"]["provider_id"] == "mock-provider"
+    assert body["final_request_context_audit"]["final_request_token_estimate"] == 128
+
+
 def test_legacy_runtime_context_is_not_read(tmp_path) -> None:
     """Old Polaris runtime context locations are no longer readable.
 

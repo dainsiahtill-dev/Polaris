@@ -93,6 +93,46 @@ def _context_window_tokens(prepared: PreparedLLMRequest, profile: Any) -> int:
 
 def _coverage_flags(text: str) -> dict[str, bool]:
     lowered = text.lower()
+    blueprint_absent = any(
+        marker in lowered
+        for marker in (
+            "无 ce 蓝图可用",
+            "无 chief engineer 蓝图可用",
+            "no ce blueprint available",
+            "no chief engineer blueprint available",
+            "chief engineer blueprint evidence: unavailable",
+            "蓝图/技术架构（降级）",
+            "非 ce 权威蓝图",
+        )
+    )
+    strong_blueprint_evidence = any(
+        needle in lowered
+        for needle in (
+            "blueprint_id",
+            "construction signatures",
+            "construction target",
+            "construction verify",
+            "scope_for_apply",
+            "construction_plan",
+            "handoff_ready",
+            "generated_blueprints",
+            'blueprints":',
+            "蓝图交接",
+        )
+    )
+    has_chief_engineer_blueprint = strong_blueprint_evidence or (
+        not blueprint_absent
+        and any(
+            needle in lowered
+            for needle in (
+                "chief engineer",
+                "chief_engineer",
+                "blueprint",
+                "ce handoff",
+                "ce 蓝图",
+            )
+        )
+    )
     return {
         "has_pm_contract": any(
             needle in lowered
@@ -110,23 +150,7 @@ def _coverage_flags(text: str) -> dict[str, bool]:
                 "验收标准",
             )
         ),
-        "has_chief_engineer_blueprint": any(
-            needle in lowered
-            for needle in (
-                "chief engineer",
-                "chief_engineer",
-                "blueprint",
-                "blueprint_id",
-                "ce handoff",
-                "ce 蓝图",
-                "construction signatures",
-                "construction target",
-                "construction verify",
-                "scope_for_apply",
-                "construction_plan",
-                "蓝图交接",
-            )
-        ),
+        "has_chief_engineer_blueprint": has_chief_engineer_blueprint,
         "has_target_files": any(
             needle in lowered
             for needle in (

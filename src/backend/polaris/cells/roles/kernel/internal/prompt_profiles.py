@@ -745,12 +745,6 @@ def _infer_artifact(*, context: dict[str, Any], message: str) -> str:
         )
         for path in candidates
     )
-    if has_test:
-        return "test_suite"
-    if any(token in lowered for token in ("cli", "command line", "命令行")):
-        return "cli"
-    if any(token in lowered for token in ("api", "rest", "http route", "接口")):
-        return "api"
     has_canvas = any(
         token in lowered
         for token in (
@@ -768,8 +762,14 @@ def _infer_artifact(*, context: dict[str, Any], message: str) -> str:
     )
     if has_web and (has_canvas or has_canvas_entry_path):
         return "html5_canvas"
+    if any(token in lowered for token in ("cli", "command line", "命令行")):
+        return "cli"
+    if any(token in lowered for token in ("api", "rest", "http route", "接口")):
+        return "api"
     if has_web or any(token in lowered for token in ("web", "browser", "frontend", "页面", "浏览器")):
         return "web"
+    if has_test:
+        return "test_suite"
     if any(token in lowered for token in ("readme", "docs", "文档")):
         return "docs"
     if has_source:
@@ -798,6 +798,9 @@ def _path_candidates(context: dict[str, Any], message: str) -> list[str]:
     quality_repair = context.get("director_quality_repair")
     if isinstance(quality_repair, dict):
         values.extend(_path_candidates(quality_repair, ""))
+    factory_quality_repair = context.get("factory_workspace_quality_repair")
+    if isinstance(factory_quality_repair, dict):
+        values.extend(_path_candidates(factory_quality_repair, ""))
     values.extend(match.group("path") for match in _PATH_TOKEN_RE.finditer(str(message or "")))
     return _dedupe_strings(values)
 

@@ -399,3 +399,41 @@ def test_factory_workspace_quality_repair_keeps_director_profiles_active(tmp_pat
     assert "builtin.artifact.test_suite" in selected_ids
     assert audit["inferred_stage"] == "quality_repair"
     assert audit["skipped_reason"] == ""
+
+
+def test_factory_workspace_quality_repair_prefers_html5_canvas_over_test_suite(tmp_path) -> None:
+    appendix, audit = build_prompt_profile_appendix(
+        workspace=str(tmp_path),
+        role_id="director",
+        message=(
+            "MATERIALIZATION QUALITY REPAIR MODE: canvas entrypoint did not render non-empty pixels. "
+            "src/web.ts(63,20): error TS2345. tests/verify.test.ts must pass."
+        ),
+        context_override={
+            "delivery_mode": "materialize_changes",
+            "factory_workspace_quality_repair": {
+                "target_files": [
+                    "index.html",
+                    "src/web.ts",
+                    "src/engine/renderer.ts",
+                    "src/engine/simulation.ts",
+                    "tests/verify.test.ts",
+                ],
+                "changed_files": [
+                    "index.html",
+                    "src/web.ts",
+                    "src/engine/renderer.ts",
+                    "src/engine/simulation.ts",
+                    "tests/verify.test.ts",
+                ],
+            },
+        },
+    )
+
+    selected_ids = audit["selected_prompt_profile_ids"]
+    assert "[POLARIS PROMPT PROFILE]" in appendix
+    assert "builtin.language.typescript" in selected_ids
+    assert "builtin.role_stage.director.quality_repair" in selected_ids
+    assert "builtin.artifact.html5_canvas" in selected_ids
+    assert "builtin.artifact.test_suite" not in selected_ids
+    assert audit["inferred_artifact"] == "html5_canvas"

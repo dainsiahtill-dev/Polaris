@@ -1588,6 +1588,7 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
     all_repairs.extend(repair_rust_missing_module_files(workspace))
     all_repairs.extend(repair_rust_missing_binary_entrypoint(workspace))
     # Pass 2: Code-level fixes
+    all_repairs.extend(repair_rust_missing_derives(workspace, stderr))
     all_repairs.extend(repair_rust_unused_imports(workspace, stderr))
     all_repairs.extend(repair_rust_missing_fields(workspace, stderr))
     all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr))
@@ -1599,6 +1600,7 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
             all_repairs.extend(repair_rust_duplicate_module_files(workspace))
             all_repairs.extend(repair_rust_missing_module_files(workspace))
             all_repairs.extend(repair_rust_missing_binary_entrypoint(workspace))
+            all_repairs.extend(repair_rust_missing_derives(workspace, stderr2))
             all_repairs.extend(repair_rust_unused_imports(workspace, stderr2))
             all_repairs.extend(repair_rust_missing_fields(workspace, stderr2))
             all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr2))
@@ -1633,6 +1635,72 @@ def repair_rust_duplicate_module_files(workspace: Path) -> list[dict[str, Any]]:
                     "action": f"removed_duplicate_module_{subdir.name}",
                 }
             )
+    return repairs
+
+
+def repair_rust_missing_derives(workspace: Path, stderr: str = "") -> list[dict[str, Any]]:
+    """Add missing trait derives when cargo reports trait bound errors.
+
+    When code requires ``Eq``, ``Hash``, ``PartialOrd`` etc. on a struct but
+    the struct only derives ``Debug, Clone``, add the missing traits.
+    """
+    if not stderr:
+        stderr = _run_cargo_check_stderr(workspace)
+    if not stderr:
+        return []
+
+    # Pattern: the trait bound `Type: Trait` is not satisfied
+    trait_bound_re = re.compile(r"the trait bound [`'](?:\w+::)*(\w+):\s*(\w+)[`'] is not satisfied")
+    # Collect (struct_name, trait_name) pairs
+    missing: set[tuple[str, str]] = set()
+    for m in trait_bound_re.finditer(stderr):
+        struct_name = m.group(1)
+        trait_name = m.group(2)
+        missing.add((struct_name, trait_name))
+
+    if not missing:
+        return []
+
+    repairs: list[dict[str, Any]] = []
+    derive_re = re.compile(r"#\[derive\(([^)]+)\)\]")
+
+    for rs_file in sorted(workspace.rglob("*.rs")):
+        if "target" in rs_file.relative_to(workspace).parts:
+            continue
+        try:
+            content = rs_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        modified = False
+        for struct_name, trait_name in missing:
+            # Find the struct definition
+            struct_re = re.compile(rf"(#\[derive\([^)]+\)\]\s*\n\s*(?:pub\s+)?struct\s+{re.escape(struct_name)}\b)")
+            sm = struct_re.search(content)
+            if not sm:
+                continue
+            # Check if the trait is already derived
+            derive_match = derive_re.search(sm.group(0))
+            if derive_match:
+                existing = derive_match.group(1)
+                if trait_name not in existing:
+                    new_derive = f"{existing}, {trait_name}"
+                    content = content.replace(
+                        derive_match.group(0),
+                        derive_match.group(0).replace(existing, new_derive),
+                        1,
+                    )
+                    modified = True
+
+        if modified:
+            rs_file.write_text(content, encoding="utf-8")
+            repairs.append(
+                {
+                    "file": str(rs_file.relative_to(workspace)),
+                    "action": "added_missing_derives",
+                }
+            )
+
     return repairs
 
 

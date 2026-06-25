@@ -1237,13 +1237,12 @@ async def _run_materialization_quality_repair_retry(
     should_merge_missing_targets = bool(explicit_missing_quality_targets) or not (
         runtime_smoke_target_files or semantic_quality_target_files or explicit_quality_target_files
     )
-    repair_target_candidates = _dedupe_preserve_order(
-        [
-            *(missing_target_files if should_merge_missing_targets else []),
-            *runtime_smoke_target_files,
-            *semantic_quality_target_files,
-            *explicit_quality_target_files,
-        ]
+    repair_target_candidates = _ordered_materialization_quality_repair_target_candidates(
+        missing_target_files=missing_target_files,
+        runtime_smoke_target_files=runtime_smoke_target_files,
+        semantic_quality_target_files=semantic_quality_target_files,
+        explicit_quality_target_files=explicit_quality_target_files,
+        should_merge_missing_targets=should_merge_missing_targets,
     )
     rotate_repair_targets = bool(
         len(repair_target_candidates) > 1
@@ -1482,6 +1481,41 @@ def _select_materialization_quality_repair_target_batch(
             return [missing_target_files[target_index]]
         return [missing_target_files[0]]
     return list(missing_target_files[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT])
+
+
+def _ordered_materialization_quality_repair_target_candidates(
+    *,
+    missing_target_files: list[str],
+    runtime_smoke_target_files: list[str],
+    semantic_quality_target_files: list[str],
+    explicit_quality_target_files: list[str],
+    should_merge_missing_targets: bool,
+) -> list[str]:
+    missing_repair_candidates = missing_target_files if should_merge_missing_targets else []
+    if semantic_quality_target_files or explicit_quality_target_files:
+        source_missing_candidates = [
+            path for path in missing_repair_candidates if not _is_generated_quality_repair_target(path)
+        ]
+        generated_missing_candidates = [
+            path for path in missing_repair_candidates if _is_generated_quality_repair_target(path)
+        ]
+        return _dedupe_preserve_order(
+            [
+                *source_missing_candidates,
+                *semantic_quality_target_files,
+                *explicit_quality_target_files,
+                *runtime_smoke_target_files,
+                *generated_missing_candidates,
+            ]
+        )
+    return _dedupe_preserve_order(
+        [
+            *missing_repair_candidates,
+            *runtime_smoke_target_files,
+            *semantic_quality_target_files,
+            *explicit_quality_target_files,
+        ]
+    )
 
 
 def _filter_materialization_quality_errors_for_repair_targets(
@@ -2475,6 +2509,16 @@ def _repair_target_context_block(
 
 def _is_typescript_command_config_path(rel_path: str) -> bool:
     return Path(str(rel_path or "")).name.lower() in {"tsconfig.json", "jsconfig.json"}
+
+
+def _is_generated_quality_repair_target(rel_path: str) -> bool:
+    normalized = _normalize_declared_task_path(rel_path).lower()
+    if not normalized:
+        return False
+    parts = set(Path(normalized).parts)
+    if parts.intersection({"dist", "build", "out", "coverage", "node_modules"}):
+        return True
+    return normalized.endswith(".d.ts")
 
 
 def _resolve_quality_error_module_target(

@@ -2511,6 +2511,7 @@ export function ContextOSWorkspace({
         <ContextViewerModal
           contextSnapshotRef={viewerHash}
           roleId={viewerRole}
+          workspace={workspace}
           workerId={viewerWorkerId}
           onClose={() => {
             setViewerHash(null);

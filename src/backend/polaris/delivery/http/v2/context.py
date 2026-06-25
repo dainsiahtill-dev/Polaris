@@ -18,6 +18,8 @@ from polaris.delivery.http.schemas.context import (
     SweepReportResponse,
     SweepRequest,
 )
+from polaris.delivery.http.workspace import requested_or_active_workspace
+from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.llm.engine.context_store_retention import (
     ContextStoreRetention,
     ContextStoreRetentionConfig,
@@ -27,13 +29,15 @@ from polaris.kernelone.llm.engine.internal.context_hash import (
     validate_context_hash,
 )
 from polaris.kernelone.storage.io_paths import resolve_storage_roots
+from polaris.kernelone.storage.layout import default_kernelone_cache_base, workspace_key
 
 from ._shared import StructuredHTTPException, get_state, require_auth
-from .workspace_acl import check_advisory_workspace_acl
+from .workspace_acl import WORKSPACE_HEADER, check_advisory_workspace_acl
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+WORKSPACE_QUERY_PARAM = "workspace"
 
 
 def _context_store_breakdown(root: str | Path, stats: dict[str, Any]) -> dict[str, Any]:
@@ -83,6 +87,33 @@ def _load_context_payload(file_path: Path, canonical_hash: str) -> dict[str, Any
             message="Context snapshot has invalid format",
         )
     return payload
+
+
+def _context_snapshot_candidates(workspace: str, canonical_hash: str) -> list[tuple[str, Path]]:
+    """Return bounded storage candidates for a ContextOS snapshot hash."""
+    candidates: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+
+    def add(source: str, runtime_root: str | Path) -> None:
+        file_path = Path(runtime_root) / "contexts" / canonical_hash[:2] / canonical_hash
+        path_key = str(file_path)
+        if path_key in seen:
+            return
+        seen.add(path_key)
+        candidates.append((source, file_path))
+
+    add("active_runtime_root", Path(resolve_storage_roots(workspace).runtime_root))
+    add("kernelone_system_cache", _default_kernelone_runtime_root(workspace))
+    return candidates
+
+
+def _default_kernelone_runtime_root(workspace: str) -> Path:
+    workspace_abs = os.path.abspath(os.path.expanduser(str(workspace or os.getcwd())))
+    cache_base = Path(default_kernelone_cache_base())
+    metadata_dir = get_workspace_metadata_dir_name()
+    cache_parts = cache_base.as_posix().split("/")
+    projects_root = cache_base / "projects" if metadata_dir in cache_parts else cache_base / metadata_dir / "projects"
+    return projects_root / workspace_key(workspace_abs) / "runtime"
 
 
 @router.get(
@@ -144,6 +175,7 @@ def get_context_final_request_by_hash(request: Request, hash: str) -> dict[str, 
         status_code=status_code,
         code=result.error_code or "FINAL_PROVIDER_REQUEST_AUDIT_UNAVAILABLE",
         message=result.error_message or "Final provider request audit is unavailable.",
+        details=result.payload if isinstance(result.payload, dict) else {},
     )
 
 
@@ -185,15 +217,25 @@ def get_context_by_hash(request: Request, hash: str) -> dict[str, Any]:
 
     workspace = _resolve_workspace(request)
 
-    shard = canonical_hash[:2]
-    file_path = Path(resolve_storage_roots(workspace).runtime_root) / "contexts" / shard / canonical_hash
+    storage_source = ""
+    file_path: Path | None = None
+    candidates = _context_snapshot_candidates(workspace, canonical_hash)
+    for candidate_source, candidate_path in candidates:
+        if candidate_path.is_file():
+            storage_source = candidate_source
+            file_path = candidate_path
+            break
 
-    storage_source = "active_workspace"
-    if not file_path.is_file():
+    if file_path is None:
         raise StructuredHTTPException(
             status_code=404,
             code="CONTEXT_NOT_FOUND",
             message=f"Context snapshot not found for hash {canonical_hash}",
+            details={
+                "context_hash": canonical_hash,
+                "workspace": workspace,
+                "searched_paths": [{"source": source, "context_path": str(path)} for source, path in candidates],
+            },
         )
     payload = _load_context_payload(file_path, canonical_hash)
 
@@ -237,10 +279,27 @@ def _admin_enabled() -> bool:
 
 
 def _resolve_workspace(request: Request) -> str:
-    """Mirror the workspace resolution used by ``get_context_by_hash``."""
+    """Resolve the workspace used for ContextOS snapshot storage.
+
+    ContextOS real-time events can be viewed from a launcher/control surface
+    that is not bound to the same workspace as the snapshot producer.  The
+    explicit ``?workspace=`` query parameter is therefore the canonical
+    per-request selector for reads; ``X-ContextOS-Workspace`` remains an
+    advisory compatibility hint for callers that still use the older header.
+    """
     state = get_state(request)
-    workspace_raw = state.settings.workspace
-    return str(workspace_raw) if workspace_raw else "."
+    requested = _request_workspace_token(request)
+    return requested_or_active_workspace(state.settings, requested)
+
+
+def _request_workspace_token(request: Request) -> str:
+    query_value = request.query_params.get(WORKSPACE_QUERY_PARAM)
+    if isinstance(query_value, str) and query_value.strip():
+        return query_value
+    header_value = request.headers.get(WORKSPACE_HEADER)
+    if isinstance(header_value, str) and header_value.strip():
+        return header_value
+    return ""
 
 
 def _build_retention(workspace: str) -> ContextStoreRetention:

@@ -56,11 +56,52 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
         captured["workspace"] = workspace_arg
         return FakeResidentAgiAdapter()
 
+    def fake_evidence_interfaces(query: object) -> dict[str, object]:
+        return {
+            "schema_version": "resident.agi_evidence_interfaces.v1",
+            "workspace": str(workspace),
+            "decision_type": "quality_gate_response",
+            "run_id": "run-agi-1",
+            "task_id": "task-agi-1",
+            "selected_decision_capability": {"decision_id": "quality.gate.response"},
+            "required_evidence_interfaces": ["run_ledger.read"],
+            "optional_evidence_interfaces": ["audit.diagnosis.execute"],
+            "requested_interface_ids": ["run_ledger.read", "audit.diagnosis.execute"],
+            "interfaces": [
+                {
+                    "interface_id": "run_ledger.read",
+                    "status": "available",
+                    "available": True,
+                    "source": "control_plane.run_ledger.public.read_run_ledger_projection",
+                    "gaps": [],
+                    "recommended_next_action": "use_run_ledger_projection",
+                },
+                {
+                    "interface_id": "audit.diagnosis.execute",
+                    "status": "governed_execute_only",
+                    "available": False,
+                    "source": "resident.agi_capability_surface",
+                    "gaps": [],
+                    "recommended_next_action": "request_governed_execution_if_read_evidence_is_insufficient",
+                },
+            ],
+            "summary": {
+                "total": 2,
+                "available": 1,
+                "missing_required_interface_ids": [],
+            },
+            "audit_pack_ref": {},
+        }
+
     app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
     with (
         patch(
             "polaris.cells.resident.autonomy.public.service.create_role_adapter",
             side_effect=fake_create_role_adapter,
+        ),
+        patch(
+            "polaris.cells.resident.autonomy.public.service.query_resident_agi_evidence_interfaces",
+            side_effect=fake_evidence_interfaces,
         ),
         TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client,
     ):
@@ -114,12 +155,14 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     )
     assert "quality.gate.response" in payload["audit_pack"]["decision_profile"]["decision_capability_ids"]
     assert payload["selected_decision_capability"]["decision_id"] == "quality.gate.response"
+    assert payload["decision_preflight"]["status"] == "pass"
     assert "run_ledger.read" in payload["required_evidence_interfaces"]
     assert payload["recorded_decision"]["actual_outcome"]["resident_agi_evidence_gate"]["status"] == "hold"
     assert payload["recorded_decision"]["actual_outcome"]["resident_agi_decision_profile"]["schema_version"] == (
         "resident.agi_decision_profile.v1"
     )
     assert payload["recorded_decision"]["actual_outcome"]["resident_agi_runtime_contract_gate"]["status"] == "pass"
+    assert payload["recorded_decision"]["actual_outcome"]["resident_agi_decision_preflight"]["status"] == "pass"
     assert payload["recorded_decision"]["actual_outcome"]["resident_agi_runtime_contract_gate"]["passed"] is True
     assert payload["recorded_decision"]["actual_outcome"]["resident_agi_output_contract_gate"]["status"] == "pass"
     assert payload["output_contract_gate"]["passed"] is True
@@ -245,6 +288,54 @@ def test_resident_agi_decide_rejects_disabled_audit_pack_before_adapter(
     assert "include_audit_pack" in payload["detail"]["message"]
 
 
+def test_resident_agi_decide_blocks_before_adapter_when_required_evidence_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    test_token = "test-resident-token"
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    def fail_create_role_adapter(role_id: str, workspace_arg: str) -> object:
+        raise AssertionError(f"adapter should not be created: {role_id} {workspace_arg}")
+
+    app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
+    with (
+        patch(
+            "polaris.cells.resident.autonomy.public.service.create_role_adapter",
+            side_effect=fail_create_role_adapter,
+        ),
+        TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client,
+    ):
+        response = client.post(
+            "/v2/resident/agi/decide",
+            json={
+                "workspace": str(workspace),
+                "decision_type": "quality_gate_response",
+                "objective": "Decide whether the current run can proceed without required evidence.",
+                "task_id": "task-agi-preflight-missing",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["decision"]["verdict"] == "request_evidence"
+    assert payload["decision_preflight"]["schema_version"] == "resident.agi_decision_preflight.v1"
+    assert payload["decision_preflight"]["status"] == "block"
+    assert payload["decision_preflight"]["passed"] is False
+    assert "run_ledger.read" in payload["decision_preflight"]["missing_required_interface_ids"]
+    assert payload["runtime_contract_gate"]["status"] == "preflight_blocked"
+    assert payload["output_contract_gate"]["status"] == "preflight_blocked"
+    assert payload["recorded_decision"]["verdict"] == "blocked"
+    assert (
+        payload["recorded_decision"]["actual_outcome"]["resident_agi_decision_preflight"]
+        == (payload["decision_preflight"])
+    )
+
+
 def test_resident_agi_decide_fails_closed_when_runtime_receipt_is_missing(
     tmp_path: Path,
     monkeypatch,
@@ -285,11 +376,44 @@ def test_resident_agi_decide_fails_closed_when_runtime_receipt_is_missing(
     def fake_create_role_adapter(role_id: str, workspace_arg: str) -> FakeResidentAgiAdapter:
         return FakeResidentAgiAdapter()
 
+    def fake_evidence_interfaces(query: object) -> dict[str, object]:
+        return {
+            "schema_version": "resident.agi_evidence_interfaces.v1",
+            "workspace": str(workspace),
+            "decision_type": "quality_gate_response",
+            "run_id": "",
+            "task_id": "",
+            "selected_decision_capability": {"decision_id": "quality.gate.response"},
+            "required_evidence_interfaces": ["run_ledger.read"],
+            "optional_evidence_interfaces": [],
+            "requested_interface_ids": ["run_ledger.read"],
+            "interfaces": [
+                {
+                    "interface_id": "run_ledger.read",
+                    "status": "available",
+                    "available": True,
+                    "source": "control_plane.run_ledger.public.read_run_ledger_projection",
+                    "gaps": [],
+                    "recommended_next_action": "use_run_ledger_projection",
+                }
+            ],
+            "summary": {
+                "total": 1,
+                "available": 1,
+                "missing_required_interface_ids": [],
+            },
+            "audit_pack_ref": {},
+        }
+
     app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
     with (
         patch(
             "polaris.cells.resident.autonomy.public.service.create_role_adapter",
             side_effect=fake_create_role_adapter,
+        ),
+        patch(
+            "polaris.cells.resident.autonomy.public.service.query_resident_agi_evidence_interfaces",
+            side_effect=fake_evidence_interfaces,
         ),
         TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client,
     ):

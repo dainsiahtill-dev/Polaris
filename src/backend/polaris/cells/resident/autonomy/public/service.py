@@ -869,12 +869,14 @@ def _resident_agi_audit_pack_with_current_refs(
 ) -> dict[str, Any]:
     """Return an audit pack view that prioritizes refs from the current decision."""
 
+    audit_refs_raw = audit_pack.get("evidence_refs")
+    audit_refs: list[Any] = audit_refs_raw if isinstance(audit_refs_raw, list) else []
     merged_refs = _merge_non_empty_strings(
         list(context_refs),
         list(evidence_refs),
-        audit_pack.get("evidence_refs") if isinstance(audit_pack.get("evidence_refs"), list) else [],
+        audit_refs,
     )
-    if merged_refs == audit_pack.get("evidence_refs"):
+    if merged_refs == audit_refs:
         return audit_pack
     payload = dict(audit_pack)
     payload["evidence_refs"] = merged_refs
@@ -1094,9 +1096,7 @@ def _resident_agi_decision_preflight(
     summary_raw = evidence_interfaces.get("summary")
     summary: dict[str, Any] = summary_raw if isinstance(summary_raw, dict) else {}
     missing_required = [
-        str(item or "").strip()
-        for item in summary.get("missing_required_interface_ids", [])
-        if str(item or "").strip()
+        str(item or "").strip() for item in summary.get("missing_required_interface_ids", []) if str(item or "").strip()
     ]
     selected_raw = evidence_interfaces.get("selected_decision_capability")
     selected: dict[str, Any] = selected_raw if isinstance(selected_raw, dict) else {}
@@ -1104,9 +1104,7 @@ def _resident_agi_decision_preflight(
     evidence_gate: dict[str, Any] = evidence_gate_raw if isinstance(evidence_gate_raw, dict) else {}
     passed = not missing_required
     recommended_verdict = "continue" if passed else "request_evidence"
-    recommended_next_action = (
-        "run_resident_agi_judgement" if passed else "request_missing_required_evidence_interfaces"
-    )
+    recommended_next_action = "run_resident_agi_judgement" if passed else "request_missing_required_evidence_interfaces"
     return {
         "schema_version": "resident.agi_decision_preflight.v1",
         "status": "pass" if passed else "block",
@@ -1136,6 +1134,12 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
             decision_limit=command.audit_pack_decision_limit,
         )
     )
+    if audit_pack is not None:
+        audit_pack = _resident_agi_audit_pack_with_current_refs(
+            audit_pack,
+            context_refs=command.context_refs,
+            evidence_refs=command.evidence_refs,
+        )
 
     input_data: dict[str, Any] = {
         "workspace": command.workspace,
@@ -1187,9 +1191,15 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         for item in selected_decision_capability.get("hard_constraints", [])
         if str(item or "").strip()
     ]
+    decision_preflight = _resident_agi_decision_preflight(
+        command=command,
+        audit_pack=audit_pack or {},
+        hard_rule_gate=hard_rule_gate,
+    )
 
     if audit_pack is not None:
         input_data["resident_agi_audit_pack"] = audit_pack
+        input_data["resident_agi_decision_preflight"] = decision_preflight
         profile_candidate_actions_raw = decision_profile.get("candidate_actions")
         profile_candidate_actions = (
             profile_candidate_actions_raw if isinstance(profile_candidate_actions_raw, list) else []
@@ -1236,6 +1246,11 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                 "resident_agi_selected_decision_capability_risk": selected_decision_capability.get("risk_level", ""),
                 "resident_agi_required_evidence_interfaces": selected_required_evidence_interfaces,
                 "resident_agi_optional_evidence_interfaces": selected_optional_evidence_interfaces,
+                "resident_agi_decision_preflight_status": decision_preflight.get("status", ""),
+                "resident_agi_decision_preflight_passed": bool(decision_preflight.get("passed")),
+                "resident_agi_missing_required_interface_ids": list(
+                    decision_preflight.get("missing_required_interface_ids") or []
+                ),
             }
         )
         input_data["evidence"] = evidence
@@ -1248,6 +1263,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         "context_refs": list(command.context_refs),
         "evidence_refs": list(command.evidence_refs),
         "resident_agi_audit_pack": audit_pack or {},
+        "resident_agi_decision_preflight": decision_preflight,
         "metadata": {
             "source": "resident.autonomy.public.run_resident_agi_decision_turn",
             "resident_agi_role_runtime_required": True,
@@ -1263,6 +1279,11 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
             "resident_agi_selected_decision_capability": selected_decision_capability.get("decision_id", ""),
             "resident_agi_required_evidence_interfaces": selected_required_evidence_interfaces,
             "resident_agi_optional_evidence_interfaces": selected_optional_evidence_interfaces,
+            "resident_agi_decision_preflight_status": decision_preflight.get("status", ""),
+            "resident_agi_decision_preflight_passed": bool(decision_preflight.get("passed")),
+            "resident_agi_missing_required_interface_ids": list(
+                decision_preflight.get("missing_required_interface_ids") or []
+            ),
         },
     }
 
@@ -1280,6 +1301,33 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                 "risks": [f"failed hard-rule check: {item}" for item in hard_rule_gate.get("failed_check_ids", [])],
                 "next_action": "repair platform evidence before running Resident AGI",
                 "downstream_allowed": False,
+            },
+            "metadata": {"role_runtime_entrypoint": "roles.runtime.execute_role_session"},
+        }
+    elif not bool(decision_preflight.get("passed")):
+        missing_required = [
+            str(item or "").strip()
+            for item in decision_preflight.get("missing_required_interface_ids", [])
+            if str(item or "").strip()
+        ]
+        preflight_refs = _merge_non_empty_strings(
+            list(command.context_refs),
+            list(command.evidence_refs),
+            ["resident.agi_decision_preflight.v1"],
+        )
+        role_result = {
+            "success": False,
+            "stage": "resident_agi",
+            "decision_type": command.decision_type,
+            "error": "Resident AGI decision evidence preflight blocked role execution.",
+            "decision": {
+                "verdict": "request_evidence",
+                "rationale": "Required evidence interfaces are missing before Resident AGI judgement.",
+                "evidence_refs": preflight_refs,
+                "risks": [f"missing required evidence interface: {item}" for item in missing_required],
+                "next_action": "request missing evidence before running Resident AGI",
+                "downstream_allowed": False,
+                "decision_capability_id": str(selected_decision_capability.get("decision_id") or ""),
             },
             "metadata": {"role_runtime_entrypoint": "roles.runtime.execute_role_session"},
         }
@@ -1309,6 +1357,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         selected_decision_capability=selected_decision_capability,
         hard_rule_gate=hard_rule_gate,
         evidence_gate=evidence_gate,
+        decision_preflight=decision_preflight,
     )
     normalized_decision_raw = output_contract_gate.get("normalized_decision")
     if isinstance(normalized_decision_raw, dict) and normalized_decision_raw:
@@ -1328,6 +1377,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         role_metadata=role_metadata,
         hard_rule_gate=hard_rule_gate,
         decision_profile=decision_profile,
+        decision_preflight=decision_preflight,
     )
     if bool(runtime_contract_gate.get("required")) and not bool(runtime_contract_gate.get("passed")):
         runtime_success = False
@@ -1416,6 +1466,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                     "resident_agi_decision_capability": selected_decision_capability,
                     "resident_agi_required_evidence_interfaces": selected_required_evidence_interfaces,
                     "resident_agi_optional_evidence_interfaces": selected_optional_evidence_interfaces,
+                    "resident_agi_decision_preflight": decision_preflight,
                     "resident_agi_output_contract_gate": output_contract_gate,
                     "resident_agi_runtime_contract_gate": runtime_contract_gate,
                     "agi_verdict": agi_verdict,
@@ -1443,6 +1494,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         "selected_decision_capability": selected_decision_capability,
         "required_evidence_interfaces": selected_required_evidence_interfaces,
         "optional_evidence_interfaces": selected_optional_evidence_interfaces,
+        "decision_preflight": decision_preflight,
         "output_contract_gate": output_contract_gate,
         "runtime_contract_gate": runtime_contract_gate,
         "error": error or None,
