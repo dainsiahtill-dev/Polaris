@@ -49,11 +49,11 @@ def repair_cpp_include_paths(workspace: Path) -> list[dict[str, str]]:
     if not header_files:
         return []
 
-    # Find all C++ source files
+    # Find all C++ source and header files
     include_re = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.MULTILINE)
     repairs: list[dict[str, str]] = []
 
-    for ext in ("*.cpp", "*.cc", "*.cxx", "*.c"):
+    for ext in ("*.cpp", "*.cc", "*.cxx", "*.c", "*.hpp", "*.h", "*.hxx"):
         for src_file in workspace.rglob(ext):
             if "build" in src_file.parts or "cmake-build" in src_file.parts:
                 continue
@@ -65,10 +65,14 @@ def repair_cpp_include_paths(workspace: Path) -> list[dict[str, str]]:
             modified = False
             for match in include_re.finditer(content):
                 inc_path = match.group(1)
-                # Check if the include path resolves to an actual file
+                # Check if the include path resolves from workspace root
                 if (workspace / inc_path).is_file():
                     continue  # Path is correct
-                # Try to find the correct path
+                # Check if it resolves relative to the source file's directory
+                src_dir = src_file.parent
+                if (src_dir / inc_path).is_file():
+                    continue  # Path is correct relative to source file
+                # Try to find the correct path by matching the filename
                 basename = Path(inc_path).name
                 candidates = header_files.get(basename, [])
                 if not candidates:
@@ -76,7 +80,7 @@ def repair_cpp_include_paths(workspace: Path) -> list[dict[str, str]]:
                 # Find the best candidate (one whose suffix matches the include path)
                 best = None
                 for candidate in candidates:
-                    if candidate.endswith(inc_path):
+                    if candidate.endswith("/" + inc_path) or candidate.endswith(inc_path):
                         best = candidate
                         break
                 if not best and len(candidates) == 1:

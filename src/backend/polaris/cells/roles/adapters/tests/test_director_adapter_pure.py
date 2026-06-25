@@ -7586,6 +7586,56 @@ def test_node_tap_multi_failure_quality_repair_preserves_batch(tmp_path: Any) ->
     assert selected[:3] == ["package.json", "src/index.js", "tests/smoke.test.js"]
 
 
+def test_python_runtime_smoke_traceback_quality_repair_preserves_batch(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _explicit_artifact_quality_repair_target_files,
+        _python_runtime_smoke_repair_target_files,
+        _select_materialization_quality_repair_target_batch,
+        _should_preserve_materialization_quality_repair_batch,
+    )
+
+    tests = tmp_path / "tests"
+    src = tmp_path / "src"
+    tests.mkdir()
+    src.mkdir()
+    (tests / "test_product.py").write_text(
+        "import unittest\nclass ProductTest(unittest.TestCase):\n    pass\n",
+        encoding="utf-8",
+    )
+    (src / "main.rs").write_text('fn main() { println!("palette"); }\n', encoding="utf-8")
+    (tmp_path / "README.md").write_text("cargo run\n", encoding="utf-8")
+    error = (
+        "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_product.py' (returncode=1); tail:\n"
+        f'  File "{tmp_path / "tests" / "test_product.py"}", line 188, in test_html_output_marker\n'
+        '    self.assertRegex(src, r"println!\\\\s*\\\\(\\\\s*\\"Palette")\n'
+        "AssertionError: Regex didn't match: '<\\\\s*html|<!DOCTYPE|\\\\.html' not found\n"
+        "README.md must include cargo test reference\n"
+    )
+
+    runtime_targets = _python_runtime_smoke_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=["README.md", "src/main.rs", "tests/test_product.py"],
+        workspace_full=str(tmp_path),
+    )
+    explicit_targets = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=["README.md", "src/main.rs", "tests/test_product.py"],
+        workspace_full=str(tmp_path),
+    )
+    targets = [*runtime_targets, *[target for target in explicit_targets if target not in runtime_targets]]
+    preserve_batch = _should_preserve_materialization_quality_repair_batch([error])
+    selected = _select_materialization_quality_repair_target_batch(
+        targets,
+        repair_attempt=3,
+        preserve_batch_after_first_attempt=preserve_batch,
+    )
+
+    assert runtime_targets == ["src/main.rs", "tests/test_product.py"]
+    assert "README.md" in explicit_targets
+    assert preserve_batch is True
+    assert selected == targets
+
+
 def test_esmodule_commonjs_entrypoint_failure_preserves_repair_batch(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.quality_gate import (
         _explicit_artifact_quality_repair_target_files,

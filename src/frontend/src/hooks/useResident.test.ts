@@ -5,6 +5,7 @@ import type { ResidentStatusDetailsPayload } from '@/app/types/appContracts';
 
 const residentServiceMock = vi.hoisted(() => ({
   decide: vi.fn(),
+  getAgiAuditPack: vi.fn(),
   getStatus: vi.fn(),
 }));
 
@@ -76,6 +77,41 @@ const LIVE_RESIDENT: ResidentStatusDetailsPayload = {
   },
 };
 
+const LIVE_AUDIT_PACK = {
+  schema_version: 'resident.agi_audit_pack.v1',
+  workspace: '/tmp/polaris-demo',
+  role_id: 'resident_agi',
+  runtime_foundation: 'roles.runtime + ContextOS + TurnEngine',
+  role_registry: {
+    schema_version: 'resident.agi_role_registry.v1',
+    dialogue_roles: ['pm', 'chief_engineer', 'director', 'qa', 'resident_agi'],
+    adapter_roles: ['pm', 'chief_engineer', 'director', 'qa', 'resident_agi'],
+    required_roles: ['pm', 'chief_engineer', 'director', 'qa', 'resident_agi'],
+    missing_required_roles: [],
+    resident_agi_available: true,
+  },
+  boundary_summary: {
+    schema: 'resident.agi_decision_boundary.v1',
+    boundary_ids: ['role.runtime.foundation'],
+  },
+  run_ledger_summary: {
+    schema_version: 'resident.agi_run_ledger_summary.v1',
+    source: 'run_ledger_projection',
+    available: false,
+    ok: false,
+    status: 'pending',
+  },
+  evidence_gate: {
+    schema_version: 'resident.agi_evidence_gate.v1',
+    status: 'hold',
+    recommended_verdict: 'request_evidence',
+  },
+  recent_decisions: LIVE_RESIDENT.decisions,
+  evidence_refs: ['runtime/contexts/context-1.json'],
+  execution_constraints: ['Downstream work must preserve PM → Chief Engineer → Director.'],
+  decision_endpoint: '/v2/resident/agi/decide',
+};
+
 describe('useResident', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -85,6 +121,10 @@ describe('useResident', () => {
     residentServiceMock.getStatus.mockResolvedValueOnce({
       ok: false,
       error: 'backend offline',
+    });
+    residentServiceMock.getAgiAuditPack.mockResolvedValue({
+      ok: true,
+      data: LIVE_AUDIT_PACK,
     });
 
     const { result } = renderHook(() =>
@@ -109,12 +149,17 @@ describe('useResident', () => {
     );
     expect(result.current.decisions[0]?.actor).toBe('ResidentAGI');
     expect(result.current.goals[0]?.goal_id).toBe('goal-1');
+    expect(residentServiceMock.getAgiAuditPack).not.toHaveBeenCalled();
   });
 
   it('runs a Resident AGI decision turn through the service and refreshes', async () => {
     residentServiceMock.getStatus.mockResolvedValue({
       ok: true,
       data: LIVE_RESIDENT,
+    });
+    residentServiceMock.getAgiAuditPack.mockResolvedValue({
+      ok: true,
+      data: LIVE_AUDIT_PACK,
     });
     residentServiceMock.decide.mockResolvedValueOnce({
       ok: true,
@@ -138,6 +183,9 @@ describe('useResident', () => {
     await waitFor(() => {
       expect(result.current.status?.workspace).toBe('/tmp/polaris-demo');
     });
+    expect(result.current.residentAgiAuditPack?.schema_version).toBe('resident.agi_audit_pack.v1');
+    expect(result.current.residentAgiAuditPack?.role_registry?.resident_agi_available).toBe(true);
+    expect(result.current.residentAgiAuditPack?.evidence_gate?.status).toBe('hold');
 
     await act(async () => {
       await result.current.runAgiDecision({
@@ -151,5 +199,6 @@ describe('useResident', () => {
       decision_type: 'platform_supervision',
     });
     expect(residentServiceMock.getStatus).toHaveBeenCalledWith('/tmp/polaris-demo', true);
+    expect(residentServiceMock.getAgiAuditPack).toHaveBeenCalledWith('/tmp/polaris-demo', 12);
   });
 });

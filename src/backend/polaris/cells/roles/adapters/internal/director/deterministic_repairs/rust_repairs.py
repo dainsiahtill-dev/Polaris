@@ -350,18 +350,21 @@ def repair_rust_lib_root_facade(workspace: Path, artifact_quality_errors: list[s
 
     requested_symbols = _parse_rust_lib_root_export_symbols(artifact_quality_errors, canonical_crate)
     source_had_lib_root_paths = _rust_workspace_uses_lib_root_path(workspace, canonical_crate)
-    if not requested_symbols and not source_had_lib_root_paths:
+    requested_modules = _parse_rust_external_module_imports(artifact_quality_errors, canonical_crate)
+    requested_modules = [module for module in requested_modules if _rust_external_module_exists(workspace, module)]
+    if not requested_symbols and not source_had_lib_root_paths and not requested_modules:
         return []
 
     repairs: list[dict[str, Any]] = []
     path_rewrites = _rewrite_rust_lib_root_paths(workspace, canonical_crate)
+    external_modules = _ensure_external_rust_module_declarations(lib_path, requested_modules)
     module_exports = _ensure_rust_lib_root_exports(lib_path, workspace, requested_symbols)
-    if path_rewrites or module_exports:
+    if path_rewrites or external_modules or module_exports:
         repairs.append(
             {
                 "file": "src/lib.rs",
                 "path_rewrites": path_rewrites,
-                "module_exports": module_exports,
+                "module_exports": [*external_modules, *module_exports],
             }
         )
     return repairs
@@ -680,6 +683,14 @@ def _parse_rust_lib_root_export_symbols(artifact_quality_errors: list[str], cano
         if crate == canonical_crate and symbol and symbol not in seen:
             seen.add(symbol)
             symbols.append(symbol)
+    for match in re.finditer(
+        rf"[`'\"]{re.escape(canonical_crate)}::(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)[`'\"]",
+        text,
+    ):
+        symbol = str(match.group("symbol") or "").strip()
+        if symbol and symbol not in seen:
+            seen.add(symbol)
+            symbols.append(symbol)
     for match in _RUST_ROOT_TYPE_FIELD_MISMATCH_RE.finditer(text):
         crate = str(match.group("crate") or "").strip()
         symbol = str(match.group("symbol") or "").strip()
@@ -693,6 +704,78 @@ def _parse_rust_lib_root_export_symbols(artifact_quality_errors: list[str], cano
             seen.add(symbol)
             symbols.append(symbol)
     return symbols
+
+
+def _parse_rust_external_module_imports(artifact_quality_errors: list[str], canonical_crate: str) -> list[str]:
+    modules: list[str] = []
+    seen: set[str] = set()
+    text = _ANSI_ESCAPE_RE.sub("", "\n".join(str(error or "") for error in artifact_quality_errors))
+    for match in re.finditer(
+        rf"[`'\"]{re.escape(canonical_crate)}::(?P<module>[A-Za-z_][A-Za-z0-9_]*)::"
+        r"[A-Za-z_][A-Za-z0-9_]*[`'\"]",
+        text,
+    ):
+        module = str(match.group("module") or "").strip()
+        if module and module not in seen:
+            seen.add(module)
+            modules.append(module)
+    return modules
+
+
+def _rust_external_module_exists(workspace: Path, module: str) -> bool:
+    normalized = str(module or "").strip()
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", normalized):
+        return False
+    return (workspace / "src" / f"{normalized}.rs").is_file() or (workspace / "src" / normalized / "mod.rs").is_file()
+
+
+def _ensure_external_rust_module_declarations(lib_path: Path, requested_modules: list[str]) -> list[str]:
+    if not requested_modules:
+        return []
+    try:
+        original = lib_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    repaired = original
+    declarations: list[str] = []
+    for module in requested_modules:
+        decl = f"pub mod {module};"
+        if re.search(rf"(?m)^\s*pub\s+mod\s+{re.escape(module)}\s*;", repaired):
+            continue
+        next_repaired, replaced = _replace_inline_rust_pub_module_with_external(repaired, module)
+        if replaced:
+            repaired = next_repaired
+            declarations.append(decl)
+    if repaired != original:
+        lib_path.write_text(repaired, encoding="utf-8")
+    return declarations
+
+
+def _replace_inline_rust_pub_module_with_external(text: str, module: str) -> tuple[str, bool]:
+    pattern = re.compile(rf"(?m)^(?P<indent>\s*)pub\s+mod\s+{re.escape(module)}\s*\{{")
+    match = pattern.search(text)
+    if not match:
+        return text, False
+    brace_index = text.find("{", match.start(), match.end())
+    if brace_index < 0:
+        return text, False
+    depth = 0
+    end_index = -1
+    for index in range(brace_index, len(text)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                end_index = index + 1
+                break
+    if end_index < 0:
+        return text, False
+    if end_index < len(text) and text[end_index : end_index + 1] == "\n":
+        end_index += 1
+    declaration = f"{match.group('indent')}pub mod {module};\n"
+    return text[: match.start()] + declaration + text[end_index:], True
 
 
 def _rust_workspace_uses_lib_root_path(workspace: Path, canonical_crate: str) -> bool:
@@ -789,8 +872,9 @@ def _remove_conflicting_simple_rust_pub_use(line: str, *, preferred_module: str,
 
 
 def _remove_conflicting_grouped_rust_pub_use(line: str, *, preferred_module: str, symbol: str) -> str:
+    newline = "\n" if line.endswith("\n") else ""
     match = re.match(
-        r"^(?P<indent>\s*)pub\s+use\s+(?P<path>[A-Za-z_][A-Za-z0-9_:]*)::\{(?P<body>[^}]+)\}\s*;\s*(?P<newline>\n?)$",
+        r"^(?P<indent>\s*)pub\s+use\s+(?P<path>[A-Za-z_][A-Za-z0-9_:]*)::\{(?P<body>[^}]+)\}\s*;",
         line,
     )
     if not match:
@@ -804,7 +888,6 @@ def _remove_conflicting_grouped_rust_pub_use(line: str, *, preferred_module: str
         return line
     if not filtered:
         return ""
-    newline = str(match.group("newline") or "")
     return f"{match.group('indent')}pub use {path}::{{{', '.join(filtered)}}};{newline}"
 
 

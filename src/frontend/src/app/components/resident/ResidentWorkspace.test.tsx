@@ -135,6 +135,21 @@ const mockResidentState = {
     count: 3,
     items: [
       {
+        capability_id: 'resident.agi_decision_turn.execute',
+        name: 'Resident AGI role decision turn',
+        category: 'role_runtime',
+        access: 'execute_through_role_runtime',
+        contract_ref: 'resident.agi_decision_turn',
+        endpoint: '/v2/resident/agi/decide',
+      },
+      {
+        capability_id: 'roles.registry.read',
+        name: 'Canonical role registry',
+        category: 'role_runtime',
+        access: 'read_only',
+        contract_ref: 'roles.registry',
+      },
+      {
         capability_id: 'contextos.final_request_audit.read',
         name: 'Final provider-request audit',
         category: 'llm_audit',
@@ -158,6 +173,14 @@ const mockResidentState = {
       },
     ],
     decision_boundaries: [
+      {
+        boundary_id: 'role.runtime.foundation',
+        name: 'Shared role runtime foundation',
+        authority: 'platform_hard_rule',
+        platform_hard_rule: 'Resident AGI uses the same RoleRuntime, ContextOS, and TurnEngine.',
+        agi_decision_scope: 'Every AGI turn remains observable as resident_agi.',
+        evidence_required: ['resident_agi role_result'],
+      },
       {
         boundary_id: 'platform.invariants',
         name: 'Platform hard invariants',
@@ -183,6 +206,95 @@ const mockResidentState = {
         evidence_required: ['decision_trace.jsonl', 'PM runtime contract'],
       },
     ],
+  },
+  residentAgiAuditPack: {
+    schema_version: 'resident.agi_audit_pack.v1',
+    workspace: 'X:/Git/polaris',
+    role_id: 'resident_agi',
+    runtime_foundation: 'roles.runtime + ContextOS + TurnEngine',
+    truth_sources: [
+      'resident.status',
+      'resident.agi_capability_surface',
+      'resident.decision_trace',
+      'roles.registry',
+    ],
+    role_registry: {
+      schema_version: 'resident.agi_role_registry.v1',
+      dialogue_roles: ['pm', 'chief_engineer', 'director', 'qa', 'resident_agi'],
+      adapter_roles: ['pm', 'chief_engineer', 'director', 'qa', 'resident_agi'],
+      required_roles: ['pm', 'chief_engineer', 'director', 'qa', 'resident_agi'],
+      missing_required_roles: [],
+      resident_agi_available: true,
+    },
+    boundary_summary: {
+      schema: 'resident.agi_decision_boundary.v1',
+      boundary_ids: ['role.runtime.foundation', 'platform.invariants'],
+    },
+    hard_rule_gate: {
+      schema_version: 'resident.agi_hard_rule_gate.v1',
+      status: 'pass',
+      checks: [
+        {
+          check_id: 'role_registry.resident_agi_available',
+          passed: true,
+          detail: 'resident_agi must exist in dialogue and adapter registries.',
+        },
+        {
+          check_id: 'topology.pm_ce_director_preserved',
+          passed: true,
+          detail: 'Downstream execution must preserve PM → Chief Engineer → Director.',
+        },
+      ],
+      failed_check_ids: [],
+      platform_enforced: true,
+      llm_override_allowed: false,
+    },
+    run_ledger_summary: {
+      schema_version: 'resident.agi_run_ledger_summary.v1',
+      source: 'run_ledger_projection',
+      available: false,
+      ok: false,
+      status: 'pending',
+      projected: 0,
+      total: 0,
+      failed: 0,
+      missing: 0,
+      detail: 'run ledger projection is not available yet',
+    },
+    evidence_gate: {
+      schema_version: 'resident.agi_evidence_gate.v1',
+      status: 'hold',
+      recommended_verdict: 'request_evidence',
+      reason: 'Run Ledger projection is not available yet.',
+      run_ledger_available: false,
+      run_ledger_ok: false,
+      context_snapshot_ref_count: 1,
+      platform_enforced: false,
+      llm_decision_required: true,
+    },
+    capability_surface: {
+      schema_version: 'resident.agi_capability_surface.v1',
+      items: [
+        {
+          capability_id: 'resident.agi_decision_turn.execute',
+          name: 'Resident AGI role decision turn',
+        },
+      ],
+    },
+    recent_decisions: [
+      {
+        decision_id: 'decision-1',
+        actor: 'pm',
+        stage: 'goal_staging',
+        summary: 'Selected bounded decomposition strategy',
+      },
+    ],
+    evidence_refs: ['runtime/contracts/plan.md'],
+    execution_constraints: [
+      'AGI decisions must execute as resident_agi role turns.',
+      'Downstream work must preserve PM → Chief Engineer → Director.',
+    ],
+    decision_endpoint: '/v2/resident/agi/decide',
   },
   refresh: vi.fn(),
   isActing: vi.fn(() => false),
@@ -227,6 +339,8 @@ describe('ResidentWorkspace', () => {
     expect(screen.getByText('最新元认知')).toBeInTheDocument();
     expect(screen.getByText('Task decomposition')).toBeInTheDocument();
     expect(screen.getByText('AGI Role 能力面')).toBeInTheDocument();
+    expect(screen.getByText('Resident AGI role decision turn')).toBeInTheDocument();
+    expect(screen.getByText('Canonical role registry')).toBeInTheDocument();
     expect(screen.getByText('Final provider-request audit')).toBeInTheDocument();
     expect(screen.getByTestId('resident-agi-governance-matrix')).toHaveTextContent('能力治理矩阵');
     expect(screen.getByTestId('resident-agi-governance-matrix')).toHaveTextContent('PM → Chief Engineer → Director');
@@ -239,6 +353,14 @@ describe('ResidentWorkspace', () => {
     expect(screen.getByTestId('resident-agi-decision-boundaries')).toHaveTextContent('AGI 受控执行');
     expect(screen.getByTestId('resident-agi-decision-boundaries')).toHaveTextContent('Architecture and dependency choice');
     expect(screen.getByTestId('resident-agi-decision-boundaries')).toHaveTextContent('final_request_context_audit');
+    expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('AGI 审计包');
+    expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('resident.agi_audit_pack.v1');
+    expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('Hard gate pass');
+    expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('hold → request_evidence');
+    expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('Run Ledger pending');
+    expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('llm override: blocked');
+    expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('resident.agi_decision_turn.execute');
+    expect(screen.getByTestId('resident-agi-audit-pack')).toHaveTextContent('PM → Chief Engineer → Director');
   });
 
   it('creates a goal from the AGI console', async () => {
@@ -366,6 +488,16 @@ describe('ResidentWorkspace', () => {
         objective: 'Decide whether the current run can proceed.',
         candidate_actions: ['continue', 'block', 'request_evidence', 'escalate'],
         evidence_refs: ['runtime/contracts/plan.md'],
+        include_audit_pack: true,
+        audit_pack_decision_limit: 12,
+        evidence: expect.objectContaining({
+          resident_agi_audit_pack_loaded: true,
+          resident_agi_audit_pack_schema: 'resident.agi_audit_pack.v1',
+          resident_agi_available: true,
+          resident_agi_hard_rule_gate_status: 'pass',
+          resident_agi_evidence_gate_status: 'hold',
+          resident_agi_evidence_gate_recommended_verdict: 'request_evidence',
+        }),
       }),
     );
   });

@@ -176,6 +176,38 @@ def test_deterministic_rust_lib_root_facade_repair_reconnects_existing_engine_ap
     assert "::lib::" not in main_rs
 
 
+def test_deterministic_rust_lib_root_facade_repair_replaces_inline_engine_stub(tmp_path: Path) -> None:
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "kitchen-flavor-palette"\n\n[lib]\nname = "kitchen_flavor_palette"\npath = "src/lib.rs"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "lib.rs").write_text(
+        "pub mod models;\npub mod engine {\n    pub struct _Placeholder;\n}\npub use models::recipe::Recipe;\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine" / "mod.rs").write_text(
+        "pub struct Recipe;\npub struct FlavorProfile;\npub fn generate_palette_and_plating(_recipe: &Recipe) {}\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_rust_lib_root_facade_repair(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task_id="factory-quality-gate:test",
+        artifact_quality_errors=[
+            "error[E0432]: unresolved imports `kitchen_flavor_palette::engine::generate_palette_and_plating`, "
+            "`kitchen_flavor_palette::engine::FlavorProfile`, `kitchen_flavor_palette::engine::Recipe`\n"
+            "no `Recipe` in `engine`"
+        ],
+    )
+
+    lib_rs = (tmp_path / "src" / "lib.rs").read_text(encoding="utf-8")
+    assert results
+    assert "pub mod engine;" in lib_rs
+    assert "pub mod engine {" not in lib_rs
+    assert "_Placeholder" not in lib_rs
+
+
 def test_deterministic_rust_lib_root_facade_repair_replaces_conflicting_root_exports(tmp_path: Path) -> None:
     (tmp_path / "Cargo.toml").write_text(
         '[package]\nname = "kitchen-flavor-palette"\n\n[lib]\nname = "kitchen_flavor_palette"\npath = "src/lib.rs"\n',

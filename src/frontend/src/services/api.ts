@@ -5,6 +5,7 @@ import type {
   BackendStatus,
   FilePayload,
   LanceDbStatus,
+  ResidentAgiAuditPackPayload,
   ResidentAgiCapabilitySurfacePayload,
   ResidentAgiDecisionTurnRequest,
   ResidentAgiDecisionTurnResponse,
@@ -244,6 +245,14 @@ export const residentService = {
     const suffix = workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
     const res = await apiFetch(`/v2/resident/capabilities${suffix}`);
     return handleResponse(res, 'Failed to load Resident AGI capability surface');
+  },
+
+  async getAgiAuditPack(workspace = '', decisionLimit = 20): Promise<ApiResult<ResidentAgiAuditPackPayload>> {
+    const query = new URLSearchParams();
+    if (workspace) query.set('workspace', workspace);
+    query.set('decision_limit', String(decisionLimit));
+    const res = await apiFetch(`/v2/resident/agi/audit-pack?${query.toString()}`);
+    return handleResponse(res, 'Failed to load Resident AGI audit pack');
   },
 
   async decide(

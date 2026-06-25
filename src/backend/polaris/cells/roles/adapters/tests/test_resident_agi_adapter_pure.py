@@ -38,6 +38,12 @@ async def test_execute_enters_shared_role_runtime(tmp_path: Any, monkeypatch: py
             "decision_type": "quality_gate_response",
             "objective": "Decide whether the current run can continue.",
             "evidence": {"context_snapshot_ref": "runtime/contexts/abc.json"},
+            "resident_agi_audit_pack": {
+                "schema_version": "resident.agi_audit_pack.v1",
+                "role_id": "resident_agi",
+                "truth_sources": ["resident.status", "roles.registry"],
+                "role_registry": {"resident_agi_available": True},
+            },
             "constraints": ["fail closed on missing evidence"],
             "candidate_actions": ["continue", "request_evidence"],
         },
@@ -53,9 +59,11 @@ async def test_execute_enters_shared_role_runtime(tmp_path: Any, monkeypatch: py
     assert captured["validate_output"] is False
     assert captured["max_retries"] == 1
     assert "Do not bypass PM -> Chief Engineer -> Director -> QA" in captured["message"]
+    assert "resident.agi_audit_pack.v1" in captured["message"]
     runtime_context = captured["context"]
     assert runtime_context["run_id"] == "run-1"
     assert runtime_context["decision_type"] == "quality_gate_response"
+    assert runtime_context["resident_agi_audit_pack"]["schema_version"] == "resident.agi_audit_pack.v1"
     assert runtime_context["metadata"]["resident_agi_role_runtime_required"] is True
     assert runtime_context["metadata"]["resident_agi_contextos_required"] is True
     assert runtime_context["metadata"]["resident_agi_turn_engine_required"] is True

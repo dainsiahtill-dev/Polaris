@@ -139,6 +139,7 @@ class ResidentAgiAdapter(BaseRoleAdapter):
                 "decision_type": decision_type,
                 "objective": objective,
                 "evidence": cls._mapping(input_data.get("evidence")),
+                "resident_agi_audit_pack": cls._mapping(input_data.get("resident_agi_audit_pack")),
                 "constraints": cls._sequence(input_data.get("constraints")),
                 "candidate_actions": cls._sequence(input_data.get("candidate_actions")),
                 "metadata": metadata,
@@ -158,6 +159,7 @@ class ResidentAgiAdapter(BaseRoleAdapter):
             "decision_type": decision_type,
             "objective": objective,
             "evidence": cls._mapping(input_data.get("evidence")),
+            "resident_agi_audit_pack": cls._mapping(input_data.get("resident_agi_audit_pack")),
             "constraints": cls._sequence(input_data.get("constraints")),
             "candidate_actions": cls._sequence(input_data.get("candidate_actions")),
             "required_output": {

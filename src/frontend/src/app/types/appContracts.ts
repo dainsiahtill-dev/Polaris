@@ -290,6 +290,74 @@ export interface ResidentAgiCapabilitySurfacePayload {
   count?: number;
 }
 
+export interface ResidentAgiRoleRegistryPayload {
+  schema_version?: string;
+  source?: string;
+  dialogue_roles?: string[];
+  adapter_roles?: string[];
+  required_roles?: string[];
+  missing_required_roles?: string[];
+  resident_agi_available?: boolean;
+}
+
+export interface ResidentAgiAuditPackPayload {
+  schema_version?: string;
+  workspace?: string;
+  role_id?: string;
+  runtime_foundation?: string;
+  truth_sources?: string[];
+  role_registry?: ResidentAgiRoleRegistryPayload;
+  runtime_summary?: Record<string, unknown>;
+  counts?: Record<string, number>;
+  capability_surface?: ResidentAgiCapabilitySurfacePayload;
+  boundary_summary?: {
+    schema?: string;
+    counts_by_authority?: Record<string, number>;
+    boundary_ids?: string[];
+  };
+  hard_rule_gate?: {
+    schema_version?: string;
+    status?: string;
+    checks?: Array<{
+      check_id?: string;
+      passed?: boolean;
+      detail?: string;
+    }>;
+    failed_check_ids?: string[];
+    platform_enforced?: boolean;
+    llm_override_allowed?: boolean;
+  };
+  run_ledger_summary?: {
+    schema_version?: string;
+    source?: string;
+    available?: boolean;
+    ok?: boolean;
+    status?: string;
+    projected?: number;
+    total?: number;
+    failed?: number;
+    missing?: number;
+    detail?: string;
+    evidence_policy?: Record<string, unknown>;
+    evidence_modalities?: Record<string, unknown>;
+  };
+  evidence_gate?: {
+    schema_version?: string;
+    status?: string;
+    recommended_verdict?: string;
+    reason?: string;
+    run_ledger_available?: boolean;
+    run_ledger_ok?: boolean;
+    context_snapshot_ref_count?: number;
+    platform_enforced?: boolean;
+    llm_decision_required?: boolean;
+  };
+  recent_decisions?: ResidentDecisionPayload[];
+  evidence_refs?: string[];
+  execution_constraints?: string[];
+  decision_endpoint?: string;
+}
+
 export interface ResidentAgiDecisionTurnRequest {
   workspace?: string;
   decision_type?: string;
@@ -303,6 +371,8 @@ export interface ResidentAgiDecisionTurnRequest {
   context_refs?: string[];
   evidence_refs?: string[];
   confidence?: number;
+  include_audit_pack?: boolean;
+  audit_pack_decision_limit?: number;
 }
 
 export interface ResidentAgiDecisionTurnResponse {
@@ -311,6 +381,7 @@ export interface ResidentAgiDecisionTurnResponse {
   decision?: Record<string, unknown>;
   recorded_decision?: ResidentDecisionPayload;
   role_result?: Record<string, unknown>;
+  audit_pack?: ResidentAgiAuditPackPayload | null;
   error?: string | null;
 }
 

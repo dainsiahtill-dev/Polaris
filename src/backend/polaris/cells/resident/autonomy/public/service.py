@@ -11,6 +11,7 @@ from polaris.cells.audit.evidence.public.service import (
     create_evidence_bundle_service,
 )
 from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
+    build_resident_agi_authority_matrix,
     build_resident_agi_capability_surface,
     build_resident_agi_decision_boundaries,
     resident_agi_capability_surface_payload,
@@ -219,6 +220,7 @@ __all__ = [
     "StrategyInsightEngine",
     "TestRunEvidence",
     "build_resident_agi_capability_surface",
+    "build_resident_agi_authority_matrix",
     "build_resident_agi_decision_boundaries",
     "create_evidence_bundle_service",
     "get_evidence_service",

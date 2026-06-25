@@ -29,6 +29,7 @@ import { ExecutionProgressBar } from './ExecutionProgressBar';
 
 import { useResident } from '@/hooks/useResident';
 import type {
+  ResidentAgiAuditPackPayload,
   ResidentAgiCapabilityPayload,
   ResidentAgiDecisionBoundaryPayload,
   ResidentDecisionPayload,
@@ -122,6 +123,7 @@ export function ResidentWorkspace({
   const latestInsight = resident.residentInsights?.[0] || null;
   const capabilities = resident.residentCapabilityGraph?.capabilities || [];
   const agiCapabilitySurface = resident.residentAgiCapabilitySurface;
+  const agiAuditPack = resident.residentAgiAuditPack;
   const agiCapabilities = agiCapabilitySurface?.items || [];
   const agiDecisionBoundaries = agiCapabilitySurface?.decision_boundaries || [];
   const decisionStats = useMemo(() => buildDecisionStats(resident.decisions), [resident.decisions]);
@@ -162,6 +164,12 @@ export function ResidentWorkspace({
         decision_count: resident.decisions.length,
         latest_decision_id: latestDecision?.decision_id || '',
         latest_verdict: latestDecision?.verdict || '',
+        resident_agi_audit_pack_loaded: Boolean(agiAuditPack),
+        resident_agi_audit_pack_schema: agiAuditPack?.schema_version || '',
+        resident_agi_available: Boolean(agiAuditPack?.role_registry?.resident_agi_available),
+        resident_agi_hard_rule_gate_status: agiAuditPack?.hard_rule_gate?.status || '',
+        resident_agi_evidence_gate_status: agiAuditPack?.evidence_gate?.status || '',
+        resident_agi_evidence_gate_recommended_verdict: agiAuditPack?.evidence_gate?.recommended_verdict || '',
       },
       constraints: [
         'preserve_pm_chief_engineer_director_qa_chain',
@@ -171,6 +179,8 @@ export function ResidentWorkspace({
       context_refs: latestDecision?.context_refs || [],
       evidence_refs: latestDecision?.evidence_refs || [],
       confidence: latestDecision ? 0.7 : 0.5,
+      include_audit_pack: true,
+      audit_pack_decision_limit: 12,
     });
   };
 
@@ -428,6 +438,7 @@ export function ResidentWorkspace({
                   schema={agiCapabilitySurface?.decision_boundary_schema}
                   boundaries={agiDecisionBoundaries}
                 />
+                <AgiAuditPackPanel pack={agiAuditPack} />
                 <div className="mt-3 grid gap-2 lg:grid-cols-2">
                   {agiCapabilities.slice(0, 6).map((capability) => (
                     <div
@@ -925,6 +936,137 @@ function DecisionBoundaryMatrix({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function AgiAuditPackPanel({ pack }: { pack?: ResidentAgiAuditPackPayload | null }) {
+  if (!pack) {
+    return (
+      <div
+        className="mt-3 rounded-lg border border-dashed border-slate-700 bg-slate-950/40 px-3 py-2 text-xs text-slate-500"
+        data-testid="resident-agi-audit-pack"
+      >
+        AGI 审计包尚未加载
+      </div>
+    );
+  }
+
+  const roleRegistry = pack.role_registry;
+  const missingRoles = roleRegistry?.missing_required_roles || [];
+  const evidenceRefs = pack.evidence_refs || [];
+  const recentDecisions = pack.recent_decisions || [];
+  const constraints = pack.execution_constraints || [];
+  const boundaryIds = pack.boundary_summary?.boundary_ids || [];
+  const hardRuleGate = pack.hard_rule_gate;
+  const hardRuleStatus = String(hardRuleGate?.status || 'unknown').toLowerCase();
+  const hardRuleFailedChecks = hardRuleGate?.failed_check_ids || [];
+  const evidenceGate = pack.evidence_gate;
+  const evidenceGateStatus = String(evidenceGate?.status || 'unknown').toLowerCase();
+  const runLedgerSummary = pack.run_ledger_summary;
+  const capabilityIds = (pack.capability_surface?.items || [])
+    .map((capability) => capability.capability_id || '')
+    .filter(Boolean);
+
+  return (
+    <div
+      className="mt-3 rounded-lg border border-emerald-500/15 bg-emerald-500/[0.04] px-3 py-2"
+      data-testid="resident-agi-audit-pack"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-medium text-emerald-100">AGI 审计包</div>
+          <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+            {pack.schema_version || 'resident.agi_audit_pack.v1'}
+          </div>
+        </div>
+        <Badge
+          className={cn(
+            hardRuleStatus === 'pass'
+              ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+              : 'border-rose-500/20 bg-rose-500/10 text-rose-300',
+          )}
+        >
+          Hard gate {hardRuleStatus}
+        </Badge>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        <CapabilityMetric label="Dialogue roles" value={String(roleRegistry?.dialogue_roles?.length ?? 0)} />
+        <CapabilityMetric label="Adapter roles" value={String(roleRegistry?.adapter_roles?.length ?? 0)} />
+        <CapabilityMetric label="Evidence gate" value={evidenceGateStatus} />
+        <CapabilityMetric label="Hard checks" value={String(hardRuleGate?.checks?.length ?? 0)} />
+      </div>
+      <div className="mt-2 grid gap-2 lg:grid-cols-2">
+        <div className="rounded border border-slate-800 bg-slate-950/70 px-2.5 py-2">
+          <div className="text-[10px] uppercase text-slate-500">Execution constraints</div>
+          <div className="mt-1 space-y-1">
+            {constraints.slice(0, 4).map((constraint) => (
+              <div key={constraint} className="text-[11px] text-slate-300">
+                {constraint}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="rounded border border-slate-800 bg-slate-950/70 px-2.5 py-2">
+          <div className="text-[10px] uppercase text-slate-500">Audit sources</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {(pack.truth_sources || []).slice(0, 6).map((source) => (
+              <span key={source} className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+                {source}
+              </span>
+            ))}
+            {boundaryIds.slice(0, 4).map((boundaryId) => (
+              <span key={boundaryId} className="rounded border border-slate-700 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+                {boundaryId}
+              </span>
+            ))}
+            {capabilityIds.slice(0, 4).map((capabilityId) => (
+              <span key={capabilityId} className="rounded border border-emerald-700/50 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300/80">
+                {capabilityId}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="mt-2 rounded border border-slate-800 bg-slate-950/70 px-2.5 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-[10px] uppercase text-slate-500">Evidence gate</div>
+          <Badge
+            className={cn(
+              evidenceGateStatus === 'pass'
+                ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+                : evidenceGateStatus === 'fail'
+                  ? 'border-rose-500/20 bg-rose-500/10 text-rose-300'
+                  : 'border-amber-500/20 bg-amber-500/10 text-amber-300',
+            )}
+          >
+            {evidenceGateStatus} → {evidenceGate?.recommended_verdict || 'request_evidence'}
+          </Badge>
+        </div>
+        <div className="mt-1 text-[11px] text-slate-400">{evidenceGate?.reason || '暂无证据门说明'}</div>
+        <div className="mt-1 font-mono text-[10px] text-slate-500">
+          Run Ledger {runLedgerSummary?.status || 'unknown'} · projected {runLedgerSummary?.projected ?? 0}/
+          {runLedgerSummary?.total ?? 0} · failed {runLedgerSummary?.failed ?? 0} · ctx refs{' '}
+          {evidenceGate?.context_snapshot_ref_count ?? evidenceRefs.length}
+        </div>
+      </div>
+      {missingRoles.length > 0 && (
+        <div className="mt-2 rounded border border-rose-500/20 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-200">
+          missing roles: {missingRoles.join(', ')}
+        </div>
+      )}
+      {hardRuleFailedChecks.length > 0 && (
+        <div className="mt-2 rounded border border-rose-500/20 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-200">
+          failed hard rules: {hardRuleFailedChecks.join(', ')}
+        </div>
+      )}
+      <div className="mt-2 text-[10px] text-slate-500">
+        recent decisions: {recentDecisions.length} · llm override:{' '}
+        {hardRuleGate?.llm_override_allowed ? 'allowed' : 'blocked'}
+      </div>
+      {pack.decision_endpoint && (
+        <div className="mt-2 font-mono text-[10px] text-slate-500">decision endpoint: {pack.decision_endpoint}</div>
+      )}
     </div>
   );
 }

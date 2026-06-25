@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from polaris.cells.resident.autonomy.public.contracts import (
     ResidentAgiCapabilityV1,
     ResidentAgiDecisionBoundaryV1,
@@ -17,6 +19,42 @@ def build_resident_agi_capability_surface() -> list[ResidentAgiCapabilityV1]:
     """
 
     return [
+        ResidentAgiCapabilityV1(
+            capability_id="resident.agi_decision_turn.execute",
+            name="Resident AGI role decision turn",
+            category="role_runtime",
+            access="execute_through_role_runtime",
+            purpose=(
+                "Run platform-level AGI judgements as resident_agi role turns through "
+                "RoleRuntime, ContextOS, and TurnEngine."
+            ),
+            contract_ref="resident.agi_decision_turn",
+            endpoint="/v2/resident/agi/decide",
+            risk_level="medium",
+            guardrails=(
+                "AGI decisions must use the resident_agi role adapter, never a sidecar runtime.",
+                "Decision results must be recorded back into the Resident decision trace.",
+                "Execution-impacting outcomes still require governed downstream role handoff.",
+            ),
+            evidence_refs=(
+                "resident_agi role_result",
+                "workspace/meta/resident/decision_trace.jsonl",
+            ),
+        ),
+        ResidentAgiCapabilityV1(
+            capability_id="roles.registry.read",
+            name="Canonical role registry",
+            category="role_runtime",
+            access="read_only",
+            purpose=(
+                "Discover PM, Chief Engineer, Director, QA, and Resident AGI from the same role registry "
+                "instead of maintaining a separate AGI role universe."
+            ),
+            contract_ref="roles.registry",
+            risk_level="low",
+            guardrails=("Registry facts are read-only; role execution still enters through role adapters.",),
+            evidence_refs=("role registry projection",),
+        ),
         ResidentAgiCapabilityV1(
             capability_id="resident.decision_trace.read_write",
             name="Resident decision trace",
@@ -124,6 +162,30 @@ def build_resident_agi_decision_boundaries() -> list[ResidentAgiDecisionBoundary
 
     return [
         ResidentAgiDecisionBoundaryV1(
+            boundary_id="role.runtime.foundation",
+            name="Shared role runtime foundation",
+            authority="platform_hard_rule",
+            platform_hard_rule=(
+                "Resident AGI is a first-class platform role on the same RoleRuntime, ContextOS, and TurnEngine "
+                "foundation as PM, Chief Engineer, Director, and QA."
+            ),
+            agi_decision_scope=(
+                "AGI may request broader platform evidence and make supervision decisions, but every turn must "
+                "remain observable as a resident_agi role session."
+            ),
+            evidence_required=(
+                "resident_agi role_result",
+                "ContextOS context snapshot",
+                "TurnEngine/runtime metadata",
+            ),
+            escalation="Block AGI automation when the decision cannot be tied to a role-runtime turn.",
+            contract_refs=(
+                "resident.agi_decision_turn",
+                "roles.runtime",
+                "contextos.final_request_audit",
+            ),
+        ),
+        ResidentAgiDecisionBoundaryV1(
             boundary_id="platform.invariants",
             name="Platform hard invariants",
             authority="platform_hard_rule",
@@ -213,15 +275,90 @@ def build_resident_agi_decision_boundaries() -> list[ResidentAgiDecisionBoundary
     ]
 
 
+def build_resident_agi_authority_matrix(
+    *,
+    capabilities: list[ResidentAgiCapabilityV1],
+    decision_boundaries: list[ResidentAgiDecisionBoundaryV1],
+) -> dict[str, Any]:
+    """Return the machine-readable split between platform rules and AGI judgement."""
+
+    platform_hard_rules: list[str] = []
+    agi_recommendation_boundaries: list[str] = []
+    governed_execution_boundaries: list[str] = []
+    boundary_contracts: set[str] = set()
+    for boundary in decision_boundaries:
+        if boundary.authority == "platform_hard_rule":
+            platform_hard_rules.append(boundary.boundary_id)
+        elif boundary.authority == "agi_recommendation":
+            agi_recommendation_boundaries.append(boundary.boundary_id)
+        elif boundary.authority == "agi_governed_execution":
+            governed_execution_boundaries.append(boundary.boundary_id)
+        boundary_contracts.update(boundary.contract_refs)
+
+    read_only_capabilities: list[str] = []
+    governed_operation_capabilities: list[str] = []
+    high_risk_capabilities: list[str] = []
+    capability_contracts: set[str] = set()
+    chain_required = False
+    for capability in capabilities:
+        access = capability.access.lower()
+        capability_contracts.add(capability.contract_ref)
+        if access == "read_only":
+            read_only_capabilities.append(capability.capability_id)
+        if "write" in access or "execute" in access:
+            governed_operation_capabilities.append(capability.capability_id)
+        if capability.risk_level.lower() == "high":
+            high_risk_capabilities.append(capability.capability_id)
+        if "pm_ce_director" in access or capability.contract_ref == "resident.goal_bridge":
+            chain_required = True
+
+    canonical_contracts = sorted(capability_contracts | boundary_contracts)
+    chain_required = chain_required or bool(governed_execution_boundaries)
+    return {
+        "schema_version": "resident.agi_authority_matrix.v1",
+        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+        "role_id": "resident_agi",
+        "chain": "PM → Chief Engineer → Director",
+        "chain_required": chain_required,
+        "platform_enforced": True,
+        "llm_decision_required": True,
+        "platform_hard_rules": platform_hard_rules,
+        "agi_recommendation_boundaries": agi_recommendation_boundaries,
+        "governed_execution_boundaries": governed_execution_boundaries,
+        "read_only_capabilities": read_only_capabilities,
+        "governed_operation_capabilities": governed_operation_capabilities,
+        "high_risk_capabilities": high_risk_capabilities,
+        "canonical_contracts": canonical_contracts,
+        "counts": {
+            "platform_hard_rules": len(platform_hard_rules),
+            "agi_recommendations": len(agi_recommendation_boundaries),
+            "governed_execution_boundaries": len(governed_execution_boundaries),
+            "read_only_capabilities": len(read_only_capabilities),
+            "governed_operation_capabilities": len(governed_operation_capabilities),
+            "high_risk_capabilities": len(high_risk_capabilities),
+            "canonical_contracts": len(canonical_contracts),
+        },
+        "decision_policy": {
+            "hard_rules": "platform_enforced_non_overridable",
+            "evidence_gates": "agi_judgement_with_fail_closed_recommendation",
+            "governed_execution": "canonical_role_chain_only",
+            "code_changes": "director_authorized_tools_only",
+        },
+    }
+
+
 def resident_agi_capability_surface_payload() -> dict[str, object]:
     """Return a serializable capability-surface payload."""
 
-    items = [item.to_dict() for item in build_resident_agi_capability_surface()]
-    decision_boundaries = [item.to_dict() for item in build_resident_agi_decision_boundaries()]
+    capability_items = build_resident_agi_capability_surface()
+    decision_boundary_items = build_resident_agi_decision_boundaries()
+    items = [item.to_dict() for item in capability_items]
+    decision_boundaries = [item.to_dict() for item in decision_boundary_items]
     categories = sorted({str(item["category"]) for item in items})
     return {
         "schema_version": "resident.agi_capability_surface.v1",
         "decision_boundary_schema": "resident.agi_decision_boundary.v1",
+        "authority_matrix_schema": "resident.agi_authority_matrix.v1",
         "role_id": "resident_agi",
         "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
         "implementation_cell": "resident.autonomy",
@@ -230,12 +367,17 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
         "categories": categories,
         "items": items,
         "decision_boundaries": decision_boundaries,
+        "authority_matrix": build_resident_agi_authority_matrix(
+            capabilities=capability_items,
+            decision_boundaries=decision_boundary_items,
+        ),
         "count": len(items),
     }
 
 
 __all__ = [
     "build_resident_agi_capability_surface",
+    "build_resident_agi_authority_matrix",
     "build_resident_agi_decision_boundaries",
     "resident_agi_capability_surface_payload",
 ]

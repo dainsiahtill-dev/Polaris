@@ -1518,6 +1518,10 @@ def _should_preserve_materialization_quality_repair_batch(artifact_quality_error
     joined_errors = "\n".join(str(item or "").lower() for item in artifact_quality_errors)
     if _artifact_quality_failed_test_count(artifact_quality_errors) >= 2:
         return True
+    if "python runtime smoke" in joined_errors and (
+        "assertregex" in joined_errors or "regex didn't match" in joined_errors
+    ):
+        return True
     if (
         "referenceerror: require is not defined" in joined_errors
         or "module is not defined in es module scope" in joined_errors
@@ -1685,6 +1689,8 @@ def _python_runtime_smoke_repair_target_files(
         if not _looks_like_python_runtime_smoke_quality_error(text):
             continue
         if workspace_root is not None and workspace_root.is_dir() and _looks_like_python_test_behavior_failure(text):
+            if _looks_like_python_regex_source_quality_failure(text):
+                targets.extend(_changed_source_repair_target_files(changed_files, workspace_root))
             failed_test_targets = _python_unittest_failure_test_target_files(text, workspace_root)
             for rel in failed_test_targets:
                 targets.extend(
@@ -1747,6 +1753,51 @@ def _is_test_like_python_path(rel_path: str) -> bool:
     return normalized.endswith(".py") and (
         name.startswith("test_") or name.endswith("_test.py") or "/tests/" in normalized
     )
+
+
+def _looks_like_python_regex_source_quality_failure(text: str) -> bool:
+    token = str(text or "").lower()
+    if "assertregex" not in token and "regex didn't match" not in token:
+        return False
+    return "not found" in token or "read_source(" in token or "src =" in token
+
+
+_SOURCE_REPAIR_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".css",
+        ".go",
+        ".html",
+        ".java",
+        ".js",
+        ".jsx",
+        ".kt",
+        ".rs",
+        ".ts",
+        ".tsx",
+    }
+)
+
+
+def _changed_source_repair_target_files(changed_files: list[str], workspace_root: Path) -> list[str]:
+    targets: list[str] = []
+    try:
+        root = workspace_root.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return []
+    for item in changed_files:
+        rel = _normalize_declared_task_path(str(item or ""))
+        if not rel:
+            continue
+        if _is_test_like_python_path(rel):
+            continue
+        if Path(rel).suffix.lower() not in _SOURCE_REPAIR_EXTENSIONS:
+            continue
+        if _workspace_path_exists_case_insensitive(root, rel):
+            targets.append(rel)
+    return _dedupe_preserve_order(targets)
 
 
 def _python_runtime_smoke_traceback_repair_target_files(text: str, workspace_root: Path) -> list[str]:

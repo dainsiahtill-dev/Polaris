@@ -71,6 +71,7 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
                 "context_refs": ["runtime/contexts/context-1.json"],
                 "evidence_refs": ["runtime/gates/qa.json"],
                 "confidence": 0.82,
+                "audit_pack_decision_limit": 7,
             },
         )
 
@@ -84,15 +85,72 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert payload["recorded_decision"]["actual_outcome"]["role_runtime_entrypoint"] == (
         "roles.runtime.execute_role_session"
     )
+    assert payload["recorded_decision"]["actual_outcome"]["resident_agi_audit_pack_injected"] is True
+    assert payload["recorded_decision"]["actual_outcome"]["resident_agi_audit_pack_schema"] == (
+        "resident.agi_audit_pack.v1"
+    )
+    assert payload["recorded_decision"]["expected_outcome"]["resident_agi_audit_pack_required"] is True
+    assert payload["audit_pack"]["schema_version"] == "resident.agi_audit_pack.v1"
+    assert payload["audit_pack"]["role_registry"]["resident_agi_available"] is True
+    assert payload["audit_pack"]["hard_rule_gate"]["status"] == "pass"
+    assert payload["audit_pack"]["run_ledger_summary"]["source"] == "run_ledger_projection"
+    assert payload["audit_pack"]["evidence_gate"]["status"] == "hold"
+    assert payload["recorded_decision"]["actual_outcome"]["resident_agi_evidence_gate"]["status"] == "hold"
     assert "runtime/gates/qa.json" in payload["recorded_decision"]["evidence_refs"]
     assert captured["role_id"] == "resident_agi"
     assert captured["workspace"] == str(workspace)
     assert captured["task_id"] == "task-agi-1"
+    captured_input = captured["input_data"]
+    assert isinstance(captured_input, dict)
+    assert captured_input["resident_agi_audit_pack"]["schema_version"] == "resident.agi_audit_pack.v1"
+    assert captured_input["evidence"]["resident_agi_audit_pack_schema"] == "resident.agi_audit_pack.v1"
+    assert captured_input["evidence"]["resident_agi_hard_rule_gate_status"] == "pass"
+    assert captured_input["evidence"]["resident_agi_evidence_gate_status"] == "hold"
     captured_context = captured["context"]
     assert isinstance(captured_context, dict)
+    assert captured_context["resident_agi_audit_pack"]["schema_version"] == "resident.agi_audit_pack.v1"
     captured_metadata = captured_context["metadata"]
     assert isinstance(captured_metadata, dict)
     assert captured_metadata["resident_agi_role_runtime_required"] is True
+    assert captured_metadata["resident_agi_audit_pack_injected"] is True
+    assert captured_metadata["resident_agi_hard_rule_gate_status"] == "pass"
+
+
+def test_resident_agi_decide_blocks_before_llm_when_hard_gate_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    test_token = "test-resident-token"
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    def fail_create_role_adapter(role_id: str, workspace_arg: str) -> object:
+        raise AssertionError(f"adapter should not be created: {role_id} {workspace_arg}")
+
+    app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
+    with (
+        patch("polaris.delivery.http.v2.resident.get_supported_roles", return_value=["pm", "director"]),
+        patch("polaris.delivery.http.v2.resident.create_role_adapter", side_effect=fail_create_role_adapter),
+        TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client,
+    ):
+        response = client.post(
+            "/v2/resident/agi/decide",
+            json={
+                "workspace": str(workspace),
+                "decision_type": "platform_supervision",
+                "objective": "Decide whether AGI can proceed without the resident adapter.",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["decision"]["verdict"] == "block"
+    assert payload["recorded_decision"]["verdict"] == "blocked"
+    assert payload["recorded_decision"]["actual_outcome"]["resident_agi_hard_rule_gate"]["status"] == "block"
+    assert "role_registry.resident_agi_available" in payload["audit_pack"]["hard_rule_gate"]["failed_check_ids"]
 
 
 def test_resident_api_supports_identity_goals_and_decisions(tmp_path: Path) -> None:
@@ -258,7 +316,30 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
         assert capabilities["schema_version"] == "resident.agi_capability_surface.v1"
         assert capabilities["decision_boundary_schema"] == "resident.agi_decision_boundary.v1"
         assert capabilities["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
+        assert any(item["capability_id"] == "resident.agi_decision_turn.execute" for item in capabilities["items"])
+        assert any(item["capability_id"] == "roles.registry.read" for item in capabilities["items"])
         assert any(item["capability_id"] == "run_ledger.read" for item in capabilities["items"])
+        assert any(item["boundary_id"] == "role.runtime.foundation" for item in capabilities["decision_boundaries"])
         assert any(item["authority"] == "platform_hard_rule" for item in capabilities["decision_boundaries"])
+
+        audit_pack_response = client.get(
+            "/v2/resident/agi/audit-pack",
+            params={"workspace": str(workspace), "decision_limit": 5},
+        )
+        assert audit_pack_response.status_code == 200
+        audit_pack = audit_pack_response.json()
+        assert audit_pack["schema_version"] == "resident.agi_audit_pack.v1"
+        assert audit_pack["role_id"] == "resident_agi"
+        assert audit_pack["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
+        assert audit_pack["role_registry"]["resident_agi_available"] is True
+        assert audit_pack["hard_rule_gate"]["status"] == "pass"
+        assert audit_pack["run_ledger_summary"]["source"] == "run_ledger_projection"
+        assert audit_pack["evidence_gate"]["recommended_verdict"] in {"continue", "request_evidence", "block"}
+        assert "resident_agi" in audit_pack["role_registry"]["dialogue_roles"]
+        assert "resident_agi" in audit_pack["role_registry"]["adapter_roles"]
+        assert "role.runtime.foundation" in audit_pack["boundary_summary"]["boundary_ids"]
+        assert audit_pack["capability_surface"]["schema_version"] == "resident.agi_capability_surface.v1"
+        assert audit_pack["recent_decisions"]
+        assert "PM → Chief Engineer → Director" in " ".join(audit_pack["execution_constraints"])
 
     reset_resident_services()

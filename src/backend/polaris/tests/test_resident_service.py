@@ -156,6 +156,12 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert capability_surface["role_id"] == "resident_agi"
     assert capability_surface["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
     assert capability_surface["count"] >= 1
+    assert any(
+        item["capability_id"] == "resident.agi_decision_turn.execute"
+        and item["access"] == "execute_through_role_runtime"
+        for item in capability_surface["items"]
+    )
+    assert any(item["capability_id"] == "roles.registry.read" for item in capability_surface["items"])
     assert any(item["capability_id"] == "contextos.final_request_audit.read" for item in capability_surface["items"])
     decision_boundaries = capability_surface["decision_boundaries"]
     assert {item["authority"] for item in decision_boundaries} >= {
@@ -163,6 +169,7 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
         "agi_recommendation",
         "agi_governed_execution",
     }
+    assert any(item["boundary_id"] == "role.runtime.foundation" for item in decision_boundaries)
     assert any(item["boundary_id"] == "architecture.options" for item in decision_boundaries)
     assert any("final_request_context_audit" in item["evidence_required"] for item in decision_boundaries)
     serialized_capability_surface = json.dumps(capability_surface, ensure_ascii=False)

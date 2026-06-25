@@ -26,6 +26,7 @@ const ROLE_LABELS: Record<RoleChatRole, string> = {
   chief_engineer: 'Chief Engineer (工部尚书)',
   director: 'Director (工部侍郎)',
   qa: 'QA (门下侍中)',
+  resident_agi: 'Resident AGI (平台总控)',
 };
 
 const FALLBACK_ROLE_OPTIONS: RoleOption[] = [
@@ -34,6 +35,7 @@ const FALLBACK_ROLE_OPTIONS: RoleOption[] = [
   { value: 'chief_engineer', label: 'Chief Engineer (工部尚书)' },
   { value: 'director', label: 'Director (工部侍郎)' },
   { value: 'qa', label: 'QA (门下侍中)' },
+  { value: 'resident_agi', label: 'Resident AGI (平台总控)' },
 ] as const satisfies RoleOption[];
 
 function isRoleChatRole(value: string): value is RoleChatRole {

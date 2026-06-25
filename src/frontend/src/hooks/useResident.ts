@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { residentService } from '@/services/api';
 import type {
   GoalExecutionView,
+  ResidentAgiAuditPackPayload,
   ResidentAgiDecisionTurnRequest,
   ResidentAgiDecisionTurnResponse,
   ResidentDecisionPayload,
@@ -73,6 +74,7 @@ export function useResident(options: UseResidentOptions = {}) {
   const [loading, setLoading] = useState(false);
   const [actionKey, setActionKey] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const [agiAuditPack, setAgiAuditPack] = useState<ResidentAgiAuditPackPayload | null>(null);
 
   // Phase 1.2: Goal Execution Projection (synced from WebSocket status)
   const [goalExecutions, setGoalExecutions] = useState<Map<string, GoalExecutionView>>(new Map());
@@ -80,6 +82,7 @@ export function useResident(options: UseResidentOptions = {}) {
   const refresh = useCallback(async () => {
     if (!workspace) {
       setStatus(emptyDetails('', options.liveResident));
+      setAgiAuditPack(null);
       setError(null);
       return null;
     }
@@ -92,6 +95,8 @@ export function useResident(options: UseResidentOptions = {}) {
       return null;
     }
     setStatus(result.data);
+    const auditPackResult = await residentService.getAgiAuditPack(workspace, 12);
+    setAgiAuditPack(auditPackResult.ok && auditPackResult.data ? auditPackResult.data : null);
     setError(null);
     return result.data;
   }, [options.liveResident, workspace]);
@@ -126,6 +131,7 @@ export function useResident(options: UseResidentOptions = {}) {
   useEffect(() => {
     if (!workspace) {
       setStatus(emptyDetails('', options.liveResident));
+      setAgiAuditPack(null);
       setError(null);
       return;
     }
@@ -168,6 +174,7 @@ export function useResident(options: UseResidentOptions = {}) {
     residentImprovements: summary?.improvements ?? [],
     residentCapabilityGraph: summary?.capability_graph ?? null,
     residentAgiCapabilitySurface: summary?.agi_capability_surface ?? null,
+    residentAgiAuditPack: agiAuditPack,
     refresh,
     isActing: (key: string) => actionKey === key,
     start: (mode: string) =>
@@ -238,6 +245,7 @@ export type {
   ResidentExperimentPayload,
   ResidentGoalPayload,
   ResidentImprovementPayload,
+  ResidentAgiAuditPackPayload,
   ResidentSkillPayload,
   ResidentStatusDetailsPayload,
 };
