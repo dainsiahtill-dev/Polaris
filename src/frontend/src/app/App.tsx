@@ -53,6 +53,7 @@ import { useLiveTaskQueues } from './hooks/useLiveTaskQueues';
 import { useUsageStats } from './hooks/useUsageStats';
 import { useFactory } from '@/hooks/useFactory';
 import { useFactoryBench } from '@/hooks/useFactoryBench';
+import { shouldEnableGlobalBenchObserver } from '@/app/runtimeScope';
 import { getLatestExecutionActivityLog, readEngineRoleDetail } from '@/app/utils/appRuntime';
 import { mergeProcessAndBenchLogs } from '@/app/utils/benchRuntimeLogs';
 import { applyBenchObservedWorkspaceChange } from '@/app/utils/benchWorkspace';
@@ -253,6 +254,7 @@ function AppContent() {
   const internalBenchEnabled = internalBenchFlag === '1' || (import.meta.env.DEV && internalBenchFlag !== '0');
   const [progressSnapshot, setProgressSnapshot] = useState<SnapshotPayload | null>(null);
   const initialWorkspaceBinding = useMemo(() => readInitialWorkspaceBinding(), []);
+  const globalBenchObserverEnabled = shouldEnableGlobalBenchObserver(internalBenchEnabled, initialWorkspaceBinding);
 
   const handleBenchWorkspaceChange = useCallback(
     (nextWorkspace: string) => {
@@ -332,9 +334,9 @@ function AppContent() {
     isLoading: factoryIsLoading,
   } = useFactory({ workspace });
   const factoryBench = useFactoryBench({
-    enabled: internalBenchEnabled,
-    autoSelect: 'newest',
-    onWorkspaceChange: handleBenchWorkspaceChange,
+    enabled: globalBenchObserverEnabled,
+    autoSelect: globalBenchObserverEnabled ? 'newest' : 'none',
+    onWorkspaceChange: globalBenchObserverEnabled ? handleBenchWorkspaceChange : undefined,
   });
   const { currentSession: factoryBenchSession, events: factoryBenchEvents } = factoryBench;
   const factoryRuntimeActive = factoryIsLoading || isFactoryRunActive(factoryCurrentRun);
@@ -934,7 +936,7 @@ function AppContent() {
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
-          internalBenchEnabled={internalBenchEnabled}
+          internalBenchEnabled={globalBenchObserverEnabled}
           llmRuntimeState={llmRuntimeState}
           currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
@@ -982,7 +984,7 @@ function AppContent() {
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
-          internalBenchEnabled={internalBenchEnabled}
+          internalBenchEnabled={globalBenchObserverEnabled}
           llmRuntimeState={llmRuntimeState}
           agentsRequired={agentsRequired}
           agentsDraftReady={agentsDraftReady}
@@ -1026,7 +1028,7 @@ function AppContent() {
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
-          internalBenchEnabled={internalBenchEnabled}
+          internalBenchEnabled={globalBenchObserverEnabled}
           llmRuntimeState={llmRuntimeState}
           notifyError={notifyError}
         />
@@ -1065,7 +1067,7 @@ function AppContent() {
           onRetryCheckpoint={() => factoryCurrentRun && retryFactoryRunFromCheckpoint(factoryCurrentRun.run_id, 'operator retry')}
           isLoading={factoryIsLoading}
           bench={factoryBench}
-          internalBenchEnabled={internalBenchEnabled}
+          internalBenchEnabled={globalBenchObserverEnabled}
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
@@ -1295,9 +1297,9 @@ function AppContent() {
           fileEditEvents={fileEditEvents}
         />
 
-        {internalBenchEnabled && (
+        {globalBenchObserverEnabled && (
           <BenchStatusStrip
-            enabled={internalBenchEnabled}
+            enabled={globalBenchObserverEnabled}
             bench={factoryBench}
             websocketLive={live}
             websocketReconnecting={reconnecting}
