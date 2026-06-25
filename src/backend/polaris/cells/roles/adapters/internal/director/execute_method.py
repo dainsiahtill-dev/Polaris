@@ -18,7 +18,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.director.runtime.public.service import summarize_deterministic_repair_source_tools
+from polaris.cells.director.runtime.public.service import (
+    summarize_deterministic_repair_source_tools,
+)
 from polaris.kernelone.fs.materialization import materialized_file_paths
 
 # ``scan_workspace_artifact_quality`` MUST stay a name on THIS module: the test
@@ -43,6 +45,7 @@ from .helpers import (
     has_successful_write_tool,
     taskboard_snapshot_brief,
 )
+from .post_execution_repair_bridge import run_post_execution_language_repairs
 
 logger = logging.getLogger(__name__)
 
@@ -2280,86 +2283,21 @@ def _phase_pre_materialization_quality(
     # outcome. This catches import/syntax/dedup/field issues that QA might not
     # detect.
     if write_tool_evidence:
-        from .deterministic_repairs.generic_repairs import (
-            _apply_deterministic_go_module_import_repair,
+        post_execution_tool_results, post_execution_repair_summary = run_post_execution_language_repairs(
+            adapter,
+            task_id=target_task_id,
         )
-
-        _post_go_repairs = _apply_deterministic_go_module_import_repair(adapter, task_id=target_task_id)
-        if _post_go_repairs:
-            tool_results.extend(_post_go_repairs)
-
-        # Post-execution Rust repair pass: unused imports, missing fields, etc.
-        from .deterministic_repairs.rust_repairs import run_all_rust_post_repairs
-
-        _ws_path = Path(str(getattr(adapter, "workspace", "") or ""))
-        _post_rust_repairs: list[dict[str, Any]] = []
-        if (_ws_path / "Cargo.toml").is_file():
-            _post_rust_repairs = run_all_rust_post_repairs(_ws_path)
-            for record in _post_rust_repairs:
-                tool_results.append(
-                    {
-                        "tool": "write_file",
-                        "tool_name": "write_file",
-                        "success": True,
-                        "result": {
-                            "ok": True,
-                            "source_tool": "deterministic_rust_post_repair",
-                            "file": record.get("file", ""),
-                            "action": record.get("action", record.get("symbols", "")),
-                        },
-                    }
-                )
-
-        # Post-execution C++ repair pass: include path mismatches
-        from .deterministic_repairs.cpp_repairs import run_all_cpp_post_repairs
-
-        _post_cpp_repairs: list[dict[str, str]] = []
-        if any((_ws_path / ext).exists() for ext in ("CMakeLists.txt",)) or any(_ws_path.rglob("*.cpp")):
-            _post_cpp_repairs = run_all_cpp_post_repairs(_ws_path)
-            for record in _post_cpp_repairs:
-                tool_results.append(
-                    {
-                        "tool": "write_file",
-                        "tool_name": "write_file",
-                        "success": True,
-                        "result": {
-                            "ok": True,
-                            "source_tool": "deterministic_cpp_post_repair",
-                            "file": record.get("file", ""),
-                            "action": record.get("action", ""),
-                        },
-                    }
-                )
-
-        # Post-execution Java repair pass: JUnit dependency removal
-        from .deterministic_repairs.java_repairs import run_all_java_post_repairs
-
-        _post_java_repairs: list[dict[str, str]] = []
-        if any(_ws_path.rglob("*.java")):
-            _post_java_repairs = run_all_java_post_repairs(_ws_path)
-            for record in _post_java_repairs:
-                tool_results.append(
-                    {
-                        "tool": "write_file",
-                        "tool_name": "write_file",
-                        "success": True,
-                        "result": {
-                            "ok": True,
-                            "source_tool": "deterministic_java_post_repair",
-                            "file": record.get("file", ""),
-                            "action": record.get("action", ""),
-                        },
-                    }
-                )
-
-        # Re-collect workspace diff after all post-execution repairs
-        if _post_go_repairs or _post_rust_repairs or _post_cpp_repairs or _post_java_repairs:
+        if post_execution_tool_results and post_execution_repair_summary is not None:
+            tool_results.extend(post_execution_tool_results)
             current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
                 adapter,
                 baseline_files,
                 task=task,
                 workspace_name=workspace_name,
             )
+            quality_repair_attempts.append(post_execution_repair_summary)
+            quality_repair_summary = dict(quality_repair_summary or {})
+            quality_repair_summary["post_execution_repair_kernel"] = post_execution_repair_summary["repair_kernel"]
     return (
         MaterializationState.from_locals(
             current_files,

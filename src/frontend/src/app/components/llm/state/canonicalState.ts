@@ -1,22 +1,23 @@
 /**
  * Canonical State Definition for LLM Settings
  * Phase 2: Single Source of Truth
- * 
+ *
  * Architecture Principle:
  * - This is the ONLY mutable state in the system
  * - All views are derived read-only projections
  * - All writes go through UnifiedLlmDataManager
  */
 
-import type { 
-  ProviderConfig, 
-  ProviderKind, 
+import type {
+  ProviderConfig,
+  ProviderKind,
   ProviderStatus,
   CostClass,
   InterviewStatus,
   CLIMode,
-  ProviderConnection 
-} from '../types';
+  ProviderConnection,
+} from "../types";
+import type { LlmRoleId } from "../roleDefinitions";
 
 // ============================================================================
 // Core Entity Types (Normalized)
@@ -60,7 +61,7 @@ export interface ProviderEntity {
 
 /** Role Assignment - Links role to provider */
 export interface RoleAssignment {
-  roleId: 'pm' | 'director' | 'chief_engineer' | 'qa' | 'architect' | 'cfo' | 'hr';
+  roleId: LlmRoleId;
   providerId?: string;
   model?: string;
   profile?: string;
@@ -71,7 +72,7 @@ export interface RoleAssignment {
 
 /** Role Requirements - Policy configuration */
 export interface RoleRequirement {
-  roleId: 'pm' | 'director' | 'chief_engineer' | 'qa' | 'architect' | 'cfo' | 'hr';
+  roleId: LlmRoleId;
   requiresThinking?: boolean;
   minConfidence?: number;
   errorMessage?: string;
@@ -104,7 +105,7 @@ export interface VisualEdgeState {
   id: string;
   source: string;
   target: string;
-  kind: 'provider-to-model' | 'model-to-role';
+  kind: "provider-to-model" | "model-to-role";
 }
 
 /** Visual graph layout state - part of canonical state */
@@ -120,7 +121,7 @@ export interface VisualGraphState {
 
 export interface UIState {
   // View mode
-  viewMode: 'list' | 'visual' | 'split';
+  viewMode: "list" | "visual" | "split";
   // Selection state
   selectedProviderId?: string;
   selectedRoleId?: string;
@@ -129,7 +130,12 @@ export interface UIState {
   editingProviderId?: string;
   editingRoleId?: string;
   // Modal/dialog state
-  activeModal?: 'add-provider' | 'edit-provider' | 'test-provider' | 'interview-role' | null;
+  activeModal?:
+    | "add-provider"
+    | "edit-provider"
+    | "test-provider"
+    | "interview-role"
+    | null;
   // Loading states
   isLoading: boolean;
   isSaving: boolean;
@@ -175,7 +181,7 @@ export interface ConnectivityState {
 
 /**
  * LlmSettingsState - The ONE canonical state for LLM Settings
- * 
+ *
  * All data flows through this structure:
  * - UI reads: Via view adapters (derived, read-only)
  * - UI writes: Through UnifiedLlmDataManager (single write path)
@@ -187,19 +193,19 @@ export interface LlmSettingsState {
     roleAssignments: Record<string, RoleAssignment>;
     roleRequirements: Record<string, RoleRequirement>;
   };
-  
+
   // === Visual Graph State (Serialized) ===
   visualGraph: VisualGraphState;
-  
+
   // === UI State (Transient, not persisted) ===
   ui: UIState;
-  
+
   // === Async Operations (Transient) ===
   asyncOps: AsyncOperationState;
-  
+
   // === Connectivity Results (Persisted) ===
   connectivity: ConnectivityState;
-  
+
   // === System ===
   version: number; // State schema version for migrations
   lastUpdated: string;
@@ -214,18 +220,36 @@ export function createInitialState(): LlmSettingsState {
     entities: {
       providers: {},
       roleAssignments: {
-        pm: { roleId: 'pm', ready: false },
-        chief_engineer: { roleId: 'chief_engineer', ready: false },
-        director: { roleId: 'director', ready: false },
-        qa: { roleId: 'qa', ready: false },
-        architect: { roleId: 'architect', ready: false },
+        pm: { roleId: "pm", ready: false },
+        chief_engineer: { roleId: "chief_engineer", ready: false },
+        director: { roleId: "director", ready: false },
+        qa: { roleId: "qa", ready: false },
+        architect: { roleId: "architect", ready: false },
+        resident_agi: { roleId: "resident_agi", ready: false },
       },
       roleRequirements: {
-        pm: { roleId: 'pm', requiresThinking: true, minConfidence: 0.8 },
-        chief_engineer: { roleId: 'chief_engineer', requiresThinking: true, minConfidence: 0.85 },
-        director: { roleId: 'director', requiresThinking: true, minConfidence: 0.9 },
-        qa: { roleId: 'qa', requiresThinking: false, minConfidence: 0.7 },
-        architect: { roleId: 'architect', requiresThinking: false, minConfidence: 0.6 },
+        pm: { roleId: "pm", requiresThinking: true, minConfidence: 0.8 },
+        chief_engineer: {
+          roleId: "chief_engineer",
+          requiresThinking: true,
+          minConfidence: 0.85,
+        },
+        director: {
+          roleId: "director",
+          requiresThinking: true,
+          minConfidence: 0.9,
+        },
+        qa: { roleId: "qa", requiresThinking: false, minConfidence: 0.7 },
+        architect: {
+          roleId: "architect",
+          requiresThinking: false,
+          minConfidence: 0.6,
+        },
+        resident_agi: {
+          roleId: "resident_agi",
+          requiresThinking: true,
+          minConfidence: 0.85,
+        },
       },
     },
     visualGraph: {
@@ -234,7 +258,7 @@ export function createInitialState(): LlmSettingsState {
       viewport: { x: 0, y: 0, zoom: 1 },
     },
     ui: {
-      viewMode: 'list',
+      viewMode: "list",
       expandedProviderIds: [],
       isLoading: false,
       isSaving: false,
@@ -254,46 +278,62 @@ export function createInitialState(): LlmSettingsState {
 
 export const canonicalSelectors = {
   // Provider selectors
-  getProviderById: (state: LlmSettingsState, id: string): ProviderEntity | undefined =>
-    state.entities.providers[id],
-  
+  getProviderById: (
+    state: LlmSettingsState,
+    id: string,
+  ): ProviderEntity | undefined => state.entities.providers[id],
+
   getAllProviders: (state: LlmSettingsState): ProviderEntity[] =>
     Object.values(state.entities.providers),
-  
-  getProvidersByKind: (state: LlmSettingsState, kind: ProviderKind): ProviderEntity[] =>
-    Object.values(state.entities.providers).filter(p => p.kind === kind),
-  
+
+  getProvidersByKind: (
+    state: LlmSettingsState,
+    kind: ProviderKind,
+  ): ProviderEntity[] =>
+    Object.values(state.entities.providers).filter((p) => p.kind === kind),
+
   // Role selectors
-  getRoleAssignment: (state: LlmSettingsState, roleId: string): RoleAssignment | undefined =>
-    state.entities.roleAssignments[roleId],
-  
+  getRoleAssignment: (
+    state: LlmSettingsState,
+    roleId: string,
+  ): RoleAssignment | undefined => state.entities.roleAssignments[roleId],
+
   getAllRoleAssignments: (state: LlmSettingsState): RoleAssignment[] =>
     Object.values(state.entities.roleAssignments),
-  
+
   // Status selectors
   getReadyProviders: (state: LlmSettingsState): ProviderEntity[] =>
-    Object.values(state.entities.providers).filter(p => p.status === 'ready'),
-  
+    Object.values(state.entities.providers).filter((p) => p.status === "ready"),
+
   getProvidersNeedingApiKey: (state: LlmSettingsState): ProviderEntity[] =>
-    Object.values(state.entities.providers).filter(p => 
-      p.status === 'failed' && p.lastError?.includes('API key')
+    Object.values(state.entities.providers).filter(
+      (p) => p.status === "failed" && p.lastError?.includes("API key"),
     ),
-  
+
   // Visual graph selectors
-  getVisualNode: (state: LlmSettingsState, id: string): VisualNodeState | undefined =>
-    state.visualGraph.nodes[id],
-  
+  getVisualNode: (
+    state: LlmSettingsState,
+    id: string,
+  ): VisualNodeState | undefined => state.visualGraph.nodes[id],
+
   getVisualViewport: (state: LlmSettingsState): VisualViewport =>
     state.visualGraph.viewport,
-  
+
   // Connectivity selectors
-  getConnectivityResult: (state: LlmSettingsState, key: string): ConnectivityResult | undefined =>
-    state.connectivity.results[key],
-  
-  getAllConnectivityResults: (state: LlmSettingsState): Record<string, ConnectivityResult> =>
-    state.connectivity.results,
-  
-  getConnectivityResultForProvider: (state: LlmSettingsState, providerId: string, roleId?: string): ConnectivityResult | undefined => {
+  getConnectivityResult: (
+    state: LlmSettingsState,
+    key: string,
+  ): ConnectivityResult | undefined => state.connectivity.results[key],
+
+  getAllConnectivityResults: (
+    state: LlmSettingsState,
+  ): Record<string, ConnectivityResult> => state.connectivity.results,
+
+  getConnectivityResultForProvider: (
+    state: LlmSettingsState,
+    providerId: string,
+    roleId?: string,
+  ): ConnectivityResult | undefined => {
     // Try role-specific key first
     if (roleId) {
       const roleResult = state.connectivity.results[`${roleId}:${providerId}`];
@@ -323,8 +363,8 @@ export function toLegacyProviderConfig(entity: ProviderEntity): ProviderConfig {
     name: entity.name,
     model: entity.modelId,
     default_model: entity.modelId,
-    base_url: entity.conn.kind === 'http' ? entity.conn.baseUrl : undefined,
-    api_key: entity.conn.kind === 'http' ? entity.conn.apiKey : undefined,
+    base_url: entity.conn.kind === "http" ? entity.conn.baseUrl : undefined,
+    api_key: entity.conn.kind === "http" ? entity.conn.apiKey : undefined,
   };
 }
 
@@ -332,23 +372,27 @@ export function toLegacyProviderConfig(entity: ProviderEntity): ProviderConfig {
  * Create ProviderEntity from legacy config
  */
 export function fromLegacyProviderConfig(
-  id: string, 
-  config: ProviderConfig
+  id: string,
+  config: ProviderConfig,
 ): ProviderEntity {
   const now = new Date().toISOString();
-  const conn: ProviderConnection = config.conn 
-    ? { kind: 'http', baseUrl: config.base_url || '', ...config.conn } as ProviderConnection
-    : { kind: 'http' as const, baseUrl: config.base_url || '' };
+  const conn: ProviderConnection = config.conn
+    ? ({
+        kind: "http",
+        baseUrl: config.base_url || "",
+        ...config.conn,
+      } as ProviderConnection)
+    : { kind: "http" as const, baseUrl: config.base_url || "" };
   return {
     id,
     name: config.name || id,
-    kind: (config.type as ProviderKind) || 'openai_compat',
-    type: config.type || '',
+    kind: (config.type as ProviderKind) || "openai_compat",
+    type: config.type || "",
     conn,
     cliMode: config.cli_mode,
-    modelId: config.model || config.default_model || '',
-    status: 'untested',
-    costClass: 'FIXED',
+    modelId: config.model || config.default_model || "",
+    status: "untested",
+    costClass: "FIXED",
     config,
     createdAt: now,
     updatedAt: now,

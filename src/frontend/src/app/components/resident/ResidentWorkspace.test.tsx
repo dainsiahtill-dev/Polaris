@@ -285,6 +285,24 @@ const mockResidentState = {
         ],
       },
       {
+        capability_id: "director.repair_coverage.read",
+        name: "Director repair diagnostic coverage",
+        category: "director_repair_strategy",
+        access: "read_only",
+        contract_ref: "director.repair_coverage_report.v1",
+        risk_level: "low",
+        evidence_refs: ["director.repair_coverage_report.v1"],
+      },
+      {
+        capability_id: "director.repair_advisory_policy.read",
+        name: "Director AGI repair advisory policy",
+        category: "director_repair_advisory",
+        access: "read_only",
+        contract_ref: "director.repair_advisory_policy.v1",
+        risk_level: "low",
+        evidence_refs: ["director.repair_advisory_policy.v1"],
+      },
+      {
         capability_id: "verifier.policy.read",
         name: "Verifier policy read model",
         category: "verification_policy",
@@ -441,6 +459,8 @@ const mockResidentState = {
         "run_ledger.read",
         "audit.diagnosis.read",
         "director.deterministic_repair_strategy_catalog.read",
+        "director.repair_coverage.read",
+        "director.repair_advisory_policy.read",
         "verifier.policy.read",
         "verifier.execution.execute",
       ],
@@ -469,6 +489,8 @@ const mockResidentState = {
         "run_ledger.read",
         "audit.diagnosis.read",
         "director.deterministic_repair_strategy_catalog.read",
+        "director.repair_coverage.read",
+        "director.repair_advisory_policy.read",
         "verifier.execution.execute",
       ],
       declared_interface_ids: [
@@ -476,11 +498,15 @@ const mockResidentState = {
         "run_ledger.read",
         "audit.diagnosis.read",
         "director.deterministic_repair_strategy_catalog.read",
+        "director.repair_coverage.read",
+        "director.repair_advisory_policy.read",
         "verifier.execution.execute",
       ],
       required_interface_ids: [
         "contextos.final_request_audit.read",
         "director.deterministic_repair_strategy_catalog.read",
+        "director.repair_coverage.read",
+        "director.repair_advisory_policy.read",
       ],
       optional_interface_ids: ["verifier.execution.execute"],
       missing_interface_ids: [],
@@ -494,6 +520,24 @@ const mockResidentState = {
           access: "read_only",
           category: "director_repair_strategy",
           contract_ref: "director.deterministic_repair_strategy_catalog.v1",
+          risk_level: "low",
+        },
+        {
+          interface_id: "director.repair_coverage.read",
+          status: "available",
+          required_by_decisions: ["quality.gate.response"],
+          access: "read_only",
+          category: "director_repair_strategy",
+          contract_ref: "director.repair_coverage_report.v1",
+          risk_level: "low",
+        },
+        {
+          interface_id: "director.repair_advisory_policy.read",
+          status: "available",
+          required_by_decisions: ["quality.gate.response"],
+          access: "read_only",
+          category: "director_repair_advisory",
+          contract_ref: "director.repair_advisory_policy.v1",
           risk_level: "low",
         },
       ],
@@ -525,6 +569,8 @@ const mockResidentState = {
         "context.catalog.search",
         "context.engine.resolve",
         "director.deterministic_repair_strategy_catalog.read",
+        "director.repair_coverage.read",
+        "director.repair_advisory_policy.read",
         "verifier.policy.read",
       ],
       governed_operation_capabilities: [
@@ -547,6 +593,8 @@ const mockResidentState = {
         "context.catalog",
         "context.engine",
         "director.deterministic_repair_strategy_catalog.v1",
+        "director.repair_coverage_report.v1",
+        "director.repair_advisory_policy.v1",
         "control_plane.verifier_policy",
         "control_plane.verifier_execution",
       ],
@@ -607,6 +655,33 @@ const mockResidentState = {
         },
       ],
     },
+    director_repair_advisory_policy: {
+      schema_version: "director.repair_advisory_policy.v1",
+      source: "director.runtime.repair_kernel.advisory_policy",
+      access: "read_only",
+      owner_cell: "director.runtime",
+      execution_boundary: "read_only_advisory_no_writes_no_registration",
+      agi_execution_authority: false,
+      writes_allowed: false,
+      registration_allowed: false,
+      authoritative_receipts_allowed: false,
+      allowed_suggested_rule_fields: [
+        "pattern",
+        "fix_template",
+        "confidence",
+        "evidence",
+      ],
+      forbidden_suggested_rule_fields: [
+        "write_file",
+        "patch",
+        "repair_plan",
+        "policy_override",
+      ],
+      summary: {
+        suggested_rules_allowed: true,
+        director_runtime_remains_authoritative: true,
+      },
+    },
   },
   residentAgiAuditPack: {
     schema_version: "resident.agi_audit_pack.v1",
@@ -620,6 +695,8 @@ const mockResidentState = {
       "runtime.v2.status.resident",
       "roles.registry",
       "director.runtime.repair_kernel.strategy_catalog",
+      "director.runtime.repair_kernel.registry",
+      "director.runtime.repair_kernel.advisory_policy",
       "director.repair_receipts",
     ],
     role_registry: {
@@ -674,15 +751,21 @@ const mockResidentState = {
       owner_cell: "director.runtime",
       source: "director.runtime.repair_kernel.strategy_catalog",
       catalog_schema: "director.deterministic_repair_strategy_catalog.v1",
+      coverage_schema: "director.repair_coverage_report.v1",
+      advisory_policy_schema: "director.repair_advisory_policy.v1",
       profile_summary_schema:
         "director.deterministic_repair_profile_summary.v1",
       unknown_source_tool_policy: "fail_closed_high_risk",
       execution_boundary: "director_authorized_tools_only",
       chain: "PM → Chief Engineer → Director",
       agi_advisory: {
-        active: false,
+        active: true,
         authoritative: false,
         writes_allowed: false,
+        registration_allowed: false,
+        suggested_rules_allowed: true,
+        allowed_suggested_rule_fields: ["pattern", "fix_template"],
+        forbidden_suggested_rule_fields: ["write_file", "patch"],
       },
       agi_execution_authority: false,
       director_tool_execution_required: true,
@@ -902,10 +985,28 @@ const mockResidentState = {
         source: "audit.verdict.public.query_audit_verdict",
         recommended_next_action: "use_audit_verdict_snapshot",
       },
+      {
+        interface_id: "director.repair_coverage.read",
+        name: "Director repair diagnostic coverage",
+        status: "available",
+        callable: true,
+        source: "director.runtime.public.query_director_repair_coverage",
+        recommended_next_action:
+          "use_repair_coverage_to_choose_retry_escalate_or_suggest_rule",
+      },
+      {
+        interface_id: "director.repair_advisory_policy.read",
+        name: "Director AGI repair advisory policy",
+        status: "available",
+        callable: true,
+        source: "director.runtime.public.query_director_repair_advisory_policy",
+        recommended_next_action:
+          "use_repair_advisory_policy_before_accepting_agi_suggested_rules",
+      },
     ],
     summary: {
-      total: 3,
-      available: 1,
+      total: 5,
+      available: 3,
       unavailable: 1,
       needs_public_facade: 0,
       metadata_only: 0,
@@ -1119,6 +1220,24 @@ describe("ResidentWorkspace", () => {
       screen.getAllByTestId("resident-agi-repair-strategy-catalog-item")[0],
     ).toHaveTextContent("typescript");
     expect(
+      screen.getByTestId("resident-agi-repair-advisory-policy"),
+    ).toHaveTextContent("AGI 修复建议边界");
+    expect(
+      screen.getByTestId("resident-agi-repair-advisory-policy"),
+    ).toHaveTextContent("director.repair_advisory_policy.v1");
+    expect(
+      screen.getByTestId("resident-agi-repair-advisory-policy"),
+    ).toHaveTextContent("suggested_rules allowed");
+    expect(
+      screen.getByTestId("resident-agi-repair-advisory-policy"),
+    ).toHaveTextContent(/Writes\s*blocked/);
+    expect(
+      screen.getByTestId("resident-agi-repair-advisory-policy"),
+    ).toHaveTextContent("allow:pattern");
+    expect(
+      screen.getByTestId("resident-agi-repair-advisory-policy"),
+    ).toHaveTextContent("deny:write_file");
+    expect(
       screen.queryByRole("button", { name: /修复|执行/i }),
     ).not.toBeInTheDocument();
     expect(
@@ -1150,7 +1269,7 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("resident.agi_evidence_interface_contract.v1");
     expect(
       screen.getByTestId("resident-agi-evidence-interface-contract"),
-    ).toHaveTextContent("required 2");
+    ).toHaveTextContent("required 4");
     expect(
       screen.getByTestId("resident-agi-evidence-interface-contract"),
     ).toHaveTextContent("missing 0");
@@ -1196,6 +1315,17 @@ describe("ResidentWorkspace", () => {
     expect(
       screen.getByTestId("resident-agi-evidence-interface-readiness"),
     ).toHaveTextContent("use_audit_verdict_snapshot");
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-readiness"),
+    ).toHaveTextContent("Director repair diagnostic coverage");
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-readiness"),
+    ).toHaveTextContent(
+      "director.runtime.public.query_director_repair_coverage",
+    );
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-readiness"),
+    ).toHaveTextContent("Director AGI repair advisory policy");
     expect(screen.getAllByText("risk high").length).toBeGreaterThan(1);
     expect(
       screen.getByText("No shortcut from PM directly to Director."),
@@ -1262,7 +1392,7 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("writes: blocked");
     expect(
       screen.getByTestId("resident-agi-director-repair-contract"),
-    ).toHaveTextContent("advisory: inactive");
+    ).toHaveTextContent("advisory: active");
     expect(
       screen.getByTestId("resident-agi-director-repair-contract"),
     ).toHaveTextContent("director.deterministic_repair_strategy_catalog.v1");
@@ -1624,6 +1754,8 @@ describe("ResidentWorkspace", () => {
           capability_surface: false,
           decision_boundary: false,
           director_repair_strategy_catalog: false,
+          director_repair_coverage: false,
+          director_repair_advisory_policy: false,
         },
         custom_scopes_allowed: true,
       },
@@ -1636,13 +1768,23 @@ describe("ResidentWorkspace", () => {
       agi_participation_policy: {
         schema_version: "resident.agi_participation_policy.v1",
         role_id: "resident_agi",
-        participation_flags: ["final_request_audit"],
+        participation_flags: [
+          "final_request_audit",
+          "goal_promotion_readiness",
+          "director_repair_advisory_policy",
+        ],
         available_scopes: [
           {
             scope_id: "goal.promotion.readiness",
             name: "Goal promotion readiness",
             category: "decision_capability",
             risk_level: "high",
+          },
+          {
+            scope_id: "director_repair_advisory_policy",
+            name: "Director AGI repair advisory policy",
+            category: "director_repair_advisory",
+            risk_level: "low",
           },
         ],
       },
@@ -1659,7 +1801,11 @@ describe("ResidentWorkspace", () => {
 
       fireEvent.click(screen.getByTestId("resident-edit-identity"));
       fireEvent.click(screen.getByTestId("resident-agi-participation-enabled"));
+      expect(screen.queryByText("goal_promotion_readiness")).toBeNull();
       fireEvent.click(screen.getByLabelText(/Goal promotion readiness/));
+      fireEvent.click(
+        screen.getByLabelText(/Director AGI repair advisory policy/),
+      );
       fireEvent.click(screen.getByTestId("resident-save-identity"));
 
       expect(mockResidentState.saveIdentity).toHaveBeenCalledWith({
@@ -1668,8 +1814,12 @@ describe("ResidentWorkspace", () => {
           "Supervise unattended Polaris development runs with governed evidence.",
         resident_agi_participation: {
           enabled: true,
-          scopes: ["goal.promotion.readiness"],
+          scopes: [
+            "goal.promotion.readiness",
+            "director_repair_advisory_policy",
+          ],
           participation: {
+            director_repair_advisory_policy: true,
             "goal.promotion.readiness": true,
             final_request_audit: false,
           },

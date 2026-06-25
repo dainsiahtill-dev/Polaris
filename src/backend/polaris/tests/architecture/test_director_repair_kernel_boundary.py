@@ -18,6 +18,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[3]
 CATALOG_PATH = BACKEND_ROOT / "docs" / "graph" / "catalog" / "cells.yaml"
 ROLES_DIRECTOR_ROOT = BACKEND_ROOT / "polaris" / "cells" / "roles" / "adapters" / "internal" / "director"
 EXECUTE_METHOD_PATH = ROLES_DIRECTOR_ROOT / "execute_method.py"
+POST_EXECUTION_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "post_execution_repair_bridge.py"
 
 FORBIDDEN_IMPORT_PREFIXES = (
     "polaris.cells.director.runtime.internal.repair_kernel",
@@ -118,6 +119,21 @@ def test_execute_method_uses_director_runtime_repair_kernel_only_via_public_serv
 
     assert set(director_runtime_imports) <= ALLOWED_EXECUTE_METHOD_DIRECTOR_RUNTIME_IMPORTS
     assert "polaris.cells.director.runtime.public.service" in director_runtime_imports
+
+
+def test_execute_method_delegates_post_execution_language_repairs_to_bridge() -> None:
+    execute_method_source = _read_text(EXECUTE_METHOD_PATH)
+    bridge_source = _read_text(POST_EXECUTION_BRIDGE_PATH)
+    language_repair_tokens = {
+        "_apply_deterministic_go_module_import_repair",
+        "run_all_rust_post_repairs",
+        "run_all_cpp_post_repairs",
+        "run_all_java_post_repairs",
+    }
+
+    assert "run_post_execution_language_repairs" in execute_method_source
+    assert not any(token in execute_method_source for token in language_repair_tokens)
+    assert all(token in bridge_source for token in language_repair_tokens)
 
 
 def test_graph_catalog_keeps_repair_kernel_owned_by_director_runtime() -> None:

@@ -1,4 +1,4 @@
-import type { Edge, Node } from '@xyflow/react';
+import type { Edge, Node } from "@xyflow/react";
 import type {
   VisualEdgeData,
   VisualGraphConfig,
@@ -12,43 +12,28 @@ import type {
   VisualRoleId,
   VisualRoleNodeData,
   RoleModelBinding,
-} from '../types/visual';
-
-const ROLE_ORDER: VisualRoleId[] = [
-  'pm',
-  'director',
-  'chief_engineer',
-  'qa',
-  'architect',
-  'cfo',
-  'hr',
-  'scout',
-];
-
-const ROLE_META: Record<VisualRoleId, { label: string; description: string }> = {
-  pm: { label: 'PM', description: '统筹任务、节奏与推进。' },
-  director: { label: 'Director', description: '负责实现、调度与技术裁断（实际编码）。' },
-  chief_engineer: { label: 'Chief Engineer', description: '绘制技术蓝图，定体例与纲目（设计不编码）。' },
-  qa: { label: 'QA', description: '主司审核与勘验，确保证据链完备。' },
-  architect: { label: 'Architect', description: '草拟项目规格与架构文档。' },
-  cfo: { label: 'CFO', description: '核算预算，监控Token用量与成本。' },
-  hr: { label: 'HR', description: '管理LLM配置与模型任免。' },
-  scout: { label: 'Scout', description: '只读代码/文档侦察（探子）。可选：仅当 scout_probe 升级为 LLM 侦察时才需要绑定模型。' },
-};
+} from "../types/visual";
+import {
+  getLlmRoleDefinition,
+  getVisibleLlmBindingRoleIds,
+  normalizeLlmRoleId,
+  REQUIRED_LLM_ASSIGNMENT_ROLE_IDS,
+} from "../../roleDefinitions";
 
 const encodeNodeSegment = (value: string) => encodeURIComponent(value);
-const legacyNormalizeId = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_');
-const legacyProviderNodeId = (providerId: string) => `provider:${legacyNormalizeId(providerId)}`;
+const legacyNormalizeId = (value: string) =>
+  value.replace(/[^a-zA-Z0-9_-]/g, "_");
+const legacyProviderNodeId = (providerId: string) =>
+  `provider:${legacyNormalizeId(providerId)}`;
 const legacyModelNodeId = (providerId: string, model: string) =>
   `model:${legacyNormalizeId(providerId)}:${legacyNormalizeId(model)}`;
 
 export const roleNodeId = (roleId: VisualRoleId) => `role:${roleId}`;
 const normalizeVisualRoleId = (roleId: string): VisualRoleId | null => {
-  if (roleId === 'docs') return 'architect';
-  if ((ROLE_ORDER as string[]).includes(roleId)) return roleId as VisualRoleId;
-  return null;
+  return normalizeLlmRoleId(roleId);
 };
-export const providerNodeId = (providerId: string) => `provider:${encodeNodeSegment(providerId)}`;
+export const providerNodeId = (providerId: string) =>
+  `provider:${encodeNodeSegment(providerId)}`;
 export const modelNodeId = (providerId: string, model: string) =>
   `model:${encodeNodeSegment(providerId)}:${encodeNodeSegment(model)}`;
 
@@ -61,37 +46,41 @@ const coerceManualModels = (config: Record<string, unknown>) => {
 };
 
 const parseOptionalPositiveInt = (value: unknown): number | undefined => {
-  if (value === undefined || value === null || value === '') return undefined;
+  if (value === undefined || value === null || value === "") return undefined;
   const parsed = Number.parseInt(String(value), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
   return parsed;
 };
 
-export const getRoleBindings = (roleCfg?: VisualRoleConfig | null): RoleModelBinding[] => {
+export const getRoleBindings = (
+  roleCfg?: VisualRoleConfig | null,
+): RoleModelBinding[] => {
   if (!roleCfg) return [];
   if (Array.isArray(roleCfg.bindings)) {
     return roleCfg.bindings
       .map((binding) => {
-        const providerId = String(binding?.provider_id || '').trim();
-        const model = String(binding?.model || '').trim();
+        const providerId = String(binding?.provider_id || "").trim();
+        const model = String(binding?.model || "").trim();
         if (!providerId || !model) return null;
         const next: RoleModelBinding = {
           provider_id: providerId,
           model,
         };
-        const profile = String(binding.profile || '').trim();
+        const profile = String(binding.profile || "").trim();
         if (profile) next.profile = profile;
-        const maxConcurrency = parseOptionalPositiveInt(binding.max_concurrency ?? binding.concurrency);
+        const maxConcurrency = parseOptionalPositiveInt(
+          binding.max_concurrency ?? binding.concurrency,
+        );
         if (maxConcurrency !== undefined) next.max_concurrency = maxConcurrency;
         return next;
       })
       .filter((binding): binding is RoleModelBinding => Boolean(binding));
   }
-  const providerId = String(roleCfg.provider_id || '').trim();
-  const model = String(roleCfg.model || '').trim();
+  const providerId = String(roleCfg.provider_id || "").trim();
+  const model = String(roleCfg.model || "").trim();
   if (!providerId || !model) return [];
   const binding: RoleModelBinding = { provider_id: providerId, model };
-  const profile = String(roleCfg.profile || '').trim();
+  const profile = String(roleCfg.profile || "").trim();
   if (profile) binding.profile = profile;
   return [binding];
 };
@@ -115,7 +104,7 @@ const mirrorPrimaryBinding = (roleCfg: VisualRoleConfig): VisualRoleConfig => {
 
 export const buildVisualGraph = (
   config: VisualGraphConfig,
-  status?: VisualGraphStatus | null
+  status?: VisualGraphStatus | null,
 ): { nodes: Node<VisualNodeData>[]; edges: Edge<VisualEdgeData>[] } => {
   const providers = Object.entries(config.providers || {});
   const roleReqs = config.policies?.role_requirements || {};
@@ -125,12 +114,12 @@ export const buildVisualGraph = (
   const restorePosition = (
     nodeId: string,
     defaultPosition: VisualNodePosition,
-    fallbackNodeIds: string[] = []
+    fallbackNodeIds: string[] = [],
   ): VisualNodePosition => {
     const ids = [nodeId, ...fallbackNodeIds];
     for (const id of ids) {
       const saved = savedLayout[id];
-      if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
+      if (saved && typeof saved.x === "number" && typeof saved.y === "number") {
         return saved;
       }
     }
@@ -154,11 +143,11 @@ export const buildVisualGraph = (
 
   providers.forEach(([providerId, providerCfgRaw]) => {
     const providerCfg =
-      typeof providerCfgRaw === 'object' && providerCfgRaw !== null
+      typeof providerCfgRaw === "object" && providerCfgRaw !== null
         ? (providerCfgRaw as Record<string, unknown>)
         : {};
     const configuredModels = [providerCfg.default_model, providerCfg.model]
-      .filter((item): item is string => typeof item === 'string')
+      .filter((item): item is string => typeof item === "string")
       .map((item) => item.trim())
       .filter(Boolean);
     configuredModels.forEach((model) => addModel(providerId, model));
@@ -170,35 +159,37 @@ export const buildVisualGraph = (
   const edges: Edge<VisualEdgeData>[] = [];
 
   providers.forEach(([providerId, providerCfgRaw], providerIndex) => {
-    const providerCfg = typeof providerCfgRaw === 'object' && providerCfgRaw !== null
-      ? (providerCfgRaw as Record<string, unknown>)
-      : {};
-    const providerType = typeof providerCfg.type === 'string' ? providerCfg.type : undefined;
+    const providerCfg =
+      typeof providerCfgRaw === "object" && providerCfgRaw !== null
+        ? (providerCfgRaw as Record<string, unknown>)
+        : {};
+    const providerType =
+      typeof providerCfg.type === "string" ? providerCfg.type : undefined;
     const providerLabel =
-      typeof providerCfg.name === 'string' && providerCfg.name.trim()
+      typeof providerCfg.name === "string" && providerCfg.name.trim()
         ? providerCfg.name.trim()
         : providerId;
     const rawProviderStatus = status?.providers?.[providerId]?.status;
     const providerStatus =
-      rawProviderStatus === 'running' ||
-      rawProviderStatus === 'success' ||
-      rawProviderStatus === 'failed' ||
-      rawProviderStatus === 'unknown'
+      rawProviderStatus === "running" ||
+      rawProviderStatus === "success" ||
+      rawProviderStatus === "failed" ||
+      rawProviderStatus === "unknown"
         ? rawProviderStatus
-        : 'unknown';
+        : "unknown";
     const modelList = Array.from(providerModels.get(providerId) || []);
-    
+
     const providerIdValue = providerNodeId(providerId);
     const providerNode: Node<VisualProviderNodeData> = {
       id: providerIdValue,
-      type: 'provider',
+      type: "provider",
       position: restorePosition(
         providerIdValue,
         { x: 40, y: providerIndex * 180 + 40 },
-        [legacyProviderNodeId(providerId)]
+        [legacyProviderNodeId(providerId)],
       ),
       data: {
-        kind: 'provider',
+        kind: "provider",
         providerId,
         label: providerLabel,
         providerType,
@@ -212,14 +203,14 @@ export const buildVisualGraph = (
       const modelId = modelNodeId(providerId, model);
       const modelNode: Node<VisualModelNodeData> = {
         id: modelId,
-        type: 'model',
+        type: "model",
         position: restorePosition(
           modelId,
           { x: 340, y: providerIndex * 180 + modelIndex * 120 + 40 },
-          [legacyModelNodeId(providerId, model)]
+          [legacyModelNodeId(providerId, model)],
         ),
         data: {
-          kind: 'model',
+          kind: "model",
           providerId,
           model,
           label: model,
@@ -231,28 +222,39 @@ export const buildVisualGraph = (
         id: `edge:${providerNode.id}:${modelNode.id}`,
         source: providerNode.id,
         target: modelNode.id,
-        type: 'custom',
-        data: { kind: 'provider-to-model' },
+        type: "custom",
+        data: { kind: "provider-to-model" },
       });
     });
   });
 
-  ROLE_ORDER.forEach((roleId, index) => {
+  const visibleRoleIds = getVisibleLlmBindingRoleIds(
+    config.roles,
+    status?.roles,
+  );
+
+  visibleRoleIds.forEach((roleId, index) => {
     const requirement = roleReqs[roleId] || {};
     const readiness = status?.roles?.[roleId];
-    const meta = ROLE_META[roleId];
-    
+    const meta = getLlmRoleDefinition(roleId);
+
     nodes.push({
       id: roleNodeId(roleId),
-      type: 'role',
-      position: restorePosition(roleNodeId(roleId), { x: 700, y: index * 180 + 40 }),
+      type: "role",
+      position: restorePosition(roleNodeId(roleId), {
+        x: 700,
+        y: index * 180 + 40,
+      }),
       data: {
-        kind: 'role',
+        kind: "role",
         roleId,
         label: meta.label,
         description: meta.description,
         requiresThinking: Boolean(requirement.requires_thinking),
-        minConfidence: typeof requirement.min_confidence === 'number' ? requirement.min_confidence : undefined,
+        minConfidence:
+          typeof requirement.min_confidence === "number"
+            ? requirement.min_confidence
+            : undefined,
         readiness: readiness
           ? {
               ready: readiness.ready,
@@ -269,17 +271,19 @@ export const buildVisualGraph = (
     getRoleBindings(roleCfg).forEach((binding, bindingIndex) => {
       const modelId = modelNodeId(binding.provider_id, binding.model);
       const modelNode = nodes.find((node) => node.id === modelId);
-      if (modelNode && modelNode.type === 'model') {
+      if (modelNode && modelNode.type === "model") {
         const data = modelNode.data as VisualModelNodeData;
-        data.assignedRoles = Array.from(new Set([...(data.assignedRoles || []), roleIdNormalized]));
+        data.assignedRoles = Array.from(
+          new Set([...(data.assignedRoles || []), roleIdNormalized]),
+        );
       }
       edges.push({
         id: `edge:${modelId}:${roleNodeId(roleIdNormalized)}:${bindingIndex}`,
         source: modelId,
         target: roleNodeId(roleIdNormalized),
-        type: 'custom',
+        type: "custom",
         data: {
-          kind: 'model-to-role',
+          kind: "model-to-role",
           roleId: roleIdNormalized,
           providerId: binding.provider_id,
           model: binding.model,
@@ -295,10 +299,10 @@ export const buildVisualGraph = (
 
 export const mergeNodePositions = (
   previous: Node<VisualNodeData>[],
-  next: Node<VisualNodeData>[]
+  next: Node<VisualNodeData>[],
 ): Node<VisualNodeData>[] => {
   const positions = new Map(previous.map((node) => [node.id, node.position]));
-  
+
   return next.map((node) => {
     const position = positions.get(node.id);
     return position ? { ...node, position } : node;
@@ -308,23 +312,29 @@ export const mergeNodePositions = (
 export const mergeNodePositionsWithStates = (
   previous: Node<VisualNodeData>[],
   next: Node<VisualNodeData>[],
-  savedStates: Record<string, VisualNodeState>
+  savedStates: Record<string, VisualNodeState>,
 ): Node<VisualNodeData>[] => {
   // Keep current in-memory node position first to avoid drag-reset during async refresh.
-  const previousPositions = new Map(previous.map((node) => [node.id, node.position]));
+  const previousPositions = new Map(
+    previous.map((node) => [node.id, node.position]),
+  );
 
-  const resolveSavedState = (node: Node<VisualNodeData>): VisualNodeState | undefined => {
+  const resolveSavedState = (
+    node: Node<VisualNodeData>,
+  ): VisualNodeState | undefined => {
     const direct = savedStates[node.id];
     if (direct) return direct;
-    if (node.type === 'provider' && node.data.kind === 'provider') {
+    if (node.type === "provider" && node.data.kind === "provider") {
       return savedStates[legacyProviderNodeId(node.data.providerId)];
     }
-    if (node.type === 'model' && node.data.kind === 'model') {
-      return savedStates[legacyModelNodeId(node.data.providerId, node.data.model)];
+    if (node.type === "model" && node.data.kind === "model") {
+      return savedStates[
+        legacyModelNodeId(node.data.providerId, node.data.model)
+      ];
     }
     return undefined;
   };
-  
+
   return next.map((node) => {
     // Prefer current position first.
     const previousPosition = previousPositions.get(node.id);
@@ -346,7 +356,7 @@ export const updateRoleAssignment = (
   roleId: VisualRoleId,
   providerId: string,
   model: string,
-  options: { maxConcurrency?: number; profile?: string } = {}
+  options: { maxConcurrency?: number; profile?: string } = {},
 ): VisualGraphConfig => {
   const currentRole = config.roles?.[roleId] || {};
   const bindings = getRoleBindings(currentRole);
@@ -354,20 +364,26 @@ export const updateRoleAssignment = (
   const normalizedModel = model.trim();
   if (!normalizedProviderId || !normalizedModel) return config;
   const existingIndex = bindings.findIndex(
-    (binding) => binding.provider_id === normalizedProviderId && binding.model === normalizedModel
+    (binding) =>
+      binding.provider_id === normalizedProviderId &&
+      binding.model === normalizedModel,
   );
   const nextBinding: RoleModelBinding = {
     provider_id: normalizedProviderId,
     model: normalizedModel,
   };
-  const profile = String(options.profile || '').trim();
+  const profile = String(options.profile || "").trim();
   if (profile) nextBinding.profile = profile;
   const maxConcurrency = parseOptionalPositiveInt(options.maxConcurrency);
-  if (maxConcurrency !== undefined) nextBinding.max_concurrency = maxConcurrency;
+  if (maxConcurrency !== undefined)
+    nextBinding.max_concurrency = maxConcurrency;
 
   const nextBindings = [...bindings];
   if (existingIndex >= 0) {
-    nextBindings[existingIndex] = { ...nextBindings[existingIndex], ...nextBinding };
+    nextBindings[existingIndex] = {
+      ...nextBindings[existingIndex],
+      ...nextBinding,
+    };
   } else {
     nextBindings.push(nextBinding);
   }
@@ -384,8 +400,14 @@ export const updateRoleAssignment = (
   };
 };
 
-export const clearRoleAssignment = (config: VisualGraphConfig, roleId: VisualRoleId): VisualGraphConfig => {
-  const nextRole = { ...(config.roles?.[roleId] || {}) } as Record<string, unknown>;
+export const clearRoleAssignment = (
+  config: VisualGraphConfig,
+  roleId: VisualRoleId,
+): VisualGraphConfig => {
+  const nextRole = { ...(config.roles?.[roleId] || {}) } as Record<
+    string,
+    unknown
+  >;
   delete nextRole.provider_id;
   delete nextRole.model;
   nextRole.bindings = [];
@@ -402,11 +424,12 @@ export const removeRoleBinding = (
   config: VisualGraphConfig,
   roleId: VisualRoleId,
   providerId: string,
-  model: string
+  model: string,
 ): VisualGraphConfig => {
   const currentRole = config.roles?.[roleId] || {};
   const nextBindings = getRoleBindings(currentRole).filter(
-    (binding) => !(binding.provider_id === providerId && binding.model === model)
+    (binding) =>
+      !(binding.provider_id === providerId && binding.model === model),
   );
   const nextRole = mirrorPrimaryBinding({
     ...currentRole,
@@ -424,11 +447,13 @@ export const removeRoleBinding = (
 export const addManualModel = (
   config: VisualGraphConfig,
   providerId: string,
-  model: string
+  model: string,
 ): VisualGraphConfig => {
   const raw = config.providers?.[providerId];
   const providerCfg =
-    typeof raw === 'object' && raw !== null ? ({ ...(raw as Record<string, unknown>) } as Record<string, unknown>) : {};
+    typeof raw === "object" && raw !== null
+      ? ({ ...(raw as Record<string, unknown>) } as Record<string, unknown>)
+      : {};
   const manualModels = coerceManualModels(providerCfg);
   if (!manualModels.includes(model)) {
     manualModels.push(model);
@@ -446,15 +471,18 @@ export const addManualModel = (
 export const removeManualModel = (
   config: VisualGraphConfig,
   providerId: string,
-  model: string
+  model: string,
 ): VisualGraphConfig => {
   const raw = config.providers?.[providerId];
-  if (!raw || typeof raw !== 'object') return config;
-  
-  const providerCfg = { ...(raw as Record<string, unknown>) } as Record<string, unknown>;
+  if (!raw || typeof raw !== "object") return config;
+
+  const providerCfg = { ...(raw as Record<string, unknown>) } as Record<
+    string,
+    unknown
+  >;
   const manualModels = coerceManualModels(providerCfg);
   const nextManual = manualModels.filter((m) => m !== model);
-  
+
   providerCfg.manual_models = nextManual;
 
   // Clear roles using this model
@@ -463,10 +491,14 @@ export const removeManualModel = (
   Object.entries(nextRoles).forEach(([roleId, roleCfg]) => {
     const bindings = getRoleBindings(roleCfg);
     const nextBindings = bindings.filter(
-      (binding) => !(binding.provider_id === providerId && binding.model === model)
+      (binding) =>
+        !(binding.provider_id === providerId && binding.model === model),
     );
     if (nextBindings.length !== bindings.length) {
-      nextRoles[roleId] = mirrorPrimaryBinding({ ...roleCfg, bindings: nextBindings });
+      nextRoles[roleId] = mirrorPrimaryBinding({
+        ...roleCfg,
+        bindings: nextBindings,
+      });
       rolesChanged = true;
     }
   });
@@ -483,20 +515,25 @@ export const removeManualModel = (
 
 export const removeProvider = (
   config: VisualGraphConfig,
-  providerId: string
+  providerId: string,
 ): VisualGraphConfig => {
   // Remove provider
   const nextProviders = { ...(config.providers || {}) };
   delete nextProviders[providerId];
-  
+
   // Clear roles using this provider
   const nextRoles = { ...(config.roles || {}) };
   let rolesChanged = false;
   Object.entries(nextRoles).forEach(([roleId, roleCfg]) => {
     const bindings = getRoleBindings(roleCfg);
-    const nextBindings = bindings.filter((binding) => binding.provider_id !== providerId);
+    const nextBindings = bindings.filter(
+      (binding) => binding.provider_id !== providerId,
+    );
     if (nextBindings.length !== bindings.length) {
-      nextRoles[roleId] = mirrorPrimaryBinding({ ...roleCfg, bindings: nextBindings });
+      nextRoles[roleId] = mirrorPrimaryBinding({
+        ...roleCfg,
+        bindings: nextBindings,
+      });
       rolesChanged = true;
     }
   });
@@ -508,51 +545,60 @@ export const removeProvider = (
   };
 };
 
-
-
-export const extractNodeStates = (nodes: Node<VisualNodeData>[], edges: Edge<VisualEdgeData>[]): Record<string, VisualNodeState> => {
+export const extractNodeStates = (
+  nodes: Node<VisualNodeData>[],
+  edges: Edge<VisualEdgeData>[],
+): Record<string, VisualNodeState> => {
   const states: Record<string, VisualNodeState> = {};
-  
+
   nodes.forEach((node) => {
     const state: VisualNodeState = {
-      position: node.position ? { x: node.position.x, y: node.position.y } : undefined,
+      position: node.position
+        ? { x: node.position.x, y: node.position.y }
+        : undefined,
       selected: node.selected || false,
       hidden: node.hidden || false,
     };
-    
+
     // 根据节点类型提取特定状态
-    if (node.type === 'role' && node.data.kind === 'role') {
+    if (node.type === "role" && node.data.kind === "role") {
       state.data = {
         roleData: {
-          readinessScore: node.data.readiness?.grade ? parseFloat(node.data.readiness.grade) : undefined,
-        }
+          readinessScore: node.data.readiness?.grade
+            ? parseFloat(node.data.readiness.grade)
+            : undefined,
+        },
       };
-    } else if (node.type === 'model' && node.data.kind === 'model') {
+    } else if (node.type === "model" && node.data.kind === "model") {
       state.data = {
         modelData: {
           assignedRoles: node.data.assignedRoles,
-        }
+        },
       };
     }
-    
+
     states[node.id] = state;
   });
-  
+
   return states;
 };
 
 export const restoreNodeStates = (
-  nodes: Node<VisualNodeData>[], 
-  savedStates: Record<string, VisualNodeState>
+  nodes: Node<VisualNodeData>[],
+  savedStates: Record<string, VisualNodeState>,
 ): Node<VisualNodeData>[] => {
-  const resolveSavedState = (node: Node<VisualNodeData>): VisualNodeState | undefined => {
+  const resolveSavedState = (
+    node: Node<VisualNodeData>,
+  ): VisualNodeState | undefined => {
     const direct = savedStates[node.id];
     if (direct) return direct;
-    if (node.type === 'provider' && node.data.kind === 'provider') {
+    if (node.type === "provider" && node.data.kind === "provider") {
       return savedStates[legacyProviderNodeId(node.data.providerId)];
     }
-    if (node.type === 'model' && node.data.kind === 'model') {
-      return savedStates[legacyModelNodeId(node.data.providerId, node.data.model)];
+    if (node.type === "model" && node.data.kind === "model") {
+      return savedStates[
+        legacyModelNodeId(node.data.providerId, node.data.model)
+      ];
     }
     return undefined;
   };
@@ -560,40 +606,47 @@ export const restoreNodeStates = (
   return nodes.map((node) => {
     const savedState = resolveSavedState(node);
     if (!savedState) return node;
-    
+
     const updatedNode = { ...node };
-    
+
     // 恢复节点数据状态（不包括位置）
     if (savedState.data) {
       updatedNode.data = { ...updatedNode.data };
-      
-      if (node.type === 'role' && savedState.data.roleData) {
-        (updatedNode.data as VisualRoleNodeData).readiness = savedState.data.roleData.readinessScore 
-          ? { ready: savedState.data.roleData.readinessScore > 0.5, grade: savedState.data.roleData.readinessScore.toString() }
+
+      if (node.type === "role" && savedState.data.roleData) {
+        (updatedNode.data as VisualRoleNodeData).readiness = savedState.data
+          .roleData.readinessScore
+          ? {
+              ready: savedState.data.roleData.readinessScore > 0.5,
+              grade: savedState.data.roleData.readinessScore.toString(),
+            }
           : undefined;
-      } else if (node.type === 'provider' && savedState.data.providerData) {
+      } else if (node.type === "provider" && savedState.data.providerData) {
         // Provider connectivity state is dynamic and must be sourced from runtime/list status.
-      } else if (node.type === 'model' && savedState.data.modelData) {
-        (updatedNode.data as VisualModelNodeData).assignedRoles = savedState.data.modelData.assignedRoles as VisualRoleId[];
+      } else if (node.type === "model" && savedState.data.modelData) {
+        (updatedNode.data as VisualModelNodeData).assignedRoles = savedState
+          .data.modelData.assignedRoles as VisualRoleId[];
       }
     }
-    
+
     // 恢复选中状态
     if (savedState.selected !== undefined) {
       updatedNode.selected = savedState.selected;
     }
-    
+
     // 恢复隐藏状态
     if (savedState.hidden !== undefined) {
       updatedNode.hidden = savedState.hidden;
     }
-    
+
     // 位置恢复将在mergeNodePositions中处理，这里不处理
     return updatedNode;
   });
 };
 
-export const extractNodePositions = (nodes: Node<VisualNodeData>[]): Record<string, VisualNodePosition> => {
+export const extractNodePositions = (
+  nodes: Node<VisualNodeData>[],
+): Record<string, VisualNodePosition> => {
   const layout: Record<string, VisualNodePosition> = {};
   nodes.forEach((node) => {
     if (node.position) {
@@ -605,7 +658,7 @@ export const extractNodePositions = (nodes: Node<VisualNodeData>[]): Record<stri
 
 export const updateVisualLayout = (
   config: VisualGraphConfig,
-  nodes: Node<VisualNodeData>[]
+  nodes: Node<VisualNodeData>[],
 ): VisualGraphConfig => {
   const layout = extractNodePositions(nodes);
   return {
@@ -618,7 +671,7 @@ export const updateVisualStates = (
   config: VisualGraphConfig,
   nodes: Node<VisualNodeData>[],
   edges: Edge<VisualEdgeData>[],
-  viewport?: { x: number; y: number; zoom: number }
+  viewport?: { x: number; y: number; zoom: number },
 ): VisualGraphConfig => {
   const states = extractNodeStates(nodes, edges);
   return {
@@ -652,30 +705,42 @@ export interface RuntimeLLMConfig {
  * Convert VisualGraphConfig to runtime configuration format
  * This ensures the visual configuration can be consumed by backend runtime scripts
  */
-export const visualToRuntimeConfig = (config: VisualGraphConfig): RuntimeLLMConfig => {
+export const visualToRuntimeConfig = (
+  config: VisualGraphConfig,
+): RuntimeLLMConfig => {
   const roleAssignments: RoleAssignment[] = [];
 
   Object.entries(config.roles || {}).forEach(([roleId, roleCfg]) => {
-    const normalizedRoleId = normalizeVisualRoleId(roleId) || 'architect';
-    const roleMaxConcurrency = parseOptionalPositiveInt(roleCfg?.max_concurrency ?? roleCfg?.concurrency);
+    const normalizedRoleId = normalizeVisualRoleId(roleId) || "architect";
+    const roleMaxConcurrency = parseOptionalPositiveInt(
+      roleCfg?.max_concurrency ?? roleCfg?.concurrency,
+    );
     getRoleBindings(roleCfg).forEach((binding) => {
       const assignment: RoleAssignment = {
         roleId: normalizedRoleId,
         providerId: binding.provider_id,
         model: binding.model,
-        profile: binding.profile || roleCfg.profile || 'default',
+        profile: binding.profile || roleCfg.profile || "default",
       };
-      const maxConcurrency = parseOptionalPositiveInt(binding.max_concurrency ?? binding.concurrency);
-      if (maxConcurrency !== undefined) assignment.maxConcurrency = maxConcurrency;
-      if (roleMaxConcurrency !== undefined) assignment.roleMaxConcurrency = roleMaxConcurrency;
+      const maxConcurrency = parseOptionalPositiveInt(
+        binding.max_concurrency ?? binding.concurrency,
+      );
+      if (maxConcurrency !== undefined)
+        assignment.maxConcurrency = maxConcurrency;
+      if (roleMaxConcurrency !== undefined)
+        assignment.roleMaxConcurrency = roleMaxConcurrency;
       roleAssignments.push(assignment);
     });
-    if (!getRoleBindings(roleCfg).length && roleCfg?.provider_id && roleCfg?.model) {
+    if (
+      !getRoleBindings(roleCfg).length &&
+      roleCfg?.provider_id &&
+      roleCfg?.model
+    ) {
       roleAssignments.push({
         roleId: normalizedRoleId,
         providerId: roleCfg.provider_id,
         model: roleCfg.model,
-        profile: roleCfg.profile || 'default',
+        profile: roleCfg.profile || "default",
       });
     }
   });
@@ -683,7 +748,7 @@ export const visualToRuntimeConfig = (config: VisualGraphConfig): RuntimeLLMConf
   return {
     providers: config.providers,
     roleAssignments,
-    version: '1.0',
+    version: "1.0",
     generatedAt: new Date().toISOString(),
   };
 };
@@ -692,14 +757,16 @@ export const visualToRuntimeConfig = (config: VisualGraphConfig): RuntimeLLMConf
  * Check if all required roles have valid model assignments
  */
 export const validateRoleAssignments = (
-  config: VisualGraphConfig
+  config: VisualGraphConfig,
 ): { valid: boolean; missing: VisualRoleId[]; incomplete: VisualRoleId[] } => {
-  const requiredRoles: VisualRoleId[] = ['pm', 'chief_engineer', 'director', 'qa', 'architect'];
+  const requiredRoles = REQUIRED_LLM_ASSIGNMENT_ROLE_IDS;
   const missing: VisualRoleId[] = [];
   const incomplete: VisualRoleId[] = [];
 
   requiredRoles.forEach((roleId) => {
-    const roleCfg = config.roles?.[roleId] || (roleId === 'architect' ? config.roles?.docs : undefined);
+    const roleCfg =
+      config.roles?.[roleId] ||
+      (roleId === "architect" ? config.roles?.docs : undefined);
     const bindings = getRoleBindings(roleCfg);
     if (!roleCfg) {
       missing.push(roleId);
@@ -721,30 +788,34 @@ export const validateRoleAssignments = (
 export const getConfigSummary = (config: VisualGraphConfig): string => {
   const assignments: string[] = [];
 
-  const roleOrder: VisualRoleId[] = ['pm', 'chief_engineer', 'director', 'qa', 'architect'];
+  const roleOrder = REQUIRED_LLM_ASSIGNMENT_ROLE_IDS;
   roleOrder.forEach((roleId) => {
-    const roleCfg = config.roles?.[roleId] || (roleId === 'architect' ? config.roles?.docs : undefined);
+    const roleCfg =
+      config.roles?.[roleId] ||
+      (roleId === "architect" ? config.roles?.docs : undefined);
     const bindings = getRoleBindings(roleCfg);
     if (bindings.length) {
       assignments.push(
-        `${roleId}: ${bindings.map((binding) => `${binding.provider_id}/${binding.model}`).join(', ')}`
+        `${roleId}: ${bindings.map((binding) => `${binding.provider_id}/${binding.model}`).join(", ")}`,
       );
     } else {
       assignments.push(`${roleId}: [未配置]`);
     }
   });
 
-  return assignments.join('\n');
+  return assignments.join("\n");
 };
 
 export const updateProviderConcurrency = (
   config: VisualGraphConfig,
   providerId: string,
-  value?: number
+  value?: number,
 ): VisualGraphConfig => {
   const raw = config.providers?.[providerId];
   const providerCfg =
-    typeof raw === 'object' && raw !== null ? ({ ...(raw as Record<string, unknown>) } as Record<string, unknown>) : {};
+    typeof raw === "object" && raw !== null
+      ? ({ ...(raw as Record<string, unknown>) } as Record<string, unknown>)
+      : {};
   const nextValue = parseOptionalPositiveInt(value);
   if (nextValue === undefined) {
     delete providerCfg.max_concurrency;
@@ -763,7 +834,7 @@ export const updateProviderConcurrency = (
 export const updateRoleConcurrency = (
   config: VisualGraphConfig,
   roleId: VisualRoleId,
-  value?: number
+  value?: number,
 ): VisualGraphConfig => {
   const nextRole: VisualRoleConfig = { ...(config.roles?.[roleId] || {}) };
   const nextValue = parseOptionalPositiveInt(value);
@@ -786,7 +857,7 @@ export const updateRoleBindingConcurrency = (
   roleId: VisualRoleId,
   providerId: string,
   model: string,
-  value?: number
+  value?: number,
 ): VisualGraphConfig => {
   const currentRole = config.roles?.[roleId] || {};
   const nextValue = parseOptionalPositiveInt(value);
@@ -806,7 +877,10 @@ export const updateRoleBindingConcurrency = (
     ...config,
     roles: {
       ...config.roles,
-      [roleId]: mirrorPrimaryBinding({ ...currentRole, bindings: nextBindings }),
+      [roleId]: mirrorPrimaryBinding({
+        ...currentRole,
+        bindings: nextBindings,
+      }),
     },
   };
 };

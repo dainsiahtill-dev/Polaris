@@ -5,7 +5,9 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
+from typing import Any
 
+import pytest
 from polaris.cells.director.runtime.public import (
     QueryDirectorRepairStrategyCatalogV1,
     query_director_repair_strategy_catalog,
@@ -17,6 +19,8 @@ from polaris.cells.director.runtime.public.service import (
     deterministic_repair_strategy_catalog,
     summarize_deterministic_repair_source_tools,
 )
+from polaris.cells.roles.adapters.internal.director.deterministic_repairs import cpp_repairs, rust_repairs
+from polaris.cells.roles.adapters.public.service import apply_deterministic_cpp_post_repairs
 
 _SOURCE_TOOL_RE = re.compile(r"[\"'](?P<tool>deterministic_[A-Za-z0-9_]+)[\"']")
 _NON_STRATEGY_TOKENS = {"deterministic_repair_profiles"}
@@ -217,3 +221,92 @@ def test_director_runtime_public_catalog_mirrors_authoritative_catalog() -> None
     assert payload["summary"]["total"] == len(catalog)
     assert payload["summary"]["returned"] == len(catalog)
     assert payload["summary"]["by_concern"]
+
+
+def test_rust_post_repairs_emit_rule_metadata_and_revalidation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
+    stderr_before = "error[E0433]: failed to resolve: use of unresolved module or unlinked crate `serde`\n"
+    stderr_after = ""
+    cargo_outputs = iter((stderr_before, stderr_after))
+
+    def fake_cargo_check(workspace: Path) -> str:
+        assert workspace == tmp_path
+        return next(cargo_outputs)
+
+    def fake_dependencies(workspace: Path, artifact_quality_errors: list[str]) -> list[dict[str, Any]]:
+        assert workspace == tmp_path
+        assert artifact_quality_errors == [stderr_before]
+        return [{"file": "Cargo.toml", "packages": ["serde"]}]
+
+    monkeypatch.setattr(rust_repairs, "_run_cargo_check_stderr", fake_cargo_check)
+    monkeypatch.setattr(rust_repairs, "repair_rust_dependencies", fake_dependencies)
+
+    for name in (
+        "repair_rust_crate_imports",
+        "repair_rust_wrong_crate_paths",
+        "repair_rust_method_self_signatures",
+        "repair_rust_incompatible_copy_derives",
+        "repair_rust_duplicate_module_files",
+        "repair_rust_missing_module_files",
+        "repair_rust_missing_binary_entrypoint",
+        "repair_rust_missing_derives",
+        "repair_rust_unused_imports",
+        "repair_rust_missing_fields",
+        "repair_rust_field_rename_suggestions",
+        "repair_rust_lib_root_facade",
+        "repair_rust_unresolved_pub_uses",
+        "repair_rust_trait_imports",
+        "repair_rust_line_suggestions",
+    ):
+        monkeypatch.setattr(rust_repairs, name, lambda *args, **kwargs: [])
+
+    records = rust_repairs.run_all_rust_post_repairs(tmp_path)
+
+    assert len(records) == 1
+    assert records[0]["source_tool"] == "deterministic_rust_dependency_repair"
+    assert records[0]["phase"] == "dependency_resolution"
+    assert records[0]["priority"] == 0
+    assert records[0]["round_number"] == 1
+    assert records[0]["revalidation"] == {
+        "command": ["cargo", "check", "--quiet"],
+        "exit_code": 0,
+        "errors_before": 1,
+        "errors_after": 0,
+        "net_error_reduction": 1,
+        "max_rounds": 3,
+    }
+
+
+def test_cpp_post_repairs_public_wrapper_uses_catalog_source_tool(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+
+    def fake_cpp_repairs(workspace: Path) -> list[dict[str, str]]:
+        assert workspace == tmp_path
+        return [{"file": "src/main.cpp", "action": "fix_include"}]
+
+    monkeypatch.setattr(cpp_repairs, "run_all_cpp_post_repairs", fake_cpp_repairs)
+
+    results = apply_deterministic_cpp_post_repairs(tmp_path)
+
+    assert results == [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_cpp_post_repair",
+                "file": "src/main.cpp",
+                "action": "fix_include",
+                "operation": "modify",
+            },
+        }
+    ]
+    assert deterministic_repair_source_tool_known(results[0]["result"]["source_tool"])

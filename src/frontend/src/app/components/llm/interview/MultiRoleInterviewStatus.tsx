@@ -1,72 +1,127 @@
-import React from 'react';
-import type { InterviewProviderSummary, InterviewResultDetail } from './InterviewHall';
+import React from "react";
+import type {
+  InterviewProviderSummary,
+  InterviewResultDetail,
+} from "./InterviewHall";
+import {
+  getLlmRoleDefinition,
+  normalizeLlmRoleId,
+  type LlmRoleId,
+} from "../roleDefinitions";
 
-type RoleId = 'pm' | 'director' | 'chief_engineer' | 'qa' | 'architect' | 'cfo' | 'hr';
+type RoleId = LlmRoleId;
 
-const ROLE_META: Record<RoleId, { label: string; badge: string }> = {
-  pm: { label: 'PM', badge: 'bg-white/[0.08] text-text-main border-white/[0.12]' },
-  director: { label: 'Director', badge: 'bg-emerald-500/[0.15] text-emerald-200 border-emerald-500/25' },
-  chief_engineer: { label: 'Chief Engineer', badge: 'bg-emerald-600/[0.15] text-emerald-300 border-emerald-600/25' },
-  qa: { label: 'QA', badge: 'bg-blue-500/[0.15] text-blue-200 border-blue-500/25' },
-  architect: { label: 'Architect', badge: 'bg-amber-500/[0.15] text-amber-200 border-amber-500/25' },
-  cfo: { label: 'CFO', badge: 'bg-white/[0.08] text-text-main border-white/[0.12]' },
-  hr: { label: 'HR', badge: 'bg-white/[0.08] text-text-main border-white/[0.12]' }
+const FALLBACK_ROLE_META = {
+  label: "Unknown",
+  badge: "bg-white/[0.08] text-text-main border-white/[0.12]",
 };
 
-export const RoleBadge: React.FC<{ roleId: RoleId; result: InterviewResultDetail }> = ({ roleId, result }) => {
-  if (result.status === 'none') return null;
-  const isSuccess = result.status === 'passed';
-  const meta = ROLE_META[roleId];
+const resolveRoleMeta = (roleId: string) => {
+  const normalized = normalizeLlmRoleId(roleId);
+  if (!normalized) return { ...FALLBACK_ROLE_META, label: roleId || "Unknown" };
+  const definition = getLlmRoleDefinition(normalized);
+  return { label: definition.label, badge: definition.badge };
+};
+
+export const RoleBadge: React.FC<{
+  roleId: RoleId;
+  result: InterviewResultDetail;
+}> = ({ roleId, result }) => {
+  if (result.status === "none") return null;
+  const isSuccess = result.status === "passed";
+  const meta = resolveRoleMeta(roleId);
   return (
-    <div className={`inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded border ${isSuccess ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-rose-500/30 bg-rose-500/10 text-rose-300'}`}>
-      <span className={`px-1 py-0.5 rounded ${meta.badge}`}>{meta.label.split(' ')[0]}</span>
-      <span>{isSuccess ? '✓' : '✗'}</span>
+    <div
+      className={`inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded border ${isSuccess ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-rose-500/30 bg-rose-500/10 text-rose-300"}`}
+    >
+      <span className={`px-1 py-0.5 rounded ${meta.badge}`}>
+        {meta.label.split(" ")[0]}
+      </span>
+      <span>{isSuccess ? "✓" : "✗"}</span>
     </div>
   );
 };
 
-export const MultiRoleInterviewStatus: React.FC<{ provider: InterviewProviderSummary; compact?: boolean }> = ({ provider, compact = false }) => {
+export const MultiRoleInterviewStatus: React.FC<{
+  provider: InterviewProviderSummary;
+  compact?: boolean;
+}> = ({ provider, compact = false }) => {
   const results = provider.interviewResults || {};
   const resultValues = Object.values(results) as InterviewResultDetail[];
-  const resultEntries = Object.entries(results) as [string, InterviewResultDetail][];
-  const passedCount = resultValues.filter((r: InterviewResultDetail) => r.status === 'passed').length;
-  const failedCount = resultValues.filter((r: InterviewResultDetail) => r.status === 'failed').length;
-  
+  const resultEntries = Object.entries(results) as [
+    string,
+    InterviewResultDetail,
+  ][];
+  const passedCount = resultValues.filter(
+    (r: InterviewResultDetail) => r.status === "passed",
+  ).length;
+  const failedCount = resultValues.filter(
+    (r: InterviewResultDetail) => r.status === "failed",
+  ).length;
+
   if (passedCount === 0 && failedCount === 0) {
-    if (provider.interviewStatus && provider.interviewStatus !== 'none') {
-      const isSuccess = provider.interviewStatus === 'passed';
-      return <span className={`text-[9px] uppercase px-1.5 py-0.5 rounded border ${isSuccess ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-rose-500/30 bg-rose-500/10 text-rose-300'}`}>{isSuccess ? '面试通过' : '面试失败'}</span>;
+    if (provider.interviewStatus && provider.interviewStatus !== "none") {
+      const isSuccess = provider.interviewStatus === "passed";
+      return (
+        <span
+          className={`text-[9px] uppercase px-1.5 py-0.5 rounded border ${isSuccess ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-rose-500/30 bg-rose-500/10 text-rose-300"}`}
+        >
+          {isSuccess ? "面试通过" : "面试失败"}
+        </span>
+      );
     }
     return null;
   }
-  
+
   if (compact) {
     return (
       <div className="flex items-center gap-1">
         {passedCount > 0 && (
           <div className="flex items-center gap-1">
-            <span className="text-[8px] text-emerald-300 bg-emerald-500/10 px-1.5 py-0.5 rounded">+{passedCount}</span>
+            <span className="text-[8px] text-emerald-300 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+              +{passedCount}
+            </span>
             <div className="flex -space-x-1">
-              {resultEntries.filter(([_, r]) => r.status === 'passed').map(([roleId]) => (
-                <div key={roleId} className={`w-3 h-3 rounded-full border border-white/20 ${ROLE_META[roleId as RoleId].badge}`} title={ROLE_META[roleId as RoleId].label} />
-              ))}
+              {resultEntries
+                .filter(([_, r]) => r.status === "passed")
+                .map(([roleId]) => {
+                  const meta = resolveRoleMeta(roleId);
+                  return (
+                    <div
+                      key={roleId}
+                      className={`w-3 h-3 rounded-full border border-white/20 ${meta.badge}`}
+                      title={meta.label}
+                    />
+                  );
+                })}
             </div>
           </div>
         )}
         {failedCount > 0 && (
           <div className="flex items-center gap-1">
-            <span className="text-[8px] text-rose-300 bg-rose-500/10 px-1.5 py-0.5 rounded">-{failedCount}</span>
+            <span className="text-[8px] text-rose-300 bg-rose-500/10 px-1.5 py-0.5 rounded">
+              -{failedCount}
+            </span>
             <div className="flex -space-x-1 opacity-50">
-              {resultEntries.filter(([_, r]) => r.status === 'failed').map(([roleId]) => (
-                <div key={roleId} className={`w-3 h-3 rounded-full border border-white/20 ${ROLE_META[roleId as RoleId].badge}`} title={ROLE_META[roleId as RoleId].label} />
-              ))}
+              {resultEntries
+                .filter(([_, r]) => r.status === "failed")
+                .map(([roleId]) => {
+                  const meta = resolveRoleMeta(roleId);
+                  return (
+                    <div
+                      key={roleId}
+                      className={`w-3 h-3 rounded-full border border-white/20 ${meta.badge}`}
+                      title={meta.label}
+                    />
+                  );
+                })}
             </div>
           </div>
         )}
       </div>
     );
   }
-  
+
   return (
     <div className="flex flex-wrap gap-1">
       {resultEntries.map(([roleId, result]) => (
@@ -76,50 +131,93 @@ export const MultiRoleInterviewStatus: React.FC<{ provider: InterviewProviderSum
   );
 };
 
-export const InterviewDetailsModal: React.FC<{ provider: InterviewProviderSummary; onClose: () => void }> = ({ provider, onClose }) => {
+export const InterviewDetailsModal: React.FC<{
+  provider: InterviewProviderSummary;
+  onClose: () => void;
+}> = ({ provider, onClose }) => {
   const results = provider.interviewResults || {};
   const resultValues = Object.values(results) as InterviewResultDetail[];
-  const resultEntries = Object.entries(results) as [string, InterviewResultDetail][];
+  const resultEntries = Object.entries(results) as [
+    string,
+    InterviewResultDetail,
+  ][];
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="soft-panel rounded-xl p-4 max-w-md w-full max-h-[80vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-text-main">{provider.name} 面试详情</h3>
-          <button onClick={onClose} className="text-text-dim hover:text-text-main">✕</button>
+          <h3 className="text-sm font-semibold text-text-main">
+            {provider.name} 面试详情
+          </h3>
+          <button
+            onClick={onClose}
+            className="text-text-dim hover:text-text-main"
+          >
+            ✕
+          </button>
         </div>
         <div className="space-y-4">
           <div className="soft-inset rounded-lg p-3">
             <div className="text-[10px] text-text-dim mb-1">模型信息</div>
             <div className="text-xs text-text-main">{provider.model}</div>
-            <div className="text-[9px] text-text-dim">{provider.providerType}</div>
+            <div className="text-[9px] text-text-dim">
+              {provider.providerType}
+            </div>
           </div>
           <div>
             <div className="text-[10px] text-text-dim mb-2">面试结果</div>
             <div className="space-y-2">
               {resultEntries.map(([roleId, result]) => {
-                if (result.status === 'none') return null;
-                const meta = ROLE_META[roleId as RoleId];
-                const isSuccess = result.status === 'passed';
+                if (result.status === "none") return null;
+                const meta = resolveRoleMeta(roleId);
+                const isSuccess = result.status === "passed";
                 return (
-                  <div key={roleId} className="flex items-center justify-between soft-inset rounded p-2">
+                  <div
+                    key={roleId}
+                    className="flex items-center justify-between soft-inset rounded p-2"
+                  >
                     <div className="flex items-center gap-2">
-                      <span className={`px-2 py-1 text-[9px] rounded ${meta.badge}`}>{meta.label}</span>
-                      <span className={`text-[10px] ${isSuccess ? 'text-emerald-300' : 'text-rose-300'}`}>{isSuccess ? '通过' : '失败'}</span>
+                      <span
+                        className={`px-2 py-1 text-[9px] rounded ${meta.badge}`}
+                      >
+                        {meta.label}
+                      </span>
+                      <span
+                        className={`text-[10px] ${isSuccess ? "text-emerald-300" : "text-rose-300"}`}
+                      >
+                        {isSuccess ? "通过" : "失败"}
+                      </span>
                     </div>
                     <div className="flex items-center gap-2 text-[9px] text-text-dim">
-                      {result.score && <span className="bg-white/10 px-1.5 py-0.5 rounded">分数: {result.score.toFixed(1)}</span>}
-                      {result.timestamp && <span>{new Date(result.timestamp).toLocaleDateString()}</span>}
+                      {result.score && (
+                        <span className="bg-white/10 px-1.5 py-0.5 rounded">
+                          分数: {result.score.toFixed(1)}
+                        </span>
+                      )}
+                      {result.timestamp && (
+                        <span>
+                          {new Date(result.timestamp).toLocaleDateString()}
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
               })}
-              {resultValues.filter((r: InterviewResultDetail) => r.status !== 'none').length === 0 && (
-                <div className="text-[10px] text-text-dim text-center py-4">暂无面试记录</div>
+              {resultValues.filter(
+                (r: InterviewResultDetail) => r.status !== "none",
+              ).length === 0 && (
+                <div className="text-[10px] text-text-dim text-center py-4">
+                  暂无面试记录
+                </div>
               )}
             </div>
           </div>
         </div>
-        <button onClick={onClose} className="mt-4 w-full px-3 py-1.5 text-[10px] bg-white/10 hover:bg-white/20 rounded">关闭</button>
+        <button
+          onClick={onClose}
+          className="mt-4 w-full px-3 py-1.5 text-[10px] bg-white/10 hover:bg-white/20 rounded"
+        >
+          关闭
+        </button>
       </div>
     </div>
   );

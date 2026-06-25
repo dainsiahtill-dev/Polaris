@@ -34,7 +34,11 @@ from polaris.cells.control_plane.verifier_policy.public import (
     read_verifier_policy,
 )
 from polaris.cells.director.runtime.public import (
+    QueryDirectorRepairAdvisoryPolicyV1,
+    QueryDirectorRepairCoverageV1,
     QueryDirectorRepairStrategyCatalogV1,
+    query_director_repair_advisory_policy,
+    query_director_repair_coverage,
     query_director_repair_strategy_catalog,
 )
 from polaris.cells.resident.autonomy.internal.agi_audit_pack import build_resident_agi_audit_pack
@@ -784,6 +788,11 @@ def _resident_agi_decision_type_tokens(decision_type: str) -> set[str]:
         "platform_supervision": "evidence.interface.selection",
         "quality_gate": "quality.gate.response",
         "quality_gate_response": "quality.gate.response",
+        "director_repair": "director.repair.advisory",
+        "director_repair_advisory": "director.repair.advisory",
+        "repair_advisory": "director.repair.advisory",
+        "repair_rule_suggestion": "director.repair.advisory",
+        "suggest_repair_rule": "director.repair.advisory",
         "verification": "quality.gate.response",
     }
     return {value for value in {token, compact, dotted, aliases.get(compact), aliases.get(dotted)} if value}
@@ -1203,6 +1212,134 @@ def _resident_agi_contextos_final_request_interface(
     return base
 
 
+def _resident_agi_director_repair_advisory_policy_interface(base: dict[str, Any]) -> dict[str, Any]:
+    result = query_director_repair_advisory_policy(QueryDirectorRepairAdvisoryPolicyV1())
+    payload = result.to_dict()
+    summary_raw = payload.get("summary")
+    summary = summary_raw if isinstance(summary_raw, dict) else {}
+    base.update(
+        {
+            "available": True,
+            "callable": True,
+            "status": "available",
+            "source": "director.runtime.public.query_director_repair_advisory_policy",
+            "summary": {
+                **summary,
+                "schema_version": payload.get("schema_version"),
+                "owner_cell": payload.get("owner_cell"),
+                "access": payload.get("access"),
+                "execution_boundary": payload.get("execution_boundary"),
+                "agi_execution_authority": bool(payload.get("agi_execution_authority")),
+                "writes_allowed": bool(payload.get("writes_allowed")),
+                "registration_allowed": bool(payload.get("registration_allowed")),
+                "authoritative_receipts_allowed": bool(payload.get("authoritative_receipts_allowed")),
+            },
+            "payload": payload,
+            "gaps": [],
+            "recommended_next_action": "use_repair_advisory_policy_before_accepting_agi_suggested_rules",
+        }
+    )
+    return base
+
+
+def _resident_agi_repair_diagnostic_candidates(
+    audit_pack: dict[str, Any],
+    *,
+    evidence_refs: tuple[str, ...] = (),
+    context_refs: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    candidates: list[str] = []
+
+    def collect(value: Any) -> None:
+        if isinstance(value, str):
+            token = value.strip()
+            if token and _looks_like_repair_diagnostic(token):
+                candidates.append(token)
+            return
+        if isinstance(value, list):
+            for item in value:
+                collect(item)
+            return
+        if not isinstance(value, dict):
+            return
+        for key, nested in value.items():
+            key_text = str(key or "").lower()
+            if key_text in {
+                "artifact_quality_errors",
+                "quality_errors",
+                "diagnostics",
+                "errors",
+                "compiler_errors",
+            } or key_text in {"actual_outcome", "expected_outcome", "verifier", "quality", "repair", "metadata"}:
+                collect(nested)
+
+    for ref in (*context_refs, *evidence_refs):
+        collect(ref)
+    collect(audit_pack.get("run_ledger_summary"))
+    collect(audit_pack.get("recent_decisions"))
+    return tuple(dict.fromkeys(candidates))[:50]
+
+
+def _looks_like_repair_diagnostic(value: str) -> bool:
+    lowered = value.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "error ts",
+            "ts1005",
+            "error[",
+            ".go:",
+            "artifact_quality",
+            "syntax check failed",
+            "cannot find",
+            "unresolved",
+            "unlinked crate",
+            "import path must be string",
+        )
+    )
+
+
+def _resident_agi_director_repair_coverage_interface(
+    *,
+    audit_pack: dict[str, Any],
+    context_refs: tuple[str, ...],
+    evidence_refs: tuple[str, ...],
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    diagnostics = _resident_agi_repair_diagnostic_candidates(
+        audit_pack,
+        context_refs=context_refs,
+        evidence_refs=evidence_refs,
+    )
+    result = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=diagnostics))
+    payload = result.to_dict()
+    base.update(
+        {
+            "available": True,
+            "callable": True,
+            "status": "available",
+            "source": "director.runtime.public.query_director_repair_coverage",
+            "summary": {
+                "schema_version": payload.get("schema_version"),
+                "owner_cell": payload.get("owner_cell"),
+                "access": payload.get("access"),
+                "diagnostic_candidate_count": len(diagnostics),
+                "total_diagnostics": payload.get("total_diagnostics"),
+                "covered_diagnostic_count": payload.get("covered_diagnostic_count"),
+                "uncovered_diagnostic_count": payload.get("uncovered_diagnostic_count"),
+                "agi_execution_authority": bool(payload.get("agi_execution_authority")),
+                "execution_boundary": payload.get("execution_boundary"),
+            },
+            "payload": payload,
+            "gaps": []
+            if diagnostics
+            else ["no repair diagnostics were found in current AGI evidence refs or audit pack decisions"],
+            "recommended_next_action": "use_repair_coverage_to_choose_retry_escalate_or_suggest_rule",
+        }
+    )
+    return base
+
+
 def _resident_agi_audit_pack_with_current_refs(
     audit_pack: dict[str, Any],
     *,
@@ -1327,6 +1464,15 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
             )
         elif interface_id == "director.deterministic_repair_strategy_catalog.read":
             item = _resident_agi_director_repair_strategy_catalog_interface(base)
+        elif interface_id == "director.repair_coverage.read":
+            item = _resident_agi_director_repair_coverage_interface(
+                audit_pack=audit_pack,
+                context_refs=query.context_refs,
+                evidence_refs=query.evidence_refs,
+                base=base,
+            )
+        elif interface_id == "director.repair_advisory_policy.read":
+            item = _resident_agi_director_repair_advisory_policy_interface(base)
         else:
             item = _resident_agi_metadata_only_interface(base)
         interfaces.append(item)
@@ -1561,6 +1707,8 @@ def _resident_agi_handoff_target_roles(
         return ("pm", "chief_engineer", "director")
     if "quality.gate" in capability_id:
         return ("chief_engineer", "director", "qa") if downstream_allowed else ("chief_engineer", "qa")
+    if "repair" in capability_id:
+        return ("director", "qa")
     if "platform.invariant" in capability_id:
         return ("chief_engineer", "qa")
     if "evidence.interface" in capability_id:

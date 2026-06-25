@@ -102,18 +102,32 @@ def resident_agi_director_repair_contract_payload(capability_surface: dict[str, 
 
     catalog_raw = capability_surface.get("hardcoded_repair_strategy_catalog")
     catalog = catalog_raw if isinstance(catalog_raw, dict) else {}
+    advisory_policy_raw = capability_surface.get("director_repair_advisory_policy")
+    advisory_policy = advisory_policy_raw if isinstance(advisory_policy_raw, dict) else {}
     summary_raw = catalog.get("summary")
     summary = summary_raw if isinstance(summary_raw, dict) else {}
+    advisory_summary_raw = advisory_policy.get("summary")
+    advisory_summary = advisory_summary_raw if isinstance(advisory_summary_raw, dict) else {}
     return {
         "schema_version": "resident.agi_director_repair_contract.v1",
         "owner_cell": catalog.get("owner_cell") or "director.runtime",
         "source": catalog.get("source") or "director.runtime.repair_kernel.strategy_catalog",
         "catalog_schema": catalog.get("schema_version") or "director.deterministic_repair_strategy_catalog.v1",
+        "coverage_schema": "director.repair_coverage_report.v1",
+        "advisory_policy_schema": advisory_policy.get("schema_version") or "director.repair_advisory_policy.v1",
         "profile_summary_schema": "director.deterministic_repair_profile_summary.v1",
         "unknown_source_tool_policy": catalog.get("unknown_source_tool_policy") or "fail_closed_high_risk",
         "execution_boundary": catalog.get("execution_boundary") or "director_authorized_tools_only",
         "chain": catalog.get("chain") or "PM → Chief Engineer → Director",
-        "agi_advisory": {"active": False, "authoritative": False, "writes_allowed": False},
+        "agi_advisory": {
+            "active": True,
+            "authoritative": False,
+            "writes_allowed": bool(advisory_policy.get("writes_allowed")),
+            "registration_allowed": bool(advisory_policy.get("registration_allowed")),
+            "suggested_rules_allowed": bool(advisory_summary.get("suggested_rules_allowed", True)),
+            "allowed_suggested_rule_fields": list(advisory_policy.get("allowed_suggested_rule_fields") or []),
+            "forbidden_suggested_rule_fields": list(advisory_policy.get("forbidden_suggested_rule_fields") or []),
+        },
         "agi_execution_authority": bool(catalog.get("agi_execution_authority")),
         "director_tool_execution_required": bool(catalog.get("director_tool_execution_required", True)),
         "strategy_count": int(summary.get("total") or 0),
@@ -311,6 +325,7 @@ def resident_agi_evidence_interface_recommendations(
         "audit_evidence",
         "context_discovery",
         "director_repair_strategy",
+        "director_repair_advisory",
         "llm_audit",
         "run_ledger",
         "verification_policy",
@@ -325,6 +340,8 @@ def resident_agi_evidence_interface_recommendations(
         "context.catalog": 70,
         "context.engine": 80,
         "director.deterministic_repair_strategy_catalog.v1": 85,
+        "director.repair_coverage_report.v1": 86,
+        "director.repair_advisory_policy.v1": 87,
         "audit.evidence.bundle": 90,
     }
     recommendations: list[dict[str, Any]] = []
@@ -341,6 +358,8 @@ def resident_agi_evidence_interface_recommendations(
                 "control_plane.run_ledger",
                 "roles.final_request_context_audit",
                 "director.deterministic_repair_strategy_catalog.v1",
+                "director.repair_coverage_report.v1",
+                "director.repair_advisory_policy.v1",
             }
         ):
             continue
@@ -543,6 +562,8 @@ def build_resident_agi_audit_pack(
             "runtime.v2.snapshot.resident",
             "roles.registry",
             "director.runtime.repair_kernel.strategy_catalog",
+            "director.runtime.repair_kernel.registry",
+            "director.runtime.repair_kernel.advisory_policy",
             "director.repair_receipts",
         ],
         "role_registry": resident_agi_role_registry_payload(),

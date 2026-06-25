@@ -135,6 +135,8 @@ class RepairRevalidationEvidence:
     exit_code: int | None = None
     diagnostics_before: tuple[RepairDiagnostic, ...] = ()
     diagnostics_after: tuple[RepairDiagnostic, ...] = ()
+    errors_before_count: int | None = None
+    errors_after_count: int | None = None
     resolved_diagnostic_ids: tuple[str, ...] = ()
     residual_diagnostic_ids: tuple[str, ...] = ()
     round_number: int | None = None
@@ -151,6 +153,16 @@ class RepairRevalidationEvidence:
         object.__setattr__(self, "command", _tuple_str(list(self.command)))
         object.__setattr__(self, "diagnostics_before", before)
         object.__setattr__(self, "diagnostics_after", after)
+        object.__setattr__(
+            self,
+            "errors_before_count",
+            None if self.errors_before_count is None else max(0, int(self.errors_before_count)),
+        )
+        object.__setattr__(
+            self,
+            "errors_after_count",
+            None if self.errors_after_count is None else max(0, int(self.errors_after_count)),
+        )
         object.__setattr__(self, "resolved_diagnostic_ids", _tuple_str(list(resolved)))
         object.__setattr__(self, "residual_diagnostic_ids", _tuple_str(list(residual)))
         object.__setattr__(self, "round_number", None if self.round_number is None else max(0, int(self.round_number)))
@@ -159,10 +171,14 @@ class RepairRevalidationEvidence:
 
     @property
     def errors_before(self) -> int:
+        if self.errors_before_count is not None:
+            return self.errors_before_count
         return len(self.diagnostics_before)
 
     @property
     def errors_after(self) -> int:
+        if self.errors_after_count is not None:
+            return self.errors_after_count
         return len(self.diagnostics_after)
 
     @property
@@ -249,6 +265,8 @@ class RepairPlan:
     plan_id: str = ""
     mode: RepairMode = "commit"
     risk_level: str = "low"
+    priority: int = 1
+    depends_on: tuple[str, ...] = ()
     advisor_notes: tuple[RepairAdvisorNote, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -267,6 +285,8 @@ class RepairPlan:
         object.__setattr__(self, "plan_id", plan_id)
         object.__setattr__(self, "operations", tuple(self.operations or ()))
         object.__setattr__(self, "diagnostics", tuple(self.diagnostics or ()))
+        object.__setattr__(self, "priority", max(0, int(self.priority)))
+        object.__setattr__(self, "depends_on", _tuple_str(list(self.depends_on)))
         object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
         object.__setattr__(self, "metadata", _dict_copy(self.metadata))
 
@@ -277,6 +297,8 @@ class RepairPlan:
             "source_tool": self.source_tool,
             "mode": self.mode,
             "risk_level": self.risk_level,
+            "priority": self.priority,
+            "depends_on": list(self.depends_on),
             "operations": [op.to_dict() for op in self.operations],
             "diagnostics": [diag.to_dict() for diag in self.diagnostics],
             "advisor_notes": [note.to_dict() for note in self.advisor_notes],
@@ -360,6 +382,8 @@ class RepairReceipt:
     diagnostics: tuple[RepairDiagnostic, ...] = ()
     before_hashes: Mapping[str, str] = field(default_factory=dict)
     after_hashes: Mapping[str, str] = field(default_factory=dict)
+    round_number: int | None = None
+    revalidation_evidence: RepairRevalidationEvidence | None = None
     advisor_notes: tuple[RepairAdvisorNote, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -382,6 +406,7 @@ class RepairReceipt:
         object.__setattr__(self, "diagnostics", tuple(self.diagnostics or ()))
         object.__setattr__(self, "before_hashes", dict(self.before_hashes or {}))
         object.__setattr__(self, "after_hashes", dict(self.after_hashes or {}))
+        object.__setattr__(self, "round_number", None if self.round_number is None else max(0, int(self.round_number)))
         object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
         object.__setattr__(self, "metadata", _dict_copy(self.metadata))
 
@@ -399,6 +424,13 @@ class RepairReceipt:
             "diagnostics": [diag.to_dict() for diag in self.diagnostics],
             "before_hashes": dict(self.before_hashes),
             "after_hashes": dict(self.after_hashes),
+            "round_number": self.round_number,
+            "errors_before": self.errors_before,
+            "errors_after": self.errors_after,
+            "net_error_reduction": self.net_error_reduction,
+            "revalidation_evidence": self.revalidation_evidence.to_dict()
+            if self.revalidation_evidence is not None
+            else None,
             "advisor_notes": [note.to_dict() for note in self.advisor_notes],
             "metadata": _dict_copy(self.metadata),
         }
@@ -430,6 +462,13 @@ class RepairReceipt:
             "diagnostics": [diag.to_dict() for diag in self.diagnostics],
             "before_hashes": dict(self.before_hashes),
             "after_hashes": dict(self.after_hashes),
+            "round_number": self.round_number,
+            "errors_before": self.errors_before,
+            "errors_after": self.errors_after,
+            "net_error_reduction": self.net_error_reduction,
+            "revalidation_evidence": self.revalidation_evidence.to_dict()
+            if self.revalidation_evidence is not None
+            else None,
             "metadata": _dict_copy(self.metadata),
         }
 
@@ -438,6 +477,24 @@ class RepairReceipt:
             **self._authority_payload(),
             "advisor_notes": [note.to_dict() for note in self.advisor_notes],
         }
+
+    @property
+    def errors_before(self) -> int | None:
+        if self.revalidation_evidence is None:
+            return None
+        return self.revalidation_evidence.errors_before
+
+    @property
+    def errors_after(self) -> int | None:
+        if self.revalidation_evidence is None:
+            return None
+        return self.revalidation_evidence.errors_after
+
+    @property
+    def net_error_reduction(self) -> int | None:
+        if self.revalidation_evidence is None:
+            return None
+        return self.revalidation_evidence.net_error_reduction
 
 
 @dataclass(frozen=True)

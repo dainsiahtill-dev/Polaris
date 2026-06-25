@@ -5,18 +5,23 @@
  * 已迁移到 Zustand: 使用 providerStore 而非 ProviderContext
  */
 
-import { useCallback } from 'react';
-import type { ProviderConfig } from '../types';
-import type { ConnectivityStatus } from './providerReducer';
-import type { ConnectivityResultStrict } from '../types/strict';
-import type { ConnectivityResult, InterviewProviderSummary, InterviewRoleSummary } from '../interview/InterviewHall';
-import { useProviderStore } from '@/app/store';
-import { resolveProviderConfiguredModel } from '../utils/providerModelResolver';
+import { useCallback } from "react";
+import type { ProviderConfig } from "../types";
+import type { ConnectivityStatus } from "./providerReducer";
+import type { ConnectivityResultStrict } from "../types/strict";
+import type {
+  ConnectivityResult,
+  InterviewProviderSummary,
+  InterviewRoleSummary,
+} from "../interview/InterviewHall";
+import { useProviderStore } from "@/app/store";
+import { resolveProviderConfiguredModel } from "../utils/providerModelResolver";
+import type { LlmRoleId } from "../roleDefinitions";
 
 export type {
   InterviewProviderSummary,
   ConnectivityResult,
-  InterviewRoleSummary
+  InterviewRoleSummary,
 };
 
 export interface ProviderConnectivitySummary {
@@ -24,7 +29,7 @@ export interface ProviderConnectivitySummary {
   name: string;
   model: string;
   providerType: string;
-  status: 'ready' | 'testing' | 'failed' | 'untested';
+  status: "ready" | "testing" | "failed" | "untested";
   lastTest?: {
     timestamp: string;
     success: boolean;
@@ -33,9 +38,12 @@ export interface ProviderConnectivitySummary {
   };
 }
 
-export type RoleId = 'pm' | 'director' | 'chief_engineer' | 'qa' | 'architect' | 'cfo' | 'hr';
+export type RoleId = LlmRoleId;
 
-export function isConnectivityKeyForProvider(key: string, providerId: string): boolean {
+export function isConnectivityKeyForProvider(
+  key: string,
+  providerId: string,
+): boolean {
   if (!key || !providerId) return false;
   return key === providerId || key.endsWith(`::${providerId}`);
 }
@@ -43,15 +51,27 @@ export function isConnectivityKeyForProvider(key: string, providerId: string): b
 interface UseConnectivityStoreReturn {
   getProviderStatus: (providerId: string) => ConnectivityStatus;
   getConnectivityResult: (key: string) => ConnectivityResult | undefined;
-  getProviderConnectivity: (providerId: string) => ConnectivityResult | undefined;
-  buildProviderSummaries: (providers: Record<string, ProviderConfig>) => ProviderConnectivitySummary[];
+  getProviderConnectivity: (
+    providerId: string,
+  ) => ConnectivityResult | undefined;
+  buildProviderSummaries: (
+    providers: Record<string, ProviderConfig>,
+  ) => ProviderConnectivitySummary[];
   buildConnectivityMap: () => Map<string, ConnectivityResult>;
-  getRoleProviderConnectivity: (roleId: string, providerId: string, model?: string) => ConnectivityResult | undefined;
-  getLatestProviderConnectivity: (providerId: string) => ConnectivityResult | undefined;
+  getRoleProviderConnectivity: (
+    roleId: string,
+    providerId: string,
+    model?: string,
+  ) => ConnectivityResult | undefined;
+  getLatestProviderConnectivity: (
+    providerId: string,
+  ) => ConnectivityResult | undefined;
   isProviderReady: (providerId: string) => boolean;
 }
 
-function convertToConnectivityResult(result: ConnectivityResultStrict): ConnectivityResult {
+function convertToConnectivityResult(
+  result: ConnectivityResultStrict,
+): ConnectivityResult {
   return {
     ok: result.ok,
     timestamp: result.timestamp,
@@ -63,16 +83,18 @@ function convertToConnectivityResult(result: ConnectivityResultStrict): Connecti
   };
 }
 
-function mapConnectivityStatusToInterview(status: ConnectivityStatus): 'ready' | 'testing' | 'failed' | 'untested' {
+function mapConnectivityStatusToInterview(
+  status: ConnectivityStatus,
+): "ready" | "testing" | "failed" | "untested" {
   switch (status) {
-    case 'success':
-      return 'ready';
-    case 'running':
-      return 'testing';
-    case 'failed':
-      return 'failed';
+    case "success":
+      return "ready";
+    case "running":
+      return "testing";
+    case "failed":
+      return "failed";
     default:
-      return 'untested';
+      return "untested";
   }
 }
 
@@ -80,59 +102,81 @@ export function useConnectivityStore(): UseConnectivityStoreReturn {
   const providerTestStatus = useProviderStore((s) => s.providerTestStatus);
   const connectivityResults = useProviderStore((s) => s.connectivityResults);
 
-  const getLatestProviderConnectivity = useCallback((providerId: string): ConnectivityResult | undefined => {
-    let latestResult: ConnectivityResult | undefined = undefined;
-    let latestTimestamp = 0;
+  const getLatestProviderConnectivity = useCallback(
+    (providerId: string): ConnectivityResult | undefined => {
+      let latestResult: ConnectivityResult | undefined = undefined;
+      let latestTimestamp = 0;
 
-    Object.entries(connectivityResults).forEach(([key, result]) => {
-      if (isConnectivityKeyForProvider(key, providerId)) {
-        const timestamp = new Date(result.timestamp).getTime();
-        if (timestamp > latestTimestamp) {
-          latestTimestamp = timestamp;
-          latestResult = convertToConnectivityResult(result);
+      Object.entries(connectivityResults).forEach(([key, result]) => {
+        if (isConnectivityKeyForProvider(key, providerId)) {
+          const timestamp = new Date(result.timestamp).getTime();
+          if (timestamp > latestTimestamp) {
+            latestTimestamp = timestamp;
+            latestResult = convertToConnectivityResult(result);
+          }
         }
-      }
-    });
+      });
 
-    return latestResult;
-  }, [connectivityResults]);
+      return latestResult;
+    },
+    [connectivityResults],
+  );
 
-  const getProviderStatus = useCallback((providerId: string): ConnectivityStatus => {
-    return providerTestStatus[providerId] || 'unknown';
-  }, [providerTestStatus]);
+  const getProviderStatus = useCallback(
+    (providerId: string): ConnectivityStatus => {
+      return providerTestStatus[providerId] || "unknown";
+    },
+    [providerTestStatus],
+  );
 
-  const getConnectivityResult = useCallback((key: string): ConnectivityResult | undefined => {
-    const result = connectivityResults[key];
-    if (!result) return undefined;
-    return convertToConnectivityResult(result);
-  }, [connectivityResults]);
+  const getConnectivityResult = useCallback(
+    (key: string): ConnectivityResult | undefined => {
+      const result = connectivityResults[key];
+      if (!result) return undefined;
+      return convertToConnectivityResult(result);
+    },
+    [connectivityResults],
+  );
 
-  const getProviderConnectivity = useCallback((providerId: string): ConnectivityResult | undefined => {
-    return getLatestProviderConnectivity(providerId);
-  }, [getLatestProviderConnectivity]);
+  const getProviderConnectivity = useCallback(
+    (providerId: string): ConnectivityResult | undefined => {
+      return getLatestProviderConnectivity(providerId);
+    },
+    [getLatestProviderConnectivity],
+  );
 
-  const buildProviderSummaries = useCallback((providers: Record<string, ProviderConfig>): ProviderConnectivitySummary[] => {
-    return Object.entries(providers).map(([providerId, provider]) => {
-      const status = getProviderStatus(providerId);
-      const latestConnectivity = getProviderConnectivity(providerId);
+  const buildProviderSummaries = useCallback(
+    (
+      providers: Record<string, ProviderConfig>,
+    ): ProviderConnectivitySummary[] => {
+      return Object.entries(providers).map(([providerId, provider]) => {
+        const status = getProviderStatus(providerId);
+        const latestConnectivity = getProviderConnectivity(providerId);
 
-      return {
-        id: providerId,
-        name: provider.name || providerId,
-        model: resolveProviderConfiguredModel(provider),
-        providerType: provider.type || 'unknown',
-        status: mapConnectivityStatusToInterview(status),
-        lastTest: latestConnectivity ? {
-          timestamp: latestConnectivity.timestamp,
-          success: latestConnectivity.ok,
-          latencyMs: latestConnectivity.latencyMs,
-          error: latestConnectivity.error,
-        } : undefined,
-      };
-    });
-  }, [getProviderStatus, getProviderConnectivity]);
+        return {
+          id: providerId,
+          name: provider.name || providerId,
+          model: resolveProviderConfiguredModel(provider),
+          providerType: provider.type || "unknown",
+          status: mapConnectivityStatusToInterview(status),
+          lastTest: latestConnectivity
+            ? {
+                timestamp: latestConnectivity.timestamp,
+                success: latestConnectivity.ok,
+                latencyMs: latestConnectivity.latencyMs,
+                error: latestConnectivity.error,
+              }
+            : undefined,
+        };
+      });
+    },
+    [getProviderStatus, getProviderConnectivity],
+  );
 
-  const buildConnectivityMap = useCallback((): Map<string, ConnectivityResult> => {
+  const buildConnectivityMap = useCallback((): Map<
+    string,
+    ConnectivityResult
+  > => {
     const result = new Map<string, ConnectivityResult>();
     Object.entries(connectivityResults).forEach(([key, value]) => {
       result.set(key, convertToConnectivityResult(value));
@@ -140,25 +184,31 @@ export function useConnectivityStore(): UseConnectivityStoreReturn {
     return result;
   }, [connectivityResults]);
 
-  const getRoleProviderConnectivity = useCallback((
-    roleId: string,
-    providerId: string,
-    model?: string
-  ): ConnectivityResult | undefined => {
-    const key = `${roleId}::${providerId}`;
-    const directResult = getConnectivityResult(key);
+  const getRoleProviderConnectivity = useCallback(
+    (
+      roleId: string,
+      providerId: string,
+      model?: string,
+    ): ConnectivityResult | undefined => {
+      const key = `${roleId}::${providerId}`;
+      const directResult = getConnectivityResult(key);
 
-    if (directResult && (!model || directResult.model === model)) {
-      return directResult;
-    }
+      if (directResult && (!model || directResult.model === model)) {
+        return directResult;
+      }
 
-    return getLatestProviderConnectivity(providerId);
-  }, [getConnectivityResult, getLatestProviderConnectivity]);
+      return getLatestProviderConnectivity(providerId);
+    },
+    [getConnectivityResult, getLatestProviderConnectivity],
+  );
 
-  const isProviderReady = useCallback((providerId: string): boolean => {
-    const status = getProviderStatus(providerId);
-    return status === 'success';
-  }, [getProviderStatus]);
+  const isProviderReady = useCallback(
+    (providerId: string): boolean => {
+      const status = getProviderStatus(providerId);
+      return status === "success";
+    },
+    [getProviderStatus],
+  );
 
   return {
     getProviderStatus,
@@ -175,7 +225,7 @@ export function useConnectivityStore(): UseConnectivityStoreReturn {
 export function useRoleProviderConnectivity(
   roleId: string,
   providerId: string,
-  model?: string
+  model?: string,
 ): {
   status: ConnectivityStatus;
   result: ConnectivityResult | undefined;
@@ -183,7 +233,11 @@ export function useRoleProviderConnectivity(
   error?: string;
   timestamp?: string;
 } {
-  const { getProviderStatus, getConnectivityResult, getLatestProviderConnectivity } = useConnectivityStore();
+  const {
+    getProviderStatus,
+    getConnectivityResult,
+    getLatestProviderConnectivity,
+  } = useConnectivityStore();
 
   const status = getProviderStatus(providerId);
   const directResult = getConnectivityResult(`${roleId}::${providerId}`);
@@ -220,13 +274,15 @@ export function useProviderReadiness(providerId: string): {
   const connectivity = getProviderConnectivity(providerId);
 
   return {
-    isReady: status === 'success',
+    isReady: status === "success",
     status,
-    lastTest: connectivity ? {
-      timestamp: connectivity.timestamp,
-      success: connectivity.ok,
-      latencyMs: connectivity.latencyMs,
-      error: connectivity.error,
-    } : undefined,
+    lastTest: connectivity
+      ? {
+          timestamp: connectivity.timestamp,
+          success: connectivity.ok,
+          latencyMs: connectivity.latencyMs,
+          error: connectivity.error,
+        }
+      : undefined,
   };
 }

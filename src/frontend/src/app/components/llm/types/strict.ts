@@ -10,6 +10,7 @@ import type {
   InterviewStatus,
   CLIMode,
 } from "../types";
+import type { LlmRoleId } from "../roleDefinitions";
 
 // ============================================================================
 // Provider Configuration Types
@@ -218,14 +219,7 @@ export interface ProviderConfigLoose extends Record<string, unknown> {
 /** 视觉角色节点数据 */
 export interface VisualRoleNodeDataStrict {
   kind: "role";
-  roleId:
-    | "pm"
-    | "director"
-    | "chief_engineer"
-    | "qa"
-    | "architect"
-    | "cfo"
-    | "hr";
+  roleId: LlmRoleId;
   label: string;
   description?: string;
   requiresThinking?: boolean;
@@ -253,9 +247,7 @@ export interface VisualModelNodeDataStrict {
   providerId: string;
   model: string;
   label: string;
-  assignedRoles?: Array<
-    "pm" | "director" | "chief_engineer" | "qa" | "architect" | "cfo" | "hr"
-  >;
+  assignedRoles?: LlmRoleId[];
 }
 
 /** 视觉节点数据 Union */
@@ -496,14 +488,7 @@ export interface SimpleProviderStrict {
 // ============================================================================
 
 /** 角色 ID */
-export type RoleIdStrict =
-  | "pm"
-  | "director"
-  | "chief_engineer"
-  | "qa"
-  | "architect"
-  | "cfo"
-  | "hr";
+export type RoleIdStrict = LlmRoleId;
 
 /** 角色配置 */
 export interface RoleConfigStrict {

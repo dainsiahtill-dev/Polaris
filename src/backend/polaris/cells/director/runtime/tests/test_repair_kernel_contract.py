@@ -9,6 +9,7 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     PatchComposer,
     RepairAdvisorNote,
     RepairArchetype,
+    RepairConvergenceScheduler,
     RepairDiagnostic,
     RepairOperation,
     RepairPlan,
@@ -16,11 +17,13 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     RepairPolicyGate,
     RepairRuleDefinition,
     RepairRuleRegistry,
+    RepairVerifierSnapshot,
     TransactionalRepairExecutor,
     build_repair_receipt_context,
     build_typescript_object_literal_comma_plan,
     default_repair_rule_registry,
     normalize_artifact_quality_errors,
+    order_repair_plans,
     repair_typescript_object_literal_commas,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy import (
@@ -29,14 +32,23 @@ from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy impor
 )
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import sha256_text
 from polaris.cells.director.runtime.public import (
+    CompareDirectorRepairShadowRunV1,
+    DirectorRepairAdvisoryPolicyResultV1,
     DirectorRepairCoverageReportV1,
+    DirectorRepairLanguageSlotsResultV1,
     DirectorRepairPlanningResultV1,
+    QueryDirectorRepairAdvisoryPolicyV1,
     QueryDirectorRepairCoverageV1,
+    QueryDirectorRepairLanguageSlotsV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
+    RepairReceiptV1,
     build_director_repair_kernel_summary,
+    compare_director_repair_shadow_run,
     plan_director_typescript_object_literal_comma_repair,
+    query_director_repair_advisory_policy,
     query_director_repair_coverage,
+    query_director_repair_language_slots,
     query_director_repair_strategy_catalog,
     run_director_typescript_object_literal_comma_repair,
 )
@@ -79,6 +91,27 @@ def test_repair_rule_registry_reports_known_and_unknown_diagnostic_coverage() ->
     assert payload["items"][1]["diagnostic_language"] == "typescript"
 
 
+def test_repair_rule_registry_matches_language_specific_go_and_rust_rules() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "main.go:8:2: import path must be string",
+            "error[E0433]: failed to resolve: use of unresolved module or unlinked crate `tokio`\n"
+            "  --> src/main.rs:3:5",
+            "error[E0277]: the trait bound `Widget: Copy` is not satisfied\n  --> src/lib.rs:12:10",
+        ]
+    )
+
+    payload = default_repair_rule_registry().coverage(diagnostics).to_dict()
+
+    assert payload["covered_diagnostic_count"] == 3
+    assert payload["items"][0]["matched_rule_ids"] == ["go.bare_import_string"]
+    assert payload["items"][0]["diagnostic_language"] == "go"
+    assert payload["items"][1]["matched_rule_ids"] == ["rust.unlinked_crate_dependency"]
+    assert payload["items"][1]["diagnostic_phase"] == "dependency_resolution"
+    assert payload["items"][2]["matched_rule_ids"] == ["rust.incompatible_derive"]
+    assert payload["items"][2]["diagnostic_archetype"] == "incompatible_derive"
+
+
 def test_repair_rule_registry_rejects_duplicate_rule_ids_and_unknown_source_tool() -> None:
     rule = RepairRuleDefinition(
         rule_id="typescript.object_literal_missing_comma",
@@ -116,6 +149,138 @@ def test_repair_rule_registry_does_not_overmatch_ts1005_without_comma_expected_m
     matches = default_repair_rule_registry().match_diagnostic(diagnostic)
 
     assert matches == ()
+
+
+def test_repair_rule_registry_falls_back_to_raw_when_message_is_empty() -> None:
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="typescript_ts1005",
+        message="",
+        path="src/app.ts",
+        raw="src/app.ts(1,1): error TS1005: ',' expected.",
+    )
+
+    matches = default_repair_rule_registry().match_diagnostic(diagnostic)
+
+    assert [match.rule_id for match in matches] == ["typescript.object_literal_missing_comma"]
+
+
+def test_repair_plan_scheduler_orders_dependencies_and_fails_closed_on_cycles() -> None:
+    first = RepairPlan(
+        rule_id="rule.first",
+        source_tool="deterministic_typescript_missing_export_repair",
+        operations=(RepairOperation(kind="write_file", path="src/first.ts", content="export const first = true;\n"),),
+        priority=10,
+    )
+    second = RepairPlan(
+        rule_id="rule.second",
+        source_tool="deterministic_typescript_missing_export_repair",
+        operations=(RepairOperation(kind="write_file", path="src/second.ts", content="export const second = true;\n"),),
+        priority=1,
+        depends_on=("rule.first",),
+    )
+
+    schedule = order_repair_plans((second, first))
+
+    assert schedule.cycle_detected is False
+    assert [plan.rule_id for plan in schedule.ordered_plans] == ["rule.first", "rule.second"]
+
+    cyclic_first = RepairPlan(
+        rule_id="rule.cyclic_first",
+        source_tool="deterministic_typescript_missing_export_repair",
+        operations=(RepairOperation(kind="write_file", path="src/a.ts", content="a\n"),),
+        depends_on=("rule.cyclic_second",),
+    )
+    cyclic_second = RepairPlan(
+        rule_id="rule.cyclic_second",
+        source_tool="deterministic_typescript_missing_export_repair",
+        operations=(RepairOperation(kind="write_file", path="src/b.ts", content="b\n"),),
+        depends_on=("rule.cyclic_first",),
+    )
+
+    cyclic_schedule = order_repair_plans((cyclic_first, cyclic_second))
+
+    assert cyclic_schedule.cycle_detected is True
+    assert cyclic_schedule.ordered_plans == ()
+    assert set(cyclic_schedule.blocked_rule_ids) == {"rule.cyclic_first", "rule.cyclic_second"}
+
+
+def test_repair_convergence_scheduler_records_revalidation_receipt_evidence(tmp_path: Path) -> None:
+    relative_path = "src/app.ts"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    target.write_text("export const pending = true;\n", encoding="utf-8")
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="typescript_ts2304",
+        message="Cannot find name 'done'.",
+        path=relative_path,
+        raw="src/app.ts(1,14): error TS2304: Cannot find name 'done'.",
+    )
+
+    def verifier(round_number: int, receipts: tuple[object, ...]) -> RepairVerifierSnapshot:
+        del receipts
+        current = target.read_text(encoding="utf-8")
+        diagnostics = () if "export const done = true;" in current else (diagnostic,)
+        return RepairVerifierSnapshot(
+            diagnostics=diagnostics,
+            command=("npm", "test"),
+            exit_code=0 if not diagnostics else 1,
+            raw_output_ref=f"runtime/verifier/round-{round_number}.log",
+        )
+
+    def planner(diagnostics: tuple[RepairDiagnostic, ...], round_number: int) -> tuple[RepairPlan, ...]:
+        if not diagnostics:
+            return ()
+        return (
+            RepairPlan(
+                rule_id="typescript.missing_done_export",
+                source_tool="deterministic_typescript_missing_export_repair",
+                diagnostics=diagnostics,
+                operations=(
+                    RepairOperation(
+                        kind="write_file",
+                        path=relative_path,
+                        content="export const done = true;\n",
+                    ),
+                ),
+                priority=round_number,
+            ),
+        )
+
+    def base_files_provider(plan: RepairPlan) -> dict[str, str]:
+        del plan
+        return {relative_path: target.read_text(encoding="utf-8")}
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        (tmp_path / path).write_text(content, encoding="utf-8")
+        return {"ok": True, "file": path, "operation": "modify"}
+
+    result = RepairConvergenceScheduler(max_rounds=2).run(
+        workspace=tmp_path,
+        verifier=verifier,
+        planner=planner,
+        base_files_provider=base_files_provider,
+        writer=writer,
+        allowed_paths=(relative_path,),
+    )
+    payload = result.to_dict()
+    receipt = result.receipts[0]
+
+    assert result.status == "converged"
+    assert result.converged is True
+    assert result.final_diagnostics == ()
+    assert result.rounds[0].status == "converged"
+    assert receipt.status == "applied"
+    assert receipt.round_number == 1
+    assert receipt.errors_before == 1
+    assert receipt.errors_after == 0
+    assert receipt.net_error_reduction == 1
+    assert receipt.revalidation_evidence is not None
+    assert receipt.revalidation_evidence.resolved_diagnostic_ids == (diagnostic.diagnostic_id,)
+    assert payload["rounds"][0]["revalidation_evidence"]["raw_output_ref"] == "runtime/verifier/round-1.log"
+    assert payload["receipts"][0]["revalidation_evidence"]["net_error_reduction"] == 1
+    assert target.read_text(encoding="utf-8") == "export const done = true;\n"
 
 
 def test_patch_composer_applies_text_spans_descending() -> None:
@@ -743,11 +908,129 @@ def test_advisory_suggested_rules_reject_authoritative_fields(field: str) -> Non
         )
 
 
+def test_public_repair_advisory_policy_exposes_read_only_agi_boundaries() -> None:
+    result = query_director_repair_advisory_policy(QueryDirectorRepairAdvisoryPolicyV1())
+    payload = result.to_dict()
+
+    assert isinstance(result, DirectorRepairAdvisoryPolicyResultV1)
+    assert payload["schema_version"] == "director.repair_advisory_policy.v1"
+    assert payload["source"] == "director.runtime.repair_kernel.advisory_policy"
+    assert payload["access"] == "read_only"
+    assert payload["owner_cell"] == "director.runtime"
+    assert payload["execution_boundary"] == "read_only_advisory_no_writes_no_registration"
+    assert payload["agi_execution_authority"] is False
+    assert payload["writes_allowed"] is False
+    assert payload["registration_allowed"] is False
+    assert payload["authoritative_receipts_allowed"] is False
+    assert "pattern" in payload["allowed_suggested_rule_fields"]
+    assert "fix_template" in payload["allowed_suggested_rule_fields"]
+    assert "repair_plan" in payload["forbidden_metadata_fields"]
+    assert "write_file" in payload["forbidden_suggested_rule_fields"]
+    assert payload["summary"]["suggested_rules_allowed"] is True
+    assert payload["summary"]["director_runtime_remains_authoritative"] is True
+
+
+def test_public_shadow_comparison_is_read_only_and_reports_scope_match() -> None:
+    result = compare_director_repair_shadow_run(
+        CompareDirectorRepairShadowRunV1(
+            legacy_tool_results=(
+                {
+                    "tool_name": "write_file",
+                    "success": True,
+                    "result": {
+                        "source_tool": "deterministic_typescript_missing_export_repair",
+                        "file": "src/app.ts",
+                    },
+                },
+            ),
+            kernel_receipts=(
+                RepairReceiptV1(
+                    receipt_id="receipt_1",
+                    plan_id="plan_1",
+                    source_tool="deterministic_typescript_missing_export_repair",
+                    status="shadow_observed",
+                    authoritative=False,
+                    files_changed=("src/app.ts",),
+                    metadata={"mode": "shadow"},
+                ),
+            ),
+        )
+    )
+    payload = result.to_dict()
+
+    assert payload["schema_version"] == "director.repair_shadow_comparison.v1"
+    assert payload["source"] == "director.runtime.repair_kernel.shadow"
+    assert payload["access"] == "read_only"
+    assert payload["execution_boundary"] == "read_only_shadow_comparison_no_writes"
+    assert payload["agi_execution_authority"] is False
+    assert payload["writes_allowed"] is False
+    assert payload["matched"] is True
+    assert payload["missing_paths_in_kernel"] == []
+    assert payload["extra_paths_in_kernel"] == []
+    assert payload["metadata"]["writes_performed"] is False
+
+
 def test_legacy_summary_without_receipts_is_not_authoritative() -> None:
     summary = build_director_repair_kernel_summary(stage="quality", tool_results=[], mode="commit")
 
     assert summary["receipt_count"] == 0
     assert summary["authoritative"] is False
+    assert summary["coverage_report"]["total_diagnostics"] == 0
+
+
+def test_legacy_summary_includes_uncovered_diagnostic_report() -> None:
+    summary = build_director_repair_kernel_summary(
+        stage="quality",
+        tool_results=[],
+        mode="shadow",
+        artifact_quality_errors=["Mystery compiler failure XYZ999: no deterministic rule covers this yet"],
+    )
+
+    coverage_report = summary["coverage_report"]
+    assert coverage_report["total_diagnostics"] == 1
+    assert coverage_report["uncovered_diagnostic_count"] == 1
+    assert coverage_report["items"][0]["known_rule_matched"] is False
+    assert coverage_report["uncovered_diagnostics"][0]["message"]
+
+
+def test_legacy_summary_preserves_revalidation_evidence_counts() -> None:
+    summary = build_director_repair_kernel_summary(
+        stage="post_execution_language_repairs",
+        mode="commit",
+        tool_results=[
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_rust_dependency_repair",
+                    "file": "Cargo.toml",
+                    "action": "add_dependency",
+                    "round_number": 2,
+                    "revalidation": {
+                        "command": ["cargo", "check", "--quiet"],
+                        "exit_code": 0,
+                        "round_number": 2,
+                        "errors_before": 3,
+                        "errors_after": 1,
+                        "net_error_reduction": 2,
+                        "max_rounds": 3,
+                    },
+                },
+            }
+        ],
+    )
+
+    assert summary["authoritative"] is True
+    assert summary["receipt_count"] == 1
+    receipt = summary["receipts"][0]
+    assert receipt["round_number"] == 2
+    assert receipt["errors_before"] == 3
+    assert receipt["errors_after"] == 1
+    assert receipt["net_error_reduction"] == 2
+    assert receipt["revalidation_evidence"]["command"] == ["cargo", "check", "--quiet"]
+    assert receipt["revalidation_evidence"]["metadata"]["max_rounds"] == 3
 
 
 def test_public_typescript_comma_planner_returns_composed_patch_projection() -> None:
@@ -831,6 +1114,33 @@ def test_public_repair_coverage_suggests_rust_missing_method_self_family() -> No
     assert item["diagnostic_archetype"] == "missing_method_self"
     assert item["diagnostic_phase"] == "quality_repair"
     assert item["suggested_rule_family"] == "missing_method_self"
+
+
+def test_public_repair_language_slots_reserve_future_languages_without_registering_rules() -> None:
+    result = query_director_repair_language_slots(QueryDirectorRepairLanguageSlotsV1())
+    payload = result.to_dict()
+
+    assert isinstance(result, DirectorRepairLanguageSlotsResultV1)
+    assert payload["schema_version"] == "director.repair_language_slots.v1"
+    assert payload["source"] == "director.runtime.repair_kernel.registry"
+    assert payload["access"] == "read_only"
+    assert payload["authoritative_rule_registration"] is False
+    assert payload["agi_execution_authority"] is False
+    assert payload["writes_allowed"] is False
+    languages = {item["language"] for item in payload["items"]}
+    assert {"typescript", "go", "rust", "cpp", "java", "python", "shell", "sql", "csharp"}.issubset(languages)
+    assert payload["summary"]["bench_driven_rule_addition_required"] is True
+
+    diagnostic = RepairDiagnostic(
+        source="shellcheck",
+        code="shell_sc1009",
+        message="The mentioned syntax error was in this if expression.",
+        path="scripts/deploy.sh",
+    )
+    coverage_item = default_repair_rule_registry().coverage([diagnostic]).to_dict()["items"][0]
+    assert coverage_item["diagnostic_language"] == "shell"
+    assert coverage_item["known_rule_matched"] is False
+    assert coverage_item["matched_source_tools"] == []
 
 
 def test_public_strategy_catalog_is_read_only_and_non_agi_authoritative() -> None:

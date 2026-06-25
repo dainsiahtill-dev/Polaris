@@ -311,6 +311,7 @@ export interface ResidentAgiCapabilityPayload {
   contract_ref?: string;
   endpoint?: string;
   risk_level?: string;
+  participation_scope_id?: string;
   guardrails?: string[];
   evidence_refs?: string[];
 }
@@ -342,6 +343,30 @@ export interface ResidentAgiHardcodedRepairStrategyCatalogPayload {
     by_phase?: Record<string, number>;
     by_concern?: Record<string, number>;
     by_risk?: Record<string, number>;
+  };
+}
+
+export interface ResidentAgiRepairAdvisoryPolicyPayload {
+  schema_version?: string;
+  source?: string;
+  access?: string;
+  owner_cell?: string;
+  execution_boundary?: string;
+  agi_execution_authority?: boolean;
+  writes_allowed?: boolean;
+  registration_allowed?: boolean;
+  authoritative_receipts_allowed?: boolean;
+  allowed_suggested_rule_fields?: string[];
+  forbidden_metadata_fields?: string[];
+  forbidden_suggested_rule_fields?: string[];
+  summary?: {
+    advisory_only?: boolean;
+    agi_execution_authority?: boolean;
+    writes_allowed?: boolean;
+    registration_allowed?: boolean;
+    suggested_rules_allowed?: boolean;
+    suggested_rules_required_fields?: string[];
+    director_runtime_remains_authoritative?: boolean;
   };
 }
 
@@ -463,6 +488,7 @@ export interface ResidentAgiCapabilitySurfacePayload {
   evidence_interface_contract?: ResidentAgiEvidenceInterfaceContractPayload;
   participation_policy?: ResidentAgiParticipationPolicyPayload;
   hardcoded_repair_strategy_catalog?: ResidentAgiHardcodedRepairStrategyCatalogPayload;
+  director_repair_advisory_policy?: ResidentAgiRepairAdvisoryPolicyPayload;
   authority_matrix?: ResidentAgiAuthorityMatrixPayload;
   count?: number;
 }

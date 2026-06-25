@@ -110,6 +110,7 @@ def build_typescript_object_literal_comma_plan(
         diagnostics=tuple(matched_diagnostics),
         mode=mode,
         risk_level="low",
+        priority=1,
     )
 
 

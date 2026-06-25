@@ -1739,65 +1739,192 @@ def repair_rust_method_self_signatures(workspace: Path, stderr: str = "") -> lis
 def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
     """Run all Rust post-execution repairs in sequence.
 
-    This is the main entry point called from the Director's post-execution
-    repair hook. It runs cargo check once, applies all repair types, then
-    re-runs cargo check for a second pass if needed.
+    This migration bridge keeps legacy strategy callbacks in this module, but
+    models the convergence loop explicitly: priority phases, bounded rounds,
+    fresh post-check evidence, and per-rule source_tool metadata.
     """
     if not (workspace / "Cargo.toml").is_file():
         return []
 
-    stderr = _run_cargo_check_stderr(workspace)
-    if not stderr or ("error" not in stderr and "warning" not in stderr):
-        return []
-
-    # Use cargo stderr as artifact_quality_errors for error-driven repairs
-    errors: list[str] = [stderr]
-
     all_repairs: list[dict[str, Any]] = []
-    # Pass 0: Dependency & crate-level fixes (must run before code-level)
-    all_repairs.extend(repair_rust_dependencies(workspace, errors))
-    all_repairs.extend(repair_rust_crate_imports(workspace, errors))
-    all_repairs.extend(repair_rust_wrong_crate_paths(workspace, stderr))
-    all_repairs.extend(repair_rust_method_self_signatures(workspace, stderr))
-    all_repairs.extend(repair_rust_incompatible_copy_derives(workspace, stderr))
-    # Pass 1: Structural fixes (duplicate modules, missing files)
-    all_repairs.extend(repair_rust_duplicate_module_files(workspace))
-    all_repairs.extend(repair_rust_missing_module_files(workspace))
-    all_repairs.extend(repair_rust_missing_binary_entrypoint(workspace))
-    # Pass 2: Code-level fixes
-    all_repairs.extend(repair_rust_missing_derives(workspace, stderr))
-    all_repairs.extend(repair_rust_unused_imports(workspace, stderr))
-    all_repairs.extend(repair_rust_missing_fields(workspace, stderr))
-    all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr))
-    # Pass 3: Export/path fixes
-    all_repairs.extend(repair_rust_lib_root_facade(workspace, errors))
-    all_repairs.extend(repair_rust_unresolved_pub_uses(workspace, errors))
-    all_repairs.extend(repair_rust_trait_imports(workspace, errors))
-    all_repairs.extend(repair_rust_line_suggestions(workspace, errors))
-
-    # Second pass with fresh cargo check output
-    if all_repairs:
-        stderr2 = _run_cargo_check_stderr(workspace)
-        if stderr2 and ("error" in stderr2 or "warning" in stderr2):
-            errors2 = [stderr2]
-            all_repairs.extend(repair_rust_dependencies(workspace, errors2))
-            all_repairs.extend(repair_rust_crate_imports(workspace, errors2))
-            all_repairs.extend(repair_rust_wrong_crate_paths(workspace, stderr2))
-            all_repairs.extend(repair_rust_method_self_signatures(workspace, stderr2))
-            all_repairs.extend(repair_rust_incompatible_copy_derives(workspace, stderr2))
-            all_repairs.extend(repair_rust_duplicate_module_files(workspace))
-            all_repairs.extend(repair_rust_missing_module_files(workspace))
-            all_repairs.extend(repair_rust_missing_binary_entrypoint(workspace))
-            all_repairs.extend(repair_rust_missing_derives(workspace, stderr2))
-            all_repairs.extend(repair_rust_unused_imports(workspace, stderr2))
-            all_repairs.extend(repair_rust_missing_fields(workspace, stderr2))
-            all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr2))
-            all_repairs.extend(repair_rust_lib_root_facade(workspace, errors2))
-            all_repairs.extend(repair_rust_unresolved_pub_uses(workspace, errors2))
-            all_repairs.extend(repair_rust_trait_imports(workspace, errors2))
-            all_repairs.extend(repair_rust_line_suggestions(workspace, errors2))
-
+    seen_stderr: set[str] = set()
+    max_rounds = 3
+    stderr = _run_cargo_check_stderr(workspace)
+    for round_number in range(1, max_rounds + 1):
+        if not stderr or ("error" not in stderr and "warning" not in stderr):
+            break
+        if stderr in seen_stderr:
+            break
+        seen_stderr.add(stderr)
+        errors_before = _count_rust_cargo_diagnostics(stderr)
+        round_batches = _run_rust_post_repair_round(workspace, stderr, round_number=round_number)
+        if not round_batches:
+            break
+        stderr_after = _run_cargo_check_stderr(workspace)
+        errors_after = _count_rust_cargo_diagnostics(stderr_after)
+        for records, source_tool, phase, priority in round_batches:
+            all_repairs.extend(
+                _annotate_rust_post_repair_records(
+                    records,
+                    source_tool=source_tool,
+                    phase=phase,
+                    priority=priority,
+                    round_number=round_number,
+                    errors_before=errors_before,
+                    errors_after=errors_after,
+                    max_rounds=max_rounds,
+                )
+            )
+        stderr = stderr_after
     return all_repairs
+
+
+def _run_rust_post_repair_round(
+    workspace: Path,
+    stderr: str,
+    *,
+    round_number: int,
+) -> list[tuple[list[dict[str, Any]], str, str, int]]:
+    errors = [stderr]
+    batches: list[tuple[list[dict[str, Any]], str, str, int]] = []
+    for records, source_tool, phase, priority in (
+        (
+            repair_rust_dependencies(workspace, errors),
+            "deterministic_rust_dependency_repair",
+            "dependency_resolution",
+            0,
+        ),
+        (
+            repair_rust_crate_imports(workspace, errors),
+            "deterministic_rust_crate_import_repair",
+            "dependency_resolution",
+            0,
+        ),
+        (
+            repair_rust_wrong_crate_paths(workspace, stderr),
+            "deterministic_rust_post_repair",
+            "dependency_resolution",
+            0,
+        ),
+        (
+            repair_rust_method_self_signatures(workspace, stderr),
+            "deterministic_rust_post_repair",
+            "code_repair",
+            1,
+        ),
+        (
+            repair_rust_incompatible_copy_derives(workspace, stderr),
+            "deterministic_rust_derive_repair",
+            "code_repair",
+            1,
+        ),
+        (
+            repair_rust_duplicate_module_files(workspace),
+            "deterministic_rust_post_repair",
+            "structural_repair",
+            1,
+        ),
+        (
+            repair_rust_missing_module_files(workspace),
+            "deterministic_rust_post_repair",
+            "structural_repair",
+            1,
+        ),
+        (
+            repair_rust_missing_binary_entrypoint(workspace),
+            "deterministic_rust_post_repair",
+            "structural_repair",
+            1,
+        ),
+        (
+            repair_rust_missing_derives(workspace, stderr),
+            "deterministic_rust_derive_repair",
+            "code_repair",
+            2,
+        ),
+        (
+            repair_rust_unused_imports(workspace, stderr),
+            "deterministic_rust_post_repair",
+            "code_repair",
+            2,
+        ),
+        (
+            repair_rust_missing_fields(workspace, stderr),
+            "deterministic_rust_post_repair",
+            "code_repair",
+            2,
+        ),
+        (
+            repair_rust_field_rename_suggestions(workspace, stderr),
+            "deterministic_rust_post_repair",
+            "code_repair",
+            2,
+        ),
+        (
+            repair_rust_lib_root_facade(workspace, errors),
+            "deterministic_rust_lib_root_facade_repair",
+            "export_resolution",
+            3,
+        ),
+        (
+            repair_rust_unresolved_pub_uses(workspace, errors),
+            "deterministic_rust_unresolved_pub_use_repair",
+            "export_resolution",
+            3,
+        ),
+        (
+            repair_rust_trait_imports(workspace, errors),
+            "deterministic_rust_trait_import_repair",
+            "export_resolution",
+            3,
+        ),
+        (
+            repair_rust_line_suggestions(workspace, errors),
+            "deterministic_rust_line_suggestion_repair",
+            "export_resolution",
+            3,
+        ),
+    ):
+        if records:
+            batches.append((records, source_tool, phase, priority))
+    return batches
+
+
+def _annotate_rust_post_repair_records(
+    records: list[dict[str, Any]],
+    *,
+    source_tool: str,
+    phase: str,
+    priority: int,
+    round_number: int,
+    errors_before: int,
+    errors_after: int,
+    max_rounds: int,
+) -> list[dict[str, Any]]:
+    annotated: list[dict[str, Any]] = []
+    for record in records:
+        payload = dict(record)
+        payload.setdefault("source_tool", source_tool)
+        payload["phase"] = phase
+        payload["priority"] = priority
+        payload["round_number"] = round_number
+        payload["revalidation"] = {
+            "command": ["cargo", "check", "--quiet"],
+            "exit_code": 0 if errors_after == 0 else 1,
+            "errors_before": errors_before,
+            "errors_after": errors_after,
+            "net_error_reduction": errors_before - errors_after,
+            "max_rounds": max_rounds,
+        }
+        annotated.append(payload)
+    return annotated
+
+
+def _count_rust_cargo_diagnostics(stderr: str) -> int:
+    text = str(stderr or "")
+    errors = len(re.findall(r"(?m)^error(?:\[[A-Z]\d+\])?:", text))
+    warnings = len(re.findall(r"(?m)^warning:", text))
+    return errors + warnings
 
 
 def repair_rust_duplicate_module_files(workspace: Path) -> list[dict[str, Any]]:

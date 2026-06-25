@@ -1,7 +1,7 @@
 /**
  * Unified LLM Data Manager V2
  * Phase 2 Implementation: Canonical State + View Adapters
- * 
+ *
  * Architecture:
  * - Single canonical state (LlmSettingsState)
  * - Read: Via view adapters (derived projections)
@@ -14,10 +14,11 @@ import type {
   RoleAssignment,
   VisualNodeState,
   VisualViewport,
-} from './canonicalState';
-import { getRoleDisplayLabel } from '@/app/constants/roleLabels';
-import { createInitialState, canonicalSelectors } from './canonicalState';
-import type { ProviderConfig, ProviderKind, ProviderStatus } from '../types';
+} from "./canonicalState";
+import { getRoleDisplayLabel } from "@/app/constants/roleLabels";
+import { createInitialState, canonicalSelectors } from "./canonicalState";
+import type { ProviderConfig, ProviderKind, ProviderStatus } from "../types";
+import type { LlmRoleId } from "../roleDefinitions";
 
 // ============================================================================
 // View Adapter Interfaces
@@ -27,27 +28,33 @@ import type { ProviderConfig, ProviderKind, ProviderStatus } from '../types';
 export interface ViewAdapter<TViewData, TViewState = unknown> {
   /** Unique adapter identifier */
   readonly viewType: string;
-  
+
   /** Convert canonical state to view data */
   adaptToView(state: LlmSettingsState): TViewData;
-  
+
   /** Convert view data back to partial canonical updates */
-  adaptFromView(viewData: TViewData, currentState: LlmSettingsState): Partial<LlmSettingsState>;
-  
+  adaptFromView(
+    viewData: TViewData,
+    currentState: LlmSettingsState,
+  ): Partial<LlmSettingsState>;
+
   /** Get initial view state */
   getInitialViewState(): TViewState;
 }
 
 /** View adapter with operation support */
-export interface ViewAdapterWithOperations<TViewData, TViewState, TOperations extends { type: string }>
-  extends ViewAdapter<TViewData, TViewState> {
+export interface ViewAdapterWithOperations<
+  TViewData,
+  TViewState,
+  TOperations extends { type: string },
+> extends ViewAdapter<TViewData, TViewState> {
   /** Get supported operation types */
-  getSupportedOperations(): TOperations['type'][];
-  
+  getSupportedOperations(): TOperations["type"][];
+
   /** Execute operation and return state updates */
   executeOperation(
     operation: TOperations,
-    state: LlmSettingsState
+    state: LlmSettingsState,
   ): Partial<LlmSettingsState>;
 }
 
@@ -86,7 +93,7 @@ export interface ListViewData {
 export interface VisualGraphViewData {
   nodes: Array<{
     id: string;
-    kind: 'provider' | 'role' | 'model';
+    kind: "provider" | "role" | "model";
     label: string;
     position: { x: number; y: number };
     data: Record<string, unknown>;
@@ -115,22 +122,22 @@ export interface ProviderDetailViewData {
 
 /** List view adapter */
 export class ListViewAdapter implements ViewAdapter<ListViewData> {
-  readonly viewType = 'list';
+  readonly viewType = "list";
 
   adaptToView(state: LlmSettingsState): ListViewData {
-    const providers = Object.values(state.entities.providers).map(p => ({
+    const providers = Object.values(state.entities.providers).map((p) => ({
       id: p.id,
       name: p.name,
       kind: p.kind,
       status: p.status,
       modelId: p.modelId,
-      costClass: p.costClass || 'balanced',
+      costClass: p.costClass || "balanced",
       hasError: !!p.lastError,
       lastTestAt: p.lastTest?.at,
       interviewStatus: p.interviewStatus,
     }));
 
-    const roles = Object.values(state.entities.roleAssignments).map(ra => ({
+    const roles = Object.values(state.entities.roleAssignments).map((ra) => ({
       id: ra.roleId,
       label: this.getRoleLabel(ra.roleId),
       assignedProviderId: ra.providerId,
@@ -143,13 +150,16 @@ export class ListViewAdapter implements ViewAdapter<ListViewData> {
       roles,
       summary: {
         totalProviders: providers.length,
-        readyProviders: providers.filter(p => p.status === 'ready').length,
-        configuredRoles: roles.filter(r => r.assignedProviderId).length,
+        readyProviders: providers.filter((p) => p.status === "ready").length,
+        configuredRoles: roles.filter((r) => r.assignedProviderId).length,
       },
     };
   }
 
-  adaptFromView(viewData: ListViewData, currentState: LlmSettingsState): Partial<LlmSettingsState> {
+  adaptFromView(
+    viewData: ListViewData,
+    currentState: LlmSettingsState,
+  ): Partial<LlmSettingsState> {
     // List view is read-only for now
     return {};
   }
@@ -165,18 +175,18 @@ export class ListViewAdapter implements ViewAdapter<ListViewData> {
 
 /** Visual graph view adapter */
 export class VisualGraphViewAdapter implements ViewAdapter<VisualGraphViewData> {
-  readonly viewType = 'visual';
+  readonly viewType = "visual";
 
   adaptToView(state: LlmSettingsState): VisualGraphViewData {
-    const nodes: VisualGraphViewData['nodes'] = [];
-    const edges: VisualGraphViewData['edges'] = [];
+    const nodes: VisualGraphViewData["nodes"] = [];
+    const edges: VisualGraphViewData["edges"] = [];
 
     // Add provider nodes
-    Object.values(state.entities.providers).forEach(provider => {
+    Object.values(state.entities.providers).forEach((provider) => {
       const visualNode = state.visualGraph.nodes[provider.id];
       nodes.push({
         id: provider.id,
-        kind: 'provider',
+        kind: "provider",
         label: provider.name,
         position: visualNode?.position || { x: 0, y: 0 },
         data: {
@@ -188,11 +198,11 @@ export class VisualGraphViewAdapter implements ViewAdapter<VisualGraphViewData> 
     });
 
     // Add role nodes
-    Object.values(state.entities.roleAssignments).forEach(ra => {
+    Object.values(state.entities.roleAssignments).forEach((ra) => {
       const visualNode = state.visualGraph.nodes[ra.roleId];
       nodes.push({
         id: ra.roleId,
-        kind: 'role',
+        kind: "role",
         label: this.getRoleLabel(ra.roleId),
         position: visualNode?.position || { x: 0, y: 0 },
         data: {
@@ -207,7 +217,7 @@ export class VisualGraphViewAdapter implements ViewAdapter<VisualGraphViewData> 
           id: `${ra.providerId}-${ra.roleId}`,
           source: ra.providerId,
           target: ra.roleId,
-          kind: 'provider-to-role',
+          kind: "provider-to-role",
         });
       }
     });
@@ -219,11 +229,14 @@ export class VisualGraphViewAdapter implements ViewAdapter<VisualGraphViewData> 
     };
   }
 
-  adaptFromView(viewData: VisualGraphViewData, currentState: LlmSettingsState): Partial<LlmSettingsState> {
+  adaptFromView(
+    viewData: VisualGraphViewData,
+    currentState: LlmSettingsState,
+  ): Partial<LlmSettingsState> {
     // Convert view data back to visual graph state
     const nodes: Record<string, VisualNodeState> = {};
-    
-    viewData.nodes.forEach(node => {
+
+    viewData.nodes.forEach((node) => {
       nodes[node.id] = {
         id: node.id,
         position: node.position,
@@ -252,7 +265,10 @@ export class VisualGraphViewAdapter implements ViewAdapter<VisualGraphViewData> 
 // Unified Data Manager V2
 // ============================================================================
 
-type ChangeListener = (state: LlmSettingsState, prevState: LlmSettingsState) => void;
+type ChangeListener = (
+  state: LlmSettingsState,
+  prevState: LlmSettingsState,
+) => void;
 
 export class UnifiedLlmDataManagerV2 {
   private state: LlmSettingsState;
@@ -283,8 +299,13 @@ export class UnifiedLlmDataManagerV2 {
 
   // === View Adapter Registration ===
 
-  registerAdapter<TViewData, TViewState>(adapter: ViewAdapter<TViewData, TViewState>): void {
-    this.adapters.set(adapter.viewType, adapter as ViewAdapter<unknown, unknown>);
+  registerAdapter<TViewData, TViewState>(
+    adapter: ViewAdapter<TViewData, TViewState>,
+  ): void {
+    this.adapters.set(
+      adapter.viewType,
+      adapter as ViewAdapter<unknown, unknown>,
+    );
   }
 
   unregisterAdapter(viewType: string): void {
@@ -311,33 +332,39 @@ export class UnifiedLlmDataManagerV2 {
    * Direct state update (for entity operations)
    * Prefer updateFromView for view-driven changes
    */
-  updateEntities(updates: Partial<LlmSettingsState['entities']>): void {
+  updateEntities(updates: Partial<LlmSettingsState["entities"]>): void {
     this.applyUpdates({
       entities: {
         ...this.state.entities,
         ...updates,
         providers: { ...this.state.entities.providers, ...updates.providers },
-        roleAssignments: { ...this.state.entities.roleAssignments, ...updates.roleAssignments },
+        roleAssignments: {
+          ...this.state.entities.roleAssignments,
+          ...updates.roleAssignments,
+        },
       },
     });
   }
 
   /** Update UI state (transient) */
-  updateUI(uiUpdates: Partial<LlmSettingsState['ui']>): void {
+  updateUI(uiUpdates: Partial<LlmSettingsState["ui"]>): void {
     this.applyUpdates({
       ui: { ...this.state.ui, ...uiUpdates },
     });
   }
 
   /** Update async operations state */
-  updateAsyncOps(asyncOpsUpdates: Partial<LlmSettingsState['asyncOps']>): void {
+  updateAsyncOps(asyncOpsUpdates: Partial<LlmSettingsState["asyncOps"]>): void {
     this.applyUpdates({
       asyncOps: { ...this.state.asyncOps, ...asyncOpsUpdates },
     });
   }
 
   /** Update connectivity test results */
-  updateConnectivityResult(key: string, result: import('./canonicalState').ConnectivityResult): void {
+  updateConnectivityResult(
+    key: string,
+    result: import("./canonicalState").ConnectivityResult,
+  ): void {
     this.applyUpdates({
       connectivity: {
         ...this.state.connectivity,
@@ -351,7 +378,9 @@ export class UnifiedLlmDataManagerV2 {
   }
 
   /** Get connectivity result by key */
-  getConnectivityResult(key: string): import('./canonicalState').ConnectivityResult | undefined {
+  getConnectivityResult(
+    key: string,
+  ): import("./canonicalState").ConnectivityResult | undefined {
     return this.state.connectivity.results[key];
   }
 
@@ -390,7 +419,11 @@ export class UnifiedLlmDataManagerV2 {
         ...this.state.entities,
         providers: {
           ...this.state.entities.providers,
-          [id]: { ...existing, ...updates, updatedAt: new Date().toISOString() },
+          [id]: {
+            ...existing,
+            ...updates,
+            updatedAt: new Date().toISOString(),
+          },
         },
       },
     });
@@ -410,7 +443,7 @@ export class UnifiedLlmDataManagerV2 {
 
   // === Role Operations ===
 
-  assignRole(roleId: 'pm' | 'director' | 'chief_engineer' | 'qa' | 'architect' | 'cfo' | 'hr', providerId: string, model?: string): void {
+  assignRole(roleId: LlmRoleId, providerId: string, model?: string): void {
     this.applyUpdates({
       entities: {
         ...this.state.entities,
@@ -453,7 +486,7 @@ export class UnifiedLlmDataManagerV2 {
 
   private applyUpdates(updates: Partial<LlmSettingsState>): void {
     const prevState = this.state;
-    
+
     // Save to history
     this.history.push(prevState);
     if (this.history.length > this.maxHistorySize) {
@@ -471,7 +504,7 @@ export class UnifiedLlmDataManagerV2 {
   }
 
   private notifyListeners(prevState: LlmSettingsState): void {
-    this.listeners.forEach(listener => listener(this.state, prevState));
+    this.listeners.forEach((listener) => listener(this.state, prevState));
   }
 }
 
@@ -499,7 +532,7 @@ export function resetDefaultManager(): void {
 // React Integration Hook (Preparation for Phase 3)
 // ============================================================================
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from "react";
 
 export function useCanonicalState(manager?: UnifiedLlmDataManagerV2) {
   const mgr = manager || getDefaultManager();
@@ -511,13 +544,19 @@ export function useCanonicalState(manager?: UnifiedLlmDataManagerV2) {
     });
   }, [mgr]);
 
-  const updateUI = useCallback((updates: Partial<LlmSettingsState['ui']>) => {
-    mgr.updateUI(updates);
-  }, [mgr]);
+  const updateUI = useCallback(
+    (updates: Partial<LlmSettingsState["ui"]>) => {
+      mgr.updateUI(updates);
+    },
+    [mgr],
+  );
 
-  const updateAsyncOps = useCallback((updates: Partial<LlmSettingsState['asyncOps']>) => {
-    mgr.updateAsyncOps(updates);
-  }, [mgr]);
+  const updateAsyncOps = useCallback(
+    (updates: Partial<LlmSettingsState["asyncOps"]>) => {
+      mgr.updateAsyncOps(updates);
+    },
+    [mgr],
+  );
 
   return {
     state,
@@ -527,7 +566,10 @@ export function useCanonicalState(manager?: UnifiedLlmDataManagerV2) {
   };
 }
 
-export function useViewData<T>(viewType: string, manager?: UnifiedLlmDataManagerV2): T {
+export function useViewData<T>(
+  viewType: string,
+  manager?: UnifiedLlmDataManagerV2,
+): T {
   const mgr = manager || getDefaultManager();
   const [data, setData] = useState<T>(() => mgr.getViewData(viewType));
 

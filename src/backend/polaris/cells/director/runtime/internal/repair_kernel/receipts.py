@@ -11,6 +11,7 @@ from .contracts import (
     RepairDiagnostic,
     RepairPlan,
     RepairReceipt,
+    RepairRevalidationEvidence,
     stable_id,
 )
 
@@ -22,6 +23,8 @@ def build_receipt(
     mode: str,
     patches: Sequence[ComposedPatch] = (),
     diagnostics: Sequence[RepairDiagnostic] = (),
+    round_number: int | None = None,
+    revalidation_evidence: RepairRevalidationEvidence | None = None,
     metadata: Mapping[str, Any] | None = None,
 ) -> RepairReceipt:
     """Build a repair receipt from plan and composed patches."""
@@ -43,6 +46,34 @@ def build_receipt(
         diagnostics=tuple(diagnostics or plan.diagnostics),
         before_hashes=before_hashes,
         after_hashes=after_hashes,
+        round_number=round_number,
+        revalidation_evidence=revalidation_evidence,
         advisor_notes=tuple(note for note in plan.advisor_notes if isinstance(note, RepairAdvisorNote)),
         metadata=dict(metadata or {}),
+    )
+
+
+def attach_revalidation_evidence(
+    receipt: RepairReceipt,
+    evidence: RepairRevalidationEvidence,
+) -> RepairReceipt:
+    """Return a receipt carrying post-check evidence without changing advisory data."""
+
+    return RepairReceipt(
+        receipt_id=receipt.receipt_id,
+        plan_id=receipt.plan_id,
+        rule_id=receipt.rule_id,
+        source_tool=receipt.source_tool,
+        status=receipt.status,
+        mode=receipt.mode,
+        authoritative=receipt.authoritative,
+        files_changed=receipt.files_changed,
+        operation_ids=receipt.operation_ids,
+        diagnostics=receipt.diagnostics,
+        before_hashes=receipt.before_hashes,
+        after_hashes=receipt.after_hashes,
+        round_number=evidence.round_number,
+        revalidation_evidence=evidence,
+        advisor_notes=receipt.advisor_notes,
+        metadata=receipt.metadata,
     )

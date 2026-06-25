@@ -7,6 +7,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
+from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy import (
+    ALLOWED_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS,
+    FORBIDDEN_REPAIR_ADVISORY_METADATA_FIELDS,
+    FORBIDDEN_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS,
+)
 from polaris.cells.director.runtime.internal.repair_kernel.composer import PatchComposer
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import RepairAdvisorNote, RepairReceipt
 from polaris.cells.director.runtime.internal.repair_kernel.diagnostics import normalize_artifact_quality_errors
@@ -18,7 +23,11 @@ from polaris.cells.director.runtime.internal.repair_kernel.policy_gate import (
     RepairPolicyContext,
     RepairPolicyGate,
 )
-from polaris.cells.director.runtime.internal.repair_kernel.registry import build_repair_coverage_report
+from polaris.cells.director.runtime.internal.repair_kernel.registry import (
+    build_repair_coverage_report,
+    repair_language_slots,
+)
+from polaris.cells.director.runtime.internal.repair_kernel.shadow import compare_legacy_and_kernel_repairs
 from polaris.cells.director.runtime.internal.repair_kernel.strategy_catalog import (
     KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS,
     DeterministicRepairStrategy,
@@ -32,16 +41,23 @@ from polaris.cells.director.runtime.internal.repair_kernel.typescript_syntax imp
     build_typescript_object_literal_comma_plan,
 )
 from polaris.cells.director.runtime.public.contracts import (
+    CompareDirectorRepairShadowRunV1,
+    DirectorRepairAdvisoryPolicyResultV1,
     DirectorRepairCompositionIssueV1,
     DirectorRepairCompositionSummaryV1,
     DirectorRepairCoverageReportV1,
     DirectorRepairDiagnosticCoverageV1,
+    DirectorRepairLanguageSlotsResultV1,
+    DirectorRepairLanguageSlotV1,
     DirectorRepairPatchSummaryV1,
     DirectorRepairPlanningResultV1,
     DirectorRepairPlanSummaryV1,
     DirectorRepairResultV1,
+    DirectorRepairShadowComparisonResultV1,
     DirectorRepairStrategyCatalogResultV1,
+    QueryDirectorRepairAdvisoryPolicyV1,
     QueryDirectorRepairCoverageV1,
+    QueryDirectorRepairLanguageSlotsV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
     RepairReceiptV1,
@@ -85,6 +101,63 @@ def query_director_repair_strategy_catalog(
     )
 
 
+def query_director_repair_advisory_policy(
+    query: QueryDirectorRepairAdvisoryPolicyV1 | None = None,
+) -> DirectorRepairAdvisoryPolicyResultV1:
+    """Return the read-only AGI repair advisory policy projection."""
+
+    request = query or QueryDirectorRepairAdvisoryPolicyV1()
+    allowed_fields = tuple(sorted(ALLOWED_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS)) if request.include_field_lists else ()
+    forbidden_metadata = tuple(sorted(FORBIDDEN_REPAIR_ADVISORY_METADATA_FIELDS)) if request.include_field_lists else ()
+    forbidden_suggested = (
+        tuple(sorted(FORBIDDEN_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS)) if request.include_field_lists else ()
+    )
+    return DirectorRepairAdvisoryPolicyResultV1(
+        schema_version="director.repair_advisory_policy.v1",
+        source="director.runtime.repair_kernel.advisory_policy",
+        access="read_only",
+        allowed_suggested_rule_fields=allowed_fields,
+        forbidden_metadata_fields=forbidden_metadata,
+        forbidden_suggested_rule_fields=forbidden_suggested,
+        summary={
+            "advisory_only": True,
+            "agi_execution_authority": False,
+            "writes_allowed": False,
+            "registration_allowed": False,
+            "suggested_rules_allowed": True,
+            "suggested_rules_required_fields": ["pattern", "fix_template"],
+            "director_runtime_remains_authoritative": True,
+        },
+    )
+
+
+def compare_director_repair_shadow_run(
+    command: CompareDirectorRepairShadowRunV1,
+) -> DirectorRepairShadowComparisonResultV1:
+    """Compare legacy deterministic repairs against new-kernel shadow receipts without writes."""
+
+    comparison = compare_legacy_and_kernel_repairs(
+        legacy_tool_results=command.legacy_tool_results,
+        kernel_receipts=tuple(_public_receipt_to_internal(receipt) for receipt in command.kernel_receipts),
+    )
+    payload = comparison.to_dict()
+    return DirectorRepairShadowComparisonResultV1(
+        schema_version="director.repair_shadow_comparison.v1",
+        source="director.runtime.repair_kernel.shadow",
+        access="read_only",
+        matched=comparison.matched,
+        legacy_source_tools=tuple(payload["legacy_source_tools"]),
+        kernel_source_tools=tuple(payload["kernel_source_tools"]),
+        legacy_paths=tuple(payload["legacy_paths"]),
+        kernel_paths=tuple(payload["kernel_paths"]),
+        missing_paths_in_kernel=tuple(payload["missing_paths_in_kernel"]),
+        extra_paths_in_kernel=tuple(payload["extra_paths_in_kernel"]),
+        missing_source_tools_in_kernel=tuple(payload["missing_source_tools_in_kernel"]),
+        extra_source_tools_in_kernel=tuple(payload["extra_source_tools_in_kernel"]),
+        metadata=payload["metadata"],
+    )
+
+
 def query_director_repair_coverage(query: QueryDirectorRepairCoverageV1) -> DirectorRepairCoverageReportV1:
     """Return read-only repair-rule coverage for raw artifact-quality errors."""
 
@@ -113,6 +186,46 @@ def query_director_repair_coverage(query: QueryDirectorRepairCoverageV1) -> Dire
             )
             for item in report.items
         ),
+    )
+
+
+def query_director_repair_language_slots(
+    query: QueryDirectorRepairLanguageSlotsV1 | None = None,
+) -> DirectorRepairLanguageSlotsResultV1:
+    """Return read-only future language extension slots for deterministic repairs."""
+
+    request = query or QueryDirectorRepairLanguageSlotsV1()
+    slots = repair_language_slots()
+    items = (
+        tuple(
+            DirectorRepairLanguageSlotV1(
+                language=slot.language,
+                aliases=slot.aliases,
+                file_extensions=slot.file_extensions,
+                diagnostic_sources=slot.diagnostic_sources,
+                preferred_archetypes=tuple(archetype.value for archetype in slot.preferred_archetypes),
+                notes=slot.notes,
+            )
+            for slot in slots
+        )
+        if request.include_items
+        else ()
+    )
+    archetypes = sorted({archetype.value for slot in slots for archetype in slot.preferred_archetypes})
+    extensions = sorted({extension for slot in slots for extension in slot.file_extensions})
+    return DirectorRepairLanguageSlotsResultV1(
+        schema_version="director.repair_language_slots.v1",
+        source="director.runtime.repair_kernel.registry",
+        access="read_only",
+        items=items,
+        summary={
+            "language_count": len(slots),
+            "extension_count": len(extensions),
+            "languages": [slot.language for slot in slots],
+            "file_extensions": extensions,
+            "preferred_archetypes": archetypes,
+            "bench_driven_rule_addition_required": True,
+        },
     )
 
 
@@ -295,6 +408,23 @@ def _normalize_base_files(base_files: Mapping[str, str]) -> dict[str, str]:
     }
 
 
+def _public_receipt_to_internal(receipt: RepairReceiptV1) -> RepairReceipt:
+    return RepairReceipt(
+        receipt_id=receipt.receipt_id,
+        plan_id=receipt.plan_id,
+        rule_id=receipt.source_tool,
+        source_tool=receipt.source_tool,
+        status=receipt.status,
+        mode=str(receipt.metadata.get("mode") or "commit"),
+        authoritative=receipt.authoritative,
+        files_changed=receipt.files_changed,
+        before_hashes=receipt.before_hashes,
+        after_hashes=receipt.after_hashes,
+        round_number=receipt.round_number,
+        metadata=receipt.metadata,
+    )
+
+
 def _to_internal_advisor_notes(advisor_notes: Sequence[RepairAdvisoryV1]) -> tuple[RepairAdvisorNote, ...]:
     return tuple(
         RepairAdvisorNote(
@@ -328,6 +458,13 @@ def _to_public_repair_receipt(receipt: RepairReceipt) -> RepairReceiptV1:
         files_changed=receipt.files_changed,
         before_hashes=receipt.before_hashes,
         after_hashes=receipt.after_hashes,
+        round_number=receipt.round_number,
+        errors_before=receipt.errors_before,
+        errors_after=receipt.errors_after,
+        net_error_reduction=receipt.net_error_reduction,
+        revalidation_evidence=receipt.revalidation_evidence.to_dict()
+        if receipt.revalidation_evidence is not None
+        else {},
         advisor_notes=advisor_notes,
         metadata=receipt.metadata,
     )
@@ -337,11 +474,14 @@ __all__ = [
     "KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS",
     "DeterministicRepairStrategy",
     "build_director_repair_kernel_summary",
+    "compare_director_repair_shadow_run",
     "describe_deterministic_repair_strategy",
     "deterministic_repair_source_tool_known",
     "deterministic_repair_strategy_catalog",
     "plan_director_typescript_object_literal_comma_repair",
+    "query_director_repair_advisory_policy",
     "query_director_repair_coverage",
+    "query_director_repair_language_slots",
     "query_director_repair_strategy_catalog",
     "run_director_typescript_object_literal_comma_repair",
     "summarize_deterministic_repair_source_tools",

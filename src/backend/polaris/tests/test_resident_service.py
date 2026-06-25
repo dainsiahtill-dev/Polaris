@@ -248,13 +248,20 @@ def test_resident_public_commands_cover_lifecycle_goals_decisions_and_labs(tmp_p
     assert ticked["runtime"]["tick_count"] >= 1
     assert ticked["agi_participation_policy"]["schema_version"] == "resident.agi_participation_policy.v1"
     assert "director_repair_strategy_catalog" in ticked["agi_participation_policy"]["participation_flags"]
-    available_scope_ids = {
-        item["scope_id"]
+    available_scopes = {
+        item["scope_id"]: item
         for item in ticked["agi_participation_policy"]["available_scopes"]
         if isinstance(item, dict) and item.get("scope_id")
     }
-    assert "director_repair_strategy_catalog" in available_scope_ids
-    assert "director_repair_strategy_catalog" in resident_public_service._resident_agi_known_participation_scope_keys()
+    assert "director_repair_strategy_catalog" in available_scopes
+    assert "director_repair_coverage" in available_scopes
+    assert "director_repair_advisory_policy" in available_scopes
+    assert available_scopes["director_repair_coverage"]["capability_id"] == "director.repair_coverage.read"
+    assert available_scopes["director_repair_advisory_policy"]["category"] == "director_repair_advisory"
+    known_scope_keys = resident_public_service._resident_agi_known_participation_scope_keys()
+    assert "director_repair_strategy_catalog" in known_scope_keys
+    assert "director_repair_coverage" in known_scope_keys
+    assert "director_repair_advisory_policy" in known_scope_keys
     assert ticked["identity"]["resident_agi_participation"]["enabled"] is True
     tick_boundary = ticked["runtime"]["last_summary"]["autonomy_boundary"]
     assert tick_boundary["schema_version"] == "resident.tick_autonomy_boundary.v1"
@@ -424,6 +431,8 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
         "verifier.policy.read",
         "verifier.execution.execute",
         "director.deterministic_repair_strategy_catalog.read",
+        "director.repair_coverage.read",
+        "director.repair_advisory_policy.read",
     } <= capability_ids
     repair_catalog = capability_surface["hardcoded_repair_strategy_catalog"]
     assert repair_catalog["schema_version"] == "director.deterministic_repair_strategy_catalog.v1"
@@ -449,7 +458,11 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert "verifier.execution.execute" in authority_matrix["high_risk_capabilities"]
     assert "control_plane.verifier_execution" in authority_matrix["canonical_contracts"]
     assert "director.deterministic_repair_strategy_catalog.read" in authority_matrix["read_only_capabilities"]
+    assert "director.repair_coverage.read" in authority_matrix["read_only_capabilities"]
+    assert "director.repair_advisory_policy.read" in authority_matrix["read_only_capabilities"]
     assert "director.deterministic_repair_strategy_catalog.v1" in authority_matrix["canonical_contracts"]
+    assert "director.repair_coverage_report.v1" in authority_matrix["canonical_contracts"]
+    assert "director.repair_advisory_policy.v1" in authority_matrix["canonical_contracts"]
     assert "audit.diagnosis" in authority_matrix["canonical_contracts"]
     assert "audit.verdict" in authority_matrix["canonical_contracts"]
     decision_boundaries = capability_surface["decision_boundaries"]
@@ -470,6 +483,7 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
         "architecture.option.selection",
         "goal.promotion.readiness",
         "quality.gate.response",
+        "director.repair.advisory",
     } <= decision_capability_ids
     decision_registry = capability_surface["decision_capability_registry"]
     assert decision_registry["schema_version"] == "resident.agi_decision_capability_registry.v1"
@@ -478,7 +492,10 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert "goal.promotion.readiness" in decision_registry["governed_execution_decisions"]
     assert "verifier.execution.execute" in decision_registry["evidence_interface_ids"]
     assert "director.deterministic_repair_strategy_catalog.read" in decision_registry["evidence_interface_ids"]
+    assert "director.repair_coverage.read" in decision_registry["evidence_interface_ids"]
+    assert "director.repair_advisory_policy.read" in decision_registry["evidence_interface_ids"]
     assert "request_evidence" in decision_registry["candidate_actions"]
+    assert "suggest_repair_rule" in decision_registry["candidate_actions"]
     evidence_interface_contract = capability_surface["evidence_interface_contract"]
     assert capability_surface["evidence_interface_contract_schema"] == "resident.agi_evidence_interface_contract.v1"
     assert evidence_interface_contract["schema_version"] == "resident.agi_evidence_interface_contract.v1"
@@ -490,6 +507,8 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
         "contextos.final_request_audit.read",
         "run_ledger.read",
         "director.deterministic_repair_strategy_catalog.read",
+        "director.repair_coverage.read",
+        "director.repair_advisory_policy.read",
     } <= set(evidence_interface_contract["declared_interface_ids"])
     interface_by_id = {item["interface_id"]: item for item in evidence_interface_contract["interfaces"]}
     repair_interface = interface_by_id["director.deterministic_repair_strategy_catalog.read"]
@@ -497,6 +516,16 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert repair_interface["access"] == "read_only"
     assert repair_interface["contract_ref"] == "director.deterministic_repair_strategy_catalog.v1"
     assert "quality.gate.response" in repair_interface["required_by_decisions"]
+    repair_coverage_interface = interface_by_id["director.repair_coverage.read"]
+    assert repair_coverage_interface["status"] == "available"
+    assert repair_coverage_interface["access"] == "read_only"
+    assert repair_coverage_interface["contract_ref"] == "director.repair_coverage_report.v1"
+    assert "quality.gate.response" in repair_coverage_interface["required_by_decisions"]
+    advisory_policy_interface = interface_by_id["director.repair_advisory_policy.read"]
+    assert advisory_policy_interface["status"] == "available"
+    assert advisory_policy_interface["access"] == "read_only"
+    assert advisory_policy_interface["contract_ref"] == "director.repair_advisory_policy.v1"
+    assert "quality.gate.response" in advisory_policy_interface["required_by_decisions"]
     assert (
         evidence_interface_contract["decision_policy"]["declared_interfaces_must_exist"]
         == "fail_closed_before_agi_decision"
@@ -512,15 +541,24 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert "runtime.v2.status.resident" in audit_pack["truth_sources"]
     assert "runtime.v2.snapshot.resident" in audit_pack["truth_sources"]
     assert "director.runtime.repair_kernel.strategy_catalog" in audit_pack["truth_sources"]
+    assert "director.runtime.repair_kernel.registry" in audit_pack["truth_sources"]
+    assert "director.runtime.repair_kernel.advisory_policy" in audit_pack["truth_sources"]
     director_repair_contract = audit_pack["director_repair_contract"]
     assert director_repair_contract["schema_version"] == "resident.agi_director_repair_contract.v1"
     assert director_repair_contract["owner_cell"] == "director.runtime"
     assert director_repair_contract["catalog_schema"] == "director.deterministic_repair_strategy_catalog.v1"
+    assert director_repair_contract["coverage_schema"] == "director.repair_coverage_report.v1"
+    assert director_repair_contract["advisory_policy_schema"] == "director.repair_advisory_policy.v1"
     assert director_repair_contract["profile_summary_schema"] == "director.deterministic_repair_profile_summary.v1"
     assert director_repair_contract["unknown_source_tool_policy"] == "fail_closed_high_risk"
     assert director_repair_contract["execution_boundary"] == "director_authorized_tools_only"
     assert director_repair_contract["chain"] == "PM → Chief Engineer → Director"
+    assert director_repair_contract["agi_advisory"]["active"] is True
     assert director_repair_contract["agi_advisory"]["writes_allowed"] is False
+    assert director_repair_contract["agi_advisory"]["registration_allowed"] is False
+    assert director_repair_contract["agi_advisory"]["suggested_rules_allowed"] is True
+    assert "pattern" in director_repair_contract["agi_advisory"]["allowed_suggested_rule_fields"]
+    assert "write_file" in director_repair_contract["agi_advisory"]["forbidden_suggested_rule_fields"]
     assert director_repair_contract["agi_execution_authority"] is False
     assert director_repair_contract["director_tool_execution_required"] is True
     assert audit_pack["authority_matrix"]["schema_version"] == "resident.agi_authority_matrix.v1"
@@ -550,8 +588,12 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert "AuditDiagnosisResultV1" in decision_profile["required_evidence"]
     assert "AuditVerdictResultV1" in decision_profile["required_evidence"]
     assert "director.deterministic_repair_strategy_catalog.v1" in decision_profile["required_evidence"]
+    assert "director.repair_coverage_report.v1" in decision_profile["required_evidence"]
+    assert "director.repair_advisory_policy.v1" in decision_profile["required_evidence"]
     assert "control_plane.verifier_execution" in decision_profile["contract_refs"]
     assert "director.deterministic_repair_strategy_catalog.v1" in decision_profile["contract_refs"]
+    assert "director.repair_coverage_report.v1" in decision_profile["contract_refs"]
+    assert "director.repair_advisory_policy.v1" in decision_profile["contract_refs"]
     assert (
         decision_profile["decision_capability_registry"]["schema_version"]
         == "resident.agi_decision_capability_registry.v1"
@@ -611,8 +653,11 @@ def test_resident_agi_evidence_interfaces_query_reports_public_facade_status(tmp
                 "verifier.policy.read",
                 "audit.verdict.read",
                 "director.deterministic_repair_strategy_catalog.read",
+                "director.repair_coverage.read",
+                "director.repair_advisory_policy.read",
                 "audit.diagnosis.execute",
             ),
+            evidence_refs=("TypeScript syntax check failed: src/app.ts(1,10): error TS1005: ',' expected.",),
             max_runs=5,
         )
     )
@@ -639,6 +684,25 @@ def test_resident_agi_evidence_interfaces_query_reports_public_facade_status(tmp
     assert repair_catalog["summary"]["agi_execution_authority"] is False
     assert repair_catalog["summary"]["director_tool_execution_required"] is True
     assert repair_catalog["summary"]["unknown_source_tool_policy"] == "fail_closed_high_risk"
+    repair_coverage = by_id["director.repair_coverage.read"]
+    assert repair_coverage["source"] == "director.runtime.public.query_director_repair_coverage"
+    assert repair_coverage["status"] == "available"
+    assert repair_coverage["available"] is True
+    assert repair_coverage["callable"] is True
+    assert repair_coverage["summary"]["schema_version"] == "director.repair_coverage_report.v1"
+    assert repair_coverage["summary"]["diagnostic_candidate_count"] == 1
+    assert repair_coverage["summary"]["covered_diagnostic_count"] == 1
+    assert repair_coverage["summary"]["uncovered_diagnostic_count"] == 0
+    assert repair_coverage["summary"]["agi_execution_authority"] is False
+    advisory_policy = by_id["director.repair_advisory_policy.read"]
+    assert advisory_policy["source"] == "director.runtime.public.query_director_repair_advisory_policy"
+    assert advisory_policy["status"] == "available"
+    assert advisory_policy["available"] is True
+    assert advisory_policy["callable"] is True
+    assert advisory_policy["summary"]["schema_version"] == "director.repair_advisory_policy.v1"
+    assert advisory_policy["summary"]["suggested_rules_allowed"] is True
+    assert advisory_policy["summary"]["writes_allowed"] is False
+    assert advisory_policy["summary"]["registration_allowed"] is False
     assert by_id["audit.diagnosis.execute"]["status"] == "governed_execute_only"
     assert payload["summary"]["needs_public_facade"] == 0
     assert payload["summary"]["governed_execute_only"] == 1
@@ -683,6 +747,48 @@ def test_resident_agi_decision_turn_participation_distinguishes_manual_and_auto_
     assert participation["participation"]["quality_gate_response"] is True
     assert participation["participation"]["final_request_audit"] is True
     assert "final_request_audit" in participation["required_role_turn_scopes"]
+
+
+def test_resident_agi_selects_director_repair_advisory_capability() -> None:
+    capability_surface = resident_public_service.resident_agi_capability_surface_payload()
+    selected = resident_public_service._resident_agi_select_decision_capability(
+        decision_type="repair_rule_suggestion",
+        audit_pack={"capability_surface": capability_surface},
+    )
+
+    assert selected["decision_id"] == "director.repair.advisory"
+    assert selected["owner"] == "resident_agi"
+    assert "director.repair_coverage.read" in selected["required_evidence_interfaces"]
+    assert "director.repair_advisory_policy.read" in selected["required_evidence_interfaces"]
+    assert "suggest_repair_rule" in selected["candidate_actions"]
+
+    handoff = resident_public_service._resident_agi_decision_handoff(
+        command=RunResidentAgiDecisionTurnCommandV1(
+            workspace="/tmp/polaris-resident-test",
+            decision_type="repair_rule_suggestion",
+            objective="Suggest a non-authoritative repair rule.",
+        ),
+        selected_decision_capability=selected,
+        decision_preflight={"status": "pass", "passed": True},
+        output_contract_gate={"status": "pass", "passed": True},
+        runtime_contract_gate={"status": "pass", "passed": True},
+        hard_rule_gate={"status": "pass"},
+        evidence_gate={"status": "pass"},
+        agi_verdict="continue",
+        downstream_allowed=True,
+        runtime_success=True,
+        next_action="suggest_repair_rule",
+        rationale="Coverage gap identified.",
+        error="",
+        effective_candidate_actions=["suggest_repair_rule"],
+        evidence_refs=["runtime/repair-coverage.json"],
+    )
+
+    assert handoff["decision_capability_id"] == "director.repair.advisory"
+    assert handoff["target_roles"] == ["director", "qa"]
+    assert "suggest_repair_rule" in handoff["allowed_actions"]
+    assert "director_tool_execution_by_agi" in handoff["blocked_actions"]
+    assert handoff["downstream_allowed"] is True
 
 
 def test_resident_agi_evidence_interfaces_treats_metadata_only_required_as_missing(

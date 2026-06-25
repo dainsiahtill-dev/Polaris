@@ -1,17 +1,11 @@
-export type VisualRoleId =
-  | 'pm'           // PM
-  | 'director'     // Director (coding)
-  | 'chief_engineer' // Chief Engineer (design)
-  | 'qa'           // QA
-  | 'architect'    // Architect
-  | 'cfo'          // CFO
-  | 'hr'           // HR
-  | 'scout';       // Scout (read-only reconnaissance; optional, escalation-only)
+import type { LlmRoleId } from "../../roleDefinitions";
 
-export type VisualNodeKind = 'role' | 'provider' | 'model';
+export type VisualRoleId = LlmRoleId;
+
+export type VisualNodeKind = "role" | "provider" | "model";
 
 export interface VisualRoleNodeData extends Record<string, unknown> {
-  kind: 'role';
+  kind: "role";
   roleId: VisualRoleId;
   label: string;
   description?: string;
@@ -34,7 +28,7 @@ export interface VisualRoleNodeData extends Record<string, unknown> {
 }
 
 export interface VisualProviderNodeData extends Record<string, unknown> {
-  kind: 'provider';
+  kind: "provider";
   providerId: string;
   label: string;
   providerType?: string;
@@ -44,16 +38,19 @@ export interface VisualProviderNodeData extends Record<string, unknown> {
 }
 
 export interface VisualModelNodeData extends Record<string, unknown> {
-  kind: 'model';
+  kind: "model";
   providerId: string;
   model: string;
   label: string;
   assignedRoles?: VisualRoleId[];
 }
 
-export type VisualNodeData = VisualRoleNodeData | VisualProviderNodeData | VisualModelNodeData;
+export type VisualNodeData =
+  | VisualRoleNodeData
+  | VisualProviderNodeData
+  | VisualModelNodeData;
 
-export type VisualEdgeKind = 'provider-to-model' | 'model-to-role';
+export type VisualEdgeKind = "provider-to-model" | "model-to-role";
 
 export interface VisualEdgeData extends Record<string, unknown> {
   kind: VisualEdgeKind;
@@ -82,13 +79,13 @@ export interface VisualNodeState {
   data?: {
     // 角色节点的特定状态
     roleData?: {
-      lastInterviewStatus?: 'passed' | 'failed' | 'none';
+      lastInterviewStatus?: "passed" | "failed" | "none";
       lastInterviewTimestamp?: string;
       readinessScore?: number;
     };
     // Provider节点的特定状态
     providerData?: {
-      connectivityStatus?: 'success' | 'failed' | 'unknown';
+      connectivityStatus?: "success" | "failed" | "unknown";
       lastTestTimestamp?: string;
       enabledModels?: string[];
     };
@@ -131,7 +128,14 @@ export interface VisualGraphConfig {
     zoom: number;
   };
   policies?: {
-    role_requirements?: Record<string, { requires_thinking?: boolean; min_confidence?: number; error_message?: string }>;
+    role_requirements?: Record<
+      string,
+      {
+        requires_thinking?: boolean;
+        min_confidence?: number;
+        error_message?: string;
+      }
+    >;
   };
 }
 
@@ -139,7 +143,7 @@ export interface VisualGraphStatus {
   roles?: Record<string, { ready?: boolean; grade?: string } | undefined>;
   providers?: Record<
     string,
-    { status?: 'unknown' | 'running' | 'success' | 'failed' } | undefined
+    { status?: "unknown" | "running" | "success" | "failed" } | undefined
   >;
 }
 
@@ -167,11 +171,11 @@ export interface RuntimeLLMConfig {
 // Validation Types
 // ============================================================================
 
-export type ValidationIssueType = 
-  | 'MISSING_MODEL' 
-  | 'INVALID_PROVIDER' 
-  | 'DISCONNECTED_ROLE' 
-  | 'MODEL_NOT_FOUND';
+export type ValidationIssueType =
+  | "MISSING_MODEL"
+  | "INVALID_PROVIDER"
+  | "DISCONNECTED_ROLE"
+  | "MODEL_NOT_FOUND";
 
 export interface ValidationIssue {
   type: ValidationIssueType;

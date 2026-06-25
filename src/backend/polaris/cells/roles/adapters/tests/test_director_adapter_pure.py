@@ -2526,6 +2526,99 @@ async def test_phase_quality_repair_loop_continues_after_deterministic_progress_
     assert quality_repair_attempts[-1]["residual_error_count"] == 0
 
 
+def test_phase_pre_materialization_quality_records_post_execution_kernel_summary(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs import generic_repairs, rust_repairs
+
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
+    monkeypatch.setattr(generic_repairs, "_apply_deterministic_go_module_import_repair", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        rust_repairs,
+        "run_all_rust_post_repairs",
+        lambda workspace: [
+            {
+                "source_tool": "deterministic_rust_dependency_repair",
+                "file": "Cargo.toml",
+                "action": "add_dependency",
+                "phase": "dependency_resolution",
+                "priority": 0,
+                "round_number": 1,
+                "revalidation": {
+                    "command": ["cargo", "check", "--quiet"],
+                    "exit_code": 0,
+                    "round_number": 1,
+                    "errors_before": 2,
+                    "errors_after": 0,
+                    "net_error_reduction": 2,
+                    "max_rounds": 3,
+                },
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        execute_method_module,
+        "_collect_workspace_code_diff",
+        lambda *args, **kwargs: ({}, [], ["Cargo.toml"], ["Cargo.toml"]),
+    )
+
+    quality_repair_attempts: list[dict[str, Any]] = []
+    state, _evidence, _can_accept, _write_evidence, summary = execute_method_module._phase_pre_materialization_quality(
+        SimpleNamespace(workspace=str(tmp_path)),
+        baseline_files={},
+        can_accept_existing_scope=True,
+        context={},
+        existing_contract_evidence={"ok": True},
+        primary_llm_summary=None,
+        quality_repair_attempts=quality_repair_attempts,
+        quality_repair_summary=None,
+        requires_fresh_materialization=False,
+        target_task_id="task-1",
+        task={"id": "task-1"},
+        workspace_name=tmp_path.name,
+        write_tool_evidence=True,
+        state=execute_method_module.MaterializationState(
+            current_files={},
+            new_files=[],
+            modified_files=["src/lib.rs"],
+            all_affected_files=["src/lib.rs"],
+            tool_results=[],
+        ),
+    )
+
+    assert summary is not None
+    kernel_summary = summary["post_execution_repair_kernel"]
+    assert kernel_summary["authoritative"] is True
+    assert kernel_summary["receipt_count"] == 1
+    receipt = kernel_summary["receipts"][0]
+    assert receipt["source_tool"] == "deterministic_rust_dependency_repair"
+    assert receipt["round_number"] == 1
+    assert receipt["errors_before"] == 2
+    assert receipt["errors_after"] == 0
+    assert receipt["revalidation_evidence"]["metadata"]["max_rounds"] == 3
+    assert quality_repair_attempts[0]["schema_version"] == "director.post_execution_repair_kernel.v1"
+    scheduler_bridge = quality_repair_attempts[0]["scheduler_bridge"]
+    assert scheduler_bridge["schema_version"] == "director.post_execution_scheduler_bridge.v1"
+    assert scheduler_bridge["mode"] == "legacy_callback_bridge"
+    assert scheduler_bridge["target_scheduler"] == "director.runtime.repair_kernel.scheduler"
+    assert [step["step_id"] for step in scheduler_bridge["step_order"]] == [
+        "go.module_import",
+        "rust.post_execution_convergence",
+        "cpp.post_execution",
+        "java.post_execution",
+    ]
+    assert scheduler_bridge["active_step_ids"] == ["rust.post_execution_convergence"]
+    assert scheduler_bridge["observed_max_round"] == 1
+    assert scheduler_bridge["configured_max_rounds"] == 3
+    assert scheduler_bridge["source_tools"] == ["deterministic_rust_dependency_repair"]
+    assert scheduler_bridge["phases"] == {"dependency_resolution": 1}
+    assert scheduler_bridge["priorities"] == {"0": 1}
+    assert scheduler_bridge["rounds"] == {"1": 1}
+    assert scheduler_bridge["receipts_with_revalidation"] == 1
+    assert state.modified_files == ["Cargo.toml"]
+
+
 def test_empty_write_content_retry_needed_only_for_blank_write() -> None:
     assert (
         _empty_write_content_retry_needed(

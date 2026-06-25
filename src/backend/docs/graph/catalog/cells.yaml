@@ -1637,6 +1637,7 @@ cells:
       - runtime.execution_broker
       - policy.workspace_guard
       - director.execution
+      - director.runtime
       - llm.dialogue
       - orchestration.pm_planning
       - orchestration.workflow_runtime
@@ -2810,15 +2811,22 @@ cells:
         - polaris.cells.director.runtime.public.contracts
         - polaris.cells.director.runtime.public.service
       commands:
+        - CompareDirectorRepairShadowRunV1
         - RunDirectorRepairCommandV1
       queries:
+        - QueryDirectorRepairAdvisoryPolicyV1
         - QueryDirectorRepairCoverageV1
+        - QueryDirectorRepairLanguageSlotsV1
         - QueryDirectorRepairStrategyCatalogV1
       events: []
       results:
+        - DirectorRepairAdvisoryPolicyResultV1
         - DirectorRepairResultV1
         - DirectorRepairCoverageReportV1
         - DirectorRepairDiagnosticCoverageV1
+        - DirectorRepairLanguageSlotV1
+        - DirectorRepairLanguageSlotsResultV1
+        - DirectorRepairShadowComparisonResultV1
         - DirectorRepairStrategyCatalogResultV1
         - DirectorRepairPlanningResultV1
         - RepairDiagnosticV1

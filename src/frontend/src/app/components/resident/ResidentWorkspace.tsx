@@ -39,6 +39,7 @@ import type {
   ResidentAgiDecisionHandoffPayload,
   ResidentAgiHandoffInboxPayload,
   ResidentAgiHardcodedRepairStrategyCatalogPayload,
+  ResidentAgiRepairAdvisoryPolicyPayload,
   ResidentAgiDecisionProfilePayload,
   ResidentAgiDecisionBoundaryPayload,
   ResidentAgiParticipationPayload,
@@ -90,6 +91,7 @@ const AGI_EVIDENCE_INTERFACE_CATEGORIES = new Set([
   "audit_verdict",
   "audit_evidence",
   "context_discovery",
+  "director_repair_advisory",
   "director_repair_strategy",
   "llm_audit",
   "run_ledger",
@@ -106,6 +108,8 @@ const DEFAULT_AGI_PARTICIPATION_FLAGS = [
   "capability_surface",
   "decision_boundary",
   "director_repair_strategy_catalog",
+  "director_repair_coverage",
+  "director_repair_advisory_policy",
 ];
 
 const AGI_PARTICIPATION_LABELS: Record<string, string> = {
@@ -118,6 +122,8 @@ const AGI_PARTICIPATION_LABELS: Record<string, string> = {
   capability_surface: "能力面可见性",
   decision_boundary: "决策边界审计",
   director_repair_strategy_catalog: "Director 修复策略目录",
+  director_repair_coverage: "Director 修复覆盖审计",
+  director_repair_advisory_policy: "Director 修复建议边界",
 };
 
 function formatTime(value?: string | null): string {
@@ -149,14 +155,32 @@ function uniqueStrings(values: Array<string | undefined | null>): string[] {
   return result;
 }
 
+function normalizeAgiParticipationScope(scope: string): string {
+  return String(scope || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.\-\s]+/g, "_");
+}
+
+function isAgiParticipationScopeSelected(
+  scope: string,
+  selectedScopes: string[],
+): boolean {
+  const scopeKey = normalizeAgiParticipationScope(scope);
+  return selectedScopes.some(
+    (selectedScope) =>
+      normalizeAgiParticipationScope(selectedScope) === scopeKey,
+  );
+}
+
 function buildAgiParticipationFlags(
   scopes: string[],
   knownScopes: string[] = DEFAULT_AGI_PARTICIPATION_FLAGS,
 ): Record<string, boolean> {
-  const selected = new Set(scopes);
+  const selected = new Set(scopes.map(normalizeAgiParticipationScope));
   const keys = uniqueStrings([...knownScopes, ...scopes]);
   return keys.reduce<Record<string, boolean>>((acc, scope) => {
-    acc[scope] = selected.has(scope);
+    acc[scope] = selected.has(normalizeAgiParticipationScope(scope));
     return acc;
   }, {});
 }
@@ -249,6 +273,8 @@ export function ResidentWorkspace({
     agiCapabilitySurface?.decision_capabilities || [];
   const hardcodedRepairCatalog =
     agiCapabilitySurface?.hardcoded_repair_strategy_catalog || null;
+  const repairAdvisoryPolicy =
+    agiCapabilitySurface?.director_repair_advisory_policy || null;
   const agiDecisionCapabilityRegistry =
     agiCapabilitySurface?.decision_capability_registry ||
     agiDecisionProfile?.decision_capability_registry;
@@ -288,8 +314,9 @@ export function ResidentWorkspace({
     }));
     const seen = new Set<string>();
     return [...dynamicOptions, ...flagOptions].filter((option) => {
-      if (seen.has(option.scope)) return false;
-      seen.add(option.scope);
+      const key = normalizeAgiParticipationScope(option.scope);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
       return true;
     });
   }, [agiParticipationPolicy]);
@@ -303,9 +330,12 @@ export function ResidentWorkspace({
   );
 
   const toggleAgiParticipationScope = (scope: string) => {
+    const scopeKey = normalizeAgiParticipationScope(scope);
     setAgiParticipationScopes((current) =>
-      current.includes(scope)
-        ? current.filter((item) => item !== scope)
+      current.some((item) => normalizeAgiParticipationScope(item) === scopeKey)
+        ? current.filter(
+            (item) => normalizeAgiParticipationScope(item) !== scopeKey,
+          )
         : [...current, scope],
     );
   };
@@ -686,8 +716,9 @@ export function ResidentWorkspace({
                                 type="checkbox"
                                 className="size-3 accent-cyan-400"
                                 disabled={!agiParticipationEnabled}
-                                checked={agiParticipationScopes.includes(
+                                checked={isAgiParticipationScopeSelected(
                                   option.scope,
+                                  agiParticipationScopes,
                                 )}
                                 onChange={() =>
                                   toggleAgiParticipationScope(option.scope)
@@ -896,6 +927,7 @@ export function ResidentWorkspace({
                 <AgiRepairStrategyCatalogPanel
                   catalog={hardcodedRepairCatalog}
                 />
+                <AgiRepairAdvisoryPolicyPanel policy={repairAdvisoryPolicy} />
                 <AgiDecisionCapabilityRegistry
                   schema={agiCapabilitySurface?.decision_capability_schema}
                   registry={agiDecisionCapabilityRegistry}
@@ -1691,6 +1723,81 @@ function AgiRepairStrategyCatalogPanel({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function AgiRepairAdvisoryPolicyPanel({
+  policy,
+}: {
+  policy?: ResidentAgiRepairAdvisoryPolicyPayload | null;
+}) {
+  if (!policy) return null;
+  const summary = policy.summary || {};
+  const allowedFields = policy.allowed_suggested_rule_fields || [];
+  const forbiddenFields = policy.forbidden_suggested_rule_fields || [];
+  const suggestedRulesAllowed = Boolean(summary.suggested_rules_allowed);
+
+  return (
+    <div
+      className="mt-2 rounded-lg border border-fuchsia-500/15 bg-slate-950/60 px-3 py-2"
+      data-testid="resident-agi-repair-advisory-policy"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-medium text-fuchsia-100">
+            AGI 修复建议边界
+          </div>
+          <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+            {policy.schema_version || "director.repair_advisory_policy.v1"} ·{" "}
+            {policy.source || "director.runtime.repair_kernel.advisory_policy"}
+          </div>
+        </div>
+        <Badge className="border-fuchsia-500/20 bg-fuchsia-500/10 text-fuchsia-200">
+          suggested_rules {suggestedRulesAllowed ? "allowed" : "blocked"}
+        </Badge>
+      </div>
+      <div className="mt-2 grid gap-2 sm:grid-cols-4">
+        <CapabilityMetric
+          label="AGI execute"
+          value={policy.agi_execution_authority ? "allowed" : "blocked"}
+        />
+        <CapabilityMetric
+          label="Writes"
+          value={policy.writes_allowed ? "allowed" : "blocked"}
+        />
+        <CapabilityMetric
+          label="Register"
+          value={policy.registration_allowed ? "allowed" : "blocked"}
+        />
+        <CapabilityMetric
+          label="Authority"
+          value={policy.authoritative_receipts_allowed ? "allowed" : "blocked"}
+        />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {allowedFields.slice(0, 8).map((field) => (
+          <span
+            key={field}
+            className="rounded border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 font-mono text-[10px] text-fuchsia-100"
+          >
+            allow:{field}
+          </span>
+        ))}
+        {forbiddenFields.slice(0, 8).map((field) => (
+          <span
+            key={field}
+            className="rounded border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 font-mono text-[10px] text-rose-100"
+          >
+            deny:{field}
+          </span>
+        ))}
+      </div>
+      <div className="mt-2 font-mono text-[10px] text-slate-500">
+        {policy.execution_boundary ||
+          "read_only_advisory_no_writes_no_registration"}{" "}
+        · Director Runtime remains authoritative
+      </div>
     </div>
   );
 }

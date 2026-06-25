@@ -3607,11 +3607,11 @@ class OrchestrationStageExecutor:
         if not has_cpp_project:
             return []
         try:
-            from polaris.cells.roles.adapters.internal.director.deterministic_repairs.cpp_repairs import (
-                run_all_cpp_post_repairs,
+            from polaris.cells.roles.adapters.public.service import (
+                apply_deterministic_cpp_post_repairs,
             )
 
-            repairs = run_all_cpp_post_repairs(self.workspace)
+            return apply_deterministic_cpp_post_repairs(self.workspace)
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return [
                 {
@@ -3623,22 +3623,6 @@ class OrchestrationStageExecutor:
                     },
                 }
             ]
-        results: list[dict[str, Any]] = []
-        for record in repairs:
-            file_name = str(record.get("file") or "").strip()
-            action = str(record.get("action") or "cpp_post_repair").strip()
-            results.append(
-                {
-                    "tool": "write_file",
-                    "success": True,
-                    "result": {
-                        "source_tool": f"deterministic_cpp_post_repair:{action}",
-                        "file": file_name,
-                        "operation": "modify",
-                    },
-                }
-            )
-        return results
 
     def _workspace_quality_repair_target_files(self) -> list[str]:
         return self._collect_declared_delivery_targets(self._load_pm_plan_tasks("tasks/plan.json"))

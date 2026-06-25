@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.orchestration.workflow_runtime.public.service import (
     configure_orchestration_role_adapter_factory,
@@ -92,6 +93,14 @@ def create_role_adapter(role_id: str, workspace: str) -> BaseRoleAdapter:
     return adapter_class(workspace_token)
 
 
+def apply_deterministic_cpp_post_repairs(workspace: str | Path) -> list[dict[str, Any]]:
+    """Run Director C++ post-execution repairs through the roles.adapters public boundary."""
+
+    from ..internal.director.post_execution_repair_bridge import run_cpp_post_repairs_as_tool_results
+
+    return run_cpp_post_repairs_as_tool_results(Path(workspace))
+
+
 def register_all_adapters(service: object) -> None:
     """Register role adapter factory to orchestration service if supported."""
     if hasattr(service, "set_role_adapter_factory"):
@@ -173,6 +182,7 @@ __all__ = [
     "ToolCall",
     "WorkflowRoleAdapter",
     "WorkflowRoleResult",
+    "apply_deterministic_cpp_post_repairs",
     "apply_deterministic_materialization_quality_repairs",
     "create_role_adapter",
     "execute_workflow_role",

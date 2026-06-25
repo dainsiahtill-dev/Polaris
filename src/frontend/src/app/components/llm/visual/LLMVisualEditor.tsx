@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -9,13 +9,13 @@ import {
   type NodeChange,
   type Edge,
   type ReactFlowInstance,
-} from '@xyflow/react';
-import { Trash2, Unplug, Activity, LayoutGrid, Maximize } from 'lucide-react';
-import '@xyflow/react/dist/style.css';
-import { devLogger } from '@/app/utils/devLogger';
-import { useVisualLLMConfig } from './hooks/useVisualLLMConfig';
-import { nodeTypes, edgeTypes } from './utils/nodeTypes';
-import { validateVisualGraph } from './utils/validation';
+} from "@xyflow/react";
+import { Trash2, Unplug, Activity, LayoutGrid, Maximize } from "lucide-react";
+import "@xyflow/react/dist/style.css";
+import { devLogger } from "@/app/utils/devLogger";
+import { useVisualLLMConfig } from "./hooks/useVisualLLMConfig";
+import { nodeTypes, edgeTypes } from "./utils/nodeTypes";
+import { validateVisualGraph } from "./utils/validation";
 import {
   extractNodePositions,
   extractNodeStates,
@@ -23,9 +23,10 @@ import {
   updateProviderConcurrency,
   updateRoleBindingConcurrency,
   updateRoleConcurrency,
-} from './utils/configConverter';
-import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
-import { ValidationPanel, ValidationBadge } from './components/ValidationPanel';
+} from "./utils/configConverter";
+import { getLlmRoleDefinition, isKnownLlmRoleId } from "../roleDefinitions";
+import { ContextMenu, type ContextMenuItem } from "./components/ContextMenu";
+import { ValidationPanel, ValidationBadge } from "./components/ValidationPanel";
 import type {
   VisualEdgeData,
   VisualGraphConfig,
@@ -35,7 +36,7 @@ import type {
   VisualModelNodeData,
   VisualRoleNodeData,
   VisualRoleId,
-} from './types/visual';
+} from "./types/visual";
 
 interface LLMVisualEditorProps {
   config: VisualGraphConfig | null;
@@ -48,24 +49,14 @@ type ContextMenuState = {
   visible: boolean;
   x: number;
   y: number;
-  type: 'node' | 'edge';
+  type: "node" | "edge";
   data: Node<VisualNodeData> | Edge;
 };
 
 type LayoutPoint = { x: number; y: number };
 
-const ROLE_LABELS: Record<VisualRoleId, string> = {
-  pm: 'PM',
-  director: 'Director',
-  chief_engineer: 'Chief Engineer',
-  qa: 'QA',
-  architect: 'Architect',
-  cfo: 'CFO',
-  hr: 'HR',
-  scout: 'Scout',
-};
-
-const isVisualRoleId = (value: string): value is VisualRoleId => value in ROLE_LABELS;
+const isVisualRoleId = (value: string): value is VisualRoleId =>
+  isKnownLlmRoleId(value);
 
 const readPositiveInt = (value: string): number | undefined => {
   const trimmed = value.trim();
@@ -74,7 +65,9 @@ const readPositiveInt = (value: string): number | undefined => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 };
 
-function extractLayoutWithFallback(nodes: Node<VisualNodeData>[]): Record<string, LayoutPoint> {
+function extractLayoutWithFallback(
+  nodes: Node<VisualNodeData>[],
+): Record<string, LayoutPoint> {
   const layout = extractNodePositions(nodes);
   if (Object.keys(layout).length > 0) {
     return layout;
@@ -88,21 +81,33 @@ function extractLayoutWithFallback(nodes: Node<VisualNodeData>[]): Record<string
       positionAbsoluteY?: number;
     };
     const absolute = rawNode.positionAbsolute;
-    if (absolute && typeof absolute.x === 'number' && typeof absolute.y === 'number') {
+    if (
+      absolute &&
+      typeof absolute.x === "number" &&
+      typeof absolute.y === "number"
+    ) {
       fallback[node.id] = { x: absolute.x, y: absolute.y };
       return;
     }
     if (
-      typeof rawNode.positionAbsoluteX === 'number' &&
-      typeof rawNode.positionAbsoluteY === 'number'
+      typeof rawNode.positionAbsoluteX === "number" &&
+      typeof rawNode.positionAbsoluteY === "number"
     ) {
-      fallback[node.id] = { x: rawNode.positionAbsoluteX, y: rawNode.positionAbsoluteY };
+      fallback[node.id] = {
+        x: rawNode.positionAbsoluteX,
+        y: rawNode.positionAbsoluteY,
+      };
     }
   });
   return fallback;
 }
 
-export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMVisualEditorProps) {
+export function LLMVisualEditor({
+  config,
+  status,
+  onConfigChange,
+  onSave,
+}: LLMVisualEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   // Validation
   const validation = useMemo(() => {
@@ -126,14 +131,20 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
     getCurrentConfig,
   } = useVisualLLMConfig({ config, status, onConfigChange });
 
-  const [rfInstance, setRfInstance] = useState<ReactFlowInstance<Node<VisualNodeData>, Edge> | null>(null);
-  const [modelDraft, setModelDraft] = useState('');
-  const [providerDraft, setProviderDraft] = useState('');
+  const [rfInstance, setRfInstance] = useState<ReactFlowInstance<
+    Node<VisualNodeData>,
+    Edge
+  > | null>(null);
+  const [modelDraft, setModelDraft] = useState("");
+  const [providerDraft, setProviderDraft] = useState("");
   const [showAddModel, setShowAddModel] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [showValidationPanel, setShowValidationPanel] = useState(true);
 
-  const providers = useMemo(() => Object.entries(config?.providers || {}), [config]);
+  const providers = useMemo(
+    () => Object.entries(config?.providers || {}),
+    [config],
+  );
   const roleConcurrencyRows = useMemo(() => {
     return Object.entries(config?.roles || {})
       .filter(([roleId]) => isVisualRoleId(roleId))
@@ -142,7 +153,12 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
         roleCfg,
         bindings: getRoleBindings(roleCfg),
       }))
-      .filter((row) => row.bindings.length > 0 || row.roleCfg.provider_id || row.roleCfg.model);
+      .filter(
+        (row) =>
+          row.bindings.length > 0 ||
+          row.roleCfg.provider_id ||
+          row.roleCfg.model,
+      );
   }, [config]);
 
   const bindingRows = useMemo(
@@ -152,9 +168,9 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
           roleId: row.roleId,
           binding,
           index,
-        }))
+        })),
       ),
-    [roleConcurrencyRows]
+    [roleConcurrencyRows],
   );
 
   const commitConfigUpdate = useCallback(
@@ -164,41 +180,49 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
       const next = updater(current);
       onConfigChange(next);
     },
-    [config, getCurrentConfig, onConfigChange]
+    [config, getCurrentConfig, onConfigChange],
   );
 
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node<VisualNodeData>) => {
       event.preventDefault();
       const containerRect = editorContainerRef.current?.getBoundingClientRect();
-      const menuX = containerRect ? event.clientX - containerRect.left : event.clientX;
-      const menuY = containerRect ? event.clientY - containerRect.top : event.clientY;
+      const menuX = containerRect
+        ? event.clientX - containerRect.left
+        : event.clientX;
+      const menuY = containerRect
+        ? event.clientY - containerRect.top
+        : event.clientY;
       setContextMenu({
         visible: true,
         x: menuX,
         y: menuY,
-        type: 'node',
+        type: "node",
         data: node,
       });
     },
-    []
+    [],
   );
 
   const onEdgeContextMenu = useCallback(
     (event: React.MouseEvent, edge: Edge) => {
       event.preventDefault();
       const containerRect = editorContainerRef.current?.getBoundingClientRect();
-      const menuX = containerRect ? event.clientX - containerRect.left : event.clientX;
-      const menuY = containerRect ? event.clientY - containerRect.top : event.clientY;
+      const menuX = containerRect
+        ? event.clientX - containerRect.left
+        : event.clientX;
+      const menuY = containerRect
+        ? event.clientY - containerRect.top
+        : event.clientY;
       setContextMenu({
         visible: true,
         x: menuX,
         y: menuY,
-        type: 'edge',
+        type: "edge",
         data: edge,
       });
     },
-    []
+    [],
   );
 
   const onPaneClick = useCallback(() => {
@@ -209,21 +233,29 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
     setContextMenu(null);
   }, []);
 
-  const focusNode = useCallback((nodeId: string) => {
-    const node = nodes.find(n => n.id === nodeId);
-    if (node && rfInstance) {
-      rfInstance.setCenter(node.position.x, node.position.y, { zoom: 1.2, duration: 400 });
-    }
-  }, [nodes, rfInstance]);
+  const focusNode = useCallback(
+    (nodeId: string) => {
+      const node = nodes.find((n) => n.id === nodeId);
+      if (node && rfInstance) {
+        rfInstance.setCenter(node.position.x, node.position.y, {
+          zoom: 1.2,
+          duration: 400,
+        });
+      }
+    },
+    [nodes, rfInstance],
+  );
 
   const handleAutoLayout = useCallback(() => {
     const updates: Node<VisualNodeData>[] = [];
-    
+
     // Group nodes by type
-    const providers = nodes.filter(n => n.type === 'provider');
-    const models = nodes.filter(n => n.type === 'model');
-    const roles = nodes.filter(n => n.type === 'role');
-    const others = nodes.filter(n => !['provider', 'model', 'role'].includes(n.type || ''));
+    const providers = nodes.filter((n) => n.type === "provider");
+    const models = nodes.filter((n) => n.type === "model");
+    const roles = nodes.filter((n) => n.type === "role");
+    const others = nodes.filter(
+      (n) => !["provider", "model", "role"].includes(n.type || ""),
+    );
 
     providers.forEach((node, index) => {
       updates.push({ ...node, position: { x: 40, y: index * 180 + 40 } });
@@ -235,7 +267,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
     roles.forEach((node, index) => {
       updates.push({ ...node, position: { x: 700, y: index * 180 + 40 } });
     });
-    
+
     others.forEach((node, index) => {
       updates.push({ ...node, position: { x: 1000, y: index * 180 + 40 } });
     });
@@ -245,60 +277,62 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
   }, [nodes, rfInstance, setNodes]);
 
   // Generate menu items based on context
-  const getContextMenuItems = useCallback((): { items: ContextMenuItem[]; title?: string } => {
+  const getContextMenuItems = useCallback((): {
+    items: ContextMenuItem[];
+    title?: string;
+  } => {
     if (!contextMenu) return { items: [] };
 
-    if (contextMenu.type === 'node') {
+    if (contextMenu.type === "node") {
       const node = contextMenu.data as Node<VisualNodeData>;
       const items: ContextMenuItem[] = [];
-      let title = '';
+      let title = "";
 
-      if (node.type === 'provider') {
+      if (node.type === "provider") {
         const data = node.data as VisualProviderNodeData;
         title = `提供商：${data.label}`;
         items.push({
-          label: '测试连接',
+          label: "测试连接",
           icon: Activity,
           action: () => {
-             devLogger.debug('Test provider', data.providerId);
+            devLogger.debug("Test provider", data.providerId);
           },
         });
         items.push({
-          label: '删除 Provider',
+          label: "删除 Provider",
           icon: Trash2,
-          variant: 'danger',
+          variant: "danger",
           action: () => deleteNode(node.id),
         });
-      } else if (node.type === 'model') {
-         const data = node.data as VisualModelNodeData;
-         title = `模型：${data.model}`;
-         items.push({
-          label: '删除模型',
+      } else if (node.type === "model") {
+        const data = node.data as VisualModelNodeData;
+        title = `模型：${data.model}`;
+        items.push({
+          label: "删除模型",
           icon: Trash2,
-          variant: 'danger',
+          variant: "danger",
           action: () => deleteNode(node.id),
         });
-      } else if (node.type === 'role') {
-         const data = node.data as VisualRoleNodeData;
-         title = `角色：${data.label}`;
-         items.push({
-           label: '清除分配',
-           icon: Unplug,
-           variant: 'warning',
-           action: () => clearRoleAssignment(data.roleId),
-         });
+      } else if (node.type === "role") {
+        const data = node.data as VisualRoleNodeData;
+        title = `角色：${data.label}`;
+        items.push({
+          label: "清除分配",
+          icon: Unplug,
+          variant: "warning",
+          action: () => clearRoleAssignment(data.roleId),
+        });
       }
       return { items, title };
-    } else if (contextMenu.type === 'edge') {
-
+    } else if (contextMenu.type === "edge") {
       const edge = contextMenu.data as Edge;
       return {
-        title: '连接操作',
+        title: "连接操作",
         items: [
           {
-            label: '删除连接',
+            label: "删除连接",
             icon: Unplug,
-            variant: 'danger',
+            variant: "danger",
             action: () => deleteEdge(edge.id),
           },
         ],
@@ -307,7 +341,10 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
     return { items: [] };
   }, [clearRoleAssignment, contextMenu, deleteNode, deleteEdge]);
 
-  const contextMenuView = useMemo(() => getContextMenuItems(), [getContextMenuItems]);
+  const contextMenuView = useMemo(
+    () => getContextMenuItems(),
+    [getContextMenuItems],
+  );
 
   useEffect(() => {
     if (!providerDraft && providers.length > 0) {
@@ -319,25 +356,41 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
     const modelName = modelDraft.trim();
     if (!modelName || !providerDraft) return;
     addModel(providerDraft, modelName);
-    setModelDraft('');
+    setModelDraft("");
   };
 
-  const handleProviderConcurrencyChange = (providerId: string, rawValue: string) => {
-    commitConfigUpdate((current) => updateProviderConcurrency(current, providerId, readPositiveInt(rawValue)));
+  const handleProviderConcurrencyChange = (
+    providerId: string,
+    rawValue: string,
+  ) => {
+    commitConfigUpdate((current) =>
+      updateProviderConcurrency(current, providerId, readPositiveInt(rawValue)),
+    );
   };
 
-  const handleRoleConcurrencyChange = (roleId: VisualRoleId, rawValue: string) => {
-    commitConfigUpdate((current) => updateRoleConcurrency(current, roleId, readPositiveInt(rawValue)));
+  const handleRoleConcurrencyChange = (
+    roleId: VisualRoleId,
+    rawValue: string,
+  ) => {
+    commitConfigUpdate((current) =>
+      updateRoleConcurrency(current, roleId, readPositiveInt(rawValue)),
+    );
   };
 
   const handleBindingConcurrencyChange = (
     roleId: VisualRoleId,
     providerId: string,
     model: string,
-    rawValue: string
+    rawValue: string,
   ) => {
     commitConfigUpdate((current) =>
-      updateRoleBindingConcurrency(current, roleId, providerId, model, readPositiveInt(rawValue))
+      updateRoleBindingConcurrency(
+        current,
+        roleId,
+        providerId,
+        model,
+        readPositiveInt(rawValue),
+      ),
     );
   };
 
@@ -346,14 +399,17 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
   }, []);
 
   const nodeColor = (node: Node<VisualNodeData>) => {
-    if (node.type === 'role') return '#22d3ee';
-    if (node.type === 'provider') return '#f472b6';
-    return '#34d399';
+    if (node.type === "role") return "#22d3ee";
+    if (node.type === "provider") return "#f472b6";
+    return "#34d399";
   };
 
-  const handleNodesChange = useCallback((changes: NodeChange[]) => {
-    onNodesChange(changes);
-  }, [onNodesChange]);
+  const handleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      onNodesChange(changes);
+    },
+    [onNodesChange],
+  );
 
   if (!config) {
     return (
@@ -393,8 +449,12 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
     >
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div>
-          <div className="text-xs font-semibold text-text-main">LLM 视觉配置编辑器 · 吏部·铨选司</div>
-          <div className="text-[10px] text-text-dim">拖拽连线：提供商 → 模型 → 角色</div>
+          <div className="text-xs font-semibold text-text-main">
+            LLM 视觉配置编辑器 · 吏部·铨选司
+          </div>
+          <div className="text-[10px] text-text-dim">
+            拖拽连线：提供商 → 模型 → 角色
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -434,7 +494,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
           {validation.issues.length > 0 && (
             <button
               type="button"
-              onClick={() => setShowValidationPanel(v => !v)}
+              onClick={() => setShowValidationPanel((v) => !v)}
               className="ml-2"
             >
               <ValidationBadge count={validation.issues.length} />
@@ -453,8 +513,12 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
             <option value="">选择提供商</option>
             {providers.map(([providerId, provider]) => {
               const label =
-                typeof provider === 'object' && provider !== null && 'name' in provider
-                  ? String((provider as Record<string, unknown>).name || providerId)
+                typeof provider === "object" &&
+                provider !== null &&
+                "name" in provider
+                  ? String(
+                      (provider as Record<string, unknown>).name || providerId,
+                    )
                   : providerId;
               return (
                 <option key={providerId} value={providerId}>
@@ -481,32 +545,47 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
 
       <div className="mb-3 border-y border-white/10 py-3">
         <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="text-[10px] font-semibold text-text-main">并发容量</div>
-          <div className="text-[10px] text-text-dim">Provider 上限 ∩ Role 上限 ∩ Binding 上限</div>
+          <div className="text-[10px] font-semibold text-text-main">
+            并发容量
+          </div>
+          <div className="text-[10px] text-text-dim">
+            Provider 上限 ∩ Role 上限 ∩ Binding 上限
+          </div>
         </div>
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
           <div className="min-w-0">
-            <div className="mb-1 text-[10px] font-semibold text-text-dim">Provider</div>
+            <div className="mb-1 text-[10px] font-semibold text-text-dim">
+              Provider
+            </div>
             <div className="max-h-36 space-y-1 overflow-y-auto pr-1">
               {providers.map(([providerId, provider]) => {
                 const providerCfg =
-                  typeof provider === 'object' && provider !== null
+                  typeof provider === "object" && provider !== null
                     ? (provider as Record<string, unknown>)
                     : {};
                 const value =
-                  typeof providerCfg.max_concurrency === 'number' ? providerCfg.max_concurrency : '';
+                  typeof providerCfg.max_concurrency === "number"
+                    ? providerCfg.max_concurrency
+                    : "";
                 return (
                   <label
                     key={providerId}
                     className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 text-[10px] text-text-dim"
                   >
-                    <span className="truncate text-text-main">{providerId}</span>
+                    <span className="truncate text-text-main">
+                      {providerId}
+                    </span>
                     <input
                       type="number"
                       min="1"
                       step="1"
                       value={value}
-                      onChange={(event) => handleProviderConcurrencyChange(providerId, event.target.value)}
+                      onChange={(event) =>
+                        handleProviderConcurrencyChange(
+                          providerId,
+                          event.target.value,
+                        )
+                      }
                       className="w-full rounded soft-inset px-2 py-1 text-[10px] text-text-main"
                       placeholder="auto"
                     />
@@ -517,27 +596,33 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
           </div>
 
           <div className="min-w-0">
-            <div className="mb-1 text-[10px] font-semibold text-text-dim">Role</div>
+            <div className="mb-1 text-[10px] font-semibold text-text-dim">
+              Role
+            </div>
             <div className="max-h-36 space-y-1 overflow-y-auto pr-1">
               {roleConcurrencyRows.map(({ roleId, roleCfg }) => {
                 const value =
-                  typeof roleCfg.max_concurrency === 'number'
+                  typeof roleCfg.max_concurrency === "number"
                     ? roleCfg.max_concurrency
-                    : typeof roleCfg.concurrency === 'number'
+                    : typeof roleCfg.concurrency === "number"
                       ? roleCfg.concurrency
-                      : '';
+                      : "";
                 return (
                   <label
                     key={roleId}
                     className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 text-[10px] text-text-dim"
                   >
-                    <span className="truncate text-text-main">{ROLE_LABELS[roleId]}</span>
+                    <span className="truncate text-text-main">
+                      {getLlmRoleDefinition(roleId).label}
+                    </span>
                     <input
                       type="number"
                       min="1"
                       step="1"
                       value={value}
-                      onChange={(event) => handleRoleConcurrencyChange(roleId, event.target.value)}
+                      onChange={(event) =>
+                        handleRoleConcurrencyChange(roleId, event.target.value)
+                      }
                       className="w-full rounded soft-inset px-2 py-1 text-[10px] text-text-main"
                       placeholder="1"
                     />
@@ -551,22 +636,25 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
           </div>
 
           <div className="min-w-0">
-            <div className="mb-1 text-[10px] font-semibold text-text-dim">Binding</div>
+            <div className="mb-1 text-[10px] font-semibold text-text-dim">
+              Binding
+            </div>
             <div className="max-h-36 space-y-1 overflow-y-auto pr-1">
               {bindingRows.map(({ roleId, binding, index }) => {
                 const value =
-                  typeof binding.max_concurrency === 'number'
+                  typeof binding.max_concurrency === "number"
                     ? binding.max_concurrency
-                    : typeof binding.concurrency === 'number'
+                    : typeof binding.concurrency === "number"
                       ? binding.concurrency
-                      : '';
+                      : "";
                 return (
                   <label
                     key={`${roleId}:${binding.provider_id}:${binding.model}:${index}`}
                     className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-2 text-[10px] text-text-dim"
                   >
                     <span className="truncate text-text-main">
-                      {ROLE_LABELS[roleId]} · {binding.provider_id}/{binding.model}
+                      {getLlmRoleDefinition(roleId).label} ·{" "}
+                      {binding.provider_id}/{binding.model}
                     </span>
                     <input
                       type="number"
@@ -578,7 +666,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
                           roleId,
                           binding.provider_id,
                           binding.model,
-                          event.target.value
+                          event.target.value,
                         )
                       }
                       className="w-full rounded soft-inset px-2 py-1 text-[10px] text-text-main"
@@ -587,7 +675,9 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
                   </label>
                 );
               })}
-              {bindingRows.length === 0 ? <div className="text-[10px] text-text-dim">暂无 Binding</div> : null}
+              {bindingRows.length === 0 ? (
+                <div className="text-[10px] text-text-dim">暂无 Binding</div>
+              ) : null}
             </div>
           </div>
         </div>

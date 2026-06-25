@@ -480,6 +480,7 @@ class ResidentAgiCapabilityV1:
     contract_ref: str
     endpoint: str = ""
     risk_level: str = "low"
+    participation_scope_id: str = ""
     guardrails: tuple[str, ...] = field(default_factory=tuple)
     evidence_refs: tuple[str, ...] = field(default_factory=tuple)
 
@@ -492,6 +493,7 @@ class ResidentAgiCapabilityV1:
         object.__setattr__(self, "contract_ref", _require_non_empty("contract_ref", self.contract_ref))
         object.__setattr__(self, "endpoint", str(self.endpoint or "").strip())
         object.__setattr__(self, "risk_level", str(self.risk_level or "low").strip() or "low")
+        object.__setattr__(self, "participation_scope_id", str(self.participation_scope_id or "").strip())
         object.__setattr__(
             self,
             "guardrails",
@@ -513,6 +515,7 @@ class ResidentAgiCapabilityV1:
             "contract_ref": self.contract_ref,
             "endpoint": self.endpoint,
             "risk_level": self.risk_level,
+            "participation_scope_id": self.participation_scope_id,
             "guardrails": list(self.guardrails),
             "evidence_refs": list(self.evidence_refs),
         }

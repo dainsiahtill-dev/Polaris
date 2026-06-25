@@ -10,6 +10,18 @@ _TS_ERROR_RE = re.compile(
     r"(?P<path>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<column>\d+)\):\s*error\s+(?P<code>TS\d+):\s*(?P<message>[^\n]+)",
     re.IGNORECASE,
 )
+_RUST_ERROR_RE = re.compile(
+    r"error\[(?P<code>E\d+)\]:\s*(?P<message>[^\n]+)",
+    re.IGNORECASE,
+)
+_RUST_LOCATION_RE = re.compile(
+    r"^\s*-->\s*(?P<path>[^:\n]+\.rs):(?P<line>\d+):(?P<column>\d+)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_GO_ERROR_RE = re.compile(
+    r"(?P<path>[^:\n]+\.go):(?P<line>\d+):(?P<column>\d+):\s*(?P<message>[^\n]+)",
+    re.IGNORECASE,
+)
 _DECLARED_TARGET_MISSING_RE = re.compile(
     r"declared target file(?:\s+missing)?\s+['\"]?(?P<path>[^'\"\n]+?)['\"]?(?:\s+is\s+missing)?(?:$|\s)",
     re.IGNORECASE,
@@ -47,6 +59,32 @@ def _normalize_one_error(text: str) -> RepairDiagnostic:
         return RepairDiagnostic(
             source="artifact_quality",
             code=f"typescript_{code}",
+            message=str(match.group("message") or text).strip(),
+            path=str(match.group("path") or "").strip(),
+            line=_to_int(match.group("line")),
+            column=_to_int(match.group("column")),
+            raw=text,
+        )
+
+    match = _RUST_ERROR_RE.search(text)
+    if match:
+        location = _RUST_LOCATION_RE.search(text)
+        code = str(match.group("code") or "rust_error").lower()
+        return RepairDiagnostic(
+            source="compiler",
+            code=f"rust_{code}",
+            message=str(match.group("message") or text).strip(),
+            path=str(location.group("path") or "").strip() if location else None,
+            line=_to_int(location.group("line")) if location else None,
+            column=_to_int(location.group("column")) if location else None,
+            raw=text,
+        )
+
+    match = _GO_ERROR_RE.search(text)
+    if match:
+        return RepairDiagnostic(
+            source="compiler",
+            code="go_compile_error",
             message=str(match.group("message") or text).strip(),
             path=str(match.group("path") or "").strip(),
             line=_to_int(match.group("line")),

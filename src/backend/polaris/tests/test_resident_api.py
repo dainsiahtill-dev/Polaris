@@ -165,7 +165,14 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
         payload["audit_pack"]["director_repair_contract"]["catalog_schema"]
         == "director.deterministic_repair_strategy_catalog.v1"
     )
+    assert payload["audit_pack"]["director_repair_contract"]["coverage_schema"] == "director.repair_coverage_report.v1"
+    assert (
+        payload["audit_pack"]["director_repair_contract"]["advisory_policy_schema"]
+        == "director.repair_advisory_policy.v1"
+    )
     assert payload["audit_pack"]["director_repair_contract"]["agi_execution_authority"] is False
+    assert payload["audit_pack"]["director_repair_contract"]["agi_advisory"]["suggested_rules_allowed"] is True
+    assert payload["audit_pack"]["director_repair_contract"]["agi_advisory"]["writes_allowed"] is False
     assert payload["audit_pack"]["director_repair_contract"]["execution_boundary"] == "director_authorized_tools_only"
     assert payload["audit_pack"]["hard_rule_gate"]["status"] == "pass"
     assert payload["audit_pack"]["authority_matrix"]["schema_version"] == "resident.agi_authority_matrix.v1"
@@ -790,6 +797,12 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
         assert any(item["capability_id"] == "resident.agi_decision_turn.execute" for item in capabilities["items"])
         assert any(item["capability_id"] == "roles.registry.read" for item in capabilities["items"])
         assert any(item["capability_id"] == "run_ledger.read" for item in capabilities["items"])
+        assert any(item["capability_id"] == "director.repair_coverage.read" for item in capabilities["items"])
+        assert any(item["capability_id"] == "director.repair_advisory_policy.read" for item in capabilities["items"])
+        assert capabilities["director_repair_advisory_policy"]["schema_version"] == (
+            "director.repair_advisory_policy.v1"
+        )
+        assert capabilities["director_repair_advisory_policy"]["writes_allowed"] is False
         assert any(item["boundary_id"] == "role.runtime.foundation" for item in capabilities["decision_boundaries"])
         assert any(item["authority"] == "platform_hard_rule" for item in capabilities["decision_boundaries"])
 
@@ -812,6 +825,8 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
         assert "resident_agi" in audit_pack["role_registry"]["adapter_roles"]
         assert "role.runtime.foundation" in audit_pack["boundary_summary"]["boundary_ids"]
         assert audit_pack["capability_surface"]["schema_version"] == "resident.agi_capability_surface.v1"
+        assert audit_pack["director_repair_contract"]["coverage_schema"] == "director.repair_coverage_report.v1"
+        assert audit_pack["director_repair_contract"]["advisory_policy_schema"] == "director.repair_advisory_policy.v1"
         assert audit_pack["recent_decisions"]
         assert "PM → Chief Engineer → Director" in " ".join(audit_pack["execution_constraints"])
 

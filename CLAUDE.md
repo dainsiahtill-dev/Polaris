@@ -18,7 +18,7 @@
 - Cross-cell public surface: `polaris.cells.director.runtime.public` / `polaris.cells.director.runtime.public.service`
 - Legacy strategy host only: `src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/`
 
-`director.runtime/internal/repair_kernel` 是 Cell 私有实现。其他 Cell，尤其是 `roles.adapters`，不得直接 import `polaris.cells.director.runtime.internal.repair_kernel`。`execute_method.py` 若需要 repair catalog、summary 或 planning，只能使用 `director.runtime.public.service`。
+`director.runtime/internal/repair_kernel` 是 Cell 私有实现。其他 Cell，尤其是 `roles.adapters`，不得直接 import `polaris.cells.director.runtime.internal.repair_kernel`。`execute_method.py` 若需要 repair catalog、summary 或 planning，只能使用 `director.runtime.public.service`。post-execution 语言修复必须通过 `roles.adapters/internal/director/post_execution_repair_bridge.py` 统一入口，禁止在 `execute_method.py`、Factory、QA 或 bench harness 里直接 import 具体语言 repair 函数。
 
 禁止恢复或新增旧架构入口：
 
@@ -26,9 +26,11 @@
 - `src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/strategy_catalog.py`
 - `roles.adapters` 下自有的 repair policy gate、PatchComposer、receipt contract 或 AGI advisory contract
 
-新增 deterministic repair 必须走 `Diagnostic -> Plan -> Compose -> Policy/Execute -> Receipt`。Planner/Composer 不得直接写文件；commit 写入必须通过 Director policy-gated `write_file` 工具，并在 receipt 中记录 before/after hash、operation ids、rule/source_tool。未来 AGI/Resident 只能作为 non-authoritative advisory：不得写文件、生成 authoritative plan、覆盖 policy、给 success verdict，且不得成为 Run Ledger、ReceiptStore 或 ContextOS 的事实源。
+新增 deterministic repair 必须走 `Diagnostic -> Plan -> Compose -> Policy/Execute -> Receipt -> Revalidate`。Planner/Composer 不得直接写文件；commit 写入必须通过 Director policy-gated `write_file` 工具，并在 receipt 中记录 before/after hash、operation ids、rule/source_tool。多轮执行必须通过 repair kernel scheduler 建模 `priority`、`depends_on`、`round_number`、`max_rounds` 与 cycle breaker；禁止把收敛循环重新藏进某个语言的 post-repair 函数。Receipt 必须携带 post-check evidence，至少包含 verifier command、exit code、before/after diagnostics、resolved/residual diagnostic ids、errors_before/errors_after/net_error_reduction。未来 AGI/Resident 只能作为 non-authoritative advisory：不得写文件、生成 authoritative plan、覆盖 policy、给 success verdict、注册规则，且不得成为 Run Ledger、ReceiptStore 或 ContextOS 的事实源。
 
-遇到新的 compiler/verifier diagnostic 时，先走 repair coverage，而不是先补 legacy regex。通过 `director.runtime.public.service.query_director_repair_coverage` 或 internal registry 产出 coverage report；`known_rule_matched=false` 是可审计平台缺口。新增规则前必须让 uncovered diagnostic 有明确的 `rule_id/source_tool/archetype/phase` 覆盖。Coverage report 只读：不得写文件、不得隐式自动注册新 `source_tool`、不得让 AGI suggested rule 直接变成 authoritative rule。
+遇到新的 compiler/verifier diagnostic 时，先走 repair coverage，而不是先补 legacy regex。通过 `director.runtime.public.service.query_director_repair_coverage` 或 internal registry 产出 coverage report；`known_rule_matched=false` 是可审计平台缺口。新增规则前必须让 uncovered diagnostic 有明确的 `rule_id/source_tool/archetype/phase` 覆盖。Coverage report 只读：不得写文件、不得隐式自动注册新 `source_tool`、不得让 AGI suggested rule 直接变成 authoritative rule。迁移旧策略时必须先暗跑：通过 `compare_director_repair_shadow_run` 对账 legacy tool_results 与新 kernel receipt 的 files/source_tools，matched 后才能切断旧路径；shadow comparison 只读、不得写 workspace。
+
+未来更多编程/脚本语言的专项 deterministic repair 由后续 Agent 通过 L1-L12/九十多个项目 bench 证据逐步补齐。新增语言规则必须先落 catalog/archetype/coverage/receipt/verifier evidence，再接入 legacy bridge 或 runtime scheduler；禁止为了单个 bench 样例直接扩写 `execute_method.py` 分支。
 
 Factory/Bench gate 是量具，不做修复。`bench_gates.py` 不得改写 workspace、自动初始化 manifest、删除/重排源码或把测量逻辑伪装成 deterministic repair。
 
