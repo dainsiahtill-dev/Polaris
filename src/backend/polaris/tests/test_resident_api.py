@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 from polaris.bootstrap.config import Settings
 from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import CommandResult
 from polaris.cells.resident.autonomy.internal.resident_runtime_service import reset_resident_services
+from polaris.cells.resident.autonomy.public import record_resident_decision
+from polaris.cells.resident.autonomy.public.contracts import RunResidentAgiDecisionTurnCommandV1
 from polaris.delivery.http.app_factory import create_app
 
 
@@ -347,6 +350,20 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert captured_input["resident_agi_decision_boundary_policy"]["schema_version"] == (
         "resident.agi_decision_boundary_policy.v1"
     )
+    assert captured_input["resident_agi_tactical_action_catalog"]["schema_version"] == (
+        "resident.agi_tactical_action_catalog.v1"
+    )
+    captured_tactical_items = {
+        item["action_id"]: item for item in captured_input["resident_agi_tactical_action_catalog"]["items"]
+    }
+    assert captured_tactical_items["request_resident_agi_judgement"]["contract_ref"] == (
+        "resident.autonomy.public.run_resident_agi_decision_turn"
+    )
+    assert captured_input["evidence"]["resident_agi_tactical_action_catalog_schema"] == (
+        "resident.agi_tactical_action_catalog.v1"
+    )
+    assert captured_input["evidence"]["resident_agi_tactical_direct_execution_allowed"] is False
+    assert "request_resident_agi_judgement" in captured_input["evidence"]["resident_agi_tactical_action_ids"]
     assert captured_input["selected_decision_capability"]["decision_id"] == "quality.gate.response"
     assert "run_ledger.read" in captured_input["required_evidence_interfaces"]
     assert "audit.diagnosis.execute" in captured_input["optional_evidence_interfaces"]
@@ -361,6 +378,9 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert captured_context["resident_agi_evidence_capability_matrix"]["summary"]["governed_execute"] == 1
     assert captured_context["resident_agi_decision_boundary_policy"]["schema_version"] == (
         "resident.agi_decision_boundary_policy.v1"
+    )
+    assert captured_context["resident_agi_tactical_action_catalog"]["schema_version"] == (
+        "resident.agi_tactical_action_catalog.v1"
     )
     assert (
         captured_context["resident_agi_decision_boundary_policy"]["capability_execution_policy"][
@@ -385,6 +405,10 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
         "resident.agi_decision_boundary_policy.v1"
     )
     assert captured_metadata["resident_agi_policy_direct_writes_allowed"] is False
+    assert captured_metadata["resident_agi_tactical_action_catalog_schema"] == (
+        "resident.agi_tactical_action_catalog.v1"
+    )
+    assert captured_metadata["resident_agi_tactical_direct_execution_allowed"] is False
     assert "run_ledger.read" in captured_metadata["resident_agi_required_evidence_interfaces"]
 
 
@@ -428,6 +452,336 @@ def test_resident_agi_evidence_interfaces_endpoint_reports_readiness(tmp_path: P
     assert "audit" in matrix_groups
 
 
+def test_resident_agi_tactical_chat_endpoint_returns_evidence_backed_response(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    test_token = "test-resident-token"
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
+    with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client:
+        response = client.post(
+            "/v2/resident/agi/chat",
+            json={
+                "workspace": str(workspace),
+                "message": "帮我看下当前项目进度",
+                "decision_type": "quality_gate_response",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "resident.agi_tactical_chat.v1"
+    assert payload["source"] == "resident.autonomy.public.query_resident_agi_tactical_chat"
+    assert payload["intent"] == "status_summary"
+    assert "Resident runtime" in payload["message"]
+    assert any("resident.agi_audit_pack.v1" in item for item in payload["flow"])
+    assert payload["receipt"]["status"] == "READ"
+    assert payload["policy"]["advisory_only"] is True
+    assert payload["policy"]["agi_direct_writes_allowed"] is False
+    assert payload["policy"]["required_chain"] == "PM → Chief Engineer → Director → QA"
+    assert payload["mission_brief"]["schema_version"] == "resident.agi_tactical_mission_brief.v1"
+    assert payload["mission_brief"]["title"] == "项目态势"
+    assert payload["mission_brief"]["policy"]["ui_must_not_recompute_verdict"] is True
+    assert any(item["label"] == "证据" for item in payload["mission_brief"]["metrics"])
+    assert payload["tool_trace"]["schema_version"] == "resident.agi_tactical_tool_trace.v1"
+    assert payload["tool_trace"]["summary"]["direct_execution_allowed"] is False
+    assert payload["participation_gate"]["schema_version"] == "resident.agi_tactical_participation_gate.v1"
+    assert payload["participation_gate"]["status"] == "disabled"
+    assert payload["participation_gate"]["settings_action_available"] is False
+    assert payload["participation_gate"]["agi_direct_permission_change_allowed"] is False
+    assert payload["decision_route"]["schema_version"] == "resident.agi_tactical_decision_route.v1"
+    assert payload["decision_route"]["source"] == "resident.autonomy.internal.agi_tactical_chat"
+    assert payload["decision_route"]["hard_rules"]["llm_override_allowed"] is False
+    assert payload["decision_route"]["governed_execution"]["agi_direct_execution_allowed"] is False
+    assert "open_evidence_black_box" in payload["decision_route"]["recommended_action_ids"]
+    assert payload["facts"]["decision_route_schema"] == "resident.agi_tactical_decision_route.v1"
+    trace_ids = {item["step_id"] for item in payload["tool_trace"]["items"]}
+    assert "resident.status.read" in trace_ids
+    assert "resident.agi_audit_pack.read" in trace_ids
+    assert "resident.agi_controlled_actions.boundary" in trace_ids
+    action_ids = {item["action_id"] for item in payload["suggested_actions"]}
+    assert "open_evidence_black_box" in action_ids
+    assert "refresh_evidence_interfaces" in action_ids
+    assert payload["action_catalog"]["schema_version"] == "resident.agi_tactical_action_catalog.v1"
+    catalog_items = {item["action_id"]: item for item in payload["action_catalog"]["items"]}
+    assert catalog_items["open_evidence_black_box"]["ui_handler"] == "open_advanced_audit"
+    assert catalog_items["open_evidence_black_box"]["requires_participation"] is False
+    assert catalog_items["refresh_evidence_interfaces"]["requires_participation"] is False
+    assert catalog_items["open_operator_settings"]["ui_handler"] == "open_operator_settings"
+    assert catalog_items["open_operator_settings"]["requires_participation"] is False
+    assert catalog_items["request_resident_agi_judgement"]["capability_id"] == "resident.agi_decision_turn.execute"
+    assert catalog_items["request_resident_agi_judgement"]["requires_participation"] is True
+
+    with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client:
+        catalog_response = client.get("/v2/resident/agi/actions/catalog")
+    assert catalog_response.status_code == 200
+    catalog_payload = catalog_response.json()
+    assert catalog_payload["schema_version"] == "resident.agi_tactical_action_catalog.v1"
+    assert catalog_payload["summary"]["agi_direct_execution_allowed"] is False
+    assert catalog_payload["summary"]["requires_participation"] == 2
+
+
+def test_resident_agi_tactical_chat_respects_participation_scopes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    test_token = "test-resident-token"
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
+    with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client:
+        disabled_response = client.post(
+            "/v2/resident/agi/chat",
+            json={
+                "workspace": str(workspace),
+                "message": "交给 Director 修复这个阻塞",
+                "decision_type": "quality_gate_response",
+            },
+        )
+        assert disabled_response.status_code == 200
+        disabled_payload = disabled_response.json()
+        assert disabled_payload["policy"]["participation_enabled"] is False
+        assert disabled_payload["policy"]["participation_allowed_for_intent"] is False
+        assert disabled_payload["participation_gate"]["status"] == "disabled"
+        assert disabled_payload["participation_gate"]["settings_action_available"] is True
+        assert "director_repair_advisory_policy" in disabled_payload["participation_gate"]["missing_scope_ids"]
+        assert disabled_payload["participation_gate"]["governed_actions_available"] is False
+        disabled_action_ids = {item["action_id"] for item in disabled_payload["suggested_actions"]}
+        assert "open_evidence_black_box" in disabled_action_ids
+        assert "refresh_evidence_interfaces" in disabled_action_ids
+        assert "open_operator_settings" in disabled_action_ids
+        assert "request_resident_agi_judgement" not in disabled_action_ids
+        assert "request_director_controlled_repair" not in disabled_action_ids
+
+        participation_response = client.patch(
+            "/v2/resident/agi/participation",
+            json={
+                "workspace": str(workspace),
+                "enabled": True,
+                "scopes": ["quality_gate_response", "director_repair_advisory_policy"],
+                "participation": {"director_repair_advisory_policy": True},
+            },
+        )
+        assert participation_response.status_code == 200
+
+        enabled_response = client.post(
+            "/v2/resident/agi/chat",
+            json={
+                "workspace": str(workspace),
+                "message": "交给 Director 修复这个阻塞",
+                "decision_type": "quality_gate_response",
+            },
+        )
+        assert enabled_response.status_code == 200
+        enabled_payload = enabled_response.json()
+        assert enabled_payload["policy"]["participation_enabled"] is True
+        assert enabled_payload["policy"]["participation_allowed_for_intent"] is True
+        assert enabled_payload["participation_gate"]["status"] == "allowed"
+        assert enabled_payload["participation_gate"]["settings_action_available"] is False
+        assert enabled_payload["participation_gate"]["governed_actions_available"] is True
+        assert enabled_payload["participation_gate"]["missing_scope_ids"] == []
+        assert "director_repair_advisory_policy" in enabled_payload["facts"]["participation"]["configured_scope_ids"]
+        enabled_actions = {item["action_id"]: item for item in enabled_payload["suggested_actions"]}
+        enabled_action_ids = set(enabled_actions)
+        assert "open_operator_settings" not in enabled_action_ids
+        assert "request_resident_agi_judgement" in enabled_action_ids
+        assert "request_director_controlled_repair" in enabled_action_ids
+        repair_action = enabled_actions["request_director_controlled_repair"]
+        assert repair_action["endpoint"] == "/v2/resident/goals"
+        assert repair_action["ui_handler"] == "execute_governed_action"
+        assert repair_action["risk_level"] == "high"
+        assert repair_action["requires_participation"] is True
+        assert repair_action["agi_direct_execution_allowed"] is False
+        assert repair_action["goal_draft"]["source"] == "resident_agi_tactical_console"
+        assert repair_action["goal_draft"]["budget"]["handoff_chain"] == "PM → Chief Engineer → Director → QA"
+        assert repair_action["goal_draft"]["budget"]["agi_direct_repair_allowed"] is False
+
+
+def test_resident_agi_tactical_action_executes_through_goal_and_decision_contracts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    test_token = "test-resident-token"
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
+    with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client:
+        blocked_response = client.post(
+            "/v2/resident/agi/actions/execute",
+            json={
+                "workspace": str(workspace),
+                "message": "交给 Director 修复这个阻塞",
+                "action_id": "request_director_controlled_repair",
+                "decision_type": "quality_gate_response",
+                "context_refs": ["runtime/contexts/context-1"],
+                "evidence_refs": ["run_ledger.read"],
+            },
+        )
+        assert blocked_response.status_code == 200
+        blocked_payload = blocked_response.json()
+        assert blocked_payload["status"] == "blocked"
+        assert blocked_payload["goal"] is None
+        assert blocked_payload["decision"] is None
+
+        participation_response = client.patch(
+            "/v2/resident/agi/participation",
+            json={
+                "workspace": str(workspace),
+                "enabled": True,
+                "scopes": ["quality_gate_response", "director_repair_advisory_policy"],
+                "participation": {"director_repair_advisory_policy": True},
+            },
+        )
+        assert participation_response.status_code == 200
+
+        executed_response = client.post(
+            "/v2/resident/agi/actions/execute",
+            json={
+                "workspace": str(workspace),
+                "message": "交给 Director 修复这个阻塞",
+                "action_id": "request_director_controlled_repair",
+                "decision_type": "quality_gate_response",
+                "context_refs": ["runtime/contexts/context-1"],
+                "evidence_refs": ["run_ledger.read"],
+            },
+        )
+        assert executed_response.status_code == 200
+        payload = executed_response.json()
+        assert payload["schema_version"] == "resident.agi_tactical_action_result.v1"
+        assert payload["status"] == "executed"
+        assert payload["action_spec"]["ui_handler"] == "execute_governed_action"
+        assert payload["action_spec"]["capability_id"] == "resident.goal_governance.commands"
+        assert payload["goal"]["source"] == "resident_agi_tactical_console"
+        assert payload["goal"]["status"] == "pending"
+        assert payload["decision"]["actor"] == "resident_agi"
+        assert payload["decision"]["stage"] == "tactical_console_action"
+        assert payload["decision"]["goal_id"] == payload["goal"]["goal_id"]
+        assert payload["decision"]["actual_outcome"]["action_id"] == "request_director_controlled_repair"
+        assert payload["receipt"]["status"] == "EXECUTED"
+        assert payload["policy"]["agi_direct_repair_allowed"] is False
+        assert payload["tool_trace"]["schema_version"] == "resident.agi_tactical_action_tool_trace.v1"
+        assert payload["tool_trace"]["summary"]["direct_execution_allowed"] is False
+        repair_trace_ids = {item["step_id"] for item in payload["tool_trace"]["items"]}
+        assert "resident.goal_governance.commands" in repair_trace_ids
+        assert "resident.decision_trace.write" in repair_trace_ids
+        follow_up_ids = {item["action_id"] for item in payload["follow_up_actions"]}
+        assert "open_goals_tab" in follow_up_ids
+        assert "request_resident_agi_judgement" in follow_up_ids
+
+
+def test_resident_agi_tactical_action_runs_resident_agi_judgement_contract(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    test_token = "test-resident-token"
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    captured: dict[str, object] = {}
+
+    async def fake_run_resident_agi_decision_turn(command: object) -> dict[str, object]:
+        captured["command"] = command
+        return {
+            "ok": True,
+            "decision": {
+                "verdict": "request_evidence",
+                "rationale": "Need fresh Run Ledger and final request audit before continuing.",
+                "evidence_refs": ["run_ledger.read"],
+                "risks": [],
+                "next_action": "request missing evidence",
+                "downstream_allowed": False,
+            },
+            "recorded_decision": {
+                "decision_id": "decision-agi-judgement",
+                "actor": "resident_agi",
+                "stage": "quality_gate_response",
+                "verdict": "request_evidence",
+            },
+            "role_result": {"success": True, "stage": "resident_agi"},
+        }
+
+    monkeypatch.setattr(
+        "polaris.cells.resident.autonomy.public.service.run_resident_agi_decision_turn",
+        fake_run_resident_agi_decision_turn,
+    )
+
+    app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
+    with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client:
+        participation_response = client.patch(
+            "/v2/resident/agi/participation",
+            json={
+                "workspace": str(workspace),
+                "enabled": True,
+                "scopes": ["quality_gate_response"],
+                "participation": {"quality_gate_response": True},
+            },
+        )
+        assert participation_response.status_code == 200
+
+        response = client.post(
+            "/v2/resident/agi/actions/execute",
+            json={
+                "workspace": str(workspace),
+                "message": "请让 AGI 判断当前质量门禁下一步怎么办",
+                "action_id": "request_resident_agi_judgement",
+                "decision_type": "quality_gate_response",
+                "context_refs": ["runtime/contexts/context-1"],
+                "evidence_refs": ["run_ledger.read"],
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "resident.agi_tactical_action_result.v1"
+    assert payload["status"] == "executed"
+    assert payload["goal"] is None
+    assert payload["decision"]["decision_id"] == "decision-agi-judgement"
+    assert payload["role_result"]["ok"] is True
+    assert payload["receipt"]["status"] == "JUDGED"
+    assert payload["action_spec"]["contract_ref"] == "resident.autonomy.public.run_resident_agi_decision_turn"
+    assert payload["policy"]["role_runtime_required"] is True
+    assert payload["policy"]["agi_direct_repair_allowed"] is False
+    assert payload["tool_trace"]["schema_version"] == "resident.agi_tactical_action_tool_trace.v1"
+    assert payload["tool_trace"]["summary"]["direct_execution_allowed"] is False
+    judgement_trace_ids = {item["step_id"] for item in payload["tool_trace"]["items"]}
+    assert "resident.agi_decision_turn.execute" in judgement_trace_ids
+    assert "resident.decision_trace.write" in judgement_trace_ids
+    follow_up_ids = {item["action_id"] for item in payload["follow_up_actions"]}
+    assert "refresh_evidence_interfaces" in follow_up_ids
+    command = cast(RunResidentAgiDecisionTurnCommandV1, captured["command"])
+    assert command.workspace == str(workspace)
+    assert command.decision_type == "quality_gate_response"
+    assert command.candidate_actions == ("continue", "block", "request_evidence", "escalate")
+    assert "preserve_pm_chief_engineer_director_qa_chain" in command.constraints
+    assert "run_ledger.read" in command.evidence_refs
+    assert command.evidence["selected_action_spec"]["action_id"] == "request_resident_agi_judgement"
+    assert command.evidence["selected_action_spec"]["contract_ref"] == (
+        "resident.autonomy.public.run_resident_agi_decision_turn"
+    )
+    assert command.evidence["selected_action_spec"]["agi_direct_execution_allowed"] is False
+    assert command.evidence["tactical_action_catalog"]["schema_version"] == ("resident.agi_tactical_action_catalog.v1")
+    command_catalog = {item["action_id"]: item for item in command.evidence["tactical_action_catalog"]["items"]}
+    assert command_catalog["request_director_controlled_repair"]["execution_boundary"] == (
+        "write_through_resident_goal_governance_only"
+    )
+    command_available_actions = {
+        item["action_id"] for item in command.evidence["available_tactical_actions"] if isinstance(item, dict)
+    }
+    assert "request_resident_agi_judgement" in command_available_actions
+
+
 def test_resident_agi_repair_advisory_overlay_endpoint_reports_missing(tmp_path: Path, monkeypatch) -> None:
     test_token = "test-resident-token"
     monkeypatch.setenv("KERNELONE_TOKEN", test_token)
@@ -455,6 +809,96 @@ def test_resident_agi_repair_advisory_overlay_endpoint_reports_missing(tmp_path:
     assert payload["filters"]["require_eligible"] is True
     assert payload["advisory_only"] is True
     assert payload["authoritative"] is False
+
+
+def test_resident_agi_repair_advisory_overlay_endpoint_reads_non_authoritative_trace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    test_token = "test-resident-token"
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    overlay = {
+        "schema_version": "resident.agi_repair_advisory_overlay.v1",
+        "source": "resident.autonomy.public.build_resident_agi_repair_advisory_overlay",
+        "workspace": str(workspace),
+        "status": "ready",
+        "active": True,
+        "eligible_for_director_injection": True,
+        "advisory_only": True,
+        "authoritative": False,
+        "agi_execution_authority": False,
+        "director_runtime_contract": "director.repair_advisory_policy.v1",
+        "decision_capability_id": "director.repair_advisory",
+        "participation_enabled": True,
+        "advisor_notes": [
+            {
+                "advisor_source": "resident_agi",
+                "message": "Suggest a non-authoritative rule family for future review.",
+                "confidence": 0.72,
+                "suggested_rules": [
+                    {
+                        "pattern": "error E0432 unresolved import",
+                        "fix_template": "map import path through crate module index",
+                        "source_tool": "deterministic_rust_import_path_repair",
+                    }
+                ],
+                "metadata": {"source_role": "resident_agi"},
+            }
+        ],
+        "reason": "Resident AGI repair advisory is valid and non-authoritative.",
+    }
+    record_resident_decision(
+        str(workspace),
+        {
+            "workspace": str(workspace),
+            "actor": "resident_agi",
+            "stage": "resident_agi_decision",
+            "run_id": "run-agi-1",
+            "task_id": "task-agi-1",
+            "summary": "Resident AGI produced a repair advisory overlay.",
+            "actual_outcome": {"resident_agi_repair_advisory_overlay": overlay},
+            "verdict": "blocked",
+            "confidence": 0.72,
+        },
+    )
+
+    app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
+    with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client:
+        response = client.get(
+            "/v2/resident/agi/repair-advisory-overlay",
+            params={
+                "workspace": str(workspace),
+                "require_ready": "true",
+                "require_eligible": "true",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "resident.agi_repair_advisory_overlay_query.v1"
+    assert payload["source"] == "resident.autonomy.public.query_resident_agi_repair_advisory_overlay"
+    assert payload["status"] == "found"
+    assert payload["found"] is True
+    assert payload["advisory_only"] is True
+    assert payload["authoritative"] is False
+    assert payload["agi_execution_authority"] is False
+    assert payload["director_runtime_contract"] == "director.repair_advisory_policy.v1"
+    assert payload["filters"]["require_ready"] is True
+    assert payload["filters"]["require_eligible"] is True
+    assert payload["matched_overlay_count"] == 1
+    assert payload["rejected_by_filter_count"] == 0
+    assert payload["decision_ref"]["run_id"] == "run-agi-1"
+    assert payload["decision_ref"]["task_id"] == "task-agi-1"
+    returned_overlay = payload["overlay"]
+    assert returned_overlay["status"] == "ready"
+    assert returned_overlay["eligible_for_director_injection"] is True
+    assert returned_overlay["advisory_only"] is True
+    assert returned_overlay["authoritative"] is False
+    assert returned_overlay["agi_execution_authority"] is False
+    assert returned_overlay["advisor_notes"][0]["advisor_source"] == "resident_agi"
 
 
 def test_resident_agi_decide_rejects_disabled_audit_pack_before_adapter(

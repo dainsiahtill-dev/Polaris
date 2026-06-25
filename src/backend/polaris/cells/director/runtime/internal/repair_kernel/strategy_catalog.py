@@ -12,7 +12,12 @@ from typing import Any
 
 KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
     {
+        "deterministic_cpp_include_path_repair",
+        "deterministic_cpp_missing_private_members_repair",
+        "deterministic_cpp_placeholder_declaration_repair",
         "deterministic_cpp_post_repair",
+        "deterministic_cpp_standard_include_repair",
+        "deterministic_cpp_struct_getter_field_access_repair",
         "deterministic_declared_target_contract_repair",
         "deterministic_go_bare_import_repair",
         "deterministic_go_bare_import_string_repair",
@@ -21,6 +26,7 @@ KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
         "deterministic_go_nested_import_repair",
         "deterministic_go_subpath_repair",
         "deterministic_html_typescript_module_script_repair",
+        "deterministic_java_accessor_alias_repair",
         "deterministic_java_post_repair",
         "deterministic_javascript_esm_commonjs_entrypoint_repair",
         "deterministic_javascript_missing_export_repair",
@@ -181,6 +187,14 @@ def _infer_language(source_tool: str) -> str:
 def _infer_phase(source_tool: str) -> str:
     if "pre_materialization" in source_tool:
         return "pre_materialization"
+    if (
+        "include_path" in source_tool
+        or "missing_private_members" in source_tool
+        or "placeholder_declaration" in source_tool
+        or "standard_include" in source_tool
+        or "struct_getter" in source_tool
+    ):
+        return "post_materialization"
     if "post_repair" in source_tool:
         return "post_materialization"
     if "cleanup" in source_tool or "residue" in source_tool:
@@ -196,6 +210,14 @@ def _infer_phase(source_tool: str) -> str:
 
 def _infer_concern(source_tool: str) -> str:
     if "missing" in source_tool:
+        return "missing_symbol_or_file"
+    if "include" in source_tool:
+        return "dependency_manifest" if "standard_include" in source_tool else "module_boundary"
+    if "placeholder" in source_tool:
+        return "syntax_normalization"
+    if "struct_getter" in source_tool:
+        return "missing_symbol_or_file"
+    if "private_members" in source_tool:
         return "missing_symbol_or_file"
     if "import" in source_tool or "export" in source_tool or "reexport" in source_tool:
         return "module_boundary"

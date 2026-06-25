@@ -117,7 +117,8 @@ export const LLM_ROLE_DEFINITIONS: Record<LlmRoleId, LlmRoleDefinition> = {
   cfo: {
     id: "cfo",
     label: "Cost Advisor",
-    description: "可选治理视角：审计预算、Token 用量、资源成本与 ROI，不参与主执行链。",
+    description:
+      "可选治理视角：审计预算、Token 用量、资源成本与 ROI，不参与主执行链。",
     bindingVisibility: "configured",
     bindingKind: "governance_advisor",
     requiresThinking: false,
@@ -129,7 +130,8 @@ export const LLM_ROLE_DEFINITIONS: Record<LlmRoleId, LlmRoleDefinition> = {
   hr: {
     id: "hr",
     label: "Model Governance Advisor",
-    description: "可选治理视角：审计角色-模型配置、能力匹配与配置漂移，不参与主执行链。",
+    description:
+      "可选治理视角：审计角色-模型配置、能力匹配与配置漂移，不参与主执行链。",
     bindingVisibility: "configured",
     bindingKind: "governance_advisor",
     requiresThinking: false,
@@ -167,6 +169,30 @@ export function isKnownLlmRoleId(value: string): value is LlmRoleId {
 export function normalizeLlmRoleId(value: string): LlmRoleId | null {
   if (value === "docs") return "architect";
   return isKnownLlmRoleId(value) ? value : null;
+}
+
+export function normalizeLlmRoleIds(
+  values?: readonly unknown[] | null,
+): LlmRoleId[] {
+  const roleIds: LlmRoleId[] = [];
+  for (const value of values || []) {
+    const normalized = normalizeLlmRoleId(String(value || "").trim());
+    if (normalized && !roleIds.includes(normalized)) {
+      roleIds.push(normalized);
+    }
+  }
+  return roleIds;
+}
+
+export function getRequiredLlmAssignmentRoleIds(
+  policies?: { required_ready_roles?: readonly unknown[] | null } | null,
+): LlmRoleId[] {
+  return [
+    ...new Set([
+      ...REQUIRED_LLM_ASSIGNMENT_ROLE_IDS,
+      ...normalizeLlmRoleIds(policies?.required_ready_roles),
+    ]),
+  ];
 }
 
 export function getLlmRoleDefinition(roleId: LlmRoleId): LlmRoleDefinition {

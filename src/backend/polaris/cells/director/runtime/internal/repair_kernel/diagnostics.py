@@ -10,6 +10,10 @@ _TS_ERROR_RE = re.compile(
     r"(?P<path>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<column>\d+)\):\s*error\s+(?P<code>TS\d+):\s*(?P<message>[^\n]+)",
     re.IGNORECASE,
 )
+_TS_RETURN_OBJECT_SEMICOLON_RE = re.compile(
+    r"TypeScript return object contains semicolon-terminated property in (?P<path>\S+)",
+    re.IGNORECASE,
+)
 _RUST_ERROR_RE = re.compile(
     r"error\[(?P<code>E\d+)\]:\s*(?P<message>[^\n]+)",
     re.IGNORECASE,
@@ -86,6 +90,16 @@ def _normalize_one_error(text: str) -> RepairDiagnostic:
             path=str(match.group("path") or "").strip(),
             line=_to_int(match.group("line")),
             column=_to_int(match.group("column")),
+            raw=text,
+        )
+
+    match = _TS_RETURN_OBJECT_SEMICOLON_RE.search(text)
+    if match:
+        return RepairDiagnostic(
+            source="artifact_quality",
+            code="typescript_return_object_property_semicolon",
+            message="TypeScript return object contains semicolon-terminated property.",
+            path=str(match.group("path") or "").strip(),
             raw=text,
         )
 

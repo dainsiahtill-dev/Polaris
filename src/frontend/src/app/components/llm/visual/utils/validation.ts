@@ -1,5 +1,6 @@
 import type { Connection, Node } from "@xyflow/react";
 import { getRoleDisplayLabel } from "@/app/constants/roleLabels";
+import { getRequiredLlmAssignmentRoleIds } from "../../roleDefinitions";
 import type {
   VisualGraphConfig,
   ValidationIssue,
@@ -7,7 +8,6 @@ import type {
   VisualRoleId,
 } from "../types/visual";
 import { getRoleBindings } from "./configConverter";
-import { REQUIRED_LLM_ASSIGNMENT_ROLE_IDS } from "../../roleDefinitions";
 
 export const isValidVisualConnection = (
   connection: Connection,
@@ -52,7 +52,7 @@ export const validateVisualGraph = (
   const issues: ValidationIssue[] = [];
 
   // Check each role has valid configuration
-  const roleIds = REQUIRED_LLM_ASSIGNMENT_ROLE_IDS;
+  const roleIds = getRequiredLlmAssignmentRoleIds(config.policies);
 
   roleIds.forEach((roleId) => {
     const roleCfg = config.roles?.[roleId];

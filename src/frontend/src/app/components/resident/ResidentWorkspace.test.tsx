@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import { ResidentWorkspace } from "./ResidentWorkspace";
@@ -758,7 +764,8 @@ const mockResidentState = {
           override_allowed: false,
           execution_authority: "governed_handoff_only",
           write_authority: false,
-          default_action: "handoff_to_canonical_role_chain_when_evidence_passes",
+          default_action:
+            "handoff_to_canonical_role_chain_when_evidence_passes",
         },
       },
       boundary_policies: [
@@ -792,13 +799,15 @@ const mockResidentState = {
           boundary_id: "goal.execution",
           name: "Goal promotion and unattended execution",
           authority: "agi_governed_execution",
-          decision_owner: "resident_agi_with_pm_chief_engineer_director_handoff",
+          decision_owner:
+            "resident_agi_with_pm_chief_engineer_director_handoff",
           llm_decision_allowed: true,
           override_allowed: false,
           execution_authority: "governed_handoff_only",
           write_authority: false,
           requires_pm_chief_engineer_director_chain: true,
-          default_action: "handoff_to_canonical_role_chain_when_evidence_passes",
+          default_action:
+            "handoff_to_canonical_role_chain_when_evidence_passes",
         },
       ],
       capability_execution_policy: {
@@ -1335,6 +1344,74 @@ const mockResidentState = {
       required_chain: "PM → Chief Engineer → Director",
     },
   },
+  residentAgiActionCatalog: {
+    schema_version: "resident.agi_tactical_action_catalog.v1",
+    source: "resident.autonomy.internal.agi_tactical_actions",
+    items: [
+      {
+        action_id: "refresh_evidence_interfaces",
+        label: "刷新证据接口",
+        mode: "read_only",
+        status: "available",
+        reason:
+          "只刷新 Resident AGI evidence interface read model，不改变项目状态。",
+        ui_handler: "refresh_evidence_interfaces",
+        capability_id: "audit.evidence_interface_selection",
+        contract_ref:
+          "resident.autonomy.public.query_resident_agi_evidence_interfaces",
+        risk_level: "low",
+        requires_participation: false,
+        agi_direct_execution_allowed: false,
+      },
+      {
+        action_id: "open_operator_settings",
+        label: "打开值守设定",
+        mode: "local_navigation",
+        status: "available",
+        reason: "打开常驻 AGI 参与范围设置，不自动修改权限。",
+        ui_handler: "open_operator_settings",
+        capability_id: "resident.agi_participation_policy.read",
+        contract_ref: "resident.workspace.local_operator_settings",
+        risk_level: "low",
+        requires_participation: false,
+        agi_direct_execution_allowed: false,
+      },
+      {
+        action_id: "request_resident_agi_judgement",
+        label: "请求 AGI 判断",
+        mode: "execute_through_role_runtime",
+        status: "preview_only",
+        reason:
+          "通过 resident_agi 角色回合执行一次受控判断；只产出决策和证据。",
+        ui_handler: "execute_governed_action",
+        capability_id: "resident.agi_decision_turn.execute",
+        contract_ref: "resident.autonomy.public.run_resident_agi_decision_turn",
+        risk_level: "medium",
+        requires_participation: true,
+        agi_direct_execution_allowed: false,
+      },
+      {
+        action_id: "request_director_controlled_repair",
+        label: "请求 Director 受控修复",
+        mode: "controlled_execution",
+        status: "preview_only",
+        reason:
+          "AGI 聊天不能直接写文件，只能建议进入 PM → Chief Engineer → Director → QA。",
+        ui_handler: "execute_governed_action",
+        capability_id: "resident.goal_governance.commands",
+        contract_ref: "resident.goal_governance.commands",
+        risk_level: "high",
+        requires_participation: true,
+        agi_direct_execution_allowed: false,
+      },
+    ],
+    summary: {
+      total: 4,
+      requires_participation: 2,
+      agi_direct_execution_allowed: false,
+      required_chain: "PM → Chief Engineer → Director → QA",
+    },
+  },
   lastAgiDecisionResult: {
     ok: true,
     workspace: "/tmp/polaris-demo",
@@ -1362,7 +1439,8 @@ const mockResidentState = {
     },
     repair_advisory_overlay: {
       schema_version: "resident.agi_repair_advisory_overlay.v1",
-      source: "resident.autonomy.public.build_resident_agi_repair_advisory_overlay",
+      source:
+        "resident.autonomy.public.build_resident_agi_repair_advisory_overlay",
       status: "ready",
       active: true,
       eligible_for_director_injection: true,
@@ -1403,7 +1481,188 @@ const mockResidentState = {
   materializeGoal: vi.fn(async () => null),
   stageGoal: vi.fn(async () => null),
   runGoal: vi.fn(async () => null),
+  recordDecision: vi.fn(async () => ({ decision_id: "decision-console" })),
+  executeAgiAction: vi.fn(async () => ({
+    schema_version: "resident.agi_tactical_action_result.v1",
+    action_id: "request_director_controlled_repair",
+    status: "executed",
+    reason: "created governed Resident goal and recorded decision trace",
+    goal: {
+      goal_id: "goal-repair",
+      title: "请求 Director 受控修复当前阻塞",
+    },
+    decision: { decision_id: "decision-console" },
+    tool_trace: {
+      schema_version: "resident.agi_tactical_action_tool_trace.v1",
+      items: [
+        {
+          step_id: "resident.goal_governance.commands",
+          label: "Resident 目标治理",
+          mode: "write_through_resident_contract",
+          status: "executed",
+          contract: "resident.goal_governance.commands",
+          summary: "已创建待治理目标；没有直接调用 Director 修复。",
+        },
+        {
+          step_id: "resident.decision_trace.write",
+          label: "写入决策轨迹",
+          mode: "write_through_resident_contract",
+          status: "recorded",
+          contract: "resident.decision_trace",
+          summary: "已记录 AGI 战术动作和治理链路。",
+        },
+      ],
+    },
+    follow_up_actions: [
+      {
+        action_id: "open_goals_tab",
+        label: "查看治理目标",
+        mode: "local_navigation",
+        status: "available",
+        reason: "打开 Resident 目标队列。",
+        ui_handler: "open_goals_tab",
+      },
+      {
+        action_id: "request_resident_agi_judgement",
+        label: "请求 AGI 复核",
+        mode: "execute_through_role_runtime",
+        status: "preview_only",
+        reason: "让 resident_agi 角色回合复核下一步。",
+        ui_handler: "execute_governed_action",
+      },
+    ],
+    receipt: {
+      status: "EXECUTED",
+      title: "受控动作执行凭证",
+      summary:
+        "已通过 Resident public contract 创建目标并写入 decision trace。",
+      rows: [
+        { label: "目标", value: "goal-repair" },
+        { label: "决策", value: "decision-console" },
+        { label: "动作", value: "request_director_controlled_repair" },
+        { label: "角色链", value: "PM→CE→Director→QA preserved" },
+      ],
+    },
+  })),
   runAgiDecision: vi.fn(async () => null),
+  chatAgi: vi.fn(async () => ({
+    schema_version: "resident.agi_tactical_chat.v1",
+    intent: "status_summary",
+    status: "ready",
+    message: "后端 AGI 已读取 Polaris 元项目事实源。",
+    flow: [
+      "[事实源] resident.status + resident.agi_audit_pack.v1",
+      "[边界] 受控动作必须进入 PM → Chief Engineer → Director → QA",
+    ],
+    mission_brief: {
+      schema_version: "resident.agi_tactical_mission_brief.v1",
+      title: "项目态势",
+      severity: "warn",
+      status_label: "受限值守",
+      progress_percent: 45,
+      current_focus: "Stabilize PM contract quality",
+      current_stage: "goal_staging",
+      latest_verdict: "success",
+      blockers: ["证据门禁为 hold，等待补齐。"],
+      next_actions: ["请求 AGI 角色回合判断下一步。"],
+      metrics: [
+        { label: "目标", value: "2" },
+        { label: "决策", value: "1" },
+        { label: "证据", value: "2/4" },
+        { label: "门禁", value: "pass/hold" },
+      ],
+    },
+    tool_trace: {
+      schema_version: "resident.agi_tactical_tool_trace.v1",
+      items: [
+        {
+          step_id: "resident.status.read",
+          label: "Resident 状态投影",
+          mode: "read_only",
+          status: "available",
+          contract: "resident.autonomy.public.query_resident_status",
+          summary: "读取 runtime、目标、决策、身份和 agenda 快照。",
+        },
+        {
+          step_id: "resident.agi_controlled_actions.boundary",
+          label: "受控动作边界",
+          mode: "controlled_action",
+          status: "blocked",
+          contract: "resident.agi_tactical_chat_participation.v1",
+          summary: "configured participation scopes do not cover this intent",
+        },
+      ],
+      summary: {
+        total: 2,
+        direct_execution_allowed: false,
+      },
+    },
+    participation_gate: {
+      schema_version: "resident.agi_tactical_participation_gate.v1",
+      status: "disabled",
+      enabled: false,
+      allowed_for_intent: false,
+      intent: "status_summary",
+      summary: "AGI 参与总开关关闭；只允许只读解释和本地导航。",
+      required_scope_ids: ["capability_surface"],
+      configured_scope_ids: [],
+      missing_scope_ids: ["capability_surface"],
+      settings_action_available: false,
+      governed_actions_available: false,
+      agi_direct_permission_change_allowed: false,
+    },
+    decision_route: {
+      schema_version: "resident.agi_tactical_decision_route.v1",
+      source: "resident.autonomy.internal.agi_tactical_chat",
+      intent: "status_summary",
+      route_status: "read_only_explanation",
+      route_reason:
+        "AGI participation does not permit an execution-impacting recommendation",
+      recommended_action_ids: [
+        "open_evidence_black_box",
+        "refresh_evidence_interfaces",
+      ],
+      read_only_action_ids: [
+        "open_evidence_black_box",
+        "refresh_evidence_interfaces",
+      ],
+      governed_action_ids: [],
+      blocked_reasons: ["resident_agi_participation.enabled is false"],
+      hard_rules: { status: "pass", llm_override_allowed: false },
+      governed_execution: {
+        allowed: false,
+        agi_direct_execution_allowed: false,
+      },
+    },
+    suggested_actions: [
+      {
+        action_id: "open_evidence_black_box",
+        label: "查看证据黑匣子",
+        mode: "read_only",
+        status: "available",
+        reason: "查看审计证据",
+        requires_participation: false,
+      },
+      {
+        action_id: "refresh_evidence_interfaces",
+        label: "刷新证据",
+        mode: "read_only",
+        status: "available",
+        reason: "刷新证据接口是只读动作。",
+        ui_handler: "refresh_evidence_interfaces",
+        requires_participation: false,
+      },
+    ],
+    receipt: {
+      status: "READ",
+      title: "战术问答凭证",
+      summary: "已通过 Resident public contract 组合答复。",
+      rows: [
+        { label: "意图", value: "status_summary" },
+        { label: "事实源", value: "resident.autonomy.public" },
+      ],
+    },
+  })),
   refreshAgiEvidenceInterfaces: vi.fn(async () => null),
   extractSkills: vi.fn(async () => null),
   runExperiments: vi.fn(async () => null),
@@ -1432,6 +1691,47 @@ describe("ResidentWorkspace", () => {
 
     expect(screen.getByText("AGI 工作区")).toBeInTheDocument();
     expect(screen.getByText("Resident AGI Supervisor")).toBeInTheDocument();
+    expect(screen.getByTestId("agi-cockpit-overview")).toHaveTextContent(
+      "驻场 AGI",
+    );
+    expect(screen.getByTestId("agi-tactical-console")).toHaveTextContent(
+      "战术控制台",
+    );
+    expect(screen.getByTestId("agi-cockpit-overview")).toHaveTextContent(
+      "受限值守",
+    );
+    expect(screen.getByTestId("agi-cockpit-overview")).toHaveTextContent("1/2");
+    expect(screen.getByTestId("agi-cockpit-overview")).toHaveTextContent(
+      "Run Ledger projection is not available yet.",
+    );
+    expect(screen.getByTestId("agi-cockpit-overview")).toHaveTextContent(
+      "1 个必需证据接口尚未满足。",
+    );
+    expect(screen.getByTestId("agi-action-timeline")).toHaveTextContent(
+      "最近行动轨迹",
+    );
+    expect(screen.getByTestId("agi-action-timeline")).toHaveTextContent(
+      "等待用户指令",
+    );
+    expect(screen.getByTestId("agi-role-track-pm")).toHaveTextContent(
+      "目标就绪",
+    );
+    expect(screen.getByTestId("agi-role-track-ce")).toHaveTextContent(
+      "等待蓝图",
+    );
+    expect(screen.getByTestId("agi-role-track-director")).toHaveTextContent(
+      "待受控执行",
+    );
+    expect(screen.getByTestId("agi-role-track-qa")).toHaveTextContent(
+      "请求证据",
+    );
+    expect(
+      screen.queryByTestId("resident-runtime-evidence"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("AGI 角色能力面")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("agi-toggle-advanced-audit"));
+
     expect(screen.getByTestId("resident-runtime-evidence")).toHaveTextContent(
       "resident.runtime_projection_evidence.v1",
     );
@@ -1452,16 +1752,16 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("resident.tick_autonomy_boundary.v1");
     expect(
       screen.getByTestId("resident-tick-autonomy-boundary"),
-    ).toHaveTextContent("tick:deterministic_evidence_producer");
+    ).toHaveTextContent("轮次角色：deterministic_evidence_producer");
     expect(
       screen.getByTestId("resident-tick-autonomy-boundary"),
-    ).toHaveTextContent("judgement:resident_agi_decision_turn");
+    ).toHaveTextContent("判断入口：resident_agi_decision_turn");
     expect(
       screen.getByTestId("resident-tick-autonomy-boundary"),
-    ).toHaveTextContent("sidecar:blocked");
+    ).toHaveTextContent("旁路模型：已阻断");
     expect(screen.getByText("最新元认知")).toBeInTheDocument();
     expect(screen.getByText("Task decomposition")).toBeInTheDocument();
-    expect(screen.getByText("AGI Role 能力面")).toBeInTheDocument();
+    expect(screen.getByText("AGI 角色能力面")).toBeInTheDocument();
     expect(
       screen.getByText("Resident AGI role decision turn"),
     ).toBeInTheDocument();
@@ -1477,40 +1777,40 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("RoleRuntime / ContextOS / TurnEngine");
     expect(
       screen.getByTestId("resident-agi-role-foundation"),
-    ).toHaveTextContent("canonical contract");
+    ).toHaveTextContent("权威契约");
     expect(
       screen.getByTestId("resident-agi-role-foundation"),
-    ).toHaveTextContent("PM → Chief Engineer → Director");
+    ).toHaveTextContent("项目经理 → 总工程师 → 执行官");
     expect(
       screen.getByTestId("resident-agi-governance-matrix"),
     ).toHaveTextContent("能力治理矩阵");
     expect(
       screen.getByTestId("resident-agi-governance-matrix"),
-    ).toHaveTextContent("PM → Chief Engineer → Director");
+    ).toHaveTextContent("项目经理 → 总工程师 → 执行官");
     expect(
       screen.getByTestId("resident-agi-governance-matrix"),
-    ).toHaveTextContent("Governed ops");
+    ).toHaveTextContent("受控操作");
     expect(
       screen.getByTestId("resident-agi-governance-matrix"),
-    ).toHaveTextContent("High risk");
+    ).toHaveTextContent("高风险");
     expect(
       screen.getByTestId("resident-agi-authority-matrix"),
     ).toHaveTextContent("resident.agi_authority_matrix.v1");
     expect(
       screen.getByTestId("resident-agi-authority-matrix"),
-    ).toHaveTextContent("hard rules 2");
+    ).toHaveTextContent("硬规则 2");
     expect(
       screen.getByTestId("resident-agi-authority-matrix"),
-    ).toHaveTextContent("AGI judgement 2");
+    ).toHaveTextContent("AGI 判断 2");
     expect(
       screen.getByTestId("resident-agi-capability-access-registry"),
     ).toHaveTextContent("resident.agi_capability_access_registry.v1");
     expect(
       screen.getByTestId("resident-agi-capability-access-registry"),
-    ).toHaveTextContent("direct tools blocked");
+    ).toHaveTextContent("直接工具 已阻断");
     expect(
       screen.getByTestId("resident-agi-capability-access-registry"),
-    ).toHaveTextContent("direct writes blocked");
+    ).toHaveTextContent("直接写入 已阻断");
     expect(
       screen.getByTestId("resident-agi-governance-tags"),
     ).toHaveTextContent("control_plane.verifier_execution");
@@ -1540,10 +1840,10 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("director_authorized_tools_only");
     expect(
       screen.getByTestId("resident-agi-repair-strategy-catalog-summary"),
-    ).toHaveTextContent("PM → Chief Engineer → Director");
+    ).toHaveTextContent("项目经理 → 总工程师 → 执行官");
     expect(
       screen.getByTestId("resident-agi-repair-strategy-catalog-summary"),
-    ).toHaveTextContent("AGI execute: blocked");
+    ).toHaveTextContent("AGI 执行：已阻断");
     expect(
       screen.getByTestId("resident-agi-repair-strategy-catalog-summary"),
     ).toHaveTextContent("fail_closed_high_risk");
@@ -1561,31 +1861,31 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("director.repair_advisory_policy.v1");
     expect(
       screen.getByTestId("resident-agi-repair-advisory-policy"),
-    ).toHaveTextContent("suggested_rules allowed");
+    ).toHaveTextContent("建议规则 允许");
     expect(
       screen.getByTestId("resident-agi-repair-advisory-policy"),
-    ).toHaveTextContent(/Writes\s*blocked/);
+    ).toHaveTextContent(/写入\s*已阻断/);
     expect(
       screen.getByTestId("resident-agi-repair-advisory-policy"),
-    ).toHaveTextContent("allow:pattern");
+    ).toHaveTextContent("允许字段：pattern");
     expect(
       screen.getByTestId("resident-agi-repair-advisory-policy"),
-    ).toHaveTextContent("deny:write_file");
+    ).toHaveTextContent("禁止字段：write_file");
     expect(
       screen.getByTestId("resident-agi-repair-advisory-overlay"),
-    ).toHaveTextContent("AGI 修复建议 Overlay");
+    ).toHaveTextContent("AGI 修复建议覆盖层");
     expect(
       screen.getByTestId("resident-agi-repair-advisory-overlay"),
-    ).toHaveTextContent("ready");
+    ).toHaveTextContent("就绪");
     expect(
       screen.getByTestId("resident-agi-repair-advisory-overlay"),
-    ).toHaveTextContent("eligible");
+    ).toHaveTextContent("可注入");
     expect(
       screen.getByTestId("resident-agi-repair-advisory-overlay"),
-    ).toHaveTextContent("Rules");
+    ).toHaveTextContent("规则");
     expect(
       screen.getByTestId("resident-agi-repair-advisory-overlay"),
-    ).toHaveTextContent("advisory_only:true");
+    ).toHaveTextContent("仅建议：是");
     expect(
       screen.queryByRole("button", { name: /修复|执行/i }),
     ).not.toBeInTheDocument();
@@ -1618,10 +1918,10 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("resident.agi_evidence_interface_contract.v1");
     expect(
       screen.getByTestId("resident-agi-evidence-interface-contract"),
-    ).toHaveTextContent("required 4");
+    ).toHaveTextContent("必需 4");
     expect(
       screen.getByTestId("resident-agi-evidence-interface-contract"),
-    ).toHaveTextContent("missing 0");
+    ).toHaveTextContent("缺失 0");
     expect(
       screen.getByTestId("resident-agi-evidence-interface-matrix"),
     ).toHaveTextContent("Audit diagnosis trail");
@@ -1680,10 +1980,10 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("resident.agi_evidence_capability_matrix.v1");
     expect(
       screen.getByTestId("resident-agi-evidence-runtime-matrix"),
-    ).toHaveTextContent("required 1/2");
+    ).toHaveTextContent("必需 1/2");
     expect(
       screen.getByTestId("resident-agi-evidence-runtime-matrix"),
-    ).toHaveTextContent("recommended 4");
+    ).toHaveTextContent("推荐 4");
     expect(
       screen.getByTestId("resident-agi-evidence-runtime-matrix"),
     ).toHaveTextContent("Run ledger");
@@ -1692,14 +1992,14 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("Director repair");
     expect(
       screen.getByTestId("resident-agi-evidence-runtime-matrix"),
-    ).toHaveTextContent("advisory_only:true");
+    ).toHaveTextContent("仅建议：是");
     expect(
       screen.getByTestId("resident-agi-evidence-runtime-matrix"),
-    ).toHaveTextContent("authoritative:false");
+    ).toHaveTextContent("权威：否");
     expect(
       screen.getByTestId("resident-agi-evidence-runtime-matrix"),
-    ).toHaveTextContent("agi_execute:blocked");
-    expect(screen.getAllByText("risk high").length).toBeGreaterThan(1);
+    ).toHaveTextContent("AGI 执行：已阻断");
+    expect(screen.getAllByText("风险 高").length).toBeGreaterThan(1);
     expect(
       screen.getByText("No shortcut from PM directly to Director."),
     ).toBeInTheDocument();
@@ -1738,19 +2038,19 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("platform_hard_rule");
     expect(
       screen.getByTestId("resident-agi-decision-boundary-policy"),
-    ).toHaveTextContent("llm:blocked");
+    ).toHaveTextContent("LLM：已阻断");
     expect(
       screen.getByTestId("resident-agi-decision-boundary-policy"),
     ).toHaveTextContent("agi_recommendation");
     expect(
       screen.getByTestId("resident-agi-decision-boundary-policy"),
-    ).toHaveTextContent("exec:advisory_only");
+    ).toHaveTextContent("执行：仅建议");
     expect(
       screen.getByTestId("resident-agi-decision-boundary-policy"),
-    ).toHaveTextContent("agi_direct_writes:blocked");
+    ).toHaveTextContent("AGI 直接写入：已阻断");
     expect(
       screen.getByTestId("resident-agi-decision-boundary-policy"),
-    ).toHaveTextContent("director_authority:retained");
+    ).toHaveTextContent("Director 权威：保留");
     expect(screen.getByTestId("resident-agi-audit-pack")).toHaveTextContent(
       "AGI 审计包",
     );
@@ -1758,14 +2058,14 @@ describe("ResidentWorkspace", () => {
       "resident.agi_audit_pack.v1",
     );
     expect(screen.getByTestId("resident-agi-audit-pack")).toHaveTextContent(
-      "Hard gate pass",
+      "硬规则门禁 通过",
     );
     expect(
       screen.getByTestId("resident-agi-audit-authority-matrix"),
     ).toHaveTextContent("resident.agi_authority_matrix.v1");
     expect(
       screen.getByTestId("resident-agi-audit-authority-matrix"),
-    ).toHaveTextContent("governed ops 2");
+    ).toHaveTextContent("受控操作 2");
     expect(
       screen.getByTestId("resident-agi-director-repair-contract"),
     ).toHaveTextContent("resident.agi_director_repair_contract.v1");
@@ -1777,19 +2077,19 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("director_authorized_tools_only");
     expect(
       screen.getByTestId("resident-agi-director-repair-contract"),
-    ).toHaveTextContent("PM → Chief Engineer → Director");
+    ).toHaveTextContent("项目经理 → 总工程师 → 执行官");
     expect(
       screen.getByTestId("resident-agi-director-repair-contract"),
     ).toHaveTextContent("fail_closed_high_risk");
     expect(
       screen.getByTestId("resident-agi-director-repair-contract"),
-    ).toHaveTextContent("AGI execute: blocked");
+    ).toHaveTextContent("AGI 执行：已阻断");
     expect(
       screen.getByTestId("resident-agi-director-repair-contract"),
-    ).toHaveTextContent("writes: blocked");
+    ).toHaveTextContent("写入：已阻断");
     expect(
       screen.getByTestId("resident-agi-director-repair-contract"),
-    ).toHaveTextContent("advisory: active");
+    ).toHaveTextContent("建议：已激活");
     expect(
       screen.getByTestId("resident-agi-director-repair-contract"),
     ).toHaveTextContent("director.deterministic_repair_strategy_catalog.v1");
@@ -1797,13 +2097,13 @@ describe("ResidentWorkspace", () => {
       screen.getByTestId("resident-agi-director-repair-contract"),
     ).toHaveTextContent("director.deterministic_repair_profile_summary.v1");
     expect(screen.getByTestId("resident-agi-audit-pack")).toHaveTextContent(
-      "hold → request_evidence",
+      "暂缓 → 请求证据",
     );
     expect(screen.getByTestId("resident-agi-audit-pack")).toHaveTextContent(
-      "Run Ledger pending",
+      "运行账本 待处理",
     );
     expect(screen.getByTestId("resident-agi-audit-pack")).toHaveTextContent(
-      "llm override: blocked",
+      "LLM 覆盖：已阻断",
     );
     expect(screen.getByTestId("resident-agi-audit-pack")).toHaveTextContent(
       "resident.agi_decision_turn.execute",
@@ -1822,7 +2122,7 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("resident.agi_decision_profile.v1");
     expect(
       screen.getByTestId("resident-agi-audit-decision-profile"),
-    ).toHaveTextContent("Role turn allowed");
+    ).toHaveTextContent("角色回合 允许");
     expect(
       screen.getByTestId("resident-agi-audit-decision-profile"),
     ).toHaveTextContent("hold_for_evidence");
@@ -1831,7 +2131,7 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("request_missing_contextos_or_run_ledger_evidence");
     expect(
       screen.getByTestId("resident-agi-audit-decision-profile"),
-    ).toHaveTextContent("action:request_evidence");
+    ).toHaveTextContent("动作：请求证据");
     expect(
       screen.getByTestId("resident-agi-audit-decision-profile"),
     ).toHaveTextContent("preserve_pm_chief_engineer_director_qa_chain");
@@ -1845,7 +2145,7 @@ describe("ResidentWorkspace", () => {
     );
     expect(
       screen.getByTestId("resident-agi-audit-decision-profile"),
-    ).toHaveTextContent("Evidence interfaces");
+    ).toHaveTextContent("证据接口");
     expect(
       screen.getByTestId("resident-agi-audit-decision-profile"),
     ).toHaveTextContent("Final provider-request audit");
@@ -1861,6 +2161,538 @@ describe("ResidentWorkspace", () => {
     expect(
       screen.getByTestId("resident-agi-audit-decision-profile"),
     ).toHaveTextContent("Request missing evidence before continuing.");
+  });
+
+  it("runs tactical console commands through governed Resident actions", async () => {
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /刷新证据/ }));
+
+    await waitFor(() => {
+      expect(
+        mockResidentState.refreshAgiEvidenceInterfaces,
+      ).toHaveBeenCalledWith("evidence.interface.selection");
+    });
+    expect(screen.getByText("[EXECUTED]")).toBeInTheDocument();
+    expect(screen.getAllByText("证据刷新凭证").length).toBeGreaterThan(0);
+    expect(screen.getByText("read_only_public_contract")).toBeInTheDocument();
+  });
+
+  it("routes tactical console questions through the Resident AGI chat contract", async () => {
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "检查进度" }));
+
+    await waitFor(() => {
+      expect(mockResidentState.chatAgi).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "/检查进度",
+          decision_type: "evidence.interface.selection",
+        }),
+      );
+    });
+    expect(
+      screen.getByText("后端 AGI 已读取 Polaris 元项目事实源。"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("项目态势")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Stabilize PM contract quality").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("证据门禁为 hold，等待补齐。")).toBeInTheDocument();
+    expect(
+      screen.getByText("请求 AGI 角色回合判断下一步。"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("指令流")).toBeInTheDocument();
+    expect(screen.getByText("Resident 状态投影")).toBeInTheDocument();
+    expect(screen.getByText("受控动作边界")).toBeInTheDocument();
+    expect(screen.getByTestId("agi-decision-route")).toHaveTextContent(
+      "决策路线",
+    );
+    expect(screen.getByTestId("agi-decision-route")).toHaveTextContent(
+      "read_only_explanation",
+    );
+    expect(screen.getByTestId("agi-decision-route")).toHaveTextContent(
+      "open_evidence_black_box",
+    );
+    expect(screen.getByText("[READ]")).toBeInTheDocument();
+    expect(screen.getByText("resident.autonomy.public")).toBeInTheDocument();
+    const actionTimeline = screen.getByTestId("agi-action-timeline");
+    expect(actionTimeline).toHaveTextContent("战术问答凭证");
+    expect(actionTimeline).toHaveTextContent(
+      "resident.agi_tactical_tool_trace.v1",
+    );
+    expect(actionTimeline).toHaveTextContent("open_evidence_black_box");
+  });
+
+  it("keeps tactical quick commands focused on the current AGI state", () => {
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+      />,
+    );
+
+    const quickCommandBar = screen.getByTestId("agi-quick-command-bar");
+    expect(
+      within(quickCommandBar).getByRole("button", { name: "检查进度" }),
+    ).toBeInTheDocument();
+    expect(
+      within(quickCommandBar).getByRole("button", { name: "解释卡住" }),
+    ).toBeInTheDocument();
+    expect(
+      within(quickCommandBar).getByRole("button", { name: /刷新证据/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(quickCommandBar).getByRole("button", { name: "刷新证据接口" }),
+    ).toBeInTheDocument();
+    expect(
+      within(quickCommandBar).queryByRole("button", {
+        name: "请求 AGI 判断",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows an AGI judgement quick command when participation and model binding are ready", async () => {
+    const identityRecord = mockResidentState.residentIdentity as Record<
+      string,
+      unknown
+    >;
+    const previousParticipation = identityRecord.resident_agi_participation;
+    identityRecord.resident_agi_participation = {
+      enabled: true,
+      scopes: ["quality_gate_response"],
+      participation: { quality_gate_response: true },
+    };
+
+    try {
+      render(
+        <ResidentWorkspace
+          workspace="X:/Git/polaris"
+          onBackToMain={vi.fn()}
+          residentSnapshot={null}
+          residentAgiLlmStatus={{
+            ready: true,
+            providerId: "openai",
+            providerName: "OpenAI",
+            model: "gpt-5",
+          }}
+        />,
+      );
+
+      fireEvent.click(
+        within(screen.getByTestId("agi-quick-command-bar")).getByRole(
+          "button",
+          {
+            name: "请求 AGI 判断",
+          },
+        ),
+      );
+
+      await waitFor(() => {
+        expect(mockResidentState.chatAgi).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: "请让 AGI 基于当前证据判断下一步怎么办。",
+            decision_type: "evidence.interface.selection",
+          }),
+        );
+      });
+    } finally {
+      if (previousParticipation === undefined) {
+        delete identityRecord.resident_agi_participation;
+      } else {
+        identityRecord.resident_agi_participation = previousParticipation;
+      }
+    }
+  });
+
+  it("creates a governed Resident goal from a tactical repair action", async () => {
+    mockResidentState.chatAgi.mockResolvedValueOnce({
+      schema_version: "resident.agi_tactical_chat.v1",
+      intent: "director_repair_request",
+      status: "ready",
+      message: "已整理为受控修复预案。",
+      flow: ["[边界] 受控动作必须进入 PM → Chief Engineer → Director → QA"],
+      suggested_actions: [
+        {
+          action_id: "request_director_controlled_repair",
+          label: "请求 Director 受控修复",
+          mode: "controlled_execution",
+          status: "preview_only",
+          reason: "进入 Resident goal governance",
+          endpoint: "/v2/resident/goals",
+          ui_handler: "execute_governed_action",
+          capability_id: "resident.goal_governance.commands",
+          contract_ref: "resident.goal_governance.commands",
+          risk_level: "high",
+          requires_participation: true,
+          agi_direct_execution_allowed: false,
+          goal_draft: {
+            goal_type: "maintenance",
+            title: "请求 Director 受控修复当前阻塞",
+            motivation: "需要通过受控链路修复失败门禁。",
+            source: "resident_agi_tactical_console",
+            scope: ["resident.agi_tactical_chat", "director.controlled_repair"],
+            evidence_refs: ["run_ledger.read"],
+            derived_from: ["runtime/contexts/context-1"],
+            budget: {
+              handoff_chain: "PM → Chief Engineer → Director → QA",
+              agi_direct_repair_allowed: false,
+            },
+            expected_value: 0.72,
+            risk_score: 0.42,
+          },
+        },
+      ],
+      receipt: {
+        status: "READ",
+        title: "战术问答凭证",
+        summary: "已生成受控动作草案。",
+        rows: [{ label: "意图", value: "director_repair_request" }],
+      },
+    });
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("给驻场 AGI 下达指令"), {
+      target: { value: "交给 Director 修复这个阻塞" },
+    });
+    fireEvent.click(screen.getByTestId("agi-console-submit"));
+
+    const actionButton = await screen.findByRole("button", {
+      name: "请求 Director 受控修复",
+    });
+    fireEvent.click(actionButton);
+    expect(mockResidentState.executeAgiAction).not.toHaveBeenCalled();
+    expect(screen.getByTestId("agi-action-confirmation")).toHaveTextContent(
+      "受控动作确认",
+    );
+    expect(screen.getByTestId("agi-action-confirmation")).toHaveTextContent(
+      "resident.goal_governance.commands",
+    );
+    expect(screen.getByTestId("agi-action-confirmation")).toHaveTextContent(
+      "参与开关",
+    );
+    expect(screen.getByTestId("agi-action-confirmation")).toHaveTextContent(
+      "必需",
+    );
+    expect(screen.getByTestId("agi-action-confirmation")).toHaveTextContent(
+      "AGI 直接执行：已阻断",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "提交受控动作" }));
+
+    await waitFor(() => {
+      expect(mockResidentState.executeAgiAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "交给 Director 修复这个阻塞",
+          action_id: "request_director_controlled_repair",
+          decision_type: "evidence.interface.selection",
+          evidence_refs: ["runtime/contracts/plan.md"],
+          context_refs: ["runtime/contexts/abc123"],
+        }),
+      );
+    });
+    expect(mockResidentState.createGoal).not.toHaveBeenCalled();
+    expect(mockResidentState.recordDecision).not.toHaveBeenCalled();
+    expect(screen.getAllByText("受控动作执行凭证").length).toBeGreaterThan(0);
+    expect(screen.getByText("goal-repair")).toBeInTheDocument();
+    expect(screen.getByText("decision-console")).toBeInTheDocument();
+    expect(screen.getByText("PM→CE→Director→QA preserved")).toBeInTheDocument();
+    expect(screen.getByText("Resident 目标治理")).toBeInTheDocument();
+    expect(screen.getAllByText("写入决策轨迹").length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("button", { name: "请求 AGI 复核" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看治理目标" }));
+    expect(
+      screen.getByRole("button", { name: "新建目标" }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens AGI operator settings from a tactical permission action without executing backend writes", async () => {
+    mockResidentState.chatAgi.mockResolvedValueOnce({
+      schema_version: "resident.agi_tactical_chat.v1",
+      intent: "director_repair_request",
+      status: "ready",
+      message:
+        "当前 AGI 参与范围不允许这个意图，我只能给出只读解释并提供设定入口。",
+      participation_gate: {
+        schema_version: "resident.agi_tactical_participation_gate.v1",
+        status: "disabled",
+        enabled: false,
+        allowed_for_intent: false,
+        intent: "director_repair_request",
+        summary: "AGI 参与总开关关闭；只允许只读解释和本地导航。",
+        required_scope_ids: ["director_repair_advisory_policy"],
+        configured_scope_ids: [],
+        missing_scope_ids: ["director_repair_advisory_policy"],
+        settings_action_available: true,
+        governed_actions_available: false,
+        agi_direct_permission_change_allowed: false,
+      },
+      suggested_actions: [
+        {
+          action_id: "open_operator_settings",
+          label: "打开值守设定",
+          mode: "local_navigation",
+          status: "available",
+          reason: "打开常驻 AGI 参与范围设置，不自动修改权限。",
+          ui_handler: "open_operator_settings",
+          capability_id: "resident.agi_participation_policy.read",
+          contract_ref: "resident.workspace.local_operator_settings",
+          requires_participation: false,
+          agi_direct_execution_allowed: false,
+        },
+      ],
+      receipt: {
+        status: "READ",
+        title: "战术问答凭证",
+        summary: "已生成本地设定入口。",
+        rows: [{ label: "意图", value: "director_repair_request" }],
+      },
+    });
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+      />,
+    );
+
+    expect(screen.queryByTestId("agi-operator-settings")).toBeNull();
+    fireEvent.change(screen.getByLabelText("给驻场 AGI 下达指令"), {
+      target: { value: "交给 Director 修复这个阻塞" },
+    });
+    fireEvent.click(screen.getByTestId("agi-console-submit"));
+
+    const gate = await screen.findByTestId("agi-participation-gate");
+    expect(gate).toHaveTextContent("权限闸门");
+    expect(gate).toHaveTextContent("已停用");
+    expect(gate).toHaveTextContent("Director 修复建议边界");
+    expect(gate).toHaveTextContent("可打开");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "打开值守设定" }),
+    );
+
+    expect(screen.getByTestId("agi-operator-settings")).toBeInTheDocument();
+    expect(mockResidentState.executeAgiAction).not.toHaveBeenCalled();
+    expect(mockResidentState.saveIdentity).not.toHaveBeenCalled();
+  });
+
+  it("dispatches tactical actions by registry handler instead of fixed action ids", async () => {
+    mockResidentState.chatAgi.mockResolvedValueOnce({
+      schema_version: "resident.agi_tactical_chat.v1",
+      intent: "resident_agi_judgement",
+      status: "ready",
+      message: "后端 registry 提供了一个受控动作。",
+      suggested_actions: [
+        {
+          action_id: "registry_defined_governed_action",
+          label: "执行 Registry 动作",
+          mode: "controlled_execution",
+          status: "preview_only",
+          reason: "由后端 action catalog 声明为受控执行。",
+          endpoint: "/v2/resident/agi/actions/execute",
+          ui_handler: "execute_governed_action",
+          capability_id: "resident.agi_decision_turn.execute",
+          contract_ref:
+            "resident.autonomy.public.run_resident_agi_decision_turn",
+          risk_level: "medium",
+          requires_participation: true,
+          agi_direct_execution_allowed: false,
+        },
+      ],
+      receipt: {
+        status: "READ",
+        title: "战术问答凭证",
+        summary: "已生成 registry 动作。",
+        rows: [
+          {
+            label: "动作目录",
+            value: "resident.agi_tactical_action_catalog.v1",
+          },
+        ],
+      },
+    });
+
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("给驻场 AGI 下达指令"), {
+      target: { value: "请执行后端动作目录里的受控动作" },
+    });
+    fireEvent.click(screen.getByTestId("agi-console-submit"));
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "执行 Registry 动作" }),
+    );
+    expect(mockResidentState.executeAgiAction).not.toHaveBeenCalled();
+    expect(screen.getByTestId("agi-action-confirmation")).toHaveTextContent(
+      "受控动作确认",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "提交受控动作" }));
+
+    await waitFor(() => {
+      expect(mockResidentState.executeAgiAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action_id: "registry_defined_governed_action",
+          message: "请执行后端动作目录里的受控动作",
+        }),
+      );
+    });
+  });
+
+  it("runs a Resident AGI judgement action through the tactical console", async () => {
+    mockResidentState.chatAgi.mockResolvedValueOnce({
+      schema_version: "resident.agi_tactical_chat.v1",
+      intent: "resident_agi_judgement",
+      status: "ready",
+      message: "可以提交给 resident_agi 做受控判断。",
+      flow: ["[角色] resident_agi role runtime + ContextOS + TurnEngine"],
+      suggested_actions: [
+        {
+          action_id: "request_resident_agi_judgement",
+          label: "请求 AGI 判断",
+          mode: "execute_through_role_runtime",
+          status: "preview_only",
+          reason: "进入 resident_agi 角色回合",
+          endpoint: "/v2/resident/agi/actions/execute",
+          requires_participation: true,
+        },
+      ],
+      receipt: {
+        status: "READ",
+        title: "战术问答凭证",
+        summary: "已生成 AGI 判断动作草案。",
+        rows: [{ label: "意图", value: "resident_agi_judgement" }],
+      },
+    });
+    mockResidentState.executeAgiAction.mockResolvedValueOnce({
+      schema_version: "resident.agi_tactical_action_result.v1",
+      action_id: "request_resident_agi_judgement",
+      status: "executed",
+      reason:
+        "ran Resident AGI judgement through the shared role runtime contract",
+      goal: null,
+      decision: {
+        decision_id: "decision-agi-judgement",
+        verdict: "request_evidence",
+      },
+      role_result: { ok: true },
+      follow_up_actions: [
+        {
+          action_id: "refresh_evidence_interfaces",
+          label: "刷新证据",
+          mode: "read_only",
+          status: "available",
+          reason: "AGI 判断需要更多证据。",
+        },
+      ],
+      tool_trace: {
+        schema_version: "resident.agi_tactical_action_tool_trace.v1",
+        items: [
+          {
+            step_id: "resident.agi_decision_turn.execute",
+            label: "AGI 判断回合",
+            mode: "execute_through_role_runtime",
+            status: "executed",
+            contract: "resident.autonomy.public.run_resident_agi_decision_turn",
+            summary: "resident_agi 角色回合产出 request_evidence 判断。",
+          },
+          {
+            step_id: "resident.decision_trace.write",
+            label: "写入决策轨迹",
+            mode: "write_through_resident_contract",
+            status: "recorded",
+            contract: "resident.decision_trace",
+            summary: "判断结果已进入 Resident decision trace。",
+          },
+        ],
+      },
+      receipt: {
+        status: "JUDGED",
+        title: "AGI 判断凭证",
+        summary: "已通过 resident_agi 角色回合完成受控判断。",
+        rows: [
+          { label: "结论", value: "request_evidence" },
+          { label: "决策", value: "decision-agi-judgement" },
+          { label: "动作", value: "request_resident_agi_judgement" },
+          { label: "角色回合", value: "resident_agi" },
+        ],
+      },
+    });
+    render(
+      <ResidentWorkspace
+        workspace="X:/Git/polaris"
+        onBackToMain={vi.fn()}
+        residentSnapshot={null}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("给驻场 AGI 下达指令"), {
+      target: { value: "请判断下一步怎么办" },
+    });
+    fireEvent.click(screen.getByTestId("agi-console-submit"));
+
+    const actionButton = await screen.findByRole("button", {
+      name: "请求 AGI 判断",
+    });
+    fireEvent.click(actionButton);
+    expect(mockResidentState.executeAgiAction).not.toHaveBeenCalled();
+    expect(screen.getByTestId("agi-action-confirmation")).toHaveTextContent(
+      "受控动作确认",
+    );
+    expect(screen.getByTestId("agi-action-confirmation")).toHaveTextContent(
+      "execute_through_role_runtime",
+    );
+    expect(screen.getByTestId("agi-action-confirmation")).toHaveTextContent(
+      "参与开关",
+    );
+    expect(screen.getByTestId("agi-action-confirmation")).toHaveTextContent(
+      "必需",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "提交受控动作" }));
+
+    await waitFor(() => {
+      expect(mockResidentState.executeAgiAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "请判断下一步怎么办",
+          action_id: "request_resident_agi_judgement",
+          decision_type: "evidence.interface.selection",
+          evidence_refs: ["runtime/contracts/plan.md"],
+          context_refs: ["runtime/contexts/abc123"],
+        }),
+      );
+    });
+    expect(mockResidentState.createGoal).not.toHaveBeenCalled();
+    expect(screen.getAllByText("AGI 判断凭证").length).toBeGreaterThan(0);
+    expect(screen.getByText("decision-agi-judgement")).toBeInTheDocument();
+    expect(screen.getByText("resident_agi")).toBeInTheDocument();
+    expect(screen.getByText("AGI 判断回合")).toBeInTheDocument();
+    expect(screen.getAllByText("写入决策轨迹").length).toBeGreaterThan(0);
   });
 
   it("creates a goal from the AGI console", async () => {
@@ -1971,33 +2803,31 @@ describe("ResidentWorkspace", () => {
 
     expect(screen.getByText("决策审计面")).toBeInTheDocument();
     expect(
-      screen.getByText("source of truth: decision_trace.jsonl"),
+      screen.getByText("唯一事实源：decision_trace.jsonl"),
     ).toBeInTheDocument();
     expect(screen.getByText("resident.decision_event.v1")).toBeInTheDocument();
-    expect(screen.getAllByText("Runtime").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("运行时").length).toBeGreaterThan(0);
     expect(
-      screen.getByText("PM → Chief Engineer → Director"),
+      screen.getByText("项目经理 → 总工程师 → 执行官"),
     ).toBeInTheDocument();
     expect(screen.getByText("validation_passed")).toBeInTheDocument();
     expect(screen.getByText("bounded decomposition")).toBeInTheDocument();
-    expect(screen.getByText("score 91%")).toBeInTheDocument();
-    expect(screen.getByText("runtime contract: pass")).toBeInTheDocument();
+    expect(screen.getByText("分数 91%")).toBeInTheDocument();
+    expect(screen.getByText("运行时契约：通过")).toBeInTheDocument();
     expect(
-      screen.getByText("runtime: roles.runtime.execute_role_session"),
+      screen.getByText("运行时：roles.runtime.execute_role_session"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("agi profile: resident.agi_decision_profile.v1"),
+      screen.getByText("AGI 画像：resident.agi_decision_profile.v1"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("agi decision: goal.promotion.readiness"),
+      screen.getByText("AGI 决策：goal.promotion.readiness"),
     ).toBeInTheDocument();
+    expect(screen.getByText("证据接口：run_ledger.read")).toBeInTheDocument();
     expect(
-      screen.getByText("evidence interface: run_ledger.read"),
+      screen.getByText(/证据引用：runtime\/contracts\/plan.md/),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/evidence refs: runtime\/contracts\/plan.md/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/symbols: record_decision/)).toBeInTheDocument();
+    expect(screen.getByText(/符号：record_decision/)).toBeInTheDocument();
   });
 
   it("runs a governed AGI decision turn from the decisions tab", () => {
@@ -2024,22 +2854,22 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("chief_engineer → director → qa");
     expect(
       screen.getByTestId("resident-agi-decision-handoff"),
-    ).toHaveTextContent("AGI execute");
+    ).toHaveTextContent("AGI 执行");
     expect(
       screen.getByTestId("resident-agi-decision-handoff"),
-    ).toHaveTextContent("blocked: director_tool_execution_by_agi");
+    ).toHaveTextContent("已阻断：director_tool_execution_by_agi");
     expect(screen.getByTestId("resident-agi-handoff-inbox")).toHaveTextContent(
       "resident.agi_handoff_inbox.v1",
     );
     expect(screen.getByTestId("resident-agi-handoff-inbox")).toHaveTextContent(
-      "1 handoffs",
+      "1 个交接",
     );
     expect(screen.getByTestId("resident-agi-handoff-inbox")).toHaveTextContent(
       "chief_engineer → director → qa",
     );
     expect(
       screen.getByTestId("resident-agi-decision-turn-profile"),
-    ).toHaveTextContent("action:request_evidence");
+    ).toHaveTextContent("动作：请求证据");
     expect(screen.getByLabelText("AGI 决策类型")).toHaveValue(
       "evidence.interface.selection",
     );
@@ -2051,16 +2881,16 @@ describe("ResidentWorkspace", () => {
     ).toHaveTextContent("director.repair.advisory");
     expect(
       screen.getByTestId("resident-agi-selected-decision-meta"),
-    ).toHaveTextContent("risk:medium");
+    ).toHaveTextContent("风险：中");
     expect(
       screen.getByTestId("resident-agi-selected-decision-evidence"),
     ).toHaveTextContent("当前决策证据预检");
     expect(
       screen.getByTestId("resident-agi-selected-decision-evidence"),
-    ).toHaveTextContent("contract fallback");
+    ).toHaveTextContent("契约兜底");
     expect(
       screen.getByTestId("resident-agi-selected-decision-evidence"),
-    ).toHaveTextContent("stale runtime evidence: quality_gate_response");
+    ).toHaveTextContent("运行态证据已过期：quality_gate_response");
     expect(
       screen.getByTestId("resident-agi-selected-decision-evidence"),
     ).toHaveTextContent("director.deterministic_repair_strategy_catalog.read");
@@ -2073,7 +2903,9 @@ describe("ResidentWorkspace", () => {
     expect(
       screen.getByTestId("resident-agi-selected-decision-evidence"),
     ).toHaveTextContent("audit.diagnosis.read");
-    fireEvent.click(screen.getByTestId("resident-refresh-agi-evidence-interfaces"));
+    fireEvent.click(
+      screen.getByTestId("resident-refresh-agi-evidence-interfaces"),
+    );
     expect(mockResidentState.refreshAgiEvidenceInterfaces).toHaveBeenCalledWith(
       "director.repair.advisory",
     );
@@ -2201,10 +3033,10 @@ describe("ResidentWorkspace", () => {
         "resident-agi-llm-binding-status",
       );
       expect(bindingStatus).toHaveTextContent(
-        "Resident AGI 参与已开启但模型不可用",
+        "常驻 AGI 参与已开启但模型不可用",
       );
       expect(bindingStatus).toHaveTextContent(
-        "请在 LLM 视觉配置编辑器中为 Resident AGI 绑定模型。",
+        "请在 LLM 视觉配置编辑器中为常驻 AGI 绑定模型。",
       );
       expect(bindingStatus).toHaveTextContent("missing resident_agi binding");
     } finally {
@@ -2264,10 +3096,14 @@ describe("ResidentWorkspace", () => {
         />,
       );
 
-      const overlay = screen.getByTestId("resident-agi-repair-advisory-overlay");
-      expect(overlay).toHaveTextContent("ready");
-      expect(overlay).toHaveTextContent("eligible");
-      expect(overlay).toHaveTextContent("Rules");
+      fireEvent.click(screen.getByTestId("agi-toggle-advanced-audit"));
+
+      const overlay = screen.getByTestId(
+        "resident-agi-repair-advisory-overlay",
+      );
+      expect(overlay).toHaveTextContent("就绪");
+      expect(overlay).toHaveTextContent("可注入");
+      expect(overlay).toHaveTextContent("规则");
       expect(
         screen.getByTestId("resident-agi-repair-advisory-overlay-source"),
       ).toHaveTextContent("decision_trace:decision-o...tory");
@@ -2326,12 +3162,14 @@ describe("ResidentWorkspace", () => {
         />,
       );
 
+      fireEvent.click(screen.getByTestId("agi-toggle-advanced-audit"));
+
       expect(
         screen.getByTestId("resident-agi-repair-advisory-overlay-source"),
       ).toHaveTextContent("public_query:decision-q...rlay");
       expect(
         screen.getByTestId("resident-agi-repair-advisory-overlay"),
-      ).toHaveTextContent("ready");
+      ).toHaveTextContent("就绪");
     } finally {
       state.decisions = originalDecisions;
       state.lastAgiDecisionResult = originalLastResult;
@@ -2402,12 +3240,14 @@ describe("ResidentWorkspace", () => {
         />,
       );
 
+      fireEvent.click(screen.getByTestId("agi-toggle-advanced-audit"));
+
       expect(
         screen.getByTestId("resident-agi-repair-advisory-overlay-source"),
       ).toHaveTextContent("audit_pack_query:decision-a...rlay");
       expect(
         screen.getByTestId("resident-agi-repair-advisory-overlay"),
-      ).toHaveTextContent("Rules1");
+      ).toHaveTextContent("规则1");
     } finally {
       state.decisions = originalDecisions;
       state.lastAgiDecisionResult = originalLastResult;
@@ -2436,24 +3276,6 @@ describe("ResidentWorkspace", () => {
     expect(mockResidentState.saveIdentity).toHaveBeenCalledWith({
       name: "Polaris Resident",
       mission: "Keep main green",
-      resident_agi_participation: {
-        enabled: false,
-        scopes: [],
-        participation: {
-          final_request_audit: false,
-          quality_gate_response: false,
-          architecture_option_selection: false,
-          evidence_interface_selection: false,
-          goal_promotion: false,
-          decision_trace: false,
-          capability_surface: false,
-          decision_boundary: false,
-          director_repair_strategy_catalog: false,
-          director_repair_coverage: false,
-          director_repair_advisory_policy: false,
-        },
-        custom_scopes_allowed: true,
-      },
     });
   });
 
@@ -2494,19 +3316,16 @@ describe("ResidentWorkspace", () => {
         />,
       );
 
-      fireEvent.click(screen.getByTestId("resident-edit-identity"));
-      fireEvent.click(screen.getByTestId("resident-agi-participation-enabled"));
+      fireEvent.click(screen.getByTestId("agi-open-operator-settings"));
+      fireEvent.click(screen.getByTestId("agi-participation-master"));
       expect(screen.queryByText("goal_promotion_readiness")).toBeNull();
-      fireEvent.click(screen.getByLabelText(/Goal promotion readiness/));
       fireEvent.click(
-        screen.getByTestId("resident-agi-repair-advisory-participation"),
+        screen.getByTestId("agi-participation-quick-goal-promotion-readiness"),
       );
-      fireEvent.click(screen.getByTestId("resident-save-identity"));
+      fireEvent.click(screen.getByTestId("agi-participation-repair-advisory"));
+      fireEvent.click(screen.getByTestId("agi-save-participation"));
 
       expect(mockResidentState.saveIdentity).toHaveBeenCalledWith({
-        name: "Resident AGI Supervisor",
-        mission:
-          "Supervise unattended Polaris development runs with governed evidence.",
         resident_agi_participation: {
           enabled: true,
           scopes: [

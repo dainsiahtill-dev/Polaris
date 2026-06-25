@@ -33,6 +33,15 @@ def build_receipt(
     operation_ids = tuple(operation_id for patch in patches for operation_id in patch.operation_ids)
     before_hashes = {patch.path: patch.before_hash for patch in patches}
     after_hashes = {patch.path: patch.after_hash for patch in patches}
+    revalidation_failed = _revalidation_failed(revalidation_evidence)
+    authoritative = (
+        mode == "commit" and status == "applied" and revalidation_evidence is not None and not revalidation_failed
+    )
+    receipt_metadata = dict(metadata or {})
+    receipt_metadata.setdefault(
+        "requires_revalidation",
+        mode == "commit" and status == "applied" and revalidation_evidence is None,
+    )
     return RepairReceipt(
         receipt_id=stable_id("repair_receipt", plan.plan_id, status, mode, files_changed, operation_ids),
         plan_id=plan.plan_id,
@@ -40,7 +49,7 @@ def build_receipt(
         source_tool=plan.source_tool,
         status=status,
         mode=mode,
-        authoritative=mode == "commit" and status == "applied",
+        authoritative=authoritative,
         files_changed=files_changed,
         operation_ids=operation_ids,
         diagnostics=tuple(diagnostics or plan.diagnostics),
@@ -49,7 +58,7 @@ def build_receipt(
         round_number=round_number,
         revalidation_evidence=revalidation_evidence,
         advisor_notes=tuple(note for note in plan.advisor_notes if isinstance(note, RepairAdvisorNote)),
-        metadata=dict(metadata or {}),
+        metadata=receipt_metadata,
     )
 
 
@@ -59,14 +68,23 @@ def attach_revalidation_evidence(
 ) -> RepairReceipt:
     """Return a receipt carrying post-check evidence without changing advisory data."""
 
+    revalidation_failed = _revalidation_failed(evidence)
+    status = receipt.status
+    if status == "pending_revalidation":
+        status = "failed_revalidation" if revalidation_failed else "applied"
+    elif status == "applied" and revalidation_failed:
+        status = "failed_revalidation"
+    authoritative = receipt.mode == "commit" and status == "applied" and not revalidation_failed
+    metadata = dict(receipt.metadata)
+    metadata["requires_revalidation"] = False
     return RepairReceipt(
         receipt_id=receipt.receipt_id,
         plan_id=receipt.plan_id,
         rule_id=receipt.rule_id,
         source_tool=receipt.source_tool,
-        status=receipt.status,
+        status=status,
         mode=receipt.mode,
-        authoritative=receipt.authoritative,
+        authoritative=authoritative,
         files_changed=receipt.files_changed,
         operation_ids=receipt.operation_ids,
         diagnostics=receipt.diagnostics,
@@ -75,5 +93,15 @@ def attach_revalidation_evidence(
         round_number=evidence.round_number,
         revalidation_evidence=evidence,
         advisor_notes=receipt.advisor_notes,
-        metadata=receipt.metadata,
+        metadata=metadata,
     )
+
+
+def _revalidation_failed(evidence: RepairRevalidationEvidence | None) -> bool:
+    if evidence is None:
+        return False
+    if evidence.exit_code not in (None, 0):
+        return True
+    if evidence.errors_after > 0:
+        return True
+    return bool(evidence.residual_diagnostic_ids)

@@ -26,6 +26,32 @@ from polaris.cells.roles.adapters.public.service import get_supported_roles
 logger = logging.getLogger(__name__)
 
 
+def resident_agi_context_snapshot_refs(refs: list[Any]) -> list[str]:
+    """Return ContextOS snapshot refs accepted by Resident AGI evidence gates."""
+
+    normalized_refs: list[str] = []
+    seen: set[str] = set()
+    for value in refs:
+        token = str(value or "").strip().replace("\\", "/")
+        if not token:
+            continue
+        candidate = token
+        leaf = token.rstrip("/").rsplit("/", 1)[-1]
+        if leaf.endswith(".json"):
+            leaf = leaf[: -len(".json")]
+        is_context_path = token.startswith("runtime/contexts/")
+        is_hash_ref = len(leaf) == 24 and all(char in "0123456789abcdefABCDEF" for char in leaf)
+        if is_hash_ref:
+            candidate = leaf.lower()
+        elif not is_context_path:
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        normalized_refs.append(candidate)
+    return normalized_refs
+
+
 def resident_agi_role_registry_payload() -> dict[str, Any]:
     """Return the shared role-registry evidence required by Resident AGI."""
 
@@ -188,7 +214,7 @@ def resident_agi_evidence_gate(
 ) -> dict[str, Any]:
     """Recommend whether AGI should continue, block, or request evidence."""
 
-    context_refs = [item for item in audit_refs if item.startswith("runtime/contexts/")]
+    context_refs = resident_agi_context_snapshot_refs(list(audit_refs))
     ledger_available = bool(run_ledger_summary.get("available"))
     ledger_ok = bool(run_ledger_summary.get("ok"))
     ledger_failed = int(run_ledger_summary.get("failed") or 0)

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
-from dataclasses import replace
-from pathlib import Path
 from typing import Any, Mapping
 
 from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy import (
@@ -13,39 +11,43 @@ from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy impor
     FORBIDDEN_REPAIR_ADVISORY_METADATA_FIELDS,
     FORBIDDEN_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS,
 )
-from polaris.cells.director.runtime.internal.repair_kernel.composer import PatchComposer
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import (
+    CompositionResult,
     RepairAdvisorNote,
+    RepairPlan,
     RepairReceipt,
+    RepairRevalidationEvidence,
     sha256_text,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.diagnostics import normalize_artifact_quality_errors
-from polaris.cells.director.runtime.internal.repair_kernel.executor import TransactionalRepairExecutor
 from polaris.cells.director.runtime.internal.repair_kernel.legacy_bridge import (
     build_legacy_repair_kernel_summary as _build_legacy_repair_kernel_summary,
-)
-from polaris.cells.director.runtime.internal.repair_kernel.policy_gate import (
-    RepairPolicyContext,
-    RepairPolicyGate,
+    summarize_repair_revalidation_coverage,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.registry import (
     build_repair_coverage_report,
     default_repair_rule_registry,
     repair_language_slots,
 )
-from polaris.cells.director.runtime.internal.repair_kernel.schedule_catalog import post_execution_repair_schedule
+from polaris.cells.director.runtime.internal.repair_kernel.runtime_dispatch import (
+    RuntimeRepairPlanning,
+    plan_runtime_repair,
+    run_runtime_repair,
+    runtime_repair_bindings,
+    runtime_repair_source_tools,
+)
+from polaris.cells.director.runtime.internal.repair_kernel.schedule_catalog import (
+    DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS,
+    MaterializationQualityRepairScheduleStep,
+    PostExecutionRepairScheduleStep,
+    materialization_quality_repair_schedule,
+    post_execution_repair_schedule,
+    run_materialization_quality_repair_schedule_callbacks,
+    run_post_execution_repair_schedule_callbacks,
+)
 from polaris.cells.director.runtime.internal.repair_kernel.shadow import compare_legacy_and_kernel_repairs
 from polaris.cells.director.runtime.internal.repair_kernel.strategy_catalog import (
-    KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS,
-    DeterministicRepairStrategy,
-    describe_deterministic_repair_strategy,
-    deterministic_repair_source_tool_known,
-    deterministic_repair_strategy_catalog,
-    summarize_deterministic_repair_source_tools,
-)
-from polaris.cells.director.runtime.internal.repair_kernel.typescript_syntax import (
-    TYPESCRIPT_RETURN_OBJECT_COMMA_SOURCE_TOOL,
-    build_typescript_object_literal_comma_plan,
+    deterministic_repair_strategy_catalog as _deterministic_repair_strategy_catalog,
 )
 from polaris.cells.director.runtime.public.contracts import (
     AttachDirectorRepairRevalidationEvidenceV1,
@@ -59,6 +61,8 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairKernelSummaryProjectionResultV1,
     DirectorRepairLanguageSlotsResultV1,
     DirectorRepairLanguageSlotV1,
+    DirectorRepairMaterializationQualityScheduleResultV1,
+    DirectorRepairMaterializationQualityStepV1,
     DirectorRepairPatchSummaryV1,
     DirectorRepairPlanningResultV1,
     DirectorRepairPlanSummaryV1,
@@ -68,25 +72,31 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairRevalidationProjectionResultV1,
     DirectorRepairShadowComparisonResultV1,
     DirectorRepairStrategyCatalogResultV1,
+    PlanDirectorRepairCommandV1,
     ProjectDirectorRepairKernelSummaryV1,
     QueryDirectorRepairAdvisoryPolicyV1,
     QueryDirectorRepairAdvisoryValidationV1,
     QueryDirectorRepairCoverageV1,
     QueryDirectorRepairLanguageSlotsV1,
+    QueryDirectorRepairMaterializationQualityScheduleV1,
     QueryDirectorRepairPostExecutionScheduleV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
     RepairReceiptV1,
+    RunDirectorRepairCommandV1,
 )
 
 WriteFileFn = Callable[[str, str], Mapping[str, Any]]
+EditFileFn = Callable[[Any], Mapping[str, Any]]
+PostExecutionStepRunnerV1 = Callable[[DirectorRepairPostExecutionStepV1], Sequence[Mapping[str, Any]]]
+MaterializationQualityStepRunnerV1 = Callable[[DirectorRepairMaterializationQualityStepV1], Sequence[Mapping[str, Any]]]
 
 
 def _stable_json(payload: Mapping[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
 
-def _count_by_key(items: list[dict[str, str]], key: str) -> dict[str, int]:
+def _count_by_key(items: Sequence[Mapping[str, Any]], key: str) -> dict[str, int]:
     counts: dict[str, int] = {}
     for item in items:
         value = str(item.get(key) or "unknown").strip() or "unknown"
@@ -159,8 +169,28 @@ def query_director_repair_strategy_catalog(
     """Return the read-only Director deterministic repair strategy catalog."""
 
     request = query or QueryDirectorRepairStrategyCatalogV1()
-    all_items = deterministic_repair_strategy_catalog()
+    raw_items = _deterministic_repair_strategy_catalog()
+    runtime_source_tools = set(runtime_repair_source_tools())
+    all_items = [
+        {
+            **dict(item),
+            "implementation_status": "executable_runtime"
+            if str(item.get("source_tool") or "") in runtime_source_tools
+            else "legacy_strategy_host",
+            "execution_owner": "director.runtime"
+            if str(item.get("source_tool") or "") in runtime_source_tools
+            else "roles.adapters.legacy_strategy_host",
+            "bench_driven_migration_required": str(item.get("source_tool") or "") not in runtime_source_tools,
+        }
+        for item in raw_items
+    ]
     visible_items = all_items[: request.max_items] if request.include_items else []
+    runtime_bindings = [dict(item) for item in runtime_repair_bindings()]
+    legacy_strategy_host_source_tools = [
+        str(item.get("source_tool") or "")
+        for item in all_items
+        if item["implementation_status"] == "legacy_strategy_host"
+    ]
     summary: dict[str, Any] = {
         "total": len(all_items),
         "returned": len(visible_items),
@@ -168,6 +198,16 @@ def query_director_repair_strategy_catalog(
         "by_phase": _count_by_key(all_items, "phase"),
         "by_concern": _count_by_key(all_items, "concern"),
         "by_risk": _count_by_key(all_items, "risk_level"),
+        "implementation_status_counts": _count_by_key(all_items, "implementation_status"),
+        "executable_runtime_binding_count": len(runtime_bindings),
+        "executable_runtime_source_tools": sorted(runtime_source_tools),
+        "executable_runtime_bindings": runtime_bindings,
+        "executable_runtime_by_language": _count_by_key(runtime_bindings, "language"),
+        "legacy_strategy_host_count": len(legacy_strategy_host_source_tools),
+        "legacy_strategy_host_source_tools": legacy_strategy_host_source_tools,
+        "legacy_strategy_host_owner": "roles.adapters.internal.director.deterministic_repairs",
+        "migration_target_owner": "director.runtime.repair_kernel",
+        "bench_driven_migration_required": bool(legacy_strategy_host_source_tools),
     }
     return DirectorRepairStrategyCatalogResultV1(
         schema_version="director.deterministic_repair_strategy_catalog.v1",
@@ -234,22 +274,32 @@ def project_director_repair_revalidation_evidence(
         diagnostic.to_dict()
         for diagnostic in normalize_artifact_quality_errors(list(command.residual_artifact_quality_errors))
     ]
-    after_ids = {str(diagnostic.get("diagnostic_id") or "") for diagnostic in diagnostics_after}
+    after_signature_index = _repair_diagnostic_signature_index(diagnostics_after)
     errors_after = len(diagnostics_after)
     resolved_exit_code = int(command.exit_code) if command.exit_code is not None else (0 if errors_after == 0 else 1)
-    evidence_metadata = {
+    evidence_metadata_base = {
         "source": "director.runtime.repair_kernel.revalidation_projection",
         "residual_error_count": errors_after,
+        "diagnostic_match_strategy": "stable_signature",
+        "diagnostics_after_signatures": sorted(after_signature_index),
         **dict(command.metadata),
     }
     for receipt in receipts:
         diagnostics_before = [dict(diagnostic or {}) for diagnostic in receipt.get("diagnostics") or []]
-        before_ids = {str(diagnostic.get("diagnostic_id") or "") for diagnostic in diagnostics_before}
+        before_signature_index = _repair_diagnostic_signature_index(diagnostics_before)
         errors_before = len(diagnostics_before)
         if errors_before == 0:
             errors_before = int(dict(repair_kernel.get("coverage_report") or {}).get("total_diagnostics") or 0)
-        residual_ids = sorted(before_ids & after_ids)
-        resolved_ids = sorted(before_ids - after_ids)
+        residual_signatures = sorted(set(before_signature_index) & set(after_signature_index))
+        resolved_signatures = sorted(set(before_signature_index) - set(after_signature_index))
+        residual_ids = _diagnostic_ids_for_signatures(before_signature_index, residual_signatures)
+        resolved_ids = _diagnostic_ids_for_signatures(before_signature_index, resolved_signatures)
+        evidence_metadata = {
+            **evidence_metadata_base,
+            "diagnostics_before_signatures": sorted(before_signature_index),
+            "resolved_diagnostic_signatures": resolved_signatures,
+            "residual_diagnostic_signatures": residual_signatures,
+        }
         evidence = {
             "command": [str(item) for item in command.command if str(item or "").strip()],
             "exit_code": resolved_exit_code,
@@ -269,9 +319,14 @@ def project_director_repair_revalidation_evidence(
         receipt["errors_after"] = errors_after
         receipt["net_error_reduction"] = errors_before - errors_after
         receipt["round_number"] = evidence["round_number"]
+        revalidation_failed = resolved_exit_code not in (0, None)
         if receipt.get("status") == "pending_revalidation":
-            receipt["status"] = "applied"
-        receipt["authoritative"] = receipt.get("mode") == "commit" and receipt.get("status") != "failed"
+            receipt["status"] = "failed_revalidation" if revalidation_failed else "applied"
+        elif revalidation_failed and receipt.get("status") == "applied":
+            receipt["status"] = "failed_revalidation"
+        receipt["authoritative"] = (
+            receipt.get("mode") == "commit" and receipt.get("status") == "applied" and not revalidation_failed
+        )
         receipt_metadata = dict(receipt.get("metadata") or {})
         receipt_metadata["requires_revalidation"] = False
         receipt["metadata"] = receipt_metadata
@@ -279,19 +334,26 @@ def project_director_repair_revalidation_evidence(
 
     repair_kernel["receipts"] = receipts
     repair_kernel["receipt_context"] = _receipt_context_with_revalidation(repair_kernel, receipts)
-    pending_revalidation_count = sum(1 for receipt in receipts if receipt.get("status") == "pending_revalidation")
+    revalidation_coverage = summarize_repair_revalidation_coverage(receipts)
+    pending_revalidation_count = int(revalidation_coverage["pending_revalidation_count"])
     repair_kernel["authoritative"] = (
-        repair_kernel.get("mode") == "commit" and bool(receipts) and pending_revalidation_count == 0
+        repair_kernel.get("mode") == "commit"
+        and bool(receipts)
+        and int(revalidation_coverage["receipts_missing_revalidation"]) == 0
+        and int(revalidation_coverage["failed_revalidation_receipt_count"]) == 0
     )
-    repair_kernel["requires_revalidation"] = pending_revalidation_count > 0
+    repair_kernel["requires_revalidation"] = bool(revalidation_coverage["requires_revalidation"])
     repair_kernel["pending_revalidation_count"] = pending_revalidation_count
-    repair_kernel["receipts_with_revalidation"] = sum(1 for receipt in receipts if receipt.get("revalidation_evidence"))
+    repair_kernel["receipts_with_revalidation"] = int(revalidation_coverage["receipts_with_revalidation"])
+    repair_kernel["revalidation_coverage"] = revalidation_coverage
     repair_kernel["revalidation"] = {
         "command": [str(item) for item in command.command if str(item or "").strip()],
         "exit_code": resolved_exit_code,
         "errors_after": errors_after,
         "residual_diagnostic_count": errors_after,
+        "diagnostics_after_signatures": sorted(after_signature_index),
         "post_check_evidence_attached": True,
+        "coverage": revalidation_coverage,
     }
     if nested:
         updated_summary["repair_kernel"] = repair_kernel
@@ -303,6 +365,41 @@ def project_director_repair_revalidation_evidence(
         access="read_only",
         summary=updated_summary,
     )
+
+
+def _repair_diagnostic_signature_index(diagnostics: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    indexed: dict[str, dict[str, Any]] = {}
+    for diagnostic in diagnostics:
+        diagnostic_dict = dict(diagnostic or {})
+        indexed.setdefault(_repair_diagnostic_signature(diagnostic_dict), diagnostic_dict)
+    return indexed
+
+
+def _repair_diagnostic_signature(diagnostic: Mapping[str, Any]) -> str:
+    payload = {
+        "source": str(diagnostic.get("source") or "unknown").strip() or "unknown",
+        "code": str(diagnostic.get("code") or "unknown").strip() or "unknown",
+        "severity": str(diagnostic.get("severity") or "error").strip() or "error",
+        "path": str(diagnostic.get("path") or "").replace("\\", "/").strip(),
+        "line": diagnostic.get("line"),
+        "column": diagnostic.get("column"),
+        "message": " ".join(str(diagnostic.get("message") or "").split()),
+    }
+    return (
+        f"diag_sig_{sha256_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')))[:24]}"
+    )
+
+
+def _diagnostic_ids_for_signatures(
+    signature_index: Mapping[str, Mapping[str, Any]],
+    signatures: Sequence[str],
+) -> list[str]:
+    diagnostic_ids: list[str] = []
+    for signature in signatures:
+        diagnostic_id = str(dict(signature_index.get(signature) or {}).get("diagnostic_id") or "").strip()
+        if diagnostic_id:
+            diagnostic_ids.append(diagnostic_id)
+    return sorted(diagnostic_ids)
 
 
 def query_director_repair_advisory_policy(
@@ -355,11 +452,7 @@ def validate_director_repair_advisory(
             access="read_only",
             ok=False,
             errors=(str(exc),),
-            summary={
-                "advisory_only": True,
-                "accepted_suggested_rule_count": 0,
-                "director_runtime_remains_authoritative": True,
-            },
+            summary=_repair_advisory_validation_summary(accepted_suggested_rule_count=0),
         )
     normalized = advisory.to_dict()
     return DirectorRepairAdvisoryValidationResultV1(
@@ -368,12 +461,23 @@ def validate_director_repair_advisory(
         access="read_only",
         ok=True,
         normalized_advisory=normalized,
-        summary={
-            "advisory_only": True,
-            "accepted_suggested_rule_count": len(normalized.get("suggested_rules", [])),
-            "director_runtime_remains_authoritative": True,
-        },
+        summary=_repair_advisory_validation_summary(
+            accepted_suggested_rule_count=len(normalized.get("suggested_rules", [])),
+        ),
     )
+
+
+def _repair_advisory_validation_summary(*, accepted_suggested_rule_count: int) -> dict[str, Any]:
+    return {
+        "advisory_only": True,
+        "accepted_suggested_rule_count": max(0, int(accepted_suggested_rule_count)),
+        "director_runtime_remains_authoritative": True,
+        "agi_execution_authority": False,
+        "writes_allowed": False,
+        "registration_allowed": False,
+        "authoritative_receipts_allowed": False,
+        "suggested_rules_are_advisory_only": True,
+    }
 
 
 def compare_director_repair_shadow_run(
@@ -390,9 +494,14 @@ def compare_director_repair_shadow_run(
     metadata = {
         **dict(payload["metadata"]),
         "cutover_readiness": {
+            "comparison_mode": command.comparison_mode,
             "hashes_matched": readiness["hashes_matched"],
             "revalidation_evidence_complete": readiness["revalidation_evidence_complete"],
+            "revalidation_evidence_passed": readiness["revalidation_evidence_passed"],
+            "authoritative_receipts": readiness["authoritative_receipts"],
+            "revalidation_coverage": readiness["revalidation_coverage"],
             "independent_shadow_required": True,
+            "independent_shadow_satisfied": readiness["independent_shadow_satisfied"],
         },
     }
     return DirectorRepairShadowComparisonResultV1(
@@ -408,6 +517,9 @@ def compare_director_repair_shadow_run(
         extra_paths_in_kernel=tuple(payload["extra_paths_in_kernel"]),
         missing_source_tools_in_kernel=tuple(payload["missing_source_tools_in_kernel"]),
         extra_source_tools_in_kernel=tuple(payload["extra_source_tools_in_kernel"]),
+        comparison_mode=command.comparison_mode,
+        independent_shadow_required=True,
+        independent_shadow_satisfied=readiness["independent_shadow_satisfied"],
         cutover_ready=readiness["cutover_ready"],
         cutover_blockers=tuple(readiness["cutover_blockers"]),
         metadata=metadata,
@@ -416,6 +528,9 @@ def compare_director_repair_shadow_run(
 
 def _shadow_cutover_readiness(command: CompareDirectorRepairShadowRunV1, *, matched: bool) -> dict[str, Any]:
     blockers: list[str] = []
+    independent_shadow_satisfied = command.comparison_mode == "independent_shadow_run"
+    if not independent_shadow_satisfied:
+        blockers.append("independent_shadow_required")
     if not matched:
         blockers.append("scope_mismatch")
     legacy_hashes = _legacy_shadow_hashes(command.legacy_tool_results)
@@ -430,13 +545,32 @@ def _shadow_cutover_readiness(command: CompareDirectorRepairShadowRunV1, *, matc
     revalidation_complete = bool(command.kernel_receipts) and all(
         bool(receipt.revalidation_evidence) for receipt in command.kernel_receipts
     )
+    revalidation_coverage = summarize_repair_revalidation_coverage(
+        tuple(receipt.to_dict() for receipt in command.kernel_receipts)
+    )
+    revalidation_passed = (
+        bool(command.kernel_receipts)
+        and bool(revalidation_coverage["post_check_evidence_complete"])
+        and int(revalidation_coverage["failed_revalidation_receipt_count"]) == 0
+    )
+    authoritative_receipts = bool(command.kernel_receipts) and all(
+        receipt.authoritative and receipt.status == "applied" for receipt in command.kernel_receipts
+    )
     if not revalidation_complete:
         blockers.append("missing_revalidation_evidence")
+    if revalidation_complete and not revalidation_passed:
+        blockers.append("failed_revalidation_evidence")
+    if not authoritative_receipts:
+        blockers.append("non_authoritative_kernel_receipt")
     return {
         "cutover_ready": not blockers,
         "cutover_blockers": sorted(set(blockers)),
         "hashes_matched": hashes_matched,
         "revalidation_evidence_complete": revalidation_complete,
+        "revalidation_evidence_passed": revalidation_passed,
+        "authoritative_receipts": authoritative_receipts,
+        "independent_shadow_satisfied": independent_shadow_satisfied,
+        "revalidation_coverage": revalidation_coverage,
     }
 
 
@@ -510,14 +644,41 @@ def query_director_repair_language_slots(
 
     request = query or QueryDirectorRepairLanguageSlotsV1()
     slots = repair_language_slots()
+    slot_languages = {slot.language for slot in slots}
+    rules = default_repair_rule_registry().rules()
+    authoritative_source_tools_by_language: dict[str, list[str]] = {}
+    for rule in rules:
+        if rule.language not in slot_languages:
+            continue
+        authoritative_source_tools_by_language.setdefault(rule.language, []).append(rule.source_tool)
+    runtime_source_tools_by_language: dict[str, list[str]] = {}
+    for binding in runtime_repair_bindings():
+        language = str(binding["language"])
+        if language not in slot_languages:
+            continue
+        runtime_source_tools_by_language.setdefault(language, []).append(str(binding["source_tool"]))
+
+    def _implementation_status(language: str) -> str:
+        if runtime_source_tools_by_language.get(language):
+            return "executable_runtime"
+        if authoritative_source_tools_by_language.get(language):
+            return "metadata_rule_registered"
+        return "reserved_only"
+
     items = (
         tuple(
             DirectorRepairLanguageSlotV1(
                 language=slot.language,
                 aliases=slot.aliases,
                 file_extensions=slot.file_extensions,
+                file_names=slot.file_names,
                 diagnostic_sources=slot.diagnostic_sources,
                 preferred_archetypes=tuple(archetype.value for archetype in slot.preferred_archetypes),
+                repairer_module=slot.repairer_module,
+                implementation_status=_implementation_status(slot.language),
+                registration_policy=slot.registration_policy,
+                authoritative_source_tools=tuple(sorted(authoritative_source_tools_by_language.get(slot.language, ()))),
+                executable_runtime_source_tools=tuple(sorted(runtime_source_tools_by_language.get(slot.language, ()))),
                 notes=slot.notes,
             )
             for slot in slots
@@ -527,8 +688,16 @@ def query_director_repair_language_slots(
     )
     archetypes = sorted({archetype.value for slot in slots for archetype in slot.preferred_archetypes})
     extensions = sorted({extension for slot in slots for extension in slot.file_extensions})
-    rule_languages = sorted({rule.language for rule in default_repair_rule_registry().rules()})
+    file_names = sorted({file_name for slot in slots for file_name in slot.file_names})
+    rule_languages = sorted(authoritative_source_tools_by_language)
+    runtime_languages = sorted(runtime_source_tools_by_language)
     reserved_only_languages = sorted({slot.language for slot in slots} - set(rule_languages))
+    implementation_status_by_language = {slot.language: _implementation_status(slot.language) for slot in slots}
+    implementation_status_counts = _count_by_key(
+        [{"implementation_status": status} for status in implementation_status_by_language.values()],
+        "implementation_status",
+    )
+    repairer_modules = {slot.language: slot.repairer_module for slot in slots}
     return DirectorRepairLanguageSlotsResultV1(
         schema_version="director.repair_language_slots.v1",
         source="director.runtime.repair_kernel.registry",
@@ -539,11 +708,20 @@ def query_director_repair_language_slots(
             "extension_count": len(extensions),
             "languages": [slot.language for slot in slots],
             "file_extensions": extensions,
+            "file_names": file_names,
             "preferred_archetypes": archetypes,
             "authoritative_rule_languages": rule_languages,
             "authoritative_rule_language_count": len(rule_languages),
+            "executable_runtime_languages": runtime_languages,
+            "executable_runtime_language_count": len(runtime_languages),
             "reserved_only_languages": reserved_only_languages,
             "reserved_only_language_count": len(reserved_only_languages),
+            "implementation_status_by_language": implementation_status_by_language,
+            "implementation_status_counts": implementation_status_counts,
+            "repairer_modules": repairer_modules,
+            "reserved_only_repairer_modules": {
+                language: repairer_modules[language] for language in reserved_only_languages
+            },
             "bench_driven_rule_addition_required": True,
         },
     )
@@ -556,17 +734,7 @@ def query_director_repair_post_execution_schedule(
 
     request = query or QueryDirectorRepairPostExecutionScheduleV1()
     internal_steps = post_execution_repair_schedule()
-    ordered_steps = tuple(
-        DirectorRepairPostExecutionStepV1(
-            step_id=step.step_id,
-            language=step.language,
-            phase=step.phase,
-            priority=step.priority,
-            source_tool=step.source_tool,
-            depends_on=step.depends_on,
-        )
-        for step in internal_steps
-    )
+    ordered_steps = tuple(_public_post_execution_step(step) for step in internal_steps)
     languages = sorted({step.language for step in ordered_steps})
     phases = sorted({step.phase for step in ordered_steps})
     priorities = sorted({step.priority for step in ordered_steps})
@@ -586,7 +754,104 @@ def query_director_repair_post_execution_schedule(
             "runner_binding_owner": "roles.adapters",
             "legacy_callback_bridge": True,
             "runtime_schedule_authoritative": True,
+            "default_max_rounds": DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS,
+            "convergence_loop_owned_by": "director.runtime.repair_kernel.scheduler",
+            "cycle_breaker": "repeated_round_fingerprint",
         },
+    )
+
+
+def run_director_post_execution_repair_schedule(
+    *,
+    runner_step_ids: Sequence[str],
+    runner: PostExecutionStepRunnerV1,
+    max_rounds: int = DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS,
+) -> tuple[list[dict[str, Any]], tuple[DirectorRepairPostExecutionStepV1, ...]]:
+    """Run migration callbacks through the runtime-owned post-execution schedule."""
+
+    run = run_post_execution_repair_schedule_callbacks(
+        runner_step_ids=runner_step_ids,
+        runner=lambda step: runner(_public_post_execution_step(step)),
+        max_rounds=max_rounds,
+    )
+    return [dict(item) for item in run.tool_results], tuple(
+        _public_post_execution_step(step) for step in run.ordered_steps
+    )
+
+
+def query_director_repair_materialization_quality_schedule(
+    query: QueryDirectorRepairMaterializationQualityScheduleV1 | None = None,
+) -> DirectorRepairMaterializationQualityScheduleResultV1:
+    """Return the runtime-owned materialization-quality deterministic repair schedule."""
+
+    request = query or QueryDirectorRepairMaterializationQualityScheduleV1()
+    internal_steps = materialization_quality_repair_schedule()
+    ordered_steps = tuple(_public_materialization_quality_step(step) for step in internal_steps)
+    languages = sorted({step.language for step in ordered_steps})
+    phases = sorted({step.phase for step in ordered_steps})
+    priorities = sorted({step.priority for step in ordered_steps})
+    return DirectorRepairMaterializationQualityScheduleResultV1(
+        schema_version="director.repair_materialization_quality_schedule.v1",
+        source="director.runtime.repair_kernel.scheduler",
+        access="read_only",
+        items=ordered_steps if request.include_items else (),
+        summary={
+            "step_count": len(ordered_steps),
+            "languages": languages,
+            "phases": phases,
+            "priorities": priorities,
+            "ordered_step_ids": [step.step_id for step in ordered_steps],
+            "source_tools": [step.source_tool for step in ordered_steps],
+            "target_scheduler": "director.runtime.repair_kernel.scheduler",
+            "runner_binding_owner": "roles.adapters",
+            "legacy_callback_bridge": True,
+            "runtime_schedule_authoritative": True,
+            "default_max_rounds": DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS,
+            "convergence_loop_owned_by": "director.runtime.repair_kernel.scheduler",
+            "cycle_breaker": "repeated_round_fingerprint",
+        },
+    )
+
+
+def run_director_materialization_quality_repair_schedule(
+    *,
+    runner_step_ids: Sequence[str],
+    runner: MaterializationQualityStepRunnerV1,
+    max_rounds: int = DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS,
+) -> tuple[list[dict[str, Any]], tuple[DirectorRepairMaterializationQualityStepV1, ...]]:
+    """Run materialization-quality callbacks through the runtime-owned schedule."""
+
+    run = run_materialization_quality_repair_schedule_callbacks(
+        runner_step_ids=runner_step_ids,
+        runner=lambda step: runner(_public_materialization_quality_step(step)),
+        max_rounds=max_rounds,
+    )
+    return [dict(item) for item in run.tool_results], tuple(
+        _public_materialization_quality_step(step) for step in run.ordered_steps
+    )
+
+
+def _public_post_execution_step(step: PostExecutionRepairScheduleStep) -> DirectorRepairPostExecutionStepV1:
+    return DirectorRepairPostExecutionStepV1(
+        step_id=step.step_id,
+        language=step.language,
+        phase=step.phase,
+        priority=step.priority,
+        source_tool=step.source_tool,
+        depends_on=step.depends_on,
+    )
+
+
+def _public_materialization_quality_step(
+    step: MaterializationQualityRepairScheduleStep,
+) -> DirectorRepairMaterializationQualityStepV1:
+    return DirectorRepairMaterializationQualityStepV1(
+        step_id=step.step_id,
+        language=step.language,
+        phase=step.phase,
+        priority=step.priority,
+        source_tool=step.source_tool,
+        depends_on=step.depends_on,
     )
 
 
@@ -629,166 +894,173 @@ def project_director_repair_kernel_summary(
     )
 
 
-def plan_director_typescript_object_literal_comma_repair(
-    *,
-    base_files: Mapping[str, str],
-    artifact_quality_errors: Sequence[str],
-    advisor_notes: Sequence[RepairAdvisoryV1] | None = None,
-    mode: str = "commit",
-) -> DirectorRepairPlanningResultV1:
-    """Plan TS1005 object-literal comma repairs through the public runtime surface."""
+def plan_director_repair(command: PlanDirectorRepairCommandV1) -> DirectorRepairPlanningResultV1:
+    """Plan a deterministic repair through the generic public runtime surface."""
 
-    normalized_base = {
-        str(path or "").strip().replace("\\", "/"): str(content or "")
-        for path, content in dict(base_files or {}).items()
-        if str(path or "").strip()
-    }
-    diagnostics = normalize_artifact_quality_errors(list(artifact_quality_errors or ()))
-    public_advisor_notes = tuple(advisor_notes or ())
-    plan = build_typescript_object_literal_comma_plan(
-        base_files=normalized_base,
-        diagnostics=diagnostics,
-        mode=mode,
+    public_advisor_notes = tuple(command.advisor_notes or ())
+    planning = plan_runtime_repair(
+        source_tool=command.source_tool,
+        base_files=command.base_files,
+        artifact_quality_errors=_artifact_quality_errors_from_command(command),
+        advisor_notes=_to_internal_advisor_notes(public_advisor_notes),
+        mode=command.mode,
     )
-    if plan is None:
+    return _to_public_repair_planning_result(planning, public_advisor_notes=public_advisor_notes)
+
+
+def run_director_repair(
+    command: RunDirectorRepairCommandV1,
+    *,
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+) -> DirectorRepairResultV1:
+    """Run a deterministic repair through the generic public runtime surface."""
+
+    public_advisor_notes = tuple(command.advisor_notes or ())
+    internal_run = run_runtime_repair(
+        source_tool=command.source_tool,
+        workspace=command.workspace,
+        base_files=command.base_files,
+        artifact_quality_errors=_artifact_quality_errors_from_command(command),
+        writer=writer,
+        editor=editor,
+        allowed_paths=command.allowed_paths,
+        advisor_notes=_to_internal_advisor_notes(public_advisor_notes),
+        mode=command.mode,
+    )
+    planning_result = _to_public_repair_planning_result(
+        internal_run.planning,
+        advisor_notes=public_advisor_notes,
+    )
+    metadata: dict[str, Any] = {"planning": planning_result.to_dict()}
+    if internal_run.planning.error_code or internal_run.planning.error_message:
+        metadata["planning_error"] = {
+            "error_code": internal_run.planning.error_code,
+            "error_message": internal_run.planning.error_message,
+        }
+    if internal_run.plan_decision is not None:
+        metadata["plan_policy"] = internal_run.plan_decision.to_dict()
+    if internal_run.composition_decision is not None:
+        metadata["composition_policy"] = internal_run.composition_decision.to_dict()
+    if internal_run.execution_result is not None:
+        metadata["execution_error"] = internal_run.execution_result.error
+        metadata["rolled_back"] = internal_run.execution_result.rolled_back
+
+    if internal_run.execution_result is None:
+        return DirectorRepairResultV1(
+            ok=False,
+            error_code=internal_run.error_code,
+            error_message=internal_run.error_message,
+            metadata=metadata,
+        )
+
+    receipt = _to_public_repair_receipt(internal_run.execution_result.receipt)
+    return DirectorRepairResultV1(
+        ok=internal_run.execution_result.ok,
+        receipts=(receipt,),
+        error_code=internal_run.error_code,
+        error_message=internal_run.error_message,
+        metadata=metadata,
+    )
+
+
+def _to_public_repair_planning_result(
+    planning: RuntimeRepairPlanning,
+    *,
+    advisor_notes: Sequence[RepairAdvisoryV1] | None = None,
+    public_advisor_notes: Sequence[RepairAdvisoryV1] | None = None,
+) -> DirectorRepairPlanningResultV1:
+    notes = tuple(public_advisor_notes if public_advisor_notes is not None else advisor_notes or ())
+    if planning.plan is None:
         return DirectorRepairPlanningResultV1(
             ok=False,
             planned=False,
-            source_tool=TYPESCRIPT_RETURN_OBJECT_COMMA_SOURCE_TOOL,
-            diagnostic_count=len(diagnostics),
-            advisor_notes=public_advisor_notes,
+            source_tool=planning.source_tool,
+            diagnostic_count=len(planning.diagnostics),
+            advisor_notes=notes,
+            error_code=planning.error_code,
+            error_message=planning.error_message,
         )
 
-    composition = PatchComposer().compose(normalized_base, plan.operations)
     return DirectorRepairPlanningResultV1(
-        ok=composition.ok,
+        ok=bool(planning.composition and planning.composition.ok),
         planned=True,
-        source_tool=plan.source_tool,
-        diagnostic_count=len(plan.diagnostics),
-        plan_summary=DirectorRepairPlanSummaryV1(
-            plan_id=plan.plan_id,
-            rule_id=plan.rule_id,
-            source_tool=plan.source_tool,
-            mode=plan.mode,
-            risk_level=plan.risk_level,
-            diagnostic_count=len(plan.diagnostics),
-            operation_count=len(plan.operations),
-            advisor_note_count=len(public_advisor_notes),
-        ),
-        composition_summary=DirectorRepairCompositionSummaryV1(
-            ok=composition.ok,
-            patches=tuple(
-                DirectorRepairPatchSummaryV1(
-                    path=patch.path,
-                    content_after=patch.content_after,
-                    before_hash=patch.before_hash,
-                    after_hash=patch.after_hash,
-                    changed=patch.before_hash != patch.after_hash,
-                    operation_ids=patch.operation_ids,
-                )
-                for patch in composition.patches
-            ),
-            issues=tuple(
-                DirectorRepairCompositionIssueV1(
-                    code=issue.code,
-                    message=issue.message,
-                    path=issue.path,
-                    operation_ids=issue.operation_ids,
-                )
-                for issue in composition.issues
-            ),
-        ),
-        advisor_notes=public_advisor_notes,
+        source_tool=planning.plan.source_tool,
+        diagnostic_count=len(planning.plan.diagnostics),
+        plan_summary=_to_public_repair_plan_summary(planning.plan, advisor_note_count=len(notes)),
+        composition_summary=_to_public_repair_composition_summary(planning.composition),
+        advisor_notes=notes,
     )
 
 
-def run_director_typescript_object_literal_comma_repair(
+def _to_public_repair_plan_summary(
+    plan: RepairPlan,
     *,
-    workspace: str | Path,
-    base_files: Mapping[str, str],
-    artifact_quality_errors: Sequence[str],
-    writer: WriteFileFn,
-    allowed_paths: Sequence[str] | None = None,
-    advisor_notes: Sequence[RepairAdvisoryV1] | None = None,
-    mode: str = "commit",
-) -> DirectorRepairResultV1:
-    """Run TS1005 object-literal comma repair through Plan→Compose→Policy→Execute→Receipt."""
-
-    normalized_base = _normalize_base_files(base_files)
-    diagnostics = normalize_artifact_quality_errors(list(artifact_quality_errors or ()))
-    public_advisor_notes = tuple(advisor_notes or ())
-    plan = build_typescript_object_literal_comma_plan(
-        base_files=normalized_base,
-        diagnostics=diagnostics,
-        mode=mode,
-    )
-    planning_result = plan_director_typescript_object_literal_comma_repair(
-        base_files=normalized_base,
-        artifact_quality_errors=artifact_quality_errors,
-        advisor_notes=public_advisor_notes,
-        mode=mode,
-    )
-    if plan is None:
-        return DirectorRepairResultV1(
-            ok=False,
-            error_code="repair_not_planned",
-            error_message="No matching TypeScript object-literal comma repair plan.",
-            metadata={"planning": planning_result.to_dict()},
-        )
-    internal_advisor_notes = _to_internal_advisor_notes(public_advisor_notes)
-    if internal_advisor_notes:
-        plan = replace(plan, advisor_notes=internal_advisor_notes)
-
-    composer = PatchComposer()
-    composition = composer.compose(normalized_base, plan.operations)
-    policy = RepairPolicyGate()
-    policy_context = RepairPolicyContext(
-        allowed_paths=tuple(
-            str(path or "").strip().replace("\\", "/") for path in (allowed_paths or normalized_base.keys())
-        )
-    )
-    plan_decision = policy.evaluate_plan(plan, policy_context)
-    composition_decision = policy.evaluate_composition(plan, composition)
-    if not plan_decision.allowed or not composition_decision.allowed:
-        return DirectorRepairResultV1(
-            ok=False,
-            error_code="repair_policy_denied",
-            error_message="Director Runtime repair policy denied the plan or composition.",
-            metadata={
-                "planning": planning_result.to_dict(),
-                "plan_policy": plan_decision.to_dict(),
-                "composition_policy": composition_decision.to_dict(),
-            },
-        )
-
-    execution_result = TransactionalRepairExecutor().execute(
-        workspace=Path(str(workspace)).resolve(),
-        plan=plan,
-        composition=composition,
-        writer=writer,
-    )
-    receipt = _to_public_repair_receipt(execution_result.receipt)
-    return DirectorRepairResultV1(
-        ok=execution_result.ok,
-        receipts=(receipt,),
-        error_code=None if execution_result.ok else "repair_execution_failed",
-        error_message=None if execution_result.ok else execution_result.error,
-        metadata={
-            "planning": planning_result.to_dict(),
-            "plan_policy": plan_decision.to_dict(),
-            "composition_policy": composition_decision.to_dict(),
-            "execution_error": execution_result.error,
-            "rolled_back": execution_result.rolled_back,
-        },
+    advisor_note_count: int = 0,
+) -> DirectorRepairPlanSummaryV1:
+    return DirectorRepairPlanSummaryV1(
+        plan_id=plan.plan_id,
+        rule_id=plan.rule_id,
+        source_tool=plan.source_tool,
+        mode=plan.mode,
+        risk_level=plan.risk_level,
+        diagnostic_count=len(plan.diagnostics),
+        operation_count=len(plan.operations),
+        advisor_note_count=advisor_note_count,
     )
 
 
-def _normalize_base_files(base_files: Mapping[str, str]) -> dict[str, str]:
-    return {
-        str(path or "").strip().replace("\\", "/"): str(content or "")
-        for path, content in dict(base_files or {}).items()
-        if str(path or "").strip()
-    }
+def _to_public_repair_composition_summary(
+    composition: CompositionResult | None,
+) -> DirectorRepairCompositionSummaryV1:
+    if composition is None:
+        return DirectorRepairCompositionSummaryV1(ok=False)
+    return DirectorRepairCompositionSummaryV1(
+        ok=composition.ok,
+        patches=tuple(
+            DirectorRepairPatchSummaryV1(
+                path=patch.path,
+                content_after=patch.content_after,
+                before_hash=patch.before_hash,
+                after_hash=patch.after_hash,
+                changed=patch.before_hash != patch.after_hash,
+                operation_ids=patch.operation_ids,
+            )
+            for patch in composition.patches
+        ),
+        issues=tuple(
+            DirectorRepairCompositionIssueV1(
+                code=issue.code,
+                message=issue.message,
+                path=issue.path,
+                operation_ids=issue.operation_ids,
+            )
+            for issue in composition.issues
+        ),
+    )
+
+
+def _artifact_quality_errors_from_command(
+    command: PlanDirectorRepairCommandV1 | RunDirectorRepairCommandV1,
+) -> tuple[str, ...]:
+    artifact_errors = tuple(str(item) for item in command.artifact_quality_errors if str(item or "").strip())
+    if artifact_errors:
+        return artifact_errors
+    return tuple(_artifact_quality_error_from_diagnostic(diagnostic) for diagnostic in command.diagnostics)
+
+
+def _artifact_quality_error_from_diagnostic(diagnostic: Any) -> str:
+    raw = str(getattr(diagnostic, "metadata", {}).get("raw") or "").strip()
+    if raw:
+        return raw
+    path = str(getattr(diagnostic, "path", "") or "").strip()
+    code = str(getattr(diagnostic, "code", "") or "").strip()
+    message = str(getattr(diagnostic, "message", "") or "").strip()
+    if path and code:
+        return f"{path}: error {code}: {message}"
+    if code:
+        return f"error {code}: {message}"
+    return message
 
 
 def _public_receipt_to_internal(receipt: RepairReceiptV1) -> RepairReceipt:
@@ -804,8 +1076,45 @@ def _public_receipt_to_internal(receipt: RepairReceiptV1) -> RepairReceipt:
         before_hashes=receipt.before_hashes,
         after_hashes=receipt.after_hashes,
         round_number=receipt.round_number,
+        revalidation_evidence=_public_revalidation_evidence_to_internal(receipt.revalidation_evidence),
         metadata=receipt.metadata,
     )
+
+
+def _public_revalidation_evidence_to_internal(evidence: Mapping[str, Any]) -> RepairRevalidationEvidence | None:
+    payload = dict(evidence or {})
+    if not payload:
+        return None
+    command = payload.get("command")
+    return RepairRevalidationEvidence(
+        command=tuple(str(item) for item in command) if isinstance(command, list | tuple) else (),
+        exit_code=_optional_int(payload.get("exit_code")),
+        errors_before_count=_optional_int(payload.get("errors_before")),
+        errors_after_count=_optional_int(payload.get("errors_after")),
+        resolved_diagnostic_ids=tuple(str(item) for item in payload.get("resolved_diagnostic_ids") or ()),
+        residual_diagnostic_ids=tuple(str(item) for item in payload.get("residual_diagnostic_ids") or ()),
+        round_number=_optional_int(payload.get("round_number")),
+        raw_output_ref=str(payload.get("raw_output_ref") or "").strip() or None,
+        metadata=dict(payload.get("metadata") or {}),
+    )
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
 
 
 def _to_internal_advisor_notes(advisor_notes: Sequence[RepairAdvisoryV1]) -> tuple[RepairAdvisorNote, ...]:
@@ -845,6 +1154,8 @@ def _to_public_repair_receipt(receipt: RepairReceipt) -> RepairReceiptV1:
         errors_before=receipt.errors_before,
         errors_after=receipt.errors_after,
         net_error_reduction=receipt.net_error_reduction,
+        authority_hash=receipt.authority_hash(),
+        projection_hash=receipt.projection_hash(),
         revalidation_evidence=receipt.revalidation_evidence.to_dict()
         if receipt.revalidation_evidence is not None
         else {},
@@ -854,10 +1165,10 @@ def _to_public_repair_receipt(receipt: RepairReceipt) -> RepairReceiptV1:
 
 
 __all__ = [
-    "KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS",
     "AttachDirectorRepairRevalidationEvidenceV1",
-    "DeterministicRepairStrategy",
     "DirectorRepairKernelSummaryProjectionResultV1",
+    "DirectorRepairMaterializationQualityScheduleResultV1",
+    "DirectorRepairMaterializationQualityStepV1",
     "DirectorRepairPostExecutionScheduleResultV1",
     "DirectorRepairPostExecutionStepV1",
     "DirectorRepairRevalidationProjectionResultV1",
@@ -865,18 +1176,17 @@ __all__ = [
     "attach_director_repair_revalidation_evidence",
     "build_director_repair_kernel_summary",
     "compare_director_repair_shadow_run",
-    "describe_deterministic_repair_strategy",
-    "deterministic_repair_source_tool_known",
-    "deterministic_repair_strategy_catalog",
-    "plan_director_typescript_object_literal_comma_repair",
+    "plan_director_repair",
     "project_director_repair_kernel_summary",
     "project_director_repair_revalidation_evidence",
     "query_director_repair_advisory_policy",
     "query_director_repair_coverage",
     "query_director_repair_language_slots",
+    "query_director_repair_materialization_quality_schedule",
     "query_director_repair_post_execution_schedule",
     "query_director_repair_strategy_catalog",
-    "run_director_typescript_object_literal_comma_repair",
-    "summarize_deterministic_repair_source_tools",
+    "run_director_materialization_quality_repair_schedule",
+    "run_director_post_execution_repair_schedule",
+    "run_director_repair",
     "validate_director_repair_advisory",
 ]

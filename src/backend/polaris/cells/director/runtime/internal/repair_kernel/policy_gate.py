@@ -91,6 +91,8 @@ def _contains_forbidden_pattern(text: str) -> bool:
 
 def _normalize_prefix(path: str) -> str:
     normalized = str(path or "").strip().replace("\\", "/").strip("/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
     if not normalized or normalized == "." or normalized.startswith("../") or "/../" in normalized:
         return ""
     return normalized

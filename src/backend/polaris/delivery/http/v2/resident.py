@@ -9,12 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from polaris.cells.resident.autonomy.public.service import (
     ApproveResidentGoalCommandV1,
     CreateResidentGoalCommandV1,
+    ExecuteResidentAgiTacticalActionCommandV1,
     ExtractResidentSkillsCommandV1,
     MaterializeResidentGoalCommandV1,
     QueryResidentAgiAuditPackV1,
     QueryResidentAgiEvidenceInterfacesV1,
     QueryResidentAgiHandoffsV1,
     QueryResidentAgiRepairAdvisoryOverlayV1,
+    QueryResidentAgiTacticalChatV1,
     QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
     RecordResidentDecisionCommandV1,
@@ -32,6 +34,7 @@ from polaris.cells.resident.autonomy.public.service import (
     UpdateResidentIdentityCommandV1,
     approve_resident_goal,
     create_resident_goal,
+    execute_resident_agi_tactical_action,
     extract_resident_skills,
     get_resident_service,
     materialize_resident_goal,
@@ -39,6 +42,8 @@ from polaris.cells.resident.autonomy.public.service import (
     query_resident_agi_evidence_interfaces,
     query_resident_agi_handoffs,
     query_resident_agi_repair_advisory_overlay,
+    query_resident_agi_tactical_action_catalog,
+    query_resident_agi_tactical_chat,
     query_resident_capabilities,
     query_resident_status,
     record_resident_decision_entry,
@@ -185,6 +190,33 @@ class ResidentAgiDecisionTurnRequest(ResidentWorkspaceRequest):
     audit_pack_decision_limit: int = Field(default=12, ge=1, le=100)
 
 
+class ResidentAgiTacticalChatRequest(ResidentWorkspaceRequest):
+    message: str = Field(min_length=1, description="User message for the Resident AGI tactical console")
+    decision_type: str = Field(default="platform_supervision", description="Resident AGI decision category")
+    run_id: str = ""
+    task_id: str = ""
+    goal_id: str = ""
+    context: dict[str, Any] = Field(default_factory=dict)
+    context_refs: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    decision_limit: int = Field(default=12, ge=1, le=100)
+    max_runs: int = Field(default=20, ge=1, le=100)
+
+
+class ResidentAgiTacticalActionRequest(ResidentWorkspaceRequest):
+    message: str = Field(min_length=1, description="User message that produced the tactical action")
+    action_id: str = Field(min_length=1, description="Resident AGI tactical action id")
+    decision_type: str = Field(default="platform_supervision", description="Resident AGI decision category")
+    run_id: str = ""
+    task_id: str = ""
+    goal_id: str = ""
+    context: dict[str, Any] = Field(default_factory=dict)
+    context_refs: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    decision_limit: int = Field(default=12, ge=1, le=100)
+    max_runs: int = Field(default=20, ge=1, le=100)
+
+
 @router.get("/status", dependencies=[Depends(require_auth)])
 def resident_status(request: Request, details: bool = False, workspace: str = "") -> dict[str, Any]:
     ws = _resolve_workspace(request, workspace)
@@ -308,6 +340,58 @@ async def resident_agi_decide(request: Request, payload: ResidentAgiDecisionTurn
             confidence=payload.confidence,
             include_audit_pack=payload.include_audit_pack,
             audit_pack_decision_limit=payload.audit_pack_decision_limit,
+        )
+    )
+
+
+@router.post("/agi/chat", dependencies=[Depends(require_auth)])
+def resident_agi_tactical_chat(request: Request, payload: ResidentAgiTacticalChatRequest) -> dict[str, Any]:
+    """Return a Resident AGI tactical-console response from public evidence."""
+
+    ws = _resolve_workspace(request, payload.workspace)
+    return query_resident_agi_tactical_chat(
+        QueryResidentAgiTacticalChatV1(
+            workspace=ws,
+            message=payload.message,
+            decision_type=payload.decision_type,
+            run_id=payload.run_id,
+            task_id=payload.task_id,
+            goal_id=payload.goal_id,
+            context=payload.context,
+            context_refs=tuple(payload.context_refs),
+            evidence_refs=tuple(payload.evidence_refs),
+            decision_limit=payload.decision_limit,
+            max_runs=payload.max_runs,
+        )
+    )
+
+
+@router.get("/agi/actions/catalog", dependencies=[Depends(require_auth)])
+def resident_agi_tactical_action_catalog() -> dict[str, Any]:
+    """Return the read-only Resident AGI tactical-console action catalog."""
+
+    return query_resident_agi_tactical_action_catalog()
+
+
+@router.post("/agi/actions/execute", dependencies=[Depends(require_auth)])
+async def resident_agi_tactical_action(request: Request, payload: ResidentAgiTacticalActionRequest) -> dict[str, Any]:
+    """Execute a governed Resident AGI tactical-console action."""
+
+    ws = _resolve_workspace(request, payload.workspace)
+    return await execute_resident_agi_tactical_action(
+        ExecuteResidentAgiTacticalActionCommandV1(
+            workspace=ws,
+            message=payload.message,
+            action_id=payload.action_id,
+            decision_type=payload.decision_type,
+            run_id=payload.run_id,
+            task_id=payload.task_id,
+            goal_id=payload.goal_id,
+            context=payload.context,
+            context_refs=tuple(payload.context_refs),
+            evidence_refs=tuple(payload.evidence_refs),
+            decision_limit=payload.decision_limit,
+            max_runs=payload.max_runs,
         )
     )
 

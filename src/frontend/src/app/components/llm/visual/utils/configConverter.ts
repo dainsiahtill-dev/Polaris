@@ -15,9 +15,9 @@ import type {
 } from "../types/visual";
 import {
   getLlmRoleDefinition,
+  getRequiredLlmAssignmentRoleIds,
   getVisibleLlmBindingRoleIds,
   normalizeLlmRoleId,
-  REQUIRED_LLM_ASSIGNMENT_ROLE_IDS,
 } from "../../roleDefinitions";
 
 const encodeNodeSegment = (value: string) => encodeURIComponent(value);
@@ -228,10 +228,13 @@ export const buildVisualGraph = (
     });
   });
 
-  const visibleRoleIds = getVisibleLlmBindingRoleIds(
-    config.roles,
-    status?.roles,
-  );
+  const requiredRoleIds = getRequiredLlmAssignmentRoleIds(config.policies);
+  const visibleRoleIds = [
+    ...new Set([
+      ...getVisibleLlmBindingRoleIds(config.roles, status?.roles),
+      ...requiredRoleIds,
+    ]),
+  ];
 
   visibleRoleIds.forEach((roleId, index) => {
     const requirement = roleReqs[roleId] || {};
@@ -759,7 +762,7 @@ export const visualToRuntimeConfig = (
 export const validateRoleAssignments = (
   config: VisualGraphConfig,
 ): { valid: boolean; missing: VisualRoleId[]; incomplete: VisualRoleId[] } => {
-  const requiredRoles = REQUIRED_LLM_ASSIGNMENT_ROLE_IDS;
+  const requiredRoles = getRequiredLlmAssignmentRoleIds(config.policies);
   const missing: VisualRoleId[] = [];
   const incomplete: VisualRoleId[] = [];
 
@@ -788,7 +791,7 @@ export const validateRoleAssignments = (
 export const getConfigSummary = (config: VisualGraphConfig): string => {
   const assignments: string[] = [];
 
-  const roleOrder = REQUIRED_LLM_ASSIGNMENT_ROLE_IDS;
+  const roleOrder = getRequiredLlmAssignmentRoleIds(config.policies);
   roleOrder.forEach((roleId) => {
     const roleCfg =
       config.roles?.[roleId] ||

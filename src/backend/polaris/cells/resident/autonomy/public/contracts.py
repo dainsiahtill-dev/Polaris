@@ -389,6 +389,92 @@ class QueryResidentAgiRepairAdvisoryOverlayV1:
 
 
 @dataclass(frozen=True)
+class QueryResidentAgiTacticalChatV1:
+    """Query a read-first Resident AGI tactical-console response."""
+
+    workspace: str
+    message: str
+    decision_type: str = "platform_supervision"
+    run_id: str = ""
+    task_id: str = ""
+    goal_id: str = ""
+    context: Mapping[str, Any] = field(default_factory=dict)
+    context_refs: tuple[str, ...] = field(default_factory=tuple)
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    decision_limit: int = 12
+    max_runs: int = 20
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "message", _require_non_empty("message", self.message))
+        object.__setattr__(
+            self,
+            "decision_type",
+            str(self.decision_type or "platform_supervision").strip() or "platform_supervision",
+        )
+        object.__setattr__(self, "run_id", str(self.run_id or "").strip())
+        object.__setattr__(self, "task_id", str(self.task_id or "").strip())
+        object.__setattr__(self, "goal_id", str(self.goal_id or "").strip())
+        object.__setattr__(self, "context", _to_dict_copy(self.context))
+        object.__setattr__(
+            self,
+            "context_refs",
+            tuple(str(item or "").strip() for item in self.context_refs if str(item or "").strip()),
+        )
+        object.__setattr__(
+            self,
+            "evidence_refs",
+            tuple(str(item or "").strip() for item in self.evidence_refs if str(item or "").strip()),
+        )
+        object.__setattr__(self, "decision_limit", max(1, min(int(self.decision_limit), 100)))
+        object.__setattr__(self, "max_runs", max(1, min(int(self.max_runs), 100)))
+
+
+@dataclass(frozen=True)
+class ExecuteResidentAgiTacticalActionCommandV1:
+    """Execute a governed Resident AGI tactical-console action."""
+
+    workspace: str
+    message: str
+    action_id: str
+    decision_type: str = "platform_supervision"
+    run_id: str = ""
+    task_id: str = ""
+    goal_id: str = ""
+    context: Mapping[str, Any] = field(default_factory=dict)
+    context_refs: tuple[str, ...] = field(default_factory=tuple)
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    decision_limit: int = 12
+    max_runs: int = 20
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "message", _require_non_empty("message", self.message))
+        object.__setattr__(self, "action_id", _require_non_empty("action_id", self.action_id))
+        object.__setattr__(
+            self,
+            "decision_type",
+            str(self.decision_type or "platform_supervision").strip() or "platform_supervision",
+        )
+        object.__setattr__(self, "run_id", str(self.run_id or "").strip())
+        object.__setattr__(self, "task_id", str(self.task_id or "").strip())
+        object.__setattr__(self, "goal_id", str(self.goal_id or "").strip())
+        object.__setattr__(self, "context", _to_dict_copy(self.context))
+        object.__setattr__(
+            self,
+            "context_refs",
+            tuple(str(item or "").strip() for item in self.context_refs if str(item or "").strip()),
+        )
+        object.__setattr__(
+            self,
+            "evidence_refs",
+            tuple(str(item or "").strip() for item in self.evidence_refs if str(item or "").strip()),
+        )
+        object.__setattr__(self, "decision_limit", max(1, min(int(self.decision_limit), 100)))
+        object.__setattr__(self, "max_runs", max(1, min(int(self.max_runs), 100)))
+
+
+@dataclass(frozen=True)
 class ResidentAgiDecisionOutputV1:
     verdict: str
     rationale: str

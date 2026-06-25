@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -2156,6 +2157,8 @@ def test_deterministic_typescript_nullable_canvas_context_repair_adds_guard(tmp_
     )
 
     assert results
+    assert results[0]["tool"] == "edit_file"
+    assert results[0]["result"]["repair_kernel"]["owner_cell"] == "director.runtime"
     repaired = (tmp_path / "src" / "index.ts").read_text(encoding="utf-8")
     assert "const ctx = canvas.getContext('2d')!;" in repaired
     assert "if (!ctx) {" in repaired
@@ -2195,6 +2198,7 @@ def test_deterministic_typescript_nullable_canvas_context_repair_handles_existin
     )
 
     assert results
+    assert results[0]["result"]["source_tool"] == "deterministic_typescript_nullable_canvas_context_repair"
     repaired = (tmp_path / "src" / "index.ts").read_text(encoding="utf-8")
     assert 'const ctx = canvas.getContext("2d")!;' in repaired
     assert repaired.count("if (!ctx) {") == 1
@@ -2299,6 +2303,8 @@ def test_deterministic_typescript_duplicate_object_property_repair_removes_repor
     )
 
     assert results
+    assert results[0]["tool"] == "edit_file"
+    assert results[0]["result"]["repair_kernel"]["owner_cell"] == "director.runtime"
     repaired = (tmp_path / "src" / "flower.ts").read_text(encoding="utf-8")
     assert repaired.count("[Phase.Quarter]:") == 1
     assert "[Phase.Full]: [Phase.Quarter]" in repaired
@@ -2548,6 +2554,894 @@ async def test_phase_quality_repair_loop_continues_after_deterministic_progress_
     assert final_receipt["net_error_reduction"] == 1
 
 
+def test_go_bare_import_string_repair_uses_director_runtime_kernel(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs import generic_repairs
+
+    target = tmp_path / "cmd" / "app" / "main.go"
+    target.parent.mkdir(parents=True)
+    target.write_text('package main\n\n"fmt"\n\nfunc main() {}\n', encoding="utf-8")
+
+    writes: list[tuple[str, str, str]] = []
+
+    class FakeDirectorToolExecutor:
+        def __init__(self, workspace: str, *, message_bus: Any = None, worker_id: str = "") -> None:
+            self.workspace = workspace
+            self.message_bus = message_bus
+            self.worker_id = worker_id
+
+        def execute_tool(self, tool_name: str, payload: dict[str, str], *, task_id: str) -> dict[str, Any]:
+            file_path = payload["file"]
+            content = payload["content"]
+            (tmp_path / file_path).write_text(content, encoding="utf-8")
+            writes.append((tool_name, task_id, file_path))
+            return {
+                "ok": True,
+                "file": file_path,
+                "bytes_written": len(content.encode("utf-8")),
+                "operation": "modify",
+                "broadcast_ok": True,
+                "director_policy": {"allowed": True},
+            }
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self.workspace = str(tmp_path)
+            self._execution = SimpleNamespace(_message_bus=None)
+            self.progress: list[tuple[str, str, str | None]] = []
+
+        def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
+            self.progress.append((task_id, state, current_file))
+
+    monkeypatch.setattr(generic_repairs, "DirectorToolExecutor", FakeDirectorToolExecutor)
+    monkeypatch.setattr(generic_repairs, "repair_go_nested_import_keyword", lambda workspace: [])
+    monkeypatch.setattr(generic_repairs, "repair_go_module_imports", lambda workspace: [])
+    monkeypatch.setattr(generic_repairs, "repair_go_bare_local_imports", lambda workspace: [])
+    monkeypatch.setattr(generic_repairs, "repair_go_import_subpaths", lambda workspace: [])
+    monkeypatch.setattr(generic_repairs, "repair_go_duplicate_declarations", lambda workspace: [])
+
+    adapter = FakeAdapter()
+    results = generic_repairs._apply_deterministic_go_module_import_repair(adapter, task_id="task-go")
+
+    assert writes == [("write_file", "task-go", "cmd/app/main.go")]
+    assert 'import "fmt"' in target.read_text(encoding="utf-8")
+    assert len(results) == 1
+    result = results[0]["result"]
+    assert result["source_tool"] == "deterministic_go_bare_import_string_repair"
+    assert result["file"] == "cmd/app/main.go"
+    assert result["repair_kernel"]["owner_cell"] == "director.runtime"
+    assert result["repair_kernel"]["status"] == "applied"
+    assert adapter.progress[-1] == ("task-go", "executing", "cmd/app/main.go")
+
+
+def test_cpp_post_include_path_repair_uses_director_runtime_kernel(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
+
+    header = tmp_path / "src" / "models" / "postcard.hpp"
+    target = tmp_path / "src" / "engine" / "generator.cpp"
+    header.parent.mkdir(parents=True)
+    target.parent.mkdir(parents=True)
+    header.write_text("#pragma once\n", encoding="utf-8")
+    target.write_text('#include "src/models/postcard.hpp"\n#include <string>\n', encoding="utf-8")
+
+    writes: list[tuple[str, str, str]] = []
+
+    class FakeDirectorToolExecutor:
+        def __init__(self, workspace: str, *, message_bus: Any = None, worker_id: str = "") -> None:
+            self.workspace = workspace
+            self.message_bus = message_bus
+            self.worker_id = worker_id
+
+        def execute_tool(self, tool_name: str, payload: dict[str, str], *, task_id: str) -> dict[str, Any]:
+            file_path = payload["file"]
+            content = payload["content"]
+            (tmp_path / file_path).write_text(content, encoding="utf-8")
+            writes.append((tool_name, task_id, file_path))
+            return {
+                "ok": True,
+                "file": file_path,
+                "bytes_written": len(content.encode("utf-8")),
+                "operation": "modify",
+                "broadcast_ok": True,
+                "director_policy": {"allowed": True},
+            }
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self.workspace = str(tmp_path)
+            self._execution = SimpleNamespace(_message_bus=None)
+            self.progress: list[tuple[str, str, str | None]] = []
+
+        def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
+            self.progress.append((task_id, state, current_file))
+
+    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+
+    adapter = FakeAdapter()
+    results = post_execution_repair_bridge.run_cpp_post_repairs_as_tool_results(
+        tmp_path,
+        adapter=adapter,
+        task_id="task-cpp",
+    )
+
+    relative_path = "src/engine/generator.cpp"
+    assert writes == [("write_file", "task-cpp", relative_path)]
+    assert '#include "../models/postcard.hpp"' in target.read_text(encoding="utf-8")
+    assert len(results) == 1
+    result = results[0]["result"]
+    assert result["source_tool"] == "deterministic_cpp_include_path_repair"
+    assert result["file"] == relative_path
+    assert result["repair_kernel"]["owner_cell"] == "director.runtime"
+    assert result["repair_kernel"]["status"] == "applied"
+    assert adapter.progress[-1] == ("task-cpp", "executing", relative_path)
+
+
+def test_cpp_post_standard_include_repair_uses_director_runtime_kernel(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
+
+    target = tmp_path / "src" / "models" / "seed.hpp"
+    target.parent.mkdir(parents=True)
+    target.write_text("#pragma once\nnamespace demo { std::uint32_t seed(); }\n", encoding="utf-8")
+
+    writes: list[tuple[str, str, str]] = []
+
+    class FakeDirectorToolExecutor:
+        def __init__(self, workspace: str, *, message_bus: Any = None, worker_id: str = "") -> None:
+            self.workspace = workspace
+            self.message_bus = message_bus
+            self.worker_id = worker_id
+
+        def execute_tool(self, tool_name: str, payload: dict[str, str], *, task_id: str) -> dict[str, Any]:
+            file_path = payload["file"]
+            content = payload["content"]
+            (tmp_path / file_path).write_text(content, encoding="utf-8")
+            writes.append((tool_name, task_id, file_path))
+            return {
+                "ok": True,
+                "file": file_path,
+                "bytes_written": len(content.encode("utf-8")),
+                "operation": "modify",
+                "broadcast_ok": True,
+                "director_policy": {"allowed": True},
+            }
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self.workspace = str(tmp_path)
+            self._execution = SimpleNamespace(_message_bus=None)
+            self.progress: list[tuple[str, str, str | None]] = []
+
+        def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
+            self.progress.append((task_id, state, current_file))
+
+    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+
+    adapter = FakeAdapter()
+    results = post_execution_repair_bridge.run_cpp_post_repairs_as_tool_results(
+        tmp_path,
+        adapter=adapter,
+        task_id="task-cpp-standard",
+    )
+
+    relative_path = "src/models/seed.hpp"
+    assert writes == [("write_file", "task-cpp-standard", relative_path)]
+    assert "#include <cstdint>" in target.read_text(encoding="utf-8")
+    assert len(results) == 1
+    result = results[0]["result"]
+    assert result["source_tool"] == "deterministic_cpp_standard_include_repair"
+    assert result["file"] == relative_path
+    assert result["repair_kernel"]["owner_cell"] == "director.runtime"
+    assert result["repair_kernel"]["status"] == "applied"
+    assert adapter.progress[-1] == ("task-cpp-standard", "executing", relative_path)
+
+
+def test_cpp_post_missing_private_members_repair_uses_director_runtime_kernel(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
+
+    target = tmp_path / "src" / "models" / "poem.hpp"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "#pragma once\n"
+        "#include <string>\n"
+        "namespace demo {\n"
+        "class Poem {\n"
+        "public:\n"
+        "    const std::string& title() const noexcept { return title_; }\n"
+        "};\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    writes: list[tuple[str, str, str]] = []
+
+    class FakeDirectorToolExecutor:
+        def __init__(self, workspace: str, *, message_bus: Any = None, worker_id: str = "") -> None:
+            self.workspace = workspace
+            self.message_bus = message_bus
+            self.worker_id = worker_id
+
+        def execute_tool(self, tool_name: str, payload: dict[str, str], *, task_id: str) -> dict[str, Any]:
+            file_path = payload["file"]
+            content = payload["content"]
+            (tmp_path / file_path).write_text(content, encoding="utf-8")
+            writes.append((tool_name, task_id, file_path))
+            return {
+                "ok": True,
+                "file": file_path,
+                "bytes_written": len(content.encode("utf-8")),
+                "operation": "modify",
+                "broadcast_ok": True,
+                "director_policy": {"allowed": True},
+            }
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self.workspace = str(tmp_path)
+            self._execution = SimpleNamespace(_message_bus=None)
+            self.progress: list[tuple[str, str, str | None]] = []
+
+        def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
+            self.progress.append((task_id, state, current_file))
+
+    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+
+    adapter = FakeAdapter()
+    results = post_execution_repair_bridge.run_cpp_post_repairs_as_tool_results(
+        tmp_path,
+        adapter=adapter,
+        task_id="task-cpp-private-members",
+    )
+
+    relative_path = "src/models/poem.hpp"
+    assert writes == [("write_file", "task-cpp-private-members", relative_path)]
+    assert "private:\n    std::string title_;" in target.read_text(encoding="utf-8")
+    assert len(results) == 1
+    result = results[0]["result"]
+    assert result["source_tool"] == "deterministic_cpp_missing_private_members_repair"
+    assert result["file"] == relative_path
+    assert result["repair_kernel"]["owner_cell"] == "director.runtime"
+    assert result["repair_kernel"]["status"] == "applied"
+    assert adapter.progress[-1] == ("task-cpp-private-members", "executing", relative_path)
+
+
+def test_cpp_post_placeholder_declaration_repair_uses_director_runtime_kernel(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
+
+    target = tmp_path / "src" / "engine" / "generator.hpp"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "#pragma once\n"
+        "namespace demo {\n"
+        "class Generator {\n"
+        "public:\n"
+        "    std::render_return_type /* placeholder */ render_html() const = delete;\n"
+        "};\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    writes: list[tuple[str, str, str]] = []
+
+    class FakeDirectorToolExecutor:
+        def __init__(self, workspace: str, *, message_bus: Any = None, worker_id: str = "") -> None:
+            self.workspace = workspace
+            self.message_bus = message_bus
+            self.worker_id = worker_id
+
+        def execute_tool(self, tool_name: str, payload: dict[str, str], *, task_id: str) -> dict[str, Any]:
+            file_path = payload["file"]
+            content = payload["content"]
+            (tmp_path / file_path).write_text(content, encoding="utf-8")
+            writes.append((tool_name, task_id, file_path))
+            return {
+                "ok": True,
+                "file": file_path,
+                "bytes_written": len(content.encode("utf-8")),
+                "operation": "modify",
+                "broadcast_ok": True,
+                "director_policy": {"allowed": True},
+            }
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self.workspace = str(tmp_path)
+            self._execution = SimpleNamespace(_message_bus=None)
+            self.progress: list[tuple[str, str, str | None]] = []
+
+        def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
+            self.progress.append((task_id, state, current_file))
+
+    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+
+    adapter = FakeAdapter()
+    results = post_execution_repair_bridge.run_cpp_post_repairs_as_tool_results(
+        tmp_path,
+        adapter=adapter,
+        task_id="task-cpp-placeholder",
+    )
+
+    relative_path = "src/engine/generator.hpp"
+    assert writes == [("write_file", "task-cpp-placeholder", relative_path)]
+    assert "std::render_return_type" not in target.read_text(encoding="utf-8")
+    assert len(results) == 1
+    result = results[0]["result"]
+    assert result["source_tool"] == "deterministic_cpp_placeholder_declaration_repair"
+    assert result["file"] == relative_path
+    assert result["repair_kernel"]["owner_cell"] == "director.runtime"
+    assert result["repair_kernel"]["status"] == "applied"
+    assert adapter.progress[-1] == ("task-cpp-placeholder", "executing", relative_path)
+
+
+def test_cpp_post_struct_getter_field_access_repair_uses_director_runtime_kernel(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
+
+    header = tmp_path / "src" / "models" / "postcard.hpp"
+    target = tmp_path / "src" / "main.cpp"
+    header.parent.mkdir(parents=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    header.write_text(
+        "#pragma once\nnamespace demo {\nstruct Postcard {\n    int poem;\n};\n}\n",
+        encoding="utf-8",
+    )
+    target.write_text(
+        '#include "models/postcard.hpp"\nint main() {\n    demo::Postcard card{};\n    return card.get_poem();\n}\n',
+        encoding="utf-8",
+    )
+
+    writes: list[tuple[str, str, str]] = []
+
+    class FakeDirectorToolExecutor:
+        def __init__(self, workspace: str, *, message_bus: Any = None, worker_id: str = "") -> None:
+            self.workspace = workspace
+            self.message_bus = message_bus
+            self.worker_id = worker_id
+
+        def execute_tool(self, tool_name: str, payload: dict[str, str], *, task_id: str) -> dict[str, Any]:
+            file_path = payload["file"]
+            content = payload["content"]
+            (tmp_path / file_path).write_text(content, encoding="utf-8")
+            writes.append((tool_name, task_id, file_path))
+            return {
+                "ok": True,
+                "file": file_path,
+                "bytes_written": len(content.encode("utf-8")),
+                "operation": "modify",
+                "broadcast_ok": True,
+                "director_policy": {"allowed": True},
+            }
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self.workspace = str(tmp_path)
+            self._execution = SimpleNamespace(_message_bus=None)
+            self.progress: list[tuple[str, str, str | None]] = []
+
+        def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
+            self.progress.append((task_id, state, current_file))
+
+    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+
+    adapter = FakeAdapter()
+    results = post_execution_repair_bridge.run_cpp_post_repairs_as_tool_results(
+        tmp_path,
+        adapter=adapter,
+        task_id="task-cpp-struct-getter",
+    )
+
+    relative_path = "src/main.cpp"
+    assert writes == [("write_file", "task-cpp-struct-getter", relative_path)]
+    assert "card.poem" in target.read_text(encoding="utf-8")
+    assert len(results) == 1
+    result = results[0]["result"]
+    assert result["source_tool"] == "deterministic_cpp_struct_getter_field_access_repair"
+    assert result["file"] == relative_path
+    assert result["repair_kernel"]["owner_cell"] == "director.runtime"
+    assert result["repair_kernel"]["status"] == "applied"
+    assert adapter.progress[-1] == ("task-cpp-struct-getter", "executing", relative_path)
+
+
+def test_java_post_accessor_alias_repair_uses_director_runtime_kernel(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
+
+    target = tmp_path / "src" / "main" / "java" / "demo" / "RhythmMonster.java"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "package demo;\n"
+        "public final class RhythmMonster {\n"
+        "    public int getTemperament() {\n"
+        "        return 4;\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    writes: list[tuple[str, str, str]] = []
+
+    class FakeDirectorToolExecutor:
+        def __init__(self, workspace: str, *, message_bus: Any = None, worker_id: str = "") -> None:
+            self.workspace = workspace
+            self.message_bus = message_bus
+            self.worker_id = worker_id
+
+        def execute_tool(self, tool_name: str, payload: dict[str, str], *, task_id: str) -> dict[str, Any]:
+            file_path = payload["file"]
+            content = payload["content"]
+            (tmp_path / file_path).write_text(content, encoding="utf-8")
+            writes.append((tool_name, task_id, file_path))
+            return {
+                "ok": True,
+                "file": file_path,
+                "bytes_written": len(content.encode("utf-8")),
+                "operation": "modify",
+                "broadcast_ok": True,
+                "director_policy": {"allowed": True},
+            }
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self.workspace = str(tmp_path)
+            self._execution = SimpleNamespace(_message_bus=None)
+            self.progress: list[tuple[str, str, str | None]] = []
+
+        def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
+            self.progress.append((task_id, state, current_file))
+
+    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+
+    adapter = FakeAdapter()
+    results = post_execution_repair_bridge._run_java_post_repairs(adapter, tmp_path, task_id="task-java")
+
+    relative_path = "src/main/java/demo/RhythmMonster.java"
+    assert writes == [("write_file", "task-java", relative_path)]
+    assert "public int temperament()" in target.read_text(encoding="utf-8")
+    assert len(results) == 1
+    result = results[0]["result"]
+    assert result["source_tool"] == "deterministic_java_accessor_alias_repair"
+    assert result["file"] == relative_path
+    assert result["repair_kernel"]["owner_cell"] == "director.runtime"
+    assert result["repair_kernel"]["status"] == "applied"
+    assert adapter.progress[-1] == ("task-java", "executing", relative_path)
+
+
+def test_rust_post_repairs_run_legacy_on_shadow_and_write_back_with_director_tool(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
+
+    cargo = tmp_path / "Cargo.toml"
+    cargo.write_text(
+        '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    src = tmp_path / "src" / "lib.rs"
+    src.parent.mkdir(parents=True)
+    src.write_text("pub fn demo() -> i32 { 1 }\n", encoding="utf-8")
+
+    legacy_workspaces: list[Path] = []
+
+    def fake_run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
+        legacy_workspaces.append(workspace.resolve())
+        assert workspace.resolve() != tmp_path.resolve()
+        shadow_cargo = workspace / "Cargo.toml"
+        shadow_cargo.write_text(
+            shadow_cargo.read_text(encoding="utf-8") + '\n[dependencies]\nserde = "1"\n',
+            encoding="utf-8",
+        )
+        return [
+            {
+                "source_tool": "deterministic_rust_dependency_repair",
+                "file": "Cargo.toml",
+                "action": "add serde dependency",
+                "phase": "structural",
+                "priority": 0,
+                "round_number": 1,
+                "revalidation": {"command": "cargo check", "exit_code": 0},
+            }
+        ]
+
+    writes: list[tuple[str, str, str]] = []
+
+    class FakeDirectorToolExecutor:
+        def __init__(self, workspace: str, *, message_bus: Any = None, worker_id: str = "") -> None:
+            self.workspace = workspace
+            self.message_bus = message_bus
+            self.worker_id = worker_id
+
+        def execute_tool(self, tool_name: str, payload: dict[str, str], *, task_id: str) -> dict[str, Any]:
+            file_path = payload["file"]
+            content = payload["content"]
+            (tmp_path / file_path).write_text(content, encoding="utf-8")
+            writes.append((tool_name, task_id, file_path))
+            return {
+                "ok": True,
+                "file": file_path,
+                "bytes_written": len(content.encode("utf-8")),
+                "operation": "modify",
+                "broadcast_ok": True,
+                "director_policy": {"allowed": True},
+            }
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self.workspace = str(tmp_path)
+            self._execution = SimpleNamespace(_message_bus=None)
+            self.progress: list[tuple[str, str, str | None]] = []
+
+        def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
+            self.progress.append((task_id, state, current_file))
+
+    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fake_run_all_rust_post_repairs)
+    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+
+    adapter = FakeAdapter()
+    results = post_execution_repair_bridge._run_rust_post_repairs(adapter, tmp_path, task_id="task-rust")
+
+    assert len(legacy_workspaces) == 1
+    assert legacy_workspaces[0] != tmp_path.resolve()
+    assert writes == [("write_file", "task-rust", "Cargo.toml")]
+    assert 'serde = "1"' in cargo.read_text(encoding="utf-8")
+    assert adapter.progress[-1] == ("task-rust", "executing", "Cargo.toml")
+    assert len(results) == 1
+    result = results[0]["result"]
+    assert result["source_tool"] == "deterministic_rust_dependency_repair"
+    assert result["file"] == "Cargo.toml"
+    assert result["legacy_shadow_workspace"] is True
+    assert result["legacy_shadow_applied_via_director_tools"] is True
+    assert result["legacy_shadow_source_tools"] == ["deterministic_rust_dependency_repair"]
+    assert result["before_hash"] != result["after_hash"]
+    assert result["revalidation_scope"] == "legacy_shadow_workspace"
+    assert result["director_policy"] == {"allowed": True}
+
+
+def test_rust_post_repairs_prefer_director_edit_file_for_existing_source_changes(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
+
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    src = tmp_path / "src" / "lib.rs"
+    src.parent.mkdir(parents=True)
+    src.write_text("pub fn demo() -> i32 {\n    1\n}\n", encoding="utf-8")
+
+    def fake_run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
+        shadow_src = workspace / "src" / "lib.rs"
+        shadow_src.write_text("pub fn demo() -> i32 {\n    2\n}\n", encoding="utf-8")
+        return [
+            {
+                "source_tool": "deterministic_rust_post_repair",
+                "file": "src/lib.rs",
+                "action": "repair_return_value",
+            }
+        ]
+
+    edits: list[tuple[str, str, str]] = []
+
+    class FakeDirectorToolExecutor:
+        def __init__(self, workspace: str, *, message_bus: Any = None, worker_id: str = "") -> None:
+            self.workspace = workspace
+            self.message_bus = message_bus
+            self.worker_id = worker_id
+
+        def execute_tool(self, tool_name: str, payload: dict[str, str], *, task_id: str) -> dict[str, Any]:
+            assert tool_name == "edit_file"
+            file_path = payload["file"]
+            target = tmp_path / file_path
+            content = target.read_text(encoding="utf-8")
+            assert payload["search"] in content
+            target.write_text(content.replace(payload["search"], payload["replace"], 1), encoding="utf-8")
+            edits.append((tool_name, task_id, file_path))
+            return {
+                "ok": True,
+                "file": file_path,
+                "replacements": 1,
+                "broadcast_ok": True,
+                "director_policy": {"allowed": True},
+            }
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self.workspace = str(tmp_path)
+            self._execution = SimpleNamespace(_message_bus=None)
+
+        def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
+            return None
+
+    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fake_run_all_rust_post_repairs)
+    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+
+    results = post_execution_repair_bridge._run_rust_post_repairs(FakeAdapter(), tmp_path, task_id="task-rust-edit")
+
+    assert edits == [("edit_file", "task-rust-edit", "src/lib.rs")]
+    assert "    2\n" in src.read_text(encoding="utf-8")
+    assert len(results) == 1
+    assert results[0]["tool_name"] == "edit_file"
+    result = results[0]["result"]
+    assert result["operation"] == "edit_file"
+    assert result["replacements"] == 1
+    assert result["legacy_shadow_applied_via_director_tools"] is True
+
+
+def test_post_execution_advisory_overlay_flows_into_runtime_receipt(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
+
+    target = tmp_path / "src" / "main" / "java" / "demo" / "RhythmMonster.java"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "package demo;\n"
+        "public final class RhythmMonster {\n"
+        "    public int getTemperament() {\n"
+        "        return 4;\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    class FakeDirectorToolExecutor:
+        def __init__(self, workspace: str, *, message_bus: Any = None, worker_id: str = "") -> None:
+            self.workspace = workspace
+            self.message_bus = message_bus
+            self.worker_id = worker_id
+
+        def execute_tool(self, tool_name: str, payload: dict[str, str], *, task_id: str) -> dict[str, Any]:
+            file_path = payload["file"]
+            content = payload["content"]
+            (tmp_path / file_path).write_text(content, encoding="utf-8")
+            return {
+                "ok": True,
+                "file": file_path,
+                "bytes_written": len(content.encode("utf-8")),
+                "operation": "modify",
+                "broadcast_ok": True,
+                "director_policy": {"allowed": True},
+            }
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self.workspace = str(tmp_path)
+            self._execution = SimpleNamespace(_message_bus=None)
+
+        def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
+            return None
+
+    def fake_schedule(
+        *,
+        runner_step_ids: tuple[str, ...],
+        runner: Any,
+        max_rounds: int = 1,
+    ) -> tuple[list[dict[str, Any]], tuple[Any, ...]]:
+        assert "java.post_execution" in runner_step_ids
+        assert max_rounds == 3
+        step = post_execution_repair_bridge.DirectorRepairPostExecutionStepV1(
+            step_id="java.post_execution",
+            language="java",
+            phase="post_materialization",
+            priority=1,
+            source_tool="deterministic_java_post_repair",
+        )
+        return list(runner(step)), (step,)
+
+    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+    monkeypatch.setattr(
+        post_execution_repair_bridge,
+        "run_director_post_execution_repair_schedule",
+        fake_schedule,
+    )
+
+    tool_results, summary = post_execution_repair_bridge.run_post_execution_language_repairs(
+        FakeAdapter(),
+        task_id="task-java-advisory",
+        resident_agi_repair_advisory_overlay={
+            "status": "ready",
+            "eligible_for_director_injection": True,
+            "advisory_only": True,
+            "advisor_notes": [
+                {
+                    "advisor_source": "resident_agi",
+                    "message": "Accessor aliases are a recurring Java bench pattern.",
+                    "confidence": 0.7,
+                    "suggested_rules": [
+                        {
+                            "pattern": "getTemperament",
+                            "fix_template": "temperament",
+                            "confidence": 0.7,
+                            "evidence": ["javac cannot find symbol temperament()"],
+                        }
+                    ],
+                    "metadata": {"evidence_ref": "runtime/contexts/advisory"},
+                }
+            ],
+        },
+    )
+
+    assert summary is not None
+    assert len(tool_results) == 1
+    receipt_notes = tool_results[0]["result"]["repair_kernel"]["advisor_notes"]
+    assert receipt_notes[0]["advisor_source"] == "resident_agi"
+    assert receipt_notes[0]["authoritative"] is False
+    assert receipt_notes[0]["suggested_rules"][0]["pattern"] == "getTemperament"
+    assert summary["repair_kernel"]["agi_advisory"]["active"] is True
+    assert summary["scheduler_bridge"]["resident_agi_advisory_note_count"] == 1
+    assert summary["scheduler_bridge"]["resident_agi_suggested_rule_count"] == 1
+
+
+def test_quality_repair_revalidation_marks_nested_post_execution_kernel() -> None:
+    diagnostic = {
+        "diagnostic_id": "diag-main",
+        "source": "typescript",
+        "code": "typescript_ts1005",
+        "message": "',' expected",
+        "severity": "error",
+        "path": "src/main.ts",
+    }
+    receipt = {
+        "receipt_id": "receipt-main",
+        "plan_id": "plan-main",
+        "rule_id": "typescript.object_literal_missing_comma",
+        "source_tool": "deterministic_typescript_return_object_semicolon_repair",
+        "status": "pending_revalidation",
+        "mode": "commit",
+        "authoritative": False,
+        "files_changed": ["src/main.ts"],
+        "operation_ids": ["op-main"],
+        "diagnostics": [diagnostic],
+        "before_hashes": {},
+        "after_hashes": {},
+        "metadata": {"requires_revalidation": True},
+    }
+    nested_receipt = {
+        **receipt,
+        "receipt_id": "receipt-post",
+        "plan_id": "plan-post",
+        "rule_id": "rust.unlinked_crate_dependency",
+        "source_tool": "deterministic_rust_dependency_repair",
+        "files_changed": ["Cargo.toml"],
+    }
+    summary: dict[str, Any] = {
+        "repair_kernel": {
+            "mode": "commit",
+            "receipts": [dict(receipt)],
+            "coverage_report": {"total_diagnostics": 1},
+        },
+        "post_execution_repair_kernel": {
+            "repair_kernel": {
+                "mode": "commit",
+                "receipts": [dict(nested_receipt)],
+                "coverage_report": {"total_diagnostics": 1},
+            }
+        },
+        "repair_attempts": [
+            {
+                "stage": "quality_retry",
+                "repair_kernel": {
+                    "mode": "commit",
+                    "receipts": [dict(receipt)],
+                    "coverage_report": {"total_diagnostics": 1},
+                },
+            }
+        ],
+    }
+
+    execute_method_module._mark_quality_repair_summary_revalidated(summary, [])
+
+    top_receipt = summary["repair_kernel"]["receipts"][0]
+    post_receipt = summary["post_execution_repair_kernel"]["repair_kernel"]["receipts"][0]
+    attempt_receipt = summary["repair_attempts"][0]["repair_kernel"]["receipts"][0]
+    assert summary["revalidated"] is True
+    assert summary["success"] is True
+    assert top_receipt["revalidation_evidence"]["errors_after"] == 0
+    assert post_receipt["revalidation_evidence"]["errors_after"] == 0
+    assert attempt_receipt["revalidation_evidence"]["errors_after"] == 0
+    assert post_receipt["status"] == "applied"
+    assert post_receipt["authoritative"] is True
+    assert summary["post_execution_repair_kernel"]["repair_kernel"]["receipts_with_revalidation"] == 1
+
+
+def test_rust_dependency_repair_runs_through_director_runtime_bridge(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.rust_repairs import (
+        _apply_deterministic_rust_dependency_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "demo"\nversion = "0.1.0"\n\n[dependencies]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "main.rs").write_text(
+        "use serde::Serialize;\nfn main() { let _ = serde_json::json!({}); }\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_rust_dependency_repair(
+        _make_adapter(tmp_path),
+        task_id="task-rust-deps",
+        artifact_quality_errors=["error[E0432]: unresolved import `serde`"],
+    )
+    repaired = (tmp_path / "Cargo.toml").read_text(encoding="utf-8")
+
+    assert len(results) == 1
+    assert results[0]["tool"] == "write_file"
+    assert results[0]["result"]["source_tool"] == "deterministic_rust_dependency_repair"
+    assert results[0]["result"]["repair_kernel"]["owner_cell"] == "director.runtime"
+    assert results[0]["result"]["repair_kernel"]["status"] == "applied"
+    assert results[0]["result"]["repair_kernel"]["metadata"]["requires_revalidation"] is True
+    assert 'serde = { version = "1.0", features = ["derive"] }' in repaired
+    assert 'serde_json = "1.0"' in repaired
+
+
+def test_materialization_quality_summary_projects_dark_launch_cutover_blocker() -> None:
+    from polaris.cells.director.runtime.public import DirectorRepairMaterializationQualityStepV1
+    from polaris.cells.roles.adapters.internal.director import materialization_quality_repair_bridge
+
+    tool_results = [
+        {
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_rust_dependency_repair",
+                "file": "Cargo.toml",
+                "before_hash": "before",
+                "after_hash": "after",
+            },
+        }
+    ]
+
+    summary = materialization_quality_repair_bridge._annotate_materialization_quality_summary(
+        step_summaries={},
+        tool_results=tool_results,
+        artifact_quality_errors=["error[E0432]: unresolved import `serde`"],
+        ordered_steps=(
+            DirectorRepairMaterializationQualityStepV1(
+                step_id="materialization.rust_compiler",
+                language="rust",
+                phase="dependency_resolution",
+                priority=0,
+                source_tool="deterministic_rust_dependency_repair",
+            ),
+        ),
+    )
+    shadow = summary["dark_launch_comparison"]
+
+    assert shadow["comparison_mode"] == "legacy_projection_self_check"
+    assert shadow["cutover_ready"] is False
+    assert "independent_shadow_required" in shadow["cutover_blockers"]
+    assert shadow["independent_shadow_required"] is True
+    assert shadow["independent_shadow_satisfied"] is False
+    assert shadow["writes_allowed"] is False
+    assert summary["materialization_quality_bridge"]["dark_launch_cutover_ready"] is False
+    assert "independent_shadow_required" in summary["materialization_quality_bridge"]["dark_launch_cutover_blockers"]
+
+
 def test_phase_pre_materialization_quality_records_post_execution_kernel_summary(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -2556,28 +3450,37 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
 
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
     monkeypatch.setattr(generic_repairs, "_apply_deterministic_go_module_import_repair", lambda *args, **kwargs: [])
-    monkeypatch.setattr(
-        rust_repairs,
-        "run_all_rust_post_repairs",
-        lambda workspace: [
+
+    def fake_run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
+        cargo = workspace / "Cargo.toml"
+        cargo_text = cargo.read_text(encoding="utf-8")
+        if 'serde = "1"' in cargo_text:
+            return []
+        cargo.write_text(
+            cargo_text + '\n[dependencies]\nserde = "1"\n',
+            encoding="utf-8",
+        )
+        return [
             {
                 "source_tool": "deterministic_rust_dependency_repair",
                 "file": "Cargo.toml",
                 "action": "add_dependency",
                 "phase": "dependency_resolution",
                 "priority": 0,
-                "round_number": 1,
                 "revalidation": {
                     "command": ["cargo", "check", "--quiet"],
                     "exit_code": 0,
-                    "round_number": 1,
                     "errors_before": 2,
                     "errors_after": 0,
                     "net_error_reduction": 2,
-                    "max_rounds": 3,
                 },
             }
-        ],
+        ]
+
+    monkeypatch.setattr(
+        rust_repairs,
+        "run_all_rust_post_repairs",
+        fake_run_all_rust_post_repairs,
     )
     monkeypatch.setattr(
         execute_method_module,
@@ -2654,6 +3557,12 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
     assert shadow["legacy_source_tools"] == ["deterministic_rust_dependency_repair"]
     assert shadow["kernel_source_tools"] == ["deterministic_rust_dependency_repair"]
     assert shadow["metadata"]["writes_performed"] is False
+    assert shadow["metadata"]["comparison_mode"] == "legacy_projection_self_check"
+    assert shadow["comparison_mode"] == "legacy_projection_self_check"
+    assert shadow["cutover_ready"] is False
+    assert shadow["cutover_blockers"] == ["independent_shadow_required"]
+    assert shadow["independent_shadow_required"] is True
+    assert shadow["independent_shadow_satisfied"] is False
     assert quality_repair_attempts[0]["schema_version"] == "director.post_execution_repair_kernel.v1"
     scheduler_bridge = quality_repair_attempts[0]["scheduler_bridge"]
     assert scheduler_bridge["schema_version"] == "director.post_execution_scheduler_bridge.v1"
@@ -5525,8 +6434,10 @@ export function summary() {
 
         cleaned = target.read_text(encoding="utf-8")
         assert len(results) == 1
-        assert results[0]["tool"] == "write_file"
+        assert results[0]["tool"] == "edit_file"
         assert results[0]["result"]["source_tool"] == "deterministic_patch_residue_cleanup"
+        assert results[0]["result"]["repair_kernel"]["owner_cell"] == "director.runtime"
+        assert results[0]["result"]["repair_kernel"]["metadata"]["requires_revalidation"] is True
         assert ">>>> REPLACE" not in cleaned
         assert "export const cardAssetsReady = true;" in cleaned
         assert "export const assetCount = 52;" in cleaned
@@ -7743,9 +8654,24 @@ def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_pa
     assert "public type: FlowerType = FlowerType.Moonflower;" in repaired
 
 
-def test_typescript_return_object_comma_repair_fixes_inline_missing_property_comma(tmp_path: Any) -> None:
+def test_typescript_return_object_comma_repair_fixes_inline_missing_property_comma(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs import (
+        typescript_repairs as typescript_repairs_module,
+    )
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
+    )
+
+    def _forbid_legacy_fallback(*args: object, **kwargs: object) -> str:
+        raise AssertionError("typescript return-object repair must not use legacy direct-write fallback")
+
+    monkeypatch.setattr(
+        typescript_repairs_module,
+        "_repair_typescript_return_object_semicolon_lines",
+        _forbid_legacy_fallback,
     )
 
     model_dir = tmp_path / "src" / "models"
@@ -7792,12 +8718,20 @@ def test_typescript_return_object_comma_repair_fixes_inline_missing_property_com
     )
 
     repaired = flight.read_text(encoding="utf-8")
-    assert summary["attempted"] is True
-    assert any(
-        (item.get("result") or {}).get("source_tool") == "deterministic_typescript_return_object_semicolon_repair"
+    repair_results = [
+        item
         for item in results
         if isinstance(item, dict)
-    )
+        and (item.get("result") or {}).get("source_tool") == "deterministic_typescript_return_object_semicolon_repair"
+    ]
+    assert summary["attempted"] is True
+    assert repair_results
+    for item in repair_results:
+        repair_kernel = dict((item.get("result") or {}).get("repair_kernel") or {})
+        assert repair_kernel["owner_cell"] == "director.runtime"
+        assert repair_kernel["authority_hash"]
+        assert repair_kernel["projection_hash"]
+        assert repair_kernel["metadata"]["requires_revalidation"] is True
     assert "flightTime, landed:" in repaired
 
 
@@ -7891,6 +8825,14 @@ def test_typescript_enum_member_separator_repair_fixes_enum_semicolon_only(tmp_p
 
     repaired = moonphase.read_text(encoding="utf-8")
     assert summary["attempted"] is True
+    enum_result = next(
+        item
+        for item in results
+        if isinstance(item, dict)
+        and (item.get("result") or {}).get("source_tool") == "deterministic_typescript_enum_member_separator_repair"
+    )
+    assert enum_result["tool"] == "edit_file"
+    assert enum_result["result"]["repair_kernel"]["owner_cell"] == "director.runtime"
     assert any(
         (item.get("result") or {}).get("source_tool") == "deterministic_typescript_enum_member_separator_repair"
         for item in results

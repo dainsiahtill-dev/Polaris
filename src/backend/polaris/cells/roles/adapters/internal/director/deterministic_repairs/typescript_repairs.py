@@ -16,10 +16,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.director.runtime.public import (
-    run_director_typescript_object_literal_comma_repair,
-)
-
 from ..execution_tools import DirectorToolExecutor
 from ..task_scope_paths import (
     _dedupe_preserve_order,
@@ -45,6 +41,7 @@ from ._common import (
     _relative_import_repair_target_candidates,
     _relative_import_suffix_order,
 )
+from ._runtime_bridge import run_runtime_repair_with_director_tools
 
 _TS_MISSING_PROPERTY_ERROR_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2339:\s*"
@@ -724,35 +721,30 @@ def _apply_deterministic_typescript_nullable_canvas_context_repair(
     if not workspace_path.exists() or not workspace_path.is_dir():
         return []
 
-    updated_by_path: dict[Path, str] = {}
-    repaired: list[dict[str, str]] = []
+    base_files: dict[str, str] = {}
     by_file: dict[str, set[str]] = {}
     for item in nullable_contexts:
         by_file.setdefault(item["file"], set()).add(item.get("symbol") or "")
 
-    for rel_file, raw_symbols in by_file.items():
+    for rel_file in by_file:
         path = (workspace_path / rel_file).resolve()
         if not _path_inside_workspace(path, workspace_path) or not path.is_file():
             continue
         try:
-            original = path.read_text(encoding="utf-8")
+            base_files[rel_file] = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        symbols = {symbol for symbol in raw_symbols if _TS_IDENTIFIER_RE.fullmatch(symbol)}
-        repaired_text, guarded_symbols = _repair_typescript_nullable_canvas_context_guards(original, symbols)
-        if repaired_text == original or not guarded_symbols:
-            continue
-        updated_by_path[path] = repaired_text
-        repaired.extend({"file": rel_file, "symbol": symbol} for symbol in guarded_symbols)
+    if not base_files:
+        return []
 
-    return _write_typescript_repair_results(
+    return run_runtime_repair_with_director_tools(
         adapter,
         workspace_path=workspace_path,
         task_id=task_id,
-        updated_by_path=updated_by_path,
         source_tool="deterministic_typescript_nullable_canvas_context_repair",
-        metadata_key="guards",
-        metadata_value=repaired,
+        executor_factory=DirectorToolExecutor,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
     )
 
 
@@ -769,8 +761,7 @@ def _apply_deterministic_typescript_duplicate_object_property_repair(
     if not workspace_path.exists() or not workspace_path.is_dir():
         return []
 
-    updated_by_path: dict[Path, str] = {}
-    repaired: list[dict[str, str]] = []
+    base_files: dict[str, str] = {}
     by_file: dict[str, set[int]] = {}
     for item in duplicate_properties:
         try:
@@ -780,28 +771,25 @@ def _apply_deterministic_typescript_duplicate_object_property_repair(
         if line_no > 0:
             by_file.setdefault(item["file"], set()).add(line_no)
 
-    for rel_file, line_numbers in by_file.items():
+    for rel_file in by_file:
         path = (workspace_path / rel_file).resolve()
         if not _path_inside_workspace(path, workspace_path) or not path.is_file():
             continue
         try:
-            original = path.read_text(encoding="utf-8")
+            base_files[rel_file] = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        repaired_text, removed_lines = _repair_typescript_duplicate_object_property_lines(original, line_numbers)
-        if repaired_text == original or not removed_lines:
-            continue
-        updated_by_path[path] = repaired_text
-        repaired.extend({"file": rel_file, "line": str(line_no)} for line_no in removed_lines)
+    if not base_files:
+        return []
 
-    return _write_typescript_repair_results(
+    return run_runtime_repair_with_director_tools(
         adapter,
         workspace_path=workspace_path,
         task_id=task_id,
-        updated_by_path=updated_by_path,
         source_tool="deterministic_typescript_duplicate_object_property_repair",
-        metadata_key="duplicates",
-        metadata_value=repaired,
+        executor_factory=DirectorToolExecutor,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
     )
 
 
@@ -3895,13 +3883,6 @@ def _apply_deterministic_typescript_return_object_semicolon_repair(
     if not workspace_path.exists() or not workspace_path.is_dir():
         return []
 
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    executor = DirectorToolExecutor(
-        str(workspace_path),
-        message_bus=message_bus,
-        worker_id="director",
-    )
-    results: list[dict[str, Any]] = []
     base_files: dict[str, str] = {}
     for relative_path in paths:
         full_path = (workspace_path / relative_path).resolve()
@@ -3916,108 +3897,16 @@ def _apply_deterministic_typescript_return_object_semicolon_repair(
         except (OSError, UnicodeDecodeError):
             continue
         base_files[relative_path] = original
-    write_results: dict[str, dict[str, Any]] = {}
-
-    def _policy_gated_writer(path: str, content: str) -> dict[str, Any]:
-        write_result = executor.execute_tool(
-            "write_file",
-            {"file": path, "content": content},
-            task_id=task_id,
-        )
-        write_results[path] = dict(write_result)
-        if bool(write_result.get("ok")):
-            with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-                adapter._update_task_progress(task_id, "executing", current_file=path)
-        return dict(write_result)
-
-    canonical_result = run_director_typescript_object_literal_comma_repair(
-        workspace=workspace_path,
+    return run_runtime_repair_with_director_tools(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        source_tool="deterministic_typescript_return_object_semicolon_repair",
+        executor_factory=DirectorToolExecutor,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
-        writer=_policy_gated_writer,
-        allowed_paths=tuple(base_files.keys()),
+        use_editor=False,
     )
-    if canonical_result.ok:
-        for receipt in canonical_result.receipts:
-            for patch_path in receipt.files_changed:
-                write_result = write_results.get(patch_path, {})
-                if not bool(write_result.get("ok")) and receipt.authoritative:
-                    continue
-                after_hash = str(receipt.after_hashes.get(patch_path) or "")
-                before_hash = str(receipt.before_hashes.get(patch_path) or "")
-                bytes_written = write_result.get("bytes_written")
-                if bytes_written is None:
-                    full_path = (workspace_path / patch_path).resolve()
-                    with contextlib.suppress(OSError, ValueError):
-                        bytes_written = len(full_path.read_text(encoding="utf-8").encode("utf-8"))
-                with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-                    adapter._update_task_progress(task_id, "executing", current_file=patch_path)
-                results.append(
-                    {
-                        "tool": "write_file",
-                        "tool_name": "write_file",
-                        "success": True,
-                        "result": {
-                            "ok": True,
-                            "source_tool": receipt.source_tool,
-                            "file": patch_path,
-                            "bytes_written": int(bytes_written or 0),
-                            "operation": str(write_result.get("operation") or "modify"),
-                            "before_hash": before_hash,
-                            "after_hash": after_hash,
-                            "broadcast_ok": bool(write_result.get("broadcast_ok")),
-                            "director_policy": write_result.get("director_policy"),
-                            "repair_kernel": {
-                                "owner_cell": "director.runtime",
-                                "receipt_id": receipt.receipt_id,
-                                "plan_id": receipt.plan_id,
-                                "status": receipt.status,
-                                "authoritative": receipt.authoritative,
-                                "before_hashes": dict(receipt.before_hashes),
-                                "after_hashes": dict(receipt.after_hashes),
-                                "metadata": dict(receipt.metadata),
-                                "planning": dict(canonical_result.metadata.get("planning") or {}),
-                                "plan_policy": dict(canonical_result.metadata.get("plan_policy") or {}),
-                                "composition_policy": dict(canonical_result.metadata.get("composition_policy") or {}),
-                            },
-                        },
-                    }
-                )
-        if results:
-            return results
-    elif canonical_result.error_code and canonical_result.error_code != "repair_not_planned":
-        return []
-
-    for relative_path, original in base_files.items():
-        repaired = _repair_typescript_return_object_semicolon_lines(original)
-        if repaired == original:
-            continue
-        write_result = executor.execute_tool(
-            "write_file",
-            {"file": relative_path, "content": repaired},
-            task_id=task_id,
-        )
-        if not bool(write_result.get("ok")):
-            continue
-        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-            adapter._update_task_progress(task_id, "executing", current_file=relative_path)
-        results.append(
-            {
-                "tool": "write_file",
-                "tool_name": "write_file",
-                "success": True,
-                "result": {
-                    "ok": True,
-                    "source_tool": "deterministic_typescript_return_object_semicolon_repair",
-                    "file": relative_path,
-                    "bytes_written": int(write_result.get("bytes_written") or len(repaired.encode("utf-8"))),
-                    "operation": str(write_result.get("operation") or "modify"),
-                    "broadcast_ok": bool(write_result.get("broadcast_ok")),
-                    "director_policy": write_result.get("director_policy"),
-                },
-            }
-        )
-    return results
 
 
 def _apply_deterministic_typescript_enum_member_separator_repair(
@@ -4034,41 +3923,37 @@ def _apply_deterministic_typescript_enum_member_separator_repair(
     if not workspace_path.exists() or not workspace_path.is_dir():
         return []
 
-    updated_by_path: dict[Path, str] = {}
-    repaired_members: list[dict[str, str]] = []
+    base_files: dict[str, str] = {}
+    by_file: dict[str, set[int]] = {}
     for item in enum_errors:
         relative_path = item["file"]
-        full_path = (workspace_path / relative_path).resolve()
-        if not _path_inside_workspace(full_path, workspace_path) or not full_path.is_file():
-            continue
-        try:
-            original = updated_by_path.get(full_path) or full_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
         try:
             line_number = int(item["line"])
         except ValueError:
             continue
-        repaired = _repair_typescript_enum_member_separator_lines(original, {line_number})
-        if repaired == original:
+        if line_number <= 0:
             continue
-        updated_by_path[full_path] = repaired
-        repaired_members.append(
-            {
-                "file": relative_path,
-                "line": item["line"],
-                "col": item["col"],
-            }
-        )
+        by_file.setdefault(relative_path, set()).add(line_number)
 
-    return _write_typescript_repair_results(
+    for relative_path in by_file:
+        full_path = (workspace_path / relative_path).resolve()
+        if not _path_inside_workspace(full_path, workspace_path) or not full_path.is_file():
+            continue
+        try:
+            base_files[relative_path] = full_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+    if not base_files:
+        return []
+
+    return run_runtime_repair_with_director_tools(
         adapter,
         workspace_path=workspace_path,
         task_id=task_id,
-        updated_by_path=updated_by_path,
         source_tool="deterministic_typescript_enum_member_separator_repair",
-        metadata_key="enum_members",
-        metadata_value=repaired_members,
+        executor_factory=DirectorToolExecutor,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
     )
 
 

@@ -882,6 +882,186 @@ export interface ResidentAgiDecisionTurnRequest {
   audit_pack_decision_limit?: number;
 }
 
+export interface ResidentAgiTacticalChatRequest {
+  workspace?: string;
+  message: string;
+  decision_type?: string;
+  run_id?: string;
+  task_id?: string;
+  goal_id?: string;
+  context?: Record<string, unknown>;
+  context_refs?: string[];
+  evidence_refs?: string[];
+  decision_limit?: number;
+  max_runs?: number;
+}
+
+export interface ResidentAgiTacticalChatGoalDraftPayload {
+  goal_type?: string;
+  title?: string;
+  motivation?: string;
+  source?: string;
+  scope?: string[];
+  evidence_refs?: string[];
+  derived_from?: string[];
+  budget?: Record<string, unknown>;
+  expected_value?: number;
+  risk_score?: number;
+}
+
+export interface ResidentAgiTacticalChatActionPayload {
+  action_id?: string;
+  label?: string;
+  mode?: string;
+  status?: string;
+  reason?: string;
+  endpoint?: string;
+  ui_handler?: string;
+  capability_id?: string;
+  contract_ref?: string;
+  risk_level?: string;
+  execution_boundary?: string;
+  requires_participation?: boolean;
+  authoritative?: boolean;
+  agi_direct_execution_allowed?: boolean;
+  goal_draft?: ResidentAgiTacticalChatGoalDraftPayload;
+}
+
+export interface ResidentAgiTacticalActionCatalogPayload {
+  schema_version?: string;
+  source?: string;
+  items?: ResidentAgiTacticalChatActionPayload[];
+  summary?: Record<string, unknown>;
+}
+
+export interface ResidentAgiTacticalChatReceiptPayload {
+  schema_version?: string;
+  status?: string;
+  title?: string;
+  summary?: string;
+  rows?: Array<{ label?: string; value?: string }>;
+}
+
+export interface ResidentAgiTacticalMissionBriefPayload {
+  schema_version?: string;
+  title?: string;
+  severity?: string;
+  status_label?: string;
+  progress_percent?: number;
+  current_focus?: string;
+  current_stage?: string;
+  latest_verdict?: string;
+  blockers?: string[];
+  next_actions?: string[];
+  metrics?: Array<{ label?: string; value?: string }>;
+  goal_status_counts?: Record<string, number>;
+  policy?: Record<string, unknown>;
+}
+
+export interface ResidentAgiTacticalToolTraceItemPayload {
+  step_id?: string;
+  label?: string;
+  mode?: string;
+  status?: string;
+  contract?: string;
+  summary?: string;
+}
+
+export interface ResidentAgiTacticalToolTracePayload {
+  schema_version?: string;
+  source?: string;
+  items?: ResidentAgiTacticalToolTraceItemPayload[];
+  summary?: Record<string, unknown>;
+}
+
+export interface ResidentAgiTacticalDecisionRoutePayload {
+  schema_version?: string;
+  source?: string;
+  intent?: string;
+  route_status?: string;
+  route_reason?: string;
+  routing_basis?: string[];
+  recommended_action_ids?: string[];
+  read_only_action_ids?: string[];
+  governed_action_ids?: string[];
+  blocked_reasons?: string[];
+  hard_rules?: Record<string, unknown>;
+  evidence_gate?: Record<string, unknown>;
+  agi_judgement?: Record<string, unknown>;
+  governed_execution?: Record<string, unknown>;
+}
+
+export interface ResidentAgiTacticalParticipationGatePayload {
+  schema_version?: string;
+  status?: string;
+  enabled?: boolean;
+  allowed_for_intent?: boolean;
+  intent?: string;
+  reason?: string;
+  summary?: string;
+  required_scope_ids?: string[];
+  configured_scope_ids?: string[];
+  missing_scope_ids?: string[];
+  suggested_action_ids?: string[];
+  settings_action_available?: boolean;
+  read_only_actions_available?: boolean;
+  governed_actions_available?: boolean;
+  agi_direct_permission_change_allowed?: boolean;
+}
+
+export interface ResidentAgiTacticalChatResponse {
+  schema_version?: string;
+  source?: string;
+  workspace?: string;
+  intent?: string;
+  status?: string;
+  message?: string;
+  flow?: string[];
+  evidence_refs?: string[];
+  context_refs?: string[];
+  mission_brief?: ResidentAgiTacticalMissionBriefPayload | null;
+  tool_trace?: ResidentAgiTacticalToolTracePayload | null;
+  participation_gate?: ResidentAgiTacticalParticipationGatePayload | null;
+  decision_route?: ResidentAgiTacticalDecisionRoutePayload | null;
+  suggested_actions?: ResidentAgiTacticalChatActionPayload[];
+  action_catalog?: ResidentAgiTacticalActionCatalogPayload | null;
+  receipt?: ResidentAgiTacticalChatReceiptPayload | null;
+  facts?: Record<string, unknown>;
+  policy?: Record<string, unknown>;
+}
+
+export interface ResidentAgiTacticalActionRequest {
+  workspace?: string;
+  message: string;
+  action_id: string;
+  decision_type?: string;
+  run_id?: string;
+  task_id?: string;
+  goal_id?: string;
+  context?: Record<string, unknown>;
+  context_refs?: string[];
+  evidence_refs?: string[];
+  decision_limit?: number;
+  max_runs?: number;
+}
+
+export interface ResidentAgiTacticalActionResponse {
+  schema_version?: string;
+  workspace?: string;
+  action_id?: string;
+  status?: string;
+  reason?: string;
+  action_spec?: ResidentAgiTacticalChatActionPayload | null;
+  chat?: ResidentAgiTacticalChatResponse;
+  goal?: ResidentGoalPayload | null;
+  decision?: ResidentDecisionPayload | null;
+  role_result?: Record<string, unknown> | null;
+  follow_up_actions?: ResidentAgiTacticalChatActionPayload[];
+  tool_trace?: ResidentAgiTacticalToolTracePayload | null;
+  receipt?: ResidentAgiTacticalChatReceiptPayload | null;
+  policy?: Record<string, unknown>;
+}
+
 export interface ResidentAgiDecisionHandoffPayload {
   schema_version?: string;
   source_role?: string;

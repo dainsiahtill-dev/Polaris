@@ -9,6 +9,14 @@ from enum import Enum
 from typing import Any, Mapping
 
 from .contracts import RepairDiagnostic
+from .cpp_syntax import (
+    CPP_INCLUDE_PATH_SOURCE_TOOL,
+    CPP_MISSING_PRIVATE_MEMBERS_SOURCE_TOOL,
+    CPP_PLACEHOLDER_DECLARATION_SOURCE_TOOL,
+    CPP_STANDARD_INCLUDE_SOURCE_TOOL,
+    CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL,
+)
+from .generic_hygiene_syntax import PATCH_RESIDUE_CLEANUP_SOURCE_TOOL
 from .strategy_catalog import deterministic_repair_source_tool_known
 from .typescript_syntax import TYPESCRIPT_RETURN_OBJECT_COMMA_SOURCE_TOOL
 
@@ -21,6 +29,7 @@ class RepairArchetype(str, Enum):
     MISSING_METHOD_SELF = "missing_method_self"
     NULLABLE_TYPE_MISMATCH = "nullable_type_mismatch"
     OBJECT_LITERAL_SYNTAX = "object_literal_syntax"
+    GENERATED_RESIDUE = "generated_residue"
     WRONG_IMPORT_PATH = "wrong_import_path"
 
 
@@ -36,6 +45,13 @@ def _slot_tuple_str(value: Sequence[str] | None) -> tuple[str, ...]:
 
 
 _AMBIGUOUS_REPAIR_LANGUAGE_EXTENSIONS = frozenset((".m",))
+_REPAIR_LANGUAGE_SLOT_MODULE_PREFIX = "polaris.cells.director.runtime.internal.repair_kernel"
+_REPAIR_LANGUAGE_SLOT_REGISTRATION_POLICY = "bench_verified_rule_required"
+
+
+def _default_repairer_module(language: str) -> str:
+    normalized = re.sub(r"[^a-z0-9_]+", "_", language.lower()).strip("_")
+    return f"{_REPAIR_LANGUAGE_SLOT_MODULE_PREFIX}.{normalized}_runtime"
 
 
 @dataclass(frozen=True)
@@ -45,9 +61,12 @@ class RepairLanguageSlot:
     language: str
     aliases: tuple[str, ...] = ()
     file_extensions: tuple[str, ...] = ()
+    file_names: tuple[str, ...] = ()
     diagnostic_sources: tuple[str, ...] = ()
     preferred_archetypes: tuple[RepairArchetype, ...] = ()
     notes: str = ""
+    repairer_module: str = ""
+    registration_policy: str = _REPAIR_LANGUAGE_SLOT_REGISTRATION_POLICY
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "language", _slot_non_empty(self.language).lower())
@@ -57,6 +76,7 @@ class RepairLanguageSlot:
             "file_extensions",
             tuple(extension.lower() for extension in _slot_tuple_str(self.file_extensions)),
         )
+        object.__setattr__(self, "file_names", tuple(name.lower() for name in _slot_tuple_str(self.file_names)))
         object.__setattr__(
             self,
             "diagnostic_sources",
@@ -64,15 +84,28 @@ class RepairLanguageSlot:
         )
         object.__setattr__(self, "preferred_archetypes", tuple(self.preferred_archetypes or ()))
         object.__setattr__(self, "notes", str(self.notes or "").strip())
+        object.__setattr__(
+            self,
+            "repairer_module",
+            str(self.repairer_module or _default_repairer_module(self.language)).strip(),
+        )
+        object.__setattr__(
+            self,
+            "registration_policy",
+            str(self.registration_policy or _REPAIR_LANGUAGE_SLOT_REGISTRATION_POLICY).strip(),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "language": self.language,
             "aliases": list(self.aliases),
             "file_extensions": list(self.file_extensions),
+            "file_names": list(self.file_names),
             "diagnostic_sources": list(self.diagnostic_sources),
             "preferred_archetypes": [archetype.value for archetype in self.preferred_archetypes],
             "notes": self.notes,
+            "repairer_module": self.repairer_module,
+            "registration_policy": self.registration_policy,
         }
 
 
@@ -366,6 +399,132 @@ _DEFAULT_REPAIR_LANGUAGE_SLOTS: tuple[RepairLanguageSlot, ...] = (
         preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.OBJECT_LITERAL_SYNTAX),
         notes="Reserved infrastructure DSL slot; not a production repair path without policy-gated receipts.",
     ),
+    RepairLanguageSlot(
+        language="dockerfile",
+        aliases=("docker", "containerfile"),
+        file_extensions=(".dockerfile",),
+        file_names=("Dockerfile", "Containerfile"),
+        diagnostic_sources=("docker build", "hadolint"),
+        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved container build script slot; keep image/build fixes policy-gated.",
+    ),
+    RepairLanguageSlot(
+        language="make",
+        aliases=("makefile",),
+        file_extensions=(".mk",),
+        file_names=("Makefile", "GNUmakefile"),
+        diagnostic_sources=("gmake",),
+        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved build scripting slot for target/dependency repairs.",
+    ),
+    RepairLanguageSlot(
+        language="yaml",
+        aliases=("yml",),
+        file_extensions=(".yaml", ".yml"),
+        diagnostic_sources=("yamllint", "yaml parser"),
+        preferred_archetypes=(RepairArchetype.OBJECT_LITERAL_SYNTAX, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved configuration language slot for structured manifest repairs.",
+    ),
+    RepairLanguageSlot(
+        language="json",
+        aliases=("jsonc",),
+        file_extensions=(".json", ".jsonc"),
+        diagnostic_sources=("json parser", "jsonschema"),
+        preferred_archetypes=(RepairArchetype.OBJECT_LITERAL_SYNTAX, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved structured manifest slot; use structured JSON operations, never regex rewrites.",
+    ),
+    RepairLanguageSlot(
+        language="toml",
+        file_extensions=(".toml",),
+        diagnostic_sources=("toml parser",),
+        preferred_archetypes=(RepairArchetype.OBJECT_LITERAL_SYNTAX, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved manifest slot for Cargo, Python, and toolchain configuration repairs.",
+    ),
+    RepairLanguageSlot(
+        language="nix",
+        file_extensions=(".nix",),
+        diagnostic_sources=("nix build", "nix flake", "statix", "deadnix"),
+        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved reproducible build DSL slot for import and dependency repairs.",
+    ),
+    RepairLanguageSlot(
+        language="starlark",
+        aliases=("bazel", "bzl"),
+        file_extensions=(".bzl", ".star"),
+        file_names=("BUILD", "BUILD.bazel", "WORKSPACE", "MODULE.bazel"),
+        diagnostic_sources=("bazel build", "bazel test", "buildifier"),
+        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved Bazel/Starlark slot for load/package/target repairs.",
+    ),
+    RepairLanguageSlot(
+        language="clojure",
+        aliases=("clj", "cljs", "cljc"),
+        file_extensions=(".clj", ".cljs", ".cljc", ".edn"),
+        diagnostic_sources=("clojure", "lein", "clj-kondo"),
+        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved Lisp/JVM slot for namespace and dependency repairs.",
+    ),
+    RepairLanguageSlot(
+        language="elm",
+        file_extensions=(".elm",),
+        diagnostic_sources=("elm make", "elm-test"),
+        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved frontend functional language slot for import/package repairs.",
+    ),
+    RepairLanguageSlot(
+        language="rescript",
+        aliases=("res", "resi"),
+        file_extensions=(".res", ".resi"),
+        diagnostic_sources=("rescript",),
+        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved typed frontend language slot for module/import repairs.",
+    ),
+    RepairLanguageSlot(
+        language="gleam",
+        file_extensions=(".gleam",),
+        diagnostic_sources=("gleam", "gleam test"),
+        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved BEAM language slot for import/module/package repairs.",
+    ),
+    RepairLanguageSlot(
+        language="solidity",
+        aliases=("sol",),
+        file_extensions=(".sol",),
+        diagnostic_sources=("solc", "hardhat", "forge test"),
+        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved smart contract language slot; security-sensitive fixes need strict receipts.",
+    ),
+    RepairLanguageSlot(
+        language="vyper",
+        aliases=("vy",),
+        file_extensions=(".vy",),
+        diagnostic_sources=("vyper",),
+        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved smart contract language slot; security-sensitive fixes need strict receipts.",
+    ),
+    RepairLanguageSlot(
+        language="qml",
+        file_extensions=(".qml",),
+        diagnostic_sources=("qml", "qmllint"),
+        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.OBJECT_LITERAL_SYNTAX),
+        notes="Reserved UI scripting slot for import/module syntax repairs.",
+    ),
+    RepairLanguageSlot(
+        language="proto",
+        aliases=("protobuf",),
+        file_extensions=(".proto",),
+        diagnostic_sources=("protoc", "buf lint", "buf breaking"),
+        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.MISSING_DEPENDENCY),
+        notes="Reserved schema language slot for import/package repairs.",
+    ),
+    RepairLanguageSlot(
+        language="graphql",
+        aliases=("gql",),
+        file_extensions=(".graphql", ".gql"),
+        diagnostic_sources=("graphql", "graphql-codegen"),
+        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.OBJECT_LITERAL_SYNTAX),
+        notes="Reserved schema/query language slot for import/schema repairs.",
+    ),
 )
 
 
@@ -508,16 +667,43 @@ class RepairCoverageReport:
     def metadata_only_diagnostic_count(self) -> int:
         return sum(1 for item in self.items if item.metadata_only_match)
 
+    @property
+    def coverage_gaps(self) -> tuple[dict[str, Any], ...]:
+        return tuple(_coverage_gap_payload(item) for item in self.items if not item.known_rule_matched)
+
     def to_dict(self) -> dict[str, Any]:
+        coverage_gaps = self.coverage_gaps
         return {
             "total_diagnostics": self.total_diagnostics,
             "covered_diagnostic_count": self.covered_diagnostic_count,
             "uncovered_diagnostic_count": self.uncovered_diagnostic_count,
+            "coverage_gap_count": len(coverage_gaps),
+            "rule_discovery_required": bool(coverage_gaps),
+            "coverage_gap_languages": sorted(
+                {str(gap.get("diagnostic_language") or "unknown") for gap in coverage_gaps}
+            ),
             "executable_runtime_plan_diagnostic_count": self.executable_runtime_plan_diagnostic_count,
             "metadata_only_diagnostic_count": self.metadata_only_diagnostic_count,
             "items": [item.to_dict() for item in self.items],
             "uncovered_diagnostics": [item.diagnostic.to_dict() for item in self.items if not item.known_rule_matched],
+            "coverage_gaps": list(coverage_gaps),
         }
+
+
+def _coverage_gap_payload(item: RepairDiagnosticCoverage) -> dict[str, Any]:
+    payload = item.to_dict()
+    return {
+        "diagnostic": dict(payload["diagnostic"]),
+        "diagnostic_id": str(payload["diagnostic"].get("diagnostic_id") or ""),
+        "known_rule_matched": False,
+        "executable_runtime_plan_matched": False,
+        "diagnostic_language": str(payload["diagnostic_language"]),
+        "diagnostic_phase": str(payload["diagnostic_phase"]),
+        "diagnostic_archetype": str(payload["diagnostic_archetype"]),
+        "suggested_rule_family": str(payload["suggested_rule_family"]),
+        "missing_capability": "deterministic_repair_rule",
+        "audit_reason": "known_rule_matched=false",
+    }
 
 
 class RepairRuleRegistry:
@@ -569,6 +755,19 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 message_terms=("import path must be string",),
                 risk_level="low",
                 description="Repairs generated Go imports missing quoted import paths.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="generic.patch_residue_cleanup",
+                source_tool=PATCH_RESIDUE_CLEANUP_SOURCE_TOOL,
+                language="generic",
+                phase="cleanup",
+                archetype=RepairArchetype.GENERATED_RESIDUE,
+                priority=0,
+                raw_terms=("patch_file",),
+                risk_level="low",
+                description="Removes leaked patch protocol residue from scoped generated source files.",
+                runtime_plan_available=True,
             ),
             RepairRuleDefinition(
                 rule_id="go.module_import_path",
@@ -583,16 +782,17 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 description="Repairs Go module import paths that should point at local project packages.",
             ),
             RepairRuleDefinition(
-                rule_id="cpp.header_not_found",
-                source_tool="deterministic_cpp_post_repair",
+                rule_id="cpp.include_path",
+                source_tool=CPP_INCLUDE_PATH_SOURCE_TOOL,
                 language="cpp",
                 phase="post_materialization",
                 archetype=RepairArchetype.WRONG_IMPORT_PATH,
-                priority=1,
+                priority=0,
                 diagnostic_codes=("cpp_compile_error",),
                 message_terms=("file not found",),
-                risk_level="medium",
-                description="Covers C++ post-pass repairs for missing include/header paths.",
+                risk_level="low",
+                description="Repairs C++ quote include paths that do not match generated header layout.",
+                runtime_plan_available=True,
             ),
             RepairRuleDefinition(
                 rule_id="cpp.no_such_file_or_directory",
@@ -605,6 +805,60 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 message_terms=("no such file",),
                 risk_level="medium",
                 description="Covers C++ post-pass repairs for include paths reported by GCC-style diagnostics.",
+            ),
+            RepairRuleDefinition(
+                rule_id="cpp.standard_include",
+                source_tool=CPP_STANDARD_INCLUDE_SOURCE_TOOL,
+                language="cpp",
+                phase="post_materialization",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=0,
+                depends_on=("cpp.include_path",),
+                diagnostic_codes=("cpp_compile_error",),
+                raw_terms=("std::",),
+                risk_level="low",
+                description="Adds missing C++ standard library includes for generated std:: type usage.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="cpp.placeholder_declaration",
+                source_tool=CPP_PLACEHOLDER_DECLARATION_SOURCE_TOOL,
+                language="cpp",
+                phase="post_materialization",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("cpp_compile_error",),
+                raw_terms=("std::render_return_type",),
+                risk_level="low",
+                description="Removes invalid generated C++ placeholder declarations.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="cpp.missing_private_members",
+                source_tool=CPP_MISSING_PRIVATE_MEMBERS_SOURCE_TOOL,
+                language="cpp",
+                phase="post_materialization",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                depends_on=("cpp.standard_include",),
+                diagnostic_codes=("cpp_compile_error",),
+                raw_terms=("return", "_"),
+                risk_level="medium",
+                description="Adds missing private member declarations for generated inline C++ getters.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="cpp.struct_getter_field_access",
+                source_tool=CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL,
+                language="cpp",
+                phase="post_materialization",
+                archetype=RepairArchetype.MISSING_METHOD_SELF,
+                priority=1,
+                diagnostic_codes=("cpp_compile_error",),
+                raw_terms=("get_", "no member"),
+                risk_level="low",
+                description="Rewrites generated getter calls for public C++ struct fields to direct field access.",
+                runtime_plan_available=True,
             ),
             RepairRuleDefinition(
                 rule_id="html.typescript_module_script",
@@ -628,6 +882,19 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 message_terms=("cannot find symbol",),
                 risk_level="medium",
                 description="Covers Java post-pass repairs for unresolved symbols after generation.",
+            ),
+            RepairRuleDefinition(
+                rule_id="java.common_accessor_aliases",
+                source_tool="deterministic_java_accessor_alias_repair",
+                language="java",
+                phase="post_materialization",
+                archetype=RepairArchetype.MISSING_METHOD_SELF,
+                priority=1,
+                diagnostic_codes=("java_compile_error",),
+                raw_terms=("gettemperament",),
+                risk_level="low",
+                description="Adds deterministic Java accessor aliases used by generated tests.",
+                runtime_plan_available=True,
             ),
             RepairRuleDefinition(
                 rule_id="java.package_does_not_exist",
@@ -744,6 +1011,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 message_terms=("unresolved module", "unlinked crate"),
                 risk_level="medium",
                 description="Repairs missing Rust dependency declarations for known crates.",
+                runtime_plan_available=True,
             ),
             RepairRuleDefinition(
                 rule_id="rust.unresolved_import_path",
@@ -784,6 +1052,19 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
+                rule_id="typescript.object_literal_property_semicolon",
+                source_tool=TYPESCRIPT_RETURN_OBJECT_COMMA_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_return_object_property_semicolon",),
+                message_terms=("semicolon-terminated", "property"),
+                risk_level="low",
+                description="Repairs semicolon-terminated properties inside TypeScript return object literals.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.missing_closing_brace",
                 source_tool="deterministic_typescript_missing_closing_brace_repair",
                 language="typescript",
@@ -794,6 +1075,32 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 message_terms=("}", "expected"),
                 risk_level="low",
                 description="Covers missing closing brace syntax repairs reported as TS1005.",
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.duplicate_object_property",
+                source_tool="deterministic_typescript_duplicate_object_property_repair",
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_ts1117",),
+                message_terms=("object literal", "multiple properties"),
+                risk_level="low",
+                description="Removes duplicate single-line TypeScript object literal properties reported as TS1117.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.enum_member_separator",
+                source_tool="deterministic_typescript_enum_member_separator_repair",
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_ts1357",),
+                message_terms=("enum member", "followed"),
+                risk_level="low",
+                description="Repairs TypeScript enum members that need a comma, initializer, or closing brace separator.",
+                runtime_plan_available=True,
             ),
             RepairRuleDefinition(
                 rule_id="typescript.missing_export",
@@ -818,6 +1125,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 message_terms=("null",),
                 risk_level="low",
                 description="Covers nullable canvas/context argument repairs.",
+                runtime_plan_available=True,
             ),
             RepairRuleDefinition(
                 rule_id="typescript.too_few_arguments",
@@ -952,6 +1260,9 @@ def _infer_language_from_slots(*, code: str, path: str, message: str) -> str:
 
 
 def _slot_path_matches(*, slot: RepairLanguageSlot, path: str) -> bool:
+    basename = path.replace("\\", "/").rsplit("/", maxsplit=1)[-1]
+    if basename in slot.file_names:
+        return True
     return any(
         extension not in _AMBIGUOUS_REPAIR_LANGUAGE_EXTENSIONS and path.endswith(extension)
         for extension in slot.file_extensions

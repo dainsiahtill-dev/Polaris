@@ -4,6 +4,7 @@ import type { VisualGraphConfig } from "../types/visual";
 import {
   buildVisualGraph,
   clearRoleAssignment,
+  getConfigSummary,
   removeRoleBinding,
   updateProviderConcurrency,
   updateRoleBindingConcurrency,
@@ -110,6 +111,31 @@ describe("LLM visual config editor — Resident AGI role", () => {
     const result = validateRoleAssignments({ providers: {}, roles: {} });
     expect(result.missing).not.toContain("resident_agi");
     expect(result.incomplete).not.toContain("resident_agi");
+  });
+
+  it("requires Resident AGI assignment when policy marks AGI as required", () => {
+    const result = validateRoleAssignments({
+      providers: {},
+      roles: {},
+      policies: { required_ready_roles: ["resident_agi"] },
+    });
+    expect(result.missing).toContain("resident_agi");
+
+    const summary = getConfigSummary({
+      providers: {},
+      roles: {},
+      policies: { required_ready_roles: ["resident_agi"] },
+    });
+    expect(summary).toContain("resident_agi: [未配置]");
+  });
+
+  it("keeps policy-required governance roles visible in the visual graph", () => {
+    const { nodes } = buildVisualGraph({
+      providers: {},
+      roles: {},
+      policies: { required_ready_roles: ["hr"] },
+    });
+    expect(nodes.some((node) => node.id === "role:hr")).toBe(true);
   });
 });
 

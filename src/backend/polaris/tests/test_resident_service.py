@@ -12,6 +12,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     read_run_ledger_projection,
 )
 from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import CommandResult
+from polaris.cells.resident.autonomy.internal.agi_audit_pack import resident_agi_evidence_gate
 from polaris.cells.resident.autonomy.internal.resident_runtime_service import (
     get_resident_service,
     reset_resident_services,
@@ -820,6 +821,166 @@ def test_resident_agi_evidence_interfaces_query_reports_public_facade_status(tmp
     assert payload["summary"]["governed_execute_only"] == 1
 
 
+def test_resident_agi_evidence_interfaces_resolves_context_engine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    def fake_audit_pack(*, workspace: str, status_payload: dict[str, object], decision_limit: int) -> dict[str, object]:
+        return {
+            "schema_version": "resident.agi_audit_pack.v1",
+            "evidence_refs": ["runtime/contracts/chief_engineer.blueprint.json"],
+            "capability_surface": {
+                "decision_capabilities": [
+                    {
+                        "decision_id": "architecture.option.selection",
+                        "required_evidence_interfaces": ["context.engine.resolve"],
+                        "optional_evidence_interfaces": [],
+                        "candidate_actions": ["request_evidence"],
+                        "hard_constraints": ["context_engine_public_contract_only"],
+                    }
+                ],
+                "items": [
+                    {
+                        "capability_id": "context.engine.resolve",
+                        "name": "Role context resolver",
+                        "category": "context_discovery",
+                        "access": "read_only",
+                        "contract_ref": "context.engine",
+                        "risk_level": "low",
+                    }
+                ],
+            },
+        }
+
+    def fake_context_engine(**kwargs: object) -> dict[str, object]:
+        assert kwargs["role"] == "resident_agi"
+        assert kwargs["project_root"] == str(workspace)
+        return {
+            "anthropomorphic_context": "Resident AGI should preserve PM -> CE -> Director topology.",
+            "context_os_summary": {"current_goal": "Explain architecture blockage"},
+            "prompt_context_obj": SimpleNamespace(
+                run_id=kwargs["run_id"],
+                phase=kwargs["phase"],
+                step=kwargs["step"],
+                persona_id="resident_agi.v1",
+                token_usage_estimate=64,
+            ),
+            "context_pack": SimpleNamespace(
+                items=[
+                    SimpleNamespace(
+                        id="ctx-1",
+                        kind="contract",
+                        provider="context_os",
+                        priority=10,
+                        reason="CE blueprint required",
+                    )
+                ]
+            ),
+        }
+
+    monkeypatch.setattr(resident_public_service, "build_resident_agi_audit_pack", fake_audit_pack)
+    monkeypatch.setattr(resident_public_service, "get_anthropomorphic_context_v2", fake_context_engine)
+
+    payload = query_resident_agi_evidence_interfaces(
+        QueryResidentAgiEvidenceInterfacesV1(
+            workspace=str(workspace),
+            decision_type="architecture_option_selection",
+            interface_ids=("context.engine.resolve",),
+            run_id="run-context",
+            task_id="task-context",
+        )
+    )
+
+    item = payload["interfaces"][0]
+    assert item["interface_id"] == "context.engine.resolve"
+    assert item["status"] == "available"
+    assert item["available"] is True
+    assert item["callable"] is True
+    assert item["source"] == "context.engine.public.get_anthropomorphic_context_v2"
+    assert item["summary"]["role"] == "resident_agi"
+    assert item["summary"]["context_item_count"] == 1
+    assert item["payload"]["context_os_summary"]["current_goal"] == "Explain architecture blockage"
+    assert item["payload"]["context_items"][0]["provider"] == "context_os"
+    assert payload["summary"]["missing_required_interface_ids"] == []
+
+
+def test_resident_agi_evidence_interfaces_reads_blueprint_profile_and_runtime_events(tmp_path: Path) -> None:
+    from polaris.cells.audit.verdict.public import create_artifact_service
+    from polaris.cells.runtime.artifact_store.public.service import resolve_artifact_path
+
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    blueprint_path = Path(resolve_artifact_path(str(workspace), "", "runtime/contracts/chief_engineer.blueprint.json"))
+    blueprint_path.parent.mkdir(parents=True, exist_ok=True)
+    blueprint_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "role": "ChiefEngineer",
+                "summary": "Keep Resident AGI behind governed PM -> Chief Engineer -> Director chain.",
+                "task_updates": [{"task_id": "task-1"}],
+                "architecture_decisions": [{"decision": "use_existing_context_engine"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    event_service = create_artifact_service(str(workspace))
+    events_path = Path(event_service.get_runtime_events_path())
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    events_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "runtime.role.started", "role": "chief_engineer"}, ensure_ascii=False),
+                json.dumps({"type": "runtime.role.blocked", "role": "resident_agi"}, ensure_ascii=False),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = query_resident_agi_evidence_interfaces(
+        QueryResidentAgiEvidenceInterfacesV1(
+            workspace=str(workspace),
+            decision_type="architecture_option_selection",
+            interface_ids=(
+                "chief_engineer.blueprint.read",
+                "task.execution_profile.read",
+                "runtime.events.read",
+            ),
+            evidence_refs=("src/frontend/src/app/components/resident/ResidentWorkspace.tsx",),
+            run_id="run-profile",
+            task_id="Add Resident AGI cockpit console",
+        )
+    )
+
+    by_id = {item["interface_id"]: item for item in payload["interfaces"]}
+    blueprint = by_id["chief_engineer.blueprint.read"]
+    assert blueprint["status"] == "available"
+    assert blueprint["summary"]["schema_version"] == "chief_engineer.blueprint.v1"
+    assert blueprint["summary"]["task_update_count"] == 1
+    assert blueprint["summary"]["architecture_decision_count"] == 1
+    profile = by_id["task.execution_profile.read"]
+    assert profile["status"] == "available"
+    assert profile["source"] == "director.tasking.resolve_director_execution_profile"
+    assert profile["summary"]["schema_version"] == "task.execution_profile.v1"
+    assert profile["summary"]["language"] == "typescript"
+    assert profile["summary"]["temperature_phase"]
+    assert profile["payload"]["profile"]["temperature_source"] == "task.execution_profile.v1"
+    runtime_events = by_id["runtime.events.read"]
+    assert runtime_events["status"] == "available"
+    assert runtime_events["summary"]["event_count"] == 2
+    assert runtime_events["summary"]["recent_event_types"] == [
+        "runtime.role.started",
+        "runtime.role.blocked",
+    ]
+
+
 def test_resident_agi_decision_turn_participation_distinguishes_manual_and_auto_switch(
     tmp_path: Path,
 ) -> None:
@@ -1222,6 +1383,21 @@ def test_resident_agi_evidence_interfaces_treats_metadata_only_required_as_missi
     assert payload["summary"]["missing_required_interface_ids"] == ["contextos.final_request_audit.read"]
 
 
+def test_resident_agi_evidence_gate_accepts_context_hash_ref() -> None:
+    gate = resident_agi_evidence_gate(
+        audit_refs=["0123456789abcdef01234567"],
+        run_ledger_summary={
+            "available": True,
+            "ok": True,
+            "failed": 0,
+        },
+    )
+
+    assert gate["status"] == "pass"
+    assert gate["recommended_verdict"] == "continue"
+    assert gate["context_snapshot_ref_count"] == 1
+
+
 def test_resident_agi_evidence_interfaces_reads_final_provider_request_audit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1299,6 +1475,83 @@ def test_resident_agi_evidence_interfaces_reads_final_provider_request_audit(
     assert item["source"] == "context.engine.public.query_final_provider_request_audit"
     assert item["payload"]["provider_request"]["schema_version"] == "llm.provider_request_snapshot.v1"
     assert item["payload"]["final_request_context_audit"]["final_request_token_estimate"] == 256
+    assert payload["summary"]["missing_required_interface_ids"] == []
+
+
+def test_resident_agi_evidence_interfaces_reads_final_provider_request_audit_from_hash_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.kernelone.llm.engine.executor import AIExecutor
+
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    hash_key = AIExecutor._store_context_messages_sync(
+        workspace=str(workspace),
+        messages=[{"role": "system", "content": "You are Resident AGI."}],
+        trace_id="trace-resident-final-request-hash",
+        call_id="call-resident-final-request-hash",
+        provider_request={
+            "schema_version": "llm.provider_request_snapshot.v1",
+            "role": "resident_agi",
+            "provider_id": "mock-provider",
+            "provider_type": "mock",
+            "model": "mock-model",
+            "tool_schema_count": 1,
+            "tools": [{"type": "function", "name": "repo_tree", "argument_keys": [], "required": []}],
+            "tool_choice": "auto",
+            "response_format": {"type": "json_schema", "name": "ResidentAgiDecisionOutputV1"},
+            "final_request_context_audit": {
+                "schema_version": "llm.final_request_context_audit.v1",
+                "final_request_token_estimate": 384,
+                "tool_schema_count": 1,
+            },
+        },
+    )
+
+    def fake_audit_pack(*, workspace: str, status_payload: dict[str, object], decision_limit: int) -> dict[str, object]:
+        return {
+            "schema_version": "resident.agi_audit_pack.v1",
+            "evidence_refs": [hash_key],
+            "capability_surface": {
+                "decision_capabilities": [
+                    {
+                        "decision_id": "quality.gate.response",
+                        "required_evidence_interfaces": ["contextos.final_request_audit.read"],
+                        "optional_evidence_interfaces": [],
+                        "candidate_actions": ["request_evidence"],
+                        "hard_constraints": ["final_provider_request_required"],
+                    }
+                ],
+                "items": [
+                    {
+                        "capability_id": "contextos.final_request_audit.read",
+                        "name": "Final request audit",
+                        "access": "read",
+                        "contract_ref": "roles.final_request_context_audit",
+                        "risk_level": "high",
+                    }
+                ],
+            },
+        }
+
+    monkeypatch.setattr(resident_public_service, "build_resident_agi_audit_pack", fake_audit_pack)
+
+    payload = query_resident_agi_evidence_interfaces(
+        QueryResidentAgiEvidenceInterfacesV1(
+            workspace=str(workspace),
+            decision_type="quality_gate_response",
+            interface_ids=("contextos.final_request_audit.read",),
+        )
+    )
+
+    by_id = {item["interface_id"]: item for item in payload["interfaces"]}
+    item = by_id["contextos.final_request_audit.read"]
+    assert item["status"] == "available"
+    assert item["available"] is True
+    assert item["summary"]["selected_context_snapshot_ref"] == hash_key
+    assert item["payload"]["final_request_context_audit"]["final_request_token_estimate"] == 384
     assert payload["summary"]["missing_required_interface_ids"] == []
 
 

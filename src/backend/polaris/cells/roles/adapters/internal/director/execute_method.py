@@ -21,7 +21,6 @@ from typing import Any
 from polaris.cells.director.runtime.public.service import (
     AttachDirectorRepairRevalidationEvidenceV1,
     project_director_repair_revalidation_evidence,
-    summarize_deterministic_repair_source_tools,
 )
 from polaris.kernelone.fs.materialization import materialized_file_paths
 
@@ -45,6 +44,7 @@ from .helpers import (
 )
 from .materialization_quality_repair_bridge import run_materialization_quality_repairs
 from .post_execution_repair_bridge import run_post_execution_language_repairs
+from .repair_profile_projection import summarize_deterministic_repair_source_tools
 
 logger = logging.getLogger(__name__)
 
@@ -1803,20 +1803,66 @@ def _mark_quality_repair_summary_revalidated(
 ) -> None:
     if not isinstance(summary, dict):
         return
-    revalidated_summary = project_director_repair_revalidation_evidence(
-        AttachDirectorRepairRevalidationEvidenceV1(
-            summary=summary,
-            residual_artifact_quality_errors=tuple(artifact_quality_errors),
-            command=("materialization_quality_revalidation",),
-            metadata={"stage": "director_materialization_quality"},
-        )
-    ).summary
+    revalidated_summary = _project_repair_revalidation_summary(
+        summary,
+        artifact_quality_errors=artifact_quality_errors,
+        stage="director_materialization_quality",
+    )
     summary.clear()
     summary.update(revalidated_summary)
+    _mark_nested_repair_kernel_summaries_revalidated(summary, artifact_quality_errors)
     residual_error_count = len(artifact_quality_errors)
     summary["revalidated"] = True
     summary["residual_error_count"] = residual_error_count
     summary["success"] = residual_error_count == 0
+
+
+def _project_repair_revalidation_summary(
+    summary: dict[str, Any],
+    *,
+    artifact_quality_errors: list[str],
+    stage: str,
+) -> dict[str, Any]:
+    return dict(
+        project_director_repair_revalidation_evidence(
+            AttachDirectorRepairRevalidationEvidenceV1(
+                summary=summary,
+                residual_artifact_quality_errors=tuple(artifact_quality_errors),
+                command=("materialization_quality_revalidation",),
+                metadata={"stage": stage},
+            )
+        ).summary
+    )
+
+
+def _mark_nested_repair_kernel_summaries_revalidated(
+    summary: dict[str, Any],
+    artifact_quality_errors: list[str],
+) -> None:
+    """Attach the same post-check evidence to nested repair-kernel projections."""
+
+    nested_kernel = summary.get("post_execution_repair_kernel")
+    if isinstance(nested_kernel, dict):
+        summary["post_execution_repair_kernel"] = _project_repair_revalidation_summary(
+            nested_kernel,
+            artifact_quality_errors=artifact_quality_errors,
+            stage="director_post_execution_language_repairs",
+        )
+
+    repair_attempts = summary.get("repair_attempts")
+    if not isinstance(repair_attempts, list):
+        return
+    for attempt in repair_attempts:
+        if not isinstance(attempt, dict):
+            continue
+        attempt_kernel = attempt.get("repair_kernel")
+        if not isinstance(attempt_kernel, dict):
+            continue
+        attempt["repair_kernel"] = _project_repair_revalidation_summary(
+            attempt_kernel,
+            artifact_quality_errors=artifact_quality_errors,
+            stage=str(attempt.get("stage") or "director_materialization_quality_attempt"),
+        )
 
 
 def _phase_existing_scope_preflight(
@@ -3376,7 +3422,6 @@ from .deterministic_repairs import (  # noqa: E402  (deferred for circular-impor
     _apply_deterministic_typescript_missing_closing_brace_repair as _apply_deterministic_typescript_missing_closing_brace_repair,
     _apply_deterministic_typescript_missing_export_repair as _apply_deterministic_typescript_missing_export_repair,
     _apply_deterministic_typescript_reexport_repair as _apply_deterministic_typescript_reexport_repair,
-    _apply_deterministic_typescript_return_object_semicolon_repair as _apply_deterministic_typescript_return_object_semicolon_repair,
     _apply_deterministic_typescript_unresolved_identifier_repair as _apply_deterministic_typescript_unresolved_identifier_repair,
     _apply_deterministic_typescript_zod_type_class_collision_repair as _apply_deterministic_typescript_zod_type_class_collision_repair,
     _apply_deterministic_unresolved_import_symbol_repair as _apply_deterministic_unresolved_import_symbol_repair,
@@ -3406,7 +3451,6 @@ from .deterministic_repairs import (  # noqa: E402  (deferred for circular-impor
     _parse_named_import_symbols as _parse_named_import_symbols,
     _parse_required_dev_dependency_packages as _parse_required_dev_dependency_packages,
     _parse_typescript_escaped_newline_paths as _parse_typescript_escaped_newline_paths,
-    _parse_typescript_return_object_semicolon_paths as _parse_typescript_return_object_semicolon_paths,
     _parse_typescript_zod_type_class_collision_paths as _parse_typescript_zod_type_class_collision_paths,
     _parse_undeclared_runtime_import_packages as _parse_undeclared_runtime_import_packages,
     _parse_undeclared_runtime_import_paths as _parse_undeclared_runtime_import_paths,
@@ -3418,7 +3462,6 @@ from .deterministic_repairs import (  # noqa: E402  (deferred for circular-impor
     _remove_patch_residue_lines as _remove_patch_residue_lines,
     _repair_typescript_enum_member_separator_lines as _repair_typescript_enum_member_separator_lines,
     _repair_typescript_escaped_newline_in_line_comments as _repair_typescript_escaped_newline_in_line_comments,
-    _repair_typescript_return_object_semicolon_lines as _repair_typescript_return_object_semicolon_lines,
     _repair_typescript_unresolved_identifier_lines as _repair_typescript_unresolved_identifier_lines,
     _repair_typescript_zod_type_class_collision as _repair_typescript_zod_type_class_collision,
     _replace_deterministic_scaffold_markers as _replace_deterministic_scaffold_markers,

@@ -2814,6 +2814,7 @@ cells:
         - AttachDirectorRepairRevalidationEvidenceV1
         - CompareDirectorRepairShadowRunV1
         - ProjectDirectorRepairKernelSummaryV1
+        - PlanDirectorRepairCommandV1
         - RunDirectorRepairCommandV1
       queries:
         - QueryDirectorRepairAdvisoryPolicyV1

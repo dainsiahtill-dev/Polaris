@@ -16,7 +16,7 @@ from .contracts import (
     RepairRevalidationEvidence,
     sha256_text,
 )
-from .executor import TransactionalRepairExecutor, WriteFileFn
+from .executor import EditFileFn, TransactionalRepairExecutor, WriteFileFn
 from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
 from .receipts import attach_revalidation_evidence, build_receipt
 
@@ -218,6 +218,7 @@ class RepairConvergenceScheduler:
         planner: PlannerFn,
         base_files_provider: BaseFilesProviderFn,
         writer: WriteFileFn | None = None,
+        editor: EditFileFn | None = None,
         allowed_paths: Sequence[str] = (),
         previous_receipts: Sequence[RepairReceipt] = (),
     ) -> RepairConvergenceResult:
@@ -262,6 +263,7 @@ class RepairConvergenceScheduler:
                 plans=schedule.ordered_plans,
                 base_files_provider=base_files_provider,
                 writer=writer,
+                editor=editor,
                 allowed_paths=allowed_paths,
                 previous_receipts=tuple(all_receipts),
                 round_number=round_number,
@@ -349,6 +351,7 @@ class RepairConvergenceScheduler:
         plans: Sequence[RepairPlan],
         base_files_provider: BaseFilesProviderFn,
         writer: WriteFileFn | None,
+        editor: EditFileFn | None,
         allowed_paths: Sequence[str],
         previous_receipts: tuple[RepairReceipt, ...],
         round_number: int,
@@ -384,6 +387,7 @@ class RepairConvergenceScheduler:
                 plan=plan,
                 composition=composition,
                 writer=writer,
+                editor=editor,
             )
             receipts.append(
                 _with_round_number(

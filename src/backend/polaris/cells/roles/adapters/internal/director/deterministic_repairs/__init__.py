@@ -18,15 +18,9 @@ exactly as it did before the split.
 
 from __future__ import annotations
 
-from polaris.cells.director.runtime.public.service import (
-    KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS as KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS,
-    DeterministicRepairStrategy as DeterministicRepairStrategy,
-    describe_deterministic_repair_strategy as describe_deterministic_repair_strategy,
-    deterministic_repair_source_tool_known as deterministic_repair_source_tool_known,
-    deterministic_repair_strategy_catalog as deterministic_repair_strategy_catalog,
+from ..repair_profile_projection import (
     summarize_deterministic_repair_source_tools as summarize_deterministic_repair_source_tools,
 )
-
 from ._common import (
     _DECLARED_TARGET_FILE_MISSING_ERROR_RE as _DECLARED_TARGET_FILE_MISSING_ERROR_RE,
     _KNOWN_DEV_DEPENDENCY_VERSIONS as _KNOWN_DEV_DEPENDENCY_VERSIONS,
@@ -183,7 +177,6 @@ from .zod_repairs import (
 )
 
 __all__ = [
-    "KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS",
     "_DECLARED_TARGET_FILE_MISSING_ERROR_RE",
     "_KNOWN_DEV_DEPENDENCY_VERSIONS",
     "_KNOWN_RUNTIME_DEPENDENCY_VERSIONS",
@@ -214,7 +207,6 @@ __all__ = [
     "_UNDECLARED_RUNTIME_IMPORT_ERROR_RE",
     "_UNRESOLVED_IMPORT_SYMBOL_ERROR_RE",
     "_UNRESOLVED_RELATIVE_IMPORT_ERROR_RE",
-    "DeterministicRepairStrategy",
     "_apply_deterministic_declared_target_contract_repairs",
     "_apply_deterministic_javascript_esm_commonjs_entrypoint_repair",
     "_apply_deterministic_javascript_missing_export_repair",
@@ -313,9 +305,6 @@ __all__ = [
     "_typescript_file_declares_runtime_export",
     "_typescript_module_runtime_exports_symbol",
     "_typescript_relative_import_without_suffix",
-    "describe_deterministic_repair_strategy",
-    "deterministic_repair_source_tool_known",
-    "deterministic_repair_strategy_catalog",
     "repair_rust_crate_imports",
     "repair_rust_dependencies",
     "repair_rust_derives",

@@ -18,15 +18,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.director.runtime.public import (
-    ProjectDirectorRepairKernelSummaryV1,
-    project_director_repair_kernel_summary,
-)
-from polaris.cells.director.runtime.public.service import summarize_deterministic_repair_source_tools
-
 from .. import execute_method as _em
 from ..execution_tools import DirectorToolExecutor
 from ..helpers import has_successful_write_tool
+from ..repair_profile_projection import project_repair_kernel_summary, summarize_deterministic_repair_source_tools
 from ..task_scope_paths import (
     _extract_task_path_candidates,
     _extract_task_target_path_candidates,
@@ -39,69 +34,13 @@ from ._common import (
     _find_nearby_declared_target_source,
     _parse_missing_declared_target_files,
 )
+from ._runtime_bridge import run_runtime_repair_with_director_tools
 from .go_repairs import (
-    repair_go_bare_import_strings,
     repair_go_bare_local_imports,
     repair_go_duplicate_declarations,
     repair_go_import_subpaths,
     repair_go_module_imports,
     repair_go_nested_import_keyword,
-)
-from .javascript_repairs import (
-    _apply_deterministic_javascript_esm_commonjs_entrypoint_repair,
-    _apply_deterministic_javascript_missing_export_repair,
-    _apply_deterministic_javascript_missing_method_runtime_repair,
-    _apply_deterministic_javascript_test_missing_target_repair,
-    _apply_deterministic_javascript_typescript_annotation_repair,
-)
-from .npm_repairs import (
-    _apply_deterministic_npm_test_script_repair,
-    _apply_deterministic_runtime_dependency_repair,
-    _apply_deterministic_typescript_scaffold_repair,
-)
-from .python_repairs import (
-    _apply_deterministic_python_package_shadow_bridge_repair,
-    _apply_deterministic_python_unittest_runtime_failure_repair,
-    _apply_deterministic_unresolved_import_symbol_repair,
-)
-from .rust_repairs import (
-    _apply_deterministic_rust_crate_import_repair,
-    _apply_deterministic_rust_dependency_repair,
-    _apply_deterministic_rust_derive_repair,
-    _apply_deterministic_rust_lib_root_facade_repair,
-    _apply_deterministic_rust_line_suggestion_repair,
-    _apply_deterministic_rust_missing_lib_target_repair,
-    _apply_deterministic_rust_trait_import_repair,
-    _apply_deterministic_rust_unresolved_pub_use_repair,
-)
-from .typeorm_repairs import (
-    _apply_deterministic_typeorm_model_normalization_repair,
-)
-from .typescript_repairs import (
-    _apply_deterministic_html_typescript_module_script_repair,
-    _apply_deterministic_typescript_canvas_scale_return_type_repair,
-    _apply_deterministic_typescript_duplicate_object_property_repair,
-    _apply_deterministic_typescript_entrypoint_repair,
-    _apply_deterministic_typescript_enum_member_separator_repair,
-    _apply_deterministic_typescript_escaped_newline_repair,
-    _apply_deterministic_typescript_member_alias_repair,
-    _apply_deterministic_typescript_missing_closing_brace_repair,
-    _apply_deterministic_typescript_missing_export_repair,
-    _apply_deterministic_typescript_missing_member_repair,
-    _apply_deterministic_typescript_nullable_canvas_context_repair,
-    _apply_deterministic_typescript_number_to_string_argument_repair,
-    _apply_deterministic_typescript_reexported_type_binding_repair,
-    _apply_deterministic_typescript_relative_import_case_repair,
-    _apply_deterministic_typescript_return_object_semicolon_repair,
-    _apply_deterministic_typescript_sourcefile_diagnostics_repair,
-    _apply_deterministic_typescript_too_few_arguments_repair,
-    _apply_deterministic_typescript_tsconfig_lib_repair,
-    _apply_deterministic_typescript_uninitialized_property_repair,
-    _apply_deterministic_typescript_unresolved_identifier_repair,
-    _apply_deterministic_typescript_vitest_globals_repair,
-)
-from .zod_repairs import (
-    _apply_deterministic_typescript_zod_type_class_collision_repair,
 )
 
 _SCAFFOLD_MARKER_ERROR_RE = re.compile(
@@ -117,15 +56,11 @@ def _project_repair_kernel_summary(
     artifact_quality_errors: list[str],
     mode: str = "commit",
 ) -> dict[str, Any]:
-    return dict(
-        project_director_repair_kernel_summary(
-            ProjectDirectorRepairKernelSummaryV1(
-                stage=stage,
-                tool_results=tuple(tool_results),
-                artifact_quality_errors=tuple(artifact_quality_errors),
-                mode=mode,
-            )
-        ).summary
+    return project_repair_kernel_summary(
+        stage=stage,
+        tool_results=tool_results,
+        artifact_quality_errors=artifact_quality_errors,
+        mode=mode,
     )
 
 
@@ -326,19 +261,13 @@ def _apply_deterministic_patch_residue_cleanup(
     task: dict[str, Any],
     task_id: str,
 ) -> list[dict[str, Any]]:
-    """Clean leaked patch markers from declared task files before invoking the LLM."""
+    """Clean leaked patch markers from declared task files through the runtime kernel."""
 
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
     if not workspace_path.exists() or not workspace_path.is_dir():
         return []
     workspace_name = workspace_path.name
-    results: list[dict[str, Any]] = []
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    executor = DirectorToolExecutor(
-        str(workspace_path),
-        message_bus=message_bus,
-        worker_id="director",
-    )
+    base_files: dict[str, str] = {}
     for candidate in _extract_task_path_candidates(task):
         normalized = _normalize_declared_task_path(candidate, workspace_name=workspace_name)
         if not normalized:
@@ -361,32 +290,18 @@ def _apply_deterministic_patch_residue_cleanup(
             text = target_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        cleaned = _remove_patch_residue_lines(text)
-        if cleaned == text:
-            continue
-        write_result = executor.execute_tool(
-            "write_file",
-            {"file": normalized, "content": cleaned},
-            task_id=task_id,
-        )
-        if not bool(write_result.get("ok")):
-            continue
-        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-            adapter._update_task_progress(task_id, "executing", current_file=normalized)
-        results.append(
-            {
-                "tool": "write_file",
-                "tool_name": "write_file",
-                "success": True,
-                "result": {
-                    "ok": True,
-                    "source_tool": "deterministic_patch_residue_cleanup",
-                    "file": normalized,
-                    "bytes_written": int(write_result.get("bytes_written") or len(cleaned.encode("utf-8"))),
-                },
-            }
-        )
-    return results
+        base_files[normalized] = text
+    if not base_files:
+        return []
+
+    return run_runtime_repair_with_director_tools(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        source_tool="deterministic_patch_residue_cleanup",
+        executor_factory=DirectorToolExecutor,
+        base_files=base_files,
+    )
 
 
 def _apply_deterministic_go_module_import_repair(
@@ -404,7 +319,8 @@ def _apply_deterministic_go_module_import_repair(
     workspace = Path(getattr(adapter, "workspace", "") or "")
     if not workspace.is_dir():
         return []
-    go_files = list(workspace.rglob("*.go"))
+    workspace_path = workspace.resolve()
+    go_files = list(workspace_path.rglob("*.go"))
     if not go_files:
         return []
     results: list[dict[str, Any]] = []
@@ -413,26 +329,35 @@ def _apply_deterministic_go_module_import_repair(
     # Must run BEFORE nested import keyword repair to avoid contradiction:
     # bare_strings adds "import" to bare strings; nested_import removes extra
     # "import" inside import blocks. Order matters.
-    bare_str_repairs = repair_go_bare_import_strings(workspace)
-    for record in bare_str_repairs:
-        results.append(
-            {
-                "tool": "write_file",
-                "tool_name": "write_file",
-                "success": True,
-                "result": {
-                    "ok": True,
-                    "source_tool": "deterministic_go_bare_import_string_repair",
-                    "file": record["file"],
-                    "before": record["before"],
-                    "after": record["after"],
-                },
-            }
+    base_files: dict[str, str] = {}
+    for go_file in go_files:
+        if go_file.name.endswith("_test.go"):
+            continue
+        try:
+            relative_path = go_file.relative_to(workspace_path).as_posix()
+        except ValueError:
+            continue
+        try:
+            base_files[relative_path] = go_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+    if base_files:
+        bare_import_results = run_runtime_repair_with_director_tools(
+            adapter,
+            workspace_path=workspace_path,
+            task_id=task_id,
+            source_tool="deterministic_go_bare_import_string_repair",
+            executor_factory=DirectorToolExecutor,
+            base_files=base_files,
+            use_editor=False,
         )
+        if any(not bool(item.get("success", False)) for item in bare_import_results):
+            return bare_import_results
+        results.extend(bare_import_results)
 
     # Pass 0: Nested import keyword repair (remove extra "import" inside import blocks).
     # Runs AFTER bare import string repair so we don't undo each other.
-    nested_repairs = repair_go_nested_import_keyword(workspace)
+    nested_repairs = repair_go_nested_import_keyword(workspace_path)
     for record in nested_repairs:
         results.append(
             {
@@ -450,8 +375,8 @@ def _apply_deterministic_go_module_import_repair(
         )
 
     # Pass 1: Prefix normalization.
-    if (workspace / "go.mod").is_file():
-        prefix_repairs = repair_go_module_imports(workspace)
+    if (workspace_path / "go.mod").is_file():
+        prefix_repairs = repair_go_module_imports(workspace_path)
         for record in prefix_repairs:
             results.append(
                 {
@@ -469,8 +394,8 @@ def _apply_deterministic_go_module_import_repair(
             )
 
     # Pass 1b: Bare local import prefix repair (e.g. "src/models" → "module/src/models").
-    if (workspace / "go.mod").is_file():
-        bare_repairs = repair_go_bare_local_imports(workspace)
+    if (workspace_path / "go.mod").is_file():
+        bare_repairs = repair_go_bare_local_imports(workspace_path)
         for record in bare_repairs:
             results.append(
                 {
@@ -488,7 +413,7 @@ def _apply_deterministic_go_module_import_repair(
             )
 
     # Pass 2: Sub-path hallucination repair.
-    subpath_repairs = repair_go_import_subpaths(workspace)
+    subpath_repairs = repair_go_import_subpaths(workspace_path)
     for record in subpath_repairs:
         results.append(
             {
@@ -506,7 +431,7 @@ def _apply_deterministic_go_module_import_repair(
         )
 
     # Pass 3: Duplicate declaration merge.
-    dedup_repairs = repair_go_duplicate_declarations(workspace)
+    dedup_repairs = repair_go_duplicate_declarations(workspace_path)
     for record in dedup_repairs:
         results.append(
             {
@@ -532,342 +457,16 @@ def _apply_deterministic_materialization_quality_repairs(
     task_id: str,
     artifact_quality_errors: list[str],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    results: list[dict[str, Any]] = []
-    results.extend(
-        _apply_deterministic_scaffold_marker_error_cleanup(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
+    """Legacy facade: materialization repair orchestration is runtime-scheduled."""
+
+    from ..materialization_quality_repair_bridge import run_materialization_quality_repairs
+
+    return run_materialization_quality_repairs(
+        adapter,
+        task=task,
+        task_id=task_id,
+        artifact_quality_errors=artifact_quality_errors,
     )
-    results.extend(
-        _apply_deterministic_typescript_scaffold_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typeorm_model_normalization_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_return_object_semicolon_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_enum_member_separator_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_unresolved_identifier_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_reexported_type_binding_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_escaped_newline_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_missing_closing_brace_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_zod_type_class_collision_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_relative_import_case_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_entrypoint_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_tsconfig_lib_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_duplicate_object_property_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_nullable_canvas_context_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_sourcefile_diagnostics_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_html_typescript_module_script_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_vitest_globals_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_missing_export_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_member_alias_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_missing_member_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_uninitialized_property_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_number_to_string_argument_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_canvas_scale_return_type_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_typescript_too_few_arguments_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_npm_test_script_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_runtime_dependency_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_rust_crate_import_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_rust_dependency_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_rust_derive_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_rust_missing_lib_target_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_rust_lib_root_facade_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_rust_line_suggestion_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_rust_unresolved_pub_use_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_rust_trait_import_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_missing_declared_target_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_javascript_test_missing_target_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_javascript_typescript_annotation_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_javascript_missing_export_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_javascript_esm_commonjs_entrypoint_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_javascript_missing_method_runtime_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_python_unittest_runtime_failure_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_python_package_shadow_bridge_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_unresolved_import_symbol_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    go_import_repairs = _apply_deterministic_go_module_import_repair(adapter, task_id=task_id)
-    results.extend(go_import_repairs)
-    source_tools: list[str] = []
-    for item in results:
-        result = item.get("result")
-        if isinstance(result, dict):
-            source_tools.append(str(result.get("source_tool") or ""))
-    return results, {
-        "stage": "deterministic_quality_repair",
-        "attempted": bool(results),
-        "success": False,
-        "revalidated": False,
-        "success_reason": "repair_actions_require_quality_gate_rerun",
-        "tool_results": len(results),
-        "write_tool_evidence": has_successful_write_tool(results),
-        "source_tools": source_tools,
-        "source_tool_profiles": summarize_deterministic_repair_source_tools(source_tools),
-        "repair_kernel": _project_repair_kernel_summary(
-            stage="deterministic_quality_repair",
-            tool_results=results,
-            artifact_quality_errors=artifact_quality_errors,
-        ),
-    }
 
 
 def _apply_deterministic_pre_materialization_declared_target_repairs(

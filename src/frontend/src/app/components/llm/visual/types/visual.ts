@@ -128,6 +128,7 @@ export interface VisualGraphConfig {
     zoom: number;
   };
   policies?: {
+    required_ready_roles?: string[];
     role_requirements?: Record<
       string,
       {

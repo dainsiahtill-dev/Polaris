@@ -12,17 +12,13 @@ from polaris.cells.director.runtime.public import (
     QueryDirectorRepairStrategyCatalogV1,
     query_director_repair_strategy_catalog,
 )
-from polaris.cells.director.runtime.public.service import (
-    KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS,
-    describe_deterministic_repair_strategy,
-    deterministic_repair_source_tool_known,
-    deterministic_repair_strategy_catalog,
-    summarize_deterministic_repair_source_tools,
-)
+from polaris.cells.roles.adapters.internal.director import materialization_quality_repair_bridge
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs import (
-    cpp_repairs,
     generic_repairs,
     rust_repairs,
+)
+from polaris.cells.roles.adapters.internal.director.repair_profile_projection import (
+    summarize_deterministic_repair_source_tools,
 )
 from polaris.cells.roles.adapters.public import service as role_adapter_service
 from polaris.cells.roles.adapters.public.service import apply_deterministic_cpp_post_repairs
@@ -106,6 +102,11 @@ def _deterministic_tokens_from_implementation() -> set[str]:
     return tokens
 
 
+def _catalog_items() -> list[dict[str, Any]]:
+    result = query_director_repair_strategy_catalog(QueryDirectorRepairStrategyCatalogV1(include_items=True))
+    return [dict(item) for item in result.items]
+
+
 def test_roles_adapter_no_longer_owns_repair_kernel_source_or_strategy_catalog() -> None:
     root = _director_internal_root()
     repair_kernel_payload = [
@@ -145,29 +146,33 @@ def test_execute_method_uses_director_runtime_repair_kernel_only_via_public_serv
 
 def test_catalog_registers_all_hardcoded_deterministic_tokens() -> None:
     implementation_tokens = _deterministic_tokens_from_implementation()
+    known_source_tools = {str(item.get("source_tool") or "") for item in _catalog_items()}
 
     assert implementation_tokens
-    assert implementation_tokens <= KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS
+    assert implementation_tokens <= known_source_tools
 
 
 def test_catalog_describes_language_phase_and_concern() -> None:
-    profile = describe_deterministic_repair_strategy("deterministic_typescript_missing_export_repair")
+    profile = {str(item.get("source_tool") or ""): item for item in _catalog_items()}[
+        "deterministic_typescript_missing_export_repair"
+    ]
 
-    assert profile.source_tool == "deterministic_typescript_missing_export_repair"
-    assert profile.language == "typescript"
-    assert profile.phase == "quality_repair"
-    assert profile.concern == "missing_symbol_or_file"
-    assert profile.risk_level == "low"
+    assert profile["source_tool"] == "deterministic_typescript_missing_export_repair"
+    assert profile["language"] == "typescript"
+    assert profile["phase"] == "quality_repair"
+    assert profile["concern"] == "missing_symbol_or_file"
+    assert profile["risk_level"] == "low"
 
 
 def test_unknown_source_tool_is_fail_closed_high_risk() -> None:
-    profile = describe_deterministic_repair_strategy("deterministic_future_repair")
+    profile = summarize_deterministic_repair_source_tools(["deterministic_future_repair"])[0]
 
-    assert deterministic_repair_source_tool_known(profile.source_tool) is False
-    assert profile.language == "unknown"
-    assert profile.phase == "unknown"
-    assert profile.concern == "unregistered"
-    assert profile.risk_level == "high"
+    assert profile["registered"] is False
+    assert profile["source_tool"] == "deterministic_future_repair"
+    assert profile["language"] == "unknown"
+    assert profile["phase"] == "unknown"
+    assert profile["concern"] == "unregistered"
+    assert profile["risk_level"] == "high"
 
 
 def test_summary_dedupes_profiles_and_marks_registration() -> None:
@@ -179,28 +184,28 @@ def test_summary_dedupes_profiles_and_marks_registration() -> None:
         ]
     )
 
-    assert profiles == [
-        {
-            "source_tool": "deterministic_patch_residue_cleanup",
-            "language": "generic",
-            "phase": "cleanup",
-            "concern": "generated_residue",
-            "risk_level": "low",
-            "registered": True,
-        },
-        {
-            "source_tool": "deterministic_future_repair",
-            "language": "unknown",
-            "phase": "unknown",
-            "concern": "unregistered",
-            "risk_level": "high",
-            "registered": False,
-        },
-    ]
+    assert len(profiles) == 2
+    assert profiles[0]["source_tool"] == "deterministic_patch_residue_cleanup"
+    assert profiles[0]["language"] == "generic"
+    assert profiles[0]["phase"] == "cleanup"
+    assert profiles[0]["concern"] == "generated_residue"
+    assert profiles[0]["risk_level"] == "low"
+    assert profiles[0]["registered"] is True
+    assert profiles[0]["implementation_status"] == "executable_runtime"
+    assert profiles[0]["execution_owner"] == "director.runtime"
+    assert profiles[0]["bench_driven_migration_required"] is False
+    assert profiles[1] == {
+        "source_tool": "deterministic_future_repair",
+        "language": "unknown",
+        "phase": "unknown",
+        "concern": "unregistered",
+        "risk_level": "high",
+        "registered": False,
+    }
 
 
 def test_catalog_is_stable_sorted_and_machine_readable() -> None:
-    catalog = deterministic_repair_strategy_catalog()
+    catalog = _catalog_items()
     source_tools = [item["source_tool"] for item in catalog]
 
     assert source_tools == sorted(source_tools)
@@ -209,7 +214,7 @@ def test_catalog_is_stable_sorted_and_machine_readable() -> None:
 
 
 def test_director_runtime_public_catalog_mirrors_authoritative_catalog() -> None:
-    catalog = deterministic_repair_strategy_catalog()
+    catalog = _catalog_items()
     result = query_director_repair_strategy_catalog(QueryDirectorRepairStrategyCatalogV1())
     payload = result.to_dict()
 
@@ -274,69 +279,64 @@ def test_rust_post_repairs_emit_rule_metadata_and_revalidation(
     assert records[0]["source_tool"] == "deterministic_rust_dependency_repair"
     assert records[0]["phase"] == "dependency_resolution"
     assert records[0]["priority"] == 0
-    assert records[0]["round_number"] == 1
+    assert "round_number" not in records[0]
     assert records[0]["revalidation"] == {
         "command": ["cargo", "check", "--quiet"],
         "exit_code": 0,
         "errors_before": 1,
         "errors_after": 0,
         "net_error_reduction": 1,
-        "max_rounds": 3,
     }
 
 
 def test_cpp_post_repairs_public_wrapper_uses_catalog_source_tool(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
-
-    def fake_cpp_repairs(workspace: Path) -> list[dict[str, str]]:
-        assert workspace == tmp_path
-        return [{"file": "src/main.cpp", "action": "fix_include"}]
-
-    monkeypatch.setattr(cpp_repairs, "run_all_cpp_post_repairs", fake_cpp_repairs)
+    header = tmp_path / "src" / "models" / "postcard.hpp"
+    target = tmp_path / "src" / "engine" / "generator.cpp"
+    header.parent.mkdir(parents=True)
+    target.parent.mkdir(parents=True)
+    header.write_text("#pragma once\n", encoding="utf-8")
+    target.write_text('#include "src/models/postcard.hpp"\n', encoding="utf-8")
 
     results = apply_deterministic_cpp_post_repairs(tmp_path)
 
-    assert results == [
-        {
-            "tool": "write_file",
-            "tool_name": "write_file",
-            "success": True,
-            "result": {
-                "ok": True,
-                "source_tool": "deterministic_cpp_post_repair",
-                "file": "src/main.cpp",
-                "action": "fix_include",
-                "operation": "modify",
-            },
-        }
-    ]
-    assert deterministic_repair_source_tool_known(results[0]["result"]["source_tool"])
+    assert len(results) == 1
+    assert results[0]["tool"] == "write_file"
+    assert results[0]["tool_name"] == "write_file"
+    assert results[0]["success"] is True
+    assert results[0]["result"]["ok"] is True
+    assert results[0]["result"]["source_tool"] == "deterministic_cpp_include_path_repair"
+    assert results[0]["result"]["file"] == "src/engine/generator.cpp"
+    assert results[0]["result"]["repair_kernel"]["owner_cell"] == "director.runtime"
+    assert '#include "../models/postcard.hpp"' in target.read_text(encoding="utf-8")
+    assert results[0]["result"]["source_tool"] in {str(item.get("source_tool") or "") for item in _catalog_items()}
 
 
 def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_materialization_repair(
+    observed_step_ids: list[str] = []
+
+    def fake_materialization_repair_step(
+        step_id: str,
         adapter: Any,
         *,
         task: dict[str, Any],
         task_id: str,
         artifact_quality_errors: list[str],
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
+        observed_step_ids.append(step_id)
         assert adapter == {"workspace": "/tmp/demo"}
         assert task_id == "task-1"
         assert task == {"target_files": ["src/app.ts"]}
         assert artifact_quality_errors == ["error TS1005"]
-        return [], {"stage": "deterministic_quality_repair"}
+        return []
 
     monkeypatch.setattr(
-        generic_repairs,
-        "_apply_deterministic_materialization_quality_repairs",
-        fake_materialization_repair,
+        materialization_quality_repair_bridge,
+        "_run_legacy_materialization_quality_repair_step",
+        fake_materialization_repair_step,
     )
 
     results, summary = role_adapter_service.apply_deterministic_materialization_quality_repairs(
@@ -347,21 +347,47 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
     )
 
     assert results == []
+    expected_step_ids = [
+        "materialization.hygiene_scaffold",
+        "materialization.typescript_scaffold",
+        "materialization.typescript_compiler",
+        "materialization.node_manifest",
+        "materialization.rust_compiler",
+        "materialization.target_runtime",
+        "materialization.python_import",
+        "materialization.go_import",
+    ]
+    assert observed_step_ids == expected_step_ids
     assert role_adapter_service.apply_deterministic_materialization_quality_repairs.__module__.endswith(
         ".public.service"
     )
     assert summary["repair_kernel"]["stage"] == "materialization_quality_repairs"
     assert summary["repair_kernel"]["receipt_count"] == 0
     assert summary["repair_kernel"]["coverage_report"]["total_diagnostics"] == 1
+    assert summary["dark_launch_comparison"]["comparison_mode"] == "legacy_projection_self_check"
+    assert summary["dark_launch_comparison"]["cutover_ready"] is False
+    assert summary["dark_launch_comparison"]["independent_shadow_required"] is True
+    assert summary["dark_launch_comparison"]["independent_shadow_satisfied"] is False
     assert summary["materialization_quality_bridge"] == {
         "schema_version": "director.materialization_quality_repair_bridge.v1",
-        "mode": "legacy_strategy_host_wrapper",
+        "mode": "runtime_schedule_step_runner_adapter",
         "bridge_file": "roles.adapters.internal.director.materialization_quality_repair_bridge",
-        "legacy_strategy_host": "roles.adapters.internal.director.deterministic_repairs.generic_repairs",
+        "legacy_strategy_host": "roles.adapters.internal.director.deterministic_repairs",
+        "runtime_schedule_owner": "director.runtime",
+        "runner_binding_owner": "roles.adapters",
+        "ordered_step_ids": expected_step_ids,
+        "runner_step_ids": expected_step_ids,
         "internal_function_exported": False,
         "repair_kernel_owner": "director.runtime",
         "director_runtime_public_summary_required": True,
         "receipt_count": 0,
+        "dark_launch_cutover_ready": False,
+        "dark_launch_cutover_blockers": [
+            "independent_shadow_required",
+            "missing_before_after_hash_evidence",
+            "missing_revalidation_evidence",
+            "non_authoritative_kernel_receipt",
+        ],
         "coverage_uncovered_diagnostic_count": 1,
     }
     assert summary["public_boundary"] == {
@@ -370,4 +396,45 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         "internal_function_exported": False,
         "repair_kernel_owner": "director.runtime",
         "director_runtime_public_summary_required": True,
+    }
+
+
+def test_legacy_materialization_quality_function_facades_runtime_bridge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, Any] = {}
+
+    def fake_bridge(
+        adapter: Any,
+        *,
+        task: dict[str, Any],
+        task_id: str,
+        artifact_quality_errors: list[str],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        observed["adapter"] = adapter
+        observed["task"] = task
+        observed["task_id"] = task_id
+        observed["artifact_quality_errors"] = artifact_quality_errors
+        return [], {"stage": "deterministic_quality_repair", "via": "runtime_schedule"}
+
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge,
+        "run_materialization_quality_repairs",
+        fake_bridge,
+    )
+
+    results, summary = generic_repairs._apply_deterministic_materialization_quality_repairs(
+        {"workspace": "/tmp/demo"},
+        task={"target_files": ["src/app.ts"]},
+        task_id="task-1",
+        artifact_quality_errors=["error TS1005"],
+    )
+
+    assert results == []
+    assert summary == {"stage": "deterministic_quality_repair", "via": "runtime_schedule"}
+    assert observed == {
+        "adapter": {"workspace": "/tmp/demo"},
+        "task": {"target_files": ["src/app.ts"]},
+        "task_id": "task-1",
+        "artifact_quality_errors": ["error TS1005"],
     }

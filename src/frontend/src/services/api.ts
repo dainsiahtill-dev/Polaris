@@ -14,6 +14,11 @@ import type {
   ResidentAgiParticipationPatchPayload,
   ResidentAgiParticipationPayload,
   ResidentAgiRepairAdvisoryOverlayQueryPayload,
+  ResidentAgiTacticalActionCatalogPayload,
+  ResidentAgiTacticalActionRequest,
+  ResidentAgiTacticalActionResponse,
+  ResidentAgiTacticalChatRequest,
+  ResidentAgiTacticalChatResponse,
   ResidentDecisionPayload,
   ResidentExperimentPayload,
   ResidentGoalPayload,
@@ -172,9 +177,7 @@ export const statusService = {
     }
   },
 
-  async getAll(
-    workspace = "",
-  ): Promise<{
+  async getAll(workspace = ""): Promise<{
     pm: ApiResult<BackendStatus>;
     director: ApiResult<BackendStatus>;
   }> {
@@ -399,6 +402,43 @@ export const residentService = {
     return handleResponse(res, "Failed to run Resident AGI decision turn");
   },
 
+  async chat(
+    workspace: string,
+    payload: ResidentAgiTacticalChatRequest,
+  ): Promise<ApiResult<ResidentAgiTacticalChatResponse>> {
+    const res = await apiFetch("/v2/resident/agi/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace, ...payload }),
+    });
+    return handleResponse(res, "Failed to run Resident AGI tactical chat");
+  },
+
+  async getAgiActionCatalog(): Promise<
+    ApiResult<ResidentAgiTacticalActionCatalogPayload>
+  > {
+    const res = await apiFetch("/v2/resident/agi/actions/catalog");
+    return handleResponse(
+      res,
+      "Failed to load Resident AGI tactical action catalog",
+    );
+  },
+
+  async executeAgiAction(
+    workspace: string,
+    payload: ResidentAgiTacticalActionRequest,
+  ): Promise<ApiResult<ResidentAgiTacticalActionResponse>> {
+    const res = await apiFetch("/v2/resident/agi/actions/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace, ...payload }),
+    });
+    return handleResponse(
+      res,
+      "Failed to execute Resident AGI tactical action",
+    );
+  },
+
   async start(
     workspace: string,
     mode: string,
@@ -456,10 +496,7 @@ export const residentService = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspace, ...payload }),
     });
-    return handleResponse(
-      res,
-      "Failed to update Resident AGI participation",
-    );
+    return handleResponse(res, "Failed to update Resident AGI participation");
   },
 
   async listGoals(
@@ -611,6 +648,18 @@ export const residentService = {
           data: Array.isArray(parsed.data?.items) ? parsed.data?.items : [],
         }
       : { ok: false, error: parsed.error };
+  },
+
+  async recordDecision(
+    workspace: string,
+    payload: ResidentDecisionPayload,
+  ): Promise<ApiResult<ResidentDecisionPayload>> {
+    const res = await apiFetch("/v2/resident/decisions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace, ...payload }),
+    });
+    return handleResponse(res, "Failed to record Resident decision");
   },
 
   async listSkills(
@@ -981,9 +1030,7 @@ export const v2Services = {
     return handleResponse(res, "Failed to get token status");
   },
 
-  async recordTokenUsage(
-    tokens: number,
-  ): Promise<
+  async recordTokenUsage(tokens: number): Promise<
     ApiResult<{
       ok: boolean;
       recorded: number;
@@ -1000,9 +1047,7 @@ export const v2Services = {
   },
 
   // Security
-  async checkSecurity(
-    command: string,
-  ): Promise<
+  async checkSecurity(command: string): Promise<
     ApiResult<{
       is_safe: boolean;
       reason?: string;

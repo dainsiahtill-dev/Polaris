@@ -28,6 +28,7 @@ public_contracts:
   - AttachDirectorRepairRevalidationEvidenceV1
   - CompareDirectorRepairShadowRunV1
   - ProjectDirectorRepairKernelSummaryV1
+  - PlanDirectorRepairCommandV1
   - RunDirectorRepairCommandV1
   queries:
   - GetDirectorTaskStatusQueryV1

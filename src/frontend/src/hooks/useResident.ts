@@ -11,6 +11,11 @@ import type {
   ResidentAgiHandoffInboxPayload,
   ResidentAgiParticipationPatchPayload,
   ResidentAgiRepairAdvisoryOverlayQueryPayload,
+  ResidentAgiTacticalActionCatalogPayload,
+  ResidentAgiTacticalActionRequest,
+  ResidentAgiTacticalActionResponse,
+  ResidentAgiTacticalChatRequest,
+  ResidentAgiTacticalChatResponse,
   ResidentDecisionPayload,
   ResidentExperimentPayload,
   ResidentGoalPayload,
@@ -45,6 +50,7 @@ interface ResidentGoalDraft {
   source?: string;
   scope?: string[];
   evidence_refs?: string[];
+  derived_from?: string[];
   budget?: Record<string, unknown>;
   expected_value?: number;
   risk_score?: number;
@@ -96,6 +102,8 @@ export function useResident(options: UseResidentOptions = {}) {
     useState<ResidentAgiHandoffInboxPayload | null>(null);
   const [agiRepairAdvisoryOverlay, setAgiRepairAdvisoryOverlay] =
     useState<ResidentAgiRepairAdvisoryOverlayQueryPayload | null>(null);
+  const [agiActionCatalog, setAgiActionCatalog] =
+    useState<ResidentAgiTacticalActionCatalogPayload | null>(null);
   const [lastAgiDecisionResult, setLastAgiDecisionResult] =
     useState<ResidentAgiDecisionTurnResponse | null>(null);
   const [httpDetailsLoaded, setHttpDetailsLoaded] = useState(false);
@@ -112,6 +120,7 @@ export function useResident(options: UseResidentOptions = {}) {
       setAgiEvidenceInterfaces(null);
       setAgiHandoffs(null);
       setAgiRepairAdvisoryOverlay(null);
+      setAgiActionCatalog(null);
       setLastAgiDecisionResult(null);
       setHttpDetailsLoaded(false);
       setError(null);
@@ -158,6 +167,12 @@ export function useResident(options: UseResidentOptions = {}) {
     setAgiRepairAdvisoryOverlay(
       repairOverlayResult.ok && repairOverlayResult.data
         ? repairOverlayResult.data
+        : null,
+    );
+    const actionCatalogResult = await residentService.getAgiActionCatalog();
+    setAgiActionCatalog(
+      actionCatalogResult.ok && actionCatalogResult.data
+        ? actionCatalogResult.data
         : null,
     );
     setError(null);
@@ -224,6 +239,7 @@ export function useResident(options: UseResidentOptions = {}) {
       setAgiEvidenceInterfaces(null);
       setAgiHandoffs(null);
       setAgiRepairAdvisoryOverlay(null);
+      setAgiActionCatalog(null);
       setLastAgiDecisionResult(null);
       setHttpDetailsLoaded(false);
       setError(null);
@@ -290,10 +306,23 @@ export function useResident(options: UseResidentOptions = {}) {
     residentAgiEvidenceInterfaces: agiEvidenceInterfaces,
     residentAgiHandoffs: agiHandoffs,
     residentAgiRepairAdvisoryOverlay: agiRepairAdvisoryOverlay,
+    residentAgiActionCatalog: agiActionCatalog,
     lastAgiDecisionResult,
     residentRuntimeEvidence,
     refresh,
     refreshAgiEvidenceInterfaces,
+    refreshAgiActionCatalog: async () => {
+      const result = await residentService.getAgiActionCatalog();
+      if (!result.ok || !result.data) {
+        const message = result.error || "加载 AGI 战术动作目录失败";
+        setError(message);
+        toast.error(message);
+        return null;
+      }
+      setAgiActionCatalog(result.data);
+      setError(null);
+      return result.data;
+    },
     isActing: (key: string) => actionKey === key,
     start: (mode: string) =>
       runAction(
@@ -317,6 +346,43 @@ export function useResident(options: UseResidentOptions = {}) {
       );
       setLastAgiDecisionResult(result);
       return result;
+    },
+    chatAgi: async (payload: ResidentAgiTacticalChatRequest) => {
+      if (!workspace) {
+        toast.error("请先选择 Workspace");
+        return null;
+      }
+      setActionKey("agi-chat");
+      const result = await residentService.chat(workspace, payload);
+      setActionKey("");
+      if (!result.ok || !result.data) {
+        const message = result.error || "AGI 战术控制台请求失败";
+        setError(message);
+        toast.error(message);
+        return null;
+      }
+      setError(null);
+      if (result.data.action_catalog) {
+        setAgiActionCatalog(result.data.action_catalog);
+      }
+      return result.data as ResidentAgiTacticalChatResponse;
+    },
+    executeAgiAction: async (payload: ResidentAgiTacticalActionRequest) => {
+      if (!workspace) {
+        toast.error("请先选择 Workspace");
+        return null;
+      }
+      setActionKey("agi-action");
+      const result = await residentService.executeAgiAction(workspace, payload);
+      setActionKey("");
+      if (!result.ok || !result.data) {
+        const message = result.error || "AGI 受控动作执行失败";
+        setError(message);
+        toast.error(message);
+        return null;
+      }
+      setError(null);
+      return result.data as ResidentAgiTacticalActionResponse;
     },
     saveIdentity: (payload: ResidentIdentityPatch) => {
       const { resident_agi_participation: agiParticipation, ...identityPatch } =
@@ -358,8 +424,7 @@ export function useResident(options: UseResidentOptions = {}) {
             if (!participationResult.ok || !participationResult.data) {
               return {
                 ok: false,
-                error:
-                  participationResult.error || "AGI 参与策略更新失败",
+                error: participationResult.error || "AGI 参与策略更新失败",
               };
             }
             return {
@@ -381,6 +446,12 @@ export function useResident(options: UseResidentOptions = {}) {
         "create-goal",
         () => residentService.createGoal(workspace, payload),
         "AGI 目标已创建",
+      ),
+    recordDecision: (payload: ResidentDecisionPayload) =>
+      runAction(
+        "record-decision",
+        () => residentService.recordDecision(workspace, payload),
+        "AGI 决策已记录",
       ),
     approveGoal: (goalId: string, note = "approved in AGI workspace") =>
       runAction(

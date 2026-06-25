@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -16,10 +18,12 @@ from polaris.cells.audit.evidence.public.service import (
     append_evidence_event,
     create_evidence_bundle_service,
 )
-from polaris.cells.audit.verdict.public import QueryAuditVerdictV1, query_audit_verdict
+from polaris.cells.audit.verdict.public import QueryAuditVerdictV1, create_artifact_service, query_audit_verdict
 from polaris.cells.context.catalog.public import ContextCatalogService, SearchCellsQueryV1
 from polaris.cells.context.engine.public import (
+    ContextEngineError,
     QueryFinalProviderRequestAuditV1,
+    get_anthropomorphic_context_v2,
     query_final_provider_request_audit,
 )
 from polaris.cells.control_plane.run_ledger.public import (
@@ -42,7 +46,11 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_coverage,
     query_director_repair_strategy_catalog,
 )
-from polaris.cells.resident.autonomy.internal.agi_audit_pack import build_resident_agi_audit_pack
+from polaris.cells.director.tasking.internal.execution_profile import resolve_director_execution_profile
+from polaris.cells.resident.autonomy.internal.agi_audit_pack import (
+    build_resident_agi_audit_pack,
+    resident_agi_context_snapshot_refs,
+)
 from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
     build_resident_agi_authority_matrix,
     build_resident_agi_capability_access_registry,
@@ -53,6 +61,14 @@ from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
     build_resident_agi_evidence_interface_contract,
     resident_agi_capability_surface_payload,
     resident_agi_participation_policy_payload,
+)
+from polaris.cells.resident.autonomy.internal.agi_tactical_actions import (
+    resident_agi_tactical_action_catalog,
+    resident_agi_tactical_action_payload,
+    resident_agi_tactical_action_spec,
+)
+from polaris.cells.resident.autonomy.internal.agi_tactical_chat import (
+    build_resident_agi_tactical_chat_response,
 )
 from polaris.cells.resident.autonomy.internal.capability_graph import CapabilityGraph
 from polaris.cells.resident.autonomy.internal.counterfactual_lab import CounterfactualLab
@@ -77,12 +93,14 @@ from polaris.cells.resident.autonomy.public.contracts import (
     ApproveResidentGoalCommandV1,
     BuildResidentAgiRepairAdvisoryOverlayCommandV1,
     CreateResidentGoalCommandV1,
+    ExecuteResidentAgiTacticalActionCommandV1,
     ExtractResidentSkillsCommandV1,
     MaterializeResidentGoalCommandV1,
     QueryResidentAgiAuditPackV1,
     QueryResidentAgiEvidenceInterfacesV1,
     QueryResidentAgiHandoffsV1,
     QueryResidentAgiRepairAdvisoryOverlayV1,
+    QueryResidentAgiTacticalChatV1,
     QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
     RecordResidentDecisionCommandV1,
@@ -108,6 +126,7 @@ from polaris.cells.resident.autonomy.public.contracts import (
     UpdateResidentIdentityCommandV1,
 )
 from polaris.cells.roles.adapters.public.service import create_role_adapter
+from polaris.cells.runtime.artifact_store.public.service import resolve_artifact_path
 from polaris.domain.entities.evidence_bundle import (
     EvidenceBundle,
     FileChange,
@@ -1430,6 +1449,338 @@ def _resident_agi_context_catalog_interface(
     return base
 
 
+def _resident_agi_context_engine_interface(
+    *,
+    workspace: str,
+    decision_type: str,
+    run_id: str,
+    task_id: str,
+    context_refs: tuple[str, ...],
+    evidence_refs: tuple[str, ...],
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    query_text = " ".join(
+        _merge_non_empty_strings(
+            [
+                decision_type,
+                task_id,
+                str(base.get("contract_ref") or ""),
+                str(base.get("category") or ""),
+                str(base.get("name") or ""),
+            ],
+            list(context_refs),
+            list(evidence_refs),
+        )
+    )
+    try:
+        context_payload = get_anthropomorphic_context_v2(
+            project_root=workspace,
+            role="resident_agi",
+            query=query_text or "Resident AGI evidence resolution",
+            step=0,
+            run_id=run_id or "resident-agi-evidence",
+            phase=f"resident_agi_{decision_type or 'evidence'}",
+        )
+    except (ContextEngineError, RuntimeError, ValueError, OSError) as exc:
+        base.update(
+            {
+                "status": "unavailable",
+                "source": "context.engine.public.get_anthropomorphic_context_v2",
+                "gaps": [str(exc)],
+                "recommended_next_action": "request_context_engine_snapshot_or_catalog_search",
+            }
+        )
+        return base
+
+    context_text = str(context_payload.get("anthropomorphic_context") or "")
+    context_os_summary_raw = context_payload.get("context_os_summary")
+    context_os_summary = context_os_summary_raw if isinstance(context_os_summary_raw, dict) else {}
+    context_pack = context_payload.get("context_pack")
+    raw_items = getattr(context_pack, "items", ()) if context_pack is not None else ()
+    raw_item_list = list(raw_items or ())
+    context_items = [
+        {
+            "id": str(getattr(item, "id", "") or ""),
+            "kind": str(getattr(item, "kind", "") or ""),
+            "provider": str(getattr(item, "provider", "") or ""),
+            "priority": getattr(item, "priority", None),
+            "reason": str(getattr(item, "reason", "") or ""),
+        }
+        for item in raw_item_list[:8]
+    ]
+    prompt_context = context_payload.get("prompt_context_obj")
+    prompt_context_payload = {
+        "run_id": str(getattr(prompt_context, "run_id", "") or ""),
+        "phase": str(getattr(prompt_context, "phase", "") or ""),
+        "step": getattr(prompt_context, "step", None),
+        "persona_id": str(getattr(prompt_context, "persona_id", "") or ""),
+        "token_usage_estimate": getattr(prompt_context, "token_usage_estimate", None),
+    }
+    available = bool(context_text or context_items or context_os_summary)
+    base.update(
+        {
+            "available": available,
+            "callable": True,
+            "status": "available" if available else "empty",
+            "source": "context.engine.public.get_anthropomorphic_context_v2",
+            "summary": {
+                "role": "resident_agi",
+                "query": query_text[:240],
+                "context_item_count": len(raw_item_list),
+                "context_preview_chars": min(len(context_text), 1200),
+                "context_os_current_goal": str(context_os_summary.get("current_goal") or ""),
+                "token_usage_estimate": prompt_context_payload["token_usage_estimate"],
+            },
+            "payload": {
+                "context_os_summary": context_os_summary,
+                "prompt_context": prompt_context_payload,
+                "context_items": context_items,
+                "anthropomorphic_context_preview": context_text[:1200],
+            },
+            "gaps": [] if available else ["context engine returned no role context items"],
+            "recommended_next_action": "use_resolved_role_context" if available else "request_context_catalog_search",
+        }
+    )
+    return base
+
+
+def _resident_agi_read_json_artifact(
+    *,
+    workspace: str,
+    relative_path: str,
+) -> tuple[dict[str, Any], str, str]:
+    try:
+        resolved = resolve_artifact_path(workspace, "", relative_path)
+    except (RuntimeError, ValueError, OSError) as exc:
+        return {}, "", str(exc)
+    if not resolved:
+        return {}, "", "artifact path could not be resolved"
+    path = Path(resolved)
+    if not path.is_file():
+        return {}, str(path), ""
+    try:
+        raw = path.read_text(encoding="utf-8")
+        payload = json.loads(raw) if raw.strip() else {}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        return {}, str(path), str(exc)
+    if not isinstance(payload, dict):
+        return {}, str(path), "artifact payload is not a JSON object"
+    return payload, str(path), ""
+
+
+def _resident_agi_chief_engineer_blueprint_interface(
+    *,
+    workspace: str,
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    payload, path, error = _resident_agi_read_json_artifact(
+        workspace=workspace,
+        relative_path="runtime/contracts/chief_engineer.blueprint.json",
+    )
+    if error:
+        base.update(
+            {
+                "callable": True,
+                "status": "unavailable",
+                "source": "runtime.artifact_store.resolve_artifact_path",
+                "summary": {"path": path},
+                "payload": {"path": path},
+                "gaps": [error],
+                "recommended_next_action": "repair_or_regenerate_chief_engineer_blueprint",
+            }
+        )
+        return base
+    if not payload:
+        base.update(
+            {
+                "callable": True,
+                "status": "empty",
+                "source": "runtime.artifact_store.resolve_artifact_path",
+                "summary": {"path": path},
+                "payload": {"path": path},
+                "gaps": ["runtime/contracts/chief_engineer.blueprint.json is not present"],
+                "recommended_next_action": "run_chief_engineer_preflight_before_director_execution",
+            }
+        )
+        return base
+
+    task_updates = payload.get("task_updates")
+    architecture_decisions = payload.get("architecture_decisions")
+    base.update(
+        {
+            "available": True,
+            "callable": True,
+            "status": "available",
+            "source": "runtime/contracts/chief_engineer.blueprint.json",
+            "summary": {
+                "path": path,
+                "schema_version": str(payload.get("schema_version") or ""),
+                "role": str(payload.get("role") or payload.get("actor") or "ChiefEngineer"),
+                "task_update_count": len(task_updates) if isinstance(task_updates, list) else 0,
+                "architecture_decision_count": len(architecture_decisions)
+                if isinstance(architecture_decisions, list)
+                else 0,
+                "reason": str(payload.get("reason") or ""),
+                "summary": str(payload.get("summary") or "")[:240],
+            },
+            "payload": payload,
+            "gaps": [],
+            "recommended_next_action": "use_chief_engineer_blueprint_for_architecture_decision",
+        }
+    )
+    return base
+
+
+def _resident_agi_find_profile_payload(payload: Any) -> dict[str, Any]:
+    stack: list[Any] = [payload]
+    visited = 0
+    while stack and visited < 500:
+        visited += 1
+        current = stack.pop()
+        if isinstance(current, dict):
+            for key in ("task_execution_profile", "director_execution_profile"):
+                nested = current.get(key)
+                if isinstance(nested, dict) and nested:
+                    return dict(nested)
+            stack.extend(current.values())
+        elif isinstance(current, (list, tuple)):
+            stack.extend(current)
+    return {}
+
+
+def _resident_agi_candidate_paths_from_refs(*refs: str) -> list[str]:
+    paths: list[str] = []
+    for ref in refs:
+        value = str(ref or "").strip().replace("\\", "/")
+        if not value or value.startswith(("http://", "https://")):
+            continue
+        if value.startswith(("runtime/", "workspace/", "config/")):
+            continue
+        if "/" not in value and "." not in value:
+            continue
+        paths.append(value)
+    return paths[:12]
+
+
+def _resident_agi_task_execution_profile_interface(
+    *,
+    workspace: str,
+    decision_type: str,
+    run_id: str,
+    task_id: str,
+    audit_pack: dict[str, Any],
+    context_refs: tuple[str, ...],
+    evidence_refs: tuple[str, ...],
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    existing_profile = _resident_agi_find_profile_payload(audit_pack)
+    if existing_profile:
+        profile_payload = existing_profile
+        source = "resident.agi_audit_pack.task_execution_profile"
+        computed_from_current_query = False
+    else:
+        refs = _merge_non_empty_strings(list(context_refs), list(evidence_refs))
+        try:
+            profile = resolve_director_execution_profile(
+                subject=task_id or decision_type or "Resident AGI evidence query",
+                description=" ".join(refs),
+                metadata={
+                    "source": "resident.agi_evidence_interface",
+                    "decision_type": decision_type,
+                    "run_id": run_id,
+                    "task_id": task_id,
+                },
+                target_files=_resident_agi_candidate_paths_from_refs(*refs),
+                workspace=workspace,
+            )
+        except (RuntimeError, ValueError, OSError) as exc:
+            base.update(
+                {
+                    "callable": True,
+                    "status": "unavailable",
+                    "source": "director.tasking.resolve_director_execution_profile",
+                    "gaps": [str(exc)],
+                    "recommended_next_action": "request_director_task_execution_profile_evidence",
+                }
+            )
+            return base
+        profile_payload = profile.to_dict()
+        source = "director.tasking.resolve_director_execution_profile"
+        computed_from_current_query = True
+
+    base.update(
+        {
+            "available": True,
+            "callable": True,
+            "status": "available",
+            "source": source,
+            "summary": {
+                "schema_version": str(profile_payload.get("schema_version") or ""),
+                "task_type": str(profile_payload.get("task_type") or ""),
+                "phase": str(profile_payload.get("phase") or ""),
+                "project_type": str(profile_payload.get("project_type") or ""),
+                "language": str(profile_payload.get("language") or ""),
+                "framework": str(profile_payload.get("framework") or ""),
+                "temperature_phase": str(profile_payload.get("temperature_phase") or ""),
+                "temperature": profile_payload.get("temperature"),
+                "computed_from_current_query": computed_from_current_query,
+            },
+            "payload": {"profile": profile_payload},
+            "gaps": [],
+            "recommended_next_action": "use_task_execution_profile_for_prompt_temperature_and_output_contract",
+        }
+    )
+    return base
+
+
+def _resident_agi_runtime_events_interface(
+    *,
+    workspace: str,
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        service = create_artifact_service(workspace)
+        events = service.read_runtime_events(limit=50)
+        events_path = service.get_runtime_events_path()
+    except (RuntimeError, ValueError, OSError) as exc:
+        base.update(
+            {
+                "callable": True,
+                "status": "unavailable",
+                "source": "audit.verdict.public.create_artifact_service.read_runtime_events",
+                "gaps": [str(exc)],
+                "recommended_next_action": "repair_runtime_events_artifact_or_use_run_ledger",
+            }
+        )
+        return base
+
+    available = bool(events)
+    recent_event_types = [
+        str(event.get("type") or event.get("event_type") or event.get("name") or "").strip()
+        for event in events[-8:]
+        if isinstance(event, dict)
+    ]
+    base.update(
+        {
+            "available": available,
+            "callable": True,
+            "status": "available" if available else "empty",
+            "source": "audit.verdict.public.ArtifactService.read_runtime_events",
+            "summary": {
+                "path": events_path,
+                "event_count": len(events),
+                "recent_event_types": [item for item in recent_event_types if item],
+            },
+            "payload": {"path": events_path, "events": events},
+            "gaps": [] if available else ["runtime/events/runtime.events.jsonl has no readable events"],
+            "recommended_next_action": "use_runtime_event_stream_evidence"
+            if available
+            else "use_run_ledger_projection",
+        }
+    )
+    return base
+
+
 def _resident_agi_contextos_final_request_interface(
     *,
     workspace: str,
@@ -1438,9 +1789,7 @@ def _resident_agi_contextos_final_request_interface(
 ) -> dict[str, Any]:
     evidence_refs_raw = audit_pack.get("evidence_refs")
     evidence_refs = evidence_refs_raw if isinstance(evidence_refs_raw, list) else []
-    context_refs = [
-        str(item or "").strip() for item in evidence_refs if str(item or "").startswith("runtime/contexts/")
-    ]
+    context_refs = resident_agi_context_snapshot_refs(evidence_refs)
     if not context_refs:
         base.update(
             {
@@ -1453,7 +1802,9 @@ def _resident_agi_contextos_final_request_interface(
                     "context_snapshot_refs": [],
                 },
                 "payload": {"context_snapshot_refs": []},
-                "gaps": ["no runtime/contexts/<hash> reference is present in the audit pack"],
+                "gaps": [
+                    "no ContextOS snapshot hash or runtime/contexts/<hash> reference is present in the audit pack"
+                ],
                 "recommended_next_action": "request_final_request_snapshot",
             }
         )
@@ -1916,10 +2267,36 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
                 decision_type=query.decision_type,
                 base=base,
             )
+        elif interface_id == "context.engine.resolve":
+            item = _resident_agi_context_engine_interface(
+                workspace=query.workspace,
+                decision_type=query.decision_type,
+                run_id=query.run_id,
+                task_id=query.task_id,
+                context_refs=query.context_refs,
+                evidence_refs=query.evidence_refs,
+                base=base,
+            )
         elif interface_id == "contextos.final_request_audit.read":
             item = _resident_agi_contextos_final_request_interface(
                 workspace=query.workspace,
                 audit_pack=audit_pack,
+                base=base,
+            )
+        elif interface_id == "task.execution_profile.read":
+            item = _resident_agi_task_execution_profile_interface(
+                workspace=query.workspace,
+                decision_type=query.decision_type,
+                run_id=query.run_id,
+                task_id=query.task_id,
+                audit_pack=audit_pack,
+                context_refs=query.context_refs,
+                evidence_refs=query.evidence_refs,
+                base=base,
+            )
+        elif interface_id == "chief_engineer.blueprint.read":
+            item = _resident_agi_chief_engineer_blueprint_interface(
+                workspace=query.workspace,
                 base=base,
             )
         elif interface_id == "director.deterministic_repair_strategy_catalog.read":
@@ -1933,6 +2310,11 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
             )
         elif interface_id == "director.repair_advisory_policy.read":
             item = _resident_agi_director_repair_advisory_policy_interface(base)
+        elif interface_id == "runtime.events.read":
+            item = _resident_agi_runtime_events_interface(
+                workspace=query.workspace,
+                base=base,
+            )
         else:
             item = _resident_agi_metadata_only_interface(base)
         interfaces.append(item)
@@ -1988,6 +2370,552 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
             "hard_rule_gate_status": (audit_pack.get("hard_rule_gate") or {}).get("status")
             if isinstance(audit_pack.get("hard_rule_gate"), dict)
             else "",
+        },
+    }
+
+
+def query_resident_agi_tactical_chat(query: QueryResidentAgiTacticalChatV1) -> dict[str, Any]:
+    """Return a tactical-console response backed by Resident AGI public evidence."""
+
+    status_payload = query_resident_status(QueryResidentStatusV1(workspace=query.workspace), include_details=True)
+    audit_pack = query_resident_agi_audit_pack(
+        QueryResidentAgiAuditPackV1(workspace=query.workspace, decision_limit=query.decision_limit)
+    )
+    evidence_interfaces = query_resident_agi_evidence_interfaces(
+        QueryResidentAgiEvidenceInterfacesV1(
+            workspace=query.workspace,
+            decision_type=query.decision_type,
+            run_id=query.run_id,
+            task_id=query.task_id,
+            context_refs=query.context_refs,
+            evidence_refs=query.evidence_refs,
+            decision_limit=query.decision_limit,
+            max_runs=query.max_runs,
+        )
+    )
+    repair_overlay_query = query_resident_agi_repair_advisory_overlay(
+        QueryResidentAgiRepairAdvisoryOverlayV1(workspace=query.workspace, limit=query.decision_limit)
+    )
+    return build_resident_agi_tactical_chat_response(
+        workspace=query.workspace,
+        message=query.message,
+        context_refs=query.context_refs,
+        evidence_refs=query.evidence_refs,
+        status_payload=status_payload,
+        audit_pack=audit_pack,
+        evidence_interfaces=evidence_interfaces,
+        repair_overlay_query=repair_overlay_query,
+    )
+
+
+def query_resident_agi_tactical_action_catalog() -> dict[str, Any]:
+    """Return the read-only Resident AGI tactical-console action catalog."""
+
+    return resident_agi_tactical_action_catalog()
+
+
+def _resident_agi_tactical_action_tool_trace(
+    *,
+    action_id: str,
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    status_counts: dict[str, int] = {}
+    mode_counts: dict[str, int] = {}
+    for item in items:
+        status_key = str(item.get("status") or "unknown").strip() or "unknown"
+        mode_key = str(item.get("mode") or "unknown").strip() or "unknown"
+        status_counts[status_key] = status_counts.get(status_key, 0) + 1
+        mode_counts[mode_key] = mode_counts.get(mode_key, 0) + 1
+    return {
+        "schema_version": "resident.agi_tactical_action_tool_trace.v1",
+        "source": "resident.autonomy.public.execute_resident_agi_tactical_action",
+        "action_id": action_id,
+        "items": items,
+        "summary": {
+            "total": len(items),
+            "by_status": dict(sorted(status_counts.items())),
+            "by_mode": dict(sorted(mode_counts.items())),
+            "direct_execution_allowed": False,
+            "agi_direct_repair_allowed": False,
+            "required_chain": "PM → Chief Engineer → Director → QA",
+        },
+    }
+
+
+def _resident_agi_tactical_follow_up_actions(
+    *,
+    action_id: str,
+    chat: dict[str, Any],
+    verdict: str = "",
+    created_goal: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(action: dict[str, Any]) -> None:
+        action_key = str(action.get("action_id") or "").strip()
+        if not action_key or action_key in seen:
+            return
+        seen.add(action_key)
+        actions.append(action)
+
+    add(
+        resident_agi_tactical_action_payload(
+            "open_evidence_black_box",
+            status="available",
+            reason="查看本次 AGI 动作使用过的审计证据和契约轨迹。",
+        )
+    )
+    normalized_verdict = str(verdict or "").strip().lower()
+    if normalized_verdict == "request_evidence":
+        add(
+            resident_agi_tactical_action_payload(
+                "refresh_evidence_interfaces",
+                status="available",
+                reason="AGI 判断需要更多证据；刷新 evidence interface read model。",
+            )
+        )
+
+    if action_id == "request_resident_agi_judgement" and normalized_verdict in {
+        "block",
+        "escalate",
+        "request_evidence",
+    }:
+        chat_actions_raw = chat.get("suggested_actions")
+        chat_actions = chat_actions_raw if isinstance(chat_actions_raw, list) else []
+        for item in chat_actions:
+            if isinstance(item, dict) and str(item.get("action_id") or "") == "request_director_controlled_repair":
+                add(dict(item))
+                break
+
+    if action_id == "request_director_controlled_repair" and created_goal:
+        add(resident_agi_tactical_action_payload("open_goals_tab", status="available"))
+        add(
+            resident_agi_tactical_action_payload(
+                "request_resident_agi_judgement",
+                status="preview_only",
+                reason="让 resident_agi 角色回合基于新目标和证据再判断下一步。",
+            )
+        )
+    return actions
+
+
+async def execute_resident_agi_tactical_action(command: ExecuteResidentAgiTacticalActionCommandV1) -> dict[str, Any]:
+    """Execute a governed Resident AGI tactical-console action."""
+
+    chat = query_resident_agi_tactical_chat(
+        QueryResidentAgiTacticalChatV1(
+            workspace=command.workspace,
+            message=command.message,
+            decision_type=command.decision_type,
+            run_id=command.run_id,
+            task_id=command.task_id,
+            goal_id=command.goal_id,
+            context=command.context,
+            context_refs=command.context_refs,
+            evidence_refs=command.evidence_refs,
+            decision_limit=command.decision_limit,
+            max_runs=command.max_runs,
+        )
+    )
+    actions_raw = chat.get("suggested_actions")
+    actions = actions_raw if isinstance(actions_raw, list) else []
+    selected_action = next(
+        (
+            dict(item)
+            for item in actions
+            if isinstance(item, dict) and str(item.get("action_id") or "").strip() == command.action_id
+        ),
+        {},
+    )
+    action_spec = resident_agi_tactical_action_spec(command.action_id)
+    action_spec_payload = action_spec.to_catalog_item() if action_spec else None
+    action_catalog_raw = chat.get("action_catalog")
+    action_catalog = (
+        action_catalog_raw if isinstance(action_catalog_raw, dict) else resident_agi_tactical_action_catalog()
+    )
+    if not selected_action:
+        return {
+            "schema_version": "resident.agi_tactical_action_result.v1",
+            "workspace": command.workspace,
+            "action_id": command.action_id,
+            "action_spec": action_spec_payload,
+            "status": "blocked",
+            "reason": "action is not available under current Resident AGI evidence and participation policy",
+            "chat": chat,
+            "goal": None,
+            "decision": None,
+            "follow_up_actions": _resident_agi_tactical_follow_up_actions(
+                action_id=command.action_id,
+                chat=chat,
+            ),
+            "tool_trace": _resident_agi_tactical_action_tool_trace(
+                action_id=command.action_id,
+                items=[
+                    {
+                        "step_id": "resident.agi_tactical_chat.revalidate",
+                        "label": "重新读取战术上下文",
+                        "mode": "read_only",
+                        "status": "available",
+                        "contract": "resident.autonomy.public.query_resident_agi_tactical_chat",
+                        "summary": "执行前重新读取 Resident AGI public facts。",
+                    },
+                    {
+                        "step_id": "resident.agi_action.policy_gate",
+                        "label": "动作策略门禁",
+                        "mode": "policy_gate",
+                        "status": "blocked",
+                        "contract": "resident.agi_tactical_chat_participation.v1",
+                        "summary": "当前 action 未出现在后端建议动作列表中。",
+                    },
+                ],
+            ),
+            "receipt": {
+                "schema_version": "resident.agi_tactical_action_receipt.v1",
+                "status": "BLOCKED",
+                "title": "受控动作阻断凭证",
+                "summary": "后端重新读取事实源后，当前 action 不可执行。",
+            },
+            "policy": {
+                "advisory_only": True,
+                "agi_direct_repair_allowed": False,
+                "required_chain": "PM → Chief Engineer → Director → QA",
+            },
+        }
+
+    evidence_refs_raw = chat.get("evidence_refs")
+    chat_evidence_refs = evidence_refs_raw if isinstance(evidence_refs_raw, list) else []
+    context_refs_raw = chat.get("context_refs")
+    chat_context_refs = context_refs_raw if isinstance(context_refs_raw, list) else []
+
+    if command.action_id == "request_resident_agi_judgement":
+        evidence_refs = _merge_non_empty_strings(list(command.evidence_refs), chat_evidence_refs)
+        context_refs = _merge_non_empty_strings(list(command.context_refs), chat_context_refs)
+        try:
+            decision_turn_result = await run_resident_agi_decision_turn(
+                RunResidentAgiDecisionTurnCommandV1(
+                    workspace=command.workspace,
+                    objective=f"Resident AGI tactical-console judgement request: {command.message}",
+                    decision_type=command.decision_type,
+                    run_id=command.run_id,
+                    task_id=command.task_id,
+                    goal_id=command.goal_id,
+                    evidence={
+                        "source": "resident_agi_tactical_console",
+                        "action_id": command.action_id,
+                        "selected_action_spec": action_spec_payload or {},
+                        "selected_action": selected_action,
+                        "available_tactical_actions": actions,
+                        "tactical_action_catalog": action_catalog,
+                        "chat_intent": chat.get("intent"),
+                        "chat_status": chat.get("status"),
+                        "chat_policy": chat.get("policy"),
+                        "chat_facts": chat.get("facts"),
+                        "user_context": dict(command.context),
+                    },
+                    constraints=(
+                        "preserve_pm_chief_engineer_director_qa_chain",
+                        "do_not_mark_failed_gates_as_passed",
+                        "do_not_execute_direct_writes_or_direct_repairs",
+                        "use_public_cell_contracts_only",
+                    ),
+                    candidate_actions=("continue", "block", "request_evidence", "escalate"),
+                    context_refs=tuple(context_refs),
+                    evidence_refs=tuple(evidence_refs),
+                    confidence=0.55,
+                    include_audit_pack=True,
+                    audit_pack_decision_limit=command.decision_limit,
+                )
+            )
+        except Exception as exc:
+            logger.exception("execute_resident_agi_tactical_action judgement failed: %s", exc)
+            return {
+                "schema_version": "resident.agi_tactical_action_result.v1",
+                "workspace": command.workspace,
+                "action_id": command.action_id,
+                "action_spec": action_spec_payload,
+                "status": "blocked",
+                "reason": f"Resident AGI judgement failed before producing a governed decision: {exc}",
+                "chat": chat,
+                "goal": None,
+                "decision": None,
+                "role_result": None,
+                "follow_up_actions": _resident_agi_tactical_follow_up_actions(
+                    action_id=command.action_id,
+                    chat=chat,
+                ),
+                "tool_trace": _resident_agi_tactical_action_tool_trace(
+                    action_id=command.action_id,
+                    items=[
+                        {
+                            "step_id": "resident.agi_tactical_chat.revalidate",
+                            "label": "重新读取战术上下文",
+                            "mode": "read_only",
+                            "status": "available",
+                            "contract": "resident.autonomy.public.query_resident_agi_tactical_chat",
+                            "summary": "执行前重新读取 Resident AGI public facts。",
+                        },
+                        {
+                            "step_id": "resident.agi_decision_turn.execute",
+                            "label": "AGI 判断回合",
+                            "mode": "execute_through_role_runtime",
+                            "status": "failed",
+                            "contract": "resident.autonomy.public.run_resident_agi_decision_turn",
+                            "summary": "角色回合失败，按 fail-closed 返回阻断凭证。",
+                        },
+                    ],
+                ),
+                "receipt": {
+                    "schema_version": "resident.agi_tactical_action_receipt.v1",
+                    "status": "BLOCKED",
+                    "title": "AGI 判断阻断凭证",
+                    "summary": "Resident AGI 角色回合未能完成；未创建目标、未执行修复、未放行门禁。",
+                    "rows": [
+                        {"label": "动作", "value": command.action_id},
+                        {"label": "边界", "value": "fail_closed"},
+                    ],
+                },
+                "policy": {
+                    "advisory_only": True,
+                    "agi_direct_repair_allowed": False,
+                    "required_chain": "PM → Chief Engineer → Director → QA",
+                    "role_runtime_required": True,
+                },
+            }
+
+        recorded_decision_raw = decision_turn_result.get("recorded_decision")
+        recorded_decision = recorded_decision_raw if isinstance(recorded_decision_raw, dict) else None
+        decision_raw = decision_turn_result.get("decision")
+        decision = decision_raw if isinstance(decision_raw, dict) else {}
+        verdict = str(decision.get("verdict") or (recorded_decision or {}).get("verdict") or "unknown")
+        return {
+            "schema_version": "resident.agi_tactical_action_result.v1",
+            "workspace": command.workspace,
+            "action_id": command.action_id,
+            "action_spec": action_spec_payload,
+            "status": "executed",
+            "reason": "ran Resident AGI judgement through the shared role runtime contract",
+            "chat": chat,
+            "goal": None,
+            "decision": recorded_decision,
+            "role_result": decision_turn_result,
+            "follow_up_actions": _resident_agi_tactical_follow_up_actions(
+                action_id=command.action_id,
+                chat=chat,
+                verdict=verdict,
+            ),
+            "tool_trace": _resident_agi_tactical_action_tool_trace(
+                action_id=command.action_id,
+                items=[
+                    {
+                        "step_id": "resident.agi_tactical_chat.revalidate",
+                        "label": "重新读取战术上下文",
+                        "mode": "read_only",
+                        "status": "available",
+                        "contract": "resident.autonomy.public.query_resident_agi_tactical_chat",
+                        "summary": "执行前重新读取 Resident AGI public facts。",
+                    },
+                    {
+                        "step_id": "resident.agi_decision_turn.execute",
+                        "label": "AGI 判断回合",
+                        "mode": "execute_through_role_runtime",
+                        "status": "executed",
+                        "contract": "resident.autonomy.public.run_resident_agi_decision_turn",
+                        "summary": f"resident_agi 角色回合产出 {verdict} 判断。",
+                    },
+                    {
+                        "step_id": "resident.decision_trace.write",
+                        "label": "写入决策轨迹",
+                        "mode": "write_through_resident_contract",
+                        "status": "recorded" if recorded_decision else "empty",
+                        "contract": "resident.decision_trace",
+                        "summary": "判断结果已进入 Resident decision trace。",
+                    },
+                ],
+            ),
+            "receipt": {
+                "schema_version": "resident.agi_tactical_action_receipt.v1",
+                "status": "JUDGED",
+                "title": "AGI 判断凭证",
+                "summary": "已通过 resident_agi 角色回合完成受控判断；未创建目标、未直接修复、未跳过门禁。",
+                "rows": [
+                    {"label": "结论", "value": verdict},
+                    {"label": "决策", "value": str((recorded_decision or {}).get("decision_id") or "not_recorded")},
+                    {"label": "动作", "value": command.action_id},
+                    {"label": "角色回合", "value": "resident_agi"},
+                ],
+            },
+            "policy": {
+                "advisory_only": True,
+                "agi_direct_repair_allowed": False,
+                "required_chain": "PM → Chief Engineer → Director → QA",
+                "role_runtime_required": True,
+                "resident_agi_decision_endpoint": "/v2/resident/agi/decide",
+            },
+        }
+
+    goal_draft_raw = selected_action.get("goal_draft")
+    goal_draft = goal_draft_raw if isinstance(goal_draft_raw, dict) else {}
+    if command.action_id != "request_director_controlled_repair" or not goal_draft:
+        return {
+            "schema_version": "resident.agi_tactical_action_result.v1",
+            "workspace": command.workspace,
+            "action_id": command.action_id,
+            "action_spec": action_spec_payload,
+            "status": "blocked",
+            "reason": "action has no governed Resident goal draft",
+            "chat": chat,
+            "goal": None,
+            "decision": None,
+            "follow_up_actions": _resident_agi_tactical_follow_up_actions(
+                action_id=command.action_id,
+                chat=chat,
+            ),
+            "tool_trace": _resident_agi_tactical_action_tool_trace(
+                action_id=command.action_id,
+                items=[
+                    {
+                        "step_id": "resident.agi_tactical_chat.revalidate",
+                        "label": "重新读取战术上下文",
+                        "mode": "read_only",
+                        "status": "available",
+                        "contract": "resident.autonomy.public.query_resident_agi_tactical_chat",
+                        "summary": "执行前重新读取 Resident AGI public facts。",
+                    },
+                    {
+                        "step_id": "resident.goal_draft.policy_gate",
+                        "label": "目标草案门禁",
+                        "mode": "policy_gate",
+                        "status": "blocked",
+                        "contract": "resident.agi_tactical_action_result.v1",
+                        "summary": "后端未生成受控 Resident goal draft，禁止前端补造。",
+                    },
+                ],
+            ),
+            "receipt": {
+                "schema_version": "resident.agi_tactical_action_receipt.v1",
+                "status": "BLOCKED",
+                "title": "受控动作阻断凭证",
+                "summary": "缺少后端生成的 Resident goal draft，未执行写入。",
+            },
+            "policy": {
+                "advisory_only": True,
+                "agi_direct_repair_allowed": False,
+                "required_chain": "PM → Chief Engineer → Director → QA",
+            },
+        }
+
+    created_goal = create_resident_goal(CreateResidentGoalCommandV1(workspace=command.workspace, payload=goal_draft))
+    evidence_refs = chat_evidence_refs
+    decision_payload = {
+        "actor": "resident_agi",
+        "stage": "tactical_console_action",
+        "goal_id": str(created_goal.get("goal_id") or ""),
+        "task_id": command.task_id,
+        "run_id": command.run_id,
+        "summary": f"AGI tactical console created a governed repair goal: {created_goal.get('title') or goal_draft.get('title')}",
+        "context_refs": list(command.context_refs),
+        "evidence_refs": list(evidence_refs),
+        "options": [
+            {
+                "option_id": command.action_id,
+                "label": str(selected_action.get("label") or command.action_id),
+                "rationale": str(selected_action.get("reason") or ""),
+                "strategy_tags": ["resident_agi_tactical_console", "controlled_repair_goal"],
+                "estimated_score": float(goal_draft.get("expected_value") or 0.72),
+            }
+        ],
+        "selected_option_id": command.action_id,
+        "strategy_tags": [
+            "resident_agi_tactical_console",
+            "controlled_repair_goal",
+            "pm_ce_director_qa_chain",
+        ],
+        "expected_outcome": {
+            "next_state": "resident_goal_pending_governance",
+            "required_chain": "PM → Chief Engineer → Director → QA",
+            "agi_direct_repair_allowed": False,
+        },
+        "actual_outcome": {
+            "created_goal_id": str(created_goal.get("goal_id") or ""),
+            "created_goal_title": str(created_goal.get("title") or goal_draft.get("title") or ""),
+            "action_id": command.action_id,
+            "goal_draft": dict(goal_draft),
+        },
+        "verdict": "partial",
+        "confidence": float(goal_draft.get("expected_value") or 0.72),
+    }
+    recorded_decision = record_resident_decision_entry(
+        RecordResidentDecisionCommandV1(
+            workspace=command.workspace,
+            payload=decision_payload,
+            action="resident_agi_tactical_action_executed",
+            detail={
+                "action_id": command.action_id,
+                "goal_id": str(created_goal.get("goal_id") or ""),
+            },
+        )
+    )
+    return {
+        "schema_version": "resident.agi_tactical_action_result.v1",
+        "workspace": command.workspace,
+        "action_id": command.action_id,
+        "action_spec": action_spec_payload,
+        "status": "executed",
+        "reason": "created governed Resident goal and recorded decision trace",
+        "chat": chat,
+        "goal": created_goal,
+        "decision": recorded_decision,
+        "follow_up_actions": _resident_agi_tactical_follow_up_actions(
+            action_id=command.action_id,
+            chat=chat,
+            created_goal=created_goal,
+        ),
+        "tool_trace": _resident_agi_tactical_action_tool_trace(
+            action_id=command.action_id,
+            items=[
+                {
+                    "step_id": "resident.agi_tactical_chat.revalidate",
+                    "label": "重新读取战术上下文",
+                    "mode": "read_only",
+                    "status": "available",
+                    "contract": "resident.autonomy.public.query_resident_agi_tactical_chat",
+                    "summary": "执行前重新读取 Resident AGI public facts。",
+                },
+                {
+                    "step_id": "resident.goal_governance.commands",
+                    "label": "Resident 目标治理",
+                    "mode": "write_through_resident_contract",
+                    "status": "executed",
+                    "contract": "resident.goal_governance.commands",
+                    "summary": "已创建待治理目标；没有直接调用 Director 修复。",
+                },
+                {
+                    "step_id": "resident.decision_trace.write",
+                    "label": "写入决策轨迹",
+                    "mode": "write_through_resident_contract",
+                    "status": "recorded",
+                    "contract": "resident.decision_trace",
+                    "summary": "已记录 AGI 战术动作和治理链路。",
+                },
+            ],
+        ),
+        "receipt": {
+            "schema_version": "resident.agi_tactical_action_receipt.v1",
+            "status": "EXECUTED",
+            "title": "受控动作执行凭证",
+            "summary": "已通过 Resident public contract 创建目标并写入 decision trace；未直接执行 Director 修复。",
+            "rows": [
+                {"label": "目标", "value": str(created_goal.get("goal_id") or "")},
+                {"label": "决策", "value": str(recorded_decision.get("decision_id") or "")},
+                {"label": "动作", "value": command.action_id},
+                {"label": "角色链", "value": "PM→CE→Director→QA preserved"},
+            ],
+        },
+        "policy": {
+            "advisory_only": True,
+            "agi_direct_repair_allowed": False,
+            "required_chain": "PM → Chief Engineer → Director → QA",
         },
     }
 
@@ -2303,6 +3231,18 @@ def _resident_agi_decision_handoff(
 async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnCommandV1) -> dict[str, Any]:
     """Handle Resident AGI judgement through the shared role runtime contract."""
 
+    tactical_action_catalog = resident_agi_tactical_action_catalog()
+    tactical_action_items_raw = tactical_action_catalog.get("items")
+    tactical_action_items = tactical_action_items_raw if isinstance(tactical_action_items_raw, list) else []
+    tactical_action_summary_raw = tactical_action_catalog.get("summary")
+    tactical_action_summary: dict[str, Any] = (
+        tactical_action_summary_raw if isinstance(tactical_action_summary_raw, dict) else {}
+    )
+    tactical_action_ids = [
+        str(item.get("action_id") or "").strip()
+        for item in tactical_action_items
+        if isinstance(item, dict) and str(item.get("action_id") or "").strip()
+    ]
     audit_pack: dict[str, Any] | None = query_resident_agi_audit_pack(
         QueryResidentAgiAuditPackV1(
             workspace=command.workspace,
@@ -2331,6 +3271,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         "confidence": command.confidence,
         "include_audit_pack": True,
         "audit_pack_decision_limit": command.audit_pack_decision_limit,
+        "resident_agi_tactical_action_catalog": tactical_action_catalog,
     }
     effective_candidate_actions = list(command.candidate_actions)
     effective_constraints = list(command.constraints)
@@ -2438,6 +3379,17 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                 "resident_agi_audit_pack_schema": audit_pack.get("schema_version"),
                 "resident_agi_audit_pack_truth_sources": list(audit_pack.get("truth_sources") or []),
                 "resident_agi_available": resident_agi_available,
+                "resident_agi_tactical_action_catalog_schema": tactical_action_catalog.get("schema_version", ""),
+                "resident_agi_tactical_action_ids": tactical_action_ids,
+                "resident_agi_tactical_action_count": len(tactical_action_ids),
+                "resident_agi_tactical_controlled_action_count": int(tactical_action_summary.get("controlled") or 0),
+                "resident_agi_tactical_authoritative_actions": int(
+                    tactical_action_summary.get("authoritative_actions") or 0
+                ),
+                "resident_agi_tactical_direct_execution_allowed": bool(
+                    tactical_action_summary.get("agi_direct_execution_allowed")
+                ),
+                "resident_agi_tactical_required_chain": tactical_action_summary.get("required_chain", ""),
                 "resident_agi_hard_rule_gate_status": hard_rule_gate.get("status", ""),
                 "resident_agi_evidence_gate_status": evidence_gate.get("status", ""),
                 "resident_agi_evidence_gate_recommended_verdict": evidence_gate.get("recommended_verdict", ""),
@@ -2516,6 +3468,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         "resident_agi_evidence_interfaces": evidence_interfaces,
         "resident_agi_evidence_capability_matrix": evidence_capability_matrix,
         "resident_agi_decision_boundary_policy": decision_boundary_policy,
+        "resident_agi_tactical_action_catalog": tactical_action_catalog,
         "metadata": {
             "source": "resident.autonomy.public.run_resident_agi_decision_turn",
             "resident_agi_role_runtime_required": True,
@@ -2523,6 +3476,12 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
             "turn_engine_expected": True,
             "resident_agi_audit_pack_injected": audit_pack is not None,
             "resident_agi_audit_pack_schema": (audit_pack or {}).get("schema_version", ""),
+            "resident_agi_tactical_action_catalog_schema": tactical_action_catalog.get("schema_version", ""),
+            "resident_agi_tactical_action_count": len(tactical_action_ids),
+            "resident_agi_tactical_controlled_action_count": int(tactical_action_summary.get("controlled") or 0),
+            "resident_agi_tactical_direct_execution_allowed": bool(
+                tactical_action_summary.get("agi_direct_execution_allowed")
+            ),
             "resident_agi_hard_rule_gate_status": hard_rule_gate.get("status", ""),
             "resident_agi_evidence_gate_status": evidence_gate.get("status", ""),
             "resident_agi_authority_matrix_schema": authority_matrix.get("schema_version", ""),
@@ -2770,6 +3729,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                     "constraints": effective_constraints,
                     "resident_agi_participation": resident_agi_participation,
                     "resident_agi_audit_pack_required": True,
+                    "resident_agi_tactical_action_catalog": tactical_action_catalog,
                 },
                 "actual_outcome": {
                     "decision_source": "resident_agi_role_runtime",
@@ -2792,6 +3752,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                     "resident_agi_runtime_contract_gate": runtime_contract_gate,
                     "resident_agi_decision_handoff": decision_handoff,
                     "resident_agi_repair_advisory_overlay": repair_advisory_overlay,
+                    "resident_agi_tactical_action_catalog": tactical_action_catalog,
                     "agi_verdict": agi_verdict,
                     "resident_verdict": resident_verdict,
                     "downstream_allowed": downstream_allowed,

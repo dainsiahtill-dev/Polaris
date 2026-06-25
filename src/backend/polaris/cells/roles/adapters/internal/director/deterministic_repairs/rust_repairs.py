@@ -8,6 +8,9 @@ from typing import Any
 
 import tomllib
 
+from ..execution_tools import DirectorToolExecutor
+from ._runtime_bridge import run_runtime_repair_with_director_tools
+
 _RUST_UNRESOLVED_CRATE_RE = re.compile(
     r"(?:cannot find (?:module or )?crate|use of unresolved module or unlinked crate) "
     r"[`'\"](?P<crate>[A-Za-z_][A-Za-z0-9_]*)[`'\"]",
@@ -111,23 +114,41 @@ def _apply_deterministic_rust_dependency_repair(
     task_id: str,
     artifact_quality_errors: list[str],
 ) -> list[dict[str, Any]]:
-    del task_id
     workspace = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    repairs = repair_rust_dependencies(workspace, artifact_quality_errors)
-    return [
-        {
-            "tool": "write_file",
-            "tool_name": "write_file",
-            "success": True,
-            "result": {
-                "ok": True,
-                "source_tool": "deterministic_rust_dependency_repair",
-                "file": "Cargo.toml",
-                "packages": record["packages"],
-            },
-        }
-        for record in repairs
-    ]
+    if not workspace.is_dir():
+        return []
+    cargo_path = workspace / "Cargo.toml"
+    if not cargo_path.is_file():
+        return []
+
+    base_files: dict[str, str] = {}
+    try:
+        base_files["Cargo.toml"] = cargo_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    for rust_file in sorted(workspace.rglob("*.rs")):
+        try:
+            relative_path = rust_file.relative_to(workspace)
+        except ValueError:
+            continue
+        if "target" in relative_path.parts:
+            continue
+        try:
+            base_files[relative_path.as_posix()] = rust_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+    return run_runtime_repair_with_director_tools(
+        adapter,
+        workspace_path=workspace,
+        task_id=task_id,
+        source_tool="deterministic_rust_dependency_repair",
+        executor_factory=DirectorToolExecutor,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        use_editor=False,
+    )
 
 
 def _apply_deterministic_rust_derive_repair(
@@ -1737,53 +1758,45 @@ def repair_rust_method_self_signatures(workspace: Path, stderr: str = "") -> lis
 
 
 def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
-    """Run all Rust post-execution repairs in sequence.
+    """Run one Rust post-execution repair pass from a fresh compiler snapshot.
 
     This migration bridge keeps legacy strategy callbacks in this module, but
-    models the convergence loop explicitly: priority phases, bounded rounds,
-    fresh post-check evidence, and per-rule source_tool metadata.
+    convergence ownership belongs to director.runtime's scheduler. This callback
+    must not run its own retry loop or stamp authoritative round/max-round
+    metadata; the runtime schedule injects those fields around each callback run.
     """
     if not (workspace / "Cargo.toml").is_file():
         return []
 
-    all_repairs: list[dict[str, Any]] = []
-    seen_stderr: set[str] = set()
-    max_rounds = 3
     stderr = _run_cargo_check_stderr(workspace)
-    for round_number in range(1, max_rounds + 1):
-        if not stderr or ("error" not in stderr and "warning" not in stderr):
-            break
-        if stderr in seen_stderr:
-            break
-        seen_stderr.add(stderr)
-        errors_before = _count_rust_cargo_diagnostics(stderr)
-        round_batches = _run_rust_post_repair_round(workspace, stderr, round_number=round_number)
-        if not round_batches:
-            break
-        stderr_after = _run_cargo_check_stderr(workspace)
-        errors_after = _count_rust_cargo_diagnostics(stderr_after)
-        for records, source_tool, phase, priority in round_batches:
-            all_repairs.extend(
-                _annotate_rust_post_repair_records(
-                    records,
-                    source_tool=source_tool,
-                    phase=phase,
-                    priority=priority,
-                    round_number=round_number,
-                    errors_before=errors_before,
-                    errors_after=errors_after,
-                    max_rounds=max_rounds,
-                )
+    if not stderr or ("error" not in stderr and "warning" not in stderr):
+        return []
+
+    errors_before = _count_rust_cargo_diagnostics(stderr)
+    round_batches = _run_rust_post_repair_round(workspace, stderr)
+    if not round_batches:
+        return []
+
+    stderr_after = _run_cargo_check_stderr(workspace)
+    errors_after = _count_rust_cargo_diagnostics(stderr_after)
+    annotated: list[dict[str, Any]] = []
+    for records, source_tool, phase, priority in round_batches:
+        annotated.extend(
+            _annotate_rust_post_repair_records(
+                records,
+                source_tool=source_tool,
+                phase=phase,
+                priority=priority,
+                errors_before=errors_before,
+                errors_after=errors_after,
             )
-        stderr = stderr_after
-    return all_repairs
+        )
+    return annotated
 
 
 def _run_rust_post_repair_round(
     workspace: Path,
     stderr: str,
-    *,
-    round_number: int,
 ) -> list[tuple[list[dict[str, Any]], str, str, int]]:
     errors = [stderr]
     batches: list[tuple[list[dict[str, Any]], str, str, int]] = []
@@ -1896,10 +1909,8 @@ def _annotate_rust_post_repair_records(
     source_tool: str,
     phase: str,
     priority: int,
-    round_number: int,
     errors_before: int,
     errors_after: int,
-    max_rounds: int,
 ) -> list[dict[str, Any]]:
     annotated: list[dict[str, Any]] = []
     for record in records:
@@ -1907,14 +1918,12 @@ def _annotate_rust_post_repair_records(
         payload.setdefault("source_tool", source_tool)
         payload["phase"] = phase
         payload["priority"] = priority
-        payload["round_number"] = round_number
         payload["revalidation"] = {
             "command": ["cargo", "check", "--quiet"],
             "exit_code": 0 if errors_after == 0 else 1,
             "errors_before": errors_before,
             "errors_after": errors_after,
             "net_error_reduction": errors_before - errors_after,
-            "max_rounds": max_rounds,
         }
         annotated.append(payload)
     return annotated
