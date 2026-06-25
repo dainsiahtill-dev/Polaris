@@ -2990,6 +2990,7 @@ cells:
       snapshot_field: snapshot.resident
       full_snapshot_trigger: status.*
     depends_on:
+      - context.catalog
       - context.engine
       - llm.control_plane
       - llm.dialogue

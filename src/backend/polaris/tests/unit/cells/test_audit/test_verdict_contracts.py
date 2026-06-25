@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from polaris.cells.audit.verdict.public import service as verdict_service
 from polaris.cells.audit.verdict.public.contracts import (
     AuditVerdictError,
     AuditVerdictIssuedEventV1,
@@ -16,6 +17,7 @@ from polaris.cells.audit.verdict.public.contracts import (
     QueryAuditVerdictV1,
     RunAuditVerdictCommandV1,
 )
+from polaris.cells.audit.verdict.public.service import ReviewGate, query_audit_verdict
 
 
 class TestRunAuditVerdictCommandV1:
@@ -240,3 +242,42 @@ class TestIAuditVerdictService:
 
     def test_protocol_is_runtime_checkable(self) -> None:
         assert callable(IAuditVerdictService)
+
+
+class TestQueryAuditVerdictFacade:
+    """Public read facade behavior."""
+
+    def test_empty_review_gate_returns_empty_result(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        gate = ReviewGate()
+        monkeypatch.setattr(verdict_service, "__getattr__", lambda name: lambda: gate)
+
+        result = query_audit_verdict(QueryAuditVerdictV1(workspace="/ws", task_id="task-1"))
+
+        assert result.ok is True
+        assert result.status == "empty"
+        assert result.run_id == "workspace"
+        assert result.details["change_count"] == 0
+        assert result.details["review_count"] == 0
+
+    def test_reads_review_gate_snapshot(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        gate = ReviewGate()
+        change = gate.create_code_change(
+            task_id="task-1",
+            worker_id="director",
+            file_path="src/main.py",
+            base_sha="base",
+            head_sha="head",
+        )
+        review = gate.request_review(change.change_id)
+        assert review is not None
+        gate.approve_review(review.review_id)
+        monkeypatch.setattr(verdict_service, "__getattr__", lambda name: lambda: gate)
+
+        result = query_audit_verdict(QueryAuditVerdictV1(workspace="/ws", run_id="run-1", task_id="task-1"))
+
+        assert result.ok is True
+        assert result.status == "available"
+        assert result.verdict == "approved"
+        assert result.details["change_count"] == 1
+        assert result.details["review_count"] == 1
+        assert result.details["task_review_status"] == "approved"

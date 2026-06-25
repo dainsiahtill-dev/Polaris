@@ -494,6 +494,54 @@ export interface ResidentAgiAuditPackPayload {
   decision_profile?: ResidentAgiDecisionProfilePayload;
 }
 
+export interface ResidentAgiEvidenceInterfacePayload {
+  interface_id?: string;
+  capability?: ResidentAgiCapabilityPayload;
+  name?: string;
+  category?: string;
+  access?: string;
+  contract_ref?: string;
+  risk_level?: string;
+  endpoint?: string;
+  available?: boolean;
+  callable?: boolean;
+  status?: string;
+  source?: string;
+  summary?: Record<string, unknown>;
+  payload?: Record<string, unknown>;
+  gaps?: string[];
+  recommended_next_action?: string;
+}
+
+export interface ResidentAgiEvidenceInterfacesPayload {
+  schema_version?: string;
+  workspace?: string;
+  decision_type?: string;
+  run_id?: string;
+  task_id?: string;
+  selected_decision_capability?: ResidentAgiDecisionCapabilityPayload;
+  required_evidence_interfaces?: string[];
+  optional_evidence_interfaces?: string[];
+  requested_interface_ids?: string[];
+  interfaces?: ResidentAgiEvidenceInterfacePayload[];
+  summary?: {
+    total?: number;
+    available?: number;
+    metadata_only?: number;
+    needs_public_facade?: number;
+    governed_execute_only?: number;
+    unavailable?: number;
+    empty?: number;
+    unknown_interface?: number;
+    missing_required_interface_ids?: string[];
+  };
+  audit_pack_ref?: {
+    schema_version?: string;
+    evidence_gate_status?: string;
+    hard_rule_gate_status?: string;
+  };
+}
+
 export interface ResidentAgiDecisionTurnRequest {
   workspace?: string;
   decision_type?: string;

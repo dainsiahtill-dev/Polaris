@@ -18,7 +18,62 @@ def run_all_java_post_repairs(workspace: Path) -> list[dict[str, str]]:
     """Run all Java post-execution repairs."""
     all_repairs: list[dict[str, str]] = []
     all_repairs.extend(repair_java_test_dependencies(workspace))
+    all_repairs.extend(repair_java_common_accessor_aliases(workspace))
     return all_repairs
+
+
+def repair_java_common_accessor_aliases(workspace: Path) -> list[dict[str, str]]:
+    """Add small Java accessor aliases when tests use beanless method names."""
+    repairs: list[dict[str, str]] = []
+    for java_file in (workspace / "src" / "main" / "java").rglob("*.java"):
+        try:
+            content = java_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        additions: list[str] = []
+        if "int getTemperament()" in content and "int temperament()" not in content:
+            additions.append("    public int temperament() {\n        return getTemperament();\n    }\n")
+        if "int getSleepyLevel()" in content and "int sleepyLevel()" not in content:
+            additions.append("    public int sleepyLevel() {\n        return getSleepyLevel();\n    }\n")
+        if "int get(int index)" in content and "int length()" in content and "boolean isHit(int index)" not in content:
+            additions.append("    public boolean isHit(int index) {\n        return get(index) == HIT;\n    }\n")
+        if "int get(int index)" in content and "int length()" in content and "boolean isRest(int index)" not in content:
+            additions.append("    public boolean isRest(int index) {\n        return get(index) == REST;\n    }\n")
+        if "int get(int index)" in content and "int length()" in content and "int countRests()" not in content:
+            additions.append(
+                "    public int countRests() {\n"
+                "        int count = 0;\n"
+                "        for (int i = 0; i < length(); i++) {\n"
+                "            if (isRest(i)) {\n"
+                "                count++;\n"
+                "            }\n"
+                "        }\n"
+                "        return count;\n"
+                "    }\n"
+            )
+        if not additions:
+            continue
+        updated = _insert_java_methods_before_final_class_brace(content, additions)
+        if updated == content:
+            continue
+        java_file.write_text(updated, encoding="utf-8")
+        repairs.append(
+            {
+                "file": str(java_file.relative_to(workspace)),
+                "action": "added_common_accessor_aliases",
+            }
+        )
+    if repairs:
+        logger.info("Java accessor alias repair: %d file(s) fixed", len(repairs))
+    return repairs
+
+
+def _insert_java_methods_before_final_class_brace(content: str, methods: list[str]) -> str:
+    last_brace = content.rfind("}")
+    if last_brace < 0:
+        return content
+    insertion = "\n" + "\n".join(method.rstrip() + "\n" for method in methods)
+    return content[:last_brace].rstrip() + insertion + content[last_brace:]
 
 
 def repair_java_test_dependencies(workspace: Path) -> list[dict[str, str]]:

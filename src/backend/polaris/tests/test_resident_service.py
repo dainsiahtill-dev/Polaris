@@ -17,6 +17,7 @@ from polaris.cells.resident.autonomy.public.service import (
     ExtractResidentSkillsCommandV1,
     MaterializeResidentGoalCommandV1,
     QueryResidentAgiAuditPackV1,
+    QueryResidentAgiEvidenceInterfacesV1,
     RecordResidentDecisionCommandV1,
     RejectResidentGoalCommandV1,
     RunResidentAgiDecisionTurnCommandV1,
@@ -33,6 +34,7 @@ from polaris.cells.resident.autonomy.public.service import (
     extract_resident_skills,
     materialize_resident_goal,
     query_resident_agi_audit_pack,
+    query_resident_agi_evidence_interfaces,
     record_resident_decision_entry,
     reject_resident_goal,
     run_resident_agi_decision_turn,
@@ -436,6 +438,40 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     recovered = get_resident_service(str(workspace)).recover()
     assert recovered["counts"]["decisions"] >= 5
     assert recovered["counts"]["goals"] >= 1
+
+
+def test_resident_agi_evidence_interfaces_query_reports_public_facade_status(tmp_path: Path) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    payload = query_resident_agi_evidence_interfaces(
+        QueryResidentAgiEvidenceInterfacesV1(
+            workspace=str(workspace),
+            decision_type="quality_gate_response",
+            interface_ids=(
+                "run_ledger.read",
+                "verifier.policy.read",
+                "audit.verdict.read",
+                "audit.diagnosis.execute",
+            ),
+            max_runs=5,
+        )
+    )
+
+    assert payload["schema_version"] == "resident.agi_evidence_interfaces.v1"
+    assert payload["selected_decision_capability"]["decision_id"] == "quality.gate.response"
+    by_id = {item["interface_id"]: item for item in payload["interfaces"]}
+    assert by_id["run_ledger.read"]["callable"] is True
+    assert by_id["run_ledger.read"]["source"] == "control_plane.run_ledger.public.read_run_ledger_projection"
+    assert by_id["verifier.policy.read"]["status"] == "available"
+    assert by_id["verifier.policy.read"]["callable"] is True
+    assert by_id["audit.verdict.read"]["source"] == "audit.verdict.public.query_audit_verdict"
+    assert by_id["audit.verdict.read"]["status"] == "empty"
+    assert by_id["audit.verdict.read"]["callable"] is True
+    assert by_id["audit.diagnosis.execute"]["status"] == "governed_execute_only"
+    assert payload["summary"]["needs_public_facade"] == 0
+    assert payload["summary"]["governed_execute_only"] == 1
 
 
 @pytest.mark.asyncio

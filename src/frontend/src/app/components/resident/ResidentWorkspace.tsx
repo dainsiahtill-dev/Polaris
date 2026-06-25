@@ -34,6 +34,7 @@ import type {
   ResidentAgiCapabilityPayload,
   ResidentAgiDecisionCapabilityPayload,
   ResidentAgiDecisionCapabilityRegistryPayload,
+  ResidentAgiEvidenceInterfacesPayload,
   ResidentAgiDecisionProfilePayload,
   ResidentAgiDecisionBoundaryPayload,
   ResidentDecisionPayload,
@@ -170,6 +171,7 @@ export function ResidentWorkspace({
   const capabilities = resident.residentCapabilityGraph?.capabilities || [];
   const agiCapabilitySurface = resident.residentAgiCapabilitySurface;
   const agiAuditPack = resident.residentAgiAuditPack;
+  const agiEvidenceInterfaces = resident.residentAgiEvidenceInterfaces;
   const agiAuthorityMatrix =
     agiAuditPack?.authority_matrix || agiCapabilitySurface?.authority_matrix;
   const agiDecisionProfile = agiAuditPack?.decision_profile;
@@ -672,6 +674,7 @@ export function ResidentWorkspace({
                   decisions={agiDecisionCapabilities}
                 />
                 <AgiEvidenceInterfaceMatrix capabilities={agiCapabilities} />
+                <AgiEvidenceInterfaceReadiness payload={agiEvidenceInterfaces} />
                 <DecisionBoundaryMatrix
                   schema={agiCapabilitySurface?.decision_boundary_schema}
                   boundaries={agiDecisionBoundaries}
@@ -1413,6 +1416,94 @@ function AgiDecisionCapabilityRegistry({
                 </span>
               )}
             </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function evidenceInterfaceStatusClass(status?: string): string {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "available") {
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
+  }
+  if (normalized === "metadata_only") {
+    return "border-cyan-500/20 bg-cyan-500/10 text-cyan-200";
+  }
+  if (normalized === "needs_public_facade" || normalized === "governed_execute_only") {
+    return "border-amber-500/20 bg-amber-500/10 text-amber-300";
+  }
+  return "border-rose-500/20 bg-rose-500/10 text-rose-300";
+}
+
+function AgiEvidenceInterfaceReadiness({
+  payload,
+}: {
+  payload?: ResidentAgiEvidenceInterfacesPayload | null;
+}) {
+  if (!payload) return null;
+  const summary = payload.summary || {};
+  const interfaces = payload.interfaces || [];
+  if (interfaces.length === 0) return null;
+
+  return (
+    <div
+      className="mt-3 rounded-lg border border-emerald-500/15 bg-slate-950/60 px-3 py-2"
+      data-testid="resident-agi-evidence-interface-readiness"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-medium text-emerald-100">
+            AGI 证据接口可用性
+          </div>
+          <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+            {payload.schema_version || "resident.agi_evidence_interfaces.v1"} ·{" "}
+            {payload.decision_type || "platform_supervision"}
+          </div>
+        </div>
+        <Badge className="border-emerald-500/20 bg-emerald-500/10 text-emerald-300">
+          {summary.available ?? 0}/{summary.total ?? interfaces.length} available
+        </Badge>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        <CapabilityMetric label="Metadata" value={String(summary.metadata_only ?? 0)} />
+        <CapabilityMetric label="Facade gaps" value={String(summary.needs_public_facade ?? 0)} />
+        <CapabilityMetric label="Governed" value={String(summary.governed_execute_only ?? 0)} />
+        <CapabilityMetric label="Unavailable" value={String(summary.unavailable ?? 0)} />
+      </div>
+      <div className="mt-2 grid gap-2 lg:grid-cols-2">
+        {interfaces.map((item) => (
+          <div
+            key={item.interface_id || item.name}
+            className="rounded border border-slate-800 bg-slate-900/50 px-2.5 py-2"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-xs font-medium text-slate-200">
+                {item.name || item.interface_id || "未命名接口"}
+              </span>
+              <span
+                className={cn(
+                  "shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px]",
+                  evidenceInterfaceStatusClass(item.status),
+                )}
+              >
+                {item.status || "unknown"}
+              </span>
+            </div>
+            <div className="mt-1 truncate font-mono text-[10px] text-slate-500">
+              {item.interface_id || ""} · {item.source || "unknown_source"}
+            </div>
+            {item.recommended_next_action && (
+              <div className="mt-1 truncate text-[10px] text-slate-400">
+                {item.recommended_next_action}
+              </div>
+            )}
+            {(item.gaps || []).length > 0 && (
+              <div className="mt-1 truncate text-[10px] text-amber-200/80">
+                {(item.gaps || [])[0]}
+              </div>
+            )}
           </div>
         ))}
       </div>

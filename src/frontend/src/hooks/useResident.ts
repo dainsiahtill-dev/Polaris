@@ -7,6 +7,7 @@ import type {
   ResidentAgiAuditPackPayload,
   ResidentAgiDecisionTurnRequest,
   ResidentAgiDecisionTurnResponse,
+  ResidentAgiEvidenceInterfacesPayload,
   ResidentDecisionPayload,
   ResidentExperimentPayload,
   ResidentGoalPayload,
@@ -75,6 +76,8 @@ export function useResident(options: UseResidentOptions = {}) {
   const [actionKey, setActionKey] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [agiAuditPack, setAgiAuditPack] = useState<ResidentAgiAuditPackPayload | null>(null);
+  const [agiEvidenceInterfaces, setAgiEvidenceInterfaces] =
+    useState<ResidentAgiEvidenceInterfacesPayload | null>(null);
   const [httpDetailsLoaded, setHttpDetailsLoaded] = useState(false);
 
   // Phase 1.2: Goal Execution Projection (synced from WebSocket status)
@@ -84,6 +87,7 @@ export function useResident(options: UseResidentOptions = {}) {
     if (!workspace) {
       setStatus(emptyDetails('', options.liveResident));
       setAgiAuditPack(null);
+      setAgiEvidenceInterfaces(null);
       setHttpDetailsLoaded(false);
       setError(null);
       return null;
@@ -101,6 +105,15 @@ export function useResident(options: UseResidentOptions = {}) {
     setHttpDetailsLoaded(true);
     const auditPackResult = await residentService.getAgiAuditPack(workspace, 12);
     setAgiAuditPack(auditPackResult.ok && auditPackResult.data ? auditPackResult.data : null);
+    const evidenceInterfacesResult = await residentService.getAgiEvidenceInterfaces(workspace, {
+      decisionType: 'quality_gate_response',
+      maxRuns: 20,
+    });
+    setAgiEvidenceInterfaces(
+      evidenceInterfacesResult.ok && evidenceInterfacesResult.data
+        ? evidenceInterfacesResult.data
+        : null,
+    );
     setError(null);
     return result.data;
   }, [options.liveResident, workspace]);
@@ -136,6 +149,7 @@ export function useResident(options: UseResidentOptions = {}) {
     if (!workspace) {
       setStatus(emptyDetails('', options.liveResident));
       setAgiAuditPack(null);
+      setAgiEvidenceInterfaces(null);
       setHttpDetailsLoaded(false);
       setError(null);
       return;
@@ -198,6 +212,7 @@ export function useResident(options: UseResidentOptions = {}) {
     residentCapabilityGraph: summary?.capability_graph ?? null,
     residentAgiCapabilitySurface: summary?.agi_capability_surface ?? null,
     residentAgiAuditPack: agiAuditPack,
+    residentAgiEvidenceInterfaces: agiEvidenceInterfaces,
     residentRuntimeEvidence,
     refresh,
     isActing: (key: string) => actionKey === key,

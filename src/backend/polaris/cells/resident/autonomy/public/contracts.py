@@ -197,6 +197,34 @@ class QueryResidentAgiAuditPackV1:
 
 
 @dataclass(frozen=True)
+class QueryResidentAgiEvidenceInterfacesV1:
+    workspace: str
+    decision_type: str = "platform_supervision"
+    interface_ids: tuple[str, ...] = field(default_factory=tuple)
+    run_id: str = ""
+    task_id: str = ""
+    decision_limit: int = 20
+    max_runs: int = 20
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(
+            self,
+            "decision_type",
+            str(self.decision_type or "platform_supervision").strip() or "platform_supervision",
+        )
+        object.__setattr__(
+            self,
+            "interface_ids",
+            tuple(str(item or "").strip() for item in self.interface_ids if str(item or "").strip()),
+        )
+        object.__setattr__(self, "run_id", str(self.run_id or "").strip())
+        object.__setattr__(self, "task_id", str(self.task_id or "").strip())
+        object.__setattr__(self, "decision_limit", max(1, min(int(self.decision_limit), 100)))
+        object.__setattr__(self, "max_runs", max(1, min(int(self.max_runs), 100)))
+
+
+@dataclass(frozen=True)
 class RunResidentAgiDecisionTurnCommandV1:
     workspace: str
     objective: str

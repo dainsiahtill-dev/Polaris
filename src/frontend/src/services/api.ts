@@ -9,6 +9,7 @@ import type {
   ResidentAgiCapabilitySurfacePayload,
   ResidentAgiDecisionTurnRequest,
   ResidentAgiDecisionTurnResponse,
+  ResidentAgiEvidenceInterfacesPayload,
   ResidentDecisionPayload,
   ResidentExperimentPayload,
   ResidentGoalPayload,
@@ -253,6 +254,29 @@ export const residentService = {
     query.set('decision_limit', String(decisionLimit));
     const res = await apiFetch(`/v2/resident/agi/audit-pack?${query.toString()}`);
     return handleResponse(res, 'Failed to load Resident AGI audit pack');
+  },
+
+  async getAgiEvidenceInterfaces(
+    workspace = '',
+    options: {
+      decisionType?: string;
+      interfaceIds?: string[];
+      runId?: string;
+      taskId?: string;
+      decisionLimit?: number;
+      maxRuns?: number;
+    } = {},
+  ): Promise<ApiResult<ResidentAgiEvidenceInterfacesPayload>> {
+    const query = new URLSearchParams();
+    if (workspace) query.set('workspace', workspace);
+    if (options.decisionType) query.set('decision_type', options.decisionType);
+    if (options.interfaceIds?.length) query.set('interface_ids', options.interfaceIds.join(','));
+    if (options.runId) query.set('run_id', options.runId);
+    if (options.taskId) query.set('task_id', options.taskId);
+    if (options.decisionLimit) query.set('decision_limit', String(options.decisionLimit));
+    if (options.maxRuns) query.set('max_runs', String(options.maxRuns));
+    const res = await apiFetch(`/v2/resident/agi/evidence-interfaces?${query.toString()}`);
+    return handleResponse(res, 'Failed to load Resident AGI evidence interfaces');
   },
 
   async decide(

@@ -6,6 +6,7 @@ import type { ResidentStatusDetailsPayload } from '@/app/types/appContracts';
 const residentServiceMock = vi.hoisted(() => ({
   decide: vi.fn(),
   getAgiAuditPack: vi.fn(),
+  getAgiEvidenceInterfaces: vi.fn(),
   getStatus: vi.fn(),
 }));
 
@@ -155,6 +156,28 @@ const LIVE_AUDIT_PACK = {
   decision_endpoint: '/v2/resident/agi/decide',
 };
 
+const LIVE_EVIDENCE_INTERFACES = {
+  schema_version: 'resident.agi_evidence_interfaces.v1',
+  decision_type: 'quality_gate_response',
+  interfaces: [
+    {
+      interface_id: 'run_ledger.read',
+      status: 'unavailable',
+      callable: true,
+    },
+    {
+      interface_id: 'verifier.policy.read',
+      status: 'available',
+      callable: true,
+    },
+  ],
+  summary: {
+    total: 2,
+    available: 1,
+    unavailable: 1,
+  },
+};
+
 describe('useResident', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -168,6 +191,10 @@ describe('useResident', () => {
     residentServiceMock.getAgiAuditPack.mockResolvedValue({
       ok: true,
       data: LIVE_AUDIT_PACK,
+    });
+    residentServiceMock.getAgiEvidenceInterfaces.mockResolvedValue({
+      ok: true,
+      data: LIVE_EVIDENCE_INTERFACES,
     });
 
     const { result } = renderHook(() =>
@@ -202,6 +229,7 @@ describe('useResident', () => {
     expect(result.current.decisions[0]?.actor).toBe('ResidentAGI');
     expect(result.current.goals[0]?.goal_id).toBe('goal-1');
     expect(residentServiceMock.getAgiAuditPack).not.toHaveBeenCalled();
+    expect(residentServiceMock.getAgiEvidenceInterfaces).not.toHaveBeenCalled();
   });
 
   it('runs a Resident AGI decision turn through the service and refreshes', async () => {
@@ -212,6 +240,10 @@ describe('useResident', () => {
     residentServiceMock.getAgiAuditPack.mockResolvedValue({
       ok: true,
       data: LIVE_AUDIT_PACK,
+    });
+    residentServiceMock.getAgiEvidenceInterfaces.mockResolvedValue({
+      ok: true,
+      data: LIVE_EVIDENCE_INTERFACES,
     });
     residentServiceMock.decide.mockResolvedValueOnce({
       ok: true,
@@ -241,6 +273,10 @@ describe('useResident', () => {
     expect(result.current.residentAgiAuditPack?.authority_matrix?.decision_policy?.governed_execution).toBe(
       'canonical_role_chain_only',
     );
+    expect(result.current.residentAgiEvidenceInterfaces?.schema_version).toBe(
+      'resident.agi_evidence_interfaces.v1',
+    );
+    expect(result.current.residentAgiEvidenceInterfaces?.interfaces?.[1]?.status).toBe('available');
     expect(result.current.residentRuntimeEvidence.realtime_channel).toBe('runtime.v2.status.resident');
     expect(result.current.residentRuntimeEvidence.source).toBe('runtime.v2_snapshot+http_details');
 
@@ -257,5 +293,9 @@ describe('useResident', () => {
     });
     expect(residentServiceMock.getStatus).toHaveBeenCalledWith('/tmp/polaris-demo', true);
     expect(residentServiceMock.getAgiAuditPack).toHaveBeenCalledWith('/tmp/polaris-demo', 12);
+    expect(residentServiceMock.getAgiEvidenceInterfaces).toHaveBeenCalledWith('/tmp/polaris-demo', {
+      decisionType: 'quality_gate_response',
+      maxRuns: 20,
+    });
   });
 });

@@ -1178,7 +1178,16 @@ def _rust_compile_command(workspace: Path, rust_files: list[str]) -> list[str]:
 def _run_language_build_gate(
     workspace: Path, code_files: list[str], *, timeout_s: int
 ) -> tuple[bool, str, list[dict[str, Any]]]:
-    ts_files = [rel for rel in _files_with_suffix(code_files, (".ts", ".tsx")) if not rel.endswith(".d.ts")]
+    # Exclude build artifacts (CMake, node_modules, target, build/) from
+    # language detection to prevent misclassification (e.g., CMake's
+    # compiler_depend.ts making a C++ project look like TypeScript).
+    _build_dir_prefixes = ("build/", "cmake-build/", "target/", "node_modules/", "dist/", "out/")
+    _source_files = [
+        rel
+        for rel in code_files
+        if not any(rel.startswith(prefix) or f"/{prefix}" in rel for prefix in _build_dir_prefixes)
+    ]
+    ts_files = [rel for rel in _files_with_suffix(_source_files, (".ts", ".tsx")) if not rel.endswith(".d.ts")]
     if ts_files:
         tsc = shutil.which("tsc")
         if not tsc:
@@ -1201,7 +1210,7 @@ def _run_language_build_gate(
         cmd["phase"] = "build_test_lint"
         return bool(cmd.get("ok")), "tsc --noEmit passed" if cmd.get("ok") else "tsc --noEmit failed", [cmd]
 
-    go_files = _files_with_suffix(code_files, (".go",))
+    go_files = _files_with_suffix(_source_files, (".go",))
     if go_files:
         command = _go_command(workspace, go_files)
         if not command:
@@ -1210,7 +1219,7 @@ def _run_language_build_gate(
         cmd["phase"] = "build_test_lint"
         return bool(cmd.get("ok")), "go test passed" if cmd.get("ok") else "go test failed", [cmd]
 
-    rust_files = _files_with_suffix(code_files, (".rs",))
+    rust_files = _files_with_suffix(_source_files, (".rs",))
     if rust_files:
         command = _rust_compile_command(workspace, rust_files)
         if not command:
@@ -1219,7 +1228,7 @@ def _run_language_build_gate(
         cmd["phase"] = "build_test_lint"
         return bool(cmd.get("ok")), "Rust compile check passed" if cmd.get("ok") else "Rust compile check failed", [cmd]
 
-    cpp_files = _files_with_suffix(code_files, _CPP_SOURCE_SUFFIXES)
+    cpp_files = _files_with_suffix(_source_files, _CPP_SOURCE_SUFFIXES)
     if cpp_files:
         compiler = _which_any("g++", "c++")
         if not compiler:
@@ -1379,6 +1388,22 @@ def _smoke_cpp_cli(workspace: Path, code_files: list[str], *, timeout_s: int) ->
     return payload
 
 
+def _java_main_class_name(workspace: Path, main_rel: str) -> str:
+    main_path = workspace / main_rel
+    stem = Path(main_rel).stem
+    try:
+        text = main_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return stem
+    package_match = re.search(
+        r"(?m)^\s*package\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*;",
+        text,
+    )
+    if not package_match:
+        return stem
+    return f"{package_match.group(1)}.{stem}"
+
+
 def _smoke_java_cli(workspace: Path, code_files: list[str], *, timeout_s: int) -> dict[str, Any]:
     javac = shutil.which("javac")
     java = shutil.which("java")
@@ -1388,7 +1413,7 @@ def _smoke_java_cli(workspace: Path, code_files: list[str], *, timeout_s: int) -
     if not java_files:
         return {"ok": False, "kind": "java_cli", "detail": "no Java entrypoint discovered"}
     main_rel = next((rel for rel in java_files if Path(rel).name == "Main.java"), java_files[0])
-    main_class = Path(main_rel).stem
+    main_class = _java_main_class_name(workspace, main_rel)
     with tempfile.TemporaryDirectory(prefix="polaris-factory-java-") as out_dir:
         compile_result = _run_command(
             [javac, "-encoding", "UTF-8", "-d", out_dir, *java_files[:120]],

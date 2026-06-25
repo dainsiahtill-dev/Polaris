@@ -8,9 +8,20 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from polaris.cells.audit.diagnosis.public import QueryAuditDiagnosisTrailV1, query_audit_diagnosis_trail
 from polaris.cells.audit.evidence.public.service import (
     EvidenceBundleService,
     create_evidence_bundle_service,
+)
+from polaris.cells.audit.verdict.public import QueryAuditVerdictV1, query_audit_verdict
+from polaris.cells.context.catalog.public import ContextCatalogService, SearchCellsQueryV1
+from polaris.cells.control_plane.run_ledger.public import (
+    ReadRunLedgerProjectionQueryV1,
+    read_run_ledger_projection,
+)
+from polaris.cells.control_plane.verifier_policy.public import (
+    ReadVerifierPolicyQueryV1,
+    read_verifier_policy,
 )
 from polaris.cells.resident.autonomy.internal.agi_audit_pack import build_resident_agi_audit_pack
 from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
@@ -46,6 +57,7 @@ from polaris.cells.resident.autonomy.public.contracts import (
     ExtractResidentSkillsCommandV1,
     MaterializeResidentGoalCommandV1,
     QueryResidentAgiAuditPackV1,
+    QueryResidentAgiEvidenceInterfacesV1,
     QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
     RecordResidentDecisionCommandV1,
@@ -363,6 +375,447 @@ def _resident_agi_select_decision_capability(
             if str(capability.get("decision_id") or "").strip().lower() == fallback_id:
                 return dict(capability)
     return dict(valid_capabilities[0])
+
+
+def _resident_agi_capability_by_id(audit_pack: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    capability_surface_raw = audit_pack.get("capability_surface")
+    capability_surface: dict[str, Any] = capability_surface_raw if isinstance(capability_surface_raw, dict) else {}
+    items_raw = capability_surface.get("items")
+    items = items_raw if isinstance(items_raw, list) else []
+    result: dict[str, dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        capability_id = str(item.get("capability_id") or "").strip()
+        if capability_id:
+            result[capability_id] = dict(item)
+    return result
+
+
+def _resident_agi_interface_base(
+    *,
+    interface_id: str,
+    capability: dict[str, Any] | None,
+) -> dict[str, Any]:
+    capability_payload = dict(capability or {})
+    return {
+        "interface_id": interface_id,
+        "capability": capability_payload,
+        "name": str(capability_payload.get("name") or interface_id).strip() or interface_id,
+        "category": str(capability_payload.get("category") or "unknown").strip() or "unknown",
+        "access": str(capability_payload.get("access") or "unknown").strip() or "unknown",
+        "contract_ref": str(capability_payload.get("contract_ref") or "").strip(),
+        "risk_level": str(capability_payload.get("risk_level") or "unknown").strip() or "unknown",
+        "endpoint": str(capability_payload.get("endpoint") or "").strip(),
+        "available": False,
+        "callable": False,
+        "status": "unknown_interface" if not capability_payload else "metadata_only",
+        "source": "resident.agi_capability_surface",
+        "summary": {},
+        "payload": {},
+        "gaps": [],
+        "recommended_next_action": "request_evidence",
+    }
+
+
+def _resident_agi_run_ledger_interface(
+    *,
+    workspace: str,
+    run_id: str,
+    max_runs: int,
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        projection = read_run_ledger_projection(
+            ReadRunLedgerProjectionQueryV1(
+                workspace=workspace,
+                run_id=run_id,
+                max_runs=max_runs,
+            )
+        ).projection
+    except (RuntimeError, ValueError, OSError) as exc:
+        base.update(
+            {
+                "status": "unavailable",
+                "source": "control_plane.run_ledger.public.read_run_ledger_projection",
+                "gaps": [str(exc)],
+                "recommended_next_action": "request_run_ledger_evidence",
+            }
+        )
+        return base
+
+    base.update(
+        {
+            "available": bool(projection.get("available")),
+            "callable": True,
+            "status": "available" if bool(projection.get("available")) else "unavailable",
+            "source": "control_plane.run_ledger.public.read_run_ledger_projection",
+            "summary": {
+                "ok": bool(projection.get("ok")),
+                "status": str(projection.get("status") or ""),
+                "total": int(projection.get("total") or 0),
+                "projected": int(projection.get("projected") or 0),
+                "failed": int(projection.get("failed") or 0),
+                "missing": int(projection.get("missing") or 0),
+                "detail": str(projection.get("detail") or ""),
+                "evidence_policy": projection.get("evidence_policy")
+                if isinstance(projection.get("evidence_policy"), dict)
+                else {},
+            },
+            "payload": {"projection": projection},
+            "gaps": [] if bool(projection.get("available")) else ["run ledger projection is not available yet"],
+            "recommended_next_action": "use_run_ledger_projection"
+            if bool(projection.get("available"))
+            else "request_run_ledger_evidence",
+        }
+    )
+    return base
+
+
+def _resident_agi_verifier_policy_interface(
+    *,
+    workspace: str,
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        policy = read_verifier_policy(ReadVerifierPolicyQueryV1(workspace=workspace)).policy
+    except (RuntimeError, ValueError, OSError) as exc:
+        base.update(
+            {
+                "status": "unavailable",
+                "source": "control_plane.verifier_policy.public.read_verifier_policy",
+                "gaps": [str(exc)],
+                "recommended_next_action": "request_verifier_policy_evidence",
+            }
+        )
+        return base
+
+    base.update(
+        {
+            "available": True,
+            "callable": True,
+            "status": "available",
+            "source": "control_plane.verifier_policy.public.read_verifier_policy",
+            "summary": {
+                "enabled_modalities": list(policy.get("enabled_modalities") or []),
+                "required_modalities": list(policy.get("required_modalities") or []),
+                "policy_source": str(policy.get("source") or ""),
+            },
+            "payload": {"policy": policy},
+            "gaps": [],
+            "recommended_next_action": "use_verifier_policy_snapshot",
+        }
+    )
+    return base
+
+
+def _resident_agi_audit_diagnosis_interface(
+    *,
+    workspace: str,
+    run_id: str,
+    task_id: str,
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    result = query_audit_diagnosis_trail(
+        QueryAuditDiagnosisTrailV1(
+            workspace=workspace,
+            run_id=run_id or None,
+            task_id=task_id or None,
+            limit=100,
+        )
+    )
+    payload = dict(result.payload)
+    base.update(
+        {
+            "available": bool(result.ok),
+            "callable": True,
+            "status": result.status if result.ok else "unavailable",
+            "source": "audit.diagnosis.public.query_audit_diagnosis_trail",
+            "summary": {
+                "ok": result.ok,
+                "status": result.status,
+                "total": int(payload.get("total") or 0),
+                "run_id": str(payload.get("run_id") or ""),
+                "task_id": str(payload.get("task_id") or ""),
+            },
+            "payload": payload,
+            "gaps": []
+            if result.ok
+            else [str(result.error_message or result.error_code or "audit diagnosis trail unavailable")],
+            "recommended_next_action": "use_audit_diagnosis_trail" if result.ok else "request_audit_diagnosis_evidence",
+        }
+    )
+    return base
+
+
+def _resident_agi_audit_verdict_interface(
+    *,
+    workspace: str,
+    run_id: str,
+    task_id: str,
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    result = query_audit_verdict(
+        QueryAuditVerdictV1(
+            workspace=workspace,
+            run_id=run_id or None,
+            task_id=task_id or None,
+            include_artifacts=True,
+        )
+    )
+    details = dict(result.details)
+    base.update(
+        {
+            "available": bool(result.ok),
+            "callable": True,
+            "status": result.status if result.ok else "unavailable",
+            "source": "audit.verdict.public.query_audit_verdict",
+            "summary": {
+                "ok": result.ok,
+                "status": result.status,
+                "verdict": result.verdict or "",
+                "change_count": int(details.get("change_count") or 0),
+                "review_count": int(details.get("review_count") or 0),
+                "task_review_status": str(details.get("task_review_status") or ""),
+            },
+            "payload": {"details": details, "verdict": result.verdict},
+            "gaps": []
+            if result.ok
+            else [str(result.error_message or result.error_code or "audit verdict unavailable")],
+            "recommended_next_action": "use_audit_verdict_snapshot" if result.ok else "request_audit_verdict_evidence",
+        }
+    )
+    return base
+
+
+def _resident_agi_context_catalog_interface(
+    *,
+    workspace: str,
+    decision_type: str,
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    query_text = " ".join(
+        str(token or "").strip()
+        for token in (
+            decision_type,
+            base.get("contract_ref"),
+            base.get("category"),
+            base.get("name"),
+        )
+        if str(token or "").strip()
+    )
+    try:
+        result = ContextCatalogService(workspace).search(SearchCellsQueryV1(query=query_text, limit=5))
+    except (RuntimeError, ValueError, OSError) as exc:
+        base.update(
+            {
+                "status": "unavailable",
+                "source": "context.catalog.public.ContextCatalogService.search",
+                "gaps": [str(exc)],
+                "recommended_next_action": "sync_context_catalog_before_search",
+            }
+        )
+        return base
+
+    descriptors = [
+        {
+            "cell_id": item.cell_id,
+            "title": item.title,
+            "purpose": item.purpose,
+            "domain": item.domain,
+            "kind": item.kind,
+            "visibility": item.visibility,
+            "stateful": item.stateful,
+            "owner": item.owner,
+            "capability_summary": item.capability_summary,
+        }
+        for item in result.descriptors
+    ]
+    base.update(
+        {
+            "available": result.total > 0,
+            "callable": True,
+            "status": "available" if result.total > 0 else "empty",
+            "source": "context.catalog.public.ContextCatalogService.search",
+            "summary": {"query": query_text, "total": result.total},
+            "payload": {"descriptors": descriptors},
+            "gaps": [] if result.total > 0 else ["context catalog has no matching descriptors"],
+            "recommended_next_action": "use_catalog_descriptors"
+            if result.total > 0
+            else "sync_context_catalog_before_search",
+        }
+    )
+    return base
+
+
+def _resident_agi_contextos_final_request_interface(
+    *,
+    audit_pack: dict[str, Any],
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    evidence_refs_raw = audit_pack.get("evidence_refs")
+    evidence_refs = evidence_refs_raw if isinstance(evidence_refs_raw, list) else []
+    context_refs = [
+        str(item or "").strip() for item in evidence_refs if str(item or "").startswith("runtime/contexts/")
+    ]
+    base.update(
+        {
+            "available": bool(context_refs),
+            "callable": False,
+            "status": "available" if context_refs else "metadata_only",
+            "source": "resident.agi_audit_pack.evidence_refs",
+            "summary": {
+                "context_snapshot_ref_count": len(context_refs),
+                "context_snapshot_refs": context_refs[:10],
+            },
+            "payload": {"context_snapshot_refs": context_refs},
+            "gaps": [] if context_refs else ["no runtime/contexts/<hash> reference is present in the audit pack"],
+            "recommended_next_action": "use_context_snapshot_refs"
+            if context_refs
+            else "request_final_request_snapshot",
+        }
+    )
+    return base
+
+
+def _resident_agi_metadata_only_interface(base: dict[str, Any]) -> dict[str, Any]:
+    access = str(base.get("access") or "").strip()
+    contract_ref = str(base.get("contract_ref") or "").strip()
+    if "execute" in access:
+        base.update(
+            {
+                "status": "governed_execute_only",
+                "source": "resident.agi_capability_surface",
+                "gaps": ["this endpoint requires a governed command and is not executed by read-only evidence query"],
+                "recommended_next_action": "request_governed_execution_if_read_evidence_is_insufficient",
+            }
+        )
+        return base
+    if contract_ref in {"audit.diagnosis", "audit.verdict", "audit.evidence.bundle", "context.engine"}:
+        base.update(
+            {
+                "status": "needs_public_facade",
+                "source": "resident.agi_capability_surface",
+                "gaps": [f"{contract_ref} has no safe Resident AGI read facade wired here yet"],
+                "recommended_next_action": "request_platform_facade_or_use_existing_audit_pack_summary",
+            }
+        )
+    return base
+
+
+def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterfacesV1) -> dict[str, Any]:
+    """Return the evidence interfaces a Resident AGI turn can safely inspect."""
+
+    status_payload = get_resident_service(query.workspace).get_status(include_details=True)
+    audit_pack = build_resident_agi_audit_pack(
+        workspace=query.workspace,
+        status_payload=status_payload,
+        decision_limit=query.decision_limit,
+    )
+    selected_decision_capability = _resident_agi_select_decision_capability(
+        decision_type=query.decision_type,
+        audit_pack=audit_pack,
+    )
+    selected_required_interfaces = [
+        str(item or "").strip()
+        for item in selected_decision_capability.get("required_evidence_interfaces", [])
+        if str(item or "").strip()
+    ]
+    selected_optional_interfaces = [
+        str(item or "").strip()
+        for item in selected_decision_capability.get("optional_evidence_interfaces", [])
+        if str(item or "").strip()
+    ]
+    requested_interface_ids = _merge_non_empty_strings(
+        list(query.interface_ids),
+        selected_required_interfaces if not query.interface_ids else [],
+        selected_optional_interfaces if not query.interface_ids else [],
+    )
+    capability_by_id = _resident_agi_capability_by_id(audit_pack)
+    interfaces: list[dict[str, Any]] = []
+    for interface_id in requested_interface_ids:
+        base = _resident_agi_interface_base(
+            interface_id=interface_id,
+            capability=capability_by_id.get(interface_id),
+        )
+        if interface_id == "run_ledger.read":
+            item = _resident_agi_run_ledger_interface(
+                workspace=query.workspace,
+                run_id=query.run_id,
+                max_runs=query.max_runs,
+                base=base,
+            )
+        elif interface_id == "audit.diagnosis.read":
+            item = _resident_agi_audit_diagnosis_interface(
+                workspace=query.workspace,
+                run_id=query.run_id,
+                task_id=query.task_id,
+                base=base,
+            )
+        elif interface_id == "audit.verdict.read":
+            item = _resident_agi_audit_verdict_interface(
+                workspace=query.workspace,
+                run_id=query.run_id,
+                task_id=query.task_id,
+                base=base,
+            )
+        elif interface_id == "verifier.policy.read":
+            item = _resident_agi_verifier_policy_interface(workspace=query.workspace, base=base)
+        elif interface_id == "context.catalog.search":
+            item = _resident_agi_context_catalog_interface(
+                workspace=query.workspace,
+                decision_type=query.decision_type,
+                base=base,
+            )
+        elif interface_id == "contextos.final_request_audit.read":
+            item = _resident_agi_contextos_final_request_interface(audit_pack=audit_pack, base=base)
+        else:
+            item = _resident_agi_metadata_only_interface(base)
+        interfaces.append(item)
+
+    required_set = set(selected_required_interfaces)
+    missing_required = [
+        str(item.get("interface_id") or "")
+        for item in interfaces
+        if str(item.get("interface_id") or "") in required_set
+        and str(item.get("status") or "") not in {"available", "metadata_only"}
+    ]
+    status_counts: dict[str, int] = {}
+    for item in interfaces:
+        status = str(item.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+    return {
+        "schema_version": "resident.agi_evidence_interfaces.v1",
+        "workspace": query.workspace,
+        "decision_type": query.decision_type,
+        "run_id": query.run_id,
+        "task_id": query.task_id,
+        "selected_decision_capability": selected_decision_capability,
+        "required_evidence_interfaces": selected_required_interfaces,
+        "optional_evidence_interfaces": selected_optional_interfaces,
+        "requested_interface_ids": requested_interface_ids,
+        "interfaces": interfaces,
+        "summary": {
+            "total": len(interfaces),
+            "available": status_counts.get("available", 0),
+            "metadata_only": status_counts.get("metadata_only", 0),
+            "needs_public_facade": status_counts.get("needs_public_facade", 0),
+            "governed_execute_only": status_counts.get("governed_execute_only", 0),
+            "unavailable": status_counts.get("unavailable", 0),
+            "empty": status_counts.get("empty", 0),
+            "unknown_interface": status_counts.get("unknown_interface", 0),
+            "missing_required_interface_ids": missing_required,
+        },
+        "audit_pack_ref": {
+            "schema_version": audit_pack.get("schema_version"),
+            "evidence_gate_status": (audit_pack.get("evidence_gate") or {}).get("status")
+            if isinstance(audit_pack.get("evidence_gate"), dict)
+            else "",
+            "hard_rule_gate_status": (audit_pack.get("hard_rule_gate") or {}).get("status")
+            if isinstance(audit_pack.get("hard_rule_gate"), dict)
+            else "",
+        },
+    }
 
 
 async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnCommandV1) -> dict[str, Any]:
@@ -991,6 +1444,7 @@ __all__ = [
     "MaterializeResidentGoalCommandV1",
     "PerfEvidence",
     "QueryResidentAgiAuditPackV1",
+    "QueryResidentAgiEvidenceInterfacesV1",
     "QueryResidentCapabilitiesV1",
     "QueryResidentStatusV1",
     "RecordResidentDecisionCommandV1",
@@ -1042,6 +1496,7 @@ __all__ = [
     "materialize_resident_goal",
     "publish_resident_status_update",
     "query_resident_agi_audit_pack",
+    "query_resident_agi_evidence_interfaces",
     "query_resident_capabilities",
     "query_resident_status",
     "record_resident_decision",

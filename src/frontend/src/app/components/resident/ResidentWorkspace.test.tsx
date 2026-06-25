@@ -744,6 +744,48 @@ const mockResidentState = {
       audit_pack_schema: "resident.agi_audit_pack.v1",
     },
   },
+  residentAgiEvidenceInterfaces: {
+    schema_version: "resident.agi_evidence_interfaces.v1",
+    decision_type: "quality_gate_response",
+    selected_decision_capability: {
+      decision_id: "quality.gate.response",
+      name: "Quality gate response",
+    },
+    interfaces: [
+      {
+        interface_id: "run_ledger.read",
+        name: "Run Ledger projection",
+        status: "unavailable",
+        callable: true,
+        source: "control_plane.run_ledger.public.read_run_ledger_projection",
+        recommended_next_action: "request_run_ledger_evidence",
+        gaps: ["run ledger projection is not available yet"],
+      },
+      {
+        interface_id: "verifier.policy.read",
+        name: "Verifier policy read model",
+        status: "available",
+        callable: true,
+        source: "control_plane.verifier_policy.public.read_verifier_policy",
+        recommended_next_action: "use_verifier_policy_snapshot",
+      },
+      {
+        interface_id: "audit.verdict.read",
+        name: "Audit verdict read model",
+        status: "empty",
+        source: "audit.verdict.public.query_audit_verdict",
+        recommended_next_action: "use_audit_verdict_snapshot",
+      },
+    ],
+    summary: {
+      total: 3,
+      available: 1,
+      unavailable: 1,
+      needs_public_facade: 0,
+      metadata_only: 0,
+      governed_execute_only: 0,
+    },
+  },
   refresh: vi.fn(),
   isActing: vi.fn(() => false),
   start: vi.fn(),
@@ -905,6 +947,24 @@ describe("ResidentWorkspace", () => {
     expect(
       screen.getByTestId("resident-agi-evidence-interface-matrix"),
     ).toHaveTextContent("execute_through_control_plane_contract");
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-readiness"),
+    ).toHaveTextContent("AGI 证据接口可用性");
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-readiness"),
+    ).toHaveTextContent("resident.agi_evidence_interfaces.v1");
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-readiness"),
+    ).toHaveTextContent("quality_gate_response");
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-readiness"),
+    ).toHaveTextContent("Run Ledger projection");
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-readiness"),
+    ).toHaveTextContent("audit.verdict.public.query_audit_verdict");
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-readiness"),
+    ).toHaveTextContent("use_audit_verdict_snapshot");
     expect(screen.getAllByText("risk high").length).toBeGreaterThan(1);
     expect(
       screen.getByText("No shortcut from PM directly to Director."),

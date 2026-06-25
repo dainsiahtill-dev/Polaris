@@ -713,6 +713,50 @@ def test_real_run_gate_executes_cpp_multifile_cli_entrypoint(tmp_path: Path) -> 
     assert "src/engine/generator.cpp" in gate["entrypoint"]["compile"]["command"]
 
 
+def test_real_run_gate_executes_packaged_java_cli_entrypoint(monkeypatch: Any, tmp_path: Path) -> None:
+    java_dir = tmp_path / "src" / "main" / "java" / "polaris" / "factory"
+    java_dir.mkdir(parents=True)
+    (java_dir / "Main.java").write_text(
+        "package polaris.factory;\n"
+        "public final class Main {\n"
+        "  public static void main(String[] args) {\n"
+        '    System.out.println("rhythm monster beat pattern");\n'
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return f"/tool/{name}" if name in {"javac", "java"} else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "duration_s": 0.01,
+            "stdout_tail": "ok",
+            "stderr_tail": "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["src/main/java/polaris/factory/Main.java"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    assert gate["requirements"]["entrypoint_smoke"]["ok"] is True
+    assert gate["entrypoint"]["kind"] == "java_cli"
+    java_commands = [command for command in commands if command and command[0] == "/tool/java"]
+    assert java_commands
+    assert any(command[3] == "polaris.factory.Main" for command in java_commands)
+
+
 def test_real_run_gate_executes_python_unittest_suite(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()

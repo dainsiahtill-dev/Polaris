@@ -70,6 +70,38 @@ describe("residentService", () => {
     );
   });
 
+  it("loads Resident AGI evidence-interface readiness from the read-only endpoint", async () => {
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          schema_version: "resident.agi_evidence_interfaces.v1",
+          interfaces: [
+            { interface_id: "run_ledger.read", status: "unavailable" },
+            { interface_id: "verifier.policy.read", status: "available" },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await residentService.getAgiEvidenceInterfaces(
+      "/tmp/polaris-demo",
+      {
+        decisionType: "quality_gate_response",
+        interfaceIds: ["run_ledger.read", "verifier.policy.read"],
+        maxRuns: 5,
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.data?.schema_version).toBe(
+      "resident.agi_evidence_interfaces.v1",
+    );
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      "/v2/resident/agi/evidence-interfaces?workspace=%2Ftmp%2Fpolaris-demo&decision_type=quality_gate_response&interface_ids=run_ledger.read%2Cverifier.policy.read&max_runs=5",
+    );
+  });
+
   it("posts Resident AGI decisions with audit-pack and governance evidence", async () => {
     apiFetchMock.mockResolvedValueOnce(
       new Response(

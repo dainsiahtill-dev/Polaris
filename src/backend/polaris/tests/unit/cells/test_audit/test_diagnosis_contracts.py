@@ -14,6 +14,7 @@ from polaris.cells.audit.diagnosis.public.contracts import (
     QueryAuditDiagnosisTrailV1,
     RunAuditDiagnosisCommandV1,
 )
+from polaris.cells.audit.diagnosis.public.service import query_audit_diagnosis_trail
 
 
 class TestRunAuditDiagnosisCommandV1:
@@ -211,3 +212,18 @@ class TestIAuditDiagnosisService:
 
     def test_protocol_is_runtime_checkable(self) -> None:
         assert callable(IAuditDiagnosisService)
+
+
+class TestQueryAuditDiagnosisTrailFacade:
+    """Public read facade behavior."""
+
+    def test_empty_trail_returns_empty_result(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        runtime_root = tmp_path / "runtime"
+        monkeypatch.setenv("KERNELONE_RUNTIME_BASE", str(runtime_root))
+
+        result = query_audit_diagnosis_trail(QueryAuditDiagnosisTrailV1(workspace=str(tmp_path)))
+
+        assert result.ok is True
+        assert result.status == "empty"
+        assert result.payload["total"] == 0
+        assert result.payload["events"] == []

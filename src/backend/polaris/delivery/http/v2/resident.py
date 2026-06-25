@@ -12,6 +12,7 @@ from polaris.cells.resident.autonomy.public.service import (
     ExtractResidentSkillsCommandV1,
     MaterializeResidentGoalCommandV1,
     QueryResidentAgiAuditPackV1,
+    QueryResidentAgiEvidenceInterfacesV1,
     QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
     RecordResidentDecisionCommandV1,
@@ -32,6 +33,7 @@ from polaris.cells.resident.autonomy.public.service import (
     get_resident_service,
     materialize_resident_goal,
     query_resident_agi_audit_pack,
+    query_resident_agi_evidence_interfaces,
     query_resident_capabilities,
     query_resident_status,
     record_resident_decision_entry,
@@ -190,6 +192,34 @@ def resident_agi_audit_pack(
 
     ws = _resolve_workspace(request, workspace)
     return query_resident_agi_audit_pack(QueryResidentAgiAuditPackV1(workspace=ws, decision_limit=decision_limit))
+
+
+@router.get("/agi/evidence-interfaces", dependencies=[Depends(require_auth)])
+def resident_agi_evidence_interfaces(
+    request: Request,
+    workspace: str = "",
+    decision_type: str = "platform_supervision",
+    interface_ids: str = "",
+    run_id: str = "",
+    task_id: str = "",
+    decision_limit: int = Query(default=20, ge=1, le=100),
+    max_runs: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
+    """Return safe evidence-interface readiness for Resident AGI decisions."""
+
+    ws = _resolve_workspace(request, workspace)
+    requested_interfaces = tuple(item.strip() for item in str(interface_ids or "").split(",") if item.strip())
+    return query_resident_agi_evidence_interfaces(
+        QueryResidentAgiEvidenceInterfacesV1(
+            workspace=ws,
+            decision_type=decision_type,
+            interface_ids=requested_interfaces,
+            run_id=run_id,
+            task_id=task_id,
+            decision_limit=decision_limit,
+            max_runs=max_runs,
+        )
+    )
 
 
 @router.post("/agi/decide", dependencies=[Depends(require_auth)])

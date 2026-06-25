@@ -175,6 +175,36 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert "run_ledger.read" in captured_metadata["resident_agi_required_evidence_interfaces"]
 
 
+def test_resident_agi_evidence_interfaces_endpoint_reports_readiness(tmp_path: Path, monkeypatch) -> None:
+    test_token = "test-resident-token"
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
+    with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client:
+        response = client.get(
+            "/v2/resident/agi/evidence-interfaces",
+            params={
+                "workspace": str(workspace),
+                "decision_type": "quality_gate_response",
+                "interface_ids": "run_ledger.read,verifier.policy.read,audit.verdict.read",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "resident.agi_evidence_interfaces.v1"
+    assert payload["selected_decision_capability"]["decision_id"] == "quality.gate.response"
+    by_id = {item["interface_id"]: item for item in payload["interfaces"]}
+    assert by_id["run_ledger.read"]["callable"] is True
+    assert by_id["verifier.policy.read"]["status"] == "available"
+    assert by_id["audit.verdict.read"]["source"] == "audit.verdict.public.query_audit_verdict"
+    assert by_id["audit.verdict.read"]["status"] == "empty"
+    assert by_id["audit.verdict.read"]["callable"] is True
+
+
 def test_resident_agi_decide_fails_closed_when_runtime_receipt_is_missing(
     tmp_path: Path,
     monkeypatch,

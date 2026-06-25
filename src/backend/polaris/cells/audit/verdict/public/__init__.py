@@ -22,6 +22,7 @@ from polaris.cells.audit.verdict.public.service import (
     get_artifact_path,
     get_review_gate,
     list_artifact_keys,
+    query_audit_verdict,
 )
 
 __all__ = [
@@ -42,4 +43,5 @@ __all__ = [
     "get_artifact_path",
     "get_review_gate",
     "list_artifact_keys",
+    "query_audit_verdict",
 ]
