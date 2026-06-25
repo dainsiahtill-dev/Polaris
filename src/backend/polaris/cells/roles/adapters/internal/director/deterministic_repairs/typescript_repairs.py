@@ -162,6 +162,11 @@ _TS_CANVAS_CONTEXT_DECLARATION_LINE_RE = re.compile(
     r"^(?P<indent>\s*)(?:const|let|var)\s+(?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)"
     r"(?:\s*:\s*[^=]+)?\s*=\s*[^;\n]*\.getContext\(\s*['\"]2d['\"]\s*\)\s*;?\s*$"
 )
+# Generalized: match any function call declaration that may return nullable type
+_TS_NULLABLE_FUNCTION_DECLARATION_LINE_RE = re.compile(
+    r"^(?P<indent>\s*)(?:const|let|var)\s+(?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)"
+    r"(?:\s*:\s*[^=]+)?\s*=\s*(?P<rhs>[^;\n]*\([^;\n]*\))\s*;?\s*$"
+)
 _TS_NAMED_REEXPORT_RE = re.compile(
     r"export\s*\{\s*(?P<symbols>[^}]+)\s*\}\s*from\s*['\"](?P<module>[^'\"]+)['\"]\s*;?",
     re.MULTILINE | re.DOTALL,
@@ -1952,25 +1957,44 @@ def _repair_typescript_nullable_canvas_context_guards(
             guarded.append(symbol)
             continue
         dom_match = _TS_NULLABLE_DOM_HANDLE_DECLARATION_LINE_RE.match(line)
-        if not dom_match:
-            repaired_lines.append(line)
+        if dom_match:
+            symbol = str(dom_match.group("symbol") or "").strip()
+            if symbols and symbol not in symbols:
+                repaired_lines.append(line)
+                continue
+            repaired_line = _typescript_dom_handle_non_null_assertion_line(line)
+            line_changed = repaired_line != line
+            repaired_lines.append(repaired_line)
+            if _typescript_nullable_guard_follows(lines, index, symbol):
+                if line_changed:
+                    guarded.append(symbol)
+                continue
+            indent = str(dom_match.group("indent") or "")
+            repaired_lines.append(f"{indent}if (!{symbol}) {{")
+            repaired_lines.append(f'{indent}  throw new Error("DOM element unavailable: {symbol}");')
+            repaired_lines.append(f"{indent}}}")
+            guarded.append(symbol)
             continue
-        symbol = str(dom_match.group("symbol") or "").strip()
-        if symbols and symbol not in symbols:
-            repaired_lines.append(line)
+        # Generalized: any function call that may return nullable type
+        func_match = _TS_NULLABLE_FUNCTION_DECLARATION_LINE_RE.match(line)
+        if func_match:
+            symbol = str(func_match.group("symbol") or "").strip()
+            if symbols and symbol not in symbols:
+                repaired_lines.append(line)
+                continue
+            rhs = str(func_match.group("rhs") or "")
+            if "!" in rhs:
+                repaired_lines.append(line)
+                continue
+            # Add ! after the function call closing paren
+            repaired_line = line.rstrip().rstrip(";")
+            repaired_line = re.sub(r"\)\s*$", ")!", repaired_line)
+            if line.rstrip().endswith(";"):
+                repaired_line += ";"
+            repaired_lines.append(repaired_line)
+            guarded.append(symbol)
             continue
-        repaired_line = _typescript_dom_handle_non_null_assertion_line(line)
-        line_changed = repaired_line != line
-        repaired_lines.append(repaired_line)
-        if _typescript_nullable_guard_follows(lines, index, symbol):
-            if line_changed:
-                guarded.append(symbol)
-            continue
-        indent = str(dom_match.group("indent") or "")
-        repaired_lines.append(f"{indent}if (!{symbol}) {{")
-        repaired_lines.append(f'{indent}  throw new Error("DOM element unavailable: {symbol}");')
-        repaired_lines.append(f"{indent}}}")
-        guarded.append(symbol)
+        repaired_lines.append(line)
     if not guarded:
         return text, []
     return "\n".join(repaired_lines) + ("\n" if text.endswith("\n") else ""), _dedupe_preserve_order(guarded)
