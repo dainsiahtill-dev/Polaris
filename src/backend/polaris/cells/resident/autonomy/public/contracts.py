@@ -343,6 +343,79 @@ class ResidentAgiDecisionOutputV1:
 
 
 @dataclass(frozen=True)
+class ResidentAgiDecisionHandoffV1:
+    decision_type: str
+    decision_capability_id: str
+    handoff_status: str
+    target_roles: tuple[str, ...]
+    allowed_actions: tuple[str, ...]
+    blocked_actions: tuple[str, ...]
+    downstream_allowed: bool
+    reason: str
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    context_refs: tuple[str, ...] = field(default_factory=tuple)
+    gate_statuses: Mapping[str, Any] = field(default_factory=dict)
+    source_role: str = "resident_agi"
+    required_chain: str = "PM → Chief Engineer → Director"
+    schema_version: str = "resident.agi_decision_handoff.v1"
+    advisory_only: bool = True
+    agi_execution_authority: bool = False
+
+    def __post_init__(self) -> None:
+        status = str(self.handoff_status or "").strip().lower()
+        if status not in {"ready", "hold", "blocked", "escalate"}:
+            raise ValueError("handoff_status must be one of ready, hold, blocked, escalate")
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "source_role", _require_non_empty("source_role", self.source_role))
+        object.__setattr__(self, "decision_type", _require_non_empty("decision_type", self.decision_type))
+        object.__setattr__(
+            self,
+            "decision_capability_id",
+            _require_non_empty("decision_capability_id", self.decision_capability_id),
+        )
+        object.__setattr__(self, "handoff_status", status)
+        object.__setattr__(self, "target_roles", _to_non_empty_tuple("target_roles", self.target_roles))
+        object.__setattr__(self, "allowed_actions", _to_non_empty_tuple("allowed_actions", self.allowed_actions))
+        object.__setattr__(self, "blocked_actions", _to_non_empty_tuple("blocked_actions", self.blocked_actions))
+        object.__setattr__(self, "downstream_allowed", bool(self.downstream_allowed))
+        object.__setattr__(self, "reason", _require_non_empty("reason", self.reason))
+        object.__setattr__(
+            self,
+            "evidence_refs",
+            tuple(str(item or "").strip() for item in self.evidence_refs if str(item or "").strip()),
+        )
+        object.__setattr__(
+            self,
+            "context_refs",
+            tuple(str(item or "").strip() for item in self.context_refs if str(item or "").strip()),
+        )
+        object.__setattr__(self, "gate_statuses", _to_dict_copy(self.gate_statuses))
+        object.__setattr__(self, "required_chain", _require_non_empty("required_chain", self.required_chain))
+        object.__setattr__(self, "advisory_only", True)
+        object.__setattr__(self, "agi_execution_authority", False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "source_role": self.source_role,
+            "decision_type": self.decision_type,
+            "decision_capability_id": self.decision_capability_id,
+            "handoff_status": self.handoff_status,
+            "target_roles": list(self.target_roles),
+            "allowed_actions": list(self.allowed_actions),
+            "blocked_actions": list(self.blocked_actions),
+            "downstream_allowed": self.downstream_allowed,
+            "reason": self.reason,
+            "evidence_refs": list(self.evidence_refs),
+            "context_refs": list(self.context_refs),
+            "gate_statuses": dict(self.gate_statuses),
+            "required_chain": self.required_chain,
+            "advisory_only": True,
+            "agi_execution_authority": False,
+        }
+
+
+@dataclass(frozen=True)
 class MaterializeResidentGoalCommandV1:
     workspace: str
     goal_id: str
@@ -626,6 +699,7 @@ __all__ = [
     "ResidentAgiCapabilityV1",
     "ResidentAgiDecisionBoundaryV1",
     "ResidentAgiDecisionCapabilityV1",
+    "ResidentAgiDecisionHandoffV1",
     "ResidentAgiDecisionOutputV1",
     "ResidentAutonomyError",
     "ResidentAutonomyResultV1",

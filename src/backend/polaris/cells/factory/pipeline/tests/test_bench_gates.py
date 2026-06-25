@@ -1180,9 +1180,47 @@ def test_real_run_gate_executes_go_build_and_cli_entrypoint(monkeypatch: Any, tm
 
     assert gate["ok"] is True
     assert gate["requirements"]["environment_prepared"]["detail"] == "go toolchain available"
-    assert gate["requirements"]["build_test_lint_ran"]["detail"] == "go test passed"
+    assert gate["requirements"]["build_test_lint_ran"]["detail"] == "go vet passed"
     assert gate["entrypoint"]["kind"] == "go_cli"
     assert [command[1] for command in commands] == ["vet", "run"]
+    assert not (tmp_path / "go.mod").exists()
+
+
+def test_real_run_gate_reports_go_vet_failure_without_mutating_workspace(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "main.go").write_text(
+        'package main\nfunc main() { println("usage: app") }\n',
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/go" if name == "go" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        is_vet = len(command) > 1 and command[1] == "vet"
+        return {
+            "command": command,
+            "ok": not is_vet,
+            "returncode": 1 if is_vet else 0,
+            "duration_s": 0.01,
+            "stdout_tail": "usage: app\n" if not is_vet else "",
+            "stderr_tail": "vet failed\n" if is_vet else "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["main.go"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    assert gate["requirements"]["build_test_lint_ran"]["ok"] is False
+    assert gate["requirements"]["build_test_lint_ran"]["detail"] == "go vet failed"
+    assert [command[1] for command in commands] == ["vet", "run"]
+    assert not (tmp_path / "go.mod").exists()
 
 
 def test_real_run_gate_ts_build_before_test_order(monkeypatch: Any, tmp_path: Path) -> None:

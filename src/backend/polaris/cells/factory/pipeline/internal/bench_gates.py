@@ -1038,7 +1038,8 @@ def _run_language_build_gate(
             return False, "go unavailable for Go project", []
         cmd = _run_command(command, workspace, timeout_s=max(10, int(timeout_s)))
         cmd["phase"] = "build_test_lint"
-        return bool(cmd.get("ok")), "go test passed" if cmd.get("ok") else "go test failed", [cmd]
+        command_label = "go vet" if len(command) > 1 and command[1] == "vet" else "go test"
+        return bool(cmd.get("ok")), f"{command_label} passed" if cmd.get("ok") else f"{command_label} failed", [cmd]
 
     rust_files = _files_with_suffix(_source_files, (".rs",))
     if rust_files:

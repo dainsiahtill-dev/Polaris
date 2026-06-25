@@ -24,8 +24,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.director.runtime.internal.repair_kernel.legacy_bridge import (
-    build_legacy_repair_kernel_summary,
+from polaris.cells.director.runtime.public import (
+    build_director_repair_kernel_summary,
 )
 
 from . import execute_method as _em
@@ -1298,7 +1298,7 @@ async def _run_materialization_quality_repair_retry(
             "repair_target_files": repair_target_files[:12],
             "rotated_repair_targets": rotate_repair_targets,
             "source_tools": source_tools,
-            "repair_kernel": build_legacy_repair_kernel_summary(
+            "repair_kernel": build_director_repair_kernel_summary(
                 stage="deterministic_semantic_quality_repair",
                 tool_results=deterministic_semantic_tool_results,
                 artifact_quality_errors=repair_quality_errors,

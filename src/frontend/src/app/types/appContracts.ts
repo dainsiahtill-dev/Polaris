@@ -392,6 +392,31 @@ export interface ResidentAgiDecisionCapabilityRegistryPayload {
   decision_policy?: Record<string, string>;
 }
 
+export interface ResidentAgiEvidenceInterfaceContractPayload {
+  schema_version?: string;
+  role_id?: string;
+  source?: string;
+  coverage_complete?: boolean;
+  supported_interface_ids?: string[];
+  declared_interface_ids?: string[];
+  required_interface_ids?: string[];
+  optional_interface_ids?: string[];
+  missing_interface_ids?: string[];
+  missing_required_interface_ids?: string[];
+  missing_optional_interface_ids?: string[];
+  interfaces?: Array<{
+    interface_id?: string;
+    status?: string;
+    required_by_decisions?: string[];
+    optional_by_decisions?: string[];
+    access?: string;
+    category?: string;
+    contract_ref?: string;
+    risk_level?: string;
+  }>;
+  decision_policy?: Record<string, string>;
+}
+
 export interface ResidentAgiAuthorityMatrixPayload {
   schema_version?: string;
   runtime_foundation?: string;
@@ -434,6 +459,8 @@ export interface ResidentAgiCapabilitySurfacePayload {
   decision_capability_schema?: string;
   decision_capabilities?: ResidentAgiDecisionCapabilityPayload[];
   decision_capability_registry?: ResidentAgiDecisionCapabilityRegistryPayload;
+  evidence_interface_contract_schema?: string;
+  evidence_interface_contract?: ResidentAgiEvidenceInterfaceContractPayload;
   participation_policy?: ResidentAgiParticipationPolicyPayload;
   hardcoded_repair_strategy_catalog?: ResidentAgiHardcodedRepairStrategyCatalogPayload;
   authority_matrix?: ResidentAgiAuthorityMatrixPayload;
@@ -649,6 +676,25 @@ export interface ResidentAgiDecisionTurnRequest {
   audit_pack_decision_limit?: number;
 }
 
+export interface ResidentAgiDecisionHandoffPayload {
+  schema_version?: string;
+  source_role?: string;
+  decision_type?: string;
+  decision_capability_id?: string;
+  handoff_status?: string;
+  target_roles?: string[];
+  allowed_actions?: string[];
+  blocked_actions?: string[];
+  downstream_allowed?: boolean;
+  reason?: string;
+  evidence_refs?: string[];
+  context_refs?: string[];
+  gate_statuses?: Record<string, unknown>;
+  required_chain?: string;
+  advisory_only?: boolean;
+  agi_execution_authority?: boolean;
+}
+
 export interface ResidentAgiDecisionTurnResponse {
   ok: boolean;
   workspace?: string;
@@ -657,6 +703,7 @@ export interface ResidentAgiDecisionTurnResponse {
   role_result?: Record<string, unknown>;
   audit_pack?: ResidentAgiAuditPackPayload | null;
   resident_agi_participation?: ResidentAgiParticipationPayload;
+  decision_handoff?: ResidentAgiDecisionHandoffPayload;
   runtime_contract_gate?: ResidentAgiRuntimeContractGatePayload;
   error?: string | null;
 }

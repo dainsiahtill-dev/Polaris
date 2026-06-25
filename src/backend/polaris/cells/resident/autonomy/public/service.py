@@ -44,6 +44,7 @@ from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
     build_resident_agi_decision_boundaries,
     build_resident_agi_decision_capabilities,
     build_resident_agi_decision_capability_registry,
+    build_resident_agi_evidence_interface_contract,
     resident_agi_capability_surface_payload,
     resident_agi_participation_policy_payload,
 )
@@ -80,6 +81,7 @@ from polaris.cells.resident.autonomy.public.contracts import (
     RejectResidentGoalCommandV1,
     ResidentAgiCapabilityV1,
     ResidentAgiDecisionCapabilityV1,
+    ResidentAgiDecisionHandoffV1,
     ResidentAgiDecisionOutputV1,
     ResidentAutonomyError,
     ResidentAutonomyResultV1,
@@ -1466,6 +1468,150 @@ def _resident_agi_decision_preflight(
     }
 
 
+_RESIDENT_AGI_HANDOFF_BLOCKED_ACTIONS = (
+    "direct_file_write_by_agi",
+    "director_tool_execution_by_agi",
+    "pm_to_director_shortcut",
+    "mark_failed_gate_passed",
+    "policy_override",
+    "authoritative_repair_metadata",
+)
+
+
+def _resident_agi_handoff_target_roles(
+    *,
+    decision_capability_id: str,
+    agi_verdict: str,
+    downstream_allowed: bool,
+) -> tuple[str, ...]:
+    capability_id = str(decision_capability_id or "").strip().lower()
+    verdict = str(agi_verdict or "").strip().lower()
+    if verdict == "request_evidence":
+        return ("resident_agi", "qa")
+    if "architecture" in capability_id:
+        return ("chief_engineer",)
+    if "goal.promotion" in capability_id:
+        return ("pm", "chief_engineer", "director")
+    if "quality.gate" in capability_id:
+        return ("chief_engineer", "director", "qa") if downstream_allowed else ("chief_engineer", "qa")
+    if "platform.invariant" in capability_id:
+        return ("chief_engineer", "qa")
+    if "evidence.interface" in capability_id:
+        return ("resident_agi", "qa")
+    return ("pm", "chief_engineer", "director", "qa") if downstream_allowed else ("resident_agi", "qa")
+
+
+def _resident_agi_handoff_status(
+    *,
+    agi_verdict: str,
+    runtime_success: bool,
+    downstream_allowed: bool,
+    decision_preflight: dict[str, Any],
+    output_contract_gate: dict[str, Any],
+    runtime_contract_gate: dict[str, Any],
+) -> str:
+    if not runtime_success:
+        return "blocked"
+    if not bool(decision_preflight.get("passed")):
+        return "hold"
+    if not bool(output_contract_gate.get("passed", True)) or not bool(runtime_contract_gate.get("passed", True)):
+        return "blocked"
+    verdict = str(agi_verdict or "").strip().lower()
+    if verdict == "escalate":
+        return "escalate"
+    if verdict == "request_evidence":
+        return "hold"
+    if verdict == "continue" and downstream_allowed:
+        return "ready"
+    return "hold"
+
+
+def _resident_agi_handoff_allowed_actions(
+    *,
+    handoff_status: str,
+    agi_verdict: str,
+    effective_candidate_actions: list[str],
+) -> tuple[str, ...]:
+    actions = ["record_decision_trace"]
+    verdict = str(agi_verdict or "").strip().lower()
+    status = str(handoff_status or "").strip().lower()
+    if verdict == "request_evidence" or status == "hold":
+        actions.append("request_evidence_via_public_cell_contract")
+    if verdict == "escalate" or status == "escalate":
+        actions.append("escalate_to_chief_engineer")
+    if status == "ready":
+        actions.append("handoff_to_pm_chief_engineer_director_chain")
+    for action in effective_candidate_actions:
+        normalized = str(action or "").strip()
+        if normalized and normalized not in actions:
+            actions.append(normalized)
+    return tuple(actions)
+
+
+def _resident_agi_decision_handoff(
+    *,
+    command: RunResidentAgiDecisionTurnCommandV1,
+    selected_decision_capability: dict[str, Any],
+    decision_preflight: dict[str, Any],
+    output_contract_gate: dict[str, Any],
+    runtime_contract_gate: dict[str, Any],
+    hard_rule_gate: dict[str, Any],
+    evidence_gate: dict[str, Any],
+    agi_verdict: str,
+    downstream_allowed: bool,
+    runtime_success: bool,
+    next_action: str,
+    rationale: str,
+    error: str,
+    effective_candidate_actions: list[str],
+    evidence_refs: list[str],
+) -> dict[str, Any]:
+    decision_capability_id = str(selected_decision_capability.get("decision_id") or command.decision_type).strip()
+    handoff_status = _resident_agi_handoff_status(
+        agi_verdict=agi_verdict,
+        runtime_success=runtime_success,
+        downstream_allowed=downstream_allowed,
+        decision_preflight=decision_preflight,
+        output_contract_gate=output_contract_gate,
+        runtime_contract_gate=runtime_contract_gate,
+    )
+    target_roles = _resident_agi_handoff_target_roles(
+        decision_capability_id=decision_capability_id,
+        agi_verdict=agi_verdict,
+        downstream_allowed=downstream_allowed,
+    )
+    allowed_actions = _resident_agi_handoff_allowed_actions(
+        handoff_status=handoff_status,
+        agi_verdict=agi_verdict,
+        effective_candidate_actions=effective_candidate_actions,
+    )
+    reason = (
+        str(next_action or "").strip()
+        or str(rationale or "").strip()
+        or str(error or "").strip()
+        or "Resident AGI decision requires governed handoff."
+    )
+    return ResidentAgiDecisionHandoffV1(
+        decision_type=command.decision_type,
+        decision_capability_id=decision_capability_id,
+        handoff_status=handoff_status,
+        target_roles=target_roles,
+        allowed_actions=allowed_actions,
+        blocked_actions=_RESIDENT_AGI_HANDOFF_BLOCKED_ACTIONS,
+        downstream_allowed=bool(downstream_allowed and handoff_status == "ready"),
+        reason=reason,
+        evidence_refs=tuple(evidence_refs),
+        context_refs=tuple(command.context_refs),
+        gate_statuses={
+            "hard_rule_gate": hard_rule_gate.get("status", ""),
+            "evidence_gate": evidence_gate.get("status", ""),
+            "decision_preflight": decision_preflight.get("status", ""),
+            "output_contract_gate": output_contract_gate.get("status", ""),
+            "runtime_contract_gate": runtime_contract_gate.get("status", ""),
+        },
+    ).to_dict()
+
+
 async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnCommandV1) -> dict[str, Any]:
     """Handle Resident AGI judgement through the shared role runtime contract."""
 
@@ -1776,6 +1922,24 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         if token:
             evidence_refs.append(token)
 
+    decision_handoff = _resident_agi_decision_handoff(
+        command=command,
+        selected_decision_capability=selected_decision_capability,
+        decision_preflight=decision_preflight,
+        output_contract_gate=output_contract_gate,
+        runtime_contract_gate=runtime_contract_gate,
+        hard_rule_gate=hard_rule_gate,
+        evidence_gate=evidence_gate,
+        agi_verdict=agi_verdict,
+        downstream_allowed=downstream_allowed,
+        runtime_success=runtime_success,
+        next_action=next_action,
+        rationale=rationale,
+        error=error,
+        effective_candidate_actions=effective_candidate_actions,
+        evidence_refs=evidence_refs,
+    )
+
     recorded = record_resident_decision_entry(
         RecordResidentDecisionCommandV1(
             workspace=command.workspace,
@@ -1837,6 +2001,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                     "resident_agi_decision_preflight": decision_preflight,
                     "resident_agi_output_contract_gate": output_contract_gate,
                     "resident_agi_runtime_contract_gate": runtime_contract_gate,
+                    "resident_agi_decision_handoff": decision_handoff,
                     "agi_verdict": agi_verdict,
                     "resident_verdict": resident_verdict,
                     "downstream_allowed": downstream_allowed,
@@ -1880,6 +2045,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         "audit_pack": audit_pack,
         "selected_decision_capability": selected_decision_capability,
         "resident_agi_participation": resident_agi_participation,
+        "decision_handoff": decision_handoff,
         "required_evidence_interfaces": selected_required_evidence_interfaces,
         "optional_evidence_interfaces": selected_optional_evidence_interfaces,
         "decision_preflight": decision_preflight,
@@ -2255,6 +2421,7 @@ __all__ = [
     "build_resident_agi_decision_boundaries",
     "build_resident_agi_decision_capabilities",
     "build_resident_agi_decision_capability_registry",
+    "build_resident_agi_evidence_interface_contract",
     "create_evidence_bundle_service",
     "create_resident_goal",
     "extract_resident_skills",

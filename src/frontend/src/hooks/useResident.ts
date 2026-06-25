@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { toast } from 'sonner';
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
-import { residentService } from '@/services/api';
+import { residentService } from "@/services/api";
 import type {
   GoalExecutionView,
   ResidentAgiAuditPackPayload,
@@ -16,7 +16,7 @@ import type {
   ResidentImprovementPayload,
   ResidentStatusDetailsPayload,
   ResidentSkillPayload,
-} from '@/app/types/appContracts';
+} from "@/app/types/appContracts";
 
 interface UseResidentOptions {
   workspace?: string | null;
@@ -51,7 +51,10 @@ interface ResidentGoalDraft {
   risk_score?: number;
 }
 
-function emptyDetails(workspace: string, liveResident?: ResidentStatusDetailsPayload | null): ResidentStatusDetailsPayload | null {
+function emptyDetails(
+  workspace: string,
+  liveResident?: ResidentStatusDetailsPayload | null,
+): ResidentStatusDetailsPayload | null {
   if (!liveResident) {
     return null;
   }
@@ -67,7 +70,11 @@ function emptyDetails(workspace: string, liveResident?: ResidentStatusDetailsPay
     skills: liveResident.skills ?? [],
     experiments: liveResident.experiments ?? [],
     improvements: liveResident.improvements ?? [],
-    capability_graph: liveResident.capability_graph ?? { generated_at: '', capabilities: [], gaps: [] },
+    capability_graph: liveResident.capability_graph ?? {
+      generated_at: "",
+      capabilities: [],
+      gaps: [],
+    },
     agi_capability_surface: liveResident.agi_capability_surface,
     agi_participation_policy: liveResident.agi_participation_policy,
     goal_executions: liveResident.goal_executions ?? [],
@@ -75,26 +82,32 @@ function emptyDetails(workspace: string, liveResident?: ResidentStatusDetailsPay
 }
 
 export function useResident(options: UseResidentOptions = {}) {
-  const workspace = String(options.workspace || '').trim();
+  const workspace = String(options.workspace || "").trim();
   const [status, setStatus] = useState<ResidentStatusDetailsPayload | null>(
     emptyDetails(workspace, options.liveResident),
   );
   const [loading, setLoading] = useState(false);
-  const [actionKey, setActionKey] = useState<string>('');
+  const [actionKey, setActionKey] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [agiAuditPack, setAgiAuditPack] = useState<ResidentAgiAuditPackPayload | null>(null);
+  const [agiAuditPack, setAgiAuditPack] =
+    useState<ResidentAgiAuditPackPayload | null>(null);
   const [agiEvidenceInterfaces, setAgiEvidenceInterfaces] =
     useState<ResidentAgiEvidenceInterfacesPayload | null>(null);
+  const [lastAgiDecisionResult, setLastAgiDecisionResult] =
+    useState<ResidentAgiDecisionTurnResponse | null>(null);
   const [httpDetailsLoaded, setHttpDetailsLoaded] = useState(false);
 
   // Phase 1.2: Goal Execution Projection (synced from WebSocket status)
-  const [goalExecutions, setGoalExecutions] = useState<Map<string, GoalExecutionView>>(new Map());
+  const [goalExecutions, setGoalExecutions] = useState<
+    Map<string, GoalExecutionView>
+  >(new Map());
 
   const refresh = useCallback(async () => {
     if (!workspace) {
-      setStatus(emptyDetails('', options.liveResident));
+      setStatus(emptyDetails("", options.liveResident));
       setAgiAuditPack(null);
       setAgiEvidenceInterfaces(null);
+      setLastAgiDecisionResult(null);
       setHttpDetailsLoaded(false);
       setError(null);
       return null;
@@ -103,19 +116,25 @@ export function useResident(options: UseResidentOptions = {}) {
     const result = await residentService.getStatus(workspace, true);
     setLoading(false);
     if (!result.ok || !result.data) {
-      const message = result.error || '加载 AGI 状态失败';
+      const message = result.error || "加载 AGI 状态失败";
       setError(message);
       setHttpDetailsLoaded(false);
       return null;
     }
     setStatus(result.data);
     setHttpDetailsLoaded(true);
-    const auditPackResult = await residentService.getAgiAuditPack(workspace, 12);
-    setAgiAuditPack(auditPackResult.ok && auditPackResult.data ? auditPackResult.data : null);
-    const evidenceInterfacesResult = await residentService.getAgiEvidenceInterfaces(workspace, {
-      decisionType: 'quality_gate_response',
-      maxRuns: 20,
-    });
+    const auditPackResult = await residentService.getAgiAuditPack(
+      workspace,
+      12,
+    );
+    setAgiAuditPack(
+      auditPackResult.ok && auditPackResult.data ? auditPackResult.data : null,
+    );
+    const evidenceInterfacesResult =
+      await residentService.getAgiEvidenceInterfaces(workspace, {
+        decisionType: "quality_gate_response",
+        maxRuns: 20,
+      });
     setAgiEvidenceInterfaces(
       evidenceInterfacesResult.ok && evidenceInterfacesResult.data
         ? evidenceInterfacesResult.data
@@ -126,20 +145,20 @@ export function useResident(options: UseResidentOptions = {}) {
   }, [options.liveResident, workspace]);
 
   const runAction = useCallback(
-    async <T,>(
+    async <T>(
       key: string,
       action: () => Promise<{ ok: boolean; data?: T; error?: string }>,
       successMessage: string,
     ): Promise<T | null> => {
       if (!workspace) {
-        toast.error('请先选择 Workspace');
+        toast.error("请先选择 Workspace");
         return null;
       }
       setActionKey(key);
       const result = await action();
-      setActionKey('');
+      setActionKey("");
       if (!result.ok) {
-        const message = result.error || 'AGI 操作失败';
+        const message = result.error || "AGI 操作失败";
         setError(message);
         toast.error(message);
         return null;
@@ -154,9 +173,10 @@ export function useResident(options: UseResidentOptions = {}) {
 
   useEffect(() => {
     if (!workspace) {
-      setStatus(emptyDetails('', options.liveResident));
+      setStatus(emptyDetails("", options.liveResident));
       setAgiAuditPack(null);
       setAgiEvidenceInterfaces(null);
+      setLastAgiDecisionResult(null);
       setHttpDetailsLoaded(false);
       setError(null);
       return;
@@ -183,19 +203,19 @@ export function useResident(options: UseResidentOptions = {}) {
   );
   const residentRuntimeEvidence = useMemo(
     () => ({
-      schema_version: 'resident.runtime_projection_evidence.v1',
-      realtime_channel: 'runtime.v2.status.resident',
-      snapshot_channel: 'runtime.v2.status.snapshot',
-      projection_field: 'snapshot.resident',
+      schema_version: "resident.runtime_projection_evidence.v1",
+      realtime_channel: "runtime.v2.status.resident",
+      snapshot_channel: "runtime.v2.status.snapshot",
+      projection_field: "snapshot.resident",
       live_snapshot_available: Boolean(options.liveResident),
       http_details_loaded: httpDetailsLoaded,
       source: options.liveResident
         ? httpDetailsLoaded
-          ? 'runtime.v2_snapshot+http_details'
-          : 'runtime.v2_snapshot'
+          ? "runtime.v2_snapshot+http_details"
+          : "runtime.v2_snapshot"
         : httpDetailsLoaded
-          ? 'http_details'
-          : 'unavailable',
+          ? "http_details"
+          : "unavailable",
     }),
     [httpDetailsLoaded, options.liveResident],
   );
@@ -220,64 +240,96 @@ export function useResident(options: UseResidentOptions = {}) {
     residentAgiCapabilitySurface: summary?.agi_capability_surface ?? null,
     residentAgiAuditPack: agiAuditPack,
     residentAgiEvidenceInterfaces: agiEvidenceInterfaces,
+    lastAgiDecisionResult,
     residentRuntimeEvidence,
     refresh,
     isActing: (key: string) => actionKey === key,
     start: (mode: string) =>
-      runAction('start', () => residentService.start(workspace, mode), 'AGI 已启动'),
-    stop: () =>
-      runAction('stop', () => residentService.stop(workspace), 'AGI 已停止'),
-    tick: () =>
-      runAction('tick', () => residentService.tick(workspace, true), 'AGI 已完成一次刷新'),
-    runAgiDecision: (payload: ResidentAgiDecisionTurnRequest) =>
-      runAction<ResidentAgiDecisionTurnResponse>(
-        'agi-decide',
-        () => residentService.decide(workspace, payload),
-        'AGI 决策已记录',
+      runAction(
+        "start",
+        () => residentService.start(workspace, mode),
+        "AGI 已启动",
       ),
+    stop: () =>
+      runAction("stop", () => residentService.stop(workspace), "AGI 已停止"),
+    tick: () =>
+      runAction(
+        "tick",
+        () => residentService.tick(workspace, true),
+        "AGI 已完成一次刷新",
+      ),
+    runAgiDecision: async (payload: ResidentAgiDecisionTurnRequest) => {
+      const result = await runAction<ResidentAgiDecisionTurnResponse>(
+        "agi-decide",
+        () => residentService.decide(workspace, payload),
+        "AGI 决策已记录",
+      );
+      setLastAgiDecisionResult(result);
+      return result;
+    },
     saveIdentity: (payload: ResidentIdentityPatch) =>
-      runAction('save-identity', () => residentService.updateIdentity(workspace, payload), 'AGI 身份已更新'),
+      runAction(
+        "save-identity",
+        () => residentService.updateIdentity(workspace, payload),
+        "AGI 身份已更新",
+      ),
     createGoal: (payload: ResidentGoalDraft) =>
-      runAction('create-goal', () => residentService.createGoal(workspace, payload), 'AGI 目标已创建'),
-    approveGoal: (goalId: string, note = 'approved in AGI workspace') =>
-      runAction('approve-goal', () => residentService.approveGoal(goalId, workspace, note), 'AGI 目标已批准'),
-    rejectGoal: (goalId: string, note = 'rejected in AGI workspace') =>
-      runAction('reject-goal', () => residentService.rejectGoal(goalId, workspace, note), 'AGI 目标已拒绝'),
+      runAction(
+        "create-goal",
+        () => residentService.createGoal(workspace, payload),
+        "AGI 目标已创建",
+      ),
+    approveGoal: (goalId: string, note = "approved in AGI workspace") =>
+      runAction(
+        "approve-goal",
+        () => residentService.approveGoal(goalId, workspace, note),
+        "AGI 目标已批准",
+      ),
+    rejectGoal: (goalId: string, note = "rejected in AGI workspace") =>
+      runAction(
+        "reject-goal",
+        () => residentService.rejectGoal(goalId, workspace, note),
+        "AGI 目标已拒绝",
+      ),
     materializeGoal: (goalId: string) =>
-      runAction('materialize-goal', () => residentService.materializeGoal(goalId, workspace), 'AGI 目标已固化'),
+      runAction(
+        "materialize-goal",
+        () => residentService.materializeGoal(goalId, workspace),
+        "AGI 目标已固化",
+      ),
     stageGoal: (goalId: string, promoteToPmRuntime = false) =>
       runAction<ResidentGoalStagePayload>(
-        'stage-goal',
+        "stage-goal",
         () => residentService.stageGoal(goalId, workspace, promoteToPmRuntime),
-        promoteToPmRuntime ? 'AGI 目标已写入 PM 运行态' : 'AGI 目标已暂存',
+        promoteToPmRuntime ? "AGI 目标已写入 PM 运行态" : "AGI 目标已暂存",
       ),
     runGoal: (goalId: string, runDirector = true, directorIterations = 1) =>
       runAction<ResidentGoalRunPayload>(
-        'run-goal',
+        "run-goal",
         () =>
           residentService.runGoal(goalId, workspace, {
             runDirector,
             directorIterations,
           }),
-        'AGI 目标已送交 PM',
+        "AGI 目标已送交 PM",
       ),
     extractSkills: () =>
       runAction<ResidentSkillPayload[]>(
-        'extract-skills',
+        "extract-skills",
         () => residentService.extractSkills(workspace),
-        'AGI 技能工坊已刷新',
+        "AGI 技能工坊已刷新",
       ),
     runExperiments: () =>
       runAction<ResidentExperimentPayload[]>(
-        'run-experiments',
+        "run-experiments",
         () => residentService.runExperiments(workspace),
-        'AGI 反事实实验已刷新',
+        "AGI 反事实实验已刷新",
       ),
     runImprovements: () =>
       runAction<ResidentImprovementPayload[]>(
-        'run-improvements',
+        "run-improvements",
         () => residentService.runImprovements(workspace),
-        'AGI 自改提案已刷新',
+        "AGI 自改提案已刷新",
       ),
 
     // Phase 1.2: Goal Execution Projection (synced from WebSocket status)

@@ -14,11 +14,17 @@ repair loop for Director tasks, plus the KernelOne tool chain execution capabili
 
 ⚠️ **PARTIAL IMPLEMENTATION — MIGRATION NOT COMPLETED** (status 2026-06-25)
 
-`runtime/internal/repair_kernel/` now owns the Director Repair Kernel contracts,
-diagnostic normalization, patch composition, policy gating, transactional
-execution shell, repair receipts, and non-authoritative advisory overlay model.
+`runtime/internal/repair_kernel/` is the cell-private implementation for Director
+Repair Kernel contracts, diagnostic normalization, patch composition, policy
+gating, transactional execution shell, repair receipts, and non-authoritative
+advisory overlay model. Cross-cell callers must use `director.runtime.public`
+or `director.runtime.public.service`; they must not import
+`director.runtime.internal.repair_kernel`.
+
 The production deterministic repair strategies are still migrated through
-`roles.adapters/internal/director/deterministic_repairs/` compatibility shims.
+`roles.adapters/internal/director/deterministic_repairs/` during cutover. That
+directory is a legacy strategy host only: it must not own a repair kernel,
+strategy catalog, policy gate, receipt contract, or AGI advisory contract.
 
 Remaining code still lives elsewhere:
 
@@ -32,7 +38,10 @@ Remaining code still lives elsewhere:
 - Legacy deterministic repair strategy functions remain in
   `polaris/cells/roles/adapters/internal/director/deterministic_repairs/`; those
   modules must remain thin migration shims or strategy hosts until the runtime
-  cutover is complete.
+  cutover is complete. Any new deterministic repair planning, patch composition,
+  receipt projection, strategy catalog, or future AGI advisory contract must be
+  added to `polaris/cells/director/runtime/` first and exposed through public
+  service functions before legacy callers can consume it.
 
 AGI/resident advisory is intentionally not part of the Director repair execution
 path. Future AGI integration may consume repair diagnostics and receipts to emit

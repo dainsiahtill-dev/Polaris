@@ -175,6 +175,8 @@ const mockResidentState = {
     schema_version: "resident.agi_capability_surface.v1",
     decision_boundary_schema: "resident.agi_decision_boundary.v1",
     authority_matrix_schema: "resident.agi_authority_matrix.v1",
+    evidence_interface_contract_schema:
+      "resident.agi_evidence_interface_contract.v1",
     role_id: "resident_agi",
     runtime_foundation: "RoleRuntime / ContextOS / TurnEngine",
     implementation_cell: "resident.autonomy",
@@ -455,6 +457,48 @@ const mockResidentState = {
         agi_judgement: "resident_agi_role_turn_with_audit_pack",
         governed_execution: "pm_chief_engineer_director_chain_only",
         evidence_execution: "public_cell_contracts_only",
+      },
+    },
+    evidence_interface_contract: {
+      schema_version: "resident.agi_evidence_interface_contract.v1",
+      role_id: "resident_agi",
+      source: "resident.autonomy.capability_surface",
+      coverage_complete: true,
+      supported_interface_ids: [
+        "contextos.final_request_audit.read",
+        "run_ledger.read",
+        "audit.diagnosis.read",
+        "director.deterministic_repair_strategy_catalog.read",
+        "verifier.execution.execute",
+      ],
+      declared_interface_ids: [
+        "contextos.final_request_audit.read",
+        "run_ledger.read",
+        "audit.diagnosis.read",
+        "director.deterministic_repair_strategy_catalog.read",
+        "verifier.execution.execute",
+      ],
+      required_interface_ids: [
+        "contextos.final_request_audit.read",
+        "director.deterministic_repair_strategy_catalog.read",
+      ],
+      optional_interface_ids: ["verifier.execution.execute"],
+      missing_interface_ids: [],
+      missing_required_interface_ids: [],
+      missing_optional_interface_ids: [],
+      interfaces: [
+        {
+          interface_id: "director.deterministic_repair_strategy_catalog.read",
+          status: "available",
+          required_by_decisions: ["quality.gate.response"],
+          access: "read_only",
+          category: "director_repair_strategy",
+          contract_ref: "director.deterministic_repair_strategy_catalog.v1",
+          risk_level: "low",
+        },
+      ],
+      decision_policy: {
+        declared_interfaces_must_exist: "fail_closed_before_agi_decision",
       },
     },
     authority_matrix: {
@@ -868,6 +912,32 @@ const mockResidentState = {
       governed_execute_only: 0,
     },
   },
+  lastAgiDecisionResult: {
+    ok: true,
+    workspace: "/tmp/polaris-demo",
+    decision_handoff: {
+      schema_version: "resident.agi_decision_handoff.v1",
+      source_role: "resident_agi",
+      decision_type: "quality_gate_response",
+      decision_capability_id: "quality.gate.response",
+      handoff_status: "ready",
+      target_roles: ["chief_engineer", "director", "qa"],
+      allowed_actions: [
+        "record_decision_trace",
+        "handoff_to_pm_chief_engineer_director_chain",
+      ],
+      blocked_actions: [
+        "direct_file_write_by_agi",
+        "director_tool_execution_by_agi",
+        "pm_to_director_shortcut",
+      ],
+      downstream_allowed: true,
+      reason: "Quality gate can proceed through governed handoff.",
+      required_chain: "PM → Chief Engineer → Director",
+      advisory_only: true,
+      agi_execution_authority: false,
+    },
+  },
   refresh: vi.fn(),
   isActing: vi.fn(() => false),
   start: vi.fn(),
@@ -1041,6 +1111,15 @@ describe("ResidentWorkspace", () => {
     expect(
       screen.getByTestId("resident-agi-evidence-interface-matrix"),
     ).toHaveTextContent("AGI 证据接口矩阵");
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-contract"),
+    ).toHaveTextContent("resident.agi_evidence_interface_contract.v1");
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-contract"),
+    ).toHaveTextContent("required 2");
+    expect(
+      screen.getByTestId("resident-agi-evidence-interface-contract"),
+    ).toHaveTextContent("missing 0");
     expect(
       screen.getByTestId("resident-agi-evidence-interface-matrix"),
     ).toHaveTextContent("Audit diagnosis trail");
@@ -1376,6 +1455,18 @@ describe("ResidentWorkspace", () => {
     expect(
       screen.getByTestId("resident-agi-decision-turn-profile"),
     ).toHaveTextContent("AGI 执行画像");
+    expect(
+      screen.getByTestId("resident-agi-decision-handoff"),
+    ).toHaveTextContent("resident.agi_decision_handoff.v1");
+    expect(
+      screen.getByTestId("resident-agi-decision-handoff"),
+    ).toHaveTextContent("chief_engineer → director → qa");
+    expect(
+      screen.getByTestId("resident-agi-decision-handoff"),
+    ).toHaveTextContent("AGI execute");
+    expect(
+      screen.getByTestId("resident-agi-decision-handoff"),
+    ).toHaveTextContent("blocked: director_tool_execution_by_agi");
     expect(
       screen.getByTestId("resident-agi-decision-turn-profile"),
     ).toHaveTextContent("action:request_evidence");

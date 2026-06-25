@@ -7530,6 +7530,110 @@ def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_pa
     assert "public type: FlowerType = FlowerType.Moonflower;" in repaired
 
 
+def test_typescript_return_object_comma_repair_fixes_inline_missing_property_comma(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    model_dir = tmp_path / "src" / "models"
+    model_dir.mkdir(parents=True)
+    flight = model_dir / "Flight.ts"
+    flight.write_text(
+        "\n".join(
+            [
+                "export interface FlightResult {",
+                "  samples: unknown[];",
+                "  range: number;",
+                "  maxAltitude: number;",
+                "  flightTime: number;",
+                "  landed?: boolean;",
+                "}",
+                "",
+                "export class Flight {",
+                "  simulate(): FlightResult {",
+                "    const samples: unknown[] = [];",
+                "    const range = 10;",
+                "    const maxAltitude = 2;",
+                "    const flightTime = 3;",
+                "    return { samples, range, maxAltitude, flightTime  landed: undefined as unknown as boolean };",
+                "  }",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    adapter = SimpleNamespace(
+        workspace=str(tmp_path),
+        _execution=SimpleNamespace(_message_bus=None),
+        _update_task_progress=lambda *args, **kwargs: None,
+    )
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        adapter,
+        task={"target_files": ["src/models/Flight.ts"]},
+        task_id="task-1",
+        artifact_quality_errors=[
+            "TypeScript syntax check failed: src/models/Flight.ts(15,55): error TS1005: ',' expected."
+        ],
+    )
+
+    repaired = flight.read_text(encoding="utf-8")
+    assert summary["attempted"] is True
+    assert any(
+        (item.get("result") or {}).get("source_tool") == "deterministic_typescript_return_object_semicolon_repair"
+        for item in results
+        if isinstance(item, dict)
+    )
+    assert "flightTime, landed:" in repaired
+
+
+def test_typescript_return_object_comma_repair_fixes_previous_line_missing_comma(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    model_dir = tmp_path / "src" / "models"
+    model_dir.mkdir(parents=True)
+    flight = model_dir / "Flight.ts"
+    flight.write_text(
+        "\n".join(
+            [
+                "export function summarizeFlight() {",
+                "  const range = 10;",
+                "  const maxAltitude = 2;",
+                "  return {",
+                "    range",
+                "    maxAltitude: maxAltitude,",
+                "  };",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    adapter = SimpleNamespace(
+        workspace=str(tmp_path),
+        _execution=SimpleNamespace(_message_bus=None),
+        _update_task_progress=lambda *args, **kwargs: None,
+    )
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        adapter,
+        task={"target_files": ["src/models/Flight.ts"]},
+        task_id="task-1",
+        artifact_quality_errors=[
+            "TypeScript syntax check failed: src/models/Flight.ts(6,5): error TS1005: ',' expected."
+        ],
+    )
+
+    repaired = flight.read_text(encoding="utf-8")
+    assert summary["attempted"] is True
+    assert results
+    assert "    range," in repaired
+    assert "    maxAltitude: maxAltitude," in repaired
+
+
 def test_typescript_enum_member_separator_repair_fixes_enum_semicolon_only(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.execute_method import (
         _apply_deterministic_materialization_quality_repairs,

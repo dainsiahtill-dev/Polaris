@@ -421,6 +421,28 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert "verifier.execution.execute" in decision_registry["evidence_interface_ids"]
     assert "director.deterministic_repair_strategy_catalog.read" in decision_registry["evidence_interface_ids"]
     assert "request_evidence" in decision_registry["candidate_actions"]
+    evidence_interface_contract = capability_surface["evidence_interface_contract"]
+    assert capability_surface["evidence_interface_contract_schema"] == "resident.agi_evidence_interface_contract.v1"
+    assert evidence_interface_contract["schema_version"] == "resident.agi_evidence_interface_contract.v1"
+    assert evidence_interface_contract["coverage_complete"] is True
+    assert evidence_interface_contract["missing_interface_ids"] == []
+    assert evidence_interface_contract["missing_required_interface_ids"] == []
+    assert evidence_interface_contract["missing_optional_interface_ids"] == []
+    assert {
+        "contextos.final_request_audit.read",
+        "run_ledger.read",
+        "director.deterministic_repair_strategy_catalog.read",
+    } <= set(evidence_interface_contract["declared_interface_ids"])
+    interface_by_id = {item["interface_id"]: item for item in evidence_interface_contract["interfaces"]}
+    repair_interface = interface_by_id["director.deterministic_repair_strategy_catalog.read"]
+    assert repair_interface["status"] == "available"
+    assert repair_interface["access"] == "read_only"
+    assert repair_interface["contract_ref"] == "director.deterministic_repair_strategy_catalog.v1"
+    assert "quality.gate.response" in repair_interface["required_by_decisions"]
+    assert (
+        evidence_interface_contract["decision_policy"]["declared_interfaces_must_exist"]
+        == "fail_closed_before_agi_decision"
+    )
     serialized_capability_surface = json.dumps(capability_surface, ensure_ascii=False)
     assert "PM -> CE -> Director" not in serialized_capability_surface
     assert "PM -> Director" not in serialized_capability_surface
@@ -931,6 +953,20 @@ async def test_resident_agi_decision_turn_public_command_uses_role_runtime_contr
     )
     assert result["recorded_decision"]["actual_outcome"]["resident_agi_runtime_contract_gate"]["passed"] is True
     assert result["recorded_decision"]["actual_outcome"]["resident_agi_decision_preflight"]["passed"] is True
+    decision_handoff = result["decision_handoff"]
+    assert decision_handoff["schema_version"] == "resident.agi_decision_handoff.v1"
+    assert decision_handoff["handoff_status"] == "hold"
+    assert decision_handoff["target_roles"] == ["resident_agi", "qa"]
+    assert decision_handoff["downstream_allowed"] is False
+    assert decision_handoff["advisory_only"] is True
+    assert decision_handoff["agi_execution_authority"] is False
+    assert "request_evidence_via_public_cell_contract" in decision_handoff["allowed_actions"]
+    assert "director_tool_execution_by_agi" in decision_handoff["blocked_actions"]
+    assert decision_handoff["required_chain"] == "PM → Chief Engineer → Director"
+    assert (
+        result["recorded_decision"]["actual_outcome"]["resident_agi_decision_handoff"]["schema_version"]
+        == "resident.agi_decision_handoff.v1"
+    )
     assert "runtime/contexts/context-public.json" in result["recorded_decision"]["evidence_refs"]
     assert captured["role_id"] == "resident_agi"
     assert captured["workspace"] == str(workspace)

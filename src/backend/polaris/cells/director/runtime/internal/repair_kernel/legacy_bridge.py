@@ -26,7 +26,7 @@ def build_legacy_repair_kernel_summary(
         "version": 1,
         "stage": stage,
         "mode": mode,
-        "authoritative": mode == "commit",
+        "authoritative": mode == "commit" and bool(receipts),
         "receipt_count": len(receipts),
         "receipts": [receipt.to_dict() for receipt in receipts],
         "receipt_context": build_repair_receipt_context(receipts),

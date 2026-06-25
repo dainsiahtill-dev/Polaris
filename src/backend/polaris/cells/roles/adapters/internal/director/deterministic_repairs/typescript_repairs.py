@@ -16,6 +16,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.director.runtime.public import (
+    run_director_typescript_object_literal_comma_repair,
+)
+
 from ..execution_tools import DirectorToolExecutor
 from ..task_scope_paths import (
     _dedupe_preserve_order,
@@ -3878,7 +3882,12 @@ def _apply_deterministic_typescript_return_object_semicolon_repair(
     task_id: str,
     artifact_quality_errors: list[str],
 ) -> list[dict[str, Any]]:
-    paths = _parse_typescript_return_object_semicolon_paths(artifact_quality_errors)
+    paths = _dedupe_preserve_order(
+        [
+            *_parse_typescript_return_object_semicolon_paths(artifact_quality_errors),
+            *[item["file"] for item in _parse_typescript_comma_expected_errors(artifact_quality_errors)],
+        ]
+    )
     if not paths:
         return []
 
@@ -3893,6 +3902,7 @@ def _apply_deterministic_typescript_return_object_semicolon_repair(
         worker_id="director",
     )
     results: list[dict[str, Any]] = []
+    base_files: dict[str, str] = {}
     for relative_path in paths:
         full_path = (workspace_path / relative_path).resolve()
         try:
@@ -3905,6 +3915,80 @@ def _apply_deterministic_typescript_return_object_semicolon_repair(
             original = full_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
+        base_files[relative_path] = original
+    write_results: dict[str, dict[str, Any]] = {}
+
+    def _policy_gated_writer(path: str, content: str) -> dict[str, Any]:
+        write_result = executor.execute_tool(
+            "write_file",
+            {"file": path, "content": content},
+            task_id=task_id,
+        )
+        write_results[path] = dict(write_result)
+        if bool(write_result.get("ok")):
+            with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+                adapter._update_task_progress(task_id, "executing", current_file=path)
+        return dict(write_result)
+
+    canonical_result = run_director_typescript_object_literal_comma_repair(
+        workspace=workspace_path,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=_policy_gated_writer,
+        allowed_paths=tuple(base_files.keys()),
+    )
+    if canonical_result.ok:
+        for receipt in canonical_result.receipts:
+            for patch_path in receipt.files_changed:
+                write_result = write_results.get(patch_path, {})
+                if not bool(write_result.get("ok")) and receipt.authoritative:
+                    continue
+                after_hash = str(receipt.after_hashes.get(patch_path) or "")
+                before_hash = str(receipt.before_hashes.get(patch_path) or "")
+                bytes_written = write_result.get("bytes_written")
+                if bytes_written is None:
+                    full_path = (workspace_path / patch_path).resolve()
+                    with contextlib.suppress(OSError, ValueError):
+                        bytes_written = len(full_path.read_text(encoding="utf-8").encode("utf-8"))
+                with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+                    adapter._update_task_progress(task_id, "executing", current_file=patch_path)
+                results.append(
+                    {
+                        "tool": "write_file",
+                        "tool_name": "write_file",
+                        "success": True,
+                        "result": {
+                            "ok": True,
+                            "source_tool": receipt.source_tool,
+                            "file": patch_path,
+                            "bytes_written": int(bytes_written or 0),
+                            "operation": str(write_result.get("operation") or "modify"),
+                            "before_hash": before_hash,
+                            "after_hash": after_hash,
+                            "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                            "director_policy": write_result.get("director_policy"),
+                            "repair_kernel": {
+                                "owner_cell": "director.runtime",
+                                "receipt_id": receipt.receipt_id,
+                                "plan_id": receipt.plan_id,
+                                "status": receipt.status,
+                                "authoritative": receipt.authoritative,
+                                "before_hashes": dict(receipt.before_hashes),
+                                "after_hashes": dict(receipt.after_hashes),
+                                "metadata": dict(receipt.metadata),
+                                "planning": dict(canonical_result.metadata.get("planning") or {}),
+                                "plan_policy": dict(canonical_result.metadata.get("plan_policy") or {}),
+                                "composition_policy": dict(canonical_result.metadata.get("composition_policy") or {}),
+                            },
+                        },
+                    }
+                )
+        if results:
+            return results
+    elif canonical_result.error_code and canonical_result.error_code != "repair_not_planned":
+        return []
+
+    for relative_path, original in base_files.items():
         repaired = _repair_typescript_return_object_semicolon_lines(original)
         if repaired == original:
             continue
@@ -4289,7 +4373,11 @@ def _repair_typescript_return_object_semicolon_lines(text: str) -> str:
     for line in lines:
         line_body = line.rstrip("\r\n")
         newline = line[len(line_body) :]
-        if object_literal_depths:
+        starts_object_literal = bool(
+            _TS_RETURN_OBJECT_START_RE.search(line_body) or _TS_OBJECT_LITERAL_START_RE.search(line_body)
+        )
+        in_object_literal = bool(object_literal_depths) or starts_object_literal
+        if in_object_literal:
             match = _TS_OBJECT_PROPERTY_SEMICOLON_LINE_RE.match(line_body)
             if match:
                 repaired.append(f"{match.group('indent')}{match.group('name')},{newline}")
@@ -4306,7 +4394,7 @@ def _repair_typescript_return_object_semicolon_lines(text: str) -> str:
 
         opens = line_body.count("{")
         closes = line_body.count("}")
-        if _TS_RETURN_OBJECT_START_RE.search(line_body) or _TS_OBJECT_LITERAL_START_RE.search(line_body):
+        if starts_object_literal:
             object_literal_depths.append(brace_depth + max(opens, 1))
         brace_depth += opens - closes
         while object_literal_depths and brace_depth < object_literal_depths[-1]:

@@ -893,6 +893,7 @@ export interface ResidentAgiCapabilitySurfacePayload {
   schema_version?: string;
   decision_boundary_schema?: string;
   authority_matrix_schema?: string;
+  evidence_interface_contract_schema?: string;
   role_id?: string;
   runtime_foundation?: string;
   implementation_cell?: string;
@@ -904,6 +905,7 @@ export interface ResidentAgiCapabilitySurfacePayload {
   decision_capability_schema?: string;
   decision_capabilities?: Array<Record<string, unknown>>;
   decision_capability_registry?: Record<string, unknown>;
+  evidence_interface_contract?: Record<string, unknown>;
   participation_policy?: ResidentAgiParticipationPolicyPayload;
   hardcoded_repair_strategy_catalog?: ResidentAgiHardcodedRepairStrategyCatalogPayload;
   authority_matrix?: Record<string, unknown>;

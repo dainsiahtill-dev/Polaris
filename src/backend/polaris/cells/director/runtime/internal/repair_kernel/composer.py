@@ -213,9 +213,20 @@ class PatchComposer:
                 )
                 continue
             if operation.kind == "json_set":
-                _json_set(payload, operation.json_path, operation.value)
+                issue_code = _json_set(payload, operation.json_path, operation.value)
             elif operation.kind == "json_delete":
-                _json_delete(payload, operation.json_path)
+                issue_code = _json_delete(payload, operation.json_path)
+            else:
+                issue_code = "unsupported_json_operation"
+            if issue_code:
+                issues.append(
+                    CompositionIssue(
+                        code=issue_code,
+                        message="JSON repair path cannot be safely applied.",
+                        path=path,
+                        operation_ids=(operation.operation_id,),
+                    )
+                )
         if issues:
             return None, issues
         content_after = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -280,21 +291,31 @@ def _check_before_hash(
     )
 
 
-def _json_set(payload: Any, path: tuple[str, ...], value: Any) -> None:
+def _json_set(payload: Any, path: tuple[str, ...], value: Any) -> str | None:
     current = payload
     for part in path[:-1]:
         if not isinstance(current, dict):
-            return
-        current = current.setdefault(part, {})
-    if isinstance(current, dict):
-        current[path[-1]] = value
+            return "json_path_parent_not_object"
+        if part not in current:
+            current[part] = {}
+        elif not isinstance(current[part], dict):
+            return "json_path_parent_not_object"
+        current = current[part]
+    if not isinstance(current, dict):
+        return "json_path_parent_not_object"
+    current[path[-1]] = value
+    return None
 
 
-def _json_delete(payload: Any, path: tuple[str, ...]) -> None:
+def _json_delete(payload: Any, path: tuple[str, ...]) -> str | None:
     current = payload
     for part in path[:-1]:
-        if not isinstance(current, dict):
-            return
+        if not isinstance(current, dict) or part not in current:
+            return "json_path_not_found"
         current = current.get(part)
-    if isinstance(current, dict):
-        current.pop(path[-1], None)
+    if not isinstance(current, dict):
+        return "json_path_parent_not_object"
+    if path[-1] not in current:
+        return "json_path_not_found"
+    current.pop(path[-1])
+    return None

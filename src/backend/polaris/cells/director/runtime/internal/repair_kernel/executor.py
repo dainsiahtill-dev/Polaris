@@ -76,16 +76,32 @@ class TransactionalRepairExecutor:
                     raise RuntimeError(f"repair writer rejected {patch.path}")
                 written.append((patch.path, patch.content_before))
         except (OSError, RuntimeError, ValueError) as exc:
-            rolled_back = False
+            rollback_failures: list[str] = []
+            rollback_success_count = 0
             for path, content_before in reversed(written):
-                rollback_result = dict(writer(path, content_before))
-                rolled_back = rolled_back or bool(rollback_result.get("ok"))
+                try:
+                    rollback_result = dict(writer(path, content_before))
+                except (OSError, RuntimeError, ValueError) as rollback_exc:
+                    rollback_failures.append(f"{path}:{rollback_exc}")
+                    continue
+                if bool(rollback_result.get("ok")):
+                    rollback_success_count += 1
+                else:
+                    rollback_failures.append(path)
+            rollback_attempted = bool(written)
+            rolled_back = rollback_attempted and not rollback_failures
+            status = "rolled_back" if rolled_back else "rollback_failed" if rollback_attempted else "failed"
             receipt = build_receipt(
                 plan=plan,
-                status="rolled_back" if rolled_back else "failed",
+                status=status,
                 mode=plan.mode,
                 patches=composition.patches,
-                metadata={"error": str(exc)},
+                metadata={
+                    "error": str(exc),
+                    "rollback_attempted": rollback_attempted,
+                    "rollback_failed_paths": rollback_failures,
+                    "rollback_success_count": rollback_success_count,
+                },
             )
             return RepairExecutionResult(ok=False, receipt=receipt, rolled_back=rolled_back, error=str(exc))
 

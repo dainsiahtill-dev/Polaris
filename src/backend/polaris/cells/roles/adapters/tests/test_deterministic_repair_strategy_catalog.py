@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from polaris.cells.director.runtime.public import (
     QueryDirectorRepairStrategyCatalogV1,
     query_director_repair_strategy_catalog,
 )
-from polaris.cells.roles.adapters.internal.director.deterministic_repairs.strategy_catalog import (
+from polaris.cells.director.runtime.public.service import (
     KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS,
     describe_deterministic_repair_strategy,
     deterministic_repair_source_tool_known,
@@ -19,6 +20,14 @@ from polaris.cells.roles.adapters.internal.director.deterministic_repairs.strate
 
 _SOURCE_TOOL_RE = re.compile(r"[\"'](?P<tool>deterministic_[A-Za-z0-9_]+)[\"']")
 _NON_STRATEGY_TOKENS = {"deterministic_repair_profiles"}
+_FORBIDDEN_REPAIR_IMPORT_PREFIXES = (
+    "polaris.cells.director.runtime.internal.repair_kernel",
+    "polaris.cells.roles.adapters.internal.director.repair_kernel",
+    "polaris.cells.roles.adapters.internal.director.deterministic_repairs.strategy_catalog",
+)
+_ALLOWED_EXECUTE_METHOD_DIRECTOR_RUNTIME_IMPORTS = {
+    "polaris.cells.director.runtime.public.service",
+}
 
 
 def _implementation_files() -> list[Path]:
@@ -27,6 +36,53 @@ def _implementation_files() -> list[Path]:
     files = [path for path in repair_root.glob("*.py") if path.name not in {"strategy_catalog.py", "__init__.py"}]
     files.append(root / "execute_method.py")
     return files
+
+
+def _director_internal_root() -> Path:
+    return Path(__file__).resolve().parents[1] / "internal" / "director"
+
+
+def _backend_root() -> Path:
+    return Path(__file__).resolve().parents[5]
+
+
+def _python_source_files(root: Path) -> list[Path]:
+    return [
+        path
+        for path in sorted(root.rglob("*.py"))
+        if "__pycache__" not in path.parts and not path.name.startswith("test_")
+    ]
+
+
+def _module_name_for_path(path: Path) -> str:
+    rel_path = path.with_suffix("").relative_to(_backend_root())
+    return ".".join(rel_path.parts)
+
+
+def _resolve_import_from_module(path: Path, node: ast.ImportFrom) -> str:
+    if node.level <= 0:
+        return node.module or ""
+
+    current_module_parts = _module_name_for_path(path).split(".")
+    package_parts = current_module_parts[: -node.level]
+    if node.module:
+        package_parts.append(node.module)
+    return ".".join(package_parts)
+
+
+def _imported_modules(path: Path) -> list[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    modules: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            modules.append(_resolve_import_from_module(path, node))
+    return modules
+
+
+def _matches_forbidden_import(module: str) -> bool:
+    return any(module == prefix or module.startswith(prefix + ".") for prefix in _FORBIDDEN_REPAIR_IMPORT_PREFIXES)
 
 
 def _deterministic_tokens_from_implementation() -> set[str]:
@@ -39,6 +95,43 @@ def _deterministic_tokens_from_implementation() -> set[str]:
             if match.group("tool") not in _NON_STRATEGY_TOKENS
         )
     return tokens
+
+
+def test_roles_adapter_no_longer_owns_repair_kernel_source_or_strategy_catalog() -> None:
+    root = _director_internal_root()
+    repair_kernel_payload = [
+        path
+        for path in sorted((root / "repair_kernel").rglob("*"))
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+    ]
+
+    assert repair_kernel_payload == []
+    assert not (root / "deterministic_repairs" / "strategy_catalog.py").exists()
+
+
+def test_roles_adapter_production_code_never_imports_repair_kernel_internals() -> None:
+    violations: list[str] = []
+    for path in _python_source_files(_director_internal_root()):
+        for module in _imported_modules(path):
+            if _matches_forbidden_import(module):
+                rel_path = path.relative_to(_backend_root())
+                violations.append(f"{rel_path}: {module}")
+
+    assert violations == []
+
+
+def test_execute_method_uses_director_runtime_repair_kernel_only_via_public_service() -> None:
+    execute_method_path = _director_internal_root() / "execute_method.py"
+    director_runtime_imports = sorted(
+        {
+            module
+            for module in _imported_modules(execute_method_path)
+            if module == "polaris.cells.director.runtime" or module.startswith("polaris.cells.director.runtime.")
+        }
+    )
+
+    assert set(director_runtime_imports) <= _ALLOWED_EXECUTE_METHOD_DIRECTOR_RUNTIME_IMPORTS
+    assert "polaris.cells.director.runtime.public.service" in director_runtime_imports
 
 
 def test_catalog_registers_all_hardcoded_deterministic_tokens() -> None:

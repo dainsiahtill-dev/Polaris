@@ -18,6 +18,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.director.runtime.public.service import summarize_deterministic_repair_source_tools
 from polaris.kernelone.fs.materialization import materialized_file_paths
 
 # ``scan_workspace_artifact_quality`` MUST stay a name on THIS module: the test
@@ -29,7 +30,6 @@ from polaris.kernelone.quality import (
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
 )
 
-from .deterministic_repairs.strategy_catalog import summarize_deterministic_repair_source_tools
 from .deterministic_repairs.typescript_repairs import (
     _apply_deterministic_typescript_canvas_scale_return_type_repair as _apply_deterministic_typescript_canvas_scale_return_type_repair,
     _apply_deterministic_typescript_missing_export_repair as _apply_deterministic_typescript_missing_export_repair,

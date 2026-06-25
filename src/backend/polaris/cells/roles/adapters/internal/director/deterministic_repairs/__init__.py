@@ -18,6 +18,15 @@ exactly as it did before the split.
 
 from __future__ import annotations
 
+from polaris.cells.director.runtime.public.service import (
+    KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS as KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS,
+    DeterministicRepairStrategy as DeterministicRepairStrategy,
+    describe_deterministic_repair_strategy as describe_deterministic_repair_strategy,
+    deterministic_repair_source_tool_known as deterministic_repair_source_tool_known,
+    deterministic_repair_strategy_catalog as deterministic_repair_strategy_catalog,
+    summarize_deterministic_repair_source_tools as summarize_deterministic_repair_source_tools,
+)
+
 from ._common import (
     _DECLARED_TARGET_FILE_MISSING_ERROR_RE as _DECLARED_TARGET_FILE_MISSING_ERROR_RE,
     _KNOWN_DEV_DEPENDENCY_VERSIONS as _KNOWN_DEV_DEPENDENCY_VERSIONS,
@@ -132,14 +141,6 @@ from .rust_repairs import (
     repair_rust_missing_lib_targets as repair_rust_missing_lib_targets,
     repair_rust_trait_imports as repair_rust_trait_imports,
     repair_rust_unresolved_pub_uses as repair_rust_unresolved_pub_uses,
-)
-from .strategy_catalog import (
-    KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS as KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS,
-    DeterministicRepairStrategy as DeterministicRepairStrategy,
-    describe_deterministic_repair_strategy as describe_deterministic_repair_strategy,
-    deterministic_repair_source_tool_known as deterministic_repair_source_tool_known,
-    deterministic_repair_strategy_catalog as deterministic_repair_strategy_catalog,
-    summarize_deterministic_repair_source_tools as summarize_deterministic_repair_source_tools,
 )
 from .typeorm_repairs import (
     _apply_deterministic_typeorm_model_normalization_repair as _apply_deterministic_typeorm_model_normalization_repair,

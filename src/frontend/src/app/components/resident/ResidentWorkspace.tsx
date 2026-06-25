@@ -34,7 +34,9 @@ import type {
   ResidentAgiCapabilityPayload,
   ResidentAgiDecisionCapabilityPayload,
   ResidentAgiDecisionCapabilityRegistryPayload,
+  ResidentAgiEvidenceInterfaceContractPayload,
   ResidentAgiEvidenceInterfacesPayload,
+  ResidentAgiDecisionHandoffPayload,
   ResidentAgiHardcodedRepairStrategyCatalogPayload,
   ResidentAgiDecisionProfilePayload,
   ResidentAgiDecisionBoundaryPayload,
@@ -248,11 +250,15 @@ export function ResidentWorkspace({
   const agiDecisionCapabilityRegistry =
     agiCapabilitySurface?.decision_capability_registry ||
     agiDecisionProfile?.decision_capability_registry;
+  const agiEvidenceInterfaceContract =
+    agiCapabilitySurface?.evidence_interface_contract;
   const agiDecisionBoundaries = agiCapabilitySurface?.decision_boundaries || [];
   const agiParticipationPolicy =
     resident.status?.agi_participation_policy ||
     agiCapabilitySurface?.participation_policy ||
     null;
+  const lastAgiDecisionHandoff =
+    resident.lastAgiDecisionResult?.decision_handoff || null;
   const agiParticipationOptions = useMemo(() => {
     const dynamicOptions =
       agiParticipationPolicy?.available_scopes
@@ -893,7 +899,10 @@ export function ResidentWorkspace({
                   registry={agiDecisionCapabilityRegistry}
                   decisions={agiDecisionCapabilities}
                 />
-                <AgiEvidenceInterfaceMatrix capabilities={agiCapabilities} />
+                <AgiEvidenceInterfaceMatrix
+                  capabilities={agiCapabilities}
+                  contract={agiEvidenceInterfaceContract}
+                />
                 <AgiEvidenceInterfaceReadiness
                   payload={agiEvidenceInterfaces}
                 />
@@ -1185,6 +1194,7 @@ export function ResidentWorkspace({
                   profile={agiDecisionProfile}
                   testId="resident-agi-decision-turn-profile"
                 />
+                <AgiDecisionHandoffPanel handoff={lastAgiDecisionHandoff} />
                 <div className="flex items-center justify-end">
                   <Button
                     size="sm"
@@ -1913,8 +1923,10 @@ function isAgiEvidenceInterface(
 
 function AgiEvidenceInterfaceMatrix({
   capabilities,
+  contract,
 }: {
   capabilities: ResidentAgiCapabilityPayload[];
+  contract?: ResidentAgiEvidenceInterfaceContractPayload;
 }) {
   const interfaces = capabilities.filter(isAgiEvidenceInterface);
   if (interfaces.length === 0) return null;
@@ -1935,6 +1947,11 @@ function AgiEvidenceInterfaceMatrix({
   const contracts = uniqueStrings(
     interfaces.map((capability) => capability.contract_ref || ""),
   );
+  const declaredCount = contract?.declared_interface_ids?.length;
+  const requiredCount = contract?.required_interface_ids?.length;
+  const optionalCount = contract?.optional_interface_ids?.length;
+  const missingIds = contract?.missing_interface_ids || [];
+  const coverageComplete = contract?.coverage_complete;
 
   return (
     <div
@@ -1950,8 +1967,14 @@ function AgiEvidenceInterfaceMatrix({
             public Cell contracts only
           </div>
         </div>
-        <Badge className="border-cyan-500/20 bg-cyan-500/10 text-cyan-200">
-          {interfaces.length} interfaces
+        <Badge
+          className={cn(
+            coverageComplete === false
+              ? "border-amber-500/20 bg-amber-500/10 text-amber-300"
+              : "border-cyan-500/20 bg-cyan-500/10 text-cyan-200",
+          )}
+        >
+          {coverageComplete === false ? "contract gaps" : "contract covered"}
         </Badge>
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-4">
@@ -1961,8 +1984,45 @@ function AgiEvidenceInterfaceMatrix({
           value={String(governedRequests)}
         />
         <CapabilityMetric label="High risk" value={String(highRisk)} />
-        <CapabilityMetric label="Contracts" value={String(contracts.length)} />
+        <CapabilityMetric
+          label="Declared"
+          value={String(declaredCount ?? interfaces.length)}
+        />
       </div>
+      {contract && (
+        <div
+          className="mt-2 rounded border border-cyan-500/10 bg-slate-950/70 px-2.5 py-2"
+          data-testid="resident-agi-evidence-interface-contract"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-mono text-[10px] text-cyan-100/80">
+              {contract.schema_version ||
+                "resident.agi_evidence_interface_contract.v1"}
+            </span>
+            <span className="text-[10px] text-slate-500">
+              required {requiredCount ?? 0} · optional {optionalCount ?? 0} ·
+              missing {missingIds.length}
+            </span>
+          </div>
+          {missingIds.length > 0 && (
+            <div className="mt-1 truncate font-mono text-[10px] text-amber-300">
+              missing: {missingIds.slice(0, 4).join(", ")}
+            </div>
+          )}
+        </div>
+      )}
+      {contracts.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {contracts.slice(0, 6).map((contractRef) => (
+            <span
+              key={contractRef}
+              className="rounded border border-slate-700 bg-slate-950/50 px-1.5 py-0.5 font-mono text-[10px] text-slate-300"
+            >
+              {contractRef}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="mt-2 grid gap-2 lg:grid-cols-2">
         {interfaces.map((capability) => (
           <div
@@ -2521,6 +2581,82 @@ function AgiDecisionProfilePanel({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function AgiDecisionHandoffPanel({
+  handoff,
+}: {
+  handoff?: ResidentAgiDecisionHandoffPayload | null;
+}) {
+  if (!handoff) return null;
+  const status = String(handoff.handoff_status || "hold").toLowerCase();
+  const targetRoles = handoff.target_roles || [];
+  const blockedActions = handoff.blocked_actions || [];
+  return (
+    <div
+      className="mt-2 rounded border border-amber-500/15 bg-amber-500/[0.04] px-2.5 py-2"
+      data-testid="resident-agi-decision-handoff"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-medium text-amber-100">AGI 决策交接</div>
+          <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+            {handoff.schema_version || "resident.agi_decision_handoff.v1"}
+          </div>
+        </div>
+        <Badge
+          className={cn(
+            status === "ready"
+              ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
+              : status === "blocked"
+                ? "border-rose-500/20 bg-rose-500/10 text-rose-300"
+                : "border-amber-500/20 bg-amber-500/10 text-amber-300",
+          )}
+        >
+          {status}
+        </Badge>
+      </div>
+      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+        <CapabilityMetric
+          label="Target roles"
+          value={targetRoles.join(" → ") || "hold"}
+        />
+        <CapabilityMetric
+          label="Downstream"
+          value={handoff.downstream_allowed ? "allowed" : "blocked"}
+        />
+        <CapabilityMetric
+          label="AGI execute"
+          value={handoff.agi_execution_authority ? "allowed" : "blocked"}
+        />
+      </div>
+      <div className="mt-2 line-clamp-2 text-[11px] text-slate-400">
+        {handoff.reason || "等待 AGI 决策交接说明"}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {(handoff.allowed_actions || []).slice(0, 5).map((action) => (
+          <span
+            key={action}
+            className="rounded border border-emerald-700/30 bg-emerald-950/20 px-1.5 py-0.5 font-mono text-[10px] text-emerald-200/80"
+          >
+            {action}
+          </span>
+        ))}
+        {blockedActions.slice(0, 5).map((action) => (
+          <span
+            key={action}
+            className="rounded border border-rose-700/30 bg-rose-950/20 px-1.5 py-0.5 font-mono text-[10px] text-rose-200/80"
+          >
+            blocked: {action}
+          </span>
+        ))}
+      </div>
+      <div className="mt-2 font-mono text-[10px] text-slate-500">
+        chain: {handoff.required_chain || "PM → Chief Engineer → Director"} ·
+        advisory: {handoff.advisory_only === false ? "false" : "true"}
+      </div>
     </div>
   );
 }

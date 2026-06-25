@@ -11,6 +11,7 @@ purpose: 'Code/patch application, file application, existence gate, and repair l
   '
 current_modules:
 - polaris.cells.director.runtime.public.contracts
+- polaris.cells.director.runtime.public.service
 tags: []
 owned_paths:
 - polaris/cells/director/runtime/**

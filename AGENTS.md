@@ -99,6 +99,7 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 21. **主端口预留与 workspace 隔离（强制）**：`49977/5173` 只属于 `main` 开发实例。任何 `bench_project`、Factory Bench、临时项目实例或 Agent 私有项目后端不得直接使用 `python -m polaris.delivery.cli.backend serve --port 49977`，不得把 bench workspace 通过 `POST /settings` 写入主后端，且不得通过手工端口复用把主 Web 前端导向测试项目。项目实例必须走 Instance Supervisor/Launcher 自动分配端口；Supervisor 必须忽略或重分配 bench 对 `49977/5173` 的显式请求，禁止抢占或复活主端口。多 Agent/bench 观测阶段 `main` 后端默认不得启用 `--reload`，否则其他 Agent 修改 `src/backend` 会触发 reload 风暴并造成前端 API/WS 短时超时；只有单人调试后端热重载时才允许显式启用。若发现 `lsof -i :49977` 的进程 workspace 不是主仓，必须只清理该错误进程并恢复 main 实例，不得误杀其他 Agent 的独立实例端口。
 22. **Launcher 自管理边界（强制）**：当前承载 Launcher API 的后端实例不得通过自己的 `/v2/instances/{id}/stop|restart|delete` 自我停止、自我重启或删除自身 registry 记录；这类操作必须 fail-closed，避免控制面先杀掉自己后无法完成重启/清理。前端必须禁用当前控制实例的 stop/restart/delete，仅允许管理其它独立项目实例；清理 stale bench 只能作用于 `kind=bench_project`、非 running、backend dead 且 `metadata.internal_test_only=true` 的内部测试实例。
 23. **Run Ledger evidence 语义（强制）**：平台级 Run Ledger 投影必须区分“缺少 required evidence”和“required evidence 已存在但失败”。`evidence_policy.missing_required_modalities` 只表示控制面/工具层没有产出该类证据，例如没有命令收据；`evidence_policy.failed_required_modalities` 表示证据真实存在但门禁失败，例如 `npm test`、`go test`、browser smoke 或用户脚本返回失败。UI、ContextOS、QA、Factory 内部测试和主 Agent 审计不得把 failed evidence 继续渲染成 missing evidence；前者是产物/验收失败，后者才是账本或工具链漏记账。任何 resolved/pass 状态都必须同时满足：无缺失 required evidence、无失败 required evidence、门禁 exit code/receipt/hash 证据闭环。
+24. **Director deterministic repairs 收敛边界（强制）**：确定性修复内核唯一归属 `director.runtime`。`src/backend/polaris/cells/director/runtime/internal/repair_kernel/` 是 Cell 私有实现；跨 Cell 只能通过 `polaris.cells.director.runtime.public` 或 `polaris.cells.director.runtime.public.service` 消费。`roles.adapters/internal/director/deterministic_repairs/` 只允许作为迁移期 legacy strategy host，不得重新拥有 repair kernel、strategy catalog、policy gate、receipt contract、PatchComposer 或 AGI advisory contract。禁止恢复 `roles/adapters/internal/director/repair_kernel/**`，禁止恢复 `deterministic_repairs/strategy_catalog.py` 作为事实源，禁止 `roles.adapters` 直接 import `polaris.cells.director.runtime.internal.repair_kernel`。`execute_method.py` 若需要 repair catalog、summary 或 planning，只能走 `director.runtime.public.service`。新增 deterministic repair 必须遵循 `Diagnostic -> Plan -> Compose -> Policy/Execute -> Receipt`，planner/composer 不得直接写文件，commit 写入必须通过 Director policy-gated `write_file` 工具并产出 before/after hash receipt。未来 AGI/Resident 只能作为 non-authoritative advisory：不得写文件、生成 authoritative plan、覆盖 policy、给 success verdict、成为 Run Ledger/ReceiptStore/ContextOS 事实源。
 
 #### factory_bench 标准启动方式（内部测试态）
 
@@ -604,8 +605,19 @@ OpenCode 并行派工必须满足：
 
 ### 修复层级铁律
 
-**bench_gates.py 是量具，不做修复。** 所有确定性修复必须放在 Director 执行链路：
-`src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/`
+**bench_gates.py 是量具，不做修复。** Factory/Bench gate 只能测量和记录 evidence，不得改写 workspace、自动初始化 manifest、删除/重排源码或“顺手修复”目标项目。
+
+确定性修复必须收敛在 Director 执行链路，事实源和公共契约归 `director.runtime`：
+- Canonical kernel: `src/backend/polaris/cells/director/runtime/internal/repair_kernel/`
+- Cross-cell public surface: `polaris.cells.director.runtime.public` / `polaris.cells.director.runtime.public.service`
+- Legacy strategy host only: `src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/`
+
+禁止其他 Agent 新增或恢复：
+- `src/backend/polaris/cells/roles/adapters/internal/director/repair_kernel/**`
+- `src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/strategy_catalog.py`
+- 从 `roles.adapters` 直接 import `polaris.cells.director.runtime.internal.repair_kernel`
+
+如需新增规则，先在 `director.runtime` 建 typed diagnostic/plan/composition/receipt 能力，再通过 public service 暴露给 legacy caller；不得把新事实源放回 `roles.adapters`。
 
 ### Director 上下文强制审计
 

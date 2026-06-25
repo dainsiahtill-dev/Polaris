@@ -743,6 +743,65 @@ def build_resident_agi_decision_capability_registry(
     }
 
 
+def build_resident_agi_evidence_interface_contract(
+    *,
+    capabilities: list[ResidentAgiCapabilityV1],
+    decision_capabilities: list[ResidentAgiDecisionCapabilityV1],
+) -> dict[str, Any]:
+    """Validate decision evidence interfaces against the capability surface."""
+
+    capability_by_id = {item.capability_id: item for item in capabilities}
+    required_by_decision: dict[str, list[str]] = {}
+    optional_by_decision: dict[str, list[str]] = {}
+    for decision in decision_capabilities:
+        for interface_id in decision.required_evidence_interfaces:
+            required_by_decision.setdefault(interface_id, []).append(decision.decision_id)
+        for interface_id in decision.optional_evidence_interfaces:
+            optional_by_decision.setdefault(interface_id, []).append(decision.decision_id)
+
+    required_ids = set(required_by_decision)
+    optional_ids = set(optional_by_decision)
+    declared_ids = required_ids | optional_ids
+    missing_required_ids = sorted(required_ids - capability_by_id.keys())
+    missing_optional_ids = sorted(optional_ids - capability_by_id.keys())
+    missing_ids = sorted(declared_ids - capability_by_id.keys())
+    interface_items: list[dict[str, Any]] = []
+    for interface_id in sorted(declared_ids):
+        capability = capability_by_id.get(interface_id)
+        interface_items.append(
+            {
+                "interface_id": interface_id,
+                "status": "available" if capability else "missing",
+                "required_by_decisions": sorted(required_by_decision.get(interface_id, [])),
+                "optional_by_decisions": sorted(optional_by_decision.get(interface_id, [])),
+                "access": capability.access if capability else "",
+                "category": capability.category if capability else "",
+                "contract_ref": capability.contract_ref if capability else "",
+                "risk_level": capability.risk_level if capability else "unknown",
+            }
+        )
+
+    return {
+        "schema_version": "resident.agi_evidence_interface_contract.v1",
+        "role_id": "resident_agi",
+        "source": "resident.autonomy.capability_surface",
+        "coverage_complete": not missing_ids,
+        "supported_interface_ids": sorted(declared_ids & capability_by_id.keys()),
+        "declared_interface_ids": sorted(declared_ids),
+        "required_interface_ids": sorted(required_ids),
+        "optional_interface_ids": sorted(optional_ids),
+        "missing_interface_ids": missing_ids,
+        "missing_required_interface_ids": missing_required_ids,
+        "missing_optional_interface_ids": missing_optional_ids,
+        "interfaces": interface_items,
+        "decision_policy": {
+            "declared_interfaces_must_exist": "fail_closed_before_agi_decision",
+            "missing_required_interface": "block_or_request_platform_facade",
+            "missing_optional_interface": "degrade_with_audit_note",
+        },
+    }
+
+
 def resident_agi_participation_policy_payload() -> dict[str, Any]:
     """Return discoverable Resident AGI participation switches.
 
@@ -923,6 +982,7 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
         "decision_boundary_schema": "resident.agi_decision_boundary.v1",
         "decision_capability_schema": "resident.agi_decision_capability.v1",
         "authority_matrix_schema": "resident.agi_authority_matrix.v1",
+        "evidence_interface_contract_schema": "resident.agi_evidence_interface_contract.v1",
         "role_id": "resident_agi",
         "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
         "implementation_cell": "resident.autonomy",
@@ -934,6 +994,10 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
         "decision_capabilities": decision_capabilities,
         "decision_capability_registry": build_resident_agi_decision_capability_registry(
             decision_capability_items,
+        ),
+        "evidence_interface_contract": build_resident_agi_evidence_interface_contract(
+            capabilities=capability_items,
+            decision_capabilities=decision_capability_items,
         ),
         "participation_policy": resident_agi_participation_policy_payload(),
         "hardcoded_repair_strategy_catalog": resident_agi_director_repair_strategy_catalog_payload(),
@@ -957,6 +1021,7 @@ __all__ = [
     "build_resident_agi_decision_boundaries",
     "build_resident_agi_decision_capabilities",
     "build_resident_agi_decision_capability_registry",
+    "build_resident_agi_evidence_interface_contract",
     "resident_agi_capability_surface_payload",
     "resident_agi_director_repair_strategy_catalog_payload",
     "resident_agi_participation_policy_payload",

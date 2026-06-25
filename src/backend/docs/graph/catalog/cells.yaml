@@ -1598,7 +1598,8 @@ cells:
       Provide role-specific adapters and schema bridges for PM, Director,
       Architect, Chief Engineer, and QA flows, while Director's optional
       projection execution backend still routes through this layer during
-      migration.
+      migration. This cell must not own Director Runtime repair-kernel packages
+      or deterministic repair strategy catalog facts.
     current_modules:
       - polaris.cells.roles.adapters.public.service
       - polaris.cells.roles.adapters.internal
@@ -1656,9 +1657,12 @@ cells:
         - tests/test_role_adapters_taskboard_alignment.py
         - tests/test_director_adapter_sequential_config.py
         - tests/test_architect_adapter_docs_extract.py
+        - polaris/cells/roles/adapters/tests/test_deterministic_repair_strategy_catalog.py
+        - polaris/tests/architecture/test_director_repair_kernel_boundary.py
       gaps:
         - Director optional execution backends still route through roles.adapters while business-cell convergence into director.execution remains in progress.
         - Adapter export boundary is still being normalized against the role kernel.
+        - Director repair-kernel directory, summary, planning, and deterministic strategy catalog facts are owned by director.runtime public service boundaries, not roles.adapters.
 
   - id: roles.engine
     title: Roles Engine
@@ -2794,19 +2798,26 @@ cells:
       Code/patch application, file application, existence gate, and repair loop
       for Director tasks. Owns PatchApplyEngine, FileApplyService, ExistenceGate, RepairService,
       and the KernelOne tool chain execution capability.
+    current_modules:
+      - polaris.cells.director.runtime.public.contracts
+      - polaris.cells.director.runtime.public.service
+      - polaris.cells.director.runtime.internal.repair_kernel
     owned_paths:
       - polaris/cells/director/runtime/**
       - polaris/kernelone/tools/**
     public_contracts:
       modules:
         - polaris.cells.director.runtime.public.contracts
+        - polaris.cells.director.runtime.public.service
       commands:
         - RunDirectorRepairCommandV1
-      queries: []
+      queries:
+        - QueryDirectorRepairStrategyCatalogV1
       events: []
       results:
         - DirectorRepairResultV1
         - DirectorRepairStrategyCatalogResultV1
+        - DirectorRepairPlanningResultV1
         - RepairDiagnosticV1
         - RepairReceiptV1
         - RepairAdvisoryV1
@@ -2826,8 +2837,10 @@ cells:
     verification:
       gaps:
         - 'Migration in progress: Repair Kernel contracts and composition primitives
-          now reside in director.runtime/internal/repair_kernel; legacy deterministic
-          strategy functions still reside in roles.adapters/internal/director/deterministic_repairs
+          are owned by director.runtime and exposed cross-cell only through
+          director.runtime.public. The director.runtime/internal/repair_kernel package
+          is cell-private implementation. Legacy deterministic strategy functions
+          still reside in roles.adapters/internal/director/deterministic_repairs
           pending full runtime cutover. Other implementation remains in director.execution/internal
           and polaris/kernelone/tools/ pending Cell extraction.'
 

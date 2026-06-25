@@ -10,6 +10,26 @@
 - 后端强制规则：`Cell` 开发先复用已有 Cell 公开能力；所有新开发必须基于 `KernelOne` 底座能力与契约链路。
 - 若本文件与 `src/backend/AGENTS.md` 或 `src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md` 存在冲突，以后两者为准。
 
+### 0.1) Director deterministic repairs 收敛边界（强制）
+
+确定性修复内核唯一归属 `director.runtime`：
+
+- Canonical implementation: `src/backend/polaris/cells/director/runtime/internal/repair_kernel/`
+- Cross-cell public surface: `polaris.cells.director.runtime.public` / `polaris.cells.director.runtime.public.service`
+- Legacy strategy host only: `src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/`
+
+`director.runtime/internal/repair_kernel` 是 Cell 私有实现。其他 Cell，尤其是 `roles.adapters`，不得直接 import `polaris.cells.director.runtime.internal.repair_kernel`。`execute_method.py` 若需要 repair catalog、summary 或 planning，只能使用 `director.runtime.public.service`。
+
+禁止恢复或新增旧架构入口：
+
+- `src/backend/polaris/cells/roles/adapters/internal/director/repair_kernel/**`
+- `src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/strategy_catalog.py`
+- `roles.adapters` 下自有的 repair policy gate、PatchComposer、receipt contract 或 AGI advisory contract
+
+新增 deterministic repair 必须走 `Diagnostic -> Plan -> Compose -> Policy/Execute -> Receipt`。Planner/Composer 不得直接写文件；commit 写入必须通过 Director policy-gated `write_file` 工具，并在 receipt 中记录 before/after hash、operation ids、rule/source_tool。未来 AGI/Resident 只能作为 non-authoritative advisory：不得写文件、生成 authoritative plan、覆盖 policy、给 success verdict，且不得成为 Run Ledger、ReceiptStore 或 ContextOS 的事实源。
+
+Factory/Bench gate 是量具，不做修复。`bench_gates.py` 不得改写 workspace、自动初始化 manifest、删除/重排源码或把测量逻辑伪装成 deterministic repair。
+
 ## 1) 真实入口路径
 - 桌面入口: `src/electron/main.cjs`
 - 后端入口: `src/backend/server.py` -> `src/backend/polaris/delivery/http/app_factory.py` (FastAPI)
@@ -29,6 +49,7 @@
 - 后端 API 与服务: `src/backend/polaris/delivery`
 - Loop / 角色内核（优先修改）: `src/backend/polaris/cells/roles`, `src/backend/polaris/kernelone`
 - Director Runtime/Accel: `src/backend/polaris/cells/director`
+- Director deterministic repair kernel: `src/backend/polaris/cells/director/runtime/internal/repair_kernel`（只允许 cell 内实现使用；跨 Cell 走 public service）
 - PM/Director 编排层: `src/backend/polaris/delivery/cli/pm`, `src/backend/polaris/delivery/cli/director`
 - 前端主 UI: `src/frontend/src/app`
 - 测试: `tests/electron`, `src/backend/polaris/tests`
