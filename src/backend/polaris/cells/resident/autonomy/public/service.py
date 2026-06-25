@@ -15,6 +15,10 @@ from polaris.cells.audit.evidence.public.service import (
 )
 from polaris.cells.audit.verdict.public import QueryAuditVerdictV1, query_audit_verdict
 from polaris.cells.context.catalog.public import ContextCatalogService, SearchCellsQueryV1
+from polaris.cells.context.engine.public import (
+    QueryFinalProviderRequestAuditV1,
+    query_final_provider_request_audit,
+)
 from polaris.cells.control_plane.run_ledger.public import (
     ReadRunLedgerProjectionQueryV1,
     read_run_ledger_projection,
@@ -65,6 +69,7 @@ from polaris.cells.resident.autonomy.public.contracts import (
     RejectResidentGoalCommandV1,
     ResidentAgiCapabilityV1,
     ResidentAgiDecisionCapabilityV1,
+    ResidentAgiDecisionOutputV1,
     ResidentAutonomyError,
     ResidentAutonomyResultV1,
     ResidentCycleCompletedEventV1,
@@ -318,6 +323,104 @@ def _resident_agi_runtime_contract_gate(
         else "RoleRuntime receipt evidence is incomplete.",
         "checks": checks,
         "failed_check_ids": [str(item["check_id"]) for item in failed],
+    }
+
+
+def _resident_agi_decision_sequence(payload: dict[str, Any], key: str) -> tuple[str, ...]:
+    raw = payload.get(key)
+    if not isinstance(raw, list):
+        return ()
+    return tuple(str(item or "").strip() for item in raw if str(item or "").strip())
+
+
+def _resident_agi_output_contract_gate(
+    *,
+    decision: dict[str, Any],
+    selected_decision_capability: dict[str, Any],
+    hard_rule_gate: dict[str, Any],
+    evidence_gate: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate the Resident AGI model output before accepting its decision."""
+
+    if hard_rule_gate.get("status") == "block":
+        return {
+            "schema_version": "resident.agi_output_contract_gate.v1",
+            "status": "preflight_blocked",
+            "passed": False,
+            "required": False,
+            "reason": "Resident AGI role turn was blocked before model output validation.",
+            "checks": [],
+            "failed_check_ids": [],
+            "normalized_decision": {},
+        }
+
+    checks: list[dict[str, Any]] = []
+
+    def add_check(check_id: str, passed: bool, detail: str) -> None:
+        checks.append({"check_id": check_id, "passed": passed, "detail": detail})
+
+    selected_decision_id = str(selected_decision_capability.get("decision_id") or "").strip()
+    add_check(
+        "selected_decision_capability.present",
+        bool(selected_decision_id),
+        "A Resident AGI output must be validated against a selected decision capability.",
+    )
+    output: ResidentAgiDecisionOutputV1 | None = None
+    normalized_decision: dict[str, Any] = {}
+    if not decision:
+        add_check("decision.output_schema", False, "Resident AGI must return a non-empty JSON decision object.")
+    else:
+        try:
+            output = ResidentAgiDecisionOutputV1(
+                verdict=str(decision.get("verdict") or ""),
+                rationale=str(decision.get("rationale") or ""),
+                evidence_refs=_resident_agi_decision_sequence(decision, "evidence_refs"),
+                risks=_resident_agi_decision_sequence(decision, "risks"),
+                next_action=str(decision.get("next_action") or ""),
+                downstream_allowed=decision.get("downstream_allowed"),
+                decision_capability_id=str(decision.get("decision_capability_id") or ""),
+            )
+            normalized_decision = output.to_dict()
+            add_check("decision.output_schema", True, "Resident AGI output matches ResidentAgiDecisionOutputV1.")
+        except ValueError as exc:
+            add_check("decision.output_schema", False, str(exc))
+
+    if output is not None:
+        add_check(
+            "decision_capability_id.matches_selected",
+            output.decision_capability_id == selected_decision_id,
+            "Resident AGI must echo the selected decision capability id.",
+        )
+        evidence_gate_status = str(evidence_gate.get("status") or "").strip().lower()
+        evidence_blocks_downstream = evidence_gate_status in {"hold", "fail", "block"}
+        add_check(
+            "evidence_gate.continue_guard",
+            not (evidence_blocks_downstream and output.verdict == "continue"),
+            "Resident AGI cannot continue when the evidence gate is hold/fail/block.",
+        )
+        add_check(
+            "evidence_gate.downstream_guard",
+            not (evidence_blocks_downstream and output.downstream_allowed),
+            "Resident AGI cannot allow downstream execution while evidence is incomplete.",
+        )
+        add_check(
+            "non_continue.downstream_guard",
+            output.verdict == "continue" or not output.downstream_allowed,
+            "Only a continue verdict may allow downstream execution.",
+        )
+
+    failed = [item for item in checks if not item["passed"]]
+    return {
+        "schema_version": "resident.agi_output_contract_gate.v1",
+        "status": "pass" if not failed else "fail",
+        "passed": not failed,
+        "required": True,
+        "reason": "Resident AGI output contract accepted."
+        if not failed
+        else "Resident AGI output contract is incomplete or unsafe.",
+        "checks": checks,
+        "failed_check_ids": [str(item["check_id"]) for item in failed],
+        "normalized_decision": normalized_decision,
     }
 
 
@@ -650,6 +753,7 @@ def _resident_agi_context_catalog_interface(
 
 def _resident_agi_contextos_final_request_interface(
     *,
+    workspace: str,
     audit_pack: dict[str, Any],
     base: dict[str, Any],
 ) -> dict[str, Any]:
@@ -658,21 +762,75 @@ def _resident_agi_contextos_final_request_interface(
     context_refs = [
         str(item or "").strip() for item in evidence_refs if str(item or "").startswith("runtime/contexts/")
     ]
+    if not context_refs:
+        base.update(
+            {
+                "available": False,
+                "callable": True,
+                "status": "metadata_only",
+                "source": "context.engine.public.query_final_provider_request_audit",
+                "summary": {
+                    "context_snapshot_ref_count": 0,
+                    "context_snapshot_refs": [],
+                },
+                "payload": {"context_snapshot_refs": []},
+                "gaps": ["no runtime/contexts/<hash> reference is present in the audit pack"],
+                "recommended_next_action": "request_final_request_snapshot",
+            }
+        )
+        return base
+
+    last_result_payload: dict[str, Any] = {}
+    last_error = ""
+    for context_ref in context_refs:
+        result = query_final_provider_request_audit(
+            QueryFinalProviderRequestAuditV1(
+                workspace=workspace,
+                context_snapshot_ref=context_ref,
+            )
+        )
+        if result.ok:
+            payload = dict(result.payload)
+            final_audit = payload.get("final_request_context_audit")
+            base.update(
+                {
+                    "available": True,
+                    "callable": True,
+                    "status": "available",
+                    "source": "context.engine.public.query_final_provider_request_audit",
+                    "summary": {
+                        "context_snapshot_ref_count": len(context_refs),
+                        "selected_context_snapshot_ref": context_ref,
+                        "final_request_token_estimate": final_audit.get("final_request_token_estimate")
+                        if isinstance(final_audit, dict)
+                        else None,
+                        "tool_schema_count": payload.get("provider_request", {}).get("tool_schema_count")
+                        if isinstance(payload.get("provider_request"), dict)
+                        else None,
+                    },
+                    "payload": payload,
+                    "gaps": [],
+                    "recommended_next_action": "use_final_provider_request_audit",
+                }
+            )
+            return base
+        last_result_payload = dict(result.payload)
+        last_error = result.error_code or result.error_message or result.status
+
     base.update(
         {
-            "available": bool(context_refs),
-            "callable": False,
-            "status": "available" if context_refs else "metadata_only",
-            "source": "resident.agi_audit_pack.evidence_refs",
+            "available": False,
+            "callable": True,
+            "status": "unavailable",
+            "source": "context.engine.public.query_final_provider_request_audit",
             "summary": {
                 "context_snapshot_ref_count": len(context_refs),
                 "context_snapshot_refs": context_refs[:10],
+                "last_error": last_error,
             },
-            "payload": {"context_snapshot_refs": context_refs},
-            "gaps": [] if context_refs else ["no runtime/contexts/<hash> reference is present in the audit pack"],
-            "recommended_next_action": "use_context_snapshot_refs"
-            if context_refs
-            else "request_final_request_snapshot",
+            "payload": {"context_snapshot_refs": context_refs, "last_result": last_result_payload},
+            "gaps": ["no referenced context snapshot contains readable final provider request audit evidence"],
+            "recommended_next_action": "request_final_request_snapshot",
         }
     )
     return base
@@ -768,7 +926,11 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
                 base=base,
             )
         elif interface_id == "contextos.final_request_audit.read":
-            item = _resident_agi_contextos_final_request_interface(audit_pack=audit_pack, base=base)
+            item = _resident_agi_contextos_final_request_interface(
+                workspace=query.workspace,
+                audit_pack=audit_pack,
+                base=base,
+            )
         else:
             item = _resident_agi_metadata_only_interface(base)
         interfaces.append(item)
@@ -777,8 +939,7 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
     missing_required = [
         str(item.get("interface_id") or "")
         for item in interfaces
-        if str(item.get("interface_id") or "") in required_set
-        and str(item.get("status") or "") not in {"available", "metadata_only"}
+        if str(item.get("interface_id") or "") in required_set and str(item.get("status") or "") != "available"
     ]
     status_counts: dict[str, int] = {}
     for item in interfaces:
@@ -821,14 +982,12 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
 async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnCommandV1) -> dict[str, Any]:
     """Handle Resident AGI judgement through the shared role runtime contract."""
 
-    audit_pack: dict[str, Any] | None = None
-    if command.include_audit_pack:
-        audit_pack = query_resident_agi_audit_pack(
-            QueryResidentAgiAuditPackV1(
-                workspace=command.workspace,
-                decision_limit=command.audit_pack_decision_limit,
-            )
+    audit_pack: dict[str, Any] | None = query_resident_agi_audit_pack(
+        QueryResidentAgiAuditPackV1(
+            workspace=command.workspace,
+            decision_limit=command.audit_pack_decision_limit,
         )
+    )
 
     input_data: dict[str, Any] = {
         "workspace": command.workspace,
@@ -843,7 +1002,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         "context_refs": list(command.context_refs),
         "evidence_refs": list(command.evidence_refs),
         "confidence": command.confidence,
-        "include_audit_pack": command.include_audit_pack,
+        "include_audit_pack": True,
         "audit_pack_decision_limit": command.audit_pack_decision_limit,
     }
     effective_candidate_actions = list(command.candidate_actions)
@@ -997,6 +1156,15 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
 
     decision_raw = role_result.get("decision")
     decision: dict[str, Any] = decision_raw if isinstance(decision_raw, dict) else {}
+    output_contract_gate = _resident_agi_output_contract_gate(
+        decision=decision,
+        selected_decision_capability=selected_decision_capability,
+        hard_rule_gate=hard_rule_gate,
+        evidence_gate=evidence_gate,
+    )
+    normalized_decision_raw = output_contract_gate.get("normalized_decision")
+    if isinstance(normalized_decision_raw, dict) and normalized_decision_raw:
+        decision = normalized_decision_raw
     agi_verdict = str(decision.get("verdict") or "").strip().lower()
     rationale = str(decision.get("rationale") or "").strip()
     next_action = str(decision.get("next_action") or "").strip()
@@ -1022,6 +1190,16 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         risks = [
             *list(risks),
             *[f"failed runtime-contract check: {item}" for item in failed_contract_checks],
+        ]
+    if bool(output_contract_gate.get("required")) and not bool(output_contract_gate.get("passed")):
+        runtime_success = False
+        gate_error = str(output_contract_gate.get("reason") or "Resident AGI output contract gate failed.")
+        error = error or gate_error
+        failed_output_checks_raw = output_contract_gate.get("failed_check_ids")
+        failed_output_checks = failed_output_checks_raw if isinstance(failed_output_checks_raw, list) else []
+        risks = [
+            *list(risks),
+            *[f"failed output-contract check: {item}" for item in failed_output_checks],
         ]
     resident_verdict = _resident_decision_verdict(agi_verdict, runtime_success=runtime_success)
     evidence_refs = list(command.evidence_refs)
@@ -1075,7 +1253,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                     "optional_evidence_interfaces": selected_optional_evidence_interfaces,
                     "candidate_actions": effective_candidate_actions,
                     "constraints": effective_constraints,
-                    "resident_agi_audit_pack_required": command.include_audit_pack,
+                    "resident_agi_audit_pack_required": True,
                 },
                 "actual_outcome": {
                     "decision_source": "resident_agi_role_runtime",
@@ -1090,6 +1268,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                     "resident_agi_decision_capability": selected_decision_capability,
                     "resident_agi_required_evidence_interfaces": selected_required_evidence_interfaces,
                     "resident_agi_optional_evidence_interfaces": selected_optional_evidence_interfaces,
+                    "resident_agi_output_contract_gate": output_contract_gate,
                     "resident_agi_runtime_contract_gate": runtime_contract_gate,
                     "agi_verdict": agi_verdict,
                     "resident_verdict": resident_verdict,
@@ -1116,6 +1295,7 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         "selected_decision_capability": selected_decision_capability,
         "required_evidence_interfaces": selected_required_evidence_interfaces,
         "optional_evidence_interfaces": selected_optional_evidence_interfaces,
+        "output_contract_gate": output_contract_gate,
         "runtime_contract_gate": runtime_contract_gate,
         "error": error or None,
     }

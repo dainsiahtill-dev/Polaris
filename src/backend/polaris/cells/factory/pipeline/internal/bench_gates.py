@@ -2774,6 +2774,8 @@ def _record_has_explicit_director_execution_failure(record: dict[str, Any]) -> b
 
 _RUNTIME_ENVIRONMENT_FAILURE_TOKENS = (
     "cognitive_runtime_mainline_unavailable",
+    "event_wait_timeout",
+    "runtime_v2_connection_failed",
     "mainline_unavailable:process",
     "process:filenotfounderror",
     "pm.runtime.exception",
@@ -2793,6 +2795,8 @@ def _record_has_runtime_environment_failure(record: dict[str, Any]) -> bool:
         ensure_ascii=False,
         default=str,
     ).lower()
+    if "event_wait_timeout" in text or "runtime_v2_connection_failed" in text:
+        return True
     if "workspace_switch_failed" in text:
         return True
     if "runtime_roles_not_ready" in text:
@@ -2814,6 +2818,10 @@ def _record_has_runtime_environment_failure(record: dict[str, Any]) -> bool:
 
 def _runtime_environment_failure_reason(record: dict[str, Any]) -> str:
     text = json.dumps(record, ensure_ascii=False, default=str).lower()
+    if "runtime_v2_connection_failed" in text:
+        return "event_wait_runtime_v2_connection_failed"
+    if "event_wait_timeout" in text:
+        return "event_wait_timeout"
     if "workspace_switch_failed" in text:
         return "workspace_switch_failed"
     if "runtime_roles_not_ready" in text:
@@ -2831,6 +2839,29 @@ def _runtime_environment_failure_reason(record: dict[str, Any]) -> str:
 
 def _runtime_environment_failure_evidence(record: dict[str, Any]) -> str:
     chain = record.get("chain")
+    diagnostics = record.get("chain_diagnostics")
+    if isinstance(diagnostics, dict):
+        event_wait_error = diagnostics.get("event_wait_error")
+        if isinstance(event_wait_error, dict):
+            detail = str(event_wait_error.get("message") or event_wait_error.get("kind") or "").strip()
+            if detail:
+                return detail
+        cancel_error = diagnostics.get("cancel_error")
+        if isinstance(cancel_error, dict):
+            detail = str(cancel_error.get("reason") or cancel_error.get("exception") or "").strip()
+            if detail:
+                return detail
+    if isinstance(chain, dict):
+        event_wait_error = chain.get("event_wait_error")
+        if isinstance(event_wait_error, dict):
+            detail = str(event_wait_error.get("message") or event_wait_error.get("kind") or "").strip()
+            if detail:
+                return detail
+    real_run_gate = record.get("real_run_gate")
+    if isinstance(real_run_gate, dict) and real_run_gate.get("skipped"):
+        detail = str(real_run_gate.get("summary") or "").strip()
+        if detail:
+            return detail
     if isinstance(chain, dict) and str(chain.get("error") or "") == "workspace_switch_failed":
         workspace_switch = chain.get("workspace_switch")
         if isinstance(workspace_switch, dict):
@@ -2960,15 +2991,20 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
         gate.get("gate") in {"run_ledger_projection", "run_ledger_event"} and not gate.get("ok")
         for gate in _gate_failures(record)
     )
-    if run_ledger_gate_failed:
+    if _record_has_runtime_environment_failure(record):
+        category, reason = "runtime_environment", _runtime_environment_failure_reason(record)
+        evidence.append(_runtime_environment_failure_evidence(record))
+        if run_ledger_gate_failed:
+            ledger_status = summarize_run_ledger_projection(record.get("run_ledger_projection"))
+            ledger_detail = str(ledger_status.get("detail") or "run ledger projection missing").strip()
+            if ledger_detail:
+                evidence.append(f"secondary_run_ledger:{ledger_detail}")
+    elif run_ledger_gate_failed:
         ledger_status = summarize_run_ledger_projection(record.get("run_ledger_projection"))
         category, reason = "control_plane", "run_ledger_projection_missing"
         evidence.append(str(ledger_status.get("detail") or "run ledger projection missing"))
     elif _contains_context_budget_signal(combined):
         category, reason = "context_budget", "context_or_token_budget"
-    elif _record_has_runtime_environment_failure(record):
-        category, reason = "runtime_environment", _runtime_environment_failure_reason(record)
-        evidence.append(_runtime_environment_failure_evidence(record))
     elif _record_has_chief_engineer_blueprint_failure(record):
         category, reason = "chief_engineer_blueprint", _chief_engineer_failure_reason(record)
         evidence.append(_chief_engineer_failure_evidence(record))

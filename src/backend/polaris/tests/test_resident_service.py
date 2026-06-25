@@ -11,6 +11,7 @@ from polaris.cells.resident.autonomy.internal.resident_runtime_service import (
     get_resident_service,
     reset_resident_services,
 )
+from polaris.cells.resident.autonomy.public import service as resident_public_service
 from polaris.cells.resident.autonomy.public.service import (
     ApproveResidentGoalCommandV1,
     CreateResidentGoalCommandV1,
@@ -474,6 +475,148 @@ def test_resident_agi_evidence_interfaces_query_reports_public_facade_status(tmp
     assert payload["summary"]["governed_execute_only"] == 1
 
 
+def test_resident_agi_evidence_interfaces_treats_metadata_only_required_as_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    def fake_audit_pack(*, workspace: str, status_payload: dict[str, object], decision_limit: int) -> dict[str, object]:
+        return {
+            "schema_version": "resident.agi_audit_pack.v1",
+            "evidence_refs": [],
+            "capability_surface": {
+                "decision_capabilities": [
+                    {
+                        "decision_id": "quality.gate.response",
+                        "required_evidence_interfaces": ["contextos.final_request_audit.read"],
+                        "optional_evidence_interfaces": [],
+                        "candidate_actions": ["request_evidence"],
+                        "hard_constraints": ["final_provider_request_required"],
+                    }
+                ],
+                "items": [
+                    {
+                        "capability_id": "contextos.final_request_audit.read",
+                        "name": "Final request audit",
+                        "access": "read",
+                        "contract_ref": "roles.final_request_context_audit",
+                        "risk_level": "high",
+                    }
+                ],
+            },
+        }
+
+    monkeypatch.setattr(resident_public_service, "build_resident_agi_audit_pack", fake_audit_pack)
+
+    payload = query_resident_agi_evidence_interfaces(
+        QueryResidentAgiEvidenceInterfacesV1(
+            workspace=str(workspace),
+            decision_type="quality_gate_response",
+            interface_ids=("contextos.final_request_audit.read",),
+        )
+    )
+
+    by_id = {item["interface_id"]: item for item in payload["interfaces"]}
+    assert by_id["contextos.final_request_audit.read"]["status"] == "metadata_only"
+    assert by_id["contextos.final_request_audit.read"]["available"] is False
+    assert payload["summary"]["missing_required_interface_ids"] == ["contextos.final_request_audit.read"]
+
+
+def test_resident_agi_evidence_interfaces_reads_final_provider_request_audit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.kernelone.llm.engine.executor import AIExecutor
+
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    hash_key = AIExecutor._store_context_messages_sync(
+        workspace=str(workspace),
+        messages=[{"role": "system", "content": "You are Resident AGI."}],
+        trace_id="trace-resident-final-request",
+        call_id="call-resident-final-request",
+        provider_request={
+            "schema_version": "llm.provider_request_snapshot.v1",
+            "role": "resident_agi",
+            "provider_id": "mock-provider",
+            "provider_type": "mock",
+            "model": "mock-model",
+            "tool_schema_count": 1,
+            "tools": [{"type": "function", "name": "repo_tree", "argument_keys": [], "required": []}],
+            "tool_choice": "auto",
+            "response_format": {"type": "json_schema", "name": "ResidentAgiDecisionOutputV1"},
+            "final_request_context_audit": {
+                "schema_version": "llm.final_request_context_audit.v1",
+                "final_request_token_estimate": 256,
+                "tool_schema_count": 1,
+            },
+        },
+    )
+    context_ref = f"runtime/contexts/{hash_key[:2]}/{hash_key}"
+
+    def fake_audit_pack(*, workspace: str, status_payload: dict[str, object], decision_limit: int) -> dict[str, object]:
+        return {
+            "schema_version": "resident.agi_audit_pack.v1",
+            "evidence_refs": [context_ref],
+            "capability_surface": {
+                "decision_capabilities": [
+                    {
+                        "decision_id": "quality.gate.response",
+                        "required_evidence_interfaces": ["contextos.final_request_audit.read"],
+                        "optional_evidence_interfaces": [],
+                        "candidate_actions": ["request_evidence"],
+                        "hard_constraints": ["final_provider_request_required"],
+                    }
+                ],
+                "items": [
+                    {
+                        "capability_id": "contextos.final_request_audit.read",
+                        "name": "Final request audit",
+                        "access": "read",
+                        "contract_ref": "roles.final_request_context_audit",
+                        "risk_level": "high",
+                    }
+                ],
+            },
+        }
+
+    monkeypatch.setattr(resident_public_service, "build_resident_agi_audit_pack", fake_audit_pack)
+
+    payload = query_resident_agi_evidence_interfaces(
+        QueryResidentAgiEvidenceInterfacesV1(
+            workspace=str(workspace),
+            decision_type="quality_gate_response",
+            interface_ids=("contextos.final_request_audit.read",),
+        )
+    )
+
+    by_id = {item["interface_id"]: item for item in payload["interfaces"]}
+    item = by_id["contextos.final_request_audit.read"]
+    assert item["status"] == "available"
+    assert item["available"] is True
+    assert item["callable"] is True
+    assert item["source"] == "context.engine.public.query_final_provider_request_audit"
+    assert item["payload"]["provider_request"]["schema_version"] == "llm.provider_request_snapshot.v1"
+    assert item["payload"]["final_request_context_audit"]["final_request_token_estimate"] == 256
+    assert payload["summary"]["missing_required_interface_ids"] == []
+
+
+def test_resident_agi_decision_turn_rejects_disabled_audit_pack(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(ValueError, match="include_audit_pack"):
+        RunResidentAgiDecisionTurnCommandV1(
+            workspace=str(workspace),
+            objective="Attempt to run Resident AGI without the platform audit pack.",
+            include_audit_pack=False,
+        )
+
+
 @pytest.mark.asyncio
 async def test_resident_agi_decision_turn_public_command_uses_role_runtime_contract(tmp_path: Path) -> None:
     reset_resident_services()
@@ -496,12 +639,13 @@ async def test_resident_agi_decision_turn_public_command_uses_role_runtime_contr
                 "stage": "resident_agi",
                 "decision_type": "platform_supervision",
                 "decision": {
-                    "verdict": "continue",
-                    "rationale": "Shared RoleRuntime evidence is complete.",
+                    "verdict": "request_evidence",
+                    "rationale": "Final request and run ledger evidence must be gathered before downstream work.",
                     "evidence_refs": ["runtime/contexts/context-public.json"],
                     "risks": [],
-                    "next_action": "continue governed run",
-                    "downstream_allowed": True,
+                    "next_action": "request final provider request and run ledger evidence",
+                    "downstream_allowed": False,
+                    "decision_capability_id": "evidence.interface.selection",
                 },
                 "metadata": {
                     "role_runtime_entrypoint": "roles.runtime.execute_role_session",
@@ -535,6 +679,7 @@ async def test_resident_agi_decision_turn_public_command_uses_role_runtime_contr
 
     assert result["ok"] is True
     assert result["runtime_contract_gate"]["status"] == "pass"
+    assert result["output_contract_gate"]["status"] == "pass"
     assert result["selected_decision_capability"]["decision_id"] == "evidence.interface.selection"
     assert "run_ledger.read" in result["required_evidence_interfaces"]
     assert "verifier.execution.execute" in result["optional_evidence_interfaces"]
@@ -561,6 +706,64 @@ async def test_resident_agi_decision_turn_public_command_uses_role_runtime_contr
     assert isinstance(captured_input, dict)
     assert captured_input["selected_decision_capability"]["decision_id"] == "evidence.interface.selection"
     assert "verifier.execution.execute" in captured_input["optional_evidence_interfaces"]
+
+
+@pytest.mark.asyncio
+async def test_resident_agi_decision_turn_rejects_continue_when_evidence_gate_holds(tmp_path: Path) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    class FakeResidentAgiAdapter:
+        async def execute(
+            self,
+            task_id: str,
+            input_data: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "success": True,
+                "stage": "resident_agi",
+                "decision_type": "quality_gate_response",
+                "decision": {
+                    "verdict": "continue",
+                    "rationale": "Attempt to continue without required final request evidence.",
+                    "evidence_refs": ["runtime/contexts/context-public.json"],
+                    "risks": [],
+                    "next_action": "continue governed run",
+                    "downstream_allowed": True,
+                    "decision_capability_id": "quality.gate.response",
+                },
+                "metadata": {
+                    "role_runtime_entrypoint": "roles.runtime.execute_role_session",
+                    "context_os_expected": True,
+                    "runtime_fallback_used": False,
+                    "fallback_policy": "fail_closed",
+                },
+            }
+
+    with patch(
+        "polaris.cells.resident.autonomy.public.service.create_role_adapter",
+        return_value=FakeResidentAgiAdapter(),
+    ):
+        result = await run_resident_agi_decision_turn(
+            RunResidentAgiDecisionTurnCommandV1(
+                workspace=str(workspace),
+                decision_type="quality_gate_response",
+                objective="Decide whether the current run can proceed.",
+                task_id="resident-agi-output-contract",
+                evidence_refs=("runtime/gates/qa.json",),
+            )
+        )
+
+    assert result["ok"] is False
+    assert result["runtime_contract_gate"]["status"] == "pass"
+    assert result["output_contract_gate"]["status"] == "fail"
+    assert "evidence_gate.continue_guard" in result["output_contract_gate"]["failed_check_ids"]
+    assert "evidence_gate.downstream_guard" in result["output_contract_gate"]["failed_check_ids"]
+    actual_outcome = result["recorded_decision"]["actual_outcome"]
+    assert actual_outcome["runtime_success"] is False
+    assert actual_outcome["resident_agi_output_contract_gate"] == result["output_contract_gate"]
 
 
 @pytest.mark.asyncio

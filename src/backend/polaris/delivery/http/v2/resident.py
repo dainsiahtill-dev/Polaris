@@ -227,6 +227,14 @@ async def resident_agi_decide(request: Request, payload: ResidentAgiDecisionTurn
     """Run a Resident AGI decision turn through the shared role runtime."""
 
     ws = _resolve_workspace(request, payload.workspace)
+    if payload.include_audit_pack is not True:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "resident_agi_contract_rejected",
+                "message": "include_audit_pack must remain enabled for Resident AGI decisions.",
+            },
+        )
     return await run_resident_agi_decision_turn(
         RunResidentAgiDecisionTurnCommandV1(
             workspace=ws,

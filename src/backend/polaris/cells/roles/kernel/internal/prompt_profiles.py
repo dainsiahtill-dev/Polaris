@@ -173,6 +173,11 @@ _TASK_FOCUS: dict[str, str] = {
 _ARTIFACT_FOCUS: dict[str, str] = {
     "cli": "CLI artifacts must expose a real command that exits correctly and reports actionable errors.",
     "web": "Web artifacts must have a real browser entrypoint whose scripts/assets resolve after build.",
+    "html5_canvas": (
+        "HTML5/Canvas artifacts require a browser-specific bootstrap: initialize after the DOM/canvas exists, "
+        "paint a visible non-empty first frame before user interaction, keep canvas dimensions stable, and make "
+        "the HTML script point to browser-loadable code rather than a Node-only CLI entrypoint."
+    ),
     "api": "API artifacts must expose a real route or handler with explicit request/response contracts.",
     "library": "Library artifacts must expose stable public APIs and keep I/O outside core logic.",
     "test_suite": "Test artifacts must be executable by the declared package/test runner.",
@@ -621,8 +626,17 @@ def _infer_language(*, context: dict[str, Any], message: str) -> str:
             return _normalize_language(explicit)
 
     candidates = _path_candidates(context, message)
+    source_candidates = [
+        path
+        for path in candidates
+        if not any(
+            part in {"dist", "build", "out", "coverage", "node_modules"}
+            for part in Path(path.strip().replace("\\", "/")).parts
+        )
+    ]
+    inference_candidates = source_candidates or candidates
     scores: dict[str, int] = {}
-    for path in candidates:
+    for path in inference_candidates:
         name = Path(path).name.lower()
         suffix = Path(path).suffix.lower()
         language = _SPECIAL_FILE_LANGUAGE_MAP.get(name) or _EXTENSION_LANGUAGE_MAP.get(suffix)
@@ -704,6 +718,11 @@ def _infer_artifact(*, context: dict[str, Any], message: str) -> str:
         Path(path).name.lower() in {"package.json", "tsconfig.json", "pyproject.toml"} for path in candidates
     )
     has_web = any(path.endswith((".html", ".css", ".tsx", ".jsx", ".vue")) for path in candidates)
+    has_canvas_entry_path = any(
+        path.endswith(("/web.ts", "/web.tsx", "/renderer.ts", "/renderer.tsx", "/simulation.ts", "/simulation.tsx"))
+        or "canvas" in path
+        for path in candidates
+    )
     has_source = any(
         path.endswith(
             (
@@ -732,6 +751,23 @@ def _infer_artifact(*, context: dict[str, Any], message: str) -> str:
         return "cli"
     if any(token in lowered for token in ("api", "rest", "http route", "接口")):
         return "api"
+    has_canvas = any(
+        token in lowered
+        for token in (
+            "html5 canvas",
+            "canvas",
+            "webgl",
+            "2d context",
+            "requestanimationframe",
+            "non-empty canvas",
+            "画布",
+            "首帧",
+            "可视化",
+            "视觉",
+        )
+    )
+    if has_web and (has_canvas or has_canvas_entry_path):
+        return "html5_canvas"
     if has_web or any(token in lowered for token in ("web", "browser", "frontend", "页面", "浏览器")):
         return "web"
     if any(token in lowered for token in ("readme", "docs", "文档")):

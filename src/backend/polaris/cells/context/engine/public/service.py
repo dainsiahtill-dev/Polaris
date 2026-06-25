@@ -8,6 +8,8 @@ Architecture (P1-CTX-003 convergence):
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.context.engine.internal.precision_mode import (
@@ -16,16 +18,20 @@ from polaris.cells.context.engine.internal.precision_mode import (
     route_by_cost_model,
 )
 from polaris.kernelone.context.runtime_feature_flags import resolve_context_os_enabled
+from polaris.kernelone.llm.engine.internal.context_hash import validate_context_hash
 from polaris.kernelone.memory.integration import (
     get_persona_text,
     init_anthropomorphic_modules,
 )
 from polaris.kernelone.memory.schema import PromptContext
+from polaris.kernelone.storage.io_paths import resolve_storage_roots
 
 from .contracts import (
     BuildRoleContextCommandV1,
     ContextEngineError,
     ContextResolvedEventV1,
+    FinalProviderRequestAuditResultV1,
+    QueryFinalProviderRequestAuditV1,
     ResolveRoleContextQueryV1,
     RoleContextResultV1,
 )
@@ -164,6 +170,119 @@ def get_search_service() -> Any:
     from polaris.cells.context.engine.internal.search_gateway import get_search_service as _get_search_service
 
     return _get_search_service()
+
+
+def _context_hash_from_ref(context_snapshot_ref: str) -> str:
+    token = str(context_snapshot_ref or "").strip().replace("\\", "/")
+    if "/" in token:
+        token = token.rstrip("/").rsplit("/", 1)[-1]
+    return validate_context_hash(token)
+
+
+def query_final_provider_request_audit(
+    query: QueryFinalProviderRequestAuditV1,
+) -> FinalProviderRequestAuditResultV1:
+    """Read final provider request audit evidence from a stored ContextOS snapshot."""
+
+    try:
+        context_hash = _context_hash_from_ref(query.context_snapshot_ref)
+    except ValueError as exc:
+        return FinalProviderRequestAuditResultV1(
+            ok=False,
+            status="invalid_ref",
+            workspace=query.workspace,
+            context_snapshot_ref=query.context_snapshot_ref,
+            payload={},
+            error_code="invalid_context_snapshot_ref",
+            error_message=str(exc),
+        )
+
+    file_path = Path(resolve_storage_roots(query.workspace).runtime_root) / "contexts" / context_hash[:2] / context_hash
+    if not file_path.is_file():
+        return FinalProviderRequestAuditResultV1(
+            ok=False,
+            status="not_found",
+            workspace=query.workspace,
+            context_snapshot_ref=query.context_snapshot_ref,
+            payload={"context_hash": context_hash, "context_path": str(file_path)},
+            error_code="context_snapshot_not_found",
+            error_message=f"Context snapshot not found for hash {context_hash}.",
+        )
+
+    try:
+        with open(file_path, encoding="utf-8") as handle:
+            snapshot_payload = json.load(handle)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return FinalProviderRequestAuditResultV1(
+            ok=False,
+            status="unreadable",
+            workspace=query.workspace,
+            context_snapshot_ref=query.context_snapshot_ref,
+            payload={"context_hash": context_hash, "context_path": str(file_path)},
+            error_code="context_snapshot_unreadable",
+            error_message=str(exc),
+        )
+    if not isinstance(snapshot_payload, dict):
+        return FinalProviderRequestAuditResultV1(
+            ok=False,
+            status="invalid_snapshot",
+            workspace=query.workspace,
+            context_snapshot_ref=query.context_snapshot_ref,
+            payload={"context_hash": context_hash, "context_path": str(file_path)},
+            error_code="context_snapshot_invalid_format",
+            error_message="Context snapshot payload must be an object.",
+        )
+
+    provider_request_raw = snapshot_payload.get("provider_request")
+    provider_request = provider_request_raw if isinstance(provider_request_raw, dict) else {}
+    if not provider_request:
+        return FinalProviderRequestAuditResultV1(
+            ok=False,
+            status="missing_provider_request",
+            workspace=query.workspace,
+            context_snapshot_ref=query.context_snapshot_ref,
+            payload={
+                "context_hash": context_hash,
+                "context_path": str(file_path),
+                "trace_id": snapshot_payload.get("trace_id"),
+                "call_id": snapshot_payload.get("call_id"),
+            },
+            error_code="provider_request_missing",
+            error_message="Context snapshot does not include provider_request audit evidence.",
+        )
+
+    messages_raw = snapshot_payload.get("messages")
+    messages = messages_raw if isinstance(messages_raw, list) else []
+    final_audit_raw = provider_request.get("final_request_context_audit")
+    final_audit = final_audit_raw if isinstance(final_audit_raw, dict) else {}
+    tools_raw = provider_request.get("tools")
+    tools = tools_raw if isinstance(tools_raw, list) else []
+    return FinalProviderRequestAuditResultV1(
+        ok=True,
+        status="available",
+        workspace=query.workspace,
+        context_snapshot_ref=query.context_snapshot_ref,
+        payload={
+            "schema_version": "context.final_provider_request_audit.v1",
+            "context_hash": context_hash,
+            "context_path": str(file_path),
+            "trace_id": snapshot_payload.get("trace_id"),
+            "call_id": snapshot_payload.get("call_id"),
+            "stored_at": snapshot_payload.get("stored_at"),
+            "message_count": len(messages),
+            "messages": messages,
+            "provider_request": provider_request,
+            "provider_request_schema_version": provider_request.get("schema_version"),
+            "role": provider_request.get("role"),
+            "provider_id": provider_request.get("provider_id"),
+            "provider_type": provider_request.get("provider_type"),
+            "model": provider_request.get("model"),
+            "tools": tools,
+            "tool_choice": provider_request.get("tool_choice"),
+            "response_format": provider_request.get("response_format"),
+            "final_request_context_audit": final_audit,
+        },
+    )
 
 
 def _build_context_request(
@@ -378,9 +497,12 @@ __all__ = [
     "BuildRoleContextCommandV1",
     "ContextEngineError",
     "ContextResolvedEventV1",
+    "FinalProviderRequestAuditResultV1",
+    "QueryFinalProviderRequestAuditV1",
     "ResolveRoleContextQueryV1",
     "RoleContextResultV1",
     "build_context_window",
     "get_anthropomorphic_context_v2",
     "get_search_service",
+    "query_final_provider_request_audit",
 ]

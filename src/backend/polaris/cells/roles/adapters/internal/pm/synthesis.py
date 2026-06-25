@@ -123,8 +123,12 @@ def _pascal_identifier_token(value: str, *, fallback: str) -> str:
 
 def _typescript_model_target_from_keyword(keyword: str, *, fallback: str) -> str:
     normalized = str(keyword or "").strip().lower()
-    name = _pascal_identifier_token(normalized, fallback=fallback)
-    return f"src/domain/{name}.ts"
+    aliases = {
+        "moon": "MoonPhase",
+        "moonphase": "MoonPhase",
+    }
+    name = aliases.get(normalized) or _pascal_identifier_token(normalized, fallback=fallback)
+    return f"src/models/{name}.ts"
 
 
 def _typescript_model_targets_from_keywords(keywords: list[str], *, domain_token: str) -> list[str]:
@@ -144,7 +148,7 @@ def _extract_typescript_semantic_keywords(directive: str) -> list[str]:
     checks = [
         ("firefly", ("firefly", "fireflies", "萤火虫", "發光昆蟲", "发光昆虫")),
         ("flower", ("flower", "flowers", "花朵", "花園", "花园")),
-        ("moon", ("moon", "moonphase", "月相", "月亮")),
+        ("moonphase", ("moon", "moonphase", "月相", "月亮")),
         ("humidity", ("humidity", "湿度", "濕度")),
     ]
     keywords: list[str] = []
@@ -372,6 +376,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "index.html",
                     "src/engine/simulation.ts",
                     "src/engine/renderer.ts",
+                    "src/web.ts",
                 ]
                 validation_targets = [
                     "package.json",
@@ -395,13 +400,15 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "target_files": model_targets,
                         "steps": [
                             "创建 package.json，声明真实 build/test/start 脚本，禁止 echo-only 或 manifest-only 脚本",
-                            "创建 tsconfig.json，启用 strict、DOM/ES2020 lib、outDir=dist、rootDir=src",
-                            "实现 src/index.ts、src/main.ts 与需求派生领域模块，暴露可运行入口和核心需求状态",
+                            "创建 tsconfig.json，启用 strict、DOM/ES2020 lib、outDir=dist、rootDir=src，并保持 package.json type 与 compilerOptions.module 一致",
+                            "实现 src/index.ts、src/main.ts 与 src/models/ 需求派生领域模块，暴露可运行入口和核心需求状态",
                             "`npm start` 必须先 build 或引用当前存在的源码入口，不能指向未生成的 dist 文件",
+                            "若 package.json 使用 type=module，则 TypeScript 必须输出可被 Node/浏览器加载的 ESM；否则不要声明 type=module",
                         ],
                         "acceptance": [
-                            "`package.json`、`tsconfig.json`、`src/index.ts`、`src/main.ts` 与需求派生领域模块存在且非空",
+                            "`package.json`、`tsconfig.json`、`src/index.ts`、`src/main.ts` 与 `src/models/` 需求派生领域模块存在且非空",
                             "`npm run build`、`npm run test` 与 `npm start` 对真实入口执行检查",
+                            "package.json type 与 tsconfig module 不得出现 ESM/CommonJS 错配",
                             f"源码或测试覆盖需求关键词：{keyword_summary}",
                         ],
                         "phase": "requirements",
@@ -421,12 +428,16 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "steps": [
                             "实现 src/engine/simulation.ts 的状态更新或计算流程",
                             "实现 src/engine/renderer.ts，将核心状态渲染为浏览器可见内容",
-                            "创建 index.html，包含有效 <html> 与可视化容器",
+                            "实现 src/web.ts 或等价浏览器 bootstrap，在 DOM 可用后初始化引擎并绘制首帧",
+                            "创建 index.html，包含有效 <html>、HTML5 canvas 与可视化容器",
+                            'index.html 不得把 Node-only CLI 入口直接作为 <script type="module"> 引入；必须引用浏览器入口或内联浏览器 bootstrap',
                             f"在页面或源码中保留验收关键词：{keyword_summary}",
                         ],
                         "acceptance": [
-                            "`index.html` 存在并包含有效 `<html>` 标签与模拟容器",
+                            "`index.html` 存在并包含有效 `<html>` 标签、`<canvas>` 与模拟容器",
                             "`src/engine/` 存在并包含可渲染场景或引擎核心文件",
+                            "浏览器入口在首屏自动绘制非空 canvas，无需用户先点击",
+                            "HTML 入口引用的脚本/资源在 build 后真实存在并能被浏览器加载",
                             f"源码或页面包含需求关键词：{keyword_summary}",
                             "`npm run build` 通过且浏览器入口引用真实构建产物",
                         ],

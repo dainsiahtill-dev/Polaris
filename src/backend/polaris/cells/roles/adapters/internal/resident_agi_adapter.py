@@ -183,6 +183,7 @@ class ResidentAgiAdapter(BaseRoleAdapter):
                 "risks": ["risk"],
                 "next_action": "specific next action",
                 "downstream_allowed": False,
+                "decision_capability_id": decision_contract["decision_capability_id"],
             },
         }
         return "\n".join(
@@ -190,7 +191,7 @@ class ResidentAgiAdapter(BaseRoleAdapter):
                 "Run a Resident AGI supervision decision through the shared role runtime.",
                 "Use resident_agi_decision_contract as the governing decision contract.",
                 "Do not infer a different AGI capability from unrelated audit-pack registry entries.",
-                "Do not bypass PM -> Chief Engineer -> Director -> QA.",
+                "Do not bypass PM → Chief Engineer → Director.",
                 "Return one JSON object matching required_output.",
                 json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2),
             ]

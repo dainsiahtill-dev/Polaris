@@ -240,6 +240,7 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         wait_mock.assert_called_once()
         self.assertEqual(wait_mock.call_args.args[:2], (self.backend_url, run_id))
         self.assertEqual(wait_mock.call_args.kwargs.get("workspace"), str(self.workspace))
+        self.assertEqual(wait_mock.call_args.kwargs.get("return_diagnostics"), True)
 
         get_status_calls = [
             p
@@ -492,7 +493,25 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         }
         log_path = Path(self._tmp.name) / "chain.log"
         run_id = self._expected_run_id()
-        with patch("scripts.factory_bench.run_factory_bench.wait_run_until_terminal", return_value=None):
+        with patch(
+            "scripts.factory_bench.run_factory_bench.wait_run_until_terminal",
+            return_value={
+                "run_id": run_id,
+                "status": "running",
+                "phase": "director_dispatch",
+                "_event_wait_error": {
+                    "kind": "runtime_v2_connection_failed",
+                    "message": "received 1012 (service restart)",
+                    "backend_url": self.backend_url,
+                    "workspace": str(self.workspace),
+                },
+                "last_observed_status": {
+                    "run_id": run_id,
+                    "status": "running",
+                    "phase": "director_dispatch",
+                },
+            },
+        ) as wait_mock:
             result = run_factory_chain(
                 project,
                 self.workspace,
@@ -504,6 +523,10 @@ class TestFactoryRunsIntegration(unittest.TestCase):
 
         self.assertEqual(result.get("exit_code"), -1)
         self.assertEqual(result.get("error"), "event_wait_timeout")
+        self.assertEqual(wait_mock.call_args.kwargs.get("return_diagnostics"), True)
+        self.assertEqual(result.get("event_wait_error", {}).get("kind"), "runtime_v2_connection_failed")
+        self.assertEqual(result.get("last_observed_status", {}).get("phase"), "director_dispatch")
+        self.assertEqual(result.get("cancel_response", {}).get("status"), "cancelled")
         control_calls = [
             body
             for method, path, body in _MockFactoryRunsBackend.received

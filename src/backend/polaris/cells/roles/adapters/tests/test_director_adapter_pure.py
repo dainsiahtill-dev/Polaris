@@ -10854,6 +10854,26 @@ class TestQualityRepairMissingTargetContract:
         assert "rewrite only the authorized JavaScript source/test files" in message
         assert "export` declarations" in message
 
+    def test_html5_canvas_entrypoint_repair_message_names_browser_bootstrap(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="Create an HTML5 Canvas TypeScript flight simulator.",
+            artifact_quality_errors=[
+                "Real run gate failed: Canvas entrypoint did not render non-empty pixels "
+                "for index.html after browser load."
+            ],
+            changed_files=["index.html", "src/main.ts"],
+            repair_target_files=["index.html", "src/web.ts"],
+        )
+
+        assert "HTML5 CANVAS ENTRYPOINT REPAIR" in message
+        assert "paint visible pixels" in message
+        assert "after the DOM/canvas exists" in message
+        assert "Node-only CLI entrypoint" in message
+
     def test_deterministic_javascript_esm_commonjs_entrypoint_repair(self, tmp_path: Any) -> None:
         from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
             _apply_deterministic_javascript_esm_commonjs_entrypoint_repair,
@@ -10918,6 +10938,72 @@ class TestQualityRepairMissingTargetContract:
         assert "if (process.argv[1] === __filename)" in repaired
         assert "export { main, Note };" in repaired
         assert "export default { main, Note };" in repaired
+
+    def test_deterministic_typescript_commonjs_package_type_repair_updates_manifest_not_dist(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
+            _apply_deterministic_javascript_esm_commonjs_entrypoint_repair,
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "dist").mkdir()
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "ts-web-lab",
+                    "type": "module",
+                    "scripts": {
+                        "build": "tsc -p .",
+                        "start": "npm run build && node dist/main.js",
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tsconfig.json").write_text(
+            json.dumps(
+                {
+                    "compilerOptions": {
+                        "module": "commonjs",
+                        "target": "ES2020",
+                        "rootDir": "src",
+                        "outDir": "dist",
+                    },
+                    "include": ["src/**/*.ts"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "main.ts").write_text("export const main = () => 'ok';\n", encoding="utf-8")
+        compiled = (
+            '"use strict";\nObject.defineProperty(exports, "__esModule", { value: true });\nexports.main = void 0;\n'
+        )
+        (tmp_path / "dist" / "main.js").write_text(compiled, encoding="utf-8")
+
+        results = _apply_deterministic_javascript_esm_commonjs_entrypoint_repair(
+            _make_adapter(tmp_path),
+            task_id="task-ts-cjs-package",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run start): "
+                f"file://{tmp_path}/dist/main.js:2\n"
+                "ReferenceError: exports is not defined in ES module scope. "
+                'package.json contains "type": "module".'
+            ],
+        )
+
+        assert results
+        assert results[0]["result"]["source_tool"] == "deterministic_typescript_commonjs_package_type_repair"
+        package_data = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+        assert package_data["type"] == "commonjs"
+        assert (tmp_path / "dist" / "main.js").read_text(encoding="utf-8") == compiled
 
     def test_deterministic_javascript_esm_commonjs_repair_converts_default_imported_commonjs_module(
         self,

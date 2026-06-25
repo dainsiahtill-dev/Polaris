@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
+from polaris.cells.context.engine.public import (
+    QueryFinalProviderRequestAuditV1,
+    query_final_provider_request_audit,
+)
 from polaris.delivery.http.schemas.context import (
     ContextStoreStatsResponse,
     SweepReportResponse,
@@ -96,6 +100,51 @@ def get_context_stats(request: Request) -> dict[str, Any]:
     workspace = _resolve_workspace(request)
     retention = _build_retention(workspace)
     return _context_stats_response(retention.get_stats(), last_sweep_report=None)
+
+
+@router.get("/v2/context/{hash}/final-request", dependencies=[Depends(require_auth)])
+def get_context_final_request_by_hash(request: Request, hash: str) -> dict[str, Any]:
+    """Retrieve final provider request audit evidence for a stored context snapshot."""
+
+    try:
+        canonical_hash = validate_context_hash(hash)
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_HASH",
+            message="Hash must be a 24-character hexadecimal string",
+        ) from exc
+
+    state = get_state(request)
+    settings = state.settings
+    check_advisory_workspace_acl(
+        request=request,
+        settings=settings,
+        code="WORKSPACE_FORBIDDEN",
+        message="Context snapshot belongs to a different workspace",
+    )
+    workspace = _resolve_workspace(request)
+    result = query_final_provider_request_audit(
+        QueryFinalProviderRequestAuditV1(
+            workspace=workspace,
+            context_snapshot_ref=canonical_hash,
+        )
+    )
+    if result.ok:
+        return result.payload
+
+    status_code = 500
+    if result.status == "invalid_ref":
+        status_code = 400
+    elif result.status == "not_found":
+        status_code = 404
+    elif result.status == "missing_provider_request":
+        status_code = 409
+    raise StructuredHTTPException(
+        status_code=status_code,
+        code=result.error_code or "FINAL_PROVIDER_REQUEST_AUDIT_UNAVAILABLE",
+        message=result.error_message or "Final provider request audit is unavailable.",
+    )
 
 
 @router.get("/v2/context/{hash}", dependencies=[Depends(require_auth)])

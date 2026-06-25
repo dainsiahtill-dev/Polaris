@@ -817,6 +817,25 @@ def _build_non_terminal_real_run_gate(*, chain_phase: str, chain_status: str) ->
     }
 
 
+def _non_terminal_chain_diagnostics(
+    *,
+    chain: dict[str, Any],
+    backend_url: str,
+    project_workspace: str,
+    launcher_instance: dict[str, Any],
+) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "backend_url": backend_url,
+        "workspace": project_workspace,
+        "launcher_instance": dict(launcher_instance),
+    }
+    for key in ("event_wait_error", "last_observed_status", "cancel_response", "cancel_error"):
+        value = chain.get(key)
+        if value not in (None, "", {}):
+            diagnostics[key] = value
+    return diagnostics
+
+
 def _resolve_bench_cache_root(workspace: Path) -> str:
     """Resolve the runtime cache_root for ``workspace`` using the same storage
     layout the chain subprocess writes to. Returns "" if storage roots cannot
@@ -2427,20 +2446,42 @@ def run_factory_chain(
             timeout_s=float(timeout_s),
             on_status=_on_status,
             initial_status=start_response,
+            return_diagnostics=True,
         )
-        if terminal_status is None:
-            cancel_factory_run(
+        event_wait_error: dict[str, Any] = {}
+        last_observed_status: dict[str, Any] = {}
+        if isinstance(terminal_status, dict):
+            raw_event_wait_error = terminal_status.get("_event_wait_error")
+            if isinstance(raw_event_wait_error, dict):
+                event_wait_error = raw_event_wait_error
+            raw_last_observed = terminal_status.get("last_observed_status")
+            if isinstance(raw_last_observed, dict):
+                last_observed_status = raw_last_observed
+        if terminal_status is None or event_wait_error:
+            cancel_response = cancel_factory_run(
                 backend_url,
                 run_id,
                 reason=f"factory-bench event wait timeout after {timeout_s}s",
                 token=backend_token,
                 workspace=str(workspace),
+                return_errors=True,
+            )
+            cancel_error = (
+                cancel_response.get("_http_error")
+                if isinstance(cancel_response, dict) and isinstance(cancel_response.get("_http_error"), dict)
+                else {}
             )
             return {
                 "exit_code": -1,
                 "duration_s": round(time.time() - started, 1),
                 "run_id": run_id,
                 "error": "event_wait_timeout",
+                "event_wait_error": event_wait_error,
+                "last_observed_status": last_observed_status,
+                "cancel_response": cancel_response,
+                "cancel_error": cancel_error,
+                "backend_url": backend_url,
+                "workspace": str(workspace),
             }
 
     audit_bundle = get_audit_bundle(backend_url, run_id, token=backend_token, workspace=str(workspace))
@@ -3152,6 +3193,14 @@ def main() -> int:
         record["runtime_dir"] = str(runtime_dir) if runtime_dir else None
         record["runtime_dirs"] = [str(path) for path in runtime_dirs]
         record["chain"] = chain
+        record["launcher_instance"] = dict(launcher_instance_meta)
+        if not chain_is_terminal:
+            record["chain_diagnostics"] = _non_terminal_chain_diagnostics(
+                chain=chain,
+                backend_url=project_backend_url,
+                project_workspace=project_workspace,
+                launcher_instance=launcher_instance_meta,
+            )
         if use_legacy_chain:
             record["chain_results"] = read_chain_results_from_runtime_dirs(runtime_dirs)
         else:
@@ -3208,6 +3257,8 @@ def main() -> int:
                 chain_phase=chain_phase_raw,
                 chain_status=chain_status_raw,
             )
+            if isinstance(record.get("chain_diagnostics"), dict):
+                record["real_run_gate"]["diagnostics"] = record["chain_diagnostics"]
             record["run_ledger"] = persist_real_run_gate_ledger(
                 workspace,
                 record,

@@ -418,6 +418,15 @@ def _apply_deterministic_javascript_esm_commonjs_entrypoint_repair(
     )
     if not candidates:
         return []
+    typescript_package_results = _repair_typescript_commonjs_package_type_mismatch(
+        adapter,
+        workspace_path=workspace_path,
+        package_path=package_path,
+        task_id=task_id,
+        candidates=candidates,
+    )
+    if typescript_package_results:
+        return typescript_package_results
 
     message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
     executor = DirectorToolExecutor(
@@ -1639,6 +1648,101 @@ def _package_declares_type_module(package_path: Path) -> bool:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return False
     return isinstance(package_data, dict) and str(package_data.get("type") or "").strip().lower() == "module"
+
+
+def _repair_typescript_commonjs_package_type_mismatch(
+    adapter: Any,
+    *,
+    workspace_path: Path,
+    package_path: Path,
+    task_id: str,
+    candidates: list[str],
+) -> list[dict[str, Any]]:
+    """Fix TS projects whose package declares ESM but tsc emits CommonJS.
+
+    Rewriting ``dist/*.js`` is the wrong layer for TypeScript projects because
+    the next ``npm run build`` overwrites ``dist``.  When the failure points at
+    compiled output and ``tsconfig.json`` explicitly emits CommonJS, repair the
+    package runtime contract instead.
+    """
+
+    if not _typescript_commonjs_dist_mismatch_present(
+        workspace_path=workspace_path,
+        candidates=candidates,
+    ):
+        return []
+    try:
+        package_data = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(package_data, dict):
+        return []
+    if str(package_data.get("type") or "").strip().lower() != "module":
+        return []
+    package_data["type"] = "commonjs"
+    repaired = json.dumps(package_data, ensure_ascii=False, indent=2) + "\n"
+
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    write_result = DirectorToolExecutor(
+        str(workspace_path),
+        message_bus=message_bus,
+        worker_id="director",
+    ).execute_tool(
+        "write_file",
+        {"file": "package.json", "content": repaired},
+        task_id=task_id,
+    )
+    if not bool(write_result.get("ok")):
+        return []
+    with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+        adapter._update_task_progress(task_id, "executing", current_file="package.json")
+    return [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_typescript_commonjs_package_type_repair",
+                "file": "package.json",
+                "candidates": candidates,
+                "bytes_written": int(write_result.get("bytes_written") or len(repaired.encode("utf-8"))),
+                "operation": str(write_result.get("operation") or "modify"),
+                "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                "director_policy": write_result.get("director_policy"),
+            },
+        }
+    ]
+
+
+def _typescript_commonjs_dist_mismatch_present(
+    *,
+    workspace_path: Path,
+    candidates: list[str],
+) -> bool:
+    tsconfig_path = workspace_path / "tsconfig.json"
+    if not tsconfig_path.is_file():
+        return False
+    try:
+        tsconfig = json.loads(tsconfig_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(tsconfig, dict):
+        return False
+    compiler_options = tsconfig.get("compilerOptions")
+    if not isinstance(compiler_options, dict):
+        return False
+    module_kind = str(compiler_options.get("module") or "").strip().lower()
+    if module_kind not in {"commonjs", "cjs"}:
+        return False
+    for rel in candidates:
+        token = str(rel or "").replace("\\", "/").lstrip("./")
+        if not token.startswith(("dist/", "build/", "out/")) or not token.endswith(".js"):
+            continue
+        source_rel = "src/" + str(Path(token).with_suffix(".ts").as_posix()).split("/", 1)[1]
+        if (workspace_path / source_rel).is_file():
+            return True
+    return False
 
 
 def _javascript_esm_commonjs_entrypoint_candidates(

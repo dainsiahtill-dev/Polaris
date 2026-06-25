@@ -20,6 +20,13 @@ def _to_dict_copy(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(payload or {})
 
 
+def _to_non_empty_tuple(name: str, values: tuple[str, ...]) -> tuple[str, ...]:
+    normalized = tuple(str(item or "").strip() for item in values if str(item or "").strip())
+    if not normalized:
+        raise ValueError(f"{name} must include at least one non-empty string")
+    return normalized
+
+
 @dataclass(frozen=True)
 class RunResidentCycleCommandV1:
     workspace: str
@@ -244,6 +251,8 @@ class RunResidentAgiDecisionTurnCommandV1:
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "objective", _require_non_empty("objective", self.objective))
+        if self.include_audit_pack is not True:
+            raise ValueError("include_audit_pack must remain enabled for Resident AGI decisions")
         object.__setattr__(
             self,
             "decision_type",
@@ -276,6 +285,49 @@ class RunResidentAgiDecisionTurnCommandV1:
         object.__setattr__(self, "confidence", min(1.0, max(0.0, float(self.confidence or 0.0))))
         object.__setattr__(self, "include_audit_pack", bool(self.include_audit_pack))
         object.__setattr__(self, "audit_pack_decision_limit", max(1, min(int(self.audit_pack_decision_limit), 100)))
+
+
+@dataclass(frozen=True)
+class ResidentAgiDecisionOutputV1:
+    verdict: str
+    rationale: str
+    evidence_refs: tuple[str, ...]
+    risks: tuple[str, ...] = field(default_factory=tuple)
+    next_action: str = ""
+    downstream_allowed: bool = False
+    decision_capability_id: str = ""
+
+    def __post_init__(self) -> None:
+        verdict = str(self.verdict or "").strip().lower()
+        if verdict not in {"continue", "block", "escalate", "request_evidence"}:
+            raise ValueError("verdict must be one of continue, block, escalate, request_evidence")
+        object.__setattr__(self, "verdict", verdict)
+        object.__setattr__(self, "rationale", _require_non_empty("rationale", self.rationale))
+        object.__setattr__(self, "evidence_refs", _to_non_empty_tuple("evidence_refs", self.evidence_refs))
+        object.__setattr__(
+            self,
+            "risks",
+            tuple(str(item or "").strip() for item in self.risks if str(item or "").strip()),
+        )
+        object.__setattr__(self, "next_action", _require_non_empty("next_action", self.next_action))
+        if not isinstance(self.downstream_allowed, bool):
+            raise ValueError("downstream_allowed must be a boolean")
+        object.__setattr__(
+            self,
+            "decision_capability_id",
+            _require_non_empty("decision_capability_id", self.decision_capability_id),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "verdict": self.verdict,
+            "rationale": self.rationale,
+            "evidence_refs": list(self.evidence_refs),
+            "risks": list(self.risks),
+            "next_action": self.next_action,
+            "downstream_allowed": self.downstream_allowed,
+            "decision_capability_id": self.decision_capability_id,
+        }
 
 
 @dataclass(frozen=True)
@@ -553,6 +605,7 @@ __all__ = [
     "ExtractResidentSkillsCommandV1",
     "MaterializeResidentGoalCommandV1",
     "QueryResidentAgiAuditPackV1",
+    "QueryResidentAgiEvidenceInterfacesV1",
     "QueryResidentCapabilitiesV1",
     "QueryResidentStatusV1",
     "RecordResidentDecisionCommandV1",
@@ -561,6 +614,7 @@ __all__ = [
     "ResidentAgiCapabilityV1",
     "ResidentAgiDecisionBoundaryV1",
     "ResidentAgiDecisionCapabilityV1",
+    "ResidentAgiDecisionOutputV1",
     "ResidentAutonomyError",
     "ResidentAutonomyResultV1",
     "ResidentCycleCompletedEventV1",

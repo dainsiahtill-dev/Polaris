@@ -227,6 +227,17 @@ def _http_post_json(
             return None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             print(f"[factory-bench] backend POST failed: {url}: {exc}", file=sys.stderr, flush=True)
+            if return_errors:
+                return {
+                    "_http_error": {
+                        "status": 0,
+                        "reason": str(exc),
+                        "body": "",
+                        "json": None,
+                        "exception": type(exc).__name__,
+                        "url": url,
+                    }
+                }
             return None
     else:
         return None
@@ -301,13 +312,14 @@ def cancel_factory_run(
     reason: str = "",
     token: str = "",
     workspace: str = "",
+    return_errors: bool = False,
 ) -> dict[str, Any] | None:
     payload = {
         "action": "cancel",
         "reason": reason or "factory-bench cancelled run",
     }
     url = _append_query_params(f"{backend_url}/v2/factory/runs/{run_id}/control", {"workspace": workspace})
-    return _http_post_json(url, payload, token=token)
+    return _http_post_json(url, payload, token=token, return_errors=return_errors)
 
 
 def get_audit_bundle(
@@ -338,6 +350,7 @@ def wait_run_until_terminal(
     timeout_s: float = 5400.0,
     on_status: Callable[[dict[str, Any]], None] | None = None,
     initial_status: Mapping[str, Any] | None = None,
+    return_diagnostics: bool = False,
 ) -> dict[str, Any] | None:
     try:
         return asyncio.run(
@@ -349,10 +362,20 @@ def wait_run_until_terminal(
                 timeout_s=timeout_s,
                 on_status=on_status,
                 initial_status=initial_status,
+                return_diagnostics=return_diagnostics,
             )
         )
     except RuntimeError as exc:
         print(f"[factory-bench] event wait failed: {run_id}: {exc}", file=sys.stderr, flush=True)
+        if return_diagnostics:
+            return _event_wait_diagnostic_status(
+                run_id,
+                dict(initial_status or {}),
+                kind="runtime_error",
+                message=str(exc),
+                backend_url=backend_url,
+                workspace=workspace,
+            )
         return None
 
 
@@ -365,6 +388,7 @@ async def _wait_run_until_terminal_async(
     timeout_s: float = 5400.0,
     on_status: Callable[[dict[str, Any]], None] | None = None,
     initial_status: Mapping[str, Any] | None = None,
+    return_diagnostics: bool = False,
 ) -> dict[str, Any] | None:
     deadline = asyncio.get_running_loop().time() + max(0.0, timeout_s)
     latest_status: dict[str, Any] = {"run_id": run_id, **dict(initial_status or {})}
@@ -380,6 +404,15 @@ async def _wait_run_until_terminal_async(
                 remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0:
                     print(f"[factory-bench] event wait timeout: {run_id}", file=sys.stderr, flush=True)
+                    if return_diagnostics:
+                        return _event_wait_diagnostic_status(
+                            run_id,
+                            latest_status,
+                            kind="timeout",
+                            message=f"runtime.v2 did not deliver terminal event within {timeout_s}s",
+                            backend_url=backend_url,
+                            workspace=workspace,
+                        )
                     return None
                 raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
                 try:
@@ -403,7 +436,52 @@ async def _wait_run_until_terminal_async(
                     return latest_status
     except asyncio.TimeoutError:
         print(f"[factory-bench] event wait timeout: {run_id}", file=sys.stderr, flush=True)
+        if return_diagnostics:
+            return _event_wait_diagnostic_status(
+                run_id,
+                latest_status,
+                kind="timeout",
+                message=f"runtime.v2 did not deliver terminal event within {timeout_s}s",
+                backend_url=backend_url,
+                workspace=workspace,
+            )
         return None
     except (OSError, ValueError, RuntimeError, websockets.exceptions.WebSocketException) as exc:
         print(f"[factory-bench] runtime.v2 event wait failed: {run_id}: {exc}", file=sys.stderr, flush=True)
+        if return_diagnostics:
+            return _event_wait_diagnostic_status(
+                run_id,
+                latest_status,
+                kind="runtime_v2_connection_failed",
+                message=str(exc),
+                backend_url=backend_url,
+                workspace=workspace,
+            )
         return None
+
+
+def _event_wait_diagnostic_status(
+    run_id: str,
+    latest_status: Mapping[str, Any],
+    *,
+    kind: str,
+    message: str,
+    backend_url: str,
+    workspace: str,
+) -> dict[str, Any]:
+    status = dict(latest_status)
+    status["run_id"] = run_id
+    status.setdefault("status", "unknown")
+    status.setdefault("phase", kind or "event_wait_failed")
+    status["_event_wait_error"] = {
+        "kind": kind,
+        "message": message,
+        "backend_url": backend_url,
+        "workspace": workspace,
+    }
+    status["last_observed_status"] = {
+        key: value
+        for key, value in dict(latest_status).items()
+        if key not in {"_event_wait_error", "last_observed_status"}
+    }
+    return status

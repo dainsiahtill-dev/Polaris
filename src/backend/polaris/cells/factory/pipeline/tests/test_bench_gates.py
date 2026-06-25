@@ -121,6 +121,67 @@ def test_failure_taxonomy_classifies_missing_run_ledger_gate_as_control_plane() 
     assert taxonomy["evidence"] == ["run ledger projection missing"]
 
 
+def test_failure_taxonomy_prioritizes_event_wait_timeout_over_run_ledger_projection() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "checks": [
+            {"check": "min_files:3", "ok": False, "detail": "0 source files (need >= 3)"},
+        ],
+        "chain": {
+            "exit_code": -1,
+            "error": "event_wait_timeout",
+            "event_wait_error": {
+                "kind": "runtime_v2_connection_failed",
+                "message": "received 1012 (service restart)",
+            },
+            "last_observed_status": {"status": "running", "phase": "director_dispatch"},
+        },
+        "chain_diagnostics": {
+            "backend_url": "http://127.0.0.1:50032",
+            "workspace": "/tmp/factory-bench-L1-08-r06/L1-08",
+            "event_wait_error": {
+                "kind": "runtime_v2_connection_failed",
+                "message": "received 1012 (service restart)",
+            },
+            "cancel_error": {
+                "exception": "URLError",
+                "reason": "<urlopen error [Errno 111] Connection refused>",
+            },
+        },
+        "factory_gates": [
+            {
+                "gate": "real_run_gate",
+                "ok": False,
+                "detail": "real run gate skipped: chain did not reach terminal state (event_wait_timeout)",
+            },
+            {
+                "gate": "run_ledger_projection",
+                "ok": False,
+                "detail": "run ledger projection has 1 failed gate(s)",
+            },
+        ],
+        "real_run_gate": {
+            "ok": False,
+            "skipped": True,
+            "summary": "real run gate skipped: chain did not reach terminal state (event_wait_timeout)",
+            "requirements": {
+                "chain_terminal": {
+                    "ok": False,
+                    "detail": "chain_terminal=false; phase=event_wait_timeout; status=unknown",
+                },
+            },
+        },
+        "run_ledger_projection": {"ok": False, "detail": "run ledger projection has 1 failed gate(s)"},
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "runtime_environment"
+    assert taxonomy["root_cause_signature"] == "runtime_environment:event_wait_runtime_v2_connection_failed"
+    assert taxonomy["evidence"][0] == "received 1012 (service restart)"
+    assert taxonomy["evidence"][1].startswith("secondary_run_ledger:")
+
+
 def test_role_tool_failure_taxonomy_does_not_emit_platform_opencode_audit() -> None:
     record: dict[str, Any] = {
         "project_id": "L1-02",
@@ -177,7 +238,7 @@ def test_failure_taxonomy_classifies_non_terminal_real_run_skip_as_runtime_envir
     taxonomy = apply_factory_bench_failure_taxonomy(record)
 
     assert taxonomy["category"] == "runtime_environment"
-    assert taxonomy["root_cause_signature"] == "runtime_environment:real_run_gate.chain_terminal"
+    assert taxonomy["root_cause_signature"] == "runtime_environment:event_wait_timeout"
     assert taxonomy["evidence"] == ["real run gate skipped: chain did not reach terminal state (event_wait_timeout)"]
 
 
@@ -2896,6 +2957,49 @@ def test_real_run_gate_ts_project_with_scaffolding_passes(tmp_path: Path) -> Non
     assert scaffolding["ok"] is True
     assert "package.json present" in scaffolding["detail"]
     assert "tsconfig.json present" in scaffolding["detail"]
+
+
+def test_real_run_gate_fails_blank_canvas_even_when_package_scripts_pass(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "index.html").write_text(
+        "<html><body><canvas id='scene'></canvas><script src='app.js'></script></body></html>",
+        encoding="utf-8",
+    )
+    (tmp_path / "app.js").write_text("console.log('loaded');\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "blank-canvas",
+                "scripts": {
+                    "build": 'node -e "process.exit(0)"',
+                    "test": 'node -e "process.exit(0)"',
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_smoke_static_web(_workspace: Path, html_rel: str, *, timeout_s: int) -> dict[str, Any]:
+        return {
+            "kind": "web_playwright",
+            "ok": False,
+            "entrypoint": html_rel,
+            "has_canvas": True,
+            "canvas_non_blank": False,
+            "detail": "Canvas entrypoint did not render non-empty pixels",
+        }
+
+    monkeypatch.setattr(bench_gates, "_smoke_static_web", fake_smoke_static_web)
+    record = {"code_files": ["index.html", "app.js", "package.json"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    assert gate["requirements"]["build_test_lint_ran"]["ok"] is True
+    assert gate["requirements"]["entrypoint_smoke"]["ok"] is False
+    assert gate["entrypoint"]["detail"] == "Canvas entrypoint did not render non-empty pixels"
 
 
 def test_real_run_gate_ts_project_requires_local_typescript_dependency(monkeypatch: Any, tmp_path: Path) -> None:

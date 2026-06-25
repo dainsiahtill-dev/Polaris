@@ -94,6 +94,33 @@ def _seed_context(workspace: Path, label: str, content: str) -> str:
     )
 
 
+def _seed_context_with_provider_request(workspace: Path, label: str) -> str:
+    from polaris.kernelone.llm.engine.executor import AIExecutor
+
+    return AIExecutor._store_context_messages_sync(
+        workspace=str(workspace),
+        messages=[{"role": "system", "content": "You are Resident AGI."}],
+        trace_id=f"trace-{label}",
+        call_id=f"call-{label}",
+        provider_request={
+            "schema_version": "llm.provider_request_snapshot.v1",
+            "role": "resident_agi",
+            "provider_id": "mock-provider",
+            "provider_type": "mock",
+            "model": "mock-model",
+            "tool_schema_count": 1,
+            "tools": [{"type": "function", "name": "repo_tree", "argument_keys": [], "required": []}],
+            "tool_choice": "auto",
+            "response_format": {"type": "json_schema", "name": "ResidentAgiDecisionOutputV1"},
+            "final_request_context_audit": {
+                "schema_version": "llm.final_request_context_audit.v1",
+                "final_request_token_estimate": 128,
+                "tool_schema_count": 1,
+            },
+        },
+    )
+
+
 def test_workspace_acl_allows_with_no_header(tmp_path) -> None:
     """No X-ContextOS-Workspace header → reads from active workspace freely."""
     workspace_a = tmp_path / "workspaceA"
@@ -105,6 +132,39 @@ def test_workspace_acl_allows_with_no_header(tmp_path) -> None:
     body = response.json()
     assert body["hash"] == hash_key
     assert body["messages"] == [{"role": "user", "content": "hello-from-A"}]
+
+
+def test_final_request_endpoint_returns_provider_request_audit(tmp_path) -> None:
+    workspace_a = tmp_path / "workspaceA"
+    workspace_a.mkdir()
+    hash_key = _seed_context_with_provider_request(workspace_a, "provider-request")
+    client = _build_client(str(workspace_a))
+
+    response = client.get(f"/v2/context/{hash_key}/final-request")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["schema_version"] == "context.final_provider_request_audit.v1"
+    assert body["context_hash"] == hash_key
+    assert body["message_count"] == 1
+    assert body["provider_request"]["schema_version"] == "llm.provider_request_snapshot.v1"
+    assert body["tools"][0]["name"] == "repo_tree"
+    assert body["tool_choice"] == "auto"
+    assert body["response_format"]["name"] == "ResidentAgiDecisionOutputV1"
+    assert body["final_request_context_audit"]["final_request_token_estimate"] == 128
+
+
+def test_final_request_endpoint_fails_closed_without_provider_request(tmp_path) -> None:
+    workspace_a = tmp_path / "workspaceA"
+    workspace_a.mkdir()
+    hash_key = _seed_context(workspace_a, "missing-provider-request", "hello")
+    client = _build_client(str(workspace_a))
+
+    response = client.get(f"/v2/context/{hash_key}/final-request")
+
+    assert response.status_code == 409, response.text
+    detail = response.json().get("detail", {})
+    assert detail.get("code") == "provider_request_missing", detail
 
 
 def test_workspace_acl_blocks_when_header_targets_other_workspace(tmp_path) -> None:

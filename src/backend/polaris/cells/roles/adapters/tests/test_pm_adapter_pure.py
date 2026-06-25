@@ -206,11 +206,14 @@ class TestFrontendTestRepairContracts:
         assert "src/index.ts" in targets
         assert "src/models/MoonPhase.ts" in targets
         assert "src/engine/renderer.ts" in targets
+        assert "src/web.ts" in targets
         assert "index.html" in targets
         assert "README.md" in targets
         assert "styles.css" not in targets
         assert "npm run build" in serialized
         assert "npm run test" in serialized
+        assert "非空 canvas" in serialized
+        assert "Node-only CLI" in serialized
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 

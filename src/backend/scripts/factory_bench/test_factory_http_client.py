@@ -112,6 +112,27 @@ class TestHTTPPostJson(unittest.TestCase):
             result = _http_post_json("http://localhost:49977/v2/factory/runs", payload, timeout_s=1.0)
         self.assertIsNone(result)
 
+    def test_post_url_error_return_errors_includes_exception(self) -> None:
+        from urllib.error import URLError
+
+        payload = {"ok": True}
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=URLError("connection refused"),
+        ):
+            result = _http_post_json(
+                "http://localhost:49977/v2/factory/runs",
+                payload,
+                timeout_s=1.0,
+                return_errors=True,
+            )
+
+        self.assertIsInstance(result, dict)
+        error = result["_http_error"]
+        self.assertEqual(error["status"], 0)
+        self.assertEqual(error["exception"], "URLError")
+        self.assertIn("connection refused", error["reason"])
+
     def test_post_malformed_json(self) -> None:
         fake_resp = FakeHTTPResponse(b"not json")
         with patch("urllib.request.urlopen", return_value=fake_resp):
@@ -280,6 +301,21 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(body["action"], "cancel")
         self.assertEqual(body["reason"], "bench event wait timeout")
 
+    def test_cancel_factory_run_can_return_connection_error_payload(self) -> None:
+        from urllib.error import URLError
+
+        with patch("urllib.request.urlopen", side_effect=URLError("connection refused")):
+            result = cancel_factory_run(
+                "http://localhost:49977",
+                "run-42",
+                reason="bench event wait timeout",
+                return_errors=True,
+            )
+
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result["_http_error"]["exception"], "URLError")
+        self.assertIn("connection refused", result["_http_error"]["reason"])
+
     def test_get_audit_bundle(self) -> None:
         fake_resp = FakeHTTPResponse(json.dumps({"audit": "data"}).encode("utf-8"))
         with patch("urllib.request.urlopen", return_value=fake_resp) as mock_urlopen:
@@ -385,6 +421,7 @@ class TestEventWaitUntilTerminal(unittest.TestCase):
             timeout_s: float = 5400.0,
             on_status=None,
             initial_status=None,
+            return_diagnostics: bool = False,
         ):
             self.assertEqual(backend_url, "http://localhost:49977")
             self.assertEqual(run_id, "run-42")
@@ -392,6 +429,7 @@ class TestEventWaitUntilTerminal(unittest.TestCase):
             self.assertEqual(workspace, "/tmp/ws")
             self.assertEqual(timeout_s, 5.0)
             self.assertEqual(initial_status, {"status": "running"})
+            self.assertFalse(return_diagnostics)
             if on_status is not None:
                 on_status({"run_id": run_id, "status": "completed"})
             return {"run_id": run_id, "status": "completed"}
@@ -410,6 +448,25 @@ class TestEventWaitUntilTerminal(unittest.TestCase):
 
         self.assertEqual(result, {"run_id": "run-42", "status": "completed"})
         self.assertEqual(seen, [{"run_id": "run-42", "status": "completed"}])
+
+    def test_wait_run_until_terminal_returns_diagnostics_on_runtime_error(self) -> None:
+        async def _fake_wait(*args, **kwargs):
+            raise RuntimeError("received 1012 (service restart)")
+
+        with patch("factory_http_client._wait_run_until_terminal_async", _fake_wait):
+            result = wait_run_until_terminal(
+                "http://localhost:49977",
+                "run-42",
+                workspace="/tmp/ws",
+                initial_status={"status": "running", "phase": "director_dispatch"},
+                return_diagnostics=True,
+            )
+
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result["run_id"], "run-42")
+        self.assertEqual(result["phase"], "director_dispatch")
+        self.assertEqual(result["_event_wait_error"]["kind"], "runtime_error")
+        self.assertIn("service restart", result["_event_wait_error"]["message"])
 
 
 if __name__ == "__main__":

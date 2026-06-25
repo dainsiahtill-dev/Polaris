@@ -33,12 +33,13 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
                 "stage": "resident_agi",
                 "decision_type": "quality_gate_response",
                 "decision": {
-                    "verdict": "continue",
+                    "verdict": "request_evidence",
                     "rationale": "ContextOS and quality gate evidence are sufficient.",
                     "evidence_refs": ["runtime/contexts/context-1.json"],
                     "risks": [],
-                    "next_action": "allow QA",
-                    "downstream_allowed": True,
+                    "next_action": "request final provider request and run ledger evidence",
+                    "downstream_allowed": False,
+                    "decision_capability_id": "quality.gate.response",
                 },
                 "metadata": {
                     "role_runtime_entrypoint": "roles.runtime.execute_role_session",
@@ -84,10 +85,10 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
-    assert payload["decision"]["verdict"] == "continue"
+    assert payload["decision"]["verdict"] == "request_evidence"
     assert payload["recorded_decision"]["actor"] == "resident_agi"
-    assert payload["recorded_decision"]["verdict"] == "success"
-    assert payload["recorded_decision"]["actual_outcome"]["agi_verdict"] == "continue"
+    assert payload["recorded_decision"]["verdict"] == "blocked"
+    assert payload["recorded_decision"]["actual_outcome"]["agi_verdict"] == "request_evidence"
     assert payload["recorded_decision"]["actual_outcome"]["role_runtime_entrypoint"] == (
         "roles.runtime.execute_role_session"
     )
@@ -120,6 +121,8 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     )
     assert payload["recorded_decision"]["actual_outcome"]["resident_agi_runtime_contract_gate"]["status"] == "pass"
     assert payload["recorded_decision"]["actual_outcome"]["resident_agi_runtime_contract_gate"]["passed"] is True
+    assert payload["recorded_decision"]["actual_outcome"]["resident_agi_output_contract_gate"]["status"] == "pass"
+    assert payload["output_contract_gate"]["passed"] is True
     assert payload["runtime_contract_gate"]["schema_version"] == "resident.agi_runtime_contract_gate.v1"
     assert payload["runtime_contract_gate"]["status"] == "pass"
     assert payload["runtime_contract_gate"]["passed"] is True
@@ -205,6 +208,43 @@ def test_resident_agi_evidence_interfaces_endpoint_reports_readiness(tmp_path: P
     assert by_id["audit.verdict.read"]["callable"] is True
 
 
+def test_resident_agi_decide_rejects_disabled_audit_pack_before_adapter(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    test_token = "test-resident-token"
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    def fail_create_role_adapter(role_id: str, workspace_arg: str) -> object:
+        raise AssertionError(f"adapter should not be created: {role_id} {workspace_arg}")
+
+    app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
+    with (
+        patch(
+            "polaris.cells.resident.autonomy.public.service.create_role_adapter",
+            side_effect=fail_create_role_adapter,
+        ),
+        TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client,
+    ):
+        response = client.post(
+            "/v2/resident/agi/decide",
+            json={
+                "workspace": str(workspace),
+                "decision_type": "quality_gate_response",
+                "objective": "Attempt to bypass Resident AGI audit pack injection.",
+                "include_audit_pack": False,
+            },
+        )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["detail"]["code"] == "resident_agi_contract_rejected"
+    assert "include_audit_pack" in payload["detail"]["message"]
+
+
 def test_resident_agi_decide_fails_closed_when_runtime_receipt_is_missing(
     tmp_path: Path,
     monkeypatch,
@@ -233,6 +273,7 @@ def test_resident_agi_decide_fails_closed_when_runtime_receipt_is_missing(
                     "risks": [],
                     "next_action": "allow QA",
                     "downstream_allowed": True,
+                    "decision_capability_id": "quality.gate.response",
                 },
                 "metadata": {
                     "runtime_fallback_used": True,

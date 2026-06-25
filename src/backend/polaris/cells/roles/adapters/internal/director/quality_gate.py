@@ -1269,6 +1269,7 @@ async def _run_materialization_quality_repair_retry(
     repair_message = _build_materialization_quality_repair_message(
         original_message=original_message,
         artifact_quality_errors=prompt_artifact_quality_errors,
+        directive_artifact_quality_errors=artifact_quality_errors,
         changed_files=changed_files,
         missing_target_files=missing_repair_target_files,
         repair_target_files=existing_repair_target_files,
@@ -2917,11 +2918,15 @@ def _build_materialization_quality_repair_message(
     *,
     original_message: str,
     artifact_quality_errors: list[str],
+    directive_artifact_quality_errors: list[str] | None = None,
     changed_files: list[str],
     missing_target_files: list[str] | None = None,
     repair_target_files: list[str] | None = None,
     workspace_full: str = "",
 ) -> str:
+    directive_quality_errors = (
+        directive_artifact_quality_errors if directive_artifact_quality_errors is not None else artifact_quality_errors
+    )
     error_lines = "\n".join(
         f"- {_format_quality_error_for_repair_prompt(item)}" for item in artifact_quality_errors[:12]
     )
@@ -3004,9 +3009,21 @@ def _build_materialization_quality_repair_message(
     symbol_repair_block = _em._build_unresolved_import_symbol_repair_block(artifact_quality_errors)
     javascript_named_export_block = _build_javascript_named_export_repair_block(artifact_quality_errors)
     javascript_module_system_block = _build_javascript_module_system_repair_block(
-        artifact_quality_errors,
+        directive_quality_errors,
         repair_target_files=prompt_repair_target_files,
     )
+    runtime_smoke_text = "\n".join(str(item or "") for item in directive_quality_errors).lower()
+    html5_canvas_entrypoint_block = ""
+    if "canvas entrypoint did not render non-empty pixels" in runtime_smoke_text or (
+        "canvas" in runtime_smoke_text and "non-empty" in runtime_smoke_text
+    ):
+        html5_canvas_entrypoint_block = (
+            "HTML5 CANVAS ENTRYPOINT REPAIR: the browser entrypoint loaded but did not paint visible pixels. "
+            "Repair the browser path, not just tests: index.html must contain a real canvas, the referenced "
+            "script/assets must exist after build, the bootstrap must run after the DOM/canvas exists, and it "
+            'must draw a non-empty first frame before user interaction. Do not point <script type="module"> '
+            "at a Node-only CLI entrypoint; use a browser bootstrap or inline browser code.\n"
+        )
     if symbol_repair_block:
         changed_line = (
             f"{len(changed_files)} file(s) were already written; do not rewrite unrelated files. "
@@ -3047,7 +3064,6 @@ def _build_materialization_quality_repair_message(
             "Do not change any other line; do not regenerate unrelated code.\n"
         )
     cli_entrypoint_block = ""
-    runtime_smoke_text = "\n".join(str(item or "") for item in artifact_quality_errors).lower()
     if "python runtime smoke" in runtime_smoke_text and (
         "no expression provided" in runtime_smoke_text
         or "usage:" in runtime_smoke_text
@@ -3104,6 +3120,7 @@ def _build_materialization_quality_repair_message(
         f"{symbol_repair_block}"
         f"{javascript_named_export_block}"
         f"{javascript_module_system_block}"
+        f"{html5_canvas_entrypoint_block}"
         f"{syntax_block}"
         f"{cli_entrypoint_block}"
         f"{npm_manifest_block}"

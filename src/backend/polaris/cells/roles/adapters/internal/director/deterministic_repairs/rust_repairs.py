@@ -1583,6 +1583,8 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
         return []
 
     all_repairs: list[dict[str, Any]] = []
+    # Pass 1: Duplicate module files (E0761) — must run first
+    all_repairs.extend(repair_rust_duplicate_module_files(workspace))
     all_repairs.extend(repair_rust_unused_imports(workspace, stderr))
     all_repairs.extend(repair_rust_missing_fields(workspace, stderr))
     all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr))
@@ -1592,12 +1594,43 @@ def run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
     if all_repairs:
         stderr2 = _run_cargo_check_stderr(workspace)
         if stderr2 and ("error" in stderr2 or "warning" in stderr2):
+            all_repairs.extend(repair_rust_duplicate_module_files(workspace))
             all_repairs.extend(repair_rust_unused_imports(workspace, stderr2))
             all_repairs.extend(repair_rust_missing_fields(workspace, stderr2))
             all_repairs.extend(repair_rust_field_rename_suggestions(workspace, stderr2))
             all_repairs.extend(repair_rust_missing_module_files(workspace))
 
     return all_repairs
+
+
+def repair_rust_duplicate_module_files(workspace: Path) -> list[dict[str, Any]]:
+    """Remove duplicate module files (E0761).
+
+    When both ``src/engine.rs`` and ``src/engine/mod.rs`` exist, Rust rejects
+    the ambiguity. Keep the ``mod.rs`` version (more common for multi-file
+    modules) and remove the flat file.
+    """
+    repairs: list[dict[str, Any]] = []
+    src = workspace / "src"
+    if not src.is_dir():
+        return []
+
+    # Check every directory for a matching .rs file at the parent level
+    for subdir in sorted(src.iterdir()):
+        if not subdir.is_dir() or subdir.name in ("target", "build"):
+            continue
+        mod_rs = subdir / "mod.rs"
+        flat_rs = src / f"{subdir.name}.rs"
+        if mod_rs.is_file() and flat_rs.is_file():
+            # Keep mod.rs (directory module), remove flat file
+            flat_rs.unlink()
+            repairs.append(
+                {
+                    "file": str(flat_rs.relative_to(workspace)),
+                    "action": f"removed_duplicate_module_{subdir.name}",
+                }
+            )
+    return repairs
 
 
 def repair_rust_missing_module_files(workspace: Path) -> list[dict[str, Any]]:

@@ -108,6 +108,62 @@ def test_go_cli_contract_does_not_infer_web_artifact_from_foreign_web_paths(tmp_
     assert audit["inferred_artifact"] == "cli"
 
 
+def test_html5_canvas_prompt_profile_specializes_browser_entrypoint(tmp_path) -> None:
+    appendix, audit = build_prompt_profile_appendix(
+        workspace=str(tmp_path),
+        role_id="director",
+        message=(
+            "PM Task Contract / 任务合同:\n"
+            "任务: 实现 HTML5 Canvas TypeScript flight simulator\n"
+            "目标文件: index.html, src/web.ts, src/engine/renderer.ts, src/engine/simulation.ts\n"
+            "验收: browser canvas must render a non-empty first frame before user interaction.\n"
+        ),
+        context_override={
+            "delivery_mode": "materialize_changes",
+            "target_files": [
+                "index.html",
+                "src/web.ts",
+                "src/engine/renderer.ts",
+                "src/engine/simulation.ts",
+            ],
+        },
+    )
+
+    selected_ids = audit["selected_prompt_profile_ids"]
+    assert "builtin.language.typescript" in selected_ids
+    assert "builtin.artifact.html5_canvas" in selected_ids
+    assert "Node-only CLI entrypoint" in appendix
+    assert audit["inferred_artifact"] == "html5_canvas"
+
+
+def test_language_inference_prefers_source_contract_over_dist_outputs(tmp_path) -> None:
+    _appendix, audit = build_prompt_profile_appendix(
+        workspace=str(tmp_path),
+        role_id="qa",
+        message=(
+            "Review workspace evidence for a TypeScript project. Generated files include "
+            "dist/domain/Angle.js, dist/domain/Flight.js, dist/main.js, package.json, "
+            "tsconfig.json, src/index.ts, src/main.ts, tests/verify.test.ts."
+        ),
+        context_override={
+            "target_files": [
+                "dist/domain/Angle.js",
+                "dist/domain/Flight.js",
+                "dist/main.js",
+                "package.json",
+                "tsconfig.json",
+                "src/index.ts",
+                "src/main.ts",
+                "tests/verify.test.ts",
+            ],
+        },
+    )
+
+    assert audit["inferred_language"] == "typescript"
+    assert "builtin.language.typescript" in audit["selected_prompt_profile_ids"]
+    assert "builtin.language.javascript" not in audit["selected_prompt_profile_ids"]
+
+
 def test_cpp_contract_language_beats_python_test_file(tmp_path) -> None:
     appendix, audit = build_prompt_profile_appendix(
         workspace=str(tmp_path),
