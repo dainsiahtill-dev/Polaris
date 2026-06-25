@@ -108,6 +108,29 @@ function stringField(value: unknown): string {
   return typeof value === 'string' && value.trim() ? value.trim() : '';
 }
 
+function timestampEpoch(value: unknown): number {
+  if (typeof value !== 'string' || !value.trim()) return 0;
+  const epoch = Date.parse(value);
+  return Number.isFinite(epoch) ? epoch : 0;
+}
+
+export function launcherInstanceRecencyEpoch(instance: PolarisInstance): number {
+  return (
+    timestampEpoch(instance.created_at) ||
+    timestampEpoch(instance.last_started_at) ||
+    timestampEpoch(instance.updated_at) ||
+    timestampEpoch(instance.last_stopped_at)
+  );
+}
+
+export function sortLauncherInstancesByNewest(instances: PolarisInstance[]): PolarisInstance[] {
+  return [...instances].sort((left, right) => {
+    const timeDelta = launcherInstanceRecencyEpoch(right) - launcherInstanceRecencyEpoch(left);
+    if (timeDelta !== 0) return timeDelta;
+    return right.instance_id.localeCompare(left.instance_id);
+  });
+}
+
 export function instanceSubtitle(instance: PolarisInstance): string {
   const parts = [instance.instance_id, instance.kind].filter(Boolean);
   if (instance.kind === 'bench_project') {
@@ -177,6 +200,10 @@ export function LauncherWorkspace() {
   );
   const stoppedBenchCount = useMemo(
     () => instances.filter(isStoppedInternalBench).length,
+    [instances],
+  );
+  const orderedInstances = useMemo(
+    () => sortLauncherInstancesByNewest(instances),
     [instances],
   );
   const selectedInstance = useMemo(
@@ -421,7 +448,7 @@ export function LauncherWorkspace() {
               <div className="col-span-full rounded-lg border border-dashed border-white/10 p-8 text-center text-sm text-slate-500">
                 暂无实例
               </div>
-            ) : instances.map((instance) => {
+            ) : orderedInstances.map((instance) => {
               const isCurrentControl = isCurrentControlInstance(instance);
               const stoppingActionId = `stop:${instance.instance_id}`;
               const restartingActionId = `restart:${instance.instance_id}`;

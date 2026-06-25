@@ -36,6 +36,7 @@ import {
   isLauncherBackendReady,
   isLauncherInstanceStoppable,
   launcherInstanceStatusTone,
+  sortLauncherInstancesByNewest,
 } from './LauncherWorkspace';
 import type { PolarisInstance } from '@/services/instances';
 
@@ -183,6 +184,29 @@ describe('Launcher instance readiness display', () => {
     ).toBe(true);
   });
 
+  it('sorts instances newest first by creation time with lifecycle fallback', () => {
+    const oldInstance = instance({
+      instance_id: 'old-instance',
+      created_at: '2026-06-24T08:00:00.000Z',
+      updated_at: '2026-06-25T12:00:00.000Z',
+    });
+    const newInstance = instance({
+      instance_id: 'new-instance',
+      created_at: '2026-06-25T08:00:00.000Z',
+    });
+    const fallbackInstance = instance({
+      instance_id: 'fallback-instance',
+      created_at: '',
+      last_started_at: '2026-06-25T09:00:00.000Z',
+    });
+
+    expect(sortLauncherInstancesByNewest([oldInstance, newInstance, fallbackInstance]).map((item) => item.instance_id)).toEqual([
+      'fallback-instance',
+      'new-instance',
+      'old-instance',
+    ]);
+  });
+
   it('adds bench project and work-dir identity to the card subtitle', () => {
     expect(
       instanceSubtitle(
@@ -223,6 +247,32 @@ describe('Launcher instance readiness display', () => {
     expect(screen.getByTestId('launcher-instance-panel')).toHaveClass('overflow-hidden');
     expect(screen.getByTestId('launcher-instance-list')).toHaveClass('overflow-y-auto');
     expect(screen.getByTestId('launcher-instance-list')).toHaveClass('flex-1');
+  });
+
+  it('renders newer instances before older ones', async () => {
+    mocks.listInstances.mockResolvedValue({
+      ok: true,
+      data: {
+        instances: [
+          instance({
+            instance_id: 'old-instance',
+            name: 'Old Instance',
+            created_at: '2026-06-24T08:00:00.000Z',
+          }),
+          instance({
+            instance_id: 'new-instance',
+            name: 'New Instance',
+            created_at: '2026-06-25T08:00:00.000Z',
+          }),
+        ],
+      },
+    });
+
+    render(createElement(LauncherWorkspace));
+
+    const newer = await screen.findByText('New Instance');
+    const older = await screen.findByText('Old Instance');
+    expect(newer.compareDocumentPosition(older) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('disables stop for stopped instances', async () => {
