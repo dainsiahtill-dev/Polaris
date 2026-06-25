@@ -25,7 +25,8 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.director.runtime.public import (
-    build_director_repair_kernel_summary,
+    ProjectDirectorRepairKernelSummaryV1,
+    project_director_repair_kernel_summary,
 )
 
 from . import execute_method as _em
@@ -1298,10 +1299,14 @@ async def _run_materialization_quality_repair_retry(
             "repair_target_files": repair_target_files[:12],
             "rotated_repair_targets": rotate_repair_targets,
             "source_tools": source_tools,
-            "repair_kernel": build_director_repair_kernel_summary(
-                stage="deterministic_semantic_quality_repair",
-                tool_results=deterministic_semantic_tool_results,
-                artifact_quality_errors=repair_quality_errors,
+            "repair_kernel": dict(
+                project_director_repair_kernel_summary(
+                    ProjectDirectorRepairKernelSummaryV1(
+                        stage="deterministic_semantic_quality_repair",
+                        tool_results=tuple(deterministic_semantic_tool_results),
+                        artifact_quality_errors=tuple(repair_quality_errors),
+                    )
+                ).summary
             ),
         }
     prompt_artifact_quality_errors = _filter_materialization_quality_errors_for_repair_targets(

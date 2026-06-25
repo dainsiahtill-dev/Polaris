@@ -7,78 +7,35 @@ repair functions and the Director runtime repair kernel receipt model.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.director.runtime.public.service import build_director_repair_kernel_summary
+from polaris.cells.director.runtime.public.service import (
+    DirectorRepairPostExecutionStepV1,
+    ProjectDirectorRepairKernelSummaryV1,
+    QueryDirectorRepairAdvisoryValidationV1,
+    QueryDirectorRepairPostExecutionScheduleV1,
+    project_director_repair_kernel_summary,
+    query_director_repair_post_execution_schedule,
+    validate_director_repair_advisory,
+)
 
 StepRunner = Callable[[Any, Path, str], list[dict[str, Any]]]
 
 
-@dataclass(frozen=True)
-class PostExecutionRepairStep:
-    """Declarative migration step for one post-execution language repair group."""
-
-    step_id: str
-    language: str
-    phase: str
-    priority: int
-    source_tool: str
-    runner: StepRunner
-    depends_on: tuple[str, ...] = ()
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "step_id": self.step_id,
-            "language": self.language,
-            "phase": self.phase,
-            "priority": self.priority,
-            "source_tool": self.source_tool,
-            "depends_on": list(self.depends_on),
-        }
-
-
-_POST_EXECUTION_REPAIR_STEPS: tuple[PostExecutionRepairStep, ...] = (
-    PostExecutionRepairStep(
-        step_id="go.module_import",
-        language="go",
-        phase="dependency_resolution",
-        priority=0,
-        source_tool="deterministic_go_module_import_repair",
-        runner=lambda adapter, workspace, task_id: _run_go_post_repairs(adapter, task_id=task_id),
-    ),
-    PostExecutionRepairStep(
-        step_id="rust.post_execution_convergence",
-        language="rust",
-        phase="multi_phase_convergence",
-        priority=0,
-        source_tool="deterministic_rust_post_repair",
-        runner=lambda adapter, workspace, task_id: _run_rust_post_repairs(workspace),
-    ),
-    PostExecutionRepairStep(
-        step_id="cpp.post_execution",
-        language="cpp",
-        phase="post_execution",
-        priority=1,
-        source_tool="deterministic_cpp_post_repair",
-        runner=lambda adapter, workspace, task_id: run_cpp_post_repairs_as_tool_results(workspace),
-    ),
-    PostExecutionRepairStep(
-        step_id="java.post_execution",
-        language="java",
-        phase="post_execution",
-        priority=1,
-        source_tool="deterministic_java_post_repair",
-        runner=lambda adapter, workspace, task_id: _run_java_post_repairs(workspace),
-    ),
-)
+_POST_EXECUTION_REPAIR_RUNNERS: dict[str, StepRunner] = {
+    "go.module_import": lambda adapter, workspace, task_id: _run_go_post_repairs(adapter, task_id=task_id),
+    "rust.post_execution_convergence": lambda adapter, workspace, task_id: _run_rust_post_repairs(workspace),
+    "cpp.post_execution": lambda adapter, workspace, task_id: run_cpp_post_repairs_as_tool_results(workspace),
+    "java.post_execution": lambda adapter, workspace, task_id: _run_java_post_repairs(workspace),
+}
 
 
 def run_post_execution_language_repairs(
     adapter: Any,
     *,
     task_id: str,
+    resident_agi_repair_advisory_overlay: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Run post-execution language repairs and return normalized tool results."""
 
@@ -86,26 +43,41 @@ def run_post_execution_language_repairs(
     tool_results: list[dict[str, Any]] = []
     ordered_steps = _ordered_post_execution_steps()
     for step in ordered_steps:
-        step_results = step.runner(adapter, workspace, task_id)
+        runner = _runner_for_post_execution_step(step)
+        step_results = runner(adapter, workspace, task_id)
         for result in step_results:
             _annotate_bridge_step(result, step)
         tool_results.extend(step_results)
     if not tool_results:
         return [], None
-    repair_kernel = build_director_repair_kernel_summary(
-        stage="post_execution_language_repairs",
-        tool_results=tool_results,
-        artifact_quality_errors=[],
-        mode="commit",
+    repair_kernel = dict(
+        project_director_repair_kernel_summary(
+            ProjectDirectorRepairKernelSummaryV1(
+                stage="post_execution_language_repairs",
+                tool_results=tuple(tool_results),
+                artifact_quality_errors=(),
+                mode="commit",
+            )
+        ).summary
+    )
+    agi_advisory_overlay = _normalize_resident_agi_repair_advisory_overlay(
+        resident_agi_repair_advisory_overlay,
+    )
+    repair_kernel["agi_advisory"] = {
+        **dict(repair_kernel.get("agi_advisory") or {}),
+        **agi_advisory_overlay,
+    }
+    scheduler_bridge = _build_scheduler_bridge_summary(
+        tool_results,
+        repair_kernel=repair_kernel,
+        ordered_steps=ordered_steps,
+        resident_agi_repair_advisory_overlay=agi_advisory_overlay,
     )
     return tool_results, {
         "schema_version": "director.post_execution_repair_kernel.v1",
         "repair_kernel": repair_kernel,
-        "scheduler_bridge": _build_scheduler_bridge_summary(
-            tool_results,
-            repair_kernel=repair_kernel,
-            ordered_steps=ordered_steps,
-        ),
+        "scheduler_bridge": scheduler_bridge,
+        "resident_agi_repair_advisory_overlay": agi_advisory_overlay,
     }
 
 
@@ -201,20 +173,91 @@ def _write_tool_result(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_resident_agi_repair_advisory_overlay(
+    overlay: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload = overlay if isinstance(overlay, dict) else {}
+    advisor_notes_raw = payload.get("advisor_notes")
+    raw_advisor_notes = (
+        [item for item in advisor_notes_raw if isinstance(item, dict)] if isinstance(advisor_notes_raw, list) else []
+    )
+    advisor_notes, validation_errors = _validate_resident_agi_advisor_notes(raw_advisor_notes)
+    suggested_rule_count = sum(
+        len(note.get("suggested_rules") or [])
+        for note in advisor_notes
+        if isinstance(note.get("suggested_rules"), list)
+    )
+
+    ready = str(payload.get("status") or "").strip() == "ready"
+    eligible = bool(payload.get("eligible_for_director_injection"))
+    advisory_only = bool(payload.get("advisory_only", True))
+    authoritative = bool(payload.get("authoritative"))
+    agi_execution_authority = bool(payload.get("agi_execution_authority"))
+    active = ready and eligible and advisory_only and not authoritative and not agi_execution_authority
+    return {
+        "schema_version": "director.post_execution_resident_agi_advisory_overlay.v1",
+        "source": payload.get("source") or "resident.autonomy.public.build_resident_agi_repair_advisory_overlay",
+        "status": payload.get("status") or "not_provided",
+        "supported": True,
+        "active": active,
+        "eligible_for_director_injection": eligible,
+        "authoritative": False,
+        "advisory_only": True,
+        "writes_allowed": False,
+        "agi_execution_authority": False,
+        "advisor_note_count": len(advisor_notes),
+        "suggested_rule_count": suggested_rule_count,
+        "advisor_notes": advisor_notes if active else [],
+        "validation_error_count": len(validation_errors),
+        "validation_errors": validation_errors,
+        "reason": payload.get("reason") or payload.get("error") or "",
+        "director_runtime_contract": payload.get("director_runtime_contract") or "director.repair_advisory_policy.v1",
+        "injection_policy": "director_runtime_advisory_only_no_writes_no_registration",
+    }
+
+
+def _validate_resident_agi_advisor_notes(advisor_notes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    normalized_notes: list[dict[str, Any]] = []
+    validation_errors: list[str] = []
+    for index, note in enumerate(advisor_notes):
+        suggested_rules = note.get("suggested_rules")
+        result = validate_director_repair_advisory(
+            QueryDirectorRepairAdvisoryValidationV1(
+                advisor_source=str(note.get("advisor_source") or note.get("source") or "resident_agi"),
+                message=str(note.get("message") or ""),
+                confidence=float(note.get("confidence") or 0.0),
+                suggested_rules=tuple(item for item in suggested_rules if isinstance(item, dict))
+                if isinstance(suggested_rules, list)
+                else (),
+                metadata=dict(note.get("metadata") or {}),
+            )
+        )
+        if result.ok and result.normalized_advisory is not None:
+            normalized_notes.append(dict(result.normalized_advisory))
+            continue
+        errors = list(result.errors or ("advisory validation rejected note",))
+        validation_errors.extend(f"advisor_notes[{index}]: {error}" for error in errors)
+    return normalized_notes, validation_errors
+
+
 def _build_scheduler_bridge_summary(
     tool_results: list[dict[str, Any]],
     *,
     repair_kernel: dict[str, Any],
-    ordered_steps: tuple[PostExecutionRepairStep, ...],
+    ordered_steps: tuple[DirectorRepairPostExecutionStepV1, ...],
+    resident_agi_repair_advisory_overlay: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payloads = [_result_payload(item) for item in tool_results]
     receipts = repair_kernel.get("receipts")
     receipt_payloads = receipts if isinstance(receipts, list) else []
     active_step_ids = _sorted_unique(str(payload.get("bridge_step_id") or "") for payload in payloads)
+    agi_overlay = resident_agi_repair_advisory_overlay or {}
     return {
         "schema_version": "director.post_execution_scheduler_bridge.v1",
         "mode": "legacy_callback_bridge",
         "target_scheduler": "director.runtime.repair_kernel.scheduler",
+        "schedule_source": "director.runtime.public.query_director_repair_post_execution_schedule",
+        "runner_binding_owner": "roles.adapters",
         "step_order": [step.to_dict() for step in ordered_steps],
         "active_step_ids": active_step_ids,
         "observed_max_round": _max_int(payloads, "round_number"),
@@ -227,26 +270,33 @@ def _build_scheduler_bridge_summary(
         "receipt_count": len(receipt_payloads),
         "receipts_with_revalidation": sum(1 for receipt in receipt_payloads if receipt.get("revalidation_evidence")),
         "authoritative": bool(repair_kernel.get("authoritative")),
+        "resident_agi_advisory_active": bool(agi_overlay.get("active")),
+        "resident_agi_advisory_note_count": int(agi_overlay.get("advisor_note_count") or 0),
+        "resident_agi_suggested_rule_count": int(agi_overlay.get("suggested_rule_count") or 0),
     }
 
 
-def _ordered_post_execution_steps() -> tuple[PostExecutionRepairStep, ...]:
-    completed: set[str] = set()
-    pending = list(_POST_EXECUTION_REPAIR_STEPS)
-    ordered: list[PostExecutionRepairStep] = []
-    while pending:
-        ready = [step for step in pending if all(depends_on in completed for depends_on in step.depends_on)]
-        if not ready:
-            raise RuntimeError("post-execution repair step dependency cycle detected")
-        ready.sort(key=lambda step: (step.priority, step.step_id))
-        for step in ready:
-            ordered.append(step)
-            completed.add(step.step_id)
-            pending.remove(step)
-    return tuple(ordered)
+def _ordered_post_execution_steps() -> tuple[DirectorRepairPostExecutionStepV1, ...]:
+    schedule = query_director_repair_post_execution_schedule(QueryDirectorRepairPostExecutionScheduleV1())
+    ordered_steps = tuple(schedule.items)
+    scheduled_step_ids = {step.step_id for step in ordered_steps}
+    missing_runner_step_ids = sorted(scheduled_step_ids - set(_POST_EXECUTION_REPAIR_RUNNERS))
+    if missing_runner_step_ids:
+        raise RuntimeError(f"post-execution repair schedule has no runner binding: {missing_runner_step_ids}")
+    extra_runner_step_ids = sorted(set(_POST_EXECUTION_REPAIR_RUNNERS) - scheduled_step_ids)
+    if extra_runner_step_ids:
+        raise RuntimeError(f"post-execution repair runner is not declared in runtime schedule: {extra_runner_step_ids}")
+    return ordered_steps
 
 
-def _annotate_bridge_step(tool_result: dict[str, Any], step: PostExecutionRepairStep) -> None:
+def _runner_for_post_execution_step(step: DirectorRepairPostExecutionStepV1) -> StepRunner:
+    runner = _POST_EXECUTION_REPAIR_RUNNERS.get(step.step_id)
+    if runner is None:
+        raise RuntimeError(f"post-execution repair schedule has no runner binding: {step.step_id}")
+    return runner
+
+
+def _annotate_bridge_step(tool_result: dict[str, Any], step: DirectorRepairPostExecutionStepV1) -> None:
     payload = _result_payload(tool_result)
     if not payload:
         return

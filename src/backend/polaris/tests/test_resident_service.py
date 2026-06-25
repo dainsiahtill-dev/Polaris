@@ -19,12 +19,14 @@ from polaris.cells.resident.autonomy.internal.resident_runtime_service import (
 from polaris.cells.resident.autonomy.public import service as resident_public_service
 from polaris.cells.resident.autonomy.public.service import (
     ApproveResidentGoalCommandV1,
+    BuildResidentAgiRepairAdvisoryOverlayCommandV1,
     CreateResidentGoalCommandV1,
     ExtractResidentSkillsCommandV1,
     MaterializeResidentGoalCommandV1,
     QueryResidentAgiAuditPackV1,
     QueryResidentAgiEvidenceInterfacesV1,
     QueryResidentAgiHandoffsV1,
+    QueryResidentAgiRepairAdvisoryOverlayV1,
     RecordResidentDecisionCommandV1,
     RejectResidentGoalCommandV1,
     RunResidentAgiDecisionTurnCommandV1,
@@ -43,6 +45,7 @@ from polaris.cells.resident.autonomy.public.service import (
     query_resident_agi_audit_pack,
     query_resident_agi_evidence_interfaces,
     query_resident_agi_handoffs,
+    query_resident_agi_repair_advisory_overlay,
     record_resident_decision_entry,
     reject_resident_goal,
     run_resident_agi_decision_turn,
@@ -409,6 +412,31 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert "role.runtime.foundation" in authority_matrix["platform_hard_rules"]
     assert "resident.goal_bridge.execute" in authority_matrix["high_risk_capabilities"]
     assert authority_matrix["decision_policy"]["governed_execution"] == "canonical_role_chain_only"
+    decision_boundary_policy = capability_surface["decision_boundary_policy"]
+    assert decision_boundary_policy["schema_version"] == "resident.agi_decision_boundary_policy.v1"
+    assert decision_boundary_policy["source"] == "resident.autonomy.capability_surface"
+    assert decision_boundary_policy["chain"] == "PM → Chief Engineer → Director"
+    assert decision_boundary_policy["decision_modes"]["platform_hard_rule"]["llm_decision_allowed"] is False
+    assert decision_boundary_policy["decision_modes"]["platform_hard_rule"]["override_allowed"] is False
+    assert decision_boundary_policy["decision_modes"]["agi_recommendation"]["execution_authority"] == "advisory_only"
+    assert (
+        decision_boundary_policy["decision_modes"]["agi_governed_execution"]["execution_authority"]
+        == "governed_handoff_only"
+    )
+    assert decision_boundary_policy["capability_execution_policy"]["agi_direct_writes_allowed"] is False
+    assert decision_boundary_policy["capability_execution_policy"]["agi_direct_tool_execution_allowed"] is False
+    assert decision_boundary_policy["capability_execution_policy"]["director_runtime_remains_authoritative"] is True
+    assert decision_boundary_policy["capability_execution_policy"]["pm_chief_engineer_director_chain_required"] is True
+    assert set(decision_boundary_policy["non_overridable_rules"]) == set(authority_matrix["platform_hard_rules"])
+    assert set(decision_boundary_policy["agi_judgement_boundaries"]) == set(
+        authority_matrix["agi_recommendation_boundaries"]
+    )
+    assert set(decision_boundary_policy["governed_execution_boundaries"]) == set(
+        authority_matrix["governed_execution_boundaries"]
+    )
+    assert (
+        decision_boundary_policy["counts"]["platform_hard_rules"] == authority_matrix["counts"]["platform_hard_rules"]
+    )
     assert any(
         item["capability_id"] == "resident.agi_decision_turn.execute"
         and item["access"] == "execute_through_role_runtime"
@@ -496,6 +524,22 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert "director.repair_advisory_policy.read" in decision_registry["evidence_interface_ids"]
     assert "request_evidence" in decision_registry["candidate_actions"]
     assert "suggest_repair_rule" in decision_registry["candidate_actions"]
+    access_registry = capability_surface["capability_access_registry"]
+    assert capability_surface["capability_access_registry_schema"] == "resident.agi_capability_access_registry.v1"
+    assert access_registry["schema_version"] == "resident.agi_capability_access_registry.v1"
+    assert access_registry["execution_policy"]["agi_direct_tool_execution_allowed"] is False
+    assert access_registry["execution_policy"]["agi_direct_writes_allowed"] is False
+    assert access_registry["execution_policy"]["director_runtime_remains_authoritative"] is True
+    assert "run_ledger.read" in access_registry["groups"]["read_only_capabilities"]
+    assert "director.repair_advisory_policy.read" in access_registry["groups"]["advisory_only_capabilities"]
+    assert "audit.diagnosis.execute" in access_registry["groups"]["governed_execution_capabilities"]
+    assert "resident.decision_trace.read_write" in access_registry["groups"]["governed_write_capabilities"]
+    assert "resident.goal_bridge.execute" in access_registry["groups"]["high_risk_capabilities"]
+    domain_by_id = {item["domain_id"]: item for item in access_registry["interface_domains"]}
+    assert {"audit", "context", "director_repair", "run_ledger", "verifier"} <= set(domain_by_id)
+    assert domain_by_id["director_repair"]["advisory_only"] >= 1
+    assert domain_by_id["audit"]["governed_execution"] >= 1
+    assert access_registry["counts"]["canonical_contracts"] >= 1
     evidence_interface_contract = capability_surface["evidence_interface_contract"]
     assert capability_surface["evidence_interface_contract_schema"] == "resident.agi_evidence_interface_contract.v1"
     assert evidence_interface_contract["schema_version"] == "resident.agi_evidence_interface_contract.v1"
@@ -543,6 +587,14 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert "director.runtime.repair_kernel.strategy_catalog" in audit_pack["truth_sources"]
     assert "director.runtime.repair_kernel.registry" in audit_pack["truth_sources"]
     assert "director.runtime.repair_kernel.advisory_policy" in audit_pack["truth_sources"]
+    assert "resident.agi_repair_advisory_overlay_query" in audit_pack["truth_sources"]
+    assert audit_pack["repair_advisory_overlay_query"]["schema_version"] == (
+        "resident.agi_repair_advisory_overlay_query.v1"
+    )
+    assert audit_pack["repair_advisory_overlay_query"]["status"] == "missing"
+    assert audit_pack["repair_advisory_overlay_query"]["advisory_only"] is True
+    assert audit_pack["repair_advisory_overlay_query"]["authoritative"] is False
+    assert audit_pack["latest_repair_advisory_overlay"] is None
     director_repair_contract = audit_pack["director_repair_contract"]
     assert director_repair_contract["schema_version"] == "resident.agi_director_repair_contract.v1"
     assert director_repair_contract["owner_cell"] == "director.runtime"
@@ -639,6 +691,48 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert recovered["counts"]["goals"] >= 1
 
 
+def test_resident_agi_capability_surface_contracts_share_one_registry() -> None:
+    capability_surface = resident_public_service.resident_agi_capability_surface_payload()
+    item_ids = {
+        str(item.get("capability_id") or "")
+        for item in capability_surface["items"]
+        if isinstance(item, dict) and item.get("capability_id")
+    }
+    assert item_ids
+
+    decision_registry = capability_surface["decision_capability_registry"]
+    assert set(decision_registry["evidence_interface_ids"]) <= item_ids
+
+    evidence_contract = capability_surface["evidence_interface_contract"]
+    assert set(evidence_contract["declared_interface_ids"]) <= item_ids
+    assert evidence_contract["missing_interface_ids"] == []
+    assert evidence_contract["coverage_complete"] is True
+
+    access_registry = capability_surface["capability_access_registry"]
+    access_item_ids = {
+        str(item.get("capability_id") or "")
+        for item in access_registry["items"]
+        if isinstance(item, dict) and item.get("capability_id")
+    }
+    assert access_item_ids == item_ids
+    grouped_ids: set[str] = set()
+    for group_ids in access_registry["groups"].values():
+        grouped_ids.update(str(item) for item in group_ids)
+    assert grouped_ids <= item_ids
+    assert access_registry["execution_policy"]["agi_direct_tool_execution_allowed"] is False
+    assert access_registry["execution_policy"]["agi_direct_writes_allowed"] is False
+
+    participation_policy = capability_surface["participation_policy"]
+    scoped_capability_ids = {
+        str(item.get("capability_id") or "")
+        for item in participation_policy["available_scopes"]
+        if isinstance(item, dict) and item.get("capability_id")
+    }
+    assert scoped_capability_ids <= item_ids
+    assert capability_surface["capability_access_registry_schema"] == "resident.agi_capability_access_registry.v1"
+    assert capability_surface["evidence_interface_contract_schema"] == "resident.agi_evidence_interface_contract.v1"
+
+
 def test_resident_agi_evidence_interfaces_query_reports_public_facade_status(tmp_path: Path) -> None:
     reset_resident_services()
     workspace = tmp_path / "workspace"
@@ -704,6 +798,24 @@ def test_resident_agi_evidence_interfaces_query_reports_public_facade_status(tmp
     assert advisory_policy["summary"]["writes_allowed"] is False
     assert advisory_policy["summary"]["registration_allowed"] is False
     assert by_id["audit.diagnosis.execute"]["status"] == "governed_execute_only"
+    matrix = payload["capability_matrix"]
+    assert matrix["schema_version"] == "resident.agi_evidence_capability_matrix.v1"
+    assert matrix["decision_type"] == "quality_gate_response"
+    assert matrix["selected_decision_id"] == "quality.gate.response"
+    assert matrix["summary"]["total"] == 7
+    assert matrix["summary"]["advisory_only"] is True
+    assert matrix["summary"]["authoritative"] is False
+    assert matrix["summary"]["agi_execution_authority"] is False
+    assert matrix["summary"]["governed_execute"] == 1
+    matrix_groups = {item["group_id"]: item for item in matrix["groups"]}
+    assert matrix_groups["director_repair"]["total"] == 3
+    assert matrix_groups["director_repair"]["available"] == 3
+    assert matrix_groups["audit"]["governed_execute"] == 1
+    matrix_rows = {item["interface_id"]: item for item in matrix["rows"]}
+    assert matrix_rows["director.repair_coverage.read"]["group_id"] == "director_repair"
+    assert matrix_rows["director.repair_coverage.read"]["recommended_now"] is True
+    assert matrix_rows["audit.diagnosis.execute"]["recommended_now"] is True
+    assert matrix_rows["audit.diagnosis.execute"]["status"] == "governed_execute_only"
     assert payload["summary"]["needs_public_facade"] == 0
     assert payload["summary"]["governed_execute_only"] == 1
 
@@ -791,6 +903,271 @@ def test_resident_agi_selects_director_repair_advisory_capability() -> None:
     assert handoff["downstream_allowed"] is True
 
 
+def test_resident_agi_repair_advisory_overlay_requires_participation_scope(tmp_path: Path) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    decision = {
+        "decision_capability_id": "director.repair.advisory",
+        "next_action": "suggest_repair_rule",
+        "rationale": "Rust receiver typo appears uncovered.",
+        "suggested_rules": [
+            {
+                "name": "rust_receiver_self",
+                "language": "rust",
+                "pattern": "found `&)` near method receiver",
+                "fix_template": "replace `(&)` with `(&self)` inside Rust impl method receivers",
+                "confidence": 0.81,
+                "evidence": ["src/lib.rs:12: expected one of `self`, `&self`, or `&mut self`"],
+            }
+        ],
+    }
+
+    disabled = resident_public_service.build_resident_agi_repair_advisory_overlay(
+        BuildResidentAgiRepairAdvisoryOverlayCommandV1(
+            workspace=str(workspace),
+            decision=decision,
+            decision_capability_id="director.repair.advisory",
+            evidence_refs=("runtime/repair-coverage/rust.json",),
+        )
+    )
+
+    assert disabled["status"] == "disabled_by_participation_policy"
+    assert disabled["advisor_notes"] == []
+    assert disabled["eligible_for_director_injection"] is False
+
+    update_resident_identity(
+        UpdateResidentIdentityCommandV1(
+            workspace=str(workspace),
+            payload={
+                "resident_agi_participation": {
+                    "enabled": True,
+                    "scopes": ["director_repair_advisory_policy"],
+                    "participation": {"director_repair_advisory_policy": True},
+                }
+            },
+        )
+    )
+    overlay = resident_public_service.build_resident_agi_repair_advisory_overlay(
+        BuildResidentAgiRepairAdvisoryOverlayCommandV1(
+            workspace=str(workspace),
+            decision=decision,
+            decision_capability_id="director.repair.advisory",
+            message="Suggest a future deterministic Rust repair rule.",
+            confidence=0.7,
+            evidence_refs=("runtime/repair-coverage/rust.json",),
+            context_refs=("runtime/contexts/aa/context.json",),
+        )
+    )
+
+    assert overlay["status"] == "ready"
+    assert overlay["active"] is True
+    assert overlay["eligible_for_director_injection"] is True
+    assert overlay["advisory_only"] is True
+    note = overlay["advisor_notes"][0]
+    assert note["advisor_source"] == "resident_agi"
+    assert note["authoritative"] is False
+    assert note["suggested_rules"][0]["name"] == "rust_receiver_self"
+    assert note["metadata"]["source_role"] == "resident_agi"
+    assert note["metadata"]["evidence_refs"] == ["runtime/repair-coverage/rust.json"]
+
+
+def test_resident_agi_repair_advisory_overlay_rejects_authoritative_fields(tmp_path: Path) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    update_resident_identity(
+        UpdateResidentIdentityCommandV1(
+            workspace=str(workspace),
+            payload={
+                "resident_agi_participation": {
+                    "enabled": True,
+                    "scopes": ["director.repair.advisory"],
+                    "participation": {"director.repair.advisory": True},
+                }
+            },
+        )
+    )
+
+    overlay = resident_public_service.build_resident_agi_repair_advisory_overlay(
+        BuildResidentAgiRepairAdvisoryOverlayCommandV1(
+            workspace=str(workspace),
+            decision={
+                "decision_capability_id": "director.repair.advisory",
+                "next_action": "suggest_repair_rule",
+                "rationale": "Invalid AGI suggestion tries to carry a patch.",
+                "suggested_rules": [
+                    {
+                        "pattern": "bad",
+                        "fix_template": "bad",
+                        "patch": "*** Begin Patch",
+                    }
+                ],
+            },
+            decision_capability_id="director.repair.advisory",
+        )
+    )
+
+    assert overlay["status"] == "invalid_advisory"
+    assert overlay["advisor_notes"] == []
+    assert "forbidden authoritative fields" in overlay["error"]
+
+
+def test_resident_agi_repair_advisory_overlay_query_reads_decision_trace(tmp_path: Path) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    blocked_overlay = {
+        "schema_version": "resident.agi_repair_advisory_overlay.v1",
+        "status": "disabled_by_participation_policy",
+        "eligible_for_director_injection": False,
+        "participation_enabled": False,
+        "advisory_only": True,
+        "authoritative": False,
+        "agi_execution_authority": False,
+        "director_runtime_contract": "director.repair_advisory_policy.v1",
+        "advisor_notes": [],
+    }
+    ready_overlay = {
+        "schema_version": "resident.agi_repair_advisory_overlay.v1",
+        "status": "ready",
+        "eligible_for_director_injection": True,
+        "participation_enabled": True,
+        "advisory_only": True,
+        "authoritative": False,
+        "agi_execution_authority": False,
+        "director_runtime_contract": "director.repair_advisory_policy.v1",
+        "advisor_notes": [
+            {
+                "advisor_source": "resident_agi",
+                "message": "Suggest future deterministic repair rule.",
+                "authoritative": False,
+                "suggested_rules": [
+                    {
+                        "pattern": "found `&)` near method receiver",
+                        "fix_template": "replace receiver",
+                    }
+                ],
+            }
+        ],
+    }
+
+    record_resident_decision_entry(
+        RecordResidentDecisionCommandV1(
+            workspace=str(workspace),
+            payload={
+                "actor": "resident_agi",
+                "stage": "director.repair.advisory",
+                "summary": "Blocked advisory overlay",
+                "verdict": "blocked",
+                "actual_outcome": {
+                    "resident_agi_repair_advisory_overlay": blocked_overlay,
+                },
+            },
+        )
+    )
+    ready_decision = record_resident_decision_entry(
+        RecordResidentDecisionCommandV1(
+            workspace=str(workspace),
+            payload={
+                "actor": "resident_agi",
+                "stage": "director.repair.advisory",
+                "summary": "Ready advisory overlay",
+                "verdict": "success",
+                "actual_outcome": {
+                    "resident_agi_repair_advisory_overlay": ready_overlay,
+                },
+            },
+        )
+    )
+
+    query = query_resident_agi_repair_advisory_overlay(
+        QueryResidentAgiRepairAdvisoryOverlayV1(
+            workspace=str(workspace),
+            require_ready=True,
+            require_eligible=True,
+        )
+    )
+
+    assert query["schema_version"] == "resident.agi_repair_advisory_overlay_query.v1"
+    assert query["status"] == "found"
+    assert query["found"] is True
+    assert query["overlay"]["status"] == "ready"
+    assert query["overlay"]["advisor_notes"][0]["suggested_rules"][0]["pattern"] == ("found `&)` near method receiver")
+    assert query["decision_ref"]["decision_id"] == ready_decision["decision_id"]
+    assert query["advisory_only"] is True
+    assert query["authoritative"] is False
+    assert query["agi_execution_authority"] is False
+
+
+def test_resident_agi_audit_pack_includes_repair_advisory_overlay_query(tmp_path: Path) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    ready_overlay = {
+        "schema_version": "resident.agi_repair_advisory_overlay.v1",
+        "status": "ready",
+        "eligible_for_director_injection": True,
+        "participation_enabled": True,
+        "advisory_only": True,
+        "authoritative": False,
+        "agi_execution_authority": False,
+        "director_runtime_contract": "director.repair_advisory_policy.v1",
+        "advisor_notes": [
+            {
+                "advisor_source": "resident_agi",
+                "message": "Suggest future deterministic repair rule.",
+                "authoritative": False,
+                "suggested_rules": [
+                    {
+                        "pattern": "found `&)` near method receiver",
+                        "fix_template": "replace receiver",
+                    }
+                ],
+            }
+        ],
+    }
+    recorded_decision = record_resident_decision_entry(
+        RecordResidentDecisionCommandV1(
+            workspace=str(workspace),
+            payload={
+                "actor": "resident_agi",
+                "stage": "director.repair.advisory",
+                "summary": "Ready advisory overlay",
+                "verdict": "success",
+                "actual_outcome": {
+                    "resident_agi_repair_advisory_overlay": ready_overlay,
+                },
+            },
+        )
+    )
+
+    audit_pack = query_resident_agi_audit_pack(
+        QueryResidentAgiAuditPackV1(
+            workspace=str(workspace),
+            decision_limit=5,
+        )
+    )
+
+    assert "resident.agi_repair_advisory_overlay_query" in audit_pack["truth_sources"]
+    overlay_query = audit_pack["repair_advisory_overlay_query"]
+    assert overlay_query["schema_version"] == "resident.agi_repair_advisory_overlay_query.v1"
+    assert overlay_query["status"] == "found"
+    assert overlay_query["found"] is True
+    assert overlay_query["decision_ref"]["decision_id"] == recorded_decision["decision_id"]
+    assert overlay_query["advisory_only"] is True
+    assert overlay_query["authoritative"] is False
+    assert overlay_query["agi_execution_authority"] is False
+    assert overlay_query["overlay"]["status"] == "ready"
+    assert audit_pack["latest_repair_advisory_overlay"]["status"] == "ready"
+    assert audit_pack["latest_repair_advisory_overlay"]["authoritative"] is False
+    assert audit_pack["latest_repair_advisory_overlay"]["advisor_notes"][0]["suggested_rules"][0]["pattern"] == (
+        "found `&)` near method receiver"
+    )
+
+
 def test_resident_agi_evidence_interfaces_treats_metadata_only_required_as_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -838,6 +1215,10 @@ def test_resident_agi_evidence_interfaces_treats_metadata_only_required_as_missi
     by_id = {item["interface_id"]: item for item in payload["interfaces"]}
     assert by_id["contextos.final_request_audit.read"]["status"] == "metadata_only"
     assert by_id["contextos.final_request_audit.read"]["available"] is False
+    assert payload["capability_matrix"]["summary"]["missing_required"] == 1
+    assert payload["capability_matrix"]["summary"]["missing_required_interface_ids"] == [
+        "contextos.final_request_audit.read"
+    ]
     assert payload["summary"]["missing_required_interface_ids"] == ["contextos.final_request_audit.read"]
 
 
@@ -1149,6 +1530,129 @@ async def test_resident_agi_decision_turn_public_command_uses_role_runtime_contr
     assert captured_input["selected_decision_capability"]["decision_id"] == "evidence.interface.selection"
     assert captured_input["resident_agi_decision_preflight"]["status"] == "pass"
     assert "verifier.execution.execute" in captured_input["optional_evidence_interfaces"]
+
+
+@pytest.mark.asyncio
+async def test_resident_agi_decision_turn_returns_repair_advisory_overlay(tmp_path: Path) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    update_resident_identity(
+        UpdateResidentIdentityCommandV1(
+            workspace=str(workspace),
+            payload={
+                "resident_agi_participation": {
+                    "enabled": True,
+                    "scopes": ["director_repair_advisory_policy"],
+                    "participation": {"director_repair_advisory_policy": True},
+                }
+            },
+        )
+    )
+
+    def fake_audit_pack(*, workspace: str, status_payload: dict[str, object], decision_limit: int) -> dict[str, object]:
+        return {
+            "schema_version": "resident.agi_audit_pack.v1",
+            "truth_sources": ["resident.status", "director.runtime.repair_kernel.advisory_policy"],
+            "evidence_refs": ["runtime/repair-coverage/rust.json"],
+            "role_registry": {"resident_agi_available": True},
+            "hard_rule_gate": {"schema_version": "resident.agi_hard_rule_gate.v1", "status": "pass"},
+            "evidence_gate": {
+                "schema_version": "resident.agi_evidence_gate.v1",
+                "status": "pass",
+                "recommended_verdict": "continue",
+            },
+            "authority_matrix": {
+                "schema_version": "resident.agi_authority_matrix.v1",
+                "chain_required": True,
+            },
+            "decision_profile": {
+                "schema_version": "resident.agi_decision_profile.v1",
+                "role_turn_allowed": True,
+                "candidate_actions": ["suggest_repair_rule", "request_evidence"],
+                "required_constraints": ["suggested_rules_must_pass_advisory_policy"],
+            },
+            "capability_surface": resident_public_service.resident_agi_capability_surface_payload(),
+        }
+
+    class FakeResidentAgiAdapter:
+        async def execute(
+            self,
+            task_id: str,
+            input_data: dict[str, object],
+            context: dict[str, object],
+        ) -> dict[str, object]:
+            return {
+                "success": True,
+                "stage": "resident_agi",
+                "decision_type": "repair_rule_suggestion",
+                "decision": {
+                    "verdict": "continue",
+                    "rationale": "Suggest a non-authoritative deterministic repair rule for a recurring Rust typo.",
+                    "evidence_refs": ["runtime/repair-coverage/rust.json"],
+                    "risks": [],
+                    "next_action": "suggest_repair_rule",
+                    "downstream_allowed": True,
+                    "decision_capability_id": "director.repair.advisory",
+                    "suggested_rules": [
+                        {
+                            "name": "rust_receiver_self",
+                            "language": "rust",
+                            "pattern": "found `&)` near method receiver",
+                            "fix_template": "replace `(&)` with `(&self)` inside Rust impl method receivers",
+                            "confidence": 0.82,
+                            "evidence": [
+                                "src/lib.rs:12: expected one of `self`, `&self`, or `&mut self`",
+                            ],
+                        }
+                    ],
+                },
+                "metadata": {
+                    "role_runtime_entrypoint": "roles.runtime.execute_role_session",
+                    "context_os_expected": True,
+                    "runtime_fallback_used": False,
+                    "fallback_policy": "fail_closed",
+                },
+            }
+
+    def fake_create_role_adapter(role_id: str, workspace_arg: str) -> FakeResidentAgiAdapter:
+        assert role_id == "resident_agi"
+        assert workspace_arg == str(workspace)
+        return FakeResidentAgiAdapter()
+
+    with (
+        patch(
+            "polaris.cells.resident.autonomy.public.service.create_role_adapter",
+            side_effect=fake_create_role_adapter,
+        ),
+        patch(
+            "polaris.cells.resident.autonomy.public.service.build_resident_agi_audit_pack",
+            side_effect=fake_audit_pack,
+        ),
+    ):
+        result = await run_resident_agi_decision_turn(
+            RunResidentAgiDecisionTurnCommandV1(
+                workspace=str(workspace),
+                decision_type="repair_rule_suggestion",
+                objective="Decide whether AGI should suggest a Director repair rule.",
+                task_id="resident-agi-repair-advisory",
+                candidate_actions=("suggest_repair_rule", "request_evidence"),
+                evidence_refs=("runtime/repair-coverage/rust.json",),
+            )
+        )
+
+    assert result["ok"] is True
+    assert result["selected_decision_capability"]["decision_id"] == "director.repair.advisory"
+    assert result["output_contract_gate"]["status"] == "pass"
+    assert result["repair_advisory_overlay"]["status"] == "ready"
+    assert result["repair_advisory_overlay"]["eligible_for_director_injection"] is True
+    note = result["repair_advisory_overlay"]["advisor_notes"][0]
+    assert note["advisor_source"] == "resident_agi"
+    assert note["authoritative"] is False
+    assert note["suggested_rules"][0]["name"] == "rust_receiver_self"
+    assert result["recorded_decision"]["actual_outcome"]["resident_agi_repair_advisory_overlay"]["status"] == "ready"
+    assert result["decision_handoff"]["target_roles"] == ["director", "qa"]
+    assert "suggest_repair_rule" in result["decision_handoff"]["allowed_actions"]
 
 
 @pytest.mark.asyncio

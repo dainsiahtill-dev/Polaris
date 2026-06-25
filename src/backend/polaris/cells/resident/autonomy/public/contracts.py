@@ -97,6 +97,31 @@ class UpdateResidentIdentityCommandV1:
 
 
 @dataclass(frozen=True)
+class UpdateResidentAgiParticipationCommandV1:
+    workspace: str
+    enabled: bool = False
+    scopes: tuple[str, ...] = field(default_factory=tuple)
+    participation: Mapping[str, bool] = field(default_factory=dict)
+    custom_scopes_allowed: bool = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "enabled", bool(self.enabled))
+        object.__setattr__(
+            self,
+            "scopes",
+            tuple(str(item or "").strip() for item in self.scopes if str(item or "").strip()),
+        )
+        normalized_participation: dict[str, bool] = {}
+        for key, value in _to_dict_copy(self.participation).items():
+            token = str(key or "").strip()
+            if token:
+                normalized_participation[token] = bool(value)
+        object.__setattr__(self, "participation", normalized_participation)
+        object.__setattr__(self, "custom_scopes_allowed", bool(self.custom_scopes_allowed))
+
+
+@dataclass(frozen=True)
 class CreateResidentGoalCommandV1:
     workspace: str
     payload: Mapping[str, Any]
@@ -311,6 +336,56 @@ class RunResidentAgiDecisionTurnCommandV1:
         object.__setattr__(self, "confidence", min(1.0, max(0.0, float(self.confidence or 0.0))))
         object.__setattr__(self, "include_audit_pack", bool(self.include_audit_pack))
         object.__setattr__(self, "audit_pack_decision_limit", max(1, min(int(self.audit_pack_decision_limit), 100)))
+
+
+@dataclass(frozen=True)
+class BuildResidentAgiRepairAdvisoryOverlayCommandV1:
+    """Project Resident AGI repair suggestions into Director advisory notes."""
+
+    workspace: str
+    decision: Mapping[str, Any] = field(default_factory=dict)
+    decision_capability_id: str = ""
+    message: str = ""
+    confidence: float = 0.0
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    context_refs: tuple[str, ...] = field(default_factory=tuple)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    require_participation_enabled: bool = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "decision", _to_dict_copy(self.decision))
+        object.__setattr__(self, "decision_capability_id", str(self.decision_capability_id or "").strip())
+        object.__setattr__(self, "message", str(self.message or "").strip())
+        object.__setattr__(self, "confidence", min(1.0, max(0.0, float(self.confidence or 0.0))))
+        object.__setattr__(
+            self,
+            "evidence_refs",
+            tuple(str(item or "").strip() for item in self.evidence_refs if str(item or "").strip()),
+        )
+        object.__setattr__(
+            self,
+            "context_refs",
+            tuple(str(item or "").strip() for item in self.context_refs if str(item or "").strip()),
+        )
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+        object.__setattr__(self, "require_participation_enabled", bool(self.require_participation_enabled))
+
+
+@dataclass(frozen=True)
+class QueryResidentAgiRepairAdvisoryOverlayV1:
+    """Query the latest persisted Resident AGI repair advisory overlay."""
+
+    workspace: str
+    limit: int = 50
+    require_ready: bool = False
+    require_eligible: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "limit", max(1, min(int(self.limit), 200)))
+        object.__setattr__(self, "require_ready", bool(self.require_ready))
+        object.__setattr__(self, "require_eligible", bool(self.require_eligible))
 
 
 @dataclass(frozen=True)
@@ -703,12 +778,14 @@ class ResidentAutonomyError(RuntimeError):
 
 __all__ = [
     "ApproveResidentGoalCommandV1",
+    "BuildResidentAgiRepairAdvisoryOverlayCommandV1",
     "CreateResidentGoalCommandV1",
     "ExtractResidentSkillsCommandV1",
     "MaterializeResidentGoalCommandV1",
     "QueryResidentAgiAuditPackV1",
     "QueryResidentAgiEvidenceInterfacesV1",
     "QueryResidentAgiHandoffsV1",
+    "QueryResidentAgiRepairAdvisoryOverlayV1",
     "QueryResidentCapabilitiesV1",
     "QueryResidentStatusV1",
     "RecordResidentDecisionCommandV1",
@@ -731,5 +808,6 @@ __all__ = [
     "StageResidentGoalCommandV1",
     "StartResidentCommandV1",
     "StopResidentCommandV1",
+    "UpdateResidentAgiParticipationCommandV1",
     "UpdateResidentIdentityCommandV1",
 ]

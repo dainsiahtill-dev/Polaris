@@ -32,25 +32,38 @@ from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy impor
 )
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import sha256_text
 from polaris.cells.director.runtime.public import (
+    AttachDirectorRepairRevalidationEvidenceV1,
     CompareDirectorRepairShadowRunV1,
     DirectorRepairAdvisoryPolicyResultV1,
+    DirectorRepairAdvisoryValidationResultV1,
     DirectorRepairCoverageReportV1,
+    DirectorRepairKernelSummaryProjectionResultV1,
     DirectorRepairLanguageSlotsResultV1,
     DirectorRepairPlanningResultV1,
+    DirectorRepairPostExecutionScheduleResultV1,
+    DirectorRepairRevalidationProjectionResultV1,
+    ProjectDirectorRepairKernelSummaryV1,
     QueryDirectorRepairAdvisoryPolicyV1,
+    QueryDirectorRepairAdvisoryValidationV1,
     QueryDirectorRepairCoverageV1,
     QueryDirectorRepairLanguageSlotsV1,
+    QueryDirectorRepairPostExecutionScheduleV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
     RepairReceiptV1,
+    attach_director_repair_revalidation_evidence,
     build_director_repair_kernel_summary,
     compare_director_repair_shadow_run,
     plan_director_typescript_object_literal_comma_repair,
+    project_director_repair_kernel_summary,
+    project_director_repair_revalidation_evidence,
     query_director_repair_advisory_policy,
     query_director_repair_coverage,
     query_director_repair_language_slots,
+    query_director_repair_post_execution_schedule,
     query_director_repair_strategy_catalog,
     run_director_typescript_object_literal_comma_repair,
+    validate_director_repair_advisory,
 )
 
 
@@ -80,8 +93,13 @@ def test_repair_rule_registry_reports_known_and_unknown_diagnostic_coverage() ->
     assert payload["total_diagnostics"] == 2
     assert payload["covered_diagnostic_count"] == 1
     assert payload["uncovered_diagnostic_count"] == 1
+    assert payload["executable_runtime_plan_diagnostic_count"] == 1
+    assert payload["metadata_only_diagnostic_count"] == 0
     assert payload["items"][0]["known_rule_matched"] is True
+    assert payload["items"][0]["executable_runtime_plan_matched"] is True
+    assert payload["items"][0]["metadata_only_match"] is False
     assert payload["items"][0]["matched_rule_ids"] == ["typescript.object_literal_missing_comma"]
+    assert payload["items"][0]["runtime_plan_rule_ids"] == ["typescript.object_literal_missing_comma"]
     assert payload["items"][0]["archetypes"] == ["object_literal_syntax"]
     assert payload["items"][0]["phases"] == ["quality_repair"]
     assert payload["items"][1]["known_rule_matched"] is False
@@ -104,12 +122,50 @@ def test_repair_rule_registry_matches_language_specific_go_and_rust_rules() -> N
     payload = default_repair_rule_registry().coverage(diagnostics).to_dict()
 
     assert payload["covered_diagnostic_count"] == 3
+    assert payload["executable_runtime_plan_diagnostic_count"] == 0
+    assert payload["metadata_only_diagnostic_count"] == 3
     assert payload["items"][0]["matched_rule_ids"] == ["go.bare_import_string"]
+    assert payload["items"][0]["metadata_only_match"] is True
     assert payload["items"][0]["diagnostic_language"] == "go"
     assert payload["items"][1]["matched_rule_ids"] == ["rust.unlinked_crate_dependency"]
+    assert payload["items"][1]["runtime_plan_rule_ids"] == []
     assert payload["items"][1]["diagnostic_phase"] == "dependency_resolution"
     assert payload["items"][2]["matched_rule_ids"] == ["rust.incompatible_derive"]
     assert payload["items"][2]["diagnostic_archetype"] == "incompatible_derive"
+
+
+def test_repair_rule_registry_matches_existing_multilanguage_legacy_strategy_metadata() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "src/main.cpp:3:10: fatal error: 'engine.hpp' file not found",
+            "src/Main.java:7: error: cannot find symbol",
+            'Traceback (most recent call last):\n  File "tests/test_app.py", line 2, in <module>\n'
+            "ModuleNotFoundError: No module named 'app'",
+            "Error: Cannot find module './src/index.js'",
+            "SyntaxError: The requested module './app.js' does not provide an export named 'run'",
+            "TypeScript project typecheck failed: src/app.ts(1,10): error TS2305: "
+            "Module '\"./model\"' has no exported member 'Widget'.",
+            "src/spec.test.ts(1,1): error TS2582: Cannot find name 'describe'.",
+        ]
+    )
+
+    payload = default_repair_rule_registry().coverage(diagnostics).to_dict()
+    matched_source_tools = [item["matched_source_tools"] for item in payload["items"]]
+
+    assert payload["covered_diagnostic_count"] == 7
+    assert payload["metadata_only_diagnostic_count"] == 7
+    assert payload["executable_runtime_plan_diagnostic_count"] == 0
+    assert matched_source_tools[0] == ["deterministic_cpp_post_repair"]
+    assert payload["items"][0]["diagnostic_language"] == "cpp"
+    assert matched_source_tools[1] == ["deterministic_java_post_repair"]
+    assert payload["items"][1]["diagnostic_language"] == "java"
+    assert matched_source_tools[2] == ["deterministic_python_package_shadow_bridge_repair"]
+    assert payload["items"][2]["diagnostic_language"] == "python"
+    assert matched_source_tools[3] == ["deterministic_node_test_script_contract_repair"]
+    assert payload["items"][3]["diagnostic_language"] == "javascript"
+    assert matched_source_tools[4] == ["deterministic_javascript_missing_export_repair"]
+    assert matched_source_tools[5] == ["deterministic_typescript_missing_export_repair"]
+    assert matched_source_tools[6] == ["deterministic_typescript_vitest_globals_repair"]
 
 
 def test_repair_rule_registry_rejects_duplicate_rule_ids_and_unknown_source_tool() -> None:
@@ -930,6 +986,67 @@ def test_public_repair_advisory_policy_exposes_read_only_agi_boundaries() -> Non
     assert payload["summary"]["director_runtime_remains_authoritative"] is True
 
 
+def test_public_repair_advisory_validation_normalizes_non_authoritative_suggestions() -> None:
+    result = validate_director_repair_advisory(
+        QueryDirectorRepairAdvisoryValidationV1(
+            advisor_source="resident_agi",
+            message="Potential recurring shell quoting diagnostic.",
+            confidence=0.9,
+            suggested_rules=(
+                {
+                    "pattern": "shellcheck SC2086",
+                    "fix_template": "quote variable expansions",
+                    "language": "shell",
+                    "confidence": 0.75,
+                    "evidence": ["scripts/deploy.sh:12"],
+                },
+            ),
+            metadata={"run_id": "run-1"},
+        )
+    )
+    payload = result.to_dict()
+
+    assert isinstance(result, DirectorRepairAdvisoryValidationResultV1)
+    assert payload["schema_version"] == "director.repair_advisory_validation.v1"
+    assert payload["access"] == "read_only"
+    assert payload["ok"] is True
+    assert payload["agi_execution_authority"] is False
+    assert payload["writes_allowed"] is False
+    assert payload["registration_allowed"] is False
+    assert payload["authoritative_receipts_allowed"] is False
+    assert payload["normalized_advisory"]["authoritative"] is False
+    assert payload["normalized_advisory"]["suggested_rules"][0]["language"] == "shell"
+    assert payload["summary"]["accepted_suggested_rule_count"] == 1
+
+
+def test_public_repair_advisory_validation_rejects_authoritative_fields() -> None:
+    result = validate_director_repair_advisory(
+        QueryDirectorRepairAdvisoryValidationV1(
+            advisor_source="resident_agi",
+            message="Attempt to smuggle authoritative fields.",
+            suggested_rules=(
+                {
+                    "pattern": "x",
+                    "fix_template": "y",
+                    "source_tool": "deterministic_future_repair",
+                    "patch": "*** Begin Patch",
+                },
+            ),
+            metadata={"success_verdict": True},
+        )
+    )
+    payload = result.to_dict()
+
+    assert payload["ok"] is False
+    assert payload["normalized_advisory"] is None
+    assert payload["agi_execution_authority"] is False
+    assert payload["writes_allowed"] is False
+    assert payload["registration_allowed"] is False
+    assert payload["authoritative_receipts_allowed"] is False
+    assert payload["summary"]["accepted_suggested_rule_count"] == 0
+    assert "forbidden authoritative fields" in payload["errors"][0]
+
+
 def test_public_shadow_comparison_is_read_only_and_reports_scope_match() -> None:
     result = compare_director_repair_shadow_run(
         CompareDirectorRepairShadowRunV1(
@@ -965,9 +1082,105 @@ def test_public_shadow_comparison_is_read_only_and_reports_scope_match() -> None
     assert payload["agi_execution_authority"] is False
     assert payload["writes_allowed"] is False
     assert payload["matched"] is True
+    assert payload["cutover_ready"] is False
+    assert payload["cutover_blockers"] == ["missing_before_after_hash_evidence", "missing_revalidation_evidence"]
     assert payload["missing_paths_in_kernel"] == []
     assert payload["extra_paths_in_kernel"] == []
     assert payload["metadata"]["writes_performed"] is False
+    assert payload["metadata"]["cutover_readiness"]["independent_shadow_required"] is True
+
+
+def test_public_shadow_comparison_requires_hash_and_revalidation_for_cutover() -> None:
+    result = compare_director_repair_shadow_run(
+        CompareDirectorRepairShadowRunV1(
+            legacy_tool_results=(
+                {
+                    "tool_name": "write_file",
+                    "success": True,
+                    "result": {
+                        "source_tool": "deterministic_typescript_missing_export_repair",
+                        "file": "src/app.ts",
+                        "before_hash": "before123",
+                        "after_hash": "after456",
+                    },
+                },
+            ),
+            kernel_receipts=(
+                RepairReceiptV1(
+                    receipt_id="receipt_1",
+                    plan_id="plan_1",
+                    source_tool="deterministic_typescript_missing_export_repair",
+                    status="shadow_observed",
+                    authoritative=False,
+                    files_changed=("src/app.ts",),
+                    before_hashes={"src/app.ts": "before123"},
+                    after_hashes={"src/app.ts": "after456"},
+                    revalidation_evidence={
+                        "command": ["tsc", "--noEmit"],
+                        "exit_code": 0,
+                        "errors_before": 1,
+                        "errors_after": 0,
+                    },
+                    metadata={"mode": "shadow"},
+                ),
+            ),
+        )
+    )
+    payload = result.to_dict()
+
+    assert payload["matched"] is True
+    assert payload["cutover_ready"] is True
+    assert payload["cutover_blockers"] == []
+    assert payload["metadata"]["cutover_readiness"]["hashes_matched"] is True
+    assert payload["metadata"]["cutover_readiness"]["revalidation_evidence_complete"] is True
+
+
+def test_public_kernel_summary_projection_is_typed_and_read_only() -> None:
+    result = project_director_repair_kernel_summary(
+        ProjectDirectorRepairKernelSummaryV1(
+            stage="materialization_quality_repairs",
+            mode="commit",
+            artifact_quality_errors=(
+                "TypeScript syntax check failed: src/app.ts(1,14): error TS2304: Cannot find name 'Widget'.",
+            ),
+            tool_results=(
+                {
+                    "tool": "write_file",
+                    "tool_name": "write_file",
+                    "success": True,
+                    "result": {
+                        "ok": True,
+                        "source_tool": "deterministic_typescript_missing_export_repair",
+                        "file": "src/app.ts",
+                        "operation": "modify",
+                    },
+                },
+            ),
+        )
+    )
+    payload = result.to_dict()
+    summary = result.summary
+
+    assert isinstance(result, DirectorRepairKernelSummaryProjectionResultV1)
+    assert payload["schema_version"] == "director.repair_kernel_summary_projection.v1"
+    assert payload["source"] == "director.runtime.repair_kernel.legacy_bridge"
+    assert payload["access"] == "read_only"
+    assert payload["execution_boundary"] == "repair_kernel_summary_projection_no_writes_no_registration"
+    assert payload["writes_allowed"] is False
+    assert payload["registration_allowed"] is False
+    assert payload["agi_execution_authority"] is False
+    assert summary["authoritative"] is False
+    assert summary["requires_revalidation"] is True
+    assert summary["pending_revalidation_count"] == 1
+    assert summary["receipts_with_revalidation"] == 0
+    assert summary["receipt_count"] == 1
+    assert summary["receipts"][0]["source_tool"] == "deterministic_typescript_missing_export_repair"
+    assert summary["receipts"][0]["status"] == "pending_revalidation"
+    assert summary["receipts"][0]["authoritative"] is False
+    assert summary["receipts"][0]["metadata"]["requires_revalidation"] is True
+    assert summary["dark_launch_comparison"]["metadata"]["read_only"] is True
+    assert summary["dark_launch_comparison"]["metadata"]["writes_performed"] is False
+    assert summary["coverage_report"]["total_diagnostics"] == 1
 
 
 def test_legacy_summary_without_receipts_is_not_authoritative() -> None:
@@ -976,6 +1189,9 @@ def test_legacy_summary_without_receipts_is_not_authoritative() -> None:
     assert summary["receipt_count"] == 0
     assert summary["authoritative"] is False
     assert summary["coverage_report"]["total_diagnostics"] == 0
+    assert summary["dark_launch_comparison"]["matched"] is True
+    assert summary["dark_launch_comparison"]["metadata"]["read_only"] is True
+    assert summary["dark_launch_comparison"]["metadata"]["writes_performed"] is False
 
 
 def test_legacy_summary_includes_uncovered_diagnostic_report() -> None:
@@ -1023,14 +1239,96 @@ def test_legacy_summary_preserves_revalidation_evidence_counts() -> None:
     )
 
     assert summary["authoritative"] is True
+    assert summary["requires_revalidation"] is False
+    assert summary["pending_revalidation_count"] == 0
+    assert summary["receipts_with_revalidation"] == 1
     assert summary["receipt_count"] == 1
     receipt = summary["receipts"][0]
+    assert receipt["status"] == "applied"
+    assert receipt["authoritative"] is True
     assert receipt["round_number"] == 2
     assert receipt["errors_before"] == 3
     assert receipt["errors_after"] == 1
     assert receipt["net_error_reduction"] == 2
     assert receipt["revalidation_evidence"]["command"] == ["cargo", "check", "--quiet"]
     assert receipt["revalidation_evidence"]["metadata"]["max_rounds"] == 3
+    shadow = summary["dark_launch_comparison"]
+    assert shadow["matched"] is True
+    assert shadow["legacy_source_tools"] == ["deterministic_rust_dependency_repair"]
+    assert shadow["kernel_source_tools"] == ["deterministic_rust_dependency_repair"]
+    assert shadow["legacy_paths"] == ["Cargo.toml"]
+    assert shadow["kernel_paths"] == ["Cargo.toml"]
+    assert shadow["metadata"]["read_only"] is True
+    assert shadow["metadata"]["writes_performed"] is False
+
+
+def test_public_revalidation_projection_updates_receipts_and_context() -> None:
+    summary = build_director_repair_kernel_summary(
+        stage="materialization_quality_repairs",
+        mode="commit",
+        artifact_quality_errors=[
+            "TypeScript syntax check failed: src/app.ts(1,14): error TS2304: Cannot find name 'Widget'."
+        ],
+        tool_results=[
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_typescript_missing_export_repair",
+                    "file": "src/app.ts",
+                    "operation": "modify",
+                },
+            }
+        ],
+    )
+    before_authority_hash = summary["receipts"][0]["authority_hash"]
+    assert summary["authoritative"] is False
+    assert summary["pending_revalidation_count"] == 1
+    assert summary["receipts"][0]["status"] == "pending_revalidation"
+
+    result = project_director_repair_revalidation_evidence(
+        AttachDirectorRepairRevalidationEvidenceV1(
+            summary={"repair_kernel": summary, "stage": "deterministic_quality_repair"},
+            residual_artifact_quality_errors=(),
+            command=("tsc", "--noEmit"),
+            metadata={"stage": "director_materialization_quality"},
+        )
+    )
+    assert isinstance(result, DirectorRepairRevalidationProjectionResultV1)
+    assert result.access == "read_only"
+    assert result.writes_allowed is False
+    assert result.registration_allowed is False
+    assert result.agi_execution_authority is False
+    updated = result.summary
+    repair_kernel = updated["repair_kernel"]
+    receipt = repair_kernel["receipts"][0]
+
+    assert repair_kernel["authoritative"] is True
+    assert repair_kernel["requires_revalidation"] is False
+    assert repair_kernel["pending_revalidation_count"] == 0
+    assert repair_kernel["receipts_with_revalidation"] == 1
+    assert receipt["status"] == "applied"
+    assert receipt["authoritative"] is True
+    assert receipt["revalidation_evidence"]["command"] == ["tsc", "--noEmit"]
+    assert receipt["revalidation_evidence"]["exit_code"] == 0
+    assert receipt["errors_before"] == 1
+    assert receipt["errors_after"] == 0
+    assert receipt["net_error_reduction"] == 1
+    assert receipt["authority_hash"] != before_authority_hash
+    assert repair_kernel["revalidation"]["post_check_evidence_attached"] is True
+    context_receipt = repair_kernel["receipt_context"]["receipts"][0]
+    assert context_receipt["post_check_evidence"]["available"] is True
+    assert context_receipt["errors_after"] == 0
+
+    compatibility_summary = attach_director_repair_revalidation_evidence(
+        {"repair_kernel": summary, "stage": "deterministic_quality_repair"},
+        residual_artifact_quality_errors=[],
+        command=("tsc", "--noEmit"),
+        metadata={"stage": "director_materialization_quality"},
+    )
+    assert compatibility_summary["repair_kernel"]["receipts"][0]["errors_after"] == 0
 
 
 def test_public_typescript_comma_planner_returns_composed_patch_projection() -> None:
@@ -1087,7 +1385,10 @@ def test_public_repair_coverage_report_exposes_uncovered_diagnostics() -> None:
     assert payload["total_diagnostics"] == 2
     assert payload["covered_diagnostic_count"] == 1
     assert payload["uncovered_diagnostic_count"] == 1
+    assert payload["executable_runtime_plan_diagnostic_count"] == 1
+    assert payload["metadata_only_diagnostic_count"] == 0
     assert payload["items"][0]["known_rule_matched"] is True
+    assert payload["items"][0]["executable_runtime_plan_matched"] is True
     assert payload["items"][0]["matched_source_tools"] == ["deterministic_typescript_return_object_semicolon_repair"]
     assert payload["items"][1]["known_rule_matched"] is False
     assert payload["items"][1]["diagnostic_language"] == "typescript"
@@ -1109,6 +1410,8 @@ def test_public_repair_coverage_suggests_rust_missing_method_self_family() -> No
 
     assert payload["covered_diagnostic_count"] == 0
     assert payload["uncovered_diagnostic_count"] == 1
+    assert payload["executable_runtime_plan_diagnostic_count"] == 0
+    assert payload["metadata_only_diagnostic_count"] == 0
     assert item["known_rule_matched"] is False
     assert item["diagnostic_language"] == "rust"
     assert item["diagnostic_archetype"] == "missing_method_self"
@@ -1128,7 +1431,41 @@ def test_public_repair_language_slots_reserve_future_languages_without_registeri
     assert payload["agi_execution_authority"] is False
     assert payload["writes_allowed"] is False
     languages = {item["language"] for item in payload["items"]}
-    assert {"typescript", "go", "rust", "cpp", "java", "python", "shell", "sql", "csharp"}.issubset(languages)
+    assert {
+        "typescript",
+        "go",
+        "rust",
+        "cpp",
+        "java",
+        "python",
+        "shell",
+        "sql",
+        "csharp",
+        "vue",
+        "svelte",
+        "scala",
+        "elixir",
+        "erlang",
+        "haskell",
+        "ocaml",
+        "zig",
+        "powershell",
+        "terraform",
+    }.issubset(languages)
+    assert payload["summary"]["language_count"] >= 30
+    assert payload["summary"]["authoritative_rule_languages"] == [
+        "cpp",
+        "go",
+        "html",
+        "java",
+        "javascript",
+        "python",
+        "rust",
+        "typescript",
+    ]
+    assert "scala" in payload["summary"]["reserved_only_languages"]
+    assert "terraform" in payload["summary"]["reserved_only_languages"]
+    assert payload["summary"]["reserved_only_language_count"] >= 25
     assert payload["summary"]["bench_driven_rule_addition_required"] is True
 
     diagnostic = RepairDiagnostic(
@@ -1141,6 +1478,81 @@ def test_public_repair_language_slots_reserve_future_languages_without_registeri
     assert coverage_item["diagnostic_language"] == "shell"
     assert coverage_item["known_rule_matched"] is False
     assert coverage_item["matched_source_tools"] == []
+
+
+def test_public_post_execution_schedule_is_runtime_owned_and_read_only() -> None:
+    result = query_director_repair_post_execution_schedule(QueryDirectorRepairPostExecutionScheduleV1())
+    payload = result.to_dict()
+
+    assert isinstance(result, DirectorRepairPostExecutionScheduleResultV1)
+    assert payload["schema_version"] == "director.repair_post_execution_schedule.v1"
+    assert payload["source"] == "director.runtime.repair_kernel.scheduler"
+    assert payload["access"] == "read_only"
+    assert payload["owner_cell"] == "director.runtime"
+    assert payload["execution_boundary"] == "read_only_post_execution_schedule_no_runner_binding"
+    assert payload["runner_binding_owner"] == "roles.adapters"
+    assert payload["writes_allowed"] is False
+    assert payload["registration_allowed"] is False
+    assert payload["agi_execution_authority"] is False
+    assert [item["step_id"] for item in payload["items"]] == [
+        "go.module_import",
+        "rust.post_execution_convergence",
+        "cpp.post_execution",
+        "java.post_execution",
+    ]
+    assert payload["items"][0]["phase"] == "dependency_resolution"
+    assert payload["items"][1]["phase"] == "multi_phase_convergence"
+    assert payload["items"][2]["priority"] == 1
+    assert payload["summary"]["runtime_schedule_authoritative"] is True
+    assert payload["summary"]["runner_binding_owner"] == "roles.adapters"
+    assert payload["summary"]["target_scheduler"] == "director.runtime.repair_kernel.scheduler"
+
+
+def test_repair_language_slot_inference_avoids_common_reserved_language_false_positives() -> None:
+    diagnostics = [
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="generic_error",
+            message="A javascript transpiler message should remain unclassified without a known source.",
+            raw="javascript transpiler message",
+        ),
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="generic_error",
+            message="Generic syntax error.",
+            path="analysis/sim.m",
+            raw="Generic syntax error in analysis/sim.m",
+        ),
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="generic_error",
+            message="MATLAB failed while loading helper code.",
+            path="analysis/sim.m",
+            raw="MATLAB failed while loading helper code.",
+        ),
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="generic_error",
+            message="clang reports an Objective-C import failure.",
+            path="src/AppDelegate.m",
+            raw="clang reports an Objective-C import failure.",
+        ),
+        RepairDiagnostic(
+            source="artifact_quality",
+            code="generic_error",
+            message="svelte-check reported an unresolved component import.",
+            path="src/App.svelte",
+            raw="svelte-check reported an unresolved component import.",
+        ),
+    ]
+
+    payload = default_repair_rule_registry().coverage(diagnostics).to_dict()
+
+    assert payload["items"][0]["diagnostic_language"] == "unknown"
+    assert payload["items"][1]["diagnostic_language"] == "unknown"
+    assert payload["items"][2]["diagnostic_language"] == "matlab"
+    assert payload["items"][3]["diagnostic_language"] == "objective_c"
+    assert payload["items"][4]["diagnostic_language"] == "svelte"
 
 
 def test_public_strategy_catalog_is_read_only_and_non_agi_authoritative() -> None:

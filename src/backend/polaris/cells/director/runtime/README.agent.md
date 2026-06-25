@@ -33,6 +33,10 @@ models plan ordering, `priority`, `depends_on`, `round_number`, `max_rounds`,
 cycle detection, and post-round verifier snapshots. Language-specific post
 repair functions must not hide their own unbounded convergence loops; they must
 be migrated behind this scheduler contract.
+The post-execution language repair schedule catalog is exposed through
+`query_director_repair_post_execution_schedule`. `roles.adapters` may bind
+runtime-declared `step_id` values to legacy runners during migration, but it
+must not redefine phase, priority, or dependency metadata locally.
 
 Repair receipts must close the loop with revalidation evidence. A receipt that
 claims an applied deterministic repair should be able to point at the verifier
@@ -45,6 +49,12 @@ Dark-launch comparison is read-only. Use
 new kernel receipts by changed files and source tools before cutting over a
 legacy path. The comparison must not write files or register rules.
 
+Legacy `tool_results` summary projection is a typed runtime public boundary.
+Cross-cell callers must use `ProjectDirectorRepairKernelSummaryV1` with
+`project_director_repair_kernel_summary` to project legacy writes into
+repair-kernel receipts and coverage reports. `build_director_repair_kernel_summary`
+is a compatibility helper only; `roles.adapters` must not call it directly.
+
 The production deterministic repair strategies are still migrated through
 `roles.adapters/internal/director/deterministic_repairs/` during cutover. That
 directory is a legacy strategy host only: it must not own a repair kernel,
@@ -53,14 +63,19 @@ strategy catalog, policy gate, receipt contract, or AGI advisory contract.
 Future language coverage must grow through this kernel, not by adding more
 branches to `execute_method.py`. Bench agents running L1-L12 or other project
 sets may add language-specific strategies for TypeScript, Go, Rust, C++, Java,
-Python, shell, SQL, or future scripting languages, but each new repair must
-declare a stable `source_tool`, language/archetype metadata, coverage behavior,
-receipt projection, and verifier evidence. If a diagnostic is not yet covered,
-surface it as `known_rule_matched=false` first; do not add speculative rules
-without bench evidence.
-Use `query_director_repair_language_slots` to inspect reserved extension slots;
-these slots are scaffolding only and do not mean the language has an
-authoritative deterministic rule.
+Python, shell, SQL, or future programming/script ecosystems. Before adding a
+language repair, use `query_director_repair_language_slots` to inspect reserved
+extension slots. The registry already reserves slots for common future targets
+such as Vue/Svelte, Scala/Groovy, Elixir/Erlang, Haskell/OCaml/F#, Zig/Nim/
+Crystal, Perl/PowerShell/Julia, Objective-C/MATLAB/Fortran, and Terraform/HCL.
+These slots are scaffolding only and do not mean the language has an
+authoritative deterministic rule. Missing slots must be added to
+`director.runtime` as read-only reservation metadata first, not as empty
+execution branches. Each new repair must declare a stable `source_tool`,
+language/archetype metadata, coverage behavior, receipt projection, and verifier
+evidence. If a diagnostic is not yet covered, surface it as
+`known_rule_matched=false` first; do not add speculative rules without bench
+evidence.
 
 Remaining code still lives elsewhere:
 
@@ -80,12 +95,18 @@ Remaining code still lives elsewhere:
   service functions before legacy callers can consume it.
 - The post-execution language path must stay behind
   `roles.adapters/internal/director/post_execution_repair_bridge.py` while
-  cutover is incomplete. `execute_method.py`, Factory, QA, and bench harnesses
-  must not import language-specific repair functions directly.
+  cutover is incomplete. The bridge must consume
+  `query_director_repair_post_execution_schedule` and only provide runner
+  bindings for runtime-declared step ids. `execute_method.py`, Factory, QA, and
+  bench harnesses must not import language-specific repair functions directly.
 
 AGI/resident advisory is intentionally not part of the Director repair execution
 path. Future AGI integration may consume repair diagnostics and receipts to emit
 non-authoritative advisory notes or suggested rule patterns only; it must not
 write files, register rules, select success, override policy gates, or become
 Run Ledger / ReceiptStore truth. Cross-cell callers can inspect the read-only
-advisory boundary through `query_director_repair_advisory_policy`.
+advisory boundary through `query_director_repair_advisory_policy`. Any future
+AGI suggested-rule payload must first pass
+`validate_director_repair_advisory`; validation is read-only and returns a
+normalized advisory projection or explicit rejection, never a repair plan or
+registered rule.

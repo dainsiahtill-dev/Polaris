@@ -30,16 +30,19 @@ import { ExecutionProgressBar } from "./ExecutionProgressBar";
 import { useResident } from "@/hooks/useResident";
 import type {
   ResidentAgiAuditPackPayload,
+  ResidentAgiCapabilityAccessRegistryPayload,
   ResidentAgiAuthorityMatrixPayload,
   ResidentAgiCapabilityPayload,
   ResidentAgiDecisionCapabilityPayload,
   ResidentAgiDecisionCapabilityRegistryPayload,
+  ResidentAgiDecisionBoundaryPolicyPayload,
   ResidentAgiEvidenceInterfaceContractPayload,
   ResidentAgiEvidenceInterfacesPayload,
   ResidentAgiDecisionHandoffPayload,
   ResidentAgiHandoffInboxPayload,
   ResidentAgiHardcodedRepairStrategyCatalogPayload,
   ResidentAgiRepairAdvisoryPolicyPayload,
+  ResidentAgiRepairAdvisoryOverlayPayload,
   ResidentAgiDecisionProfilePayload,
   ResidentAgiDecisionBoundaryPayload,
   ResidentAgiParticipationPayload,
@@ -77,6 +80,7 @@ interface ResidentWorkspaceProps {
   onBackToMain: () => void;
   residentSnapshot?: ResidentStatusDetailsPayload | null;
   initialTab?: AgiTab;
+  residentAgiLlmStatus?: ResidentAgiLlmStatus | null;
 }
 
 interface AgiParticipationOption {
@@ -84,6 +88,19 @@ interface AgiParticipationOption {
   label: string;
   category?: string;
   riskLevel?: string;
+}
+
+export interface ResidentAgiLlmStatus {
+  ready?: boolean | null;
+  providerId?: string | null;
+  providerName?: string | null;
+  model?: string | null;
+  grade?: string | null;
+  blocked?: boolean;
+  unsupported?: boolean;
+  readinessIssue?: string | null;
+  runtimeIssue?: string | null;
+  lastUpdated?: string | null;
 }
 
 const AGI_EVIDENCE_INTERFACE_CATEGORIES = new Set([
@@ -125,6 +142,13 @@ const AGI_PARTICIPATION_LABELS: Record<string, string> = {
   director_repair_coverage: "Director 修复覆盖审计",
   director_repair_advisory_policy: "Director 修复建议边界",
 };
+
+const AGI_REPAIR_ADVISORY_SCOPE_IDS = [
+  "director.repair.advisory",
+  "director_repair_advisory_policy",
+  "director_repair_coverage",
+  "director_repair_strategy_catalog",
+];
 
 function formatTime(value?: string | null): string {
   if (!value) return "暂无";
@@ -223,6 +247,7 @@ export function ResidentWorkspace({
   onBackToMain,
   residentSnapshot = null,
   initialTab = "overview",
+  residentAgiLlmStatus = null,
 }: ResidentWorkspaceProps) {
   const resident = useResident({ workspace, liveResident: residentSnapshot });
   const [activeTab, setActiveTab] = useState<AgiTab>(initialTab);
@@ -234,6 +259,9 @@ export function ResidentWorkspace({
   const [newGoalDesc, setNewGoalDesc] = useState("");
   const [agiDecisionObjective, setAgiDecisionObjective] = useState(
     "审计当前运行证据，判断是否允许进入下一步。",
+  );
+  const [agiDecisionType, setAgiDecisionType] = useState(
+    "evidence.interface.selection",
   );
 
   // Identity edit state
@@ -248,6 +276,27 @@ export function ResidentWorkspace({
   const isActive = Boolean(resident.residentRuntime?.active);
   const mode = resident.residentRuntime?.mode || "observe";
   const runtimeEvidence = resident.residentRuntimeEvidence;
+  const residentAgiParticipationEnabled = Boolean(
+    resident.residentIdentity?.resident_agi_participation?.enabled,
+  );
+  const residentAgiLlmProvider = String(
+    residentAgiLlmStatus?.providerName ||
+      residentAgiLlmStatus?.providerId ||
+      "",
+  ).trim();
+  const residentAgiLlmModel = String(residentAgiLlmStatus?.model || "").trim();
+  const residentAgiLlmBound = Boolean(
+    residentAgiLlmProvider && residentAgiLlmModel,
+  );
+  const residentAgiLlmBlocked = Boolean(
+    residentAgiLlmStatus?.blocked || residentAgiLlmStatus?.unsupported,
+  );
+  const residentAgiLlmReady = Boolean(
+    residentAgiLlmStatus?.ready && residentAgiLlmBound && !residentAgiLlmBlocked,
+  );
+  const residentAgiLlmRiskVisible =
+    residentAgiParticipationEnabled &&
+    (!residentAgiLlmBound || residentAgiLlmBlocked);
 
   // Current focus - simplified
   const currentFocus = resident.residentAgenda?.current_focus?.[0] || null;
@@ -278,15 +327,62 @@ export function ResidentWorkspace({
   const agiDecisionCapabilityRegistry =
     agiCapabilitySurface?.decision_capability_registry ||
     agiDecisionProfile?.decision_capability_registry;
+  const agiCapabilityAccessRegistry =
+    agiCapabilitySurface?.capability_access_registry || null;
   const agiEvidenceInterfaceContract =
     agiCapabilitySurface?.evidence_interface_contract;
   const agiDecisionBoundaries = agiCapabilitySurface?.decision_boundaries || [];
+  const agiDecisionBoundaryPolicy =
+    agiCapabilitySurface?.decision_boundary_policy || null;
   const agiParticipationPolicy =
     resident.status?.agi_participation_policy ||
     agiCapabilitySurface?.participation_policy ||
     null;
   const lastAgiDecisionHandoff =
     resident.lastAgiDecisionResult?.decision_handoff || null;
+  const lastRepairAdvisoryOverlay =
+    resident.lastAgiDecisionResult?.repair_advisory_overlay || null;
+  const queriedRepairAdvisoryOverlay =
+    resident.residentAgiRepairAdvisoryOverlay?.overlay || null;
+  const queriedRepairAdvisoryOverlaySource =
+    resident.residentAgiRepairAdvisoryOverlay?.found &&
+    resident.residentAgiRepairAdvisoryOverlay?.decision_ref?.decision_id
+      ? `public_query:${shortDecisionId(
+          resident.residentAgiRepairAdvisoryOverlay.decision_ref.decision_id,
+        )}`
+      : resident.residentAgiRepairAdvisoryOverlay?.found
+      ? "public_query"
+      : "";
+  const auditPackRepairAdvisoryOverlay =
+    agiAuditPack?.repair_advisory_overlay_query?.overlay ||
+    agiAuditPack?.latest_repair_advisory_overlay ||
+    null;
+  const auditPackRepairAdvisoryOverlaySource =
+    agiAuditPack?.repair_advisory_overlay_query?.found &&
+    agiAuditPack.repair_advisory_overlay_query.decision_ref?.decision_id
+      ? `audit_pack_query:${shortDecisionId(
+          agiAuditPack.repair_advisory_overlay_query.decision_ref.decision_id,
+        )}`
+      : auditPackRepairAdvisoryOverlay
+        ? "audit_pack"
+        : "";
+  const persistedRepairAdvisoryOverlay = useMemo(
+    () => latestDecisionRepairAdvisoryOverlay(resident.decisions),
+    [resident.decisions],
+  );
+  const activeRepairAdvisoryOverlay =
+    lastRepairAdvisoryOverlay ||
+    queriedRepairAdvisoryOverlay ||
+    auditPackRepairAdvisoryOverlay ||
+    persistedRepairAdvisoryOverlay?.overlay ||
+    null;
+  const activeRepairAdvisoryOverlaySource = lastRepairAdvisoryOverlay
+    ? "runtime decision result"
+    : queriedRepairAdvisoryOverlay
+      ? queriedRepairAdvisoryOverlaySource
+      : auditPackRepairAdvisoryOverlay
+        ? auditPackRepairAdvisoryOverlaySource
+        : persistedRepairAdvisoryOverlay?.source || "";
   const agiParticipationOptions = useMemo(() => {
     const dynamicOptions =
       agiParticipationPolicy?.available_scopes
@@ -320,6 +416,54 @@ export function ResidentWorkspace({
       return true;
     });
   }, [agiParticipationPolicy]);
+  const agiDecisionTypeOptions = useMemo(() => {
+    const options = agiDecisionCapabilities
+      .map((capability) => {
+        const decisionId = String(capability.decision_id || "").trim();
+        if (!decisionId) return null;
+        return {
+          decisionId,
+          label: String(capability.name || decisionId).trim(),
+          owner: String(capability.owner || "").trim(),
+          riskLevel: String(capability.risk_level || "").trim(),
+        };
+      })
+      .filter(
+        (
+          option,
+        ): option is {
+          decisionId: string;
+          label: string;
+          owner: string;
+          riskLevel: string;
+        } => option !== null,
+      );
+    return options.length
+      ? options
+      : [
+          {
+            decisionId: "platform_supervision",
+            label: "Platform supervision",
+            owner: "resident_agi",
+            riskLevel: "medium",
+          },
+        ];
+  }, [agiDecisionCapabilities]);
+  useEffect(() => {
+    if (agiDecisionTypeOptions.length === 0) return;
+    if (
+      agiDecisionTypeOptions.some(
+        (option) => option.decisionId === agiDecisionType,
+      )
+    ) {
+      return;
+    }
+    setAgiDecisionType(agiDecisionTypeOptions[0].decisionId);
+  }, [agiDecisionType, agiDecisionTypeOptions]);
+  const selectedAgiDecisionCapability =
+    agiDecisionCapabilities.find(
+      (capability) => capability.decision_id === agiDecisionType,
+    ) || null;
   const decisionStats = useMemo(
     () => buildDecisionStats(resident.decisions),
     [resident.decisions],
@@ -328,6 +472,11 @@ export function ResidentWorkspace({
     () => buildCapabilityGovernanceStats(agiCapabilities),
     [agiCapabilities],
   );
+  const agiRepairAdvisoryParticipationEnabled =
+    agiParticipationEnabled &&
+    AGI_REPAIR_ADVISORY_SCOPE_IDS.some((scope) =>
+      isAgiParticipationScopeSelected(scope, agiParticipationScopes),
+    );
 
   const toggleAgiParticipationScope = (scope: string) => {
     const scopeKey = normalizeAgiParticipationScope(scope);
@@ -338,6 +487,32 @@ export function ResidentWorkspace({
           )
         : [...current, scope],
     );
+  };
+  const setAgiRepairAdvisoryParticipation = (enabled: boolean) => {
+    setAgiParticipationScopes((current) => {
+      const selectedKeys = new Set(
+        current.map((item) => normalizeAgiParticipationScope(item)),
+      );
+      if (enabled) {
+        const next = [...current];
+        for (const scope of AGI_REPAIR_ADVISORY_SCOPE_IDS) {
+          const key = normalizeAgiParticipationScope(scope);
+          if (!selectedKeys.has(key)) {
+            next.push(scope);
+            selectedKeys.add(key);
+          }
+        }
+        return next;
+      }
+      return current.filter(
+        (scope) =>
+          !AGI_REPAIR_ADVISORY_SCOPE_IDS.some(
+            (repairScope) =>
+              normalizeAgiParticipationScope(repairScope) ===
+              normalizeAgiParticipationScope(scope),
+          ),
+      );
+    });
   };
 
   const handleCreateGoal = async () => {
@@ -362,6 +537,7 @@ export function ResidentWorkspace({
     if (!objective) return;
     const latestDecision = resident.decisions[0] || null;
     const candidateActions = uniqueStrings([
+      ...(selectedAgiDecisionCapability?.candidate_actions || []),
       ...(agiDecisionProfile?.candidate_actions || []),
       "continue",
       "block",
@@ -371,10 +547,11 @@ export function ResidentWorkspace({
     const constraints = uniqueStrings([
       "preserve_pm_chief_engineer_director_qa_chain",
       "request_evidence_or_block_when_context_is_insufficient",
+      ...(selectedAgiDecisionCapability?.hard_constraints || []),
       ...(agiDecisionProfile?.required_constraints || []),
     ]);
     await resident.runAgiDecision({
-      decision_type: "platform_supervision",
+      decision_type: agiDecisionType,
       objective,
       evidence: {
         workspace,
@@ -411,6 +588,18 @@ export function ResidentWorkspace({
         ),
         resident_agi_downstream_precheck:
           agiDecisionProfile?.downstream_precheck || "",
+        selected_decision_capability_id:
+          selectedAgiDecisionCapability?.decision_id || agiDecisionType,
+        selected_decision_capability_name:
+          selectedAgiDecisionCapability?.name || "",
+        selected_decision_capability_owner:
+          selectedAgiDecisionCapability?.owner || "",
+        selected_decision_capability_risk:
+          selectedAgiDecisionCapability?.risk_level || "",
+        selected_decision_required_evidence_interfaces:
+          selectedAgiDecisionCapability?.required_evidence_interfaces || [],
+        selected_decision_optional_evidence_interfaces:
+          selectedAgiDecisionCapability?.optional_evidence_interfaces || [],
       },
       constraints,
       candidate_actions: candidateActions,
@@ -439,7 +628,7 @@ export function ResidentWorkspace({
             <ArrowLeft className="size-4" />
           </Button>
           <div className="flex items-center gap-2">
-            <Bot className="size-5 text-cyan-400" />
+            <Bot className="size-5 text-slate-300" />
             <span className="font-medium">AGI 工作区</span>
           </div>
         </div>
@@ -448,9 +637,8 @@ export function ResidentWorkspace({
           <Badge
             variant="outline"
             className={cn(
-              isActive
-                ? "border-emerald-500/30 text-emerald-400"
-                : "border-slate-600 text-slate-400",
+              "border-slate-700 bg-slate-950/40",
+              isActive ? "text-slate-100" : "text-slate-500",
             )}
           >
             {isActive ? "运行中" : "已停止"}
@@ -468,7 +656,7 @@ export function ResidentWorkspace({
             <Button
               size="sm"
               onClick={() => void resident.start(mode)}
-              className="bg-cyan-500 text-black hover:bg-cyan-400"
+              className="bg-slate-100 text-slate-950 hover:bg-white"
             >
               <Play className="mr-1 size-3" />
               启动
@@ -481,7 +669,7 @@ export function ResidentWorkspace({
             title="立即运行一轮反思 (Tick)：元认知 / 技能 / 反事实 / 自改 / 目标生成"
             onClick={() => void resident.tick()}
             disabled={resident.isActing("tick")}
-            className="border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10"
+            className="border-slate-700 text-slate-200 hover:bg-slate-900"
           >
             <Brain
               className={cn(
@@ -507,10 +695,10 @@ export function ResidentWorkspace({
       {/* Main Content */}
       <div className="flex-1 overflow-auto p-4">
         {/* Current Status Card - Always visible */}
-        <Card className="mb-4 border-slate-800 bg-slate-900/50">
+        <Card className="mb-4 border-slate-800/80 bg-slate-950/45">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm text-slate-300">
-              <Clock className="size-4 text-cyan-400" />
+              <Clock className="size-4 text-slate-400" />
               当前状态
             </CardTitle>
           </CardHeader>
@@ -528,7 +716,7 @@ export function ResidentWorkspace({
                   </span>
                 </div>
                 <div
-                  className="mt-2 inline-flex max-w-full flex-wrap items-center gap-1 rounded border border-cyan-500/15 bg-slate-950/70 px-2 py-1 font-mono text-[10px] text-cyan-200/80"
+                  className="mt-2 inline-flex max-w-full flex-wrap items-center gap-1 rounded-md border border-slate-800 bg-slate-950/40 px-2 py-1 font-mono text-[10px] text-slate-400"
                   data-testid="resident-runtime-evidence"
                 >
                   <span>
@@ -552,7 +740,7 @@ export function ResidentWorkspace({
                 </div>
                 {tickAutonomyBoundary && (
                   <div
-                    className="mt-2 inline-flex max-w-full flex-wrap items-center gap-1 rounded border border-slate-700 bg-slate-950/70 px-2 py-1 font-mono text-[10px] text-slate-300"
+                    className="mt-2 inline-flex max-w-full flex-wrap items-center gap-1 rounded-md border border-slate-800 bg-slate-950/40 px-2 py-1 font-mono text-[10px] text-slate-400"
                     data-testid="resident-tick-autonomy-boundary"
                   >
                     <span>
@@ -584,20 +772,20 @@ export function ResidentWorkspace({
 
         {/* Stats Row */}
         <div className="mb-4 grid grid-cols-3 gap-3">
-          <Card className="border-slate-800 bg-slate-900/50 p-3">
+          <Card className="border-slate-800/80 bg-slate-950/45 p-3">
             <div className="text-2xl font-semibold text-white">
               {resident.goals.length}
             </div>
             <div className="text-xs text-slate-400">目标总数</div>
           </Card>
-          <Card className="border-slate-800 bg-slate-900/50 p-3">
-            <div className="text-2xl font-semibold text-emerald-400">
+          <Card className="border-slate-800/80 bg-slate-950/45 p-3">
+            <div className="text-2xl font-semibold text-slate-100">
               {approvedGoals.length}
             </div>
             <div className="text-xs text-slate-400">已批准</div>
           </Card>
-          <Card className="border-slate-800 bg-slate-900/50 p-3">
-            <div className="text-2xl font-semibold text-amber-400">
+          <Card className="border-slate-800/80 bg-slate-950/45 p-3">
+            <div className="text-2xl font-semibold text-slate-100">
               {pendingGoals.length}
             </div>
             <div className="text-xs text-slate-400">待审批</div>
@@ -632,10 +820,10 @@ export function ResidentWorkspace({
         {activeTab === "overview" && (
           <div className="space-y-3">
             <div className="grid gap-3 lg:grid-cols-2">
-              <Card className="border-slate-800 bg-slate-900/50">
+              <Card className="border-slate-800/80 bg-slate-950/45">
                 <CardHeader className="flex flex-row items-center justify-between pb-2">
                   <CardTitle className="flex items-center gap-2 text-sm text-slate-300">
-                    <Bot className="size-4 text-cyan-400" />
+                    <Bot className="size-4 text-slate-400" />
                     AGI 身份
                   </CardTitle>
                   {!editingIdentity && (
@@ -684,7 +872,7 @@ export function ResidentWorkspace({
                         placeholder="任务宣言"
                         className="bg-slate-950"
                       />
-                      <div className="rounded border border-slate-800 bg-slate-950/70 p-3">
+                      <div className="rounded-md border border-slate-800 bg-slate-950/45 p-3">
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <div className="text-xs font-medium text-slate-200">
@@ -702,11 +890,37 @@ export function ResidentWorkspace({
                           />
                         </div>
                         <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          <label
+                            className={cn(
+                              "flex items-center justify-between gap-3 rounded-md border border-slate-800 bg-slate-950/35 px-2 py-2 text-xs sm:col-span-2",
+                              agiParticipationEnabled
+                                ? "text-slate-200"
+                                : "text-slate-600",
+                            )}
+                          >
+                            <span className="min-w-0">
+                              <span className="block font-medium">
+                                Director 修复建议
+                              </span>
+                              <span className="block text-[10px] text-slate-500">
+                                仅允许 AGI 提交非权威 suggested_rules，不允许写入或注册修复规则
+                              </span>
+                            </span>
+                            <Switch
+                              aria-label="Director 修复建议参与"
+                              data-testid="resident-agi-repair-advisory-participation"
+                              disabled={!agiParticipationEnabled}
+                              checked={agiRepairAdvisoryParticipationEnabled}
+                              onCheckedChange={
+                                setAgiRepairAdvisoryParticipation
+                              }
+                            />
+                          </label>
                           {agiParticipationOptions.map((option) => (
                             <label
                               key={option.scope}
                               className={cn(
-                                "flex items-center gap-2 rounded border border-slate-800 px-2 py-1.5 text-xs",
+                                "flex items-center gap-2 rounded-md border border-slate-800 px-2 py-1.5 text-xs",
                                 agiParticipationEnabled
                                   ? "text-slate-300"
                                   : "text-slate-600",
@@ -766,7 +980,7 @@ export function ResidentWorkspace({
                             });
                             setEditingIdentity(false);
                           }}
-                          className="bg-cyan-500 text-black hover:bg-cyan-400"
+                          className="bg-slate-100 text-slate-950 hover:bg-white"
                         >
                           保存
                         </Button>
@@ -793,14 +1007,12 @@ export function ResidentWorkspace({
                         <Badge
                           className={cn(
                             "border text-xs",
-                            resident.residentIdentity
-                              ?.resident_agi_participation?.enabled
+                            residentAgiParticipationEnabled
                               ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-300"
                               : "border-slate-700 bg-slate-950 text-slate-500",
                           )}
                         >
-                          {resident.residentIdentity?.resident_agi_participation
-                            ?.enabled
+                          {residentAgiParticipationEnabled
                             ? "AGI 参与已开启"
                             : "AGI 参与未开启"}
                         </Badge>
@@ -817,6 +1029,49 @@ export function ResidentWorkspace({
                               {AGI_PARTICIPATION_LABELS[scope] || scope}
                             </Badge>
                           ))}
+                      </div>
+                      <div
+                        className={cn(
+                          "mt-3 rounded border px-3 py-2 text-xs",
+                          residentAgiLlmReady
+                            ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+                            : residentAgiLlmRiskVisible
+                              ? "border-amber-500/25 bg-amber-500/10 text-amber-200"
+                              : "border-slate-800 bg-slate-950/70 text-slate-400",
+                        )}
+                        data-testid="resident-agi-llm-binding-status"
+                      >
+                        <div className="flex items-center gap-2 font-medium">
+                          {residentAgiLlmReady ? (
+                            <CheckCircle2 className="size-3.5" />
+                          ) : residentAgiLlmRiskVisible ? (
+                            <Ban className="size-3.5" />
+                          ) : (
+                            <Bot className="size-3.5" />
+                          )}
+                          <span>
+                            {residentAgiLlmReady
+                              ? "Resident AGI 模型已绑定"
+                              : residentAgiLlmRiskVisible
+                                ? "Resident AGI 参与已开启但模型不可用"
+                                : "Resident AGI 模型绑定状态未确认"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[11px] opacity-80">
+                          {residentAgiLlmBound
+                            ? `${residentAgiLlmProvider}/${residentAgiLlmModel}${
+                                residentAgiLlmStatus?.grade
+                                  ? ` · ${residentAgiLlmStatus.grade}`
+                                  : ""
+                              }`
+                            : "请在 LLM 视觉配置编辑器中为 Resident AGI 绑定模型。"}
+                          {residentAgiLlmStatus?.readinessIssue
+                            ? ` ${residentAgiLlmStatus.readinessIssue}`
+                            : ""}
+                          {residentAgiLlmStatus?.runtimeIssue
+                            ? ` ${residentAgiLlmStatus.runtimeIssue}`
+                            : ""}
+                        </div>
                       </div>
                     </>
                   )}
@@ -919,6 +1174,7 @@ export function ResidentWorkspace({
                 <CapabilityGovernanceMatrix
                   stats={capabilityGovernance}
                   authorityMatrix={agiAuthorityMatrix}
+                  accessRegistry={agiCapabilityAccessRegistry}
                   runtimeFoundation={
                     agiCapabilitySurface?.runtime_foundation ||
                     "roles.runtime + ContextOS + TurnEngine"
@@ -928,6 +1184,10 @@ export function ResidentWorkspace({
                   catalog={hardcodedRepairCatalog}
                 />
                 <AgiRepairAdvisoryPolicyPanel policy={repairAdvisoryPolicy} />
+                <AgiRepairAdvisoryOverlayPanel
+                  overlay={activeRepairAdvisoryOverlay}
+                  source={activeRepairAdvisoryOverlaySource}
+                />
                 <AgiDecisionCapabilityRegistry
                   schema={agiCapabilitySurface?.decision_capability_schema}
                   registry={agiDecisionCapabilityRegistry}
@@ -944,6 +1204,7 @@ export function ResidentWorkspace({
                   schema={agiCapabilitySurface?.decision_boundary_schema}
                   boundaries={agiDecisionBoundaries}
                 />
+                <DecisionBoundaryPolicyPanel policy={agiDecisionBoundaryPolicy} />
                 <AgiAuditPackPanel pack={agiAuditPack} />
                 <div className="mt-3 grid gap-2 lg:grid-cols-2">
                   {agiCapabilities.map((capability) => (
@@ -1216,6 +1477,50 @@ export function ResidentWorkspace({
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                  <label className="block min-w-0">
+                    <span className="mb-1 block text-xs text-slate-500">
+                      决策类型
+                    </span>
+                    <select
+                      aria-label="AGI 决策类型"
+                      data-testid="resident-agi-decision-type"
+                      value={agiDecisionType}
+                      onChange={(event) =>
+                        setAgiDecisionType(event.target.value)
+                      }
+                      className="h-9 w-full rounded border border-slate-700 bg-slate-950 px-2 text-xs text-slate-200 outline-none focus:border-cyan-500"
+                    >
+                      {agiDecisionTypeOptions.map((option) => (
+                        <option
+                          key={option.decisionId}
+                          value={option.decisionId}
+                        >
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div
+                    className="flex flex-wrap gap-1"
+                    data-testid="resident-agi-selected-decision-meta"
+                  >
+                    <span className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+                      {selectedAgiDecisionCapability?.decision_id ||
+                        agiDecisionType}
+                    </span>
+                    {selectedAgiDecisionCapability?.owner && (
+                      <span className="rounded border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-200">
+                        {selectedAgiDecisionCapability.owner}
+                      </span>
+                    )}
+                    {selectedAgiDecisionCapability?.risk_level && (
+                      <span className="rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-200">
+                        risk:{selectedAgiDecisionCapability.risk_level}
+                      </span>
+                    )}
+                  </div>
+                </div>
                 <Textarea
                   aria-label="AGI 决策目标"
                   value={agiDecisionObjective}
@@ -1227,6 +1532,15 @@ export function ResidentWorkspace({
                 <AgiDecisionProfilePanel
                   profile={agiDecisionProfile}
                   testId="resident-agi-decision-turn-profile"
+                />
+                <AgiSelectedDecisionEvidencePanel
+                  decision={selectedAgiDecisionCapability}
+                  evidencePayload={agiEvidenceInterfaces}
+                  contract={agiEvidenceInterfaceContract}
+                  refreshing={resident.isActing("agi-evidence-interfaces")}
+                  onRefresh={() =>
+                    void resident.refreshAgiEvidenceInterfaces(agiDecisionType)
+                  }
                 />
                 <AgiDecisionHandoffPanel handoff={lastAgiDecisionHandoff} />
                 <AgiHandoffInboxPanel inbox={agiHandoffs} />
@@ -1436,8 +1750,8 @@ function EvolutionSection({
 
 function CapabilityMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2">
-      <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
+    <div className="min-w-0 rounded-md border border-slate-800 bg-slate-950/35 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
         {label}
       </div>
       <div
@@ -1492,10 +1806,12 @@ function buildCapabilityGovernanceStats(
 function CapabilityGovernanceMatrix({
   stats,
   authorityMatrix,
+  accessRegistry,
   runtimeFoundation,
 }: {
   stats: CapabilityGovernanceStats;
   authorityMatrix?: ResidentAgiAuthorityMatrixPayload;
+  accessRegistry?: ResidentAgiCapabilityAccessRegistryPayload | null;
   runtimeFoundation: string;
 }) {
   const chainLabel = authorityMatrix?.chain_required
@@ -1504,27 +1820,46 @@ function CapabilityGovernanceMatrix({
       ? "PM → Chief Engineer → Director"
       : "只读/观察优先";
   const counts = authorityMatrix?.counts || {};
-  const readOnly = counts.read_only_capabilities ?? stats.readOnly;
+  const accessCounts = accessRegistry?.counts || {};
+  const accessGovernedOps =
+    (accessCounts.governed_execution || 0) +
+    (accessCounts.governed_write || 0);
+  const readOnly =
+    counts.read_only_capabilities ?? accessCounts.read_only ?? stats.readOnly;
   const governedOps =
-    counts.governed_operation_capabilities ?? stats.governedMutation;
-  const highRisk = counts.high_risk_capabilities ?? stats.highRisk;
-  const contracts = counts.canonical_contracts ?? stats.contractRefs.length;
+    counts.governed_operation_capabilities ??
+    (accessGovernedOps || stats.governedMutation);
+  const highRisk =
+    counts.high_risk_capabilities ?? accessCounts.high_risk ?? stats.highRisk;
+  const contracts =
+    counts.canonical_contracts ??
+    accessCounts.canonical_contracts ??
+    stats.contractRefs.length;
   const contractRefs =
-    authorityMatrix?.canonical_contracts || stats.contractRefs;
+    authorityMatrix?.canonical_contracts ||
+    accessRegistry?.canonical_contracts ||
+    stats.contractRefs;
   const policy = authorityMatrix?.decision_policy || {};
+  const directToolAllowed = Boolean(
+    accessRegistry?.execution_policy?.agi_direct_tool_execution_allowed,
+  );
+  const directWriteAllowed = Boolean(
+    accessRegistry?.execution_policy?.agi_direct_writes_allowed,
+  );
+  const domains = accessRegistry?.interface_domains || [];
   return (
     <div
-      className="mt-3 rounded-lg border border-cyan-500/15 bg-cyan-500/[0.04] px-3 py-2"
+      className="mt-3 rounded-md border border-slate-800 bg-slate-950/35 px-3 py-2"
       data-testid="resident-agi-governance-matrix"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-xs font-medium text-cyan-100">能力治理矩阵</div>
+          <div className="text-xs font-medium text-slate-200">能力治理矩阵</div>
           <div className="mt-0.5 text-[10px] text-slate-500">
             底座: {authorityMatrix?.runtime_foundation || runtimeFoundation}
           </div>
         </div>
-        <Badge className="border-cyan-500/20 bg-cyan-500/10 text-cyan-200">
+        <Badge className="border-slate-700 bg-slate-950/50 text-slate-300">
           {chainLabel}
         </Badge>
       </div>
@@ -1536,7 +1871,7 @@ function CapabilityGovernanceMatrix({
       </div>
       {authorityMatrix && (
         <div
-          className="mt-2 rounded border border-cyan-500/10 bg-slate-950/50 px-2 py-1 font-mono text-[10px] text-cyan-100/80"
+          className="mt-2 rounded border border-slate-800 bg-slate-950/35 px-2 py-1 font-mono text-[10px] text-slate-400"
           data-testid="resident-agi-authority-matrix"
         >
           {authorityMatrix.schema_version || "resident.agi_authority_matrix.v1"}{" "}
@@ -1545,14 +1880,35 @@ function CapabilityGovernanceMatrix({
           {counts.governed_execution_boundaries ?? 0}
         </div>
       )}
+      {accessRegistry && (
+        <div
+          className="mt-2 rounded border border-slate-800 bg-slate-950/35 px-2 py-1 font-mono text-[10px] text-slate-400"
+          data-testid="resident-agi-capability-access-registry"
+        >
+          {accessRegistry.schema_version ||
+            "resident.agi_capability_access_registry.v1"}{" "}
+          · direct tools {directToolAllowed ? "allowed" : "blocked"} · direct
+          writes {directWriteAllowed ? "allowed" : "blocked"} · advisory{" "}
+          {accessCounts.advisory_only ?? 0}
+        </div>
+      )}
       <div
         className="mt-2 flex flex-wrap gap-1"
         data-testid="resident-agi-governance-tags"
       >
+        {domains.slice(0, 6).map((domain) => (
+          <span
+            key={domain.domain_id}
+            className="rounded border border-slate-800 bg-slate-950/45 px-1.5 py-0.5 font-mono text-[10px] text-slate-400"
+          >
+            {domain.domain_id}:r{domain.read_only ?? 0}/g
+            {domain.governed_execution ?? 0}
+          </span>
+        ))}
         {stats.categories.slice(0, 8).map((category) => (
           <span
             key={category}
-            className="rounded bg-slate-950/80 px-1.5 py-0.5 font-mono text-[10px] text-slate-400"
+            className="rounded bg-slate-950/45 px-1.5 py-0.5 font-mono text-[10px] text-slate-500"
           >
             {category}
           </span>
@@ -1560,7 +1916,7 @@ function CapabilityGovernanceMatrix({
         {contractRefs.slice(0, 6).map((contractRef) => (
           <span
             key={contractRef}
-            className="rounded border border-slate-700 bg-slate-950/50 px-1.5 py-0.5 font-mono text-[10px] text-slate-300"
+            className="rounded border border-slate-800 bg-slate-950/35 px-1.5 py-0.5 font-mono text-[10px] text-slate-400"
           >
             {contractRef}
           </span>
@@ -1740,12 +2096,12 @@ function AgiRepairAdvisoryPolicyPanel({
 
   return (
     <div
-      className="mt-2 rounded-lg border border-fuchsia-500/15 bg-slate-950/60 px-3 py-2"
+      className="mt-2 rounded-md border border-slate-800 bg-slate-950/35 px-3 py-2"
       data-testid="resident-agi-repair-advisory-policy"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-xs font-medium text-fuchsia-100">
+          <div className="text-xs font-medium text-slate-200">
             AGI 修复建议边界
           </div>
           <div className="mt-0.5 font-mono text-[10px] text-slate-500">
@@ -1753,7 +2109,7 @@ function AgiRepairAdvisoryPolicyPanel({
             {policy.source || "director.runtime.repair_kernel.advisory_policy"}
           </div>
         </div>
-        <Badge className="border-fuchsia-500/20 bg-fuchsia-500/10 text-fuchsia-200">
+        <Badge className="border-slate-700 bg-slate-950/50 text-slate-300">
           suggested_rules {suggestedRulesAllowed ? "allowed" : "blocked"}
         </Badge>
       </div>
@@ -1779,7 +2135,7 @@ function AgiRepairAdvisoryPolicyPanel({
         {allowedFields.slice(0, 8).map((field) => (
           <span
             key={field}
-            className="rounded border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 font-mono text-[10px] text-fuchsia-100"
+            className="rounded border border-slate-800 bg-slate-950/35 px-1.5 py-0.5 font-mono text-[10px] text-slate-400"
           >
             allow:{field}
           </span>
@@ -1787,7 +2143,7 @@ function AgiRepairAdvisoryPolicyPanel({
         {forbiddenFields.slice(0, 8).map((field) => (
           <span
             key={field}
-            className="rounded border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 font-mono text-[10px] text-rose-100"
+            className="rounded border border-slate-800 bg-slate-950/35 px-1.5 py-0.5 font-mono text-[10px] text-slate-500"
           >
             deny:{field}
           </span>
@@ -1798,6 +2154,87 @@ function AgiRepairAdvisoryPolicyPanel({
           "read_only_advisory_no_writes_no_registration"}{" "}
         · Director Runtime remains authoritative
       </div>
+    </div>
+  );
+}
+
+function AgiRepairAdvisoryOverlayPanel({
+  overlay,
+  source,
+}: {
+  overlay?: ResidentAgiRepairAdvisoryOverlayPayload | null;
+  source?: string;
+}) {
+  if (!overlay) return null;
+  const advisorNotes = overlay.advisor_notes || [];
+  const suggestedRuleCount = advisorNotes.reduce(
+    (count, note) => count + (note.suggested_rules?.length || 0),
+    0,
+  );
+
+  return (
+    <div
+      className="mt-2 rounded-md border border-slate-800 bg-slate-950/35 px-3 py-2"
+      data-testid="resident-agi-repair-advisory-overlay"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-medium text-slate-200">
+            AGI 修复建议 Overlay
+          </div>
+          <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+            {overlay.schema_version || "resident.agi_repair_advisory_overlay.v1"} ·{" "}
+            {overlay.director_runtime_contract || "director.repair_advisory_policy.v1"}
+          </div>
+          {source && (
+            <div
+              className="mt-0.5 font-mono text-[10px] text-slate-500"
+              data-testid="resident-agi-repair-advisory-overlay-source"
+            >
+              source:{source}
+            </div>
+          )}
+        </div>
+        <Badge
+          className={cn(
+            "border-slate-700 bg-slate-950/50 text-slate-300",
+            overlay.status === "ready" &&
+              "border-slate-600 bg-slate-900 text-slate-100",
+            overlay.status?.startsWith("invalid") &&
+              "border-slate-600 bg-slate-900 text-slate-100",
+          )}
+        >
+          {overlay.status || "unknown"}
+        </Badge>
+      </div>
+      <div className="mt-2 grid gap-2 sm:grid-cols-4">
+        <CapabilityMetric
+          label="Inject"
+          value={overlay.eligible_for_director_injection ? "eligible" : "blocked"}
+        />
+        <CapabilityMetric
+          label="Participation"
+          value={overlay.participation_enabled ? "enabled" : "disabled"}
+        />
+        <CapabilityMetric label="Notes" value={String(advisorNotes.length)} />
+        <CapabilityMetric label="Rules" value={String(suggestedRuleCount)} />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        <span className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+          advisory_only:{overlay.advisory_only ? "true" : "false"}
+        </span>
+        <span className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+          authoritative:{overlay.authoritative ? "true" : "false"}
+        </span>
+        <span className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] text-slate-300">
+          agi_execute:{overlay.agi_execution_authority ? "allowed" : "blocked"}
+        </span>
+      </div>
+      {(overlay.reason || overlay.error) && (
+        <div className="mt-2 text-[11px] text-slate-500">
+          {overlay.reason || overlay.error}
+        </div>
+      )}
     </div>
   );
 }
@@ -1929,6 +2366,145 @@ function evidenceInterfaceStatusClass(status?: string): string {
   return "border-rose-500/20 bg-rose-500/10 text-rose-300";
 }
 
+function AgiSelectedDecisionEvidencePanel({
+  decision,
+  evidencePayload,
+  contract,
+  refreshing = false,
+  onRefresh,
+}: {
+  decision?: ResidentAgiDecisionCapabilityPayload | null;
+  evidencePayload?: ResidentAgiEvidenceInterfacesPayload | null;
+  contract?: ResidentAgiEvidenceInterfaceContractPayload;
+  refreshing?: boolean;
+  onRefresh?: () => void;
+}) {
+  if (!decision?.decision_id) return null;
+  const payloadDecisionType = String(evidencePayload?.decision_type || "").trim();
+  const runtimePayloadMatchesDecision =
+    Boolean(payloadDecisionType) && payloadDecisionType === decision.decision_id;
+  const runtimeInterfaces = evidencePayload?.interfaces || [];
+  const contractInterfaces = contract?.interfaces || [];
+  const interfaceById = new Map<
+    string,
+    {
+      interface_id?: string;
+      status?: string;
+      source?: string;
+      contract_ref?: string;
+    }
+  >();
+  contractInterfaces.forEach((item) => {
+    if (item.interface_id) interfaceById.set(item.interface_id, item);
+  });
+  if (runtimePayloadMatchesDecision) {
+    runtimeInterfaces.forEach((item) => {
+      if (item.interface_id) interfaceById.set(item.interface_id, item);
+    });
+  }
+
+  const required = decision.required_evidence_interfaces || [];
+  const optional = decision.optional_evidence_interfaces || [];
+  const rows = [
+    ...required.map((interfaceId) => ({ interfaceId, required: true })),
+    ...optional.map((interfaceId) => ({ interfaceId, required: false })),
+  ];
+  if (rows.length === 0) return null;
+  const availableRequired = required.filter((interfaceId) => {
+    const status = String(interfaceById.get(interfaceId)?.status || "");
+    return status === "available";
+  }).length;
+
+  return (
+    <div
+      className="rounded-lg border border-emerald-500/15 bg-slate-950/60 px-3 py-2"
+      data-testid="resident-agi-selected-decision-evidence"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-medium text-emerald-100">
+            当前决策证据预检
+          </div>
+          <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+            {decision.decision_id}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          <Badge
+            className={cn(
+              "border-amber-500/20 bg-amber-500/10 text-amber-200",
+              runtimePayloadMatchesDecision &&
+                "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+            )}
+          >
+            {runtimePayloadMatchesDecision ? "runtime fresh" : "contract fallback"}
+          </Badge>
+          <Badge className="border-emerald-500/20 bg-emerald-500/10 text-emerald-300">
+            {availableRequired}/{required.length} required
+          </Badge>
+          {onRefresh && (
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="resident-refresh-agi-evidence-interfaces"
+              disabled={refreshing}
+              onClick={onRefresh}
+              className="h-6 px-2 text-[10px] text-cyan-200"
+            >
+              <RefreshCw
+                className={cn("mr-1 size-3", refreshing && "animate-spin")}
+              />
+              刷新
+            </Button>
+          )}
+        </div>
+      </div>
+      {!runtimePayloadMatchesDecision && payloadDecisionType && (
+        <div className="mt-2 rounded border border-amber-500/20 bg-amber-500/10 px-2 py-1 font-mono text-[10px] text-amber-200">
+          stale runtime evidence: {payloadDecisionType}
+        </div>
+      )}
+      <div className="mt-2 grid gap-2 lg:grid-cols-2">
+        {rows.map(({ interfaceId, required }) => {
+          const item = interfaceById.get(interfaceId) || {};
+          const status = String(item.status || "unknown");
+          const source = String(item.source || item.contract_ref || "");
+          return (
+            <div
+              key={`${required ? "required" : "optional"}:${interfaceId}`}
+              className="rounded border border-slate-800 bg-slate-900/50 px-2.5 py-2"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate font-mono text-[10px] text-slate-200">
+                  {interfaceId}
+                </span>
+                <span
+                  className={cn(
+                    "shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px]",
+                    evidenceInterfaceStatusClass(status),
+                  )}
+                >
+                  {status}
+                </span>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-1">
+                <span className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+                  {required ? "required" : "optional"}
+                </span>
+                {source && (
+                  <span className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+                    {source}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function AgiEvidenceInterfaceReadiness({
   payload,
 }: {
@@ -1937,6 +2513,9 @@ function AgiEvidenceInterfaceReadiness({
   if (!payload) return null;
   const summary = payload.summary || {};
   const interfaces = payload.interfaces || [];
+  const matrix = payload.capability_matrix || null;
+  const matrixSummary = matrix?.summary || {};
+  const matrixGroups = matrix?.groups || [];
   if (interfaces.length === 0) return null;
 
   return (
@@ -1977,6 +2556,70 @@ function AgiEvidenceInterfaceReadiness({
           value={String(summary.unavailable ?? 0)}
         />
       </div>
+      {matrix && (
+        <div
+          className="mt-2 rounded border border-cyan-500/10 bg-slate-950/70 px-2.5 py-2"
+          data-testid="resident-agi-evidence-runtime-matrix"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-mono text-[10px] text-cyan-100/80">
+              {matrix.schema_version ||
+                "resident.agi_evidence_capability_matrix.v1"}
+            </span>
+            <span className="text-[10px] text-slate-500">
+              required {matrixSummary.required_available ?? 0}/
+              {matrixSummary.required ?? 0} · recommended{" "}
+              {matrixSummary.recommended_now ?? 0}
+            </span>
+          </div>
+          <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+            {matrixGroups.slice(0, 6).map((group) => (
+              <div
+                key={group.group_id || group.name}
+                className="rounded border border-slate-800 bg-slate-900/50 px-2 py-1.5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-[11px] text-slate-200">
+                    {group.name || group.group_id || "group"}
+                  </span>
+                  <span className="font-mono text-[10px] text-slate-500">
+                    {group.available ?? 0}/{group.total ?? 0}
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {(group.required ?? 0) > 0 && (
+                    <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] text-emerald-200">
+                      required:{group.required}
+                    </span>
+                  )}
+                  {(group.missing_required ?? 0) > 0 && (
+                    <span className="rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-200">
+                      missing:{group.missing_required}
+                    </span>
+                  )}
+                  {(group.governed_execute ?? 0) > 0 && (
+                    <span className="rounded border border-fuchsia-500/20 bg-fuchsia-500/10 px-1.5 py-0.5 font-mono text-[10px] text-fuchsia-200">
+                      governed:{group.governed_execute}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1">
+            <span className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+              advisory_only:{String(matrixSummary.advisory_only ?? true)}
+            </span>
+            <span className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+              authoritative:{String(matrixSummary.authoritative ?? false)}
+            </span>
+            <span className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+              agi_execute:
+              {matrixSummary.agi_execution_authority ? "allowed" : "blocked"}
+            </span>
+          </div>
+        </div>
+      )}
       <div className="mt-2 grid gap-2 lg:grid-cols-2">
         {interfaces.map((item) => (
           <div
@@ -2273,6 +2916,144 @@ function DecisionBoundaryMatrix({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function DecisionBoundaryPolicyPanel({
+  policy,
+}: {
+  policy?: ResidentAgiDecisionBoundaryPolicyPayload | null;
+}) {
+  if (!policy) return null;
+  const counts = policy.counts || {};
+  const executionPolicy = policy.capability_execution_policy || {};
+  const modes = Object.entries(policy.decision_modes || {});
+  const boundaryPolicies = policy.boundary_policies || [];
+  const nonOverridable = policy.non_overridable_rules || [];
+  const agiJudgement = policy.agi_judgement_boundaries || [];
+  const governedExecution = policy.governed_execution_boundaries || [];
+
+  return (
+    <div
+      className="mt-3 rounded-lg border border-violet-500/15 bg-slate-950/60 px-3 py-2"
+      data-testid="resident-agi-decision-boundary-policy"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-medium text-violet-100">
+            AGI 决策边界策略
+          </div>
+          <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+            {policy.schema_version ||
+              "resident.agi_decision_boundary_policy.v1"}{" "}
+            · {policy.source || "resident.autonomy.capability_surface"}
+          </div>
+        </div>
+        <Badge className="border-violet-500/20 bg-violet-500/10 text-violet-200">
+          {policy.chain || "PM → Chief Engineer → Director"}
+        </Badge>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        <CapabilityMetric
+          label="Hard rules"
+          value={String(counts.platform_hard_rules ?? nonOverridable.length)}
+        />
+        <CapabilityMetric
+          label="AGI judgement"
+          value={String(counts.agi_judgement ?? agiJudgement.length)}
+        />
+        <CapabilityMetric
+          label="Governed"
+          value={String(
+            counts.governed_execution ?? governedExecution.length,
+          )}
+        />
+        <CapabilityMetric
+          label="High risk"
+          value={String(counts.high_risk_capabilities ?? 0)}
+        />
+      </div>
+
+      <div className="mt-2 grid gap-2 lg:grid-cols-3">
+        {modes.map(([modeId, mode]) => (
+          <div
+            key={modeId}
+            className="rounded border border-slate-800 bg-slate-900/50 px-2.5 py-2"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-mono text-[10px] text-slate-200">
+                {modeId}
+              </span>
+              <span
+                className={cn(
+                  "shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px]",
+                  mode.llm_decision_allowed
+                    ? "border-cyan-500/20 bg-cyan-500/10 text-cyan-200"
+                    : "border-rose-500/20 bg-rose-500/10 text-rose-200",
+                )}
+              >
+                llm:{mode.llm_decision_allowed ? "allowed" : "blocked"}
+              </span>
+            </div>
+            <div className="mt-1 truncate text-[10px] text-slate-500">
+              owner:{mode.owner || "unknown"}
+            </div>
+            <div className="mt-1 flex flex-wrap gap-1">
+              <span className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+                exec:{mode.execution_authority || "none"}
+              </span>
+              <span className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+                override:{String(mode.override_allowed ?? false)}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-2 flex flex-wrap gap-1">
+        <span className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+          agi_direct_writes:
+          {executionPolicy.agi_direct_writes_allowed ? "allowed" : "blocked"}
+        </span>
+        <span className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+          agi_direct_tools:
+          {executionPolicy.agi_direct_tool_execution_allowed
+            ? "allowed"
+            : "blocked"}
+        </span>
+        <span className="rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+          director_authority:
+          {executionPolicy.director_runtime_remains_authoritative
+            ? "retained"
+            : "unknown"}
+        </span>
+      </div>
+
+      {boundaryPolicies.length > 0 && (
+        <div className="mt-2 grid gap-2 lg:grid-cols-2">
+          {boundaryPolicies.slice(0, 4).map((item) => (
+            <div
+              key={item.boundary_id || item.name}
+              className="rounded border border-slate-800 bg-slate-900/50 px-2.5 py-2"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate text-[11px] font-medium text-slate-200">
+                  {item.name || item.boundary_id || "boundary"}
+                </span>
+                <span className="rounded border border-violet-500/20 bg-violet-500/10 px-1.5 py-0.5 font-mono text-[10px] text-violet-200">
+                  {item.execution_authority || "none"}
+                </span>
+              </div>
+              <div className="mt-1 truncate font-mono text-[10px] text-slate-500">
+                owner:{item.decision_owner || "unknown"} · action:
+                {item.default_action || "request_evidence"}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -3011,6 +3792,59 @@ function decisionStringList(value: unknown): string[] {
 function decisionObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+function toRepairAdvisoryOverlay(
+  value: unknown,
+): ResidentAgiRepairAdvisoryOverlayPayload | null {
+  const overlay = decisionObject(value);
+  if (!Object.keys(overlay).length) return null;
+  const schema = decisionString(overlay.schema_version);
+  const status = decisionString(overlay.status);
+  const notes = overlay.advisor_notes;
+  if (
+    schema !== "resident.agi_repair_advisory_overlay.v1" &&
+    !status &&
+    !Array.isArray(notes)
+  ) {
+    return null;
+  }
+  return overlay as ResidentAgiRepairAdvisoryOverlayPayload;
+}
+
+function latestDecisionRepairAdvisoryOverlay(
+  decisions: ResidentDecisionPayload[],
+): { overlay: ResidentAgiRepairAdvisoryOverlayPayload; source: string } | null {
+  const ordered = decisions
+    .map((decision, index) => ({
+      decision,
+      index,
+      timestamp: Date.parse(decision.timestamp || ""),
+    }))
+    .sort((left, right) => {
+      const leftTime = Number.isFinite(left.timestamp)
+        ? left.timestamp
+        : left.index;
+      const rightTime = Number.isFinite(right.timestamp)
+        ? right.timestamp
+        : right.index;
+      return rightTime - leftTime;
+    });
+
+  for (const item of ordered) {
+    const actual = decisionObject(item.decision.actual_outcome);
+    const overlay =
+      toRepairAdvisoryOverlay(
+        actual.resident_agi_repair_advisory_overlay,
+      ) || toRepairAdvisoryOverlay(actual.repair_advisory_overlay);
+    if (!overlay) continue;
+    const sourceId = shortDecisionId(item.decision.decision_id);
+    return {
+      overlay,
+      source: sourceId ? `decision_trace:${sourceId}` : "decision_trace",
+    };
+  }
+  return null;
 }
 
 function shortDecisionId(value?: string): string {

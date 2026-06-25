@@ -3573,7 +3573,7 @@ class OrchestrationStageExecutor:
         artifact_quality_errors: list[str],
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         from polaris.cells.roles.adapters.public.service import (
-            apply_deterministic_materialization_quality_repairs as _apply_deterministic_materialization_quality_repairs,
+            apply_deterministic_materialization_quality_repairs,
         )
 
         class _QualityRepairAdapter:
@@ -3595,7 +3595,7 @@ class OrchestrationStageExecutor:
                 del task_id, phase, current_file, event_code, event_status, event_reason, event_detail, event_refs
 
         target_files = self._workspace_quality_repair_target_files()
-        return _apply_deterministic_materialization_quality_repairs(
+        return apply_deterministic_materialization_quality_repairs(
             _QualityRepairAdapter(self.workspace),
             task={"target_files": target_files, "metadata": {"target_files": target_files}},
             task_id=f"factory-quality-gate:{run_id}",

@@ -19,7 +19,12 @@ from polaris.cells.director.runtime.public.service import (
     deterministic_repair_strategy_catalog,
     summarize_deterministic_repair_source_tools,
 )
-from polaris.cells.roles.adapters.internal.director.deterministic_repairs import cpp_repairs, rust_repairs
+from polaris.cells.roles.adapters.internal.director.deterministic_repairs import (
+    cpp_repairs,
+    generic_repairs,
+    rust_repairs,
+)
+from polaris.cells.roles.adapters.public import service as role_adapter_service
 from polaris.cells.roles.adapters.public.service import apply_deterministic_cpp_post_repairs
 
 _SOURCE_TOOL_RE = re.compile(r"[\"'](?P<tool>deterministic_[A-Za-z0-9_]+)[\"']")
@@ -310,3 +315,59 @@ def test_cpp_post_repairs_public_wrapper_uses_catalog_source_tool(
         }
     ]
     assert deterministic_repair_source_tool_known(results[0]["result"]["source_tool"])
+
+
+def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_materialization_repair(
+        adapter: Any,
+        *,
+        task: dict[str, Any],
+        task_id: str,
+        artifact_quality_errors: list[str],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        assert adapter == {"workspace": "/tmp/demo"}
+        assert task_id == "task-1"
+        assert task == {"target_files": ["src/app.ts"]}
+        assert artifact_quality_errors == ["error TS1005"]
+        return [], {"stage": "deterministic_quality_repair"}
+
+    monkeypatch.setattr(
+        generic_repairs,
+        "_apply_deterministic_materialization_quality_repairs",
+        fake_materialization_repair,
+    )
+
+    results, summary = role_adapter_service.apply_deterministic_materialization_quality_repairs(
+        {"workspace": "/tmp/demo"},
+        task={"target_files": ["src/app.ts"]},
+        task_id="task-1",
+        artifact_quality_errors=["error TS1005"],
+    )
+
+    assert results == []
+    assert role_adapter_service.apply_deterministic_materialization_quality_repairs.__module__.endswith(
+        ".public.service"
+    )
+    assert summary["repair_kernel"]["stage"] == "materialization_quality_repairs"
+    assert summary["repair_kernel"]["receipt_count"] == 0
+    assert summary["repair_kernel"]["coverage_report"]["total_diagnostics"] == 1
+    assert summary["materialization_quality_bridge"] == {
+        "schema_version": "director.materialization_quality_repair_bridge.v1",
+        "mode": "legacy_strategy_host_wrapper",
+        "bridge_file": "roles.adapters.internal.director.materialization_quality_repair_bridge",
+        "legacy_strategy_host": "roles.adapters.internal.director.deterministic_repairs.generic_repairs",
+        "internal_function_exported": False,
+        "repair_kernel_owner": "director.runtime",
+        "director_runtime_public_summary_required": True,
+        "receipt_count": 0,
+        "coverage_uncovered_diagnostic_count": 1,
+    }
+    assert summary["public_boundary"] == {
+        "schema_version": "roles.adapters.materialization_quality_repair_boundary.v1",
+        "mode": "legacy_strategy_host_wrapper",
+        "internal_function_exported": False,
+        "repair_kernel_owner": "director.runtime",
+        "director_runtime_public_summary_required": True,
+    }

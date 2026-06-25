@@ -179,4 +179,54 @@ describe("residentService", () => {
       }),
     );
   });
+
+  it("updates Resident AGI participation through the scoped endpoint", async () => {
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          enabled: true,
+          scopes: ["final_request_audit", "director.repair.advisory"],
+          participation: {
+            final_request_audit: true,
+            director_repair_advisory: true,
+          },
+          custom_scopes_allowed: false,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await residentService.updateAgiParticipation(
+      "/tmp/polaris-demo",
+      {
+        enabled: true,
+        scopes: ["final_request_audit", "director.repair.advisory"],
+        participation: {
+          final_request_audit: true,
+          director_repair_advisory: true,
+        },
+        custom_scopes_allowed: false,
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.data?.enabled).toBe(true);
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      "/v2/resident/agi/participation",
+      expect.objectContaining({
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspace: "/tmp/polaris-demo",
+          enabled: true,
+          scopes: ["final_request_audit", "director.repair.advisory"],
+          participation: {
+            final_request_audit: true,
+            director_repair_advisory: true,
+          },
+          custom_scopes_allowed: false,
+        }),
+      }),
+    );
+  });
 });

@@ -8,7 +8,10 @@ const residentServiceMock = vi.hoisted(() => ({
   getAgiAuditPack: vi.fn(),
   getAgiEvidenceInterfaces: vi.fn(),
   getAgiHandoffs: vi.fn(),
+  getAgiRepairAdvisoryOverlay: vi.fn(),
   getStatus: vi.fn(),
+  updateAgiParticipation: vi.fn(),
+  updateIdentity: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -235,9 +238,45 @@ const LIVE_HANDOFFS = {
   },
 };
 
+const LIVE_REPAIR_ADVISORY_OVERLAY = {
+  schema_version: "resident.agi_repair_advisory_overlay_query.v1",
+  status: "found",
+  found: true,
+  overlay: {
+    schema_version: "resident.agi_repair_advisory_overlay.v1",
+    status: "ready",
+    eligible_for_director_injection: true,
+    participation_enabled: true,
+    advisory_only: true,
+    authoritative: false,
+    agi_execution_authority: false,
+    director_runtime_contract: "director.repair_advisory_policy.v1",
+    advisor_notes: [
+      {
+        advisor_source: "resident_agi",
+        message: "Suggest future deterministic repair rule.",
+        suggested_rules: [
+          {
+            pattern: "found `&)` near method receiver",
+            fix_template: "replace receiver",
+          },
+        ],
+      },
+    ],
+  },
+  decision_ref: {
+    decision_id: "decision-agi-repair",
+    stage: "director.repair.advisory",
+  },
+};
+
 describe("useResident", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    residentServiceMock.getAgiRepairAdvisoryOverlay.mockResolvedValue({
+      ok: true,
+      data: LIVE_REPAIR_ADVISORY_OVERLAY,
+    });
   });
 
   it("keeps live AGI capability-surface evidence when detailed refresh is unavailable", async () => {
@@ -321,6 +360,9 @@ describe("useResident", () => {
     expect(residentServiceMock.getAgiAuditPack).not.toHaveBeenCalled();
     expect(residentServiceMock.getAgiEvidenceInterfaces).not.toHaveBeenCalled();
     expect(residentServiceMock.getAgiHandoffs).not.toHaveBeenCalled();
+    expect(
+      residentServiceMock.getAgiRepairAdvisoryOverlay,
+    ).not.toHaveBeenCalled();
   });
 
   it("runs a Resident AGI decision turn through the service and refreshes", async () => {
@@ -335,6 +377,10 @@ describe("useResident", () => {
     residentServiceMock.getAgiEvidenceInterfaces.mockResolvedValue({
       ok: true,
       data: LIVE_EVIDENCE_INTERFACES,
+    });
+    residentServiceMock.getAgiHandoffs.mockResolvedValue({
+      ok: true,
+      data: LIVE_HANDOFFS,
     });
     residentServiceMock.decide.mockResolvedValueOnce({
       ok: true,
@@ -384,6 +430,9 @@ describe("useResident", () => {
     expect(
       result.current.residentAgiHandoffs?.items?.[0]?.handoff?.target_roles,
     ).toContain("director");
+    expect(
+      result.current.residentAgiRepairAdvisoryOverlay?.overlay?.status,
+    ).toBe("ready");
     expect(result.current.residentRuntimeEvidence.realtime_channel).toBe(
       "runtime.v2.status.resident",
     );
@@ -423,6 +472,147 @@ describe("useResident", () => {
     expect(residentServiceMock.getAgiHandoffs).toHaveBeenCalledWith(
       "/tmp/polaris-demo",
       { limit: 50 },
+    );
+    expect(
+      residentServiceMock.getAgiRepairAdvisoryOverlay,
+    ).toHaveBeenCalledWith("/tmp/polaris-demo", { limit: 50 });
+  });
+
+  it("refreshes AGI evidence interfaces for the selected decision type", async () => {
+    residentServiceMock.getStatus.mockResolvedValue({
+      ok: true,
+      data: LIVE_RESIDENT,
+    });
+    residentServiceMock.getAgiAuditPack.mockResolvedValue({
+      ok: true,
+      data: LIVE_AUDIT_PACK,
+    });
+    residentServiceMock.getAgiEvidenceInterfaces
+      .mockResolvedValueOnce({
+        ok: true,
+        data: LIVE_EVIDENCE_INTERFACES,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          ...LIVE_EVIDENCE_INTERFACES,
+          decision_type: "director.repair.advisory",
+        },
+      });
+    residentServiceMock.getAgiHandoffs.mockResolvedValue({
+      ok: true,
+      data: LIVE_HANDOFFS,
+    });
+
+    const { result } = renderHook(() =>
+      useResident({
+        workspace: "/tmp/polaris-demo",
+        liveResident: LIVE_RESIDENT,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.residentAgiEvidenceInterfaces?.decision_type).toBe(
+        "quality_gate_response",
+      );
+    });
+
+    await act(async () => {
+      await result.current.refreshAgiEvidenceInterfaces(
+        "director.repair.advisory",
+      );
+    });
+
+    expect(residentServiceMock.getAgiEvidenceInterfaces).toHaveBeenLastCalledWith(
+      "/tmp/polaris-demo",
+      {
+        decisionType: "director.repair.advisory",
+        maxRuns: 20,
+      },
+    );
+    expect(result.current.residentAgiEvidenceInterfaces?.decision_type).toBe(
+      "director.repair.advisory",
+    );
+  });
+
+  it("saves identity and AGI participation through separate scoped APIs", async () => {
+    residentServiceMock.getStatus.mockResolvedValue({
+      ok: true,
+      data: LIVE_RESIDENT,
+    });
+    residentServiceMock.getAgiAuditPack.mockResolvedValue({
+      ok: true,
+      data: LIVE_AUDIT_PACK,
+    });
+    residentServiceMock.getAgiEvidenceInterfaces.mockResolvedValue({
+      ok: true,
+      data: LIVE_EVIDENCE_INTERFACES,
+    });
+    residentServiceMock.getAgiHandoffs.mockResolvedValue({
+      ok: true,
+      data: LIVE_HANDOFFS,
+    });
+    residentServiceMock.updateIdentity.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ...LIVE_RESIDENT.identity,
+        name: "Resident AGI Supervisor v2",
+      },
+    });
+    residentServiceMock.updateAgiParticipation.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        enabled: true,
+        scopes: ["final_request_audit", "director.repair.advisory"],
+        participation: {
+          final_request_audit: true,
+          director_repair_advisory: true,
+        },
+        custom_scopes_allowed: false,
+      },
+    });
+
+    const { result } = renderHook(() =>
+      useResident({
+        workspace: "/tmp/polaris-demo",
+        liveResident: LIVE_RESIDENT,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.status?.workspace).toBe("/tmp/polaris-demo");
+    });
+
+    await act(async () => {
+      await result.current.saveIdentity({
+        name: "Resident AGI Supervisor v2",
+        resident_agi_participation: {
+          enabled: true,
+          scopes: ["final_request_audit", "director.repair.advisory"],
+          participation: {
+            final_request_audit: true,
+            director_repair_advisory: true,
+          },
+          custom_scopes_allowed: false,
+        },
+      });
+    });
+
+    expect(residentServiceMock.updateIdentity).toHaveBeenCalledWith(
+      "/tmp/polaris-demo",
+      { name: "Resident AGI Supervisor v2" },
+    );
+    expect(residentServiceMock.updateAgiParticipation).toHaveBeenCalledWith(
+      "/tmp/polaris-demo",
+      {
+        enabled: true,
+        scopes: ["final_request_audit", "director.repair.advisory"],
+        participation: {
+          final_request_audit: true,
+          director_repair_advisory: true,
+        },
+        custom_scopes_allowed: false,
+      },
     );
   });
 });

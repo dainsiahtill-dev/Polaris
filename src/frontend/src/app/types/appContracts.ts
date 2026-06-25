@@ -178,6 +178,13 @@ export interface ResidentAgiParticipationPayload {
   updated_at?: string;
 }
 
+export interface ResidentAgiParticipationPatchPayload {
+  enabled?: boolean;
+  scopes?: string[];
+  participation?: Record<string, boolean>;
+  custom_scopes_allowed?: boolean;
+}
+
 export interface ResidentAgiParticipationPolicyPayload {
   schema_version?: string;
   role_id?: string;
@@ -314,6 +321,54 @@ export interface ResidentAgiCapabilityPayload {
   participation_scope_id?: string;
   guardrails?: string[];
   evidence_refs?: string[];
+}
+
+export interface ResidentAgiCapabilityAccessRegistryPayload {
+  schema_version?: string;
+  role_id?: string;
+  source?: string;
+  runtime_foundation?: string;
+  access_semantics?: Record<string, string>;
+  execution_policy?: {
+    agi_direct_tool_execution_allowed?: boolean;
+    agi_direct_writes_allowed?: boolean;
+    director_runtime_remains_authoritative?: boolean;
+    governed_execution_requires_public_contract?: boolean;
+    pm_chief_engineer_director_chain_required_for_code_changes?: boolean;
+  };
+  groups?: {
+    read_only_capabilities?: string[];
+    advisory_only_capabilities?: string[];
+    governed_execution_capabilities?: string[];
+    governed_write_capabilities?: string[];
+    high_risk_capabilities?: string[];
+  };
+  interface_domains?: Array<{
+    domain_id?: string;
+    capability_ids?: string[];
+    read_only?: number;
+    advisory_only?: number;
+    governed_execution?: number;
+    governed_write?: number;
+    high_risk?: number;
+  }>;
+  canonical_contracts?: string[];
+  items?: Array<
+    ResidentAgiCapabilityPayload & {
+      domain_id?: string;
+      execution_authority?: string;
+    }
+  >;
+  counts?: {
+    capabilities?: number;
+    read_only?: number;
+    advisory_only?: number;
+    governed_execution?: number;
+    governed_write?: number;
+    high_risk?: number;
+    domains?: number;
+    canonical_contracts?: number;
+  };
 }
 
 export interface ResidentAgiHardcodedRepairStrategyPayload {
@@ -469,10 +524,74 @@ export interface ResidentAgiAuthorityMatrixPayload {
   decision_policy?: Record<string, string>;
 }
 
+export interface ResidentAgiDecisionBoundaryPolicyPayload {
+  schema_version?: string;
+  role_id?: string;
+  source?: string;
+  runtime_foundation?: string;
+  chain?: string;
+  decision_modes?: Record<
+    string,
+    {
+      owner?: string;
+      llm_decision_allowed?: boolean;
+      llm_may_explain_or_request_evidence?: boolean;
+      override_allowed?: boolean;
+      execution_authority?: string;
+      write_authority?: boolean;
+      default_action?: string;
+    }
+  >;
+  boundary_policies?: Array<{
+    boundary_id?: string;
+    name?: string;
+    authority?: string;
+    decision_owner?: string;
+    llm_decision_allowed?: boolean;
+    override_allowed?: boolean;
+    execution_authority?: string;
+    write_authority?: boolean;
+    requires_pm_chief_engineer_director_chain?: boolean;
+    advisory_only?: boolean;
+    platform_enforced?: boolean;
+    evidence_required?: string[];
+    contract_refs?: string[];
+    default_action?: string;
+    escalation?: string;
+    hard_rule?: string;
+    agi_scope?: string;
+  }>;
+  capability_execution_policy?: {
+    read_only_capabilities?: string[];
+    governed_request_capabilities?: string[];
+    write_contract_capabilities?: string[];
+    high_risk_capabilities?: string[];
+    advisory_evidence_capabilities?: string[];
+    agi_direct_writes_allowed?: boolean;
+    agi_direct_tool_execution_allowed?: boolean;
+    director_runtime_remains_authoritative?: boolean;
+    pm_chief_engineer_director_chain_required?: boolean;
+  };
+  non_overridable_rules?: string[];
+  agi_judgement_boundaries?: string[];
+  governed_execution_boundaries?: string[];
+  counts?: {
+    boundary_policies?: number;
+    platform_hard_rules?: number;
+    agi_judgement?: number;
+    governed_execution?: number;
+    read_only_capabilities?: number;
+    governed_request_capabilities?: number;
+    write_contract_capabilities?: number;
+    high_risk_capabilities?: number;
+  };
+}
+
 export interface ResidentAgiCapabilitySurfacePayload {
   schema_version?: string;
   decision_boundary_schema?: string;
   authority_matrix_schema?: string;
+  capability_access_registry_schema?: string;
   role_id?: string;
   runtime_foundation?: string;
   implementation_cell?: string;
@@ -484,12 +603,14 @@ export interface ResidentAgiCapabilitySurfacePayload {
   decision_capability_schema?: string;
   decision_capabilities?: ResidentAgiDecisionCapabilityPayload[];
   decision_capability_registry?: ResidentAgiDecisionCapabilityRegistryPayload;
+  capability_access_registry?: ResidentAgiCapabilityAccessRegistryPayload;
   evidence_interface_contract_schema?: string;
   evidence_interface_contract?: ResidentAgiEvidenceInterfaceContractPayload;
   participation_policy?: ResidentAgiParticipationPolicyPayload;
   hardcoded_repair_strategy_catalog?: ResidentAgiHardcodedRepairStrategyCatalogPayload;
   director_repair_advisory_policy?: ResidentAgiRepairAdvisoryPolicyPayload;
   authority_matrix?: ResidentAgiAuthorityMatrixPayload;
+  decision_boundary_policy?: ResidentAgiDecisionBoundaryPolicyPayload;
   count?: number;
 }
 
@@ -635,6 +756,8 @@ export interface ResidentAgiAuditPackPayload {
   execution_constraints?: string[];
   decision_endpoint?: string;
   decision_profile?: ResidentAgiDecisionProfilePayload;
+  repair_advisory_overlay_query?: ResidentAgiRepairAdvisoryOverlayQueryPayload;
+  latest_repair_advisory_overlay?: ResidentAgiRepairAdvisoryOverlayPayload | null;
 }
 
 export interface ResidentAgiEvidenceInterfacePayload {
@@ -656,6 +779,62 @@ export interface ResidentAgiEvidenceInterfacePayload {
   recommended_next_action?: string;
 }
 
+export interface ResidentAgiEvidenceCapabilityMatrixPayload {
+  schema_version?: string;
+  workspace_evidence_source?: string;
+  decision_type?: string;
+  selected_decision_id?: string;
+  rows?: Array<{
+    interface_id?: string;
+    name?: string;
+    group_id?: string;
+    group_name?: string;
+    required?: boolean;
+    optional?: boolean;
+    recommended_now?: boolean;
+    available?: boolean;
+    callable?: boolean;
+    status?: string;
+    source?: string;
+    access?: string;
+    risk_level?: string;
+    contract_ref?: string;
+    recommended_next_action?: string;
+    priority?: number;
+    reason?: string;
+    gap_count?: number;
+    gaps?: string[];
+  }>;
+  groups?: Array<{
+    group_id?: string;
+    name?: string;
+    interface_ids?: string[];
+    total?: number;
+    available?: number;
+    required?: number;
+    missing_required?: number;
+    recommended_now?: number;
+    high_risk?: number;
+    governed_execute?: number;
+  }>;
+  summary?: {
+    total?: number;
+    available?: number;
+    required?: number;
+    required_available?: number;
+    missing_required?: number;
+    missing_required_interface_ids?: string[];
+    recommended_now?: number;
+    callable?: number;
+    high_risk?: number;
+    governed_execute?: number;
+    status_counts?: Record<string, number>;
+    advisory_only?: boolean;
+    authoritative?: boolean;
+    agi_execution_authority?: boolean;
+  };
+}
+
 export interface ResidentAgiEvidenceInterfacesPayload {
   schema_version?: string;
   workspace?: string;
@@ -667,6 +846,7 @@ export interface ResidentAgiEvidenceInterfacesPayload {
   optional_evidence_interfaces?: string[];
   requested_interface_ids?: string[];
   interfaces?: ResidentAgiEvidenceInterfacePayload[];
+  capability_matrix?: ResidentAgiEvidenceCapabilityMatrixPayload;
   summary?: {
     total?: number;
     available?: number;
@@ -721,6 +901,60 @@ export interface ResidentAgiDecisionHandoffPayload {
   agi_execution_authority?: boolean;
 }
 
+export interface ResidentAgiRepairAdvisoryOverlayPayload {
+  schema_version?: string;
+  source?: string;
+  workspace?: string;
+  status?: string;
+  active?: boolean;
+  eligible_for_director_injection?: boolean;
+  advisory_only?: boolean;
+  authoritative?: boolean;
+  agi_execution_authority?: boolean;
+  director_runtime_contract?: string;
+  decision_capability_id?: string;
+  participation_enabled?: boolean;
+  advisor_notes?: Array<{
+    advisor_source?: string;
+    message?: string;
+    confidence?: number;
+    authoritative?: boolean;
+    suggested_rules?: Array<Record<string, unknown>>;
+    metadata?: Record<string, unknown>;
+  }>;
+  reason?: string;
+  error?: string;
+}
+
+export interface ResidentAgiRepairAdvisoryOverlayQueryPayload {
+  schema_version?: string;
+  source?: string;
+  workspace?: string;
+  status?: string;
+  found?: boolean;
+  overlay?: ResidentAgiRepairAdvisoryOverlayPayload | null;
+  decision_ref?: {
+    decision_id?: string;
+    timestamp?: string;
+    run_id?: string;
+    task_id?: string;
+    stage?: string;
+    actor?: string;
+  };
+  filters?: {
+    limit?: number;
+    require_ready?: boolean;
+    require_eligible?: boolean;
+  };
+  considered_decision_count?: number;
+  matched_overlay_count?: number;
+  rejected_by_filter_count?: number;
+  advisory_only?: boolean;
+  authoritative?: boolean;
+  agi_execution_authority?: boolean;
+  director_runtime_contract?: string;
+}
+
 export interface ResidentAgiDecisionTurnResponse {
   ok: boolean;
   workspace?: string;
@@ -730,6 +964,9 @@ export interface ResidentAgiDecisionTurnResponse {
   audit_pack?: ResidentAgiAuditPackPayload | null;
   resident_agi_participation?: ResidentAgiParticipationPayload;
   decision_handoff?: ResidentAgiDecisionHandoffPayload;
+  repair_advisory_overlay?: ResidentAgiRepairAdvisoryOverlayPayload;
+  evidence_capability_matrix?: ResidentAgiEvidenceCapabilityMatrixPayload;
+  decision_boundary_policy?: ResidentAgiDecisionBoundaryPolicyPayload;
   runtime_contract_gate?: ResidentAgiRuntimeContractGatePayload;
   error?: string | null;
 }

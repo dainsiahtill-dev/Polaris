@@ -19,7 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.director.runtime.public import (
-    build_director_repair_kernel_summary,
+    ProjectDirectorRepairKernelSummaryV1,
+    project_director_repair_kernel_summary,
 )
 from polaris.cells.director.runtime.public.service import summarize_deterministic_repair_source_tools
 
@@ -107,6 +108,25 @@ _SCAFFOLD_MARKER_ERROR_RE = re.compile(
     r"deterministic scaffold marker ['\"][^'\"]+['\"] in (?P<path>\S+)",
     re.IGNORECASE,
 )
+
+
+def _project_repair_kernel_summary(
+    *,
+    stage: str,
+    tool_results: list[dict[str, Any]],
+    artifact_quality_errors: list[str],
+    mode: str = "commit",
+) -> dict[str, Any]:
+    return dict(
+        project_director_repair_kernel_summary(
+            ProjectDirectorRepairKernelSummaryV1(
+                stage=stage,
+                tool_results=tuple(tool_results),
+                artifact_quality_errors=tuple(artifact_quality_errors),
+                mode=mode,
+            )
+        ).summary
+    )
 
 
 def _remove_patch_residue_lines(text: str) -> str:
@@ -842,7 +862,7 @@ def _apply_deterministic_materialization_quality_repairs(
         "write_tool_evidence": has_successful_write_tool(results),
         "source_tools": source_tools,
         "source_tool_profiles": summarize_deterministic_repair_source_tools(source_tools),
-        "repair_kernel": build_director_repair_kernel_summary(
+        "repair_kernel": _project_repair_kernel_summary(
             stage="deterministic_quality_repair",
             tool_results=results,
             artifact_quality_errors=artifact_quality_errors,
@@ -883,7 +903,7 @@ def _apply_deterministic_pre_materialization_declared_target_repairs(
         "write_tool_evidence": has_successful_write_tool(results),
         "source_tools": source_tools,
         "source_tool_profiles": summarize_deterministic_repair_source_tools(source_tools),
-        "repair_kernel": build_director_repair_kernel_summary(
+        "repair_kernel": _project_repair_kernel_summary(
             stage="deterministic_pre_materialization_declared_target_repair",
             tool_results=results,
             artifact_quality_errors=allowed_errors,
@@ -937,7 +957,7 @@ def _apply_deterministic_declared_target_contract_repairs(
         "write_tool_evidence": has_successful_write_tool(results),
         "source_tools": source_tools,
         "source_tool_profiles": summarize_deterministic_repair_source_tools(source_tools),
-        "repair_kernel": build_director_repair_kernel_summary(
+        "repair_kernel": _project_repair_kernel_summary(
             stage="deterministic_declared_target_contract_repair",
             tool_results=results,
             artifact_quality_errors=[],

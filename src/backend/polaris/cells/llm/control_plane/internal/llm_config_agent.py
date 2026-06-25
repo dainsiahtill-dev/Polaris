@@ -312,7 +312,12 @@ class LLMConfigStore:
 
 
 class HRAgent(RoleAgent):
-    """HR role agent for role/provider config operations."""
+    """Model-governance advisor with a legacy HR class name.
+
+    The class manages role/provider configuration state.  It is not a default
+    LLM-bound delivery role and must not be promoted into the PM → Chief
+    Engineer → Director → QA execution chain.
+    """
 
     def __init__(self, workspace: str) -> None:
         super().__init__(workspace=workspace, agent_name="HR")

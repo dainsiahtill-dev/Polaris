@@ -13,12 +13,14 @@ export const LLM_ROLE_IDS = [
 export type LlmRoleId = (typeof LLM_ROLE_IDS)[number];
 
 type RoleBindingVisibility = "default" | "configured";
+type RoleBindingKind = "execution_role" | "governance_advisor";
 
 export interface LlmRoleDefinition {
   id: LlmRoleId;
   label: string;
   description: string;
   bindingVisibility: RoleBindingVisibility;
+  bindingKind: RoleBindingKind;
   requiresThinking: boolean;
   minConfidence: number;
   badge: string;
@@ -32,6 +34,7 @@ export const LLM_ROLE_DEFINITIONS: Record<LlmRoleId, LlmRoleDefinition> = {
     label: "PM",
     description: "统筹任务、节奏与推进。",
     bindingVisibility: "default",
+    bindingKind: "execution_role",
     requiresThinking: true,
     minConfidence: 0.8,
     color: "text-text-main",
@@ -43,6 +46,7 @@ export const LLM_ROLE_DEFINITIONS: Record<LlmRoleId, LlmRoleDefinition> = {
     label: "Chief Engineer",
     description: "绘制技术蓝图，定体例与纲目（设计不编码）。",
     bindingVisibility: "default",
+    bindingKind: "execution_role",
     requiresThinking: true,
     minConfidence: 0.85,
     color: "text-emerald-400",
@@ -54,6 +58,7 @@ export const LLM_ROLE_DEFINITIONS: Record<LlmRoleId, LlmRoleDefinition> = {
     label: "Director",
     description: "负责实现、调度与技术裁断（实际编码）。",
     bindingVisibility: "default",
+    bindingKind: "execution_role",
     requiresThinking: true,
     minConfidence: 0.9,
     color: "text-emerald-300",
@@ -65,6 +70,7 @@ export const LLM_ROLE_DEFINITIONS: Record<LlmRoleId, LlmRoleDefinition> = {
     label: "QA",
     description: "主司审核与勘验，确保证据链完备。",
     bindingVisibility: "default",
+    bindingKind: "execution_role",
     requiresThinking: false,
     minConfidence: 0.7,
     color: "text-blue-200",
@@ -76,6 +82,7 @@ export const LLM_ROLE_DEFINITIONS: Record<LlmRoleId, LlmRoleDefinition> = {
     label: "Architect",
     description: "草拟项目规格与架构文档，定体例与纲目。",
     bindingVisibility: "default",
+    bindingKind: "execution_role",
     requiresThinking: false,
     minConfidence: 0.6,
     color: "text-amber-300",
@@ -87,6 +94,7 @@ export const LLM_ROLE_DEFINITIONS: Record<LlmRoleId, LlmRoleDefinition> = {
     label: "Resident AGI",
     description: "平台级无人值守决策、审计交接与自治监督。",
     bindingVisibility: "default",
+    bindingKind: "execution_role",
     requiresThinking: true,
     minConfidence: 0.85,
     color: "text-fuchsia-200",
@@ -99,6 +107,7 @@ export const LLM_ROLE_DEFINITIONS: Record<LlmRoleId, LlmRoleDefinition> = {
     description:
       "只读代码/文档侦察（探子）。可选：仅当 scout_probe 升级为 LLM 侦察时才需要绑定模型。",
     bindingVisibility: "default",
+    bindingKind: "execution_role",
     requiresThinking: false,
     minConfidence: 0.5,
     color: "text-text-main",
@@ -107,27 +116,33 @@ export const LLM_ROLE_DEFINITIONS: Record<LlmRoleId, LlmRoleDefinition> = {
   },
   cfo: {
     id: "cfo",
-    label: "CFO",
-    description: "核算预算，监控 Token 用量与成本。",
+    label: "Cost Advisor",
+    description: "可选治理视角：审计预算、Token 用量、资源成本与 ROI，不参与主执行链。",
     bindingVisibility: "configured",
+    bindingKind: "governance_advisor",
     requiresThinking: false,
     minConfidence: 0.5,
     color: "text-text-main",
     badge: "bg-white/[0.08] text-text-main border-white/[0.12]",
-    testDescription: "检验预算核算与 Token 用量监控能力。",
+    testDescription: "检验成本治理、预算审计与 Token 用量监控能力。",
   },
   hr: {
     id: "hr",
-    label: "HR",
-    description: "管理 LLM 配置与模型任免。",
+    label: "Model Governance Advisor",
+    description: "可选治理视角：审计角色-模型配置、能力匹配与配置漂移，不参与主执行链。",
     bindingVisibility: "configured",
+    bindingKind: "governance_advisor",
     requiresThinking: false,
     minConfidence: 0.5,
     color: "text-text-main",
     badge: "bg-white/[0.08] text-text-main border-white/[0.12]",
-    testDescription: "检验 LLM 配置与模型管理能力。",
+    testDescription: "检验模型治理、配置漂移与角色-模型连线审计能力。",
   },
 };
+
+export const GOVERNANCE_ADVISOR_LLM_ROLE_IDS = LLM_ROLE_IDS.filter(
+  (roleId) => LLM_ROLE_DEFINITIONS[roleId].bindingKind === "governance_advisor",
+);
 
 export const DEFAULT_LLM_BINDING_ROLE_IDS = LLM_ROLE_IDS.filter(
   (roleId) => LLM_ROLE_DEFINITIONS[roleId].bindingVisibility === "default",

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_LLM_BINDING_ROLE_IDS,
+  getLlmRoleDefinition,
   getVisibleLlmBindingRoleIds,
+  GOVERNANCE_ADVISOR_LLM_ROLE_IDS,
   normalizeLlmRoleId,
   OPTIONAL_GOVERNANCE_LLM_ROLE_IDS,
   REQUIRED_LLM_ASSIGNMENT_ROLE_IDS,
@@ -15,6 +17,17 @@ describe("LLM role definitions", () => {
     expect(DEFAULT_LLM_BINDING_ROLE_IDS).not.toContain("cfo");
     expect(DEFAULT_LLM_BINDING_ROLE_IDS).not.toContain("hr");
     expect(OPTIONAL_GOVERNANCE_LLM_ROLE_IDS).toEqual(["cfo", "hr"]);
+    expect(GOVERNANCE_ADVISOR_LLM_ROLE_IDS).toEqual(["cfo", "hr"]);
+    expect(getLlmRoleDefinition("cfo").bindingKind).toBe(
+      "governance_advisor",
+    );
+    expect(getLlmRoleDefinition("hr").bindingKind).toBe(
+      "governance_advisor",
+    );
+    expect(getLlmRoleDefinition("cfo").label).toBe("Cost Advisor");
+    expect(getLlmRoleDefinition("hr").label).toBe(
+      "Model Governance Advisor",
+    );
   });
 
   it("requires only the core delivery roles for baseline LLM readiness", () => {

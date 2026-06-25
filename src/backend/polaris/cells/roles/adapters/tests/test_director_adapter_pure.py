@@ -2447,18 +2447,33 @@ async def test_phase_quality_repair_loop_continues_after_deterministic_progress_
         return error_rounds.pop(0) if error_rounds else []
 
     def fake_deterministic_quality_repair(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        from polaris.cells.director.runtime.public.service import build_director_repair_kernel_summary
+
         artifact_quality_errors = list(kwargs.get("artifact_quality_errors") or [])
         deterministic_inputs.append(artifact_quality_errors)
         if not artifact_quality_errors:
             return [], {"stage": "deterministic_quality_repair", "success": False}
-        return [
+        tool_results = [
             {
                 "tool_name": "write_file",
                 "tool": "write_file",
                 "success": True,
-                "result": {"ok": True, "source_tool": "fake_deterministic_repair", "file": "src/moon.ts"},
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_typescript_missing_export_repair",
+                    "file": "src/moon.ts",
+                },
             }
-        ], {"stage": "deterministic_quality_repair", "success": True}
+        ]
+        return tool_results, {
+            "stage": "deterministic_quality_repair",
+            "success": True,
+            "repair_kernel": build_director_repair_kernel_summary(
+                stage="materialization_quality_repairs",
+                tool_results=tool_results,
+                artifact_quality_errors=artifact_quality_errors,
+            ),
+        }
 
     async def fake_llm_quality_repair(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         return [], {"stage": "llm_quality_repair", "success": False}
@@ -2478,9 +2493,7 @@ async def test_phase_quality_repair_loop_continues_after_deterministic_progress_
         "_apply_deterministic_declared_target_contract_repairs",
         lambda *args, **kwargs: ([], {"stage": "deterministic_contract_repair", "success": False}),
     )
-    monkeypatch.setattr(
-        execute_method_module, "_apply_deterministic_materialization_quality_repairs", fake_deterministic_quality_repair
-    )
+    monkeypatch.setattr(execute_method_module, "run_materialization_quality_repairs", fake_deterministic_quality_repair)
     monkeypatch.setattr(execute_method_module, "_run_materialization_quality_repair_retry", fake_llm_quality_repair)
     monkeypatch.setattr(
         execute_method_module,
@@ -2521,9 +2534,18 @@ async def test_phase_quality_repair_loop_continues_after_deterministic_progress_
     assert quality_repair_attempts[0]["revalidated"] is True
     assert quality_repair_attempts[0]["success"] is False
     assert quality_repair_attempts[0]["residual_error_count"] == 1
+    first_receipt = quality_repair_attempts[0]["repair_kernel"]["receipts"][0]
+    assert first_receipt["revalidation_evidence"]["errors_before"] == 1
+    assert first_receipt["revalidation_evidence"]["errors_after"] == 1
+    assert first_receipt["revalidation_evidence"]["exit_code"] == 1
     assert quality_repair_attempts[-1]["revalidated"] is True
     assert quality_repair_attempts[-1]["success"] is True
     assert quality_repair_attempts[-1]["residual_error_count"] == 0
+    final_receipt = quality_repair_attempts[-1]["repair_kernel"]["receipts"][0]
+    assert final_receipt["revalidation_evidence"]["errors_before"] == 1
+    assert final_receipt["revalidation_evidence"]["errors_after"] == 0
+    assert final_receipt["revalidation_evidence"]["exit_code"] == 0
+    assert final_receipt["net_error_reduction"] == 1
 
 
 def test_phase_pre_materialization_quality_records_post_execution_kernel_summary(
@@ -2564,11 +2586,37 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
     )
 
     quality_repair_attempts: list[dict[str, Any]] = []
+    resident_agi_overlay = {
+        "schema_version": "resident.agi_repair_advisory_overlay.v1",
+        "source": "resident.autonomy.public.build_resident_agi_repair_advisory_overlay",
+        "status": "ready",
+        "eligible_for_director_injection": True,
+        "advisory_only": True,
+        "authoritative": False,
+        "agi_execution_authority": False,
+        "director_runtime_contract": "director.repair_advisory_policy.v1",
+        "advisor_notes": [
+            {
+                "advisor_source": "resident_agi",
+                "message": "Suggest future deterministic Rust repair coverage.",
+                "confidence": 0.7,
+                "authoritative": False,
+                "suggested_rules": [
+                    {
+                        "name": "rust_receiver_self",
+                        "pattern": "found `&)` near method receiver",
+                        "fix_template": "replace receiver marker",
+                    }
+                ],
+                "metadata": {"source_role": "resident_agi"},
+            }
+        ],
+    }
     state, _evidence, _can_accept, _write_evidence, summary = execute_method_module._phase_pre_materialization_quality(
         SimpleNamespace(workspace=str(tmp_path)),
         baseline_files={},
         can_accept_existing_scope=True,
-        context={},
+        context={"metadata": {"resident_agi_repair_advisory_overlay": resident_agi_overlay}},
         existing_contract_evidence={"ok": True},
         primary_llm_summary=None,
         quality_repair_attempts=quality_repair_attempts,
@@ -2590,6 +2638,10 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
     assert summary is not None
     kernel_summary = summary["post_execution_repair_kernel"]
     assert kernel_summary["authoritative"] is True
+    assert kernel_summary["agi_advisory"]["active"] is True
+    assert kernel_summary["agi_advisory"]["advisor_note_count"] == 1
+    assert kernel_summary["agi_advisory"]["suggested_rule_count"] == 1
+    assert kernel_summary["agi_advisory"]["advisor_notes"][0]["advisor_source"] == "resident_agi"
     assert kernel_summary["receipt_count"] == 1
     receipt = kernel_summary["receipts"][0]
     assert receipt["source_tool"] == "deterministic_rust_dependency_repair"
@@ -2597,11 +2649,20 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
     assert receipt["errors_before"] == 2
     assert receipt["errors_after"] == 0
     assert receipt["revalidation_evidence"]["metadata"]["max_rounds"] == 3
+    shadow = kernel_summary["dark_launch_comparison"]
+    assert shadow["matched"] is True
+    assert shadow["legacy_source_tools"] == ["deterministic_rust_dependency_repair"]
+    assert shadow["kernel_source_tools"] == ["deterministic_rust_dependency_repair"]
+    assert shadow["metadata"]["writes_performed"] is False
     assert quality_repair_attempts[0]["schema_version"] == "director.post_execution_repair_kernel.v1"
     scheduler_bridge = quality_repair_attempts[0]["scheduler_bridge"]
     assert scheduler_bridge["schema_version"] == "director.post_execution_scheduler_bridge.v1"
     assert scheduler_bridge["mode"] == "legacy_callback_bridge"
     assert scheduler_bridge["target_scheduler"] == "director.runtime.repair_kernel.scheduler"
+    assert (
+        scheduler_bridge["schedule_source"] == "director.runtime.public.query_director_repair_post_execution_schedule"
+    )
+    assert scheduler_bridge["runner_binding_owner"] == "roles.adapters"
     assert [step["step_id"] for step in scheduler_bridge["step_order"]] == [
         "go.module_import",
         "rust.post_execution_convergence",
@@ -2616,7 +2677,66 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
     assert scheduler_bridge["priorities"] == {"0": 1}
     assert scheduler_bridge["rounds"] == {"1": 1}
     assert scheduler_bridge["receipts_with_revalidation"] == 1
+    assert scheduler_bridge["resident_agi_advisory_active"] is True
+    assert scheduler_bridge["resident_agi_advisory_note_count"] == 1
+    assert scheduler_bridge["resident_agi_suggested_rule_count"] == 1
+    assert quality_repair_attempts[0]["resident_agi_repair_advisory_overlay"]["active"] is True
     assert state.modified_files == ["Cargo.toml"]
+
+
+def test_post_execution_agi_advisory_overlay_validates_nested_suggested_rules() -> None:
+    from polaris.cells.roles.adapters.internal.director.post_execution_repair_bridge import (
+        _normalize_resident_agi_repair_advisory_overlay,
+    )
+
+    overlay = _normalize_resident_agi_repair_advisory_overlay(
+        {
+            "status": "ready",
+            "eligible_for_director_injection": True,
+            "advisory_only": True,
+            "authoritative": False,
+            "agi_execution_authority": False,
+            "advisor_notes": [
+                {
+                    "advisor_source": "resident_agi",
+                    "message": "Suggest a future deterministic rule.",
+                    "confidence": 0.8,
+                    "suggested_rules": [
+                        {
+                            "name": "rust_receiver_self",
+                            "pattern": "found `&)` near method receiver",
+                            "fix_template": "replace receiver marker",
+                            "evidence": ["rustc E0424"],
+                        }
+                    ],
+                    "metadata": {"source_role": "resident_agi"},
+                },
+                {
+                    "advisor_source": "resident_agi",
+                    "message": "This must be rejected.",
+                    "confidence": 0.9,
+                    "suggested_rules": [
+                        {
+                            "pattern": "bad",
+                            "fix_template": "bad",
+                            "patch": "*** Begin Patch",
+                            "success_verdict": "pass",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    assert overlay["active"] is True
+    assert overlay["advisor_note_count"] == 1
+    assert overlay["suggested_rule_count"] == 1
+    assert overlay["validation_error_count"] == 1
+    assert "forbidden authoritative fields" in overlay["validation_errors"][0]
+    assert overlay["advisor_notes"][0]["authoritative"] is False
+    assert overlay["advisor_notes"][0]["suggested_rules"][0]["name"] == "rust_receiver_self"
+    assert "patch" not in overlay["advisor_notes"][0]["suggested_rules"][0]
+    assert "success_verdict" not in overlay["advisor_notes"][0]["suggested_rules"][0]
 
 
 def test_empty_write_content_retry_needed_only_for_blank_write() -> None:
@@ -7334,7 +7454,7 @@ def test_scaffold_synthesis_default_off(monkeypatch, tmp_path: Any) -> None:
     """§8 integrity: a declared TS target with no clean nearby source must never
     be fabricated — and the historical opt-in env vars are now permanently inert,
     so setting them re-arms nothing (the re-activation footgun is gone)."""
-    from polaris.cells.roles.adapters.internal.director.execute_method import (
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
     )
 
@@ -7381,7 +7501,7 @@ def test_business_contract_synthesis_default_off(monkeypatch, tmp_path: Any) -> 
     """§8 regression: Director must not fabricate business-domain service code
     unless a legacy benchmark explicitly opts into the synthesizer."""
     monkeypatch.delenv("KERNELONE_DIRECTOR_BUSINESS_CONTRACT_SYNTHESIS", raising=False)
-    from polaris.cells.roles.adapters.internal.director.execute_method import (
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
     )
 
@@ -7430,7 +7550,7 @@ def test_business_contract_synthesis_default_off(monkeypatch, tmp_path: Any) -> 
 
 
 def test_typescript_relative_import_case_repair_rewrites_importer_only(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.internal.director.execute_method import (
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
     )
 
@@ -7467,7 +7587,7 @@ def test_typescript_relative_import_case_repair_rewrites_importer_only(tmp_path:
 
 
 def test_typescript_unresolved_unused_import_repair_removes_import(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.internal.director.execute_method import (
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
     )
 
@@ -7503,7 +7623,7 @@ def test_typescript_unresolved_unused_import_repair_removes_import(tmp_path: Any
 
 
 def test_npm_test_script_repair_handles_ts_source_require_module_not_found(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.internal.director.execute_method import (
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
     )
 
@@ -7552,7 +7672,7 @@ def test_npm_test_script_repair_handles_ts_source_require_module_not_found(tmp_p
 
 
 def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.internal.director.execute_method import (
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
     )
 
@@ -7624,7 +7744,7 @@ def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_pa
 
 
 def test_typescript_return_object_comma_repair_fixes_inline_missing_property_comma(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.internal.director.execute_method import (
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
     )
 
@@ -7682,7 +7802,7 @@ def test_typescript_return_object_comma_repair_fixes_inline_missing_property_com
 
 
 def test_typescript_return_object_comma_repair_fixes_previous_line_missing_comma(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.internal.director.execute_method import (
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
     )
 
@@ -7728,7 +7848,7 @@ def test_typescript_return_object_comma_repair_fixes_previous_line_missing_comma
 
 
 def test_typescript_enum_member_separator_repair_fixes_enum_semicolon_only(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.internal.director.execute_method import (
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
     )
 
@@ -7781,7 +7901,7 @@ def test_typescript_enum_member_separator_repair_fixes_enum_semicolon_only(tmp_p
 
 
 def test_typescript_missing_closing_brace_repair_fixes_ts1005_brace_expected(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.internal.director.execute_method import (
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
     )
 
@@ -7827,7 +7947,7 @@ def test_typescript_missing_closing_brace_repair_fixes_ts1005_brace_expected(tmp
 
 
 def test_typescript_unresolved_identifier_repair_uses_function_parameter_alias(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.internal.director.execute_method import (
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
     )
 
@@ -7889,7 +8009,7 @@ def test_typescript_unresolved_identifier_repair_uses_function_parameter_alias(t
 
 
 def test_typescript_comma_expected_repair_accepts_plain_tsc_error_format(tmp_path: Any) -> None:
-    from polaris.cells.roles.adapters.internal.director.execute_method import (
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
     )
 
@@ -8156,7 +8276,7 @@ def test_placeholder_node_test_synthesis_default_off(monkeypatch, tmp_path: Any)
     """§8 regression: missing test files should not be masked by fabricated
     placeholder tests in production/director hot paths."""
     monkeypatch.delenv("KERNELONE_DIRECTOR_SCAFFOLD_SYNTHESIS", raising=False)
-    from polaris.cells.roles.adapters.internal.director.execute_method import (
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
         _apply_deterministic_materialization_quality_repairs,
     )
 

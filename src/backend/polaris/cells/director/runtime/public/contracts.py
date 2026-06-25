@@ -247,8 +247,11 @@ class DirectorRepairDiagnosticCoverageV1:
 
     diagnostic: Mapping[str, Any]
     known_rule_matched: bool
+    executable_runtime_plan_matched: bool = False
+    metadata_only_match: bool = False
     matched_rule_ids: tuple[str, ...] = ()
     matched_source_tools: tuple[str, ...] = ()
+    runtime_plan_rule_ids: tuple[str, ...] = ()
     archetypes: tuple[str, ...] = ()
     phases: tuple[str, ...] = ()
     languages: tuple[str, ...] = ()
@@ -260,8 +263,11 @@ class DirectorRepairDiagnosticCoverageV1:
     def __post_init__(self) -> None:
         object.__setattr__(self, "diagnostic", _to_dict_copy(self.diagnostic))
         object.__setattr__(self, "known_rule_matched", bool(self.known_rule_matched))
+        object.__setattr__(self, "executable_runtime_plan_matched", bool(self.executable_runtime_plan_matched))
+        object.__setattr__(self, "metadata_only_match", bool(self.metadata_only_match))
         object.__setattr__(self, "matched_rule_ids", _to_tuple_str(list(self.matched_rule_ids)))
         object.__setattr__(self, "matched_source_tools", _to_tuple_str(list(self.matched_source_tools)))
+        object.__setattr__(self, "runtime_plan_rule_ids", _to_tuple_str(list(self.runtime_plan_rule_ids)))
         object.__setattr__(self, "archetypes", _to_tuple_str(list(self.archetypes)))
         object.__setattr__(self, "phases", _to_tuple_str(list(self.phases)))
         object.__setattr__(self, "languages", _to_tuple_str(list(self.languages)))
@@ -274,8 +280,11 @@ class DirectorRepairDiagnosticCoverageV1:
         return {
             "diagnostic": dict(self.diagnostic),
             "known_rule_matched": self.known_rule_matched,
+            "executable_runtime_plan_matched": self.executable_runtime_plan_matched,
+            "metadata_only_match": self.metadata_only_match,
             "matched_rule_ids": list(self.matched_rule_ids),
             "matched_source_tools": list(self.matched_source_tools),
+            "runtime_plan_rule_ids": list(self.runtime_plan_rule_ids),
             "archetypes": list(self.archetypes),
             "phases": list(self.phases),
             "languages": list(self.languages),
@@ -296,6 +305,8 @@ class DirectorRepairCoverageReportV1:
     total_diagnostics: int
     covered_diagnostic_count: int
     uncovered_diagnostic_count: int
+    executable_runtime_plan_diagnostic_count: int = 0
+    metadata_only_diagnostic_count: int = 0
     items: tuple[DirectorRepairDiagnosticCoverageV1, ...] = ()
     owner_cell: str = "director.runtime"
     execution_boundary: str = "read_only_coverage_no_writes"
@@ -309,6 +320,16 @@ class DirectorRepairCoverageReportV1:
         object.__setattr__(self, "total_diagnostics", max(0, int(self.total_diagnostics)))
         object.__setattr__(self, "covered_diagnostic_count", max(0, int(self.covered_diagnostic_count)))
         object.__setattr__(self, "uncovered_diagnostic_count", max(0, int(self.uncovered_diagnostic_count)))
+        object.__setattr__(
+            self,
+            "executable_runtime_plan_diagnostic_count",
+            max(0, int(self.executable_runtime_plan_diagnostic_count)),
+        )
+        object.__setattr__(
+            self,
+            "metadata_only_diagnostic_count",
+            max(0, int(self.metadata_only_diagnostic_count)),
+        )
         object.__setattr__(self, "items", tuple(self.items or ()))
         object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
         object.__setattr__(
@@ -331,8 +352,151 @@ class DirectorRepairCoverageReportV1:
             "total_diagnostics": self.total_diagnostics,
             "covered_diagnostic_count": self.covered_diagnostic_count,
             "uncovered_diagnostic_count": self.uncovered_diagnostic_count,
+            "executable_runtime_plan_diagnostic_count": self.executable_runtime_plan_diagnostic_count,
+            "metadata_only_diagnostic_count": self.metadata_only_diagnostic_count,
             "items": [item.to_dict() for item in self.items],
             "uncovered_diagnostics": [dict(item.diagnostic) for item in self.items if not item.known_rule_matched],
+        }
+
+
+@dataclass(frozen=True)
+class AttachDirectorRepairRevalidationEvidenceV1:
+    """Command shape for projecting post-check evidence onto repair receipts."""
+
+    summary: Mapping[str, Any]
+    residual_artifact_quality_errors: tuple[str, ...] = ()
+    command: tuple[str, ...] = ("materialization_quality_revalidation",)
+    exit_code: int | None = None
+    round_number: int | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "summary", _to_dict_copy(self.summary))
+        object.__setattr__(
+            self,
+            "residual_artifact_quality_errors",
+            _to_tuple_str(list(self.residual_artifact_quality_errors)),
+        )
+        object.__setattr__(self, "command", _to_tuple_str(list(self.command)))
+        object.__setattr__(self, "exit_code", None if self.exit_code is None else int(self.exit_code))
+        object.__setattr__(self, "round_number", None if self.round_number is None else max(0, int(self.round_number)))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class DirectorRepairRevalidationProjectionResultV1:
+    """Result for repair receipt revalidation projection."""
+
+    schema_version: str
+    source: str
+    access: str
+    summary: Mapping[str, Any]
+    owner_cell: str = "director.runtime"
+    execution_boundary: str = "receipt_revalidation_projection_no_writes_no_registration"
+    writes_allowed: bool = False
+    registration_allowed: bool = False
+    agi_execution_authority: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        object.__setattr__(self, "access", _require_non_empty("access", self.access))
+        object.__setattr__(self, "summary", _to_dict_copy(self.summary))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+        object.__setattr__(self, "writes_allowed", False)
+        object.__setattr__(self, "registration_allowed", False)
+        object.__setattr__(self, "agi_execution_authority", False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "access": self.access,
+            "owner_cell": self.owner_cell,
+            "execution_boundary": self.execution_boundary,
+            "writes_allowed": False,
+            "registration_allowed": False,
+            "agi_execution_authority": False,
+            "summary": dict(self.summary),
+        }
+
+
+@dataclass(frozen=True)
+class ProjectDirectorRepairKernelSummaryV1:
+    """Command shape for projecting legacy repair tool results into kernel receipts."""
+
+    stage: str
+    tool_results: tuple[Mapping[str, Any], ...] = ()
+    artifact_quality_errors: tuple[str, ...] = ()
+    mode: str = "commit"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "stage", _require_non_empty("stage", self.stage))
+        object.__setattr__(self, "tool_results", tuple(_to_dict_copy(item) for item in self.tool_results))
+        object.__setattr__(
+            self,
+            "artifact_quality_errors",
+            _to_tuple_str(list(self.artifact_quality_errors)),
+        )
+        object.__setattr__(self, "mode", _require_non_empty("mode", self.mode))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "stage": self.stage,
+            "tool_results": [dict(item) for item in self.tool_results],
+            "artifact_quality_errors": list(self.artifact_quality_errors),
+            "mode": self.mode,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class DirectorRepairKernelSummaryProjectionResultV1:
+    """Read-only result for legacy repair summary projection."""
+
+    schema_version: str
+    source: str
+    access: str
+    summary: Mapping[str, Any]
+    owner_cell: str = "director.runtime"
+    execution_boundary: str = "repair_kernel_summary_projection_no_writes_no_registration"
+    writes_allowed: bool = False
+    registration_allowed: bool = False
+    agi_execution_authority: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        object.__setattr__(self, "access", _require_non_empty("access", self.access))
+        object.__setattr__(self, "summary", _to_dict_copy(self.summary))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+        object.__setattr__(self, "writes_allowed", False)
+        object.__setattr__(self, "registration_allowed", False)
+        object.__setattr__(self, "agi_execution_authority", False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "access": self.access,
+            "owner_cell": self.owner_cell,
+            "execution_boundary": self.execution_boundary,
+            "writes_allowed": False,
+            "registration_allowed": False,
+            "agi_execution_authority": False,
+            "summary": dict(self.summary),
         }
 
 
@@ -423,6 +587,97 @@ class DirectorRepairLanguageSlotsResultV1:
 
 
 @dataclass(frozen=True)
+class QueryDirectorRepairPostExecutionScheduleV1:
+    """Query shape for the runtime-owned post-execution repair schedule catalog."""
+
+    include_items: bool = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "include_items", bool(self.include_items))
+
+
+@dataclass(frozen=True)
+class DirectorRepairPostExecutionStepV1:
+    """Public projection of one post-execution repair scheduling step."""
+
+    step_id: str
+    language: str
+    phase: str
+    priority: int
+    source_tool: str
+    depends_on: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "step_id", _require_non_empty("step_id", self.step_id))
+        object.__setattr__(self, "language", _require_non_empty("language", self.language))
+        object.__setattr__(self, "phase", _require_non_empty("phase", self.phase))
+        object.__setattr__(self, "priority", max(0, int(self.priority)))
+        object.__setattr__(self, "source_tool", _require_non_empty("source_tool", self.source_tool))
+        object.__setattr__(self, "depends_on", _to_tuple_str(list(self.depends_on)))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "step_id": self.step_id,
+            "language": self.language,
+            "phase": self.phase,
+            "priority": self.priority,
+            "source_tool": self.source_tool,
+            "depends_on": list(self.depends_on),
+        }
+
+
+@dataclass(frozen=True)
+class DirectorRepairPostExecutionScheduleResultV1:
+    """Read-only runtime-owned post-execution repair schedule catalog."""
+
+    schema_version: str
+    source: str
+    access: str
+    items: tuple[DirectorRepairPostExecutionStepV1, ...] = ()
+    summary: Mapping[str, Any] = field(default_factory=dict)
+    owner_cell: str = "director.runtime"
+    execution_boundary: str = "read_only_post_execution_schedule_no_runner_binding"
+    runner_binding_owner: str = "roles.adapters"
+    writes_allowed: bool = False
+    registration_allowed: bool = False
+    agi_execution_authority: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        object.__setattr__(self, "access", _require_non_empty("access", self.access))
+        object.__setattr__(self, "items", tuple(self.items or ()))
+        object.__setattr__(self, "summary", _to_dict_copy(self.summary))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+        object.__setattr__(
+            self, "runner_binding_owner", _require_non_empty("runner_binding_owner", self.runner_binding_owner)
+        )
+        object.__setattr__(self, "writes_allowed", False)
+        object.__setattr__(self, "registration_allowed", False)
+        object.__setattr__(self, "agi_execution_authority", False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "access": self.access,
+            "owner_cell": self.owner_cell,
+            "execution_boundary": self.execution_boundary,
+            "runner_binding_owner": self.runner_binding_owner,
+            "writes_allowed": False,
+            "registration_allowed": False,
+            "agi_execution_authority": False,
+            "items": [item.to_dict() for item in self.items],
+            "summary": dict(self.summary),
+        }
+
+
+@dataclass(frozen=True)
 class QueryDirectorRepairAdvisoryPolicyV1:
     """Query shape for the non-authoritative AGI repair advisory policy."""
 
@@ -494,6 +749,83 @@ class DirectorRepairAdvisoryPolicyResultV1:
 
 
 @dataclass(frozen=True)
+class QueryDirectorRepairAdvisoryValidationV1:
+    """Read-only query for validating a future AGI repair advisory payload."""
+
+    advisor_source: str
+    message: str
+    confidence: float = 0.0
+    suggested_rules: tuple[Mapping[str, Any], ...] = ()
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "advisor_source", _require_non_empty("advisor_source", self.advisor_source))
+        object.__setattr__(self, "message", str(self.message or "").strip())
+        object.__setattr__(self, "confidence", max(0.0, min(float(self.confidence), 1.0)))
+        object.__setattr__(self, "suggested_rules", tuple(dict(item or {}) for item in self.suggested_rules))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class DirectorRepairAdvisoryValidationResultV1:
+    """Read-only validation result for non-authoritative AGI repair advisory payloads."""
+
+    schema_version: str
+    source: str
+    access: str
+    ok: bool
+    normalized_advisory: Mapping[str, Any] | None = None
+    errors: tuple[str, ...] = ()
+    owner_cell: str = "director.runtime"
+    execution_boundary: str = "read_only_advisory_validation_no_writes_no_registration"
+    agi_execution_authority: bool = False
+    writes_allowed: bool = False
+    registration_allowed: bool = False
+    authoritative_receipts_allowed: bool = False
+    summary: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        object.__setattr__(self, "access", _require_non_empty("access", self.access))
+        object.__setattr__(self, "ok", bool(self.ok))
+        object.__setattr__(
+            self,
+            "normalized_advisory",
+            dict(self.normalized_advisory) if self.normalized_advisory is not None else None,
+        )
+        object.__setattr__(self, "errors", _to_tuple_str(list(self.errors)))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+        object.__setattr__(self, "agi_execution_authority", False)
+        object.__setattr__(self, "writes_allowed", False)
+        object.__setattr__(self, "registration_allowed", False)
+        object.__setattr__(self, "authoritative_receipts_allowed", False)
+        object.__setattr__(self, "summary", _to_dict_copy(self.summary))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "access": self.access,
+            "ok": self.ok,
+            "owner_cell": self.owner_cell,
+            "execution_boundary": self.execution_boundary,
+            "agi_execution_authority": False,
+            "writes_allowed": False,
+            "registration_allowed": False,
+            "authoritative_receipts_allowed": False,
+            "normalized_advisory": dict(self.normalized_advisory) if self.normalized_advisory is not None else None,
+            "errors": list(self.errors),
+            "summary": dict(self.summary),
+        }
+
+
+@dataclass(frozen=True)
 class CompareDirectorRepairShadowRunV1:
     """Read-only command for legacy-vs-kernel deterministic repair shadow comparison."""
 
@@ -521,6 +853,8 @@ class DirectorRepairShadowComparisonResultV1:
     extra_paths_in_kernel: tuple[str, ...] = ()
     missing_source_tools_in_kernel: tuple[str, ...] = ()
     extra_source_tools_in_kernel: tuple[str, ...] = ()
+    cutover_ready: bool = False
+    cutover_blockers: tuple[str, ...] = ()
     owner_cell: str = "director.runtime"
     execution_boundary: str = "read_only_shadow_comparison_no_writes"
     agi_execution_authority: bool = False
@@ -544,6 +878,8 @@ class DirectorRepairShadowComparisonResultV1:
             _to_tuple_str(list(self.missing_source_tools_in_kernel)),
         )
         object.__setattr__(self, "extra_source_tools_in_kernel", _to_tuple_str(list(self.extra_source_tools_in_kernel)))
+        object.__setattr__(self, "cutover_ready", bool(self.cutover_ready))
+        object.__setattr__(self, "cutover_blockers", _to_tuple_str(list(self.cutover_blockers)))
         object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
         object.__setattr__(
             self,
@@ -572,6 +908,8 @@ class DirectorRepairShadowComparisonResultV1:
             "extra_paths_in_kernel": list(self.extra_paths_in_kernel),
             "missing_source_tools_in_kernel": list(self.missing_source_tools_in_kernel),
             "extra_source_tools_in_kernel": list(self.extra_source_tools_in_kernel),
+            "cutover_ready": self.cutover_ready,
+            "cutover_blockers": list(self.cutover_blockers),
             "metadata": dict(self.metadata),
         }
 
@@ -798,24 +1136,33 @@ class DirectorRuntimeError(RuntimeError):
 
 
 __all__ = [
+    "AttachDirectorRepairRevalidationEvidenceV1",
     "CompareDirectorRepairShadowRunV1",
     "DirectorRepairAdvisoryPolicyResultV1",
+    "DirectorRepairAdvisoryValidationResultV1",
     "DirectorRepairCompositionIssueV1",
     "DirectorRepairCompositionSummaryV1",
     "DirectorRepairCoverageReportV1",
     "DirectorRepairDiagnosticCoverageV1",
+    "DirectorRepairKernelSummaryProjectionResultV1",
     "DirectorRepairLanguageSlotV1",
     "DirectorRepairLanguageSlotsResultV1",
     "DirectorRepairPatchSummaryV1",
     "DirectorRepairPlanSummaryV1",
     "DirectorRepairPlanningResultV1",
+    "DirectorRepairPostExecutionScheduleResultV1",
+    "DirectorRepairPostExecutionStepV1",
     "DirectorRepairResultV1",
+    "DirectorRepairRevalidationProjectionResultV1",
     "DirectorRepairShadowComparisonResultV1",
     "DirectorRepairStrategyCatalogResultV1",
     "DirectorRuntimeError",
+    "ProjectDirectorRepairKernelSummaryV1",
     "QueryDirectorRepairAdvisoryPolicyV1",
+    "QueryDirectorRepairAdvisoryValidationV1",
     "QueryDirectorRepairCoverageV1",
     "QueryDirectorRepairLanguageSlotsV1",
+    "QueryDirectorRepairPostExecutionScheduleV1",
     "QueryDirectorRepairStrategyCatalogV1",
     "RepairAdvisoryV1",
     "RepairDiagnosticV1",

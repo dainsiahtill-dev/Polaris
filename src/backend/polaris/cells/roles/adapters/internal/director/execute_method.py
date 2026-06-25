@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.director.runtime.public.service import (
+    AttachDirectorRepairRevalidationEvidenceV1,
+    project_director_repair_revalidation_evidence,
     summarize_deterministic_repair_source_tools,
 )
 from polaris.kernelone.fs.materialization import materialized_file_paths
@@ -32,10 +34,6 @@ from polaris.kernelone.quality import (
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
 )
 
-from .deterministic_repairs.typescript_repairs import (
-    _apply_deterministic_typescript_canvas_scale_return_type_repair as _apply_deterministic_typescript_canvas_scale_return_type_repair,
-    _apply_deterministic_typescript_missing_export_repair as _apply_deterministic_typescript_missing_export_repair,
-)
 from .execution_tools import (
     DirectorToolExecutor as DirectorToolExecutor,
 )
@@ -45,6 +43,7 @@ from .helpers import (
     has_successful_write_tool,
     taskboard_snapshot_brief,
 )
+from .materialization_quality_repair_bridge import run_materialization_quality_repairs
 from .post_execution_repair_bridge import run_post_execution_language_repairs
 
 logger = logging.getLogger(__name__)
@@ -1022,6 +1021,31 @@ def _resolve_claim_external_task_id(task: dict[str, Any], requested_task_id: str
     return str(requested_task_id or "").strip()
 
 
+def _extract_resident_agi_repair_advisory_overlay(
+    *,
+    task: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Read a Resident AGI repair advisory overlay from governed handoff metadata."""
+
+    candidates: list[dict[str, Any]] = []
+    for source in (context, task):
+        metadata_raw = source.get("metadata") if isinstance(source, dict) else None
+        metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+        runtime_execution_raw = metadata.get("runtime_execution")
+        runtime_execution = runtime_execution_raw if isinstance(runtime_execution_raw, dict) else {}
+        candidates.extend([source, metadata, runtime_execution])
+    for candidate in candidates:
+        for key in (
+            "resident_agi_repair_advisory_overlay",
+            "repair_advisory_overlay",
+        ):
+            overlay = candidate.get(key)
+            if isinstance(overlay, dict):
+                return overlay
+    return None
+
+
 async def _handle_claim_required(
     adapter: Any,
     target_task_id: str,
@@ -1779,6 +1803,16 @@ def _mark_quality_repair_summary_revalidated(
 ) -> None:
     if not isinstance(summary, dict):
         return
+    revalidated_summary = project_director_repair_revalidation_evidence(
+        AttachDirectorRepairRevalidationEvidenceV1(
+            summary=summary,
+            residual_artifact_quality_errors=tuple(artifact_quality_errors),
+            command=("materialization_quality_revalidation",),
+            metadata={"stage": "director_materialization_quality"},
+        )
+    ).summary
+    summary.clear()
+    summary.update(revalidated_summary)
     residual_error_count = len(artifact_quality_errors)
     summary["revalidated"] = True
     summary["residual_error_count"] = residual_error_count
@@ -2240,13 +2274,11 @@ def _phase_pre_materialization_quality(
             workspace_name=workspace_name,
             context=context,
         )
-        deterministic_quality_tool_results, deterministic_quality_summary = (
-            _apply_deterministic_materialization_quality_repairs(
-                adapter,
-                task=task,
-                task_id=target_task_id,
-                artifact_quality_errors=pre_materialization_quality_errors,
-            )
+        deterministic_quality_tool_results, deterministic_quality_summary = run_materialization_quality_repairs(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+            artifact_quality_errors=pre_materialization_quality_errors,
         )
         if deterministic_quality_tool_results:
             tool_results.extend(deterministic_quality_tool_results)
@@ -2283,9 +2315,14 @@ def _phase_pre_materialization_quality(
     # outcome. This catches import/syntax/dedup/field issues that QA might not
     # detect.
     if write_tool_evidence:
+        resident_agi_repair_advisory_overlay = _extract_resident_agi_repair_advisory_overlay(
+            task=task,
+            context=context,
+        )
         post_execution_tool_results, post_execution_repair_summary = run_post_execution_language_repairs(
             adapter,
             task_id=target_task_id,
+            resident_agi_repair_advisory_overlay=resident_agi_repair_advisory_overlay,
         )
         if post_execution_tool_results and post_execution_repair_summary is not None:
             tool_results.extend(post_execution_tool_results)
@@ -2416,13 +2453,11 @@ async def _phase_quality_repair_loop(
         prev_error_count = current_error_count
         prev_error_signature = current_error_signature
         deterministic_quality_made_progress = False
-        deterministic_quality_tool_results, deterministic_quality_summary = (
-            _apply_deterministic_materialization_quality_repairs(
-                adapter,
-                task=task,
-                task_id=target_task_id,
-                artifact_quality_errors=artifact_quality_errors,
-            )
+        deterministic_quality_tool_results, deterministic_quality_summary = run_materialization_quality_repairs(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+            artifact_quality_errors=artifact_quality_errors,
         )
         if deterministic_quality_tool_results:
             deterministic_quality_made_progress = True
@@ -2515,13 +2550,11 @@ async def _phase_quality_repair_loop(
             )
             _mark_quality_repair_summary_revalidated(quality_repair_summary, artifact_quality_errors)
             if artifact_quality_errors:
-                deterministic_quality_tool_results, deterministic_quality_summary = (
-                    _apply_deterministic_materialization_quality_repairs(
-                        adapter,
-                        task=task,
-                        task_id=target_task_id,
-                        artifact_quality_errors=artifact_quality_errors,
-                    )
+                deterministic_quality_tool_results, deterministic_quality_summary = run_materialization_quality_repairs(
+                    adapter,
+                    task=task,
+                    task_id=target_task_id,
+                    artifact_quality_errors=artifact_quality_errors,
                 )
                 if deterministic_quality_tool_results:
                     tool_results.extend(deterministic_quality_tool_results)
@@ -3316,7 +3349,6 @@ from .deterministic_repairs import (  # noqa: E402  (deferred for circular-impor
     _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE as _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE,
     _apply_deterministic_declared_target_contract_repairs as _apply_deterministic_declared_target_contract_repairs,
     _apply_deterministic_javascript_test_missing_target_repair as _apply_deterministic_javascript_test_missing_target_repair,
-    _apply_deterministic_materialization_quality_repairs as _apply_deterministic_materialization_quality_repairs,
     _apply_deterministic_missing_declared_target_repair as _apply_deterministic_missing_declared_target_repair,
     _apply_deterministic_node_test_script_contract_repair as _apply_deterministic_node_test_script_contract_repair,
     _apply_deterministic_npm_test_script_repair as _apply_deterministic_npm_test_script_repair,
@@ -3338,9 +3370,11 @@ from .deterministic_repairs import (  # noqa: E402  (deferred for circular-impor
     _apply_deterministic_rust_unresolved_pub_use_repair as _apply_deterministic_rust_unresolved_pub_use_repair,
     _apply_deterministic_scaffold_marker_cleanup as _apply_deterministic_scaffold_marker_cleanup,
     _apply_deterministic_typeorm_model_normalization_repair as _apply_deterministic_typeorm_model_normalization_repair,
+    _apply_deterministic_typescript_canvas_scale_return_type_repair as _apply_deterministic_typescript_canvas_scale_return_type_repair,
     _apply_deterministic_typescript_enum_member_separator_repair as _apply_deterministic_typescript_enum_member_separator_repair,
     _apply_deterministic_typescript_escaped_newline_repair as _apply_deterministic_typescript_escaped_newline_repair,
     _apply_deterministic_typescript_missing_closing_brace_repair as _apply_deterministic_typescript_missing_closing_brace_repair,
+    _apply_deterministic_typescript_missing_export_repair as _apply_deterministic_typescript_missing_export_repair,
     _apply_deterministic_typescript_reexport_repair as _apply_deterministic_typescript_reexport_repair,
     _apply_deterministic_typescript_return_object_semicolon_repair as _apply_deterministic_typescript_return_object_semicolon_repair,
     _apply_deterministic_typescript_unresolved_identifier_repair as _apply_deterministic_typescript_unresolved_identifier_repair,

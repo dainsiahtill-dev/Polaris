@@ -81,6 +81,11 @@ export function ResidentPage({
         workspace={workspace}
         onBackToMain={onBackToMain}
         residentSnapshot={residentSnapshot}
+        residentAgiLlmStatus={{
+          blocked: llmRuntimeState.blockedRoles.includes('resident_agi'),
+          unsupported: false,
+          lastUpdated: llmRuntimeState.lastUpdated,
+        }}
       />
       <LlmRuntimeOverlay
         activeView="agi"

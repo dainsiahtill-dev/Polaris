@@ -12,6 +12,11 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from polaris.cells.director.runtime.public import (
+    QueryDirectorRepairAdvisoryPolicyV1,
+    query_director_repair_advisory_policy,
+)
+
 from .base import BaseRoleAdapter
 from .runtime_dialogue import invoke_role_runtime_first
 
@@ -153,6 +158,12 @@ class ResidentAgiAdapter(BaseRoleAdapter):
                 "optional_evidence_interfaces": decision_contract["optional_evidence_interfaces"],
                 "evidence": cls._mapping(input_data.get("evidence")),
                 "resident_agi_audit_pack": cls._mapping(input_data.get("resident_agi_audit_pack")),
+                "resident_agi_evidence_capability_matrix": cls._mapping(
+                    input_data.get("resident_agi_evidence_capability_matrix")
+                ),
+                "resident_agi_decision_boundary_policy": cls._mapping(
+                    input_data.get("resident_agi_decision_boundary_policy")
+                ),
                 "constraints": decision_contract["constraints"],
                 "candidate_actions": decision_contract["candidate_actions"],
                 "metadata": metadata,
@@ -176,22 +187,14 @@ class ResidentAgiAdapter(BaseRoleAdapter):
         payload = {
             "resident_agi_decision_contract": decision_contract,
             "evidence": cls._mapping(input_data.get("evidence")),
-            "required_output": {
-                "verdict": "continue|block|escalate|request_evidence",
-                "rationale": "evidence-backed reason",
-                "evidence_refs": ["context/ref/path"],
-                "risks": ["risk"],
-                "next_action": "specific next action",
-                "downstream_allowed": False,
-                "decision_capability_id": decision_contract["decision_capability_id"],
-            },
+            "required_output": cls._required_output_contract(decision_contract),
         }
         return "\n".join(
             [
                 "Run a Resident AGI supervision decision through the shared role runtime.",
                 "Use resident_agi_decision_contract as the governing decision contract.",
                 "Do not infer a different AGI capability from unrelated audit-pack registry entries.",
-                "Do not bypass PM → Chief Engineer → Director.",
+                "Do not bypass PM -> Chief Engineer -> Director -> QA.",
                 "Return one JSON object matching required_output.",
                 json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2),
             ]
@@ -231,9 +234,19 @@ class ResidentAgiAdapter(BaseRoleAdapter):
             "optional_evidence_interfaces": optional_interfaces,
             "candidate_actions": candidate_actions,
             "constraints": constraints,
+            "decision_output_protocol": cls._decision_output_protocol(
+                decision_capability_id=decision_capability_id,
+                candidate_actions=candidate_actions,
+            ),
             "context_refs": cls._non_empty_strings(cls._sequence(input_data.get("context_refs"))),
             "evidence_refs": cls._non_empty_strings(cls._sequence(input_data.get("evidence_refs"))),
             "audit_summary": cls._resident_agi_audit_summary(cls._mapping(input_data.get("resident_agi_audit_pack"))),
+            "evidence_capability_matrix": cls._resident_agi_evidence_capability_matrix_summary(
+                cls._mapping(input_data.get("resident_agi_evidence_capability_matrix"))
+            ),
+            "decision_boundary_policy": cls._resident_agi_decision_boundary_policy_summary(
+                cls._mapping(input_data.get("resident_agi_decision_boundary_policy"))
+            ),
         }
 
     @classmethod
@@ -270,6 +283,84 @@ class ResidentAgiAdapter(BaseRoleAdapter):
         if "platform_enforced" in selected:
             result["platform_enforced"] = bool(selected.get("platform_enforced"))
         return result
+
+    @classmethod
+    def _required_output_contract(cls, decision_contract: Mapping[str, Any]) -> dict[str, Any]:
+        required_output: dict[str, Any] = {
+            "verdict": "continue|block|escalate|request_evidence",
+            "rationale": "evidence-backed reason",
+            "evidence_refs": ["context/ref/path"],
+            "risks": ["risk"],
+            "next_action": "specific next action",
+            "downstream_allowed": False,
+            "decision_capability_id": cls._string(decision_contract.get("decision_capability_id")),
+        }
+        output_protocol = cls._mapping(decision_contract.get("decision_output_protocol"))
+        if output_protocol.get("suggested_rules_allowed") is True:
+            required_output["suggested_rules"] = [
+                {
+                    "pattern": "diagnostic pattern that motivated the proposed rule",
+                    "fix_template": "non-authoritative replacement template or repair hint",
+                    "confidence": 0.0,
+                    "evidence": ["diagnostic message or context ref"],
+                    "name": "optional stable rule name",
+                    "language": "optional language/runtime",
+                    "rationale": "optional reason this rule may generalize",
+                    "scope": "optional applicability boundary",
+                    "notes": "optional caveats",
+                    "examples": ["optional before -> after example"],
+                }
+            ]
+        return required_output
+
+    @classmethod
+    def _decision_output_protocol(
+        cls,
+        *,
+        decision_capability_id: str,
+        candidate_actions: Sequence[str],
+    ) -> dict[str, Any]:
+        action_keys = {cls._scope_key(action) for action in candidate_actions}
+        capability_key = cls._scope_key(decision_capability_id)
+        repair_advisory = (
+            capability_key
+            in {
+                "director_repair_advisory",
+                "director_repair_advisory_policy",
+            }
+            or "suggest_repair_rule" in action_keys
+        )
+        if not repair_advisory:
+            return {
+                "schema_version": "resident.agi_decision_output_protocol.v1",
+                "suggested_rules_allowed": False,
+                "authoritative_fields_allowed": False,
+            }
+
+        policy = query_director_repair_advisory_policy(QueryDirectorRepairAdvisoryPolicyV1(include_field_lists=True))
+        policy_payload = policy.to_dict()
+        return {
+            "schema_version": "resident.agi_decision_output_protocol.v1",
+            "decision_mode": "director_repair_advisory",
+            "director_runtime_policy": policy_payload,
+            "suggested_rules_allowed": True,
+            "suggested_rules_required_fields": list(
+                policy_payload.get("summary", {}).get("suggested_rules_required_fields", [])
+            ),
+            "allowed_suggested_rule_fields": list(policy_payload.get("allowed_suggested_rule_fields", [])),
+            "forbidden_metadata_fields": list(policy_payload.get("forbidden_metadata_fields", [])),
+            "forbidden_suggested_rule_fields": list(policy_payload.get("forbidden_suggested_rule_fields", [])),
+            "authoritative_fields_allowed": False,
+            "instructions": [
+                "suggested_rules are non-authoritative proposals only",
+                "Director Runtime remains the only owner of repair execution and receipts",
+                "Do not include repair_plan, policy_override, success_verdict, patches, write_file, or file content",
+            ],
+        }
+
+    @staticmethod
+    def _scope_key(value: Any) -> str:
+        return str(value or "").strip().lower().replace(".", "_").replace("-", "_").replace(" ", "_")
 
     @classmethod
     def _resident_agi_audit_summary(cls, audit_pack: Mapping[str, Any]) -> dict[str, Any]:
@@ -315,6 +406,181 @@ class ResidentAgiAdapter(BaseRoleAdapter):
                 decision_registry,
                 ("schema_version", "role_id", "runtime_foundation", "counts", "decision_policy"),
             ),
+        }
+
+    @classmethod
+    def _resident_agi_evidence_capability_matrix_summary(
+        cls,
+        matrix: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        if not matrix:
+            return {}
+        summary = cls._mapping(matrix.get("summary"))
+        groups_raw = cls._sequence(matrix.get("groups"))
+        rows_raw = cls._sequence(matrix.get("rows"))
+        groups: list[dict[str, Any]] = []
+        for item in groups_raw:
+            group = cls._mapping(item)
+            if not group:
+                continue
+            groups.append(
+                cls._pick_mapping(
+                    group,
+                    (
+                        "group_id",
+                        "name",
+                        "total",
+                        "available",
+                        "required",
+                        "missing_required",
+                        "recommended_now",
+                        "governed_execute",
+                    ),
+                )
+            )
+        recommended_or_missing_rows: list[dict[str, Any]] = []
+        for item in rows_raw:
+            row = cls._mapping(item)
+            if not row:
+                continue
+            if not bool(row.get("recommended_now")) and not bool(row.get("required")) and not row.get("gaps"):
+                continue
+            recommended_or_missing_rows.append(
+                cls._pick_mapping(
+                    row,
+                    (
+                        "interface_id",
+                        "group_id",
+                        "required",
+                        "recommended_now",
+                        "available",
+                        "status",
+                        "source",
+                        "recommended_next_action",
+                        "gap_count",
+                    ),
+                )
+            )
+        return {
+            "schema_version": cls._string(matrix.get("schema_version")),
+            "decision_type": cls._string(matrix.get("decision_type")),
+            "selected_decision_id": cls._string(matrix.get("selected_decision_id")),
+            "summary": cls._pick_mapping(
+                summary,
+                (
+                    "total",
+                    "available",
+                    "required",
+                    "required_available",
+                    "missing_required",
+                    "missing_required_interface_ids",
+                    "recommended_now",
+                    "callable",
+                    "high_risk",
+                    "governed_execute",
+                    "advisory_only",
+                    "authoritative",
+                    "agi_execution_authority",
+                ),
+            ),
+            "groups": [group for group in groups if group][:8],
+            "recommended_or_missing_rows": [row for row in recommended_or_missing_rows if row][:12],
+        }
+
+    @classmethod
+    def _resident_agi_decision_boundary_policy_summary(
+        cls,
+        policy: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        if not policy:
+            return {}
+        decision_modes_raw = cls._mapping(policy.get("decision_modes"))
+        decision_modes: dict[str, Any] = {}
+        for mode_id, mode_raw in decision_modes_raw.items():
+            mode = cls._mapping(mode_raw)
+            if not mode:
+                continue
+            decision_modes[str(mode_id)] = cls._pick_mapping(
+                mode,
+                (
+                    "owner",
+                    "llm_decision_allowed",
+                    "llm_may_explain_or_request_evidence",
+                    "override_allowed",
+                    "execution_authority",
+                    "write_authority",
+                    "default_action",
+                ),
+            )
+        boundary_policies: list[dict[str, Any]] = []
+        for item in cls._sequence(policy.get("boundary_policies")):
+            boundary = cls._mapping(item)
+            if not boundary:
+                continue
+            if (
+                not bool(boundary.get("platform_enforced"))
+                and not bool(boundary.get("advisory_only"))
+                and not bool(boundary.get("requires_pm_chief_engineer_director_chain"))
+            ):
+                continue
+            boundary_policies.append(
+                cls._pick_mapping(
+                    boundary,
+                    (
+                        "boundary_id",
+                        "authority",
+                        "decision_owner",
+                        "llm_decision_allowed",
+                        "override_allowed",
+                        "execution_authority",
+                        "write_authority",
+                        "requires_pm_chief_engineer_director_chain",
+                        "advisory_only",
+                        "platform_enforced",
+                        "default_action",
+                        "hard_rule",
+                        "agi_scope",
+                    ),
+                )
+            )
+        return {
+            "schema_version": cls._string(policy.get("schema_version")),
+            "role_id": cls._string(policy.get("role_id")),
+            "runtime_foundation": cls._string(policy.get("runtime_foundation")),
+            "chain": cls._string(policy.get("chain")),
+            "decision_modes": decision_modes,
+            "capability_execution_policy": cls._pick_mapping(
+                cls._mapping(policy.get("capability_execution_policy")),
+                (
+                    "agi_direct_writes_allowed",
+                    "agi_direct_tool_execution_allowed",
+                    "director_runtime_remains_authoritative",
+                    "pm_chief_engineer_director_chain_required",
+                    "governed_request_capabilities",
+                    "write_contract_capabilities",
+                    "high_risk_capabilities",
+                    "advisory_evidence_capabilities",
+                ),
+            ),
+            "non_overridable_rules": cls._non_empty_strings(cls._sequence(policy.get("non_overridable_rules"))),
+            "agi_judgement_boundaries": cls._non_empty_strings(cls._sequence(policy.get("agi_judgement_boundaries"))),
+            "governed_execution_boundaries": cls._non_empty_strings(
+                cls._sequence(policy.get("governed_execution_boundaries"))
+            ),
+            "counts": cls._pick_mapping(
+                cls._mapping(policy.get("counts")),
+                (
+                    "boundary_policies",
+                    "platform_hard_rules",
+                    "agi_judgement",
+                    "governed_execution",
+                    "read_only_capabilities",
+                    "governed_request_capabilities",
+                    "write_contract_capabilities",
+                    "high_risk_capabilities",
+                ),
+            ),
+            "boundary_policies": [boundary for boundary in boundary_policies if boundary][:8],
         }
 
     @staticmethod

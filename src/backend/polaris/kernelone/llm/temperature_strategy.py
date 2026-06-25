@@ -22,6 +22,7 @@ _ROLE_TEMPERATURES: dict[str, float] = {
     "director": 0.15,
     "qa": 0.2,
     "scout": 0.3,
+    "resident_agi": 0.25,
 }
 
 # Phase-specific overrides (role, phase) → temperature
@@ -113,6 +114,17 @@ _PHASE_OVERRIDES: dict[tuple[str, str], float] = {
     ("scout", "doc_search"): 0.3,
     ("scout", "exploration"): 0.35,
     ("scout", "summarization"): 0.3,
+    # -- Resident AGI (platform supervision) --
+    ("resident_agi", "platform_supervision"): 0.25,
+    ("resident_agi", "autonomy_policy"): 0.2,
+    ("resident_agi", "decision_boundary"): 0.15,
+    ("resident_agi", "evidence_audit"): 0.15,
+    ("resident_agi", "final_request_audit"): 0.15,
+    ("resident_agi", "quality_gate_response"): 0.18,
+    ("resident_agi", "repair_rule_suggestion"): 0.12,
+    ("resident_agi", "director_repair_advisory"): 0.12,
+    ("resident_agi", "governed_handoff"): 0.15,
+    ("resident_agi", "brainstorming"): 0.45,
 }
 
 # Default fallback

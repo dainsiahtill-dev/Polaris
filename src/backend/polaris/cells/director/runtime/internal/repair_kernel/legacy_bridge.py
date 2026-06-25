@@ -9,6 +9,7 @@ from .contracts import RepairDiagnostic, RepairReceipt, RepairRevalidationEviden
 from .diagnostics import normalize_artifact_quality_errors
 from .receipt_context import build_repair_receipt_context
 from .registry import build_repair_coverage_report
+from .shadow import compare_legacy_and_kernel_repairs
 from .strategy_catalog import summarize_deterministic_repair_source_tools
 
 
@@ -24,11 +25,20 @@ def build_legacy_repair_kernel_summary(
     diagnostics = normalize_artifact_quality_errors(list(artifact_quality_errors or []))
     receipts = _receipts_from_tool_results(stage=stage, tool_results=tool_results, diagnostics=diagnostics, mode=mode)
     coverage_report = build_repair_coverage_report(diagnostics)
+    shadow_comparison = compare_legacy_and_kernel_repairs(
+        legacy_tool_results=tool_results,
+        kernel_receipts=receipts,
+    )
+    pending_revalidation_count = sum(1 for receipt in receipts if receipt.status == "pending_revalidation")
+    receipts_with_revalidation = sum(1 for receipt in receipts if receipt.revalidation_evidence is not None)
     return {
         "version": 1,
         "stage": stage,
         "mode": mode,
-        "authoritative": mode == "commit" and bool(receipts),
+        "authoritative": mode == "commit" and bool(receipts) and pending_revalidation_count == 0,
+        "requires_revalidation": pending_revalidation_count > 0,
+        "pending_revalidation_count": pending_revalidation_count,
+        "receipts_with_revalidation": receipts_with_revalidation,
         "receipt_count": len(receipts),
         "receipts": [receipt.to_dict() for receipt in receipts],
         "receipt_context": build_repair_receipt_context(receipts),
@@ -36,6 +46,7 @@ def build_legacy_repair_kernel_summary(
             [receipt.source_tool for receipt in receipts]
         ),
         "coverage_report": coverage_report.to_dict(),
+        "dark_launch_comparison": shadow_comparison.to_dict(),
         "agi_advisory": {
             "supported": True,
             "active": False,
@@ -68,14 +79,18 @@ def _receipts_from_tool_results(
         round_number = _coerce_optional_int(result_payload.get("round_number"))
         if round_number is None and revalidation_evidence is not None:
             round_number = revalidation_evidence.round_number
+        success = bool(item.get("success"))
+        status = "failed"
+        if success:
+            status = "applied" if revalidation_evidence is not None else "pending_revalidation"
         receipts.append(
             RepairReceipt(
                 plan_id=plan_id,
                 rule_id=source_tool,
                 source_tool=source_tool,
-                status="applied" if bool(item.get("success")) else "failed",
+                status=status,
                 mode=mode,
-                authoritative=mode == "commit" and bool(item.get("success")),
+                authoritative=mode == "commit" and success and revalidation_evidence is not None,
                 files_changed=(file_path,) if file_path else (),
                 operation_ids=(stable_id("legacy_op", plan_id, file_path, operation),),
                 diagnostics=diagnostics,
@@ -91,6 +106,7 @@ def _receipts_from_tool_results(
                     "director_policy": result_payload.get("director_policy"),
                     "phase": result_payload.get("phase"),
                     "priority": result_payload.get("priority"),
+                    "requires_revalidation": success and revalidation_evidence is None,
                 },
             )
         )

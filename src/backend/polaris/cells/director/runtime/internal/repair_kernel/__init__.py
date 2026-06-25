@@ -32,11 +32,14 @@ from .registry import (
     RepairArchetype,
     RepairCoverageReport,
     RepairDiagnosticCoverage,
+    RepairLanguageSlot,
     RepairRuleDefinition,
     RepairRuleRegistry,
     build_repair_coverage_report,
     default_repair_rule_registry,
+    repair_language_slots,
 )
+from .schedule_catalog import PostExecutionRepairScheduleStep, post_execution_repair_schedule
 from .scheduler import (
     BaseFilesProviderFn,
     PlannerFn,
@@ -74,6 +77,7 @@ __all__ = [
     "PatchComposer",
     "PlannerFn",
     "PolicyDecision",
+    "PostExecutionRepairScheduleStep",
     "RepairAdvisorNote",
     "RepairArchetype",
     "RepairConvergenceResult",
@@ -82,6 +86,7 @@ __all__ = [
     "RepairDiagnostic",
     "RepairDiagnosticCoverage",
     "RepairExecutionResult",
+    "RepairLanguageSlot",
     "RepairOperation",
     "RepairPlan",
     "RepairPlanSchedule",
@@ -108,6 +113,8 @@ __all__ = [
     "deterministic_repair_strategy_catalog",
     "normalize_artifact_quality_errors",
     "order_repair_plans",
+    "post_execution_repair_schedule",
+    "repair_language_slots",
     "repair_typescript_object_literal_commas",
     "summarize_deterministic_repair_source_tools",
 ]

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import pytest
 from polaris.cells.resident.autonomy.public.contracts import (
+    QueryResidentAgiRepairAdvisoryOverlayV1,
     QueryResidentStatusV1,
     RecordResidentEvidenceCommandV1,
     ResidentAutonomyError,
     ResidentAutonomyResultV1,
     ResidentCycleCompletedEventV1,
     RunResidentCycleCommandV1,
+    UpdateResidentAgiParticipationCommandV1,
 )
 
 
@@ -98,6 +100,48 @@ class TestQueryResidentStatusV1EdgeCases:
     def test_whitespace_cycle_id_raises(self) -> None:
         with pytest.raises(ValueError, match="cycle_id"):
             QueryResidentStatusV1(workspace="/repo", cycle_id="  ")
+
+
+class TestUpdateResidentAgiParticipationCommandV1:
+    def test_normalizes_scope_and_participation_values(self) -> None:
+        command = UpdateResidentAgiParticipationCommandV1(
+            workspace=" /repo ",
+            enabled=True,
+            scopes=(" final_request_audit ", "", "director.repair.advisory"),
+            participation={
+                " final_request_audit ": 1,
+                "": True,
+                "director.repair.advisory": 0,
+            },
+            custom_scopes_allowed=False,
+        )
+
+        assert command.workspace == "/repo"
+        assert command.enabled is True
+        assert command.scopes == ("final_request_audit", "director.repair.advisory")
+        assert command.participation == {
+            "final_request_audit": True,
+            "director.repair.advisory": False,
+        }
+        assert command.custom_scopes_allowed is False
+
+    def test_empty_workspace_raises(self) -> None:
+        with pytest.raises(ValueError, match="workspace"):
+            UpdateResidentAgiParticipationCommandV1(workspace="")
+
+
+class TestQueryResidentAgiRepairAdvisoryOverlayV1:
+    def test_defaults_and_bounds(self) -> None:
+        query = QueryResidentAgiRepairAdvisoryOverlayV1(workspace="/repo", limit=999)
+
+        assert query.workspace == "/repo"
+        assert query.limit == 200
+        assert query.require_ready is False
+        assert query.require_eligible is False
+
+    def test_empty_workspace_raises(self) -> None:
+        with pytest.raises(ValueError, match="workspace"):
+            QueryResidentAgiRepairAdvisoryOverlayV1(workspace="")
 
 
 class TestResidentCycleCompletedEventV1HappyPath:

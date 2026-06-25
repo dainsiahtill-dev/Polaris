@@ -37,6 +37,12 @@ class TestBuiltinProfilesStructure:
         role_ids = [p["role_id"] for p in BUILTIN_PROFILES]
         assert len(role_ids) == len(set(role_ids))
 
+    def test_governance_advisors_are_not_builtin_delivery_roles(self) -> None:
+        role_ids = {p["role_id"] for p in BUILTIN_PROFILES}
+        assert "resident_agi" in role_ids
+        assert "cfo" not in role_ids
+        assert "hr" not in role_ids
+
 
 class TestPmProfile:
     """Tests for the PM profile."""

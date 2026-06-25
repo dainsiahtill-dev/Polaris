@@ -14,6 +14,7 @@ from polaris.cells.resident.autonomy.public.service import (
     QueryResidentAgiAuditPackV1,
     QueryResidentAgiEvidenceInterfacesV1,
     QueryResidentAgiHandoffsV1,
+    QueryResidentAgiRepairAdvisoryOverlayV1,
     QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
     RecordResidentDecisionCommandV1,
@@ -27,6 +28,7 @@ from polaris.cells.resident.autonomy.public.service import (
     StageResidentGoalCommandV1,
     StartResidentCommandV1,
     StopResidentCommandV1,
+    UpdateResidentAgiParticipationCommandV1,
     UpdateResidentIdentityCommandV1,
     approve_resident_goal,
     create_resident_goal,
@@ -36,6 +38,7 @@ from polaris.cells.resident.autonomy.public.service import (
     query_resident_agi_audit_pack,
     query_resident_agi_evidence_interfaces,
     query_resident_agi_handoffs,
+    query_resident_agi_repair_advisory_overlay,
     query_resident_capabilities,
     query_resident_status,
     record_resident_decision_entry,
@@ -48,6 +51,7 @@ from polaris.cells.resident.autonomy.public.service import (
     stage_resident_goal,
     start_resident,
     stop_resident,
+    update_resident_agi_participation,
     update_resident_identity,
 )
 from polaris.delivery.http.dependencies import require_auth
@@ -96,6 +100,14 @@ class ResidentIdentityPatch(BaseModel):
     memory_lineage: list[str] | None = None
     capability_profile: dict[str, float] | None = None
     resident_agi_participation: dict[str, Any] | None = None
+
+
+class ResidentAgiParticipationPatch(BaseModel):
+    workspace: str = Field(default="", description="Optional workspace override")
+    enabled: bool | None = None
+    scopes: list[str] | None = None
+    participation: dict[str, bool] | None = None
+    custom_scopes_allowed: bool | None = None
 
 
 class DecisionOptionPayload(BaseModel):
@@ -246,6 +258,27 @@ def resident_agi_handoffs(
     )
 
 
+@router.get("/agi/repair-advisory-overlay", dependencies=[Depends(require_auth)])
+def resident_agi_repair_advisory_overlay(
+    request: Request,
+    workspace: str = "",
+    limit: int = Query(default=50, ge=1, le=200),
+    require_ready: bool = False,
+    require_eligible: bool = False,
+) -> dict[str, Any]:
+    """Return the latest persisted Resident AGI repair advisory overlay."""
+
+    ws = _resolve_workspace(request, workspace)
+    return query_resident_agi_repair_advisory_overlay(
+        QueryResidentAgiRepairAdvisoryOverlayV1(
+            workspace=ws,
+            limit=limit,
+            require_ready=require_ready,
+            require_eligible=require_eligible,
+        )
+    )
+
+
 @router.post("/agi/decide", dependencies=[Depends(require_auth)])
 async def resident_agi_decide(request: Request, payload: ResidentAgiDecisionTurnRequest) -> dict[str, Any]:
     """Run a Resident AGI decision turn through the shared role runtime."""
@@ -314,6 +347,50 @@ def resident_patch_identity(request: Request, payload: ResidentIdentityPatch) ->
         UpdateResidentIdentityCommandV1(
             workspace=ws,
             payload=payload.model_dump(exclude_none=True),
+        )
+    )
+
+
+@router.get("/agi/participation", dependencies=[Depends(require_auth)])
+def resident_agi_participation(request: Request, workspace: str = "") -> dict[str, Any]:
+    service = get_resident_service(_resolve_workspace(request, workspace))
+    identity = service.get_status(include_details=False)["identity"]
+    participation = identity.get("resident_agi_participation")
+    return participation if isinstance(participation, dict) else {}
+
+
+@router.patch("/agi/participation", dependencies=[Depends(require_auth)])
+def resident_patch_agi_participation(
+    request: Request,
+    payload: ResidentAgiParticipationPatch,
+) -> dict[str, Any]:
+    ws = _resolve_workspace(request, payload.workspace)
+    current = resident_agi_participation(request, workspace=ws)
+    current_scopes_raw = current.get("scopes")
+    current_participation_raw = current.get("participation")
+    return update_resident_agi_participation(
+        UpdateResidentAgiParticipationCommandV1(
+            workspace=ws,
+            enabled=bool(current.get("enabled", False) if payload.enabled is None else payload.enabled),
+            scopes=tuple(
+                payload.scopes
+                if payload.scopes is not None
+                else current_scopes_raw
+                if isinstance(current_scopes_raw, list)
+                else []
+            ),
+            participation=(
+                payload.participation
+                if payload.participation is not None
+                else current_participation_raw
+                if isinstance(current_participation_raw, dict)
+                else {}
+            ),
+            custom_scopes_allowed=bool(
+                current.get("custom_scopes_allowed", True)
+                if payload.custom_scopes_allowed is None
+                else payload.custom_scopes_allowed
+            ),
         )
     )
 

@@ -363,6 +363,37 @@ function AppContent() {
     live,
     llmStatus,
   });
+  const residentAgiRoleStatus = llmStatus?.roles?.resident_agi;
+  const residentAgiLlmStatus = useMemo(
+    () => ({
+      ready: residentAgiRoleStatus?.ready,
+      providerId: residentAgiRoleStatus?.provider_id,
+      providerName: residentAgiRoleStatus?.provider_name,
+      model: residentAgiRoleStatus?.model,
+      grade: residentAgiRoleStatus?.grade,
+      blocked:
+        llmRuntimeState.blockedRoles.includes('resident_agi') ||
+        Boolean(llmStatus?.blocked_roles?.includes('resident_agi')),
+      unsupported: Boolean(llmStatus?.unsupported_roles?.includes('resident_agi')),
+      readinessIssue: residentAgiRoleStatus?.readiness_issue,
+      runtimeIssue: residentAgiRoleStatus?.runtime_issue,
+      lastUpdated: residentAgiRoleStatus?.timestamp || llmStatus?.last_updated || null,
+    }),
+    [
+      llmRuntimeState.blockedRoles,
+      llmStatus?.blocked_roles,
+      llmStatus?.last_updated,
+      llmStatus?.unsupported_roles,
+      residentAgiRoleStatus?.grade,
+      residentAgiRoleStatus?.model,
+      residentAgiRoleStatus?.provider_id,
+      residentAgiRoleStatus?.provider_name,
+      residentAgiRoleStatus?.readiness_issue,
+      residentAgiRoleStatus?.ready,
+      residentAgiRoleStatus?.runtime_issue,
+      residentAgiRoleStatus?.timestamp,
+    ],
+  );
 
   useEffect(() => {
     const handleOpenIntervention = () => uiActions.openIntervention();
@@ -1107,6 +1138,7 @@ function AppContent() {
           workspace={workspace}
           onBackToMain={handleBackToMain}
           residentSnapshot={displaySnapshot?.resident ?? snapshot?.resident ?? null}
+          residentAgiLlmStatus={residentAgiLlmStatus}
         />
         {!floatingRuntimeSuppressed && (
           <LlmRuntimeOverlay

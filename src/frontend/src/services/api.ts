@@ -11,6 +11,9 @@ import type {
   ResidentAgiDecisionTurnResponse,
   ResidentAgiEvidenceInterfacesPayload,
   ResidentAgiHandoffInboxPayload,
+  ResidentAgiParticipationPatchPayload,
+  ResidentAgiParticipationPayload,
+  ResidentAgiRepairAdvisoryOverlayQueryPayload,
   ResidentDecisionPayload,
   ResidentExperimentPayload,
   ResidentGoalPayload,
@@ -362,6 +365,28 @@ export const residentService = {
     return handleResponse(res, "Failed to load Resident AGI handoffs");
   },
 
+  async getAgiRepairAdvisoryOverlay(
+    workspace = "",
+    options: {
+      limit?: number;
+      requireReady?: boolean;
+      requireEligible?: boolean;
+    } = {},
+  ): Promise<ApiResult<ResidentAgiRepairAdvisoryOverlayQueryPayload>> {
+    const query = new URLSearchParams();
+    if (workspace) query.set("workspace", workspace);
+    if (options.limit) query.set("limit", String(options.limit));
+    if (options.requireReady) query.set("require_ready", "true");
+    if (options.requireEligible) query.set("require_eligible", "true");
+    const res = await apiFetch(
+      `/v2/resident/agi/repair-advisory-overlay?${query.toString()}`,
+    );
+    return handleResponse(
+      res,
+      "Failed to load Resident AGI repair advisory overlay",
+    );
+  },
+
   async decide(
     workspace: string,
     payload: ResidentAgiDecisionTurnRequest,
@@ -420,6 +445,21 @@ export const residentService = {
       body: JSON.stringify({ workspace, ...payload }),
     });
     return handleResponse(res, "Failed to update Resident identity");
+  },
+
+  async updateAgiParticipation(
+    workspace: string,
+    payload: ResidentAgiParticipationPatchPayload,
+  ): Promise<ApiResult<ResidentAgiParticipationPayload>> {
+    const res = await apiFetch("/v2/resident/agi/participation", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace, ...payload }),
+    });
+    return handleResponse(
+      res,
+      "Failed to update Resident AGI participation",
+    );
   },
 
   async listGoals(

@@ -836,6 +836,158 @@ def build_resident_agi_decision_capability_registry(
     }
 
 
+def _resident_agi_capability_domain(capability: ResidentAgiCapabilityV1) -> str:
+    capability_id = capability.capability_id
+    category = capability.category
+    contract_ref = capability.contract_ref
+    if category.startswith("audit_") or capability_id.startswith("audit.") or contract_ref.startswith("audit."):
+        return "audit"
+    if category in {"context_discovery", "llm_audit"} or capability_id.startswith(("context.", "contextos.")):
+        return "context"
+    if category.startswith("director_repair") or capability_id.startswith("director."):
+        return "director_repair"
+    if category == "run_ledger" or capability_id.startswith("run_ledger."):
+        return "run_ledger"
+    if category == "verification_policy" or capability_id.startswith("verifier."):
+        return "verifier"
+    if category.startswith("resident_") or capability_id.startswith("resident."):
+        return "resident"
+    if category == "role_runtime" or capability_id.startswith("roles."):
+        return "role_runtime"
+    if category == "task_profile":
+        return "task_profile"
+    if category == "architecture_decision":
+        return "architecture"
+    if category == "runtime_observation" or capability_id.startswith("runtime."):
+        return "runtime"
+    return "other"
+
+
+def _resident_agi_capability_execution_authority(capability: ResidentAgiCapabilityV1) -> str:
+    access = capability.access.lower()
+    category = capability.category.lower()
+    if "advisory" in category or "repair_strategy" in category:
+        return "advisory_only"
+    if access == "read_only":
+        return "read_only_evidence"
+    if "pm_ce_director" in access:
+        return "governed_pm_chief_engineer_director_handoff"
+    if "execute" in access:
+        return "governed_contract_execution_request"
+    if "write" in access:
+        return "write_through_canonical_contract"
+    return "unknown"
+
+
+def build_resident_agi_capability_access_registry(
+    capabilities: list[ResidentAgiCapabilityV1],
+) -> dict[str, Any]:
+    """Return access-mode groups AGI and UI can consume without re-deriving policy."""
+
+    rows: list[dict[str, Any]] = []
+    by_domain: dict[str, dict[str, Any]] = {}
+    read_only_ids: list[str] = []
+    advisory_only_ids: list[str] = []
+    governed_execution_ids: list[str] = []
+    governed_write_ids: list[str] = []
+    high_risk_ids: list[str] = []
+    canonical_contracts: set[str] = set()
+    for capability in capabilities:
+        access = capability.access.lower()
+        domain = _resident_agi_capability_domain(capability)
+        authority = _resident_agi_capability_execution_authority(capability)
+        canonical_contracts.add(capability.contract_ref)
+        if access == "read_only":
+            read_only_ids.append(capability.capability_id)
+        if authority == "advisory_only":
+            advisory_only_ids.append(capability.capability_id)
+        if "execute" in access:
+            governed_execution_ids.append(capability.capability_id)
+        if "write" in access:
+            governed_write_ids.append(capability.capability_id)
+        if capability.risk_level.lower() == "high":
+            high_risk_ids.append(capability.capability_id)
+
+        domain_entry = by_domain.setdefault(
+            domain,
+            {
+                "domain_id": domain,
+                "capability_ids": [],
+                "read_only": 0,
+                "advisory_only": 0,
+                "governed_execution": 0,
+                "governed_write": 0,
+                "high_risk": 0,
+            },
+        )
+        domain_entry["capability_ids"].append(capability.capability_id)
+        if access == "read_only":
+            domain_entry["read_only"] += 1
+        if authority == "advisory_only":
+            domain_entry["advisory_only"] += 1
+        if "execute" in access:
+            domain_entry["governed_execution"] += 1
+        if "write" in access:
+            domain_entry["governed_write"] += 1
+        if capability.risk_level.lower() == "high":
+            domain_entry["high_risk"] += 1
+        rows.append(
+            {
+                "capability_id": capability.capability_id,
+                "name": capability.name,
+                "domain_id": domain,
+                "category": capability.category,
+                "access": capability.access,
+                "execution_authority": authority,
+                "contract_ref": capability.contract_ref,
+                "endpoint": capability.endpoint,
+                "risk_level": capability.risk_level,
+                "participation_scope_id": capability.participation_scope_id,
+                "guardrails": list(capability.guardrails),
+            }
+        )
+
+    return {
+        "schema_version": "resident.agi_capability_access_registry.v1",
+        "role_id": "resident_agi",
+        "source": "resident.autonomy.capability_surface",
+        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+        "access_semantics": {
+            "read_only": "AGI may inspect evidence through public read contracts.",
+            "advisory_only": "AGI may recommend or explain; it cannot execute, register, patch, or override.",
+            "governed_execution": "AGI may request execution only through the named public contract and policy gates.",
+            "governed_write": "Writes stay behind canonical Resident/role/control-plane commands.",
+        },
+        "execution_policy": {
+            "agi_direct_tool_execution_allowed": False,
+            "agi_direct_writes_allowed": False,
+            "director_runtime_remains_authoritative": True,
+            "governed_execution_requires_public_contract": True,
+            "pm_chief_engineer_director_chain_required_for_code_changes": True,
+        },
+        "groups": {
+            "read_only_capabilities": read_only_ids,
+            "advisory_only_capabilities": advisory_only_ids,
+            "governed_execution_capabilities": governed_execution_ids,
+            "governed_write_capabilities": governed_write_ids,
+            "high_risk_capabilities": high_risk_ids,
+        },
+        "interface_domains": [by_domain[key] for key in sorted(by_domain)],
+        "canonical_contracts": sorted(canonical_contracts),
+        "items": rows,
+        "counts": {
+            "capabilities": len(capabilities),
+            "read_only": len(read_only_ids),
+            "advisory_only": len(advisory_only_ids),
+            "governed_execution": len(governed_execution_ids),
+            "governed_write": len(governed_write_ids),
+            "high_risk": len(high_risk_ids),
+            "domains": len(by_domain),
+            "canonical_contracts": len(canonical_contracts),
+        },
+    }
+
+
 def build_resident_agi_evidence_interface_contract(
     *,
     capabilities: list[ResidentAgiCapabilityV1],
@@ -1093,12 +1245,143 @@ def build_resident_agi_authority_matrix(
     }
 
 
+def build_resident_agi_decision_boundary_policy(
+    *,
+    capabilities: list[ResidentAgiCapabilityV1],
+    decision_boundaries: list[ResidentAgiDecisionBoundaryV1],
+    authority_matrix: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the explicit policy split between hard code, AGI judgement, and governed handoff."""
+
+    decision_modes: dict[str, dict[str, Any]] = {
+        "platform_hard_rule": {
+            "owner": "platform_code",
+            "llm_decision_allowed": False,
+            "llm_may_explain_or_request_evidence": True,
+            "override_allowed": False,
+            "execution_authority": "none",
+            "write_authority": False,
+            "default_action": "block_or_request_governed_remediation",
+        },
+        "agi_recommendation": {
+            "owner": "resident_agi",
+            "llm_decision_allowed": True,
+            "llm_may_explain_or_request_evidence": True,
+            "override_allowed": False,
+            "execution_authority": "advisory_only",
+            "write_authority": False,
+            "default_action": "recommend_request_evidence_or_escalate",
+        },
+        "agi_governed_execution": {
+            "owner": "resident_agi_with_pm_chief_engineer_director_handoff",
+            "llm_decision_allowed": True,
+            "llm_may_explain_or_request_evidence": True,
+            "override_allowed": False,
+            "execution_authority": "governed_handoff_only",
+            "write_authority": False,
+            "default_action": "handoff_to_canonical_role_chain_when_evidence_passes",
+        },
+    }
+
+    boundary_policies: list[dict[str, Any]] = []
+    for boundary in decision_boundaries:
+        mode = decision_modes.get(boundary.authority, decision_modes["agi_recommendation"])
+        boundary_policies.append(
+            {
+                "boundary_id": boundary.boundary_id,
+                "name": boundary.name,
+                "authority": boundary.authority,
+                "decision_owner": mode["owner"],
+                "llm_decision_allowed": bool(mode["llm_decision_allowed"]),
+                "override_allowed": False,
+                "execution_authority": mode["execution_authority"],
+                "write_authority": False,
+                "requires_pm_chief_engineer_director_chain": boundary.authority == "agi_governed_execution",
+                "advisory_only": boundary.authority == "agi_recommendation",
+                "platform_enforced": boundary.authority == "platform_hard_rule",
+                "evidence_required": list(boundary.evidence_required),
+                "contract_refs": list(boundary.contract_refs),
+                "default_action": mode["default_action"],
+                "escalation": boundary.escalation,
+                "hard_rule": boundary.platform_hard_rule,
+                "agi_scope": boundary.agi_decision_scope,
+            }
+        )
+
+    read_only_capabilities: list[str] = []
+    governed_request_capabilities: list[str] = []
+    write_contract_capabilities: list[str] = []
+    high_risk_capabilities: list[str] = []
+    advisory_evidence_capabilities: list[str] = []
+    for capability in capabilities:
+        access = capability.access.lower()
+        category = capability.category.lower()
+        if access == "read_only":
+            read_only_capabilities.append(capability.capability_id)
+        if "execute" in access:
+            governed_request_capabilities.append(capability.capability_id)
+        if "write" in access:
+            write_contract_capabilities.append(capability.capability_id)
+        if capability.risk_level.lower() == "high":
+            high_risk_capabilities.append(capability.capability_id)
+        if "advisory" in category or "repair_strategy" in category:
+            advisory_evidence_capabilities.append(capability.capability_id)
+
+    return {
+        "schema_version": "resident.agi_decision_boundary_policy.v1",
+        "role_id": "resident_agi",
+        "source": "resident.autonomy.capability_surface",
+        "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
+        "chain": "PM → Chief Engineer → Director",
+        "decision_modes": decision_modes,
+        "boundary_policies": boundary_policies,
+        "capability_execution_policy": {
+            "read_only_capabilities": read_only_capabilities,
+            "governed_request_capabilities": governed_request_capabilities,
+            "write_contract_capabilities": write_contract_capabilities,
+            "high_risk_capabilities": high_risk_capabilities,
+            "advisory_evidence_capabilities": advisory_evidence_capabilities,
+            "agi_direct_writes_allowed": False,
+            "agi_direct_tool_execution_allowed": False,
+            "director_runtime_remains_authoritative": True,
+            "pm_chief_engineer_director_chain_required": bool(authority_matrix.get("chain_required")),
+        },
+        "non_overridable_rules": [
+            item.boundary_id for item in decision_boundaries if item.authority == "platform_hard_rule"
+        ],
+        "agi_judgement_boundaries": [
+            item.boundary_id for item in decision_boundaries if item.authority == "agi_recommendation"
+        ],
+        "governed_execution_boundaries": [
+            item.boundary_id for item in decision_boundaries if item.authority == "agi_governed_execution"
+        ],
+        "counts": {
+            "boundary_policies": len(boundary_policies),
+            "platform_hard_rules": len(
+                [item for item in decision_boundaries if item.authority == "platform_hard_rule"]
+            ),
+            "agi_judgement": len([item for item in decision_boundaries if item.authority == "agi_recommendation"]),
+            "governed_execution": len(
+                [item for item in decision_boundaries if item.authority == "agi_governed_execution"]
+            ),
+            "read_only_capabilities": len(read_only_capabilities),
+            "governed_request_capabilities": len(governed_request_capabilities),
+            "write_contract_capabilities": len(write_contract_capabilities),
+            "high_risk_capabilities": len(high_risk_capabilities),
+        },
+    }
+
+
 def resident_agi_capability_surface_payload() -> dict[str, object]:
     """Return a serializable capability-surface payload."""
 
     capability_items = build_resident_agi_capability_surface()
     decision_boundary_items = build_resident_agi_decision_boundaries()
     decision_capability_items = build_resident_agi_decision_capabilities()
+    authority_matrix = build_resident_agi_authority_matrix(
+        capabilities=capability_items,
+        decision_boundaries=decision_boundary_items,
+    )
     items = [item.to_dict() for item in capability_items]
     decision_boundaries = [item.to_dict() for item in decision_boundary_items]
     decision_capabilities = [item.to_dict() for item in decision_capability_items]
@@ -1108,6 +1391,7 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
         "decision_boundary_schema": "resident.agi_decision_boundary.v1",
         "decision_capability_schema": "resident.agi_decision_capability.v1",
         "authority_matrix_schema": "resident.agi_authority_matrix.v1",
+        "capability_access_registry_schema": "resident.agi_capability_access_registry.v1",
         "evidence_interface_contract_schema": "resident.agi_evidence_interface_contract.v1",
         "role_id": "resident_agi",
         "runtime_foundation": "roles.runtime + ContextOS + TurnEngine",
@@ -1121,6 +1405,7 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
         "decision_capability_registry": build_resident_agi_decision_capability_registry(
             decision_capability_items,
         ),
+        "capability_access_registry": build_resident_agi_capability_access_registry(capability_items),
         "evidence_interface_contract": build_resident_agi_evidence_interface_contract(
             capabilities=capability_items,
             decision_capabilities=decision_capability_items,
@@ -1128,9 +1413,11 @@ def resident_agi_capability_surface_payload() -> dict[str, object]:
         "participation_policy": resident_agi_participation_policy_payload(),
         "hardcoded_repair_strategy_catalog": resident_agi_director_repair_strategy_catalog_payload(),
         "director_repair_advisory_policy": resident_agi_director_repair_advisory_policy_payload(),
-        "authority_matrix": build_resident_agi_authority_matrix(
+        "authority_matrix": authority_matrix,
+        "decision_boundary_policy": build_resident_agi_decision_boundary_policy(
             capabilities=capability_items,
             decision_boundaries=decision_boundary_items,
+            authority_matrix=authority_matrix,
         ),
         "count": len(items),
     }
@@ -1150,8 +1437,10 @@ def resident_agi_director_repair_advisory_policy_payload() -> dict[str, Any]:
 
 __all__ = [
     "build_resident_agi_authority_matrix",
+    "build_resident_agi_capability_access_registry",
     "build_resident_agi_capability_surface",
     "build_resident_agi_decision_boundaries",
+    "build_resident_agi_decision_boundary_policy",
     "build_resident_agi_decision_capabilities",
     "build_resident_agi_decision_capability_registry",
     "build_resident_agi_evidence_interface_contract",

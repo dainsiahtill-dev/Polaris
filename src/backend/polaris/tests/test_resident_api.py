@@ -85,6 +85,76 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
                     "recommended_next_action": "request_governed_execution_if_read_evidence_is_insufficient",
                 },
             ],
+            "capability_matrix": {
+                "schema_version": "resident.agi_evidence_capability_matrix.v1",
+                "decision_type": "quality_gate_response",
+                "selected_decision_id": "quality.gate.response",
+                "summary": {
+                    "total": 2,
+                    "available": 1,
+                    "required": 1,
+                    "required_available": 1,
+                    "missing_required": 0,
+                    "missing_required_interface_ids": [],
+                    "recommended_now": 2,
+                    "callable": 1,
+                    "high_risk": 0,
+                    "governed_execute": 1,
+                    "advisory_only": True,
+                    "authoritative": False,
+                    "agi_execution_authority": False,
+                },
+                "groups": [
+                    {
+                        "group_id": "run_ledger",
+                        "name": "Run ledger",
+                        "interface_ids": ["run_ledger.read"],
+                        "total": 1,
+                        "available": 1,
+                        "required": 1,
+                        "missing_required": 0,
+                        "recommended_now": 1,
+                        "high_risk": 0,
+                        "governed_execute": 0,
+                    },
+                    {
+                        "group_id": "audit",
+                        "name": "Audit",
+                        "interface_ids": ["audit.diagnosis.execute"],
+                        "total": 1,
+                        "available": 0,
+                        "required": 0,
+                        "missing_required": 0,
+                        "recommended_now": 1,
+                        "high_risk": 0,
+                        "governed_execute": 1,
+                    },
+                ],
+                "rows": [
+                    {
+                        "interface_id": "run_ledger.read",
+                        "group_id": "run_ledger",
+                        "required": True,
+                        "recommended_now": True,
+                        "available": True,
+                        "status": "available",
+                        "source": "control_plane.run_ledger.public.read_run_ledger_projection",
+                        "recommended_next_action": "use_run_ledger_projection",
+                        "gap_count": 0,
+                    },
+                    {
+                        "interface_id": "audit.diagnosis.execute",
+                        "group_id": "audit",
+                        "required": False,
+                        "recommended_now": True,
+                        "available": False,
+                        "status": "governed_execute_only",
+                        "source": "resident.agi_capability_surface",
+                        "recommended_next_action": "request_governed_execution_if_read_evidence_is_insufficient",
+                        "gap_count": 0,
+                    },
+                ],
+            },
             "summary": {
                 "total": 2,
                 "available": 1,
@@ -177,6 +247,16 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert payload["audit_pack"]["hard_rule_gate"]["status"] == "pass"
     assert payload["audit_pack"]["authority_matrix"]["schema_version"] == "resident.agi_authority_matrix.v1"
     assert payload["audit_pack"]["authority_matrix"]["chain_required"] is True
+    assert (
+        payload["audit_pack"]["capability_surface"]["decision_boundary_policy"]["schema_version"]
+        == "resident.agi_decision_boundary_policy.v1"
+    )
+    assert (
+        payload["audit_pack"]["capability_surface"]["decision_boundary_policy"]["capability_execution_policy"][
+            "agi_direct_tool_execution_allowed"
+        ]
+        is False
+    )
     assert payload["audit_pack"]["run_ledger_summary"]["source"] == "run_ledger_projection"
     assert payload["audit_pack"]["evidence_gate"]["status"] == "hold"
     assert payload["audit_pack"]["decision_profile"]["schema_version"] == "resident.agi_decision_profile.v1"
@@ -197,6 +277,17 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     )
     assert payload["recorded_decision"]["actual_outcome"]["resident_agi_runtime_contract_gate"]["status"] == "pass"
     assert payload["recorded_decision"]["actual_outcome"]["resident_agi_decision_preflight"]["status"] == "pass"
+    assert (
+        payload["recorded_decision"]["actual_outcome"]["resident_agi_evidence_capability_matrix"]["schema_version"]
+        == "resident.agi_evidence_capability_matrix.v1"
+    )
+    assert payload["evidence_capability_matrix"]["summary"]["required_available"] == 1
+    assert payload["evidence_capability_matrix"]["summary"]["authoritative"] is False
+    assert payload["decision_boundary_policy"]["schema_version"] == "resident.agi_decision_boundary_policy.v1"
+    assert (
+        payload["decision_boundary_policy"]["capability_execution_policy"]["director_runtime_remains_authoritative"]
+        is True
+    )
     assert payload["recorded_decision"]["actual_outcome"]["resident_agi_runtime_contract_gate"]["passed"] is True
     assert payload["recorded_decision"]["actual_outcome"]["resident_agi_output_contract_gate"]["status"] == "pass"
     assert payload["output_contract_gate"]["passed"] is True
@@ -208,6 +299,12 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
             "governed_execution"
         ]
         == "canonical_role_chain_only"
+    )
+    assert (
+        payload["recorded_decision"]["actual_outcome"]["resident_agi_decision_boundary_policy"]["decision_modes"][
+            "platform_hard_rule"
+        ]["llm_decision_allowed"]
+        is False
     )
     assert (
         "preserve_pm_chief_engineer_director_qa_chain"
@@ -237,6 +334,19 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert captured_input["evidence"]["resident_agi_role_turn_allowed"] is True
     assert captured_input["evidence"]["resident_agi_manual_role_turn_requested"] is True
     assert captured_input["evidence"]["resident_agi_automatic_participation_enabled"] is False
+    assert captured_input["evidence"]["resident_agi_evidence_capability_matrix_schema"] == (
+        "resident.agi_evidence_capability_matrix.v1"
+    )
+    assert captured_input["evidence"]["resident_agi_evidence_matrix_required_available"] == 1
+    assert captured_input["evidence"]["resident_agi_decision_boundary_policy_schema"] == (
+        "resident.agi_decision_boundary_policy.v1"
+    )
+    assert captured_input["evidence"]["resident_agi_policy_direct_tools_allowed"] is False
+    assert captured_input["resident_agi_evidence_capability_matrix"]["summary"]["recommended_now"] == 2
+    assert captured_input["resident_agi_evidence_capability_matrix"]["summary"]["agi_execution_authority"] is False
+    assert captured_input["resident_agi_decision_boundary_policy"]["schema_version"] == (
+        "resident.agi_decision_boundary_policy.v1"
+    )
     assert captured_input["selected_decision_capability"]["decision_id"] == "quality.gate.response"
     assert "run_ledger.read" in captured_input["required_evidence_interfaces"]
     assert "audit.diagnosis.execute" in captured_input["optional_evidence_interfaces"]
@@ -245,6 +355,19 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     captured_context = captured["context"]
     assert isinstance(captured_context, dict)
     assert captured_context["resident_agi_audit_pack"]["schema_version"] == "resident.agi_audit_pack.v1"
+    assert captured_context["resident_agi_evidence_capability_matrix"]["schema_version"] == (
+        "resident.agi_evidence_capability_matrix.v1"
+    )
+    assert captured_context["resident_agi_evidence_capability_matrix"]["summary"]["governed_execute"] == 1
+    assert captured_context["resident_agi_decision_boundary_policy"]["schema_version"] == (
+        "resident.agi_decision_boundary_policy.v1"
+    )
+    assert (
+        captured_context["resident_agi_decision_boundary_policy"]["capability_execution_policy"][
+            "agi_direct_writes_allowed"
+        ]
+        is False
+    )
     captured_metadata = captured_context["metadata"]
     assert isinstance(captured_metadata, dict)
     assert captured_metadata["resident_agi_role_runtime_required"] is True
@@ -254,6 +377,14 @@ def test_resident_agi_decide_runs_role_adapter_and_records_decision(tmp_path: Pa
     assert captured_metadata["resident_agi_decision_profile_schema"] == "resident.agi_decision_profile.v1"
     assert captured_metadata["resident_agi_role_turn_allowed"] is True
     assert captured_metadata["resident_agi_selected_decision_capability"] == "quality.gate.response"
+    assert captured_metadata["resident_agi_evidence_capability_matrix_schema"] == (
+        "resident.agi_evidence_capability_matrix.v1"
+    )
+    assert captured_metadata["resident_agi_evidence_matrix_recommended_now"] == 2
+    assert captured_metadata["resident_agi_decision_boundary_policy_schema"] == (
+        "resident.agi_decision_boundary_policy.v1"
+    )
+    assert captured_metadata["resident_agi_policy_direct_writes_allowed"] is False
     assert "run_ledger.read" in captured_metadata["resident_agi_required_evidence_interfaces"]
 
 
@@ -285,6 +416,45 @@ def test_resident_agi_evidence_interfaces_endpoint_reports_readiness(tmp_path: P
     assert by_id["audit.verdict.read"]["source"] == "audit.verdict.public.query_audit_verdict"
     assert by_id["audit.verdict.read"]["status"] == "empty"
     assert by_id["audit.verdict.read"]["callable"] is True
+    matrix = payload["capability_matrix"]
+    assert matrix["schema_version"] == "resident.agi_evidence_capability_matrix.v1"
+    assert matrix["decision_type"] == "quality_gate_response"
+    assert matrix["summary"]["advisory_only"] is True
+    assert matrix["summary"]["authoritative"] is False
+    assert matrix["summary"]["agi_execution_authority"] is False
+    matrix_groups = {item["group_id"]: item for item in matrix["groups"]}
+    assert "run_ledger" in matrix_groups
+    assert "verifier" in matrix_groups
+    assert "audit" in matrix_groups
+
+
+def test_resident_agi_repair_advisory_overlay_endpoint_reports_missing(tmp_path: Path, monkeypatch) -> None:
+    test_token = "test-resident-token"
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    app = create_app(Settings(workspace=str(workspace), ramdisk_root=""))
+    with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as client:
+        response = client.get(
+            "/v2/resident/agi/repair-advisory-overlay",
+            params={
+                "workspace": str(workspace),
+                "require_ready": "true",
+                "require_eligible": "true",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "resident.agi_repair_advisory_overlay_query.v1"
+    assert payload["status"] == "missing"
+    assert payload["found"] is False
+    assert payload["filters"]["require_ready"] is True
+    assert payload["filters"]["require_eligible"] is True
+    assert payload["advisory_only"] is True
+    assert payload["authoritative"] is False
 
 
 def test_resident_agi_decide_rejects_disabled_audit_pack_before_adapter(
@@ -550,6 +720,56 @@ def test_resident_api_supports_identity_goals_and_decisions(tmp_path: Path, monk
         assert identity_response.status_code == 200
         assert identity_response.json()["name"] == "Resident AGI Supervisor"
 
+        participation_response = client.patch(
+            "/v2/resident/agi/participation",
+            json={
+                "workspace": str(workspace),
+                "enabled": True,
+                "scopes": ["final_request_audit", "director.repair.advisory"],
+                "participation": {
+                    "final_request_audit": True,
+                    "director_repair_advisory": True,
+                },
+                "custom_scopes_allowed": False,
+            },
+        )
+        assert participation_response.status_code == 200
+        participation_payload = participation_response.json()
+        assert participation_payload["enabled"] is True
+        assert participation_payload["scopes"] == [
+            "final_request_audit",
+            "director.repair.advisory",
+        ]
+        assert participation_payload["participation"]["final_request_audit"] is True
+        assert participation_payload["custom_scopes_allowed"] is False
+
+        participation_patch_response = client.patch(
+            "/v2/resident/agi/participation",
+            json={
+                "workspace": str(workspace),
+                "participation": {
+                    "final_request_audit": False,
+                    "director_repair_advisory": True,
+                },
+            },
+        )
+        assert participation_patch_response.status_code == 200
+        participation_patch_payload = participation_patch_response.json()
+        assert participation_patch_payload["enabled"] is True
+        assert participation_patch_payload["scopes"] == [
+            "final_request_audit",
+            "director.repair.advisory",
+        ]
+        assert participation_patch_payload["participation"]["final_request_audit"] is False
+        assert participation_patch_payload["custom_scopes_allowed"] is False
+
+        participation_get_response = client.get(
+            "/v2/resident/agi/participation",
+            params={"workspace": str(workspace)},
+        )
+        assert participation_get_response.status_code == 200
+        assert participation_get_response.json() == participation_patch_payload
+
         goal_response = client.post(
             "/v2/resident/goals",
             json={
@@ -598,6 +818,8 @@ def test_resident_api_supports_identity_goals_and_decisions(tmp_path: Path, monk
         assert status_response.status_code == 200
         status_payload = status_response.json()
         assert status_payload["identity"]["name"] == "Resident AGI Supervisor"
+        assert status_payload["identity"]["resident_agi_participation"]["enabled"] is True
+        assert status_payload["identity"]["resident_agi_participation"]["custom_scopes_allowed"] is False
         assert status_payload["counts"]["goals"] == 1
         assert status_payload["counts"]["decisions"] == 1
 
@@ -794,6 +1016,25 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
         assert capabilities["runtime_foundation"] == "roles.runtime + ContextOS + TurnEngine"
         assert capabilities["authority_matrix"]["chain"] == "PM → Chief Engineer → Director"
         assert capabilities["authority_matrix"]["decision_policy"]["code_changes"] == "director_authorized_tools_only"
+        assert capabilities["decision_boundary_policy"]["schema_version"] == "resident.agi_decision_boundary_policy.v1"
+        assert (
+            capabilities["decision_boundary_policy"]["decision_modes"]["platform_hard_rule"]["llm_decision_allowed"]
+            is False
+        )
+        assert (
+            capabilities["decision_boundary_policy"]["decision_modes"]["agi_recommendation"]["execution_authority"]
+            == "advisory_only"
+        )
+        assert (
+            capabilities["decision_boundary_policy"]["capability_execution_policy"]["agi_direct_tool_execution_allowed"]
+            is False
+        )
+        assert (
+            capabilities["decision_boundary_policy"]["capability_execution_policy"][
+                "director_runtime_remains_authoritative"
+            ]
+            is True
+        )
         assert any(item["capability_id"] == "resident.agi_decision_turn.execute" for item in capabilities["items"])
         assert any(item["capability_id"] == "roles.registry.read" for item in capabilities["items"])
         assert any(item["capability_id"] == "run_ledger.read" for item in capabilities["items"])
@@ -824,6 +1065,14 @@ def test_resident_api_stages_and_runs_goals_through_pm_bridge(tmp_path: Path, mo
         assert "resident_agi" in audit_pack["role_registry"]["dialogue_roles"]
         assert "resident_agi" in audit_pack["role_registry"]["adapter_roles"]
         assert "role.runtime.foundation" in audit_pack["boundary_summary"]["boundary_ids"]
+        assert "resident.agi_repair_advisory_overlay_query" in audit_pack["truth_sources"]
+        assert audit_pack["repair_advisory_overlay_query"]["schema_version"] == (
+            "resident.agi_repair_advisory_overlay_query.v1"
+        )
+        assert audit_pack["repair_advisory_overlay_query"]["status"] == "missing"
+        assert audit_pack["repair_advisory_overlay_query"]["advisory_only"] is True
+        assert audit_pack["repair_advisory_overlay_query"]["authoritative"] is False
+        assert audit_pack["latest_repair_advisory_overlay"] is None
         assert audit_pack["capability_surface"]["schema_version"] == "resident.agi_capability_surface.v1"
         assert audit_pack["director_repair_contract"]["coverage_schema"] == "director.repair_coverage_report.v1"
         assert audit_pack["director_repair_contract"]["advisory_policy_schema"] == "director.repair_advisory_policy.v1"

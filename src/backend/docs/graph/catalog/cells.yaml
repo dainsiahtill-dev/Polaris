@@ -2811,21 +2811,30 @@ cells:
         - polaris.cells.director.runtime.public.contracts
         - polaris.cells.director.runtime.public.service
       commands:
+        - AttachDirectorRepairRevalidationEvidenceV1
         - CompareDirectorRepairShadowRunV1
+        - ProjectDirectorRepairKernelSummaryV1
         - RunDirectorRepairCommandV1
       queries:
         - QueryDirectorRepairAdvisoryPolicyV1
+        - QueryDirectorRepairAdvisoryValidationV1
         - QueryDirectorRepairCoverageV1
         - QueryDirectorRepairLanguageSlotsV1
+        - QueryDirectorRepairPostExecutionScheduleV1
         - QueryDirectorRepairStrategyCatalogV1
       events: []
       results:
         - DirectorRepairAdvisoryPolicyResultV1
+        - DirectorRepairAdvisoryValidationResultV1
+        - DirectorRepairKernelSummaryProjectionResultV1
+        - DirectorRepairRevalidationProjectionResultV1
         - DirectorRepairResultV1
         - DirectorRepairCoverageReportV1
         - DirectorRepairDiagnosticCoverageV1
         - DirectorRepairLanguageSlotV1
         - DirectorRepairLanguageSlotsResultV1
+        - DirectorRepairPostExecutionScheduleResultV1
+        - DirectorRepairPostExecutionStepV1
         - DirectorRepairShadowComparisonResultV1
         - DirectorRepairStrategyCatalogResultV1
         - DirectorRepairPlanningResultV1

@@ -446,13 +446,36 @@ const mockResidentState = {
         ],
         llm_decision_required: true,
       },
+      {
+        decision_id: "director.repair.advisory",
+        name: "Director repair advisory",
+        owner: "resident_agi",
+        decision_scope:
+          "Suggest non-authoritative future repair rules for Director Runtime.",
+        risk_level: "medium",
+        required_evidence_interfaces: [
+          "director.deterministic_repair_strategy_catalog.read",
+          "director.repair_coverage.read",
+          "director.repair_advisory_policy.read",
+        ],
+        optional_evidence_interfaces: ["audit.diagnosis.read"],
+        candidate_actions: ["suggest_repair_rule", "request_evidence"],
+        hard_constraints: [
+          "repair_rule_suggestions_are_non_authoritative",
+          "suggested_rules_must_pass_advisory_policy",
+        ],
+        llm_decision_required: true,
+      },
     ],
     decision_capability_registry: {
       schema_version: "resident.agi_decision_capability_registry.v1",
       role_id: "resident_agi",
       runtime_foundation: "roles.runtime + ContextOS + TurnEngine",
       platform_owned_decisions: ["platform.invariant.blocker"],
-      agi_owned_decisions: ["evidence.interface.selection"],
+      agi_owned_decisions: [
+        "evidence.interface.selection",
+        "director.repair.advisory",
+      ],
       governed_execution_decisions: ["goal.promotion.readiness"],
       evidence_interface_ids: [
         "contextos.final_request_audit.read",
@@ -464,11 +487,16 @@ const mockResidentState = {
         "verifier.policy.read",
         "verifier.execution.execute",
       ],
-      candidate_actions: ["block", "continue", "request_evidence"],
+      candidate_actions: [
+        "block",
+        "continue",
+        "request_evidence",
+        "suggest_repair_rule",
+      ],
       counts: {
-        decisions: 3,
+        decisions: 4,
         platform_owned: 1,
-        agi_owned: 1,
+        agi_owned: 2,
         governed_execution: 1,
         evidence_interfaces: 5,
       },
@@ -477,6 +505,91 @@ const mockResidentState = {
         agi_judgement: "resident_agi_role_turn_with_audit_pack",
         governed_execution: "pm_chief_engineer_director_chain_only",
         evidence_execution: "public_cell_contracts_only",
+      },
+    },
+    capability_access_registry_schema:
+      "resident.agi_capability_access_registry.v1",
+    capability_access_registry: {
+      schema_version: "resident.agi_capability_access_registry.v1",
+      role_id: "resident_agi",
+      source: "resident.autonomy.capability_surface",
+      execution_policy: {
+        agi_direct_tool_execution_allowed: false,
+        agi_direct_writes_allowed: false,
+        director_runtime_remains_authoritative: true,
+        governed_execution_requires_public_contract: true,
+        pm_chief_engineer_director_chain_required_for_code_changes: true,
+      },
+      groups: {
+        read_only_capabilities: [
+          "roles.registry.read",
+          "contextos.final_request_audit.read",
+          "run_ledger.read",
+        ],
+        advisory_only_capabilities: [
+          "director.deterministic_repair_strategy_catalog.read",
+          "director.repair_coverage.read",
+          "director.repair_advisory_policy.read",
+        ],
+        governed_execution_capabilities: [
+          "audit.diagnosis.execute",
+          "verifier.execution.execute",
+          "resident.goal_bridge.execute",
+        ],
+        governed_write_capabilities: [],
+        high_risk_capabilities: [
+          "verifier.execution.execute",
+          "resident.goal_bridge.execute",
+        ],
+      },
+      interface_domains: [
+        {
+          domain_id: "audit",
+          capability_ids: ["audit.diagnosis.read", "audit.diagnosis.execute"],
+          read_only: 1,
+          advisory_only: 0,
+          governed_execution: 1,
+          governed_write: 0,
+          high_risk: 0,
+        },
+        {
+          domain_id: "director_repair",
+          capability_ids: [
+            "director.deterministic_repair_strategy_catalog.read",
+            "director.repair_coverage.read",
+            "director.repair_advisory_policy.read",
+          ],
+          read_only: 3,
+          advisory_only: 3,
+          governed_execution: 0,
+          governed_write: 0,
+          high_risk: 0,
+        },
+        {
+          domain_id: "run_ledger",
+          capability_ids: ["run_ledger.read"],
+          read_only: 1,
+          advisory_only: 0,
+          governed_execution: 0,
+          governed_write: 0,
+          high_risk: 0,
+        },
+      ],
+      canonical_contracts: [
+        "roles.registry",
+        "control_plane.run_ledger",
+        "control_plane.verifier_execution",
+        "director.repair_advisory_policy.v1",
+      ],
+      counts: {
+        capabilities: 16,
+        read_only: 10,
+        advisory_only: 3,
+        governed_execution: 5,
+        governed_write: 0,
+        high_risk: 2,
+        domains: 3,
+        canonical_contracts: 4,
       },
     },
     evidence_interface_contract: {
@@ -611,6 +724,115 @@ const mockResidentState = {
         hard_rules: "platform_enforced_non_overridable",
         governed_execution: "canonical_role_chain_only",
         code_changes: "director_authorized_tools_only",
+      },
+    },
+    decision_boundary_policy: {
+      schema_version: "resident.agi_decision_boundary_policy.v1",
+      role_id: "resident_agi",
+      source: "resident.autonomy.capability_surface",
+      runtime_foundation: "roles.runtime + ContextOS + TurnEngine",
+      chain: "PM → Chief Engineer → Director",
+      decision_modes: {
+        platform_hard_rule: {
+          owner: "platform_code",
+          llm_decision_allowed: false,
+          llm_may_explain_or_request_evidence: true,
+          override_allowed: false,
+          execution_authority: "none",
+          write_authority: false,
+          default_action: "block_or_request_governed_remediation",
+        },
+        agi_recommendation: {
+          owner: "resident_agi",
+          llm_decision_allowed: true,
+          llm_may_explain_or_request_evidence: true,
+          override_allowed: false,
+          execution_authority: "advisory_only",
+          write_authority: false,
+          default_action: "recommend_request_evidence_or_escalate",
+        },
+        agi_governed_execution: {
+          owner: "resident_agi_with_pm_chief_engineer_director_handoff",
+          llm_decision_allowed: true,
+          llm_may_explain_or_request_evidence: true,
+          override_allowed: false,
+          execution_authority: "governed_handoff_only",
+          write_authority: false,
+          default_action: "handoff_to_canonical_role_chain_when_evidence_passes",
+        },
+      },
+      boundary_policies: [
+        {
+          boundary_id: "platform.invariants",
+          name: "Platform hard invariants",
+          authority: "platform_hard_rule",
+          decision_owner: "platform_code",
+          llm_decision_allowed: false,
+          override_allowed: false,
+          execution_authority: "none",
+          write_authority: false,
+          platform_enforced: true,
+          advisory_only: false,
+          default_action: "block_or_request_governed_remediation",
+        },
+        {
+          boundary_id: "architecture.options",
+          name: "Architecture and dependency choice",
+          authority: "agi_recommendation",
+          decision_owner: "resident_agi",
+          llm_decision_allowed: true,
+          override_allowed: false,
+          execution_authority: "advisory_only",
+          write_authority: false,
+          platform_enforced: false,
+          advisory_only: true,
+          default_action: "recommend_request_evidence_or_escalate",
+        },
+        {
+          boundary_id: "goal.execution",
+          name: "Goal promotion and unattended execution",
+          authority: "agi_governed_execution",
+          decision_owner: "resident_agi_with_pm_chief_engineer_director_handoff",
+          llm_decision_allowed: true,
+          override_allowed: false,
+          execution_authority: "governed_handoff_only",
+          write_authority: false,
+          requires_pm_chief_engineer_director_chain: true,
+          default_action: "handoff_to_canonical_role_chain_when_evidence_passes",
+        },
+      ],
+      capability_execution_policy: {
+        read_only_capabilities: ["run_ledger.read"],
+        governed_request_capabilities: ["verifier.execution.execute"],
+        write_contract_capabilities: ["resident.goal_governance.write"],
+        high_risk_capabilities: [
+          "resident.goal_bridge.execute",
+          "verifier.execution.execute",
+        ],
+        advisory_evidence_capabilities: [
+          "director.repair_advisory_policy.read",
+        ],
+        agi_direct_writes_allowed: false,
+        agi_direct_tool_execution_allowed: false,
+        director_runtime_remains_authoritative: true,
+        pm_chief_engineer_director_chain_required: true,
+      },
+      non_overridable_rules: ["role.runtime.foundation", "platform.invariants"],
+      agi_judgement_boundaries: [
+        "architecture.options",
+        "quality.response",
+        "audit.interface.selection",
+      ],
+      governed_execution_boundaries: ["goal.execution"],
+      counts: {
+        boundary_policies: 6,
+        platform_hard_rules: 2,
+        agi_judgement: 3,
+        governed_execution: 1,
+        read_only_capabilities: 8,
+        governed_request_capabilities: 5,
+        write_contract_capabilities: 2,
+        high_risk_capabilities: 2,
       },
     },
     hardcoded_repair_strategy_catalog: {
@@ -1004,6 +1226,72 @@ const mockResidentState = {
           "use_repair_advisory_policy_before_accepting_agi_suggested_rules",
       },
     ],
+    capability_matrix: {
+      schema_version: "resident.agi_evidence_capability_matrix.v1",
+      decision_type: "quality_gate_response",
+      selected_decision_id: "quality.gate.response",
+      groups: [
+        {
+          group_id: "run_ledger",
+          name: "Run ledger",
+          interface_ids: ["run_ledger.read"],
+          total: 1,
+          available: 0,
+          required: 1,
+          missing_required: 1,
+          recommended_now: 1,
+          high_risk: 0,
+          governed_execute: 0,
+        },
+        {
+          group_id: "verifier",
+          name: "Verifier",
+          interface_ids: ["verifier.policy.read"],
+          total: 1,
+          available: 1,
+          required: 1,
+          missing_required: 0,
+          recommended_now: 1,
+          high_risk: 0,
+          governed_execute: 0,
+        },
+        {
+          group_id: "director_repair",
+          name: "Director repair",
+          interface_ids: [
+            "director.repair_coverage.read",
+            "director.repair_advisory_policy.read",
+          ],
+          total: 2,
+          available: 2,
+          required: 0,
+          missing_required: 0,
+          recommended_now: 2,
+          high_risk: 0,
+          governed_execute: 0,
+        },
+      ],
+      summary: {
+        total: 5,
+        available: 3,
+        required: 2,
+        required_available: 1,
+        missing_required: 1,
+        missing_required_interface_ids: ["run_ledger.read"],
+        recommended_now: 4,
+        callable: 4,
+        high_risk: 0,
+        governed_execute: 0,
+        status_counts: {
+          available: 3,
+          unavailable: 1,
+          empty: 1,
+        },
+        advisory_only: true,
+        authoritative: false,
+        agi_execution_authority: false,
+      },
+    },
     summary: {
       total: 5,
       available: 3,
@@ -1072,6 +1360,36 @@ const mockResidentState = {
       advisory_only: true,
       agi_execution_authority: false,
     },
+    repair_advisory_overlay: {
+      schema_version: "resident.agi_repair_advisory_overlay.v1",
+      source: "resident.autonomy.public.build_resident_agi_repair_advisory_overlay",
+      status: "ready",
+      active: true,
+      eligible_for_director_injection: true,
+      advisory_only: true,
+      authoritative: false,
+      agi_execution_authority: false,
+      director_runtime_contract: "director.repair_advisory_policy.v1",
+      decision_capability_id: "director.repair.advisory",
+      participation_enabled: true,
+      reason: "Resident AGI repair advisory is valid and non-authoritative.",
+      advisor_notes: [
+        {
+          advisor_source: "resident_agi",
+          message: "Suggest future deterministic repair rule.",
+          confidence: 0.7,
+          authoritative: false,
+          suggested_rules: [
+            {
+              name: "rust_receiver_self",
+              pattern: "found `&)` near method receiver",
+              fix_template: "replace receiver",
+            },
+          ],
+          metadata: { source_role: "resident_agi" },
+        },
+      ],
+    },
   },
   refresh: vi.fn(),
   isActing: vi.fn(() => false),
@@ -1086,6 +1404,7 @@ const mockResidentState = {
   stageGoal: vi.fn(async () => null),
   runGoal: vi.fn(async () => null),
   runAgiDecision: vi.fn(async () => null),
+  refreshAgiEvidenceInterfaces: vi.fn(async () => null),
   extractSkills: vi.fn(async () => null),
   runExperiments: vi.fn(async () => null),
   runImprovements: vi.fn(async () => null),
@@ -1184,8 +1503,23 @@ describe("ResidentWorkspace", () => {
       screen.getByTestId("resident-agi-authority-matrix"),
     ).toHaveTextContent("AGI judgement 2");
     expect(
+      screen.getByTestId("resident-agi-capability-access-registry"),
+    ).toHaveTextContent("resident.agi_capability_access_registry.v1");
+    expect(
+      screen.getByTestId("resident-agi-capability-access-registry"),
+    ).toHaveTextContent("direct tools blocked");
+    expect(
+      screen.getByTestId("resident-agi-capability-access-registry"),
+    ).toHaveTextContent("direct writes blocked");
+    expect(
       screen.getByTestId("resident-agi-governance-tags"),
     ).toHaveTextContent("control_plane.verifier_execution");
+    expect(
+      screen.getByTestId("resident-agi-governance-tags"),
+    ).toHaveTextContent("director_repair:r3/g0");
+    expect(
+      screen.getByTestId("resident-agi-governance-tags"),
+    ).toHaveTextContent("audit:r1/g1");
     expect(
       screen.getByTestId("resident-agi-governance-tags"),
     ).toHaveTextContent("canonical_role_chain_only");
@@ -1237,6 +1571,21 @@ describe("ResidentWorkspace", () => {
     expect(
       screen.getByTestId("resident-agi-repair-advisory-policy"),
     ).toHaveTextContent("deny:write_file");
+    expect(
+      screen.getByTestId("resident-agi-repair-advisory-overlay"),
+    ).toHaveTextContent("AGI 修复建议 Overlay");
+    expect(
+      screen.getByTestId("resident-agi-repair-advisory-overlay"),
+    ).toHaveTextContent("ready");
+    expect(
+      screen.getByTestId("resident-agi-repair-advisory-overlay"),
+    ).toHaveTextContent("eligible");
+    expect(
+      screen.getByTestId("resident-agi-repair-advisory-overlay"),
+    ).toHaveTextContent("Rules");
+    expect(
+      screen.getByTestId("resident-agi-repair-advisory-overlay"),
+    ).toHaveTextContent("advisory_only:true");
     expect(
       screen.queryByRole("button", { name: /修复|执行/i }),
     ).not.toBeInTheDocument();
@@ -1326,6 +1675,30 @@ describe("ResidentWorkspace", () => {
     expect(
       screen.getByTestId("resident-agi-evidence-interface-readiness"),
     ).toHaveTextContent("Director AGI repair advisory policy");
+    expect(
+      screen.getByTestId("resident-agi-evidence-runtime-matrix"),
+    ).toHaveTextContent("resident.agi_evidence_capability_matrix.v1");
+    expect(
+      screen.getByTestId("resident-agi-evidence-runtime-matrix"),
+    ).toHaveTextContent("required 1/2");
+    expect(
+      screen.getByTestId("resident-agi-evidence-runtime-matrix"),
+    ).toHaveTextContent("recommended 4");
+    expect(
+      screen.getByTestId("resident-agi-evidence-runtime-matrix"),
+    ).toHaveTextContent("Run ledger");
+    expect(
+      screen.getByTestId("resident-agi-evidence-runtime-matrix"),
+    ).toHaveTextContent("Director repair");
+    expect(
+      screen.getByTestId("resident-agi-evidence-runtime-matrix"),
+    ).toHaveTextContent("advisory_only:true");
+    expect(
+      screen.getByTestId("resident-agi-evidence-runtime-matrix"),
+    ).toHaveTextContent("authoritative:false");
+    expect(
+      screen.getByTestId("resident-agi-evidence-runtime-matrix"),
+    ).toHaveTextContent("agi_execute:blocked");
     expect(screen.getAllByText("risk high").length).toBeGreaterThan(1);
     expect(
       screen.getByText("No shortcut from PM directly to Director."),
@@ -1354,6 +1727,30 @@ describe("ResidentWorkspace", () => {
     expect(
       screen.getByTestId("resident-agi-decision-boundaries"),
     ).toHaveTextContent("final_request_context_audit");
+    expect(
+      screen.getByTestId("resident-agi-decision-boundary-policy"),
+    ).toHaveTextContent("AGI 决策边界策略");
+    expect(
+      screen.getByTestId("resident-agi-decision-boundary-policy"),
+    ).toHaveTextContent("resident.agi_decision_boundary_policy.v1");
+    expect(
+      screen.getByTestId("resident-agi-decision-boundary-policy"),
+    ).toHaveTextContent("platform_hard_rule");
+    expect(
+      screen.getByTestId("resident-agi-decision-boundary-policy"),
+    ).toHaveTextContent("llm:blocked");
+    expect(
+      screen.getByTestId("resident-agi-decision-boundary-policy"),
+    ).toHaveTextContent("agi_recommendation");
+    expect(
+      screen.getByTestId("resident-agi-decision-boundary-policy"),
+    ).toHaveTextContent("exec:advisory_only");
+    expect(
+      screen.getByTestId("resident-agi-decision-boundary-policy"),
+    ).toHaveTextContent("agi_direct_writes:blocked");
+    expect(
+      screen.getByTestId("resident-agi-decision-boundary-policy"),
+    ).toHaveTextContent("director_authority:retained");
     expect(screen.getByTestId("resident-agi-audit-pack")).toHaveTextContent(
       "AGI 审计包",
     );
@@ -1643,6 +2040,43 @@ describe("ResidentWorkspace", () => {
     expect(
       screen.getByTestId("resident-agi-decision-turn-profile"),
     ).toHaveTextContent("action:request_evidence");
+    expect(screen.getByLabelText("AGI 决策类型")).toHaveValue(
+      "evidence.interface.selection",
+    );
+    fireEvent.change(screen.getByLabelText("AGI 决策类型"), {
+      target: { value: "director.repair.advisory" },
+    });
+    expect(
+      screen.getByTestId("resident-agi-selected-decision-meta"),
+    ).toHaveTextContent("director.repair.advisory");
+    expect(
+      screen.getByTestId("resident-agi-selected-decision-meta"),
+    ).toHaveTextContent("risk:medium");
+    expect(
+      screen.getByTestId("resident-agi-selected-decision-evidence"),
+    ).toHaveTextContent("当前决策证据预检");
+    expect(
+      screen.getByTestId("resident-agi-selected-decision-evidence"),
+    ).toHaveTextContent("contract fallback");
+    expect(
+      screen.getByTestId("resident-agi-selected-decision-evidence"),
+    ).toHaveTextContent("stale runtime evidence: quality_gate_response");
+    expect(
+      screen.getByTestId("resident-agi-selected-decision-evidence"),
+    ).toHaveTextContent("director.deterministic_repair_strategy_catalog.read");
+    expect(
+      screen.getByTestId("resident-agi-selected-decision-evidence"),
+    ).toHaveTextContent("director.repair_coverage.read");
+    expect(
+      screen.getByTestId("resident-agi-selected-decision-evidence"),
+    ).toHaveTextContent("director.repair_advisory_policy.read");
+    expect(
+      screen.getByTestId("resident-agi-selected-decision-evidence"),
+    ).toHaveTextContent("audit.diagnosis.read");
+    fireEvent.click(screen.getByTestId("resident-refresh-agi-evidence-interfaces"));
+    expect(mockResidentState.refreshAgiEvidenceInterfaces).toHaveBeenCalledWith(
+      "director.repair.advisory",
+    );
     fireEvent.change(screen.getByLabelText("AGI 决策目标"), {
       target: { value: "Decide whether the current run can proceed." },
     });
@@ -1650,16 +2084,19 @@ describe("ResidentWorkspace", () => {
 
     expect(mockResidentState.runAgiDecision).toHaveBeenCalledWith(
       expect.objectContaining({
-        decision_type: "platform_supervision",
+        decision_type: "director.repair.advisory",
         objective: "Decide whether the current run can proceed.",
-        candidate_actions: [
+        candidate_actions: expect.arrayContaining([
+          "suggest_repair_rule",
           "request_evidence",
           "block",
           "escalate",
           "continue",
-        ],
+        ]),
         constraints: expect.arrayContaining([
           "preserve_pm_chief_engineer_director_qa_chain",
+          "repair_rule_suggestions_are_non_authoritative",
+          "suggested_rules_must_pass_advisory_policy",
           "resident_agi_role_runtime_required",
           "contextos_expected",
           "turn_engine_expected",
@@ -1684,6 +2121,18 @@ describe("ResidentWorkspace", () => {
             "request_missing_contextos_or_run_ledger_evidence",
           resident_agi_role_turn_allowed: true,
           resident_agi_downstream_precheck: "hold_for_evidence",
+          selected_decision_capability_id: "director.repair.advisory",
+          selected_decision_capability_name: "Director repair advisory",
+          selected_decision_capability_owner: "resident_agi",
+          selected_decision_capability_risk: "medium",
+          selected_decision_required_evidence_interfaces: [
+            "director.deterministic_repair_strategy_catalog.read",
+            "director.repair_coverage.read",
+            "director.repair_advisory_policy.read",
+          ],
+          selected_decision_optional_evidence_interfaces: [
+            "audit.diagnosis.read",
+          ],
         }),
       }),
     );
@@ -1719,6 +2168,252 @@ describe("ResidentWorkspace", () => {
     expect(mockResidentState.materializeGoal).toHaveBeenCalledWith(
       "goal-approved",
     );
+  });
+
+  it("warns when AGI participation is enabled without a resident_agi model binding", () => {
+    const state = mockResidentState as unknown as {
+      residentIdentity: Record<string, unknown>;
+    };
+    const originalIdentity = state.residentIdentity;
+    state.residentIdentity = {
+      ...originalIdentity,
+      resident_agi_participation: {
+        enabled: true,
+        scopes: ["final_request_audit"],
+        participation: { final_request_audit: true },
+      },
+    };
+
+    try {
+      render(
+        <ResidentWorkspace
+          workspace="X:/Git/polaris"
+          onBackToMain={vi.fn()}
+          residentSnapshot={null}
+          residentAgiLlmStatus={{
+            blocked: true,
+            readinessIssue: "missing resident_agi binding",
+          }}
+        />,
+      );
+
+      const bindingStatus = screen.getByTestId(
+        "resident-agi-llm-binding-status",
+      );
+      expect(bindingStatus).toHaveTextContent(
+        "Resident AGI 参与已开启但模型不可用",
+      );
+      expect(bindingStatus).toHaveTextContent(
+        "请在 LLM 视觉配置编辑器中为 Resident AGI 绑定模型。",
+      );
+      expect(bindingStatus).toHaveTextContent("missing resident_agi binding");
+    } finally {
+      state.residentIdentity = originalIdentity;
+    }
+  });
+
+  it("restores AGI repair advisory overlay from the persisted decision trace", () => {
+    const state = mockResidentState as unknown as {
+      decisions: Array<Record<string, unknown>>;
+      lastAgiDecisionResult: unknown;
+    };
+    const originalDecisions = state.decisions;
+    const originalLastResult = state.lastAgiDecisionResult;
+    state.lastAgiDecisionResult = null;
+    state.decisions = [
+      {
+        decision_id: "decision-overlay-history",
+        actor: "resident_agi",
+        stage: "director.repair.advisory",
+        summary: "Historical advisory overlay",
+        timestamp: "2026-03-08T00:00:00Z",
+        verdict: "success",
+        actual_outcome: {
+          resident_agi_repair_advisory_overlay: {
+            schema_version: "resident.agi_repair_advisory_overlay.v1",
+            status: "ready",
+            eligible_for_director_injection: true,
+            participation_enabled: true,
+            advisory_only: true,
+            authoritative: false,
+            agi_execution_authority: false,
+            director_runtime_contract: "director.repair_advisory_policy.v1",
+            advisor_notes: [
+              {
+                advisor_source: "resident_agi",
+                message: "Historical repair rule suggestion",
+                suggested_rules: [
+                  {
+                    pattern: "borrow marker diagnostic",
+                    fix_template: "replace (&) with (&self)",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    ];
+
+    try {
+      render(
+        <ResidentWorkspace
+          workspace="X:/Git/polaris"
+          onBackToMain={vi.fn()}
+          residentSnapshot={null}
+        />,
+      );
+
+      const overlay = screen.getByTestId("resident-agi-repair-advisory-overlay");
+      expect(overlay).toHaveTextContent("ready");
+      expect(overlay).toHaveTextContent("eligible");
+      expect(overlay).toHaveTextContent("Rules");
+      expect(
+        screen.getByTestId("resident-agi-repair-advisory-overlay-source"),
+      ).toHaveTextContent("decision_trace:decision-o...tory");
+    } finally {
+      state.decisions = originalDecisions;
+      state.lastAgiDecisionResult = originalLastResult;
+    }
+  });
+
+  it("uses the public repair advisory overlay query before local decision scanning", () => {
+    const state = mockResidentState as unknown as {
+      decisions: Array<Record<string, unknown>>;
+      lastAgiDecisionResult: unknown;
+      residentAgiRepairAdvisoryOverlay: unknown;
+    };
+    const originalDecisions = state.decisions;
+    const originalLastResult = state.lastAgiDecisionResult;
+    const originalQuery = state.residentAgiRepairAdvisoryOverlay;
+    state.lastAgiDecisionResult = null;
+    state.decisions = [];
+    state.residentAgiRepairAdvisoryOverlay = {
+      schema_version: "resident.agi_repair_advisory_overlay_query.v1",
+      status: "found",
+      found: true,
+      decision_ref: { decision_id: "decision-query-overlay" },
+      overlay: {
+        schema_version: "resident.agi_repair_advisory_overlay.v1",
+        status: "ready",
+        eligible_for_director_injection: true,
+        participation_enabled: true,
+        advisory_only: true,
+        authoritative: false,
+        agi_execution_authority: false,
+        director_runtime_contract: "director.repair_advisory_policy.v1",
+        advisor_notes: [
+          {
+            advisor_source: "resident_agi",
+            message: "Query repair rule suggestion",
+            suggested_rules: [
+              {
+                pattern: "query overlay diagnostic",
+                fix_template: "query overlay fix",
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    try {
+      render(
+        <ResidentWorkspace
+          workspace="X:/Git/polaris"
+          onBackToMain={vi.fn()}
+          residentSnapshot={null}
+        />,
+      );
+
+      expect(
+        screen.getByTestId("resident-agi-repair-advisory-overlay-source"),
+      ).toHaveTextContent("public_query:decision-q...rlay");
+      expect(
+        screen.getByTestId("resident-agi-repair-advisory-overlay"),
+      ).toHaveTextContent("ready");
+    } finally {
+      state.decisions = originalDecisions;
+      state.lastAgiDecisionResult = originalLastResult;
+      state.residentAgiRepairAdvisoryOverlay = originalQuery;
+    }
+  });
+
+  it("uses audit pack repair advisory overlay when public query is empty", () => {
+    const state = mockResidentState as unknown as {
+      decisions: Array<Record<string, unknown>>;
+      lastAgiDecisionResult: unknown;
+      residentAgiAuditPack: Record<string, unknown>;
+      residentAgiRepairAdvisoryOverlay: unknown;
+    };
+    const originalDecisions = state.decisions;
+    const originalLastResult = state.lastAgiDecisionResult;
+    const originalAuditPack = state.residentAgiAuditPack;
+    const originalQuery = state.residentAgiRepairAdvisoryOverlay;
+    state.lastAgiDecisionResult = null;
+    state.decisions = [];
+    state.residentAgiRepairAdvisoryOverlay = {
+      schema_version: "resident.agi_repair_advisory_overlay_query.v1",
+      status: "missing",
+      found: false,
+      overlay: null,
+    };
+    state.residentAgiAuditPack = {
+      ...originalAuditPack,
+      repair_advisory_overlay_query: {
+        schema_version: "resident.agi_repair_advisory_overlay_query.v1",
+        status: "found",
+        found: true,
+        decision_ref: { decision_id: "decision-audit-pack-overlay" },
+        advisory_only: true,
+        authoritative: false,
+        agi_execution_authority: false,
+        overlay: {
+          schema_version: "resident.agi_repair_advisory_overlay.v1",
+          status: "ready",
+          eligible_for_director_injection: true,
+          participation_enabled: true,
+          advisory_only: true,
+          authoritative: false,
+          agi_execution_authority: false,
+          director_runtime_contract: "director.repair_advisory_policy.v1",
+          advisor_notes: [
+            {
+              advisor_source: "resident_agi",
+              message: "Audit pack repair rule suggestion",
+              suggested_rules: [
+                {
+                  pattern: "audit pack overlay diagnostic",
+                  fix_template: "audit pack overlay fix",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+
+    try {
+      render(
+        <ResidentWorkspace
+          workspace="X:/Git/polaris"
+          onBackToMain={vi.fn()}
+          residentSnapshot={null}
+        />,
+      );
+
+      expect(
+        screen.getByTestId("resident-agi-repair-advisory-overlay-source"),
+      ).toHaveTextContent("audit_pack_query:decision-a...rlay");
+      expect(
+        screen.getByTestId("resident-agi-repair-advisory-overlay"),
+      ).toHaveTextContent("Rules1");
+    } finally {
+      state.decisions = originalDecisions;
+      state.lastAgiDecisionResult = originalLastResult;
+      state.residentAgiAuditPack = originalAuditPack;
+      state.residentAgiRepairAdvisoryOverlay = originalQuery;
+    }
   });
 
   it("edits the AGI identity", () => {
@@ -1804,7 +2499,7 @@ describe("ResidentWorkspace", () => {
       expect(screen.queryByText("goal_promotion_readiness")).toBeNull();
       fireEvent.click(screen.getByLabelText(/Goal promotion readiness/));
       fireEvent.click(
-        screen.getByLabelText(/Director AGI repair advisory policy/),
+        screen.getByTestId("resident-agi-repair-advisory-participation"),
       );
       fireEvent.click(screen.getByTestId("resident-save-identity"));
 
@@ -1816,10 +2511,16 @@ describe("ResidentWorkspace", () => {
           enabled: true,
           scopes: [
             "goal.promotion.readiness",
+            "director.repair.advisory",
             "director_repair_advisory_policy",
+            "director_repair_coverage",
+            "director_repair_strategy_catalog",
           ],
           participation: {
+            "director.repair.advisory": true,
             director_repair_advisory_policy: true,
+            director_repair_coverage: true,
+            director_repair_strategy_catalog: true,
             "goal.promotion.readiness": true,
             final_request_audit: false,
           },

@@ -30,11 +30,14 @@ if TYPE_CHECKING:
 
 
 class CFOAgent(RoleAgent):
-    """CFO role agent (FinOps).
+    """FinOps budget-governance advisor with a legacy CFO class name.
 
     All persistent state flows through ``BudgetKFSStore``.  The agent accepts
     an optional ``fs`` parameter so tests can inject a ``KernelFileSystem``
     without touching the global registry.
+
+    This is a deterministic budget service, not a default LLM-bound delivery
+    role in the PM → Chief Engineer → Director → QA chain.
     """
 
     def __init__(self, workspace: str, *, fs: KernelFileSystem | None = None) -> None:

@@ -12,12 +12,13 @@
  */
 
 import type { InteractiveInterviewReport } from '../components/llm/interview/InteractiveInterviewHall';
+import type { LlmRoleId } from '../components/llm/roleDefinitions';
 
 // ============================================================================
 // Role Types
 // ============================================================================
 
-export type RoleId = 'pm' | 'director' | 'chief_engineer' | 'qa' | 'architect' | 'cfo' | 'hr' | string;
+export type RoleId = LlmRoleId | (string & {});
 
 // ============================================================================
 // Event Types

@@ -37,6 +37,7 @@ from polaris.cells.director.runtime.public import (
     QueryDirectorRepairAdvisoryPolicyV1,
     QueryDirectorRepairCoverageV1,
     QueryDirectorRepairStrategyCatalogV1,
+    RepairAdvisoryV1,
     query_director_repair_advisory_policy,
     query_director_repair_coverage,
     query_director_repair_strategy_catalog,
@@ -44,6 +45,7 @@ from polaris.cells.director.runtime.public import (
 from polaris.cells.resident.autonomy.internal.agi_audit_pack import build_resident_agi_audit_pack
 from polaris.cells.resident.autonomy.internal.agi_capability_surface import (
     build_resident_agi_authority_matrix,
+    build_resident_agi_capability_access_registry,
     build_resident_agi_capability_surface,
     build_resident_agi_decision_boundaries,
     build_resident_agi_decision_capabilities,
@@ -73,12 +75,14 @@ from polaris.cells.resident.autonomy.internal.self_improvement_lab import SelfIm
 from polaris.cells.resident.autonomy.internal.skill_foundry import SkillFoundry
 from polaris.cells.resident.autonomy.public.contracts import (
     ApproveResidentGoalCommandV1,
+    BuildResidentAgiRepairAdvisoryOverlayCommandV1,
     CreateResidentGoalCommandV1,
     ExtractResidentSkillsCommandV1,
     MaterializeResidentGoalCommandV1,
     QueryResidentAgiAuditPackV1,
     QueryResidentAgiEvidenceInterfacesV1,
     QueryResidentAgiHandoffsV1,
+    QueryResidentAgiRepairAdvisoryOverlayV1,
     QueryResidentCapabilitiesV1,
     QueryResidentStatusV1,
     RecordResidentDecisionCommandV1,
@@ -100,6 +104,7 @@ from polaris.cells.resident.autonomy.public.contracts import (
     StageResidentGoalCommandV1,
     StartResidentCommandV1,
     StopResidentCommandV1,
+    UpdateResidentAgiParticipationCommandV1,
     UpdateResidentIdentityCommandV1,
 )
 from polaris.cells.roles.adapters.public.service import create_role_adapter
@@ -230,11 +235,27 @@ def query_resident_agi_audit_pack(query: QueryResidentAgiAuditPackV1) -> dict[st
     """Handle :class:`QueryResidentAgiAuditPackV1` → Resident AGI audit pack."""
 
     status_payload = get_resident_service(query.workspace).get_status(include_details=True)
-    return build_resident_agi_audit_pack(
+    audit_pack = build_resident_agi_audit_pack(
         workspace=query.workspace,
         status_payload=status_payload,
         decision_limit=query.decision_limit,
     )
+    repair_advisory_overlay_query = query_resident_agi_repair_advisory_overlay(
+        QueryResidentAgiRepairAdvisoryOverlayV1(
+            workspace=query.workspace,
+            limit=query.decision_limit,
+            require_ready=False,
+            require_eligible=False,
+        )
+    )
+    truth_sources_raw = audit_pack.get("truth_sources")
+    truth_sources = truth_sources_raw if isinstance(truth_sources_raw, list) else []
+    if "resident.agi_repair_advisory_overlay_query" not in truth_sources:
+        truth_sources.append("resident.agi_repair_advisory_overlay_query")
+    audit_pack["truth_sources"] = truth_sources
+    audit_pack["repair_advisory_overlay_query"] = repair_advisory_overlay_query
+    audit_pack["latest_repair_advisory_overlay"] = repair_advisory_overlay_query.get("overlay")
+    return audit_pack
 
 
 def _merge_non_empty_strings(*groups: list[Any] | tuple[Any, ...]) -> list[str]:
@@ -346,6 +367,254 @@ def _resident_agi_decision_turn_participation(
         "participation": participation,
         "custom_scopes_allowed": bool(configured.get("custom_scopes_allowed", True)),
         "selected_decision_capability_id": selected_decision_id,
+    }
+
+
+_RESIDENT_AGI_REPAIR_ADVISORY_SCOPE_KEYS = frozenset(
+    _resident_agi_participation_scope_key(value)
+    for value in (
+        "director.repair.advisory",
+        "director_repair_advisory",
+        "director_repair_advisory_policy",
+        "repair_advisory",
+        "repair_rule_suggestion",
+        "suggest_repair_rule",
+    )
+)
+
+
+def _resident_agi_repair_advisory_participation_enabled(
+    participation: dict[str, Any],
+) -> bool:
+    if not bool(
+        participation.get("enabled")
+        or participation.get("configured_enabled")
+        or participation.get("automatic_participation_enabled")
+    ):
+        return False
+    scopes_raw = participation.get("scopes") or participation.get("configured_scopes") or ()
+    scope_keys = {
+        _resident_agi_participation_scope_key(scope)
+        for scope in scopes_raw
+        if _resident_agi_participation_scope_key(scope)
+    }
+    for flag_group_key in ("participation", "configured_participation", "automatic_participation"):
+        flag_group_raw = participation.get(flag_group_key)
+        flag_group = flag_group_raw if isinstance(flag_group_raw, dict) else {}
+        for key, enabled in flag_group.items():
+            normalized = _resident_agi_participation_scope_key(key)
+            if enabled and normalized:
+                scope_keys.add(normalized)
+    return bool(scope_keys & _RESIDENT_AGI_REPAIR_ADVISORY_SCOPE_KEYS)
+
+
+def _resident_agi_repair_advisory_decision_relevant(
+    *,
+    decision: dict[str, Any],
+    decision_capability_id: str,
+) -> bool:
+    capability_id = _resident_agi_participation_scope_key(
+        decision_capability_id or str(decision.get("decision_capability_id") or "")
+    )
+    next_action = _resident_agi_participation_scope_key(str(decision.get("next_action") or ""))
+    has_rules = isinstance(decision.get("suggested_rules"), list) and bool(decision.get("suggested_rules"))
+    return (
+        capability_id in _RESIDENT_AGI_REPAIR_ADVISORY_SCOPE_KEYS or next_action == "suggest_repair_rule" or has_rules
+    )
+
+
+def _resident_agi_repair_advisory_overlay_from_decision(
+    *,
+    workspace: str,
+    decision: dict[str, Any],
+    decision_capability_id: str,
+    participation: dict[str, Any],
+    message: str = "",
+    confidence: float = 0.0,
+    evidence_refs: tuple[str, ...] = (),
+    context_refs: tuple[str, ...] = (),
+    metadata: dict[str, Any] | None = None,
+    require_participation_enabled: bool = True,
+) -> dict[str, Any]:
+    relevant = _resident_agi_repair_advisory_decision_relevant(
+        decision=decision,
+        decision_capability_id=decision_capability_id,
+    )
+    participation_enabled = _resident_agi_repair_advisory_participation_enabled(participation)
+    base: dict[str, Any] = {
+        "schema_version": "resident.agi_repair_advisory_overlay.v1",
+        "source": "resident.autonomy.public.build_resident_agi_repair_advisory_overlay",
+        "workspace": workspace,
+        "status": "not_applicable",
+        "active": False,
+        "eligible_for_director_injection": False,
+        "advisory_only": True,
+        "authoritative": False,
+        "agi_execution_authority": False,
+        "director_runtime_contract": "director.repair_advisory_policy.v1",
+        "decision_capability_id": decision_capability_id or str(decision.get("decision_capability_id") or ""),
+        "participation_enabled": participation_enabled,
+        "advisor_notes": [],
+        "error": "",
+    }
+    if not relevant:
+        return base
+    if require_participation_enabled and not participation_enabled:
+        return {
+            **base,
+            "status": "disabled_by_participation_policy",
+            "reason": "Resident AGI repair advisory participation is not enabled for this workspace.",
+        }
+
+    suggested_rules_raw = decision.get("suggested_rules")
+    suggested_rules = suggested_rules_raw if isinstance(suggested_rules_raw, list) else []
+    if not suggested_rules:
+        return {
+            **base,
+            "status": "no_suggested_rules",
+            "reason": "Resident AGI did not provide advisory suggested_rules.",
+        }
+
+    advisory_metadata = {
+        **dict(metadata or {}),
+        "workspace": workspace,
+        "decision_capability_id": base["decision_capability_id"],
+        "context_refs": list(context_refs),
+        "evidence_refs": list(evidence_refs),
+        "source_role": "resident_agi",
+    }
+    try:
+        note = RepairAdvisoryV1(
+            advisor_source="resident_agi",
+            message=message
+            or str(decision.get("rationale") or "Resident AGI suggested non-authoritative repair rules."),
+            confidence=confidence or float(decision.get("confidence") or 0.0),
+            suggested_rules=tuple(suggested_rules),
+            metadata=advisory_metadata,
+        )
+    except (TypeError, ValueError) as exc:
+        return {
+            **base,
+            "status": "invalid_advisory",
+            "reason": "Resident AGI repair advisory failed Director Runtime policy validation.",
+            "error": str(exc),
+        }
+
+    return {
+        **base,
+        "status": "ready",
+        "active": True,
+        "eligible_for_director_injection": participation_enabled,
+        "advisor_notes": [note.to_dict()],
+        "reason": "Resident AGI repair advisory is valid and non-authoritative.",
+    }
+
+
+def build_resident_agi_repair_advisory_overlay(
+    command: BuildResidentAgiRepairAdvisoryOverlayCommandV1,
+) -> dict[str, Any]:
+    """Project Resident AGI repair suggestions into Director advisory notes."""
+
+    participation = _resident_agi_identity_participation(command.workspace)
+    return _resident_agi_repair_advisory_overlay_from_decision(
+        workspace=command.workspace,
+        decision=dict(command.decision),
+        decision_capability_id=command.decision_capability_id,
+        participation=participation,
+        message=command.message,
+        confidence=command.confidence,
+        evidence_refs=command.evidence_refs,
+        context_refs=command.context_refs,
+        metadata=dict(command.metadata),
+        require_participation_enabled=command.require_participation_enabled,
+    )
+
+
+def _resident_agi_repair_advisory_overlay_from_decision_record(
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    actual_outcome_raw = decision.get("actual_outcome")
+    actual_outcome = actual_outcome_raw if isinstance(actual_outcome_raw, dict) else {}
+    for key in ("resident_agi_repair_advisory_overlay", "repair_advisory_overlay"):
+        overlay_raw = actual_outcome.get(key)
+        overlay = overlay_raw if isinstance(overlay_raw, dict) else {}
+        if overlay.get("schema_version") != "resident.agi_repair_advisory_overlay.v1":
+            continue
+        if bool(overlay.get("authoritative")) or bool(overlay.get("agi_execution_authority")):
+            continue
+        return dict(overlay)
+    return {}
+
+
+def query_resident_agi_repair_advisory_overlay(
+    query: QueryResidentAgiRepairAdvisoryOverlayV1,
+) -> dict[str, Any]:
+    """Return the latest persisted Resident AGI repair advisory overlay."""
+
+    decisions = [item.to_dict() for item in get_resident_service(query.workspace).list_decisions(limit=query.limit)]
+    matched = 0
+    rejected_by_filter = 0
+    for decision in decisions:
+        overlay = _resident_agi_repair_advisory_overlay_from_decision_record(decision)
+        if not overlay:
+            continue
+        matched += 1
+        if query.require_ready and str(overlay.get("status") or "").strip().lower() != "ready":
+            rejected_by_filter += 1
+            continue
+        if query.require_eligible and not bool(overlay.get("eligible_for_director_injection")):
+            rejected_by_filter += 1
+            continue
+        return {
+            "schema_version": "resident.agi_repair_advisory_overlay_query.v1",
+            "source": "resident.autonomy.public.query_resident_agi_repair_advisory_overlay",
+            "workspace": query.workspace,
+            "status": "found",
+            "found": True,
+            "overlay": overlay,
+            "decision_ref": {
+                "decision_id": str(decision.get("decision_id") or ""),
+                "timestamp": str(decision.get("timestamp") or ""),
+                "run_id": str(decision.get("run_id") or ""),
+                "task_id": str(decision.get("task_id") or ""),
+                "stage": str(decision.get("stage") or ""),
+                "actor": str(decision.get("actor") or ""),
+            },
+            "filters": {
+                "limit": query.limit,
+                "require_ready": query.require_ready,
+                "require_eligible": query.require_eligible,
+            },
+            "considered_decision_count": len(decisions),
+            "matched_overlay_count": matched,
+            "rejected_by_filter_count": rejected_by_filter,
+            "advisory_only": True,
+            "authoritative": False,
+            "agi_execution_authority": False,
+            "director_runtime_contract": str(
+                overlay.get("director_runtime_contract") or "director.repair_advisory_policy.v1"
+            ),
+        }
+    return {
+        "schema_version": "resident.agi_repair_advisory_overlay_query.v1",
+        "source": "resident.autonomy.public.query_resident_agi_repair_advisory_overlay",
+        "workspace": query.workspace,
+        "status": "missing",
+        "found": False,
+        "overlay": None,
+        "decision_ref": {},
+        "filters": {
+            "limit": query.limit,
+            "require_ready": query.require_ready,
+            "require_eligible": query.require_eligible,
+        },
+        "considered_decision_count": len(decisions),
+        "matched_overlay_count": matched,
+        "rejected_by_filter_count": rejected_by_filter,
+        "advisory_only": True,
+        "authoritative": False,
+        "agi_execution_authority": False,
+        "director_runtime_contract": "director.repair_advisory_policy.v1",
     }
 
 
@@ -749,6 +1018,40 @@ def _resident_agi_output_contract_gate(
             output.verdict == "continue" or not output.downstream_allowed,
             "Only a continue verdict may allow downstream execution.",
         )
+        next_action = str(output.next_action or "").strip()
+        suggested_rules_raw = decision.get("suggested_rules")
+        suggested_rules = suggested_rules_raw if isinstance(suggested_rules_raw, list) else []
+        repair_advisory_relevant = _resident_agi_repair_advisory_decision_relevant(
+            decision=decision,
+            decision_capability_id=selected_decision_id,
+        )
+        if repair_advisory_relevant:
+            add_check(
+                "repair_advisory.suggested_rules_present",
+                next_action != "suggest_repair_rule" or bool(suggested_rules),
+                "Repair-rule suggestions require a non-empty suggested_rules list.",
+            )
+        if suggested_rules:
+            try:
+                advisory = RepairAdvisoryV1(
+                    advisor_source="resident_agi",
+                    message=output.rationale,
+                    confidence=0.0,
+                    suggested_rules=tuple(suggested_rules),
+                    metadata={"source_role": "resident_agi"},
+                )
+                normalized_decision["suggested_rules"] = advisory.to_dict()["suggested_rules"]
+                add_check(
+                    "repair_advisory.suggested_rules_policy",
+                    True,
+                    "Resident AGI suggested_rules pass Director Runtime advisory policy.",
+                )
+            except (TypeError, ValueError) as exc:
+                add_check(
+                    "repair_advisory.suggested_rules_policy",
+                    False,
+                    str(exc),
+                )
 
     failed = [item for item in checks if not item["passed"]]
     return {
@@ -1387,6 +1690,163 @@ def _resident_agi_metadata_only_interface(base: dict[str, Any]) -> dict[str, Any
     return base
 
 
+def _resident_agi_evidence_interface_group_id(interface: dict[str, Any]) -> str:
+    interface_id = str(interface.get("interface_id") or "").strip()
+    category = str(interface.get("category") or "").strip()
+    contract_ref = str(interface.get("contract_ref") or "").strip()
+    if interface_id.startswith("director.") or category.startswith("director_repair"):
+        return "director_repair"
+    if interface_id.startswith("verifier.") or contract_ref.startswith("control_plane.verifier"):
+        return "verifier"
+    if interface_id.startswith("audit.") or contract_ref.startswith("audit."):
+        return "audit"
+    if interface_id.startswith("context.") or contract_ref.startswith("context."):
+        return "context"
+    if interface_id.startswith("contextos.") or contract_ref == "roles.final_request_context_audit":
+        return "llm_context"
+    if interface_id.startswith("run_ledger.") or contract_ref == "control_plane.run_ledger":
+        return "run_ledger"
+    if "execute" in str(interface.get("access") or "").strip().lower():
+        return "governed_execution"
+    return "other"
+
+
+def _resident_agi_evidence_group_name(group_id: str) -> str:
+    return {
+        "audit": "Audit",
+        "context": "Context",
+        "director_repair": "Director repair",
+        "governed_execution": "Governed execution",
+        "llm_context": "LLM context",
+        "run_ledger": "Run ledger",
+        "verifier": "Verifier",
+        "other": "Other",
+    }.get(group_id, group_id)
+
+
+def _resident_agi_evidence_capability_matrix(
+    *,
+    decision_type: str,
+    selected_decision_capability: dict[str, Any],
+    interfaces: list[dict[str, Any]],
+    required_interface_ids: list[str],
+    optional_interface_ids: list[str],
+    audit_pack: dict[str, Any],
+) -> dict[str, Any]:
+    decision_profile_raw = audit_pack.get("decision_profile")
+    decision_profile: dict[str, Any] = decision_profile_raw if isinstance(decision_profile_raw, dict) else {}
+    recommendations_raw = decision_profile.get("evidence_interface_recommendations")
+    recommendations = recommendations_raw if isinstance(recommendations_raw, list) else []
+    recommendation_by_id = {
+        str(item.get("capability_id") or "").strip(): item
+        for item in recommendations
+        if isinstance(item, dict) and str(item.get("capability_id") or "").strip()
+    }
+    required_set = set(required_interface_ids)
+    optional_set = set(optional_interface_ids)
+    rows: list[dict[str, Any]] = []
+    groups: dict[str, dict[str, Any]] = {}
+    missing_required_interface_ids: list[str] = []
+    status_counts: dict[str, int] = {}
+
+    for interface in interfaces:
+        interface_id = str(interface.get("interface_id") or "").strip()
+        status = str(interface.get("status") or "unknown").strip() or "unknown"
+        available = bool(interface.get("available")) or status == "available"
+        callable_now = bool(interface.get("callable"))
+        access = str(interface.get("access") or "").strip()
+        risk_level = str(interface.get("risk_level") or "").strip()
+        group_id = _resident_agi_evidence_interface_group_id(interface)
+        recommendation = recommendation_by_id.get(interface_id, {})
+        required = interface_id in required_set
+        optional = interface_id in optional_set
+        recommended_now = bool(recommendation.get("recommended_now")) or required
+        gaps_raw = interface.get("gaps")
+        gaps = (
+            [str(item or "").strip() for item in gaps_raw if str(item or "").strip()]
+            if isinstance(gaps_raw, list)
+            else []
+        )
+
+        if required and not available:
+            missing_required_interface_ids.append(interface_id)
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+        row = {
+            "interface_id": interface_id,
+            "name": str(interface.get("name") or interface_id).strip() or interface_id,
+            "group_id": group_id,
+            "group_name": _resident_agi_evidence_group_name(group_id),
+            "required": required,
+            "optional": optional,
+            "recommended_now": recommended_now,
+            "available": available,
+            "callable": callable_now,
+            "status": status,
+            "source": str(interface.get("source") or "").strip(),
+            "access": access,
+            "risk_level": risk_level,
+            "contract_ref": str(interface.get("contract_ref") or "").strip(),
+            "recommended_next_action": str(interface.get("recommended_next_action") or "").strip(),
+            "priority": int(recommendation.get("priority") or 100),
+            "reason": str(recommendation.get("reason") or "").strip(),
+            "gap_count": len(gaps),
+            "gaps": gaps[:5],
+        }
+        rows.append(row)
+
+        group = groups.setdefault(
+            group_id,
+            {
+                "group_id": group_id,
+                "name": _resident_agi_evidence_group_name(group_id),
+                "interface_ids": [],
+                "total": 0,
+                "available": 0,
+                "required": 0,
+                "missing_required": 0,
+                "recommended_now": 0,
+                "high_risk": 0,
+                "governed_execute": 0,
+            },
+        )
+        group["interface_ids"].append(interface_id)
+        group["total"] += 1
+        group["available"] += 1 if available else 0
+        group["required"] += 1 if required else 0
+        group["missing_required"] += 1 if required and not available else 0
+        group["recommended_now"] += 1 if recommended_now else 0
+        group["high_risk"] += 1 if risk_level.lower() == "high" else 0
+        group["governed_execute"] += 1 if "execute" in access.lower() else 0
+
+    return {
+        "schema_version": "resident.agi_evidence_capability_matrix.v1",
+        "workspace_evidence_source": "resident.autonomy.public.query_resident_agi_evidence_interfaces",
+        "decision_type": decision_type,
+        "selected_decision_id": str(selected_decision_capability.get("decision_id") or decision_type).strip(),
+        "rows": sorted(
+            rows, key=lambda item: (int(item["priority"]), str(item["group_id"]), str(item["interface_id"]))
+        ),
+        "groups": sorted(groups.values(), key=lambda item: str(item["group_id"])),
+        "summary": {
+            "total": len(rows),
+            "available": sum(1 for item in rows if bool(item["available"])),
+            "required": len(required_set),
+            "required_available": sum(1 for item in rows if bool(item["required"]) and bool(item["available"])),
+            "missing_required": len(missing_required_interface_ids),
+            "missing_required_interface_ids": missing_required_interface_ids,
+            "recommended_now": sum(1 for item in rows if bool(item["recommended_now"])),
+            "callable": sum(1 for item in rows if bool(item["callable"])),
+            "high_risk": sum(1 for item in rows if str(item["risk_level"]).lower() == "high"),
+            "governed_execute": sum(1 for item in rows if "execute" in str(item["access"]).lower()),
+            "status_counts": status_counts,
+            "advisory_only": True,
+            "authoritative": False,
+            "agi_execution_authority": False,
+        },
+    }
+
+
 def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterfacesV1) -> dict[str, Any]:
     """Return the evidence interfaces a Resident AGI turn can safely inspect."""
 
@@ -1487,6 +1947,14 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
     for item in interfaces:
         status = str(item.get("status") or "unknown")
         status_counts[status] = status_counts.get(status, 0) + 1
+    capability_matrix = _resident_agi_evidence_capability_matrix(
+        decision_type=query.decision_type,
+        selected_decision_capability=selected_decision_capability,
+        interfaces=interfaces,
+        required_interface_ids=selected_required_interfaces,
+        optional_interface_ids=selected_optional_interfaces,
+        audit_pack=audit_pack,
+    )
     return {
         "schema_version": "resident.agi_evidence_interfaces.v1",
         "workspace": query.workspace,
@@ -1500,6 +1968,7 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
         "optional_evidence_interfaces": selected_optional_interfaces,
         "requested_interface_ids": requested_interface_ids,
         "interfaces": interfaces,
+        "capability_matrix": capability_matrix,
         "summary": {
             "total": len(interfaces),
             "available": status_counts.get("available", 0),
@@ -1636,6 +2105,7 @@ def _resident_agi_decision_preflight(
             "missing_required_interface_ids": [],
             "required_interface_statuses": [],
             "evidence_interfaces": {},
+            "evidence_capability_matrix": {},
         }
 
     evidence_interfaces = query_resident_agi_evidence_interfaces(
@@ -1658,6 +2128,8 @@ def _resident_agi_decision_preflight(
     selected: dict[str, Any] = selected_raw if isinstance(selected_raw, dict) else {}
     evidence_gate_raw = audit_pack.get("evidence_gate")
     evidence_gate: dict[str, Any] = evidence_gate_raw if isinstance(evidence_gate_raw, dict) else {}
+    capability_matrix_raw = evidence_interfaces.get("capability_matrix")
+    capability_matrix: dict[str, Any] = capability_matrix_raw if isinstance(capability_matrix_raw, dict) else {}
     passed = not missing_required
     recommended_verdict = "continue" if passed else "request_evidence"
     recommended_next_action = "run_resident_agi_judgement" if passed else "request_missing_required_evidence_interfaces"
@@ -1678,6 +2150,7 @@ def _resident_agi_decision_preflight(
         "evidence_gate_status": str(evidence_gate.get("status") or ""),
         "evidence_gate_recommended_verdict": str(evidence_gate.get("recommended_verdict") or ""),
         "evidence_interfaces": evidence_interfaces,
+        "evidence_capability_matrix": capability_matrix,
     }
 
 
@@ -1869,6 +2342,20 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
     authority_matrix: dict[str, Any] = authority_matrix_raw if isinstance(authority_matrix_raw, dict) else {}
     decision_profile_raw = audit_pack.get("decision_profile") if audit_pack is not None else None
     decision_profile: dict[str, Any] = decision_profile_raw if isinstance(decision_profile_raw, dict) else {}
+    capability_surface_raw = audit_pack.get("capability_surface") if audit_pack is not None else None
+    capability_surface: dict[str, Any] = capability_surface_raw if isinstance(capability_surface_raw, dict) else {}
+    decision_boundary_policy_raw = capability_surface.get("decision_boundary_policy")
+    decision_boundary_policy: dict[str, Any] = (
+        decision_boundary_policy_raw if isinstance(decision_boundary_policy_raw, dict) else {}
+    )
+    decision_boundary_policy_counts_raw = decision_boundary_policy.get("counts")
+    decision_boundary_policy_counts: dict[str, Any] = (
+        decision_boundary_policy_counts_raw if isinstance(decision_boundary_policy_counts_raw, dict) else {}
+    )
+    decision_boundary_execution_raw = decision_boundary_policy.get("capability_execution_policy")
+    decision_boundary_execution: dict[str, Any] = (
+        decision_boundary_execution_raw if isinstance(decision_boundary_execution_raw, dict) else {}
+    )
     selected_decision_capability = _resident_agi_select_decision_capability(
         decision_type=command.decision_type,
         audit_pack=audit_pack,
@@ -1902,10 +2389,23 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         audit_pack=audit_pack or {},
         hard_rule_gate=hard_rule_gate,
     )
+    evidence_interfaces_raw = decision_preflight.get("evidence_interfaces")
+    evidence_interfaces: dict[str, Any] = evidence_interfaces_raw if isinstance(evidence_interfaces_raw, dict) else {}
+    evidence_capability_matrix_raw = decision_preflight.get("evidence_capability_matrix")
+    evidence_capability_matrix: dict[str, Any] = (
+        evidence_capability_matrix_raw if isinstance(evidence_capability_matrix_raw, dict) else {}
+    )
+    evidence_capability_matrix_summary_raw = evidence_capability_matrix.get("summary")
+    evidence_capability_matrix_summary: dict[str, Any] = (
+        evidence_capability_matrix_summary_raw if isinstance(evidence_capability_matrix_summary_raw, dict) else {}
+    )
 
     if audit_pack is not None:
         input_data["resident_agi_audit_pack"] = audit_pack
         input_data["resident_agi_decision_preflight"] = decision_preflight
+        input_data["resident_agi_evidence_interfaces"] = evidence_interfaces
+        input_data["resident_agi_evidence_capability_matrix"] = evidence_capability_matrix
+        input_data["resident_agi_decision_boundary_policy"] = decision_boundary_policy
         input_data["resident_agi_participation"] = resident_agi_participation
         profile_candidate_actions_raw = decision_profile.get("candidate_actions")
         profile_candidate_actions = (
@@ -1958,6 +2458,34 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                 "resident_agi_missing_required_interface_ids": list(
                     decision_preflight.get("missing_required_interface_ids") or []
                 ),
+                "resident_agi_evidence_capability_matrix_schema": evidence_capability_matrix.get(
+                    "schema_version",
+                    "",
+                ),
+                "resident_agi_evidence_matrix_required_available": int(
+                    evidence_capability_matrix_summary.get("required_available") or 0
+                ),
+                "resident_agi_evidence_matrix_required": int(evidence_capability_matrix_summary.get("required") or 0),
+                "resident_agi_evidence_matrix_missing_required": int(
+                    evidence_capability_matrix_summary.get("missing_required") or 0
+                ),
+                "resident_agi_evidence_matrix_recommended_now": int(
+                    evidence_capability_matrix_summary.get("recommended_now") or 0
+                ),
+                "resident_agi_decision_boundary_policy_schema": decision_boundary_policy.get("schema_version", ""),
+                "resident_agi_policy_platform_hard_rules": int(
+                    decision_boundary_policy_counts.get("platform_hard_rules") or 0
+                ),
+                "resident_agi_policy_agi_judgement": int(decision_boundary_policy_counts.get("agi_judgement") or 0),
+                "resident_agi_policy_governed_execution": int(
+                    decision_boundary_policy_counts.get("governed_execution") or 0
+                ),
+                "resident_agi_policy_direct_writes_allowed": bool(
+                    decision_boundary_execution.get("agi_direct_writes_allowed")
+                ),
+                "resident_agi_policy_direct_tools_allowed": bool(
+                    decision_boundary_execution.get("agi_direct_tool_execution_allowed")
+                ),
                 "resident_agi_manual_role_turn_requested": bool(
                     resident_agi_participation.get("manual_role_turn_requested")
                 ),
@@ -1985,6 +2513,9 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         "resident_agi_participation_scopes": list(resident_agi_participation.get("scopes") or []),
         "resident_agi_audit_pack": audit_pack or {},
         "resident_agi_decision_preflight": decision_preflight,
+        "resident_agi_evidence_interfaces": evidence_interfaces,
+        "resident_agi_evidence_capability_matrix": evidence_capability_matrix,
+        "resident_agi_decision_boundary_policy": decision_boundary_policy,
         "metadata": {
             "source": "resident.autonomy.public.run_resident_agi_decision_turn",
             "resident_agi_role_runtime_required": True,
@@ -2004,6 +2535,31 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
             "resident_agi_decision_preflight_passed": bool(decision_preflight.get("passed")),
             "resident_agi_missing_required_interface_ids": list(
                 decision_preflight.get("missing_required_interface_ids") or []
+            ),
+            "resident_agi_evidence_capability_matrix_schema": evidence_capability_matrix.get("schema_version", ""),
+            "resident_agi_evidence_matrix_required_available": int(
+                evidence_capability_matrix_summary.get("required_available") or 0
+            ),
+            "resident_agi_evidence_matrix_required": int(evidence_capability_matrix_summary.get("required") or 0),
+            "resident_agi_evidence_matrix_missing_required": int(
+                evidence_capability_matrix_summary.get("missing_required") or 0
+            ),
+            "resident_agi_evidence_matrix_recommended_now": int(
+                evidence_capability_matrix_summary.get("recommended_now") or 0
+            ),
+            "resident_agi_decision_boundary_policy_schema": decision_boundary_policy.get("schema_version", ""),
+            "resident_agi_policy_platform_hard_rules": int(
+                decision_boundary_policy_counts.get("platform_hard_rules") or 0
+            ),
+            "resident_agi_policy_agi_judgement": int(decision_boundary_policy_counts.get("agi_judgement") or 0),
+            "resident_agi_policy_governed_execution": int(
+                decision_boundary_policy_counts.get("governed_execution") or 0
+            ),
+            "resident_agi_policy_direct_writes_allowed": bool(
+                decision_boundary_execution.get("agi_direct_writes_allowed")
+            ),
+            "resident_agi_policy_direct_tools_allowed": bool(
+                decision_boundary_execution.get("agi_direct_tool_execution_allowed")
             ),
             "resident_agi_manual_role_turn_requested": bool(
                 resident_agi_participation.get("manual_role_turn_requested")
@@ -2154,6 +2710,22 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         effective_candidate_actions=effective_candidate_actions,
         evidence_refs=evidence_refs,
     )
+    repair_advisory_overlay = _resident_agi_repair_advisory_overlay_from_decision(
+        workspace=command.workspace,
+        decision=decision,
+        decision_capability_id=str(selected_decision_capability.get("decision_id") or command.decision_type),
+        participation=resident_agi_participation,
+        message=rationale,
+        confidence=command.confidence,
+        evidence_refs=tuple(evidence_refs),
+        context_refs=tuple(command.context_refs),
+        metadata={
+            "run_id": command.run_id,
+            "task_id": command.task_id,
+            "goal_id": command.goal_id,
+        },
+        require_participation_enabled=True,
+    )
 
     recorded = record_resident_decision_entry(
         RecordResidentDecisionCommandV1(
@@ -2214,9 +2786,12 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
                     "resident_agi_required_evidence_interfaces": selected_required_evidence_interfaces,
                     "resident_agi_optional_evidence_interfaces": selected_optional_evidence_interfaces,
                     "resident_agi_decision_preflight": decision_preflight,
+                    "resident_agi_evidence_capability_matrix": evidence_capability_matrix,
+                    "resident_agi_decision_boundary_policy": decision_boundary_policy,
                     "resident_agi_output_contract_gate": output_contract_gate,
                     "resident_agi_runtime_contract_gate": runtime_contract_gate,
                     "resident_agi_decision_handoff": decision_handoff,
+                    "resident_agi_repair_advisory_overlay": repair_advisory_overlay,
                     "agi_verdict": agi_verdict,
                     "resident_verdict": resident_verdict,
                     "downstream_allowed": downstream_allowed,
@@ -2261,9 +2836,12 @@ async def run_resident_agi_decision_turn(command: RunResidentAgiDecisionTurnComm
         "selected_decision_capability": selected_decision_capability,
         "resident_agi_participation": resident_agi_participation,
         "decision_handoff": decision_handoff,
+        "repair_advisory_overlay": repair_advisory_overlay,
         "required_evidence_interfaces": selected_required_evidence_interfaces,
         "optional_evidence_interfaces": selected_optional_evidence_interfaces,
         "decision_preflight": decision_preflight,
+        "evidence_capability_matrix": evidence_capability_matrix,
+        "decision_boundary_policy": decision_boundary_policy,
         "output_contract_gate": output_contract_gate,
         "runtime_contract_gate": runtime_contract_gate,
         "error": error or None,
@@ -2316,6 +2894,32 @@ def update_resident_identity(command: UpdateResidentIdentityCommandV1) -> dict[s
         action="identity_updated",
     )
     return result
+
+
+def update_resident_agi_participation(command: UpdateResidentAgiParticipationCommandV1) -> dict[str, Any]:
+    """Handle AGI participation policy updates through a scoped public contract."""
+
+    payload = {
+        "enabled": command.enabled,
+        "scopes": list(command.scopes),
+        "participation": dict(command.participation),
+        "custom_scopes_allowed": command.custom_scopes_allowed,
+    }
+    updated_identity = get_resident_service(command.workspace).update_identity({"resident_agi_participation": payload})
+    participation_raw = updated_identity.get("resident_agi_participation")
+    participation = participation_raw if isinstance(participation_raw, dict) else payload
+    scopes_raw = participation.get("scopes")
+    scopes = scopes_raw if isinstance(scopes_raw, list) else []
+    publish_resident_status_update(
+        workspace=command.workspace,
+        action="resident_agi_participation_updated",
+        detail={
+            "enabled": bool(participation.get("enabled")),
+            "scope_count": len(scopes),
+            "configured_scope_ids": scopes,
+        },
+    )
+    return participation
 
 
 def create_resident_goal(command: CreateResidentGoalCommandV1) -> dict[str, Any]:
@@ -2578,6 +3182,7 @@ def run_resident_improvements(command: RunResidentImprovementsCommandV1) -> list
 
 __all__ = [
     "ApproveResidentGoalCommandV1",
+    "BuildResidentAgiRepairAdvisoryOverlayCommandV1",
     "CapabilityGraph",
     "CounterfactualLab",
     "CreateResidentGoalCommandV1",
@@ -2595,6 +3200,7 @@ __all__ = [
     "QueryResidentAgiAuditPackV1",
     "QueryResidentAgiEvidenceInterfacesV1",
     "QueryResidentAgiHandoffsV1",
+    "QueryResidentAgiRepairAdvisoryOverlayV1",
     "QueryResidentCapabilitiesV1",
     "QueryResidentStatusV1",
     "RecordResidentDecisionCommandV1",
@@ -2630,14 +3236,17 @@ __all__ = [
     "StopResidentCommandV1",
     "StrategyInsightEngine",
     "TestRunEvidence",
+    "UpdateResidentAgiParticipationCommandV1",
     "UpdateResidentIdentityCommandV1",
     "approve_resident_goal",
     "build_resident_agi_authority_matrix",
+    "build_resident_agi_capability_access_registry",
     "build_resident_agi_capability_surface",
     "build_resident_agi_decision_boundaries",
     "build_resident_agi_decision_capabilities",
     "build_resident_agi_decision_capability_registry",
     "build_resident_agi_evidence_interface_contract",
+    "build_resident_agi_repair_advisory_overlay",
     "create_evidence_bundle_service",
     "create_resident_goal",
     "extract_resident_skills",
@@ -2649,6 +3258,7 @@ __all__ = [
     "query_resident_agi_audit_pack",
     "query_resident_agi_evidence_interfaces",
     "query_resident_agi_handoffs",
+    "query_resident_agi_repair_advisory_overlay",
     "query_resident_capabilities",
     "query_resident_status",
     "record_resident_decision",
@@ -2666,5 +3276,6 @@ __all__ = [
     "stage_resident_goal",
     "start_resident",
     "stop_resident",
+    "update_resident_agi_participation",
     "update_resident_identity",
 ]

@@ -9,11 +9,14 @@ import type {
   ResidentAgiDecisionTurnResponse,
   ResidentAgiEvidenceInterfacesPayload,
   ResidentAgiHandoffInboxPayload,
+  ResidentAgiParticipationPatchPayload,
+  ResidentAgiRepairAdvisoryOverlayQueryPayload,
   ResidentDecisionPayload,
   ResidentExperimentPayload,
   ResidentGoalPayload,
   ResidentGoalRunPayload,
   ResidentGoalStagePayload,
+  ResidentIdentityPayload,
   ResidentImprovementPayload,
   ResidentStatusDetailsPayload,
   ResidentSkillPayload,
@@ -32,12 +35,7 @@ interface ResidentIdentityPatch {
   values?: string[];
   memory_lineage?: string[];
   capability_profile?: Record<string, number>;
-  resident_agi_participation?: {
-    enabled?: boolean;
-    scopes?: string[];
-    participation?: Record<string, boolean>;
-    custom_scopes_allowed?: boolean;
-  };
+  resident_agi_participation?: ResidentAgiParticipationPatchPayload;
 }
 
 interface ResidentGoalDraft {
@@ -96,6 +94,8 @@ export function useResident(options: UseResidentOptions = {}) {
     useState<ResidentAgiEvidenceInterfacesPayload | null>(null);
   const [agiHandoffs, setAgiHandoffs] =
     useState<ResidentAgiHandoffInboxPayload | null>(null);
+  const [agiRepairAdvisoryOverlay, setAgiRepairAdvisoryOverlay] =
+    useState<ResidentAgiRepairAdvisoryOverlayQueryPayload | null>(null);
   const [lastAgiDecisionResult, setLastAgiDecisionResult] =
     useState<ResidentAgiDecisionTurnResponse | null>(null);
   const [httpDetailsLoaded, setHttpDetailsLoaded] = useState(false);
@@ -111,6 +111,7 @@ export function useResident(options: UseResidentOptions = {}) {
       setAgiAuditPack(null);
       setAgiEvidenceInterfaces(null);
       setAgiHandoffs(null);
+      setAgiRepairAdvisoryOverlay(null);
       setLastAgiDecisionResult(null);
       setHttpDetailsLoaded(false);
       setError(null);
@@ -150,6 +151,15 @@ export function useResident(options: UseResidentOptions = {}) {
     setAgiHandoffs(
       handoffsResult.ok && handoffsResult.data ? handoffsResult.data : null,
     );
+    const repairOverlayResult =
+      await residentService.getAgiRepairAdvisoryOverlay(workspace, {
+        limit: 50,
+      });
+    setAgiRepairAdvisoryOverlay(
+      repairOverlayResult.ok && repairOverlayResult.data
+        ? repairOverlayResult.data
+        : null,
+    );
     setError(null);
     return result.data;
   }, [options.liveResident, workspace]);
@@ -181,12 +191,39 @@ export function useResident(options: UseResidentOptions = {}) {
     [refresh, workspace],
   );
 
+  const refreshAgiEvidenceInterfaces = useCallback(
+    async (decisionType = "quality_gate_response") => {
+      if (!workspace) {
+        toast.error("请先选择 Workspace");
+        return null;
+      }
+      setActionKey("agi-evidence-interfaces");
+      const result = await residentService.getAgiEvidenceInterfaces(workspace, {
+        decisionType,
+        maxRuns: 20,
+      });
+      setActionKey("");
+      if (!result.ok || !result.data) {
+        const message = result.error || "加载 AGI 证据接口失败";
+        setError(message);
+        toast.error(message);
+        return null;
+      }
+      setAgiEvidenceInterfaces(result.data);
+      setError(null);
+      toast.success("AGI 证据接口已刷新");
+      return result.data;
+    },
+    [workspace],
+  );
+
   useEffect(() => {
     if (!workspace) {
       setStatus(emptyDetails("", options.liveResident));
       setAgiAuditPack(null);
       setAgiEvidenceInterfaces(null);
       setAgiHandoffs(null);
+      setAgiRepairAdvisoryOverlay(null);
       setLastAgiDecisionResult(null);
       setHttpDetailsLoaded(false);
       setError(null);
@@ -252,9 +289,11 @@ export function useResident(options: UseResidentOptions = {}) {
     residentAgiAuditPack: agiAuditPack,
     residentAgiEvidenceInterfaces: agiEvidenceInterfaces,
     residentAgiHandoffs: agiHandoffs,
+    residentAgiRepairAdvisoryOverlay: agiRepairAdvisoryOverlay,
     lastAgiDecisionResult,
     residentRuntimeEvidence,
     refresh,
+    refreshAgiEvidenceInterfaces,
     isActing: (key: string) => actionKey === key,
     start: (mode: string) =>
       runAction(
@@ -279,12 +318,64 @@ export function useResident(options: UseResidentOptions = {}) {
       setLastAgiDecisionResult(result);
       return result;
     },
-    saveIdentity: (payload: ResidentIdentityPatch) =>
-      runAction(
+    saveIdentity: (payload: ResidentIdentityPatch) => {
+      const { resident_agi_participation: agiParticipation, ...identityPatch } =
+        payload;
+      const hasIdentityPatch = Object.values(identityPatch).some((value) => {
+        if (Array.isArray(value)) {
+          return value.length > 0;
+        }
+        if (value && typeof value === "object") {
+          return Object.keys(value).length > 0;
+        }
+        return value !== undefined && value !== null && String(value).trim();
+      });
+
+      return runAction<ResidentIdentityPayload>(
         "save-identity",
-        () => residentService.updateIdentity(workspace, payload),
+        async () => {
+          let identity = summary?.identity ?? null;
+          if (hasIdentityPatch) {
+            const identityResult = await residentService.updateIdentity(
+              workspace,
+              identityPatch,
+            );
+            if (!identityResult.ok || !identityResult.data) {
+              return {
+                ok: false,
+                error: identityResult.error || "AGI 身份更新失败",
+              };
+            }
+            identity = identityResult.data;
+          }
+
+          if (agiParticipation) {
+            const participationResult =
+              await residentService.updateAgiParticipation(
+                workspace,
+                agiParticipation,
+              );
+            if (!participationResult.ok || !participationResult.data) {
+              return {
+                ok: false,
+                error:
+                  participationResult.error || "AGI 参与策略更新失败",
+              };
+            }
+            return {
+              ok: true,
+              data: {
+                ...(identity || {}),
+                resident_agi_participation: participationResult.data,
+              },
+            };
+          }
+
+          return { ok: true, data: identity ?? undefined };
+        },
         "AGI 身份已更新",
-      ),
+      );
+    },
     createGoal: (payload: ResidentGoalDraft) =>
       runAction(
         "create-goal",
@@ -356,6 +447,7 @@ export type {
   ResidentGoalPayload,
   ResidentImprovementPayload,
   ResidentAgiAuditPackPayload,
+  ResidentAgiRepairAdvisoryOverlayQueryPayload,
   ResidentSkillPayload,
   ResidentStatusDetailsPayload,
 };

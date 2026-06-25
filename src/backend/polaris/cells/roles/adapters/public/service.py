@@ -27,9 +27,6 @@ from polaris.cells.orchestration.workflow_runtime.public.service import (
 from ..internal.architect_adapter import ArchitectAdapter
 from ..internal.base import BaseRoleAdapter
 from ..internal.chief_engineer_adapter import ChiefEngineerAdapter
-from ..internal.director.deterministic_repairs.generic_repairs import (
-    _apply_deterministic_materialization_quality_repairs as apply_deterministic_materialization_quality_repairs,
-)
 from ..internal.pm_adapter import PMAdapter
 from ..internal.qa_adapter import (
     QAAdapter,
@@ -91,6 +88,36 @@ def create_role_adapter(role_id: str, workspace: str) -> BaseRoleAdapter:
     if adapter_class is None:
         raise ValueError(f"Unknown role: {role_token}, supported: {list(_ADAPTERS.keys())}")
     return adapter_class(workspace_token)
+
+
+def apply_deterministic_materialization_quality_repairs(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Run legacy materialization-quality repairs through an explicit public wrapper."""
+
+    from ..internal.director.materialization_quality_repair_bridge import (
+        run_materialization_quality_repairs,
+    )
+
+    results, summary = run_materialization_quality_repairs(
+        adapter,
+        task=task,
+        task_id=task_id,
+        artifact_quality_errors=artifact_quality_errors,
+    )
+    public_summary = dict(summary or {})
+    public_summary["public_boundary"] = {
+        "schema_version": "roles.adapters.materialization_quality_repair_boundary.v1",
+        "mode": "legacy_strategy_host_wrapper",
+        "internal_function_exported": False,
+        "repair_kernel_owner": "director.runtime",
+        "director_runtime_public_summary_required": True,
+    }
+    return results, public_summary
 
 
 def apply_deterministic_cpp_post_repairs(workspace: str | Path) -> list[dict[str, Any]]:
