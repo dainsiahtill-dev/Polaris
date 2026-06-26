@@ -71,6 +71,7 @@ _PM_SCOPE_PATH_ROOTS = {
 _PM_SCOPE_PATH_FILENAMES = {
     "CMakeLists.txt",
     "cmakelists.txt",
+    "go.mod",
     "package.json",
     "README.md",
     "requirements.txt",
@@ -92,6 +93,7 @@ _PM_SCOPE_PATH_SUFFIXES = {
     ".hpp",
     ".html",
     ".hxx",
+    ".go",
     ".java",
     ".js",
     ".jsx",

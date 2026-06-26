@@ -3763,3 +3763,57 @@ class TestTaskFieldAccessors:
         result = executor._build_director_task_filter([{"title": "T1", "scope": "src/"}])
         assert "Execute PM tasks strictly in order:" in result
         assert "- T1 [scope: src/]" in result
+
+
+class TestExistingTargetFileSummaries:
+    """Cross-file coherence: a later task must see the API of files it depends on.
+
+    Regression (factory-bench L1-03): TASK-1 created src/models/mood.py defining
+    ``Mood`` as an enum; TASK-2 wrote src/main.py and — without the dependency
+    signature — guessed ``Mood(mood=..., intensity=...)``, crashing entrypoint
+    smoke with ``EnumType.__call__() got an unexpected keyword argument 'mood'``.
+    The injection must surface the dependency file's signature, NOT just the
+    task's own (not-yet-written) targets.
+    """
+
+    def test_dependency_file_signature_is_injected_for_later_task(self, tmp_path: Path) -> None:
+        # TASK-1 already wrote the model (a dependency of TASK-2).
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "src" / "models" / "mood.py").write_text(
+            "from enum import Enum\n\n\nclass Mood(Enum):\n    SUNNY = 'sunny'\n    CALM = 'calm'\n\n\n"
+            "def derive_mood(weather):\n    return Mood.CALM\n",
+            encoding="utf-8",
+        )
+        executor = _executor(tmp_path)
+
+        # TASK-2 owns main.py (which does NOT exist yet) and depends on mood.py.
+        task2 = {"target_files": ["src/main.py"]}
+        summaries = executor._read_existing_target_file_summaries(task2)
+
+        by_path = {s["path"]: s["exports"] for s in summaries}
+        # The dependency file's real signature must be present even though it is
+        # not one of TASK-2's own target_files.
+        assert "src/models/mood.py" in by_path
+        assert "class Mood(Enum):" in by_path["src/models/mood.py"]
+        assert "def derive_mood" in by_path["src/models/mood.py"]
+        # main.py is the task's own target and does not exist yet → not summarized.
+        assert "src/main.py" not in by_path
+
+    def test_runtime_and_dotpolaris_paths_are_excluded(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "core.py").write_text("def core():\n    return 1\n", encoding="utf-8")
+        # Noise that must never enter Director context.
+        (tmp_path / ".polaris" / "history").mkdir(parents=True)
+        (tmp_path / ".polaris" / "history" / "leak.py").write_text("def leak():\n    return 1\n", encoding="utf-8")
+        (tmp_path / "runtime").mkdir()
+        (tmp_path / "runtime" / "noise.py").write_text("def noise():\n    return 1\n", encoding="utf-8")
+        executor = _executor(tmp_path)
+
+        summaries = executor._read_existing_target_file_summaries({"target_files": ["src/main.py"]})
+        paths = {s["path"] for s in summaries}
+        assert "src/core.py" in paths
+        assert not any(".polaris" in p or "runtime/" in p for p in paths)
+
+    def test_no_existing_files_returns_empty(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        assert executor._read_existing_target_file_summaries({"target_files": ["src/main.py"]}) == []

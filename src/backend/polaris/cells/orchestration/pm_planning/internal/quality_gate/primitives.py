@@ -142,8 +142,10 @@ _PM_SCOPE_ROOTS = {
 _PM_SCOPE_FILENAMES = {
     "CMakeLists.txt",
     "cmakelists.txt",
+    "go.mod",
     "package.json",
     "README.md",
+    "requirements.txt",
     "tsconfig.json",
     "vite.config.ts",
     "vitest.config.ts",
@@ -162,12 +164,15 @@ _PM_SCOPE_SUFFIXES = {
     ".hpp",
     ".html",
     ".hxx",
+    ".go",
+    ".java",
     ".js",
     ".jsx",
     ".json",
     ".md",
     ".mjs",
     ".py",
+    ".rs",
     ".toml",
     ".ts",
     ".tsx",
@@ -291,7 +296,7 @@ def _normalize_path(value: Any) -> str:
         token = token[2:]
     token = token.strip("/")
     token = re.sub(r"/+", "/", token)
-    return token
+    return token.lower()
 
 
 def _canonical_pm_contract_output_path(value: str) -> str:

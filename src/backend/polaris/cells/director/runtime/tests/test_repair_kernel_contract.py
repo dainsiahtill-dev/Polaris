@@ -107,6 +107,8 @@ from polaris.cells.director.runtime.public import (
     DirectorRepairPlanningResultV1,
     DirectorRepairPostExecutionScheduleResultV1,
     DirectorRepairRevalidationProjectionResultV1,
+    DirectorRepairShadowComparisonResultV1,
+    EvaluateDirectorRepairCutoverReadinessV1,
     PlanDirectorRepairCommandV1,
     ProjectDirectorRepairKernelSummaryV1,
     QueryDirectorRepairAdvisoryPolicyV1,
@@ -122,6 +124,7 @@ from polaris.cells.director.runtime.public import (
     attach_director_repair_revalidation_evidence,
     build_director_repair_kernel_summary,
     compare_director_repair_shadow_run,
+    evaluate_director_repair_cutover_readiness,
     plan_director_repair,
     project_director_repair_kernel_summary,
     project_director_repair_revalidation_evidence,
@@ -5678,6 +5681,82 @@ def test_public_shadow_comparison_requires_hash_and_revalidation_for_cutover() -
     assert payload["metadata"]["cutover_readiness"]["revalidation_evidence_passed"] is True
     assert payload["metadata"]["cutover_readiness"]["authoritative_receipts"] is True
     assert payload["metadata"]["cutover_readiness"]["independent_shadow_satisfied"] is True
+
+
+def _ready_shadow_comparison(path: str = "src/app.ts") -> DirectorRepairShadowComparisonResultV1:
+    return DirectorRepairShadowComparisonResultV1(
+        schema_version="director.repair_shadow_comparison.v1",
+        source="director.runtime.repair_kernel.shadow",
+        access="read_only",
+        matched=True,
+        legacy_source_tools=("deterministic_typescript_missing_export_repair",),
+        kernel_source_tools=("deterministic_typescript_missing_export_repair",),
+        legacy_paths=(path,),
+        kernel_paths=(path,),
+        comparison_mode="independent_shadow_run",
+        independent_shadow_satisfied=True,
+        cutover_ready=True,
+        cutover_blockers=(),
+    )
+
+
+def test_public_cutover_readiness_requires_repeated_independent_shadow_success() -> None:
+    result = evaluate_director_repair_cutover_readiness(
+        EvaluateDirectorRepairCutoverReadinessV1(
+            comparisons=(_ready_shadow_comparison(), _ready_shadow_comparison()),
+            required_successful_runs=2,
+        )
+    )
+    payload = result.to_dict()
+
+    assert payload["schema_version"] == "director.repair_cutover_readiness.v1"
+    assert payload["source"] == "director.runtime.repair_kernel.cutover_gate"
+    assert payload["access"] == "read_only"
+    assert payload["writes_allowed"] is False
+    assert payload["cutover_ready"] is True
+    assert payload["required_successful_runs"] == 2
+    assert payload["successful_comparison_count"] == 2
+    assert payload["cutover_blockers"] == []
+    assert payload["metadata"]["successful_comparison_indices"] == [0, 1]
+    assert payload["metadata"]["multi_run_cutover_gate"] is True
+
+
+def test_public_cutover_readiness_blocks_self_check_shortfall_and_scope_drift() -> None:
+    self_check = DirectorRepairShadowComparisonResultV1(
+        schema_version="director.repair_shadow_comparison.v1",
+        source="director.runtime.repair_kernel.shadow",
+        access="read_only",
+        matched=True,
+        legacy_source_tools=("deterministic_typescript_missing_export_repair",),
+        kernel_source_tools=("deterministic_typescript_missing_export_repair",),
+        legacy_paths=("src/app.ts",),
+        kernel_paths=("src/app.ts",),
+        comparison_mode="legacy_projection_self_check",
+        independent_shadow_satisfied=False,
+        cutover_ready=False,
+        cutover_blockers=("independent_shadow_required",),
+    )
+    shortfall = evaluate_director_repair_cutover_readiness(
+        EvaluateDirectorRepairCutoverReadinessV1(
+            comparisons=(_ready_shadow_comparison(), self_check),
+            required_successful_runs=2,
+        )
+    ).to_dict()
+    drift = evaluate_director_repair_cutover_readiness(
+        EvaluateDirectorRepairCutoverReadinessV1(
+            comparisons=(_ready_shadow_comparison("src/app.ts"), _ready_shadow_comparison("src/other.ts")),
+            required_successful_runs=2,
+        )
+    ).to_dict()
+
+    assert shortfall["cutover_ready"] is False
+    assert shortfall["cutover_blockers"] == [
+        "insufficient_successful_independent_shadow_runs",
+        "shadow_comparison_not_cutover_ready",
+    ]
+    assert shortfall["metadata"]["failed_comparison_indices"] == [1]
+    assert drift["cutover_ready"] is False
+    assert drift["cutover_blockers"] == ["shadow_comparison_scope_drift"]
 
 
 def test_public_shadow_comparison_self_check_cannot_cutover_even_when_scope_matches() -> None:

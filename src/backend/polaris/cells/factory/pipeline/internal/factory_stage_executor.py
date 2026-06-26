@@ -71,6 +71,16 @@ _LANGUAGE_SOURCE_EXTENSIONS: dict[str, frozenset[str]] = {
 _LANGUAGE_NEUTRAL_EXTENSIONS: frozenset[str] = frozenset(
     {".json", ".yaml", ".yml", ".toml", ".md", ".txt", ".html", ".css", ".xml", ".csv", ".lock"}
 )
+_LANGUAGE_NEUTRAL_FILENAMES: frozenset[str] = frozenset(
+    {
+        "go.mod",
+        "go.sum",
+        "package.json",
+        "requirements.txt",
+        "pyproject.toml",
+        "cmakelists.txt",
+    }
+)
 
 _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
 _WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_ENV = "KERNELONE_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS"
@@ -508,12 +518,15 @@ class OrchestrationStageExecutor:
             for file_path in target_files:
                 if not isinstance(file_path, str):
                     continue
-                ext = Path(file_path).suffix.lower()
+                normalized = file_path.replace("\\", "/")
+                filename = Path(normalized).name.lower()
+                if filename in _LANGUAGE_NEUTRAL_FILENAMES:
+                    continue
+                ext = Path(normalized).suffix.lower()
                 if ext in _LANGUAGE_NEUTRAL_EXTENSIONS or not ext:
                     continue
                 # Bench injects tests/test_product.py as a validation script;
                 # it is not project source code, so skip test directories.
-                normalized = file_path.replace("\\", "/")
                 if normalized.startswith("tests/") or "/tests/" in normalized:
                     continue
                 if ext not in expected_extensions:
@@ -846,20 +859,74 @@ class OrchestrationStageExecutor:
             context["existing_target_files"] = existing_file_context
         return context
 
-    def _read_existing_target_file_summaries(self, task: dict[str, Any], *, max_chars_per_file: int = 1500) -> list[dict[str, str]]:
-        """Read existing target files and extract compact export summaries.
+    _EXISTING_SUMMARY_SOURCE_SUFFIXES = (".py", ".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx")
+    _EXISTING_SUMMARY_MAX_FILES = 24
 
-        For each target file that already exists in the workspace, reads its
-        content and extracts a compact summary (module.exports, class/function
-        declarations) so downstream Director tasks know the actual API.
+    def _read_existing_target_file_summaries(
+        self, task: dict[str, Any], *, max_chars_per_file: int = 1500
+    ) -> list[dict[str, str]]:
+        """Summarize the export API of files this task depends on but does NOT own.
+
+        A later task (e.g. the one writing ``main.py``) imports symbols from files
+        an earlier task already created (e.g. ``src/models/mood.py``). Those
+        dependency files are NOT in this task's own ``target_files``, so the
+        Director would otherwise have to guess their API — and guessing wrong is
+        exactly how ``main.py`` ended up calling ``Mood(mood=..., intensity=...)``
+        on an ``enum`` (live L1-03: cross-file coherence break, entrypoint smoke
+        TypeError). We therefore scan the workspace for already-existing source
+        files OUTSIDE this task's targets and inject their compact export
+        signatures so the Director's imports stay coherent with reality.
+
+        The task's own existing targets are also summarized (harmless re-edit
+        context); both sets are returned, de-duplicated, capped, and path-sorted
+        for deterministic context.
         """
-        target_files = task.get("target_files")
-        if not isinstance(target_files, list):
-            return []
+        own_targets: set[str] = set()
+        raw_targets = task.get("target_files")
+        if isinstance(raw_targets, list):
+            for item in raw_targets:
+                if isinstance(item, str) and item.strip():
+                    own_targets.add(item.strip().replace("\\", "/").lstrip("./"))
+
+        # Collect candidate relative paths: existing own targets first, then any
+        # other existing workspace source file (the dependency surface).
+        candidates: list[str] = []
+        seen: set[str] = set()
+
+        def _add(rel: str) -> None:
+            norm = rel.replace("\\", "/")
+            if norm and norm not in seen:
+                seen.add(norm)
+                candidates.append(norm)
+
+        for rel in sorted(own_targets):
+            if (self.workspace / rel).is_file():
+                _add(rel)
+
+        workspace_root = self.workspace.resolve()
+        if workspace_root.is_dir():
+            for suffix in self._EXISTING_SUMMARY_SOURCE_SUFFIXES:
+                for full_path in sorted(workspace_root.rglob(f"*{suffix}")):
+                    if not full_path.is_file():
+                        continue
+                    parts = set(full_path.relative_to(workspace_root).parts)
+                    if parts & {".polaris", "runtime", "node_modules", "__pycache__", ".git", "dist", "build"}:
+                        continue
+                    try:
+                        rel = str(full_path.relative_to(workspace_root))
+                    except ValueError:
+                        continue
+                    norm = rel.replace("\\", "/")
+                    if norm in own_targets:
+                        continue  # the task is (re)writing this; not a frozen dependency
+                    _add(rel)
+                    if len(candidates) >= self._EXISTING_SUMMARY_MAX_FILES:
+                        break
+                if len(candidates) >= self._EXISTING_SUMMARY_MAX_FILES:
+                    break
+
         summaries: list[dict[str, str]] = []
-        for rel_path in target_files:
-            if not isinstance(rel_path, str) or not rel_path.strip():
-                continue
+        for rel_path in candidates[: self._EXISTING_SUMMARY_MAX_FILES]:
             full_path = self.workspace / rel_path
             if not full_path.is_file():
                 continue
@@ -869,9 +936,8 @@ class OrchestrationStageExecutor:
                 continue
             if not content.strip():
                 continue
-            # For source code files, extract export signatures
             suffix = full_path.suffix.lower()
-            if suffix in (".js", ".ts", ".mjs", ".cjs"):
+            if suffix in (".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"):
                 summary = self._extract_js_export_summary(content)
             elif suffix == ".py":
                 summary = self._extract_py_export_summary(content)
@@ -891,7 +957,13 @@ class OrchestrationStageExecutor:
             if not stripped or stripped.startswith("//") or stripped.startswith("/*"):
                 continue
             # module.exports = ...
-            if _re.match(r"module\.exports\s*=", stripped) or _re.match(r"exports\.\w+", stripped) or _re.match(r"(?:export\s+)?class\s+\w+", stripped) or _re.match(r"(?:export\s+)?(?:async\s+)?function\s+\w+", stripped) or _re.match(r"(?:export\s+)?(?:const|let)\s+\w+\s*=\s*(?:async\s+)?\(", stripped):
+            if (
+                _re.match(r"module\.exports\s*=", stripped)
+                or _re.match(r"exports\.\w+", stripped)
+                or _re.match(r"(?:export\s+)?class\s+\w+", stripped)
+                or _re.match(r"(?:export\s+)?(?:async\s+)?function\s+\w+", stripped)
+                or _re.match(r"(?:export\s+)?(?:const|let)\s+\w+\s*=\s*(?:async\s+)?\(", stripped)
+            ):
                 lines.append(stripped[:200])
         if not lines:
             # Fallback: first 30 non-empty lines

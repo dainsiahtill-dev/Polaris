@@ -347,6 +347,70 @@ class TestFrontendTestRepairContracts:
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
+    def test_go_directive_prefers_go_module_over_html_fallback(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+请基于 Architect 阶段产物生成 PM 执行任务合同。
+
+## Original Requirement Excerpt
+# Product Requirements — 时间胶囊博物馆
+
+## Goal
+- 用 Go 实现「时间胶囊博物馆」。创意钩子: 未来才可打开的记忆展品有谜语和展厅布局。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。
+
+## Project Metadata
+- 主语言: go
+- 领域: creative
+- 项目类型: memory_app
+
+## Acceptance Criteria
+- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。
+- 必须提供至少一种真实可执行入口, 且验收脚本可自动发现: Web/visual/simulation/game 项目提供含 <html> 的 index.html 或等价 HTML 入口; CLI 项目提供 package.json 脚本或可直接执行的 main 文件; API 项目提供可启动服务入口和健康检查说明。
+- 附 README.md 说明如何运行。
+- 关键验收维度: 未来才可打开的记忆展品有谜语和展厅布局; 同时验证 Go 产物结构、入口可运行性和核心领域规则。
+
+## Deterministic Checks
+- go_compile
+- min_files:4
+- content_any:capsule|museum|riddle|unlock
+- source_target_coverage:**/*.go
+
+## Source Tree Structure Contract (MANDATORY)
+- 必须包含 `src/` 或项目级 Go 包, 核心业务逻辑在 `.go` 文件中。
+- 至少包含 `models/`、`engine/`、`main.go` 和 `*_test.go`。
+""".strip()
+
+        contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+        _normalized, quality = adapter._evaluate_contract_quality(contracts, directive=directive)
+        targets = [target for item in contracts for target in item.get("target_files", [])]
+        serialized = json.dumps(contracts, ensure_ascii=False)
+
+        assert len(contracts) == 3
+        assert "go.mod" in targets
+        assert "main.go" in targets
+        assert "models/capsule.go" in targets
+        assert "models/exhibit.go" in targets
+        assert "engine/museum.go" in targets
+        assert "engine/riddle.go" in targets
+        assert "engine/unlock.go" in targets
+        assert "main_test.go" in targets
+        assert "tests/test_product.py" in targets
+        assert "README.md" in targets
+        assert "index.html" not in targets
+        assert "styles.css" not in targets
+        assert "go_compile" in serialized
+        assert "source_target_coverage:**/*.go" in serialized
+        assert "go test ./..." in serialized
+        assert "go run ." in serialized
+        assert "capsule" in serialized
+        assert "museum" in serialized
+        assert "riddle" in serialized
+        assert "unlock" in serialized
+        assert "polaris.delivery_plan_document.v1" in serialized
+        assert "polaris.delivery_depth_contract.v1" in serialized
+        assert quality["ok"] is True
+        assert (quality.get("score") or 0) >= 80
+
     def test_rust_root_workspace_directive_prefers_cargo_contracts(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         directive = """

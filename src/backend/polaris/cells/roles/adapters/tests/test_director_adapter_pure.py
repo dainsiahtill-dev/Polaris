@@ -3187,118 +3187,7 @@ def test_rust_post_aggregate_excludes_runtime_migrated_span_repairs(
     assert batches == []
 
 
-def test_rust_post_repairs_run_legacy_on_shadow_and_write_back_with_director_tool(
-    tmp_path: Any,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
-    from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
-
-    cargo = tmp_path / "Cargo.toml"
-    cargo.write_text(
-        '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n',
-        encoding="utf-8",
-    )
-    src = tmp_path / "src" / "lib.rs"
-    src.parent.mkdir(parents=True)
-    src.write_text("pub fn demo() -> i32 { 1 }\n", encoding="utf-8")
-
-    legacy_workspaces: list[Path] = []
-
-    def fake_run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
-        legacy_workspaces.append(workspace.resolve())
-        assert workspace.resolve() != tmp_path.resolve()
-        shadow_cargo = workspace / "Cargo.toml"
-        shadow_cargo.write_text(
-            shadow_cargo.read_text(encoding="utf-8") + '\n[dependencies]\nserde = "1"\n',
-            encoding="utf-8",
-        )
-        return [
-            {
-                "source_tool": "deterministic_rust_lib_root_facade_repair",
-                "file": "Cargo.toml",
-                "action": "legacy lib root facade shadow write",
-                "phase": "structural",
-                "priority": 0,
-                "round_number": 1,
-                "revalidation": {"command": "cargo check", "exit_code": 0},
-            }
-        ]
-
-    writes: list[tuple[str, str, str]] = []
-
-    class FakeDirectorToolExecutor:
-        def __init__(self, workspace: str, *, message_bus: Any = None, worker_id: str = "") -> None:
-            self.workspace = workspace
-            self.message_bus = message_bus
-            self.worker_id = worker_id
-
-        def execute_tool(self, tool_name: str, payload: dict[str, str], *, task_id: str) -> dict[str, Any]:
-            file_path = payload["file"]
-            content = payload["content"]
-            (tmp_path / file_path).write_text(content, encoding="utf-8")
-            writes.append((tool_name, task_id, file_path))
-            return {
-                "ok": True,
-                "file": file_path,
-                "bytes_written": len(content.encode("utf-8")),
-                "operation": "modify",
-                "broadcast_ok": True,
-                "director_policy": {"allowed": True},
-            }
-
-    class FakeAdapter:
-        def __init__(self) -> None:
-            self.workspace = str(tmp_path)
-            self._execution = SimpleNamespace(_message_bus=None)
-            self.progress: list[tuple[str, str, str | None]] = []
-
-        def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
-            self.progress.append((task_id, state, current_file))
-
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fake_run_all_rust_post_repairs)
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
-    monkeypatch.setattr(
-        post_execution_repair_bridge,
-        "_runtime_executable_source_tools",
-        lambda: frozenset({"deterministic_rust_dependency_repair"}),
-    )
-
-    adapter = FakeAdapter()
-    results = post_execution_repair_bridge._run_rust_post_repairs(adapter, tmp_path, task_id="task-rust")
-
-    assert len(legacy_workspaces) == 1
-    assert legacy_workspaces[0] != tmp_path.resolve()
-    assert writes == [("write_file", "task-rust", "Cargo.toml")]
-    assert 'serde = "1"' in cargo.read_text(encoding="utf-8")
-    assert adapter.progress[-1] == ("task-rust", "executing", "Cargo.toml")
-    assert len(results) == 1
-    result = results[0]["result"]
-    assert result["source_tool"] == "deterministic_rust_lib_root_facade_repair"
-    assert result["file"] == "Cargo.toml"
-    assert result["legacy_shadow_workspace"] is True
-    assert result["legacy_shadow_applied_via_director_tools"] is True
-    assert result["legacy_shadow_source_tools"] == ["deterministic_rust_lib_root_facade_repair"]
-    assert result["legacy_aggregate_remaining_source_tools"] == [
-        "deterministic_rust_lib_root_facade_repair",
-        "deterministic_rust_missing_fields_repair",
-    ]
-    assert result["remaining_legacy_subcases"] == [
-        "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
-        "deterministic_rust_lib_root_facade_repair:path_rewrite",
-        "deterministic_rust_missing_fields_repair:field_declaration",
-    ]
-    assert result["runtime_migrated_subcases"] == []
-    assert result["legacy_aggregate_remaining_source_tool_count"] == 2
-    assert result["legacy_aggregate_remaining_legacy_subcase_count"] == 3
-    assert result["legacy_aggregate_runtime_migrated_subcase_count"] == 0
-    assert result["legacy_aggregate_cutover_ready"] is False
-    assert result["before_hash"] != result["after_hash"]
-    assert result["revalidation_scope"] == "legacy_shadow_workspace"
-    assert result["director_policy"] == {"allowed": True}
-
-
-def test_rust_post_repairs_prefer_director_edit_file_for_existing_source_changes(
+def test_rust_post_repairs_run_remaining_rules_through_runtime_bridge(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3311,84 +3200,52 @@ def test_rust_post_repairs_prefer_director_edit_file_for_existing_source_changes
     )
     src = tmp_path / "src" / "lib.rs"
     src.parent.mkdir(parents=True)
-    src.write_text("pub fn demo() -> i32 {\n    1\n}\n", encoding="utf-8")
+    src.write_text("pub struct Demo;\n", encoding="utf-8")
+    raw_error = "error[E0609]: no field `name` on type `Demo`\nerror[E0432]: unresolved import `demo::external`"
 
-    def fake_run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
-        shadow_src = workspace / "src" / "lib.rs"
-        shadow_src.write_text("pub fn demo() -> i32 {\n    2\n}\n", encoding="utf-8")
-        return [
-            {
-                "source_tool": "deterministic_rust_missing_fields_repair",
-                "file": "src/lib.rs",
-                "action": "repair_return_value",
-            }
-        ]
-
-    edits: list[tuple[str, str, str]] = []
-
-    class FakeDirectorToolExecutor:
-        def __init__(self, workspace: str, *, message_bus: Any = None, worker_id: str = "") -> None:
-            self.workspace = workspace
-            self.message_bus = message_bus
-            self.worker_id = worker_id
-
-        def execute_tool(self, tool_name: str, payload: dict[str, str], *, task_id: str) -> dict[str, Any]:
-            assert tool_name == "edit_file"
-            file_path = payload["file"]
-            target = tmp_path / file_path
-            content = target.read_text(encoding="utf-8")
-            assert payload["search"] in content
-            target.write_text(content.replace(payload["search"], payload["replace"], 1), encoding="utf-8")
-            edits.append((tool_name, task_id, file_path))
-            return {
-                "ok": True,
-                "file": file_path,
-                "replacements": 1,
-                "broadcast_ok": True,
-                "director_policy": {"allowed": True},
-            }
+    def fail_if_legacy_aggregate_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("Rust post repairs must not run legacy aggregate shadow replay")
 
     class FakeAdapter:
         def __init__(self) -> None:
             self.workspace = str(tmp_path)
             self._execution = SimpleNamespace(_message_bus=None)
+            self.artifact_quality_errors = [raw_error]
 
         def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
             return None
 
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fake_run_all_rust_post_repairs)
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
-    monkeypatch.setattr(
-        post_execution_repair_bridge,
-        "_runtime_executable_source_tools",
-        lambda: frozenset({"deterministic_rust_dependency_repair"}),
-    )
+    called: list[tuple[str, bool]] = []
 
-    results = post_execution_repair_bridge._run_rust_post_repairs(FakeAdapter(), tmp_path, task_id="task-rust-edit")
+    def fake_runtime_bridge(
+        adapter: Any,
+        *,
+        workspace_path: Path,
+        task_id: str,
+        source_tool: str,
+        base_files: dict[str, str],
+        artifact_quality_errors: tuple[str, ...] = (),
+        use_editor: bool,
+        **_kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        assert isinstance(adapter, FakeAdapter)
+        assert workspace_path == tmp_path.resolve()
+        assert task_id == "task-rust-runtime"
+        assert base_files["src/lib.rs"] == "pub struct Demo;\n"
+        assert raw_error.strip() in artifact_quality_errors
+        called.append((source_tool, use_editor))
+        return []
 
-    assert edits == [("edit_file", "task-rust-edit", "src/lib.rs")]
-    assert "    2\n" in src.read_text(encoding="utf-8")
-    assert len(results) == 1
-    assert results[0]["tool_name"] == "edit_file"
-    result = results[0]["result"]
-    assert result["operation"] == "edit_file"
-    assert result["replacements"] == 1
-    assert result["legacy_shadow_applied_via_director_tools"] is True
-    assert result["legacy_shadow_source_tools"] == ["deterministic_rust_missing_fields_repair"]
-    assert result["legacy_aggregate_remaining_source_tools"] == [
-        "deterministic_rust_lib_root_facade_repair",
-        "deterministic_rust_missing_fields_repair",
+    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fail_if_legacy_aggregate_called)
+    monkeypatch.setattr(post_execution_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
+
+    results = post_execution_repair_bridge._run_rust_post_repairs(FakeAdapter(), tmp_path, task_id="task-rust-runtime")
+
+    assert results == []
+    assert called[-2:] == [
+        ("deterministic_rust_missing_fields_repair", True),
+        ("deterministic_rust_lib_root_facade_repair", True),
     ]
-    assert result["remaining_legacy_subcases"] == [
-        "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
-        "deterministic_rust_lib_root_facade_repair:path_rewrite",
-        "deterministic_rust_missing_fields_repair:field_declaration",
-    ]
-    assert result["runtime_migrated_subcases"] == []
-    assert result["legacy_aggregate_remaining_source_tool_count"] == 2
-    assert result["legacy_aggregate_remaining_legacy_subcase_count"] == 3
-    assert result["legacy_aggregate_runtime_migrated_subcase_count"] == 0
-    assert result["legacy_aggregate_cutover_ready"] is False
 
 
 def test_post_execution_advisory_overlay_flows_into_runtime_receipt(

@@ -61,6 +61,28 @@ def _directive_requires_cpp_package_contract(directive: str) -> bool:
     )
 
 
+def _directive_requires_go_workspace_contract(directive: str) -> bool:
+    text = str(directive or "")
+    lower = text.lower()
+    has_explicit_go_metadata = bool(
+        re.search(r"(?im)^\s*[-*]?\s*(?:主语言|main language)\s*[:：]\s*go\s*(?:$|[;,.，。])", text)
+    )
+    has_explicit_go_goal = bool(re.search(r"(?i)(?:用\s+go\s+实现|implement(?:ed)?\s+in\s+go)", text))
+    has_explicit_go_artifact = any(
+        token in lower
+        for token in (
+            ".go",
+            "go.mod",
+            "go test",
+            "go run",
+            "go_compile",
+            "source_target_coverage:**/*.go",
+            "source_target_coverage:src/**/*.go",
+        )
+    )
+    return has_explicit_go_metadata or has_explicit_go_goal or has_explicit_go_artifact
+
+
 def _directive_requires_java_package_contract(directive: str) -> bool:
     text = str(directive or "")
     lower = str(directive or "").lower()
@@ -90,6 +112,7 @@ def _directive_requires_javascript_package_contract(directive: str) -> bool:
         _directive_requires_typescript_package_contract(directive)
         or _directive_requires_rust_package_contract(directive)
         or _directive_requires_cpp_package_contract(directive)
+        or _directive_requires_go_workspace_contract(directive)
         or _directive_requires_java_package_contract(directive)
     ):
         return False
@@ -133,7 +156,7 @@ def _directive_requires_python_workspace_contract(directive: str) -> bool:
 
 
 _DETERMINISTIC_CHECK_RE = re.compile(
-    r"(?i)(html|ts_syntax|js_syntax|py_compile|package_scripts|rust_compile|cpp_compile|java_compile|min_files:\d+|source_target_coverage:[^\s]+|content_any:[A-Za-z0-9_|-]+)"
+    r"(?i)(html|ts_syntax|js_syntax|py_compile|package_scripts|rust_compile|cpp_compile|java_compile|go_compile|min_files:\d+|source_target_coverage:[^\s]+|content_any:[A-Za-z0-9_|-]+)"
 )
 _CONTENT_ANY_RE = re.compile(r"(?i)content_any:([A-Za-z0-9_|-]+)")
 
@@ -547,6 +570,17 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             )
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(python_contracts)
+            ]
+            return [item for item in contracts if isinstance(item, dict)]
+
+        if _directive_requires_go_workspace_contract(directive):
+            go_contracts = self._synthesize_go_workspace_contracts(
+                directive=directive,
+                domain_label=str(domain_label),
+                source_metadata=source_metadata,
+            )
+            contracts = [
+                self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(go_contracts)
             ]
             return [item for item in contracts if isinstance(item, dict)]
 
@@ -1178,6 +1212,143 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
                         "`python src/main.py` 与 `python -m src.main` 都返回 PASS",
                         "`README.md` 包含依赖安装、编译、测试和启动步骤",
+                        f"确定性检查进入任务验收：{check_summary}",
+                    ],
+                    "phase": "verification",
+                    "depends_on": ["TASK-2"],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+            ],
+            delivery_plan_document=delivery_plan_document,
+            delivery_depth_contract=delivery_depth_contract,
+        )
+
+    def _synthesize_go_workspace_contracts(
+        self,
+        *,
+        directive: str,
+        domain_label: str,
+        source_metadata: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        deterministic_checks = [
+            check for check in _extract_deterministic_checks_from_directive(directive) if check.lower() != "html"
+        ]
+        content_keywords = _extract_content_any_keywords_from_directive(directive)
+        if not content_keywords:
+            content_keywords = self._extract_domain_keywords(directive, limit=6)
+        keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
+        check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "go_compile; go test ./..."
+        model_targets = [
+            "go.mod",
+            "models/capsule.go",
+            "models/exhibit.go",
+            "models/gallery.go",
+        ]
+        engine_targets = [
+            "engine/museum.go",
+            "engine/riddle.go",
+            "engine/unlock.go",
+            "main.go",
+        ]
+        verification_targets = [
+            "main_test.go",
+            "tests/test_product.py",
+            "README.md",
+        ]
+        delivery_depth_contract = _delivery_depth_contract(
+            domain_label=domain_label,
+            language="go",
+            project_type="go_module",
+            keywords=content_keywords,
+            checks=deterministic_checks,
+        )
+        delivery_plan_document = _delivery_plan_document(
+            domain_label=domain_label,
+            language="go",
+            project_type="go_module",
+            keywords=content_keywords,
+            checks=deterministic_checks,
+        )
+        return _append_delivery_depth_to_contracts(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": f"实现 {domain_label} Go 模块与领域模型",
+                    "goal": f"在工作区根交付 {domain_label} 的 go.mod 与项目级 Go 领域模型源码。",
+                    "description": (
+                        "创建 go.mod 与 models/ 下的 Go 源文件，定义时间胶囊、展品和展厅布局等领域实体，"
+                        f"确保 .go 源码覆盖需求关键词：{keyword_summary}。"
+                    ),
+                    "scope": model_targets,
+                    "target_files": model_targets,
+                    "steps": [
+                        "创建 go.mod，声明可被 `go test ./...` 加载的本地 Go module",
+                        "实现 models/capsule.go、models/exhibit.go 与 models/gallery.go，封装领域数据结构和校验规则",
+                        f"Go 源码中必须真实使用或保留验收关键词：{keyword_summary}",
+                        "执行 `go test ./...` 或等价命令验证模块可编译",
+                    ],
+                    "acceptance": [
+                        "`go.mod` 与 `models/*.go` 存在且非空",
+                        "`go test ./...` 返回成功并编译当前 Go module",
+                        f"Go 源码包含需求关键词：{keyword_summary}",
+                        f"确定性检查进入任务验收：{check_summary}",
+                    ],
+                    "phase": "requirements",
+                    "depends_on": [],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+                {
+                    "id": "TASK-2",
+                    "title": f"实现 {domain_label} Go 规则引擎与 CLI 入口",
+                    "goal": f"实现 {domain_label} 的解锁规则、谜语验证、展厅布局和可执行 Go 入口。",
+                    "description": (
+                        "补齐 engine/ 下的核心规则与 main.go，"
+                        f"让 `go run .` 执行真实领域流程并输出覆盖需求关键词的结果：{keyword_summary}。"
+                    ),
+                    "scope": [*model_targets, *engine_targets],
+                    "target_files": [*model_targets, *engine_targets],
+                    "steps": [
+                        "实现 engine/museum.go，组织展厅布局与展品查询流程",
+                        "实现 engine/riddle.go，封装谜语校验和提示规则",
+                        "实现 engine/unlock.go，封装未来时间锁定和解锁判定",
+                        "实现 main.go，调用 models/ 与 engine/ 的公开 API，提供可执行 CLI 或文本入口",
+                        "入口必须运行真实核心规则，不能只打印静态占位文本",
+                    ],
+                    "acceptance": [
+                        "`engine/*.go` 与 `main.go` 存在且非空",
+                        "`go run .` 返回成功并执行真实核心规则",
+                        "`go test ./...` 返回成功",
+                        f"源码或入口输出覆盖需求关键词：{keyword_summary}",
+                    ],
+                    "phase": "implementation",
+                    "depends_on": ["TASK-1"],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+                {
+                    "id": "TASK-3",
+                    "title": f"实现 {domain_label} Go 测试、外部验收与 README",
+                    "goal": f"固化 {domain_label} 的 Go 编译、单元测试、入口 smoke 和交付说明。",
+                    "description": (
+                        "创建 main_test.go、tests/test_product.py 与 README，验证 **/*.go 覆盖、go_compile、"
+                        f"真实入口和核心领域规则：{check_summary}。"
+                    ),
+                    "scope": [*model_targets, *engine_targets, *verification_targets],
+                    "target_files": [*model_targets, *engine_targets, *verification_targets],
+                    "steps": [
+                        "实现 main_test.go，使用 Go testing 包覆盖 capsule、museum、riddle、unlock 核心规则",
+                        "实现 tests/test_product.py，使用 Python unittest 检查至少多个 .go 源文件、go.mod、go test 和 go run 入口",
+                        "README 记录依赖要求、`go test ./...`、`go run .` 和验收脚本执行方式",
+                        f"验证脚本覆盖确定性检查：{check_summary}",
+                    ],
+                    "acceptance": [
+                        "`main_test.go` 与 `tests/test_product.py` 存在且可执行",
+                        "`go test ./...` 返回成功",
+                        "`go run .` 返回成功",
+                        "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
+                        "`README.md` 包含编译、测试和启动步骤",
                         f"确定性检查进入任务验收：{check_summary}",
                     ],
                     "phase": "verification",

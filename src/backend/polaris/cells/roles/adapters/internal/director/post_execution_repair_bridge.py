@@ -135,6 +135,21 @@ def run_post_execution_language_repairs(
                 advisor_notes=runtime_advisor_notes,
                 convergence_verifier=convergence_verifier,
             )
+        if step.step_id == "rust.dependency_resolution":
+            return _run_rust_dependency_repair(
+                adapter,
+                task_id=task_id,
+                advisor_notes=runtime_advisor_notes,
+                convergence_verifier=convergence_verifier,
+            )
+        if step.step_id == "rust.post_execution_convergence":
+            return _run_rust_post_repairs(
+                adapter,
+                workspace,
+                task_id=task_id,
+                advisor_notes=runtime_advisor_notes,
+                convergence_verifier=convergence_verifier,
+            )
         if step.step_id == "java.post_execution":
             return _run_java_post_repairs(
                 adapter,
@@ -493,6 +508,8 @@ def _run_rust_post_repairs(
     workspace: Path,
     *,
     task_id: str,
+    advisor_notes: RuntimeAdvisorNotes = (),
+    convergence_verifier: ConvergenceVerifier | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     if not (workspace_path / "Cargo.toml").is_file():
@@ -592,6 +609,8 @@ def _run_rust_post_repairs(
             adapter,
             workspace_path,
             task_id=task_id,
+            advisor_notes=advisor_notes,
+            convergence_verifier=convergence_verifier,
         )
     )
     tool_results.extend(
@@ -599,6 +618,8 @@ def _run_rust_post_repairs(
             adapter,
             workspace_path,
             task_id=task_id,
+            advisor_notes=advisor_notes,
+            convergence_verifier=convergence_verifier,
         )
     )
     return tool_results
@@ -608,6 +629,8 @@ def _run_rust_dependency_repair(
     adapter: Any,
     *,
     task_id: str,
+    advisor_notes: RuntimeAdvisorNotes = (),
+    convergence_verifier: ConvergenceVerifier | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
     if not (workspace_path / "Cargo.toml").is_file():
@@ -624,7 +647,10 @@ def _run_rust_dependency_repair(
         base_files=base_files,
         artifact_quality_errors=_rust_post_execution_artifact_quality_errors(adapter),
         allowed_paths=tuple(base_files.keys()),
+        advisor_notes=advisor_notes,
         use_editor=False,
+        convergence_verifier=convergence_verifier,
+        max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
     )
 
 
@@ -961,6 +987,8 @@ def _run_rust_missing_fields_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    advisor_notes: RuntimeAdvisorNotes = (),
+    convergence_verifier: ConvergenceVerifier | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -976,7 +1004,10 @@ def _run_rust_missing_fields_runtime_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
+        advisor_notes=advisor_notes,
         use_editor=True,
+        convergence_verifier=convergence_verifier,
+        max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
     )
 
 
@@ -985,6 +1016,8 @@ def _run_rust_lib_root_facade_runtime_repair(
     workspace: Path,
     *,
     task_id: str,
+    advisor_notes: RuntimeAdvisorNotes = (),
+    convergence_verifier: ConvergenceVerifier | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = workspace.resolve()
     base_files = _collect_rust_base_files(workspace_path)
@@ -1000,7 +1033,10 @@ def _run_rust_lib_root_facade_runtime_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
+        advisor_notes=advisor_notes,
         use_editor=True,
+        convergence_verifier=convergence_verifier,
+        max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
     )
 
 

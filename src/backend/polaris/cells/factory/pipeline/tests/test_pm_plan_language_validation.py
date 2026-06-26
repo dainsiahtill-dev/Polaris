@@ -199,6 +199,28 @@ class TestPMPlanLanguageConsistency:
             result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
         assert result == ""
 
+    def test_go_project_with_go_mod_manifest_passes(self, tmp_path: Path) -> None:
+        """Go manifest files are language-neutral and must not trigger mismatch."""
+        tasks = [
+            {
+                "id": "TASK-1",
+                "goal": "Implement Go CLI",
+                "target_files": [
+                    "go.mod",
+                    "go.sum",
+                    "models/capsule.go",
+                    "engine/museum.go",
+                    "main.go",
+                    "tests/test_product.py",
+                    "README.md",
+                ],
+            }
+        ]
+        executor = self._build_executor(tmp_path, tasks, "go")
+        with patch.object(type(executor), "_load_pm_plan_tasks", return_value=tasks):
+            result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
+        assert result == ""
+
     def test_cpp_project_with_java_files_detected(self, tmp_path: Path) -> None:
         """PM plans .java files for a cpp project -> mismatch."""
         tasks = [

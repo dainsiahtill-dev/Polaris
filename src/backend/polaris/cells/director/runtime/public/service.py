@@ -64,6 +64,7 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairConvergenceRoundResultV1,
     DirectorRepairConvergenceVerifierRequestV1,
     DirectorRepairCoverageReportV1,
+    DirectorRepairCutoverReadinessResultV1,
     DirectorRepairDiagnosticCoverageV1,
     DirectorRepairKernelSummaryProjectionResultV1,
     DirectorRepairLanguageSlotsResultV1,
@@ -84,6 +85,7 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairShadowComparisonResultV1,
     DirectorRepairStrategyCatalogResultV1,
     DirectorRepairVerifierSnapshotInputV1,
+    EvaluateDirectorRepairCutoverReadinessV1,
     PlanDirectorRepairCommandV1,
     ProjectDirectorRepairKernelSummaryV1,
     QueryDirectorRepairAdvisoryPolicyV1,
@@ -704,6 +706,67 @@ def compare_director_repair_shadow_run(
         cutover_ready=readiness["cutover_ready"],
         cutover_blockers=tuple(readiness["cutover_blockers"]),
         metadata=metadata,
+    )
+
+
+def evaluate_director_repair_cutover_readiness(
+    command: EvaluateDirectorRepairCutoverReadinessV1,
+) -> DirectorRepairCutoverReadinessResultV1:
+    """Evaluate repeated shadow comparisons before allowing migration cutover."""
+
+    comparisons = tuple(command.comparisons or ())
+    required_successful_runs = max(1, int(command.required_successful_runs or 0))
+    successful = tuple(comparison for comparison in comparisons if _shadow_comparison_is_successful(comparison))
+    blockers: list[str] = []
+    if len(successful) < required_successful_runs:
+        blockers.append("insufficient_successful_independent_shadow_runs")
+    failed_indices = tuple(index for index, comparison in enumerate(comparisons) if not _shadow_comparison_is_successful(comparison))
+    if failed_indices:
+        blockers.append("shadow_comparison_not_cutover_ready")
+    scope_signatures = tuple(_shadow_comparison_scope_signature(comparison) for comparison in successful)
+    if len(set(scope_signatures)) > 1:
+        blockers.append("shadow_comparison_scope_drift")
+    return DirectorRepairCutoverReadinessResultV1(
+        schema_version="director.repair_cutover_readiness.v1",
+        source="director.runtime.repair_kernel.cutover_gate",
+        access="read_only",
+        cutover_ready=not blockers,
+        required_successful_runs=required_successful_runs,
+        comparison_count=len(comparisons),
+        successful_comparison_count=len(successful),
+        cutover_blockers=tuple(sorted(set(blockers))),
+        metadata={
+            "comparison_modes": [comparison.comparison_mode for comparison in comparisons],
+            "failed_comparison_indices": list(failed_indices),
+            "successful_comparison_indices": [
+                index for index, comparison in enumerate(comparisons) if _shadow_comparison_is_successful(comparison)
+            ],
+            "scope_signatures": [list(signature) for signature in scope_signatures],
+            "independent_shadow_required": True,
+            "multi_run_cutover_gate": True,
+        },
+    )
+
+
+def _shadow_comparison_is_successful(comparison: DirectorRepairShadowComparisonResultV1) -> bool:
+    return (
+        comparison.cutover_ready
+        and comparison.comparison_mode == "independent_shadow_run"
+        and comparison.independent_shadow_satisfied
+        and not comparison.cutover_blockers
+    )
+
+
+def _shadow_comparison_scope_signature(comparison: DirectorRepairShadowComparisonResultV1) -> tuple[str, ...]:
+    return (
+        "legacy_paths",
+        *comparison.legacy_paths,
+        "kernel_paths",
+        *comparison.kernel_paths,
+        "legacy_source_tools",
+        *comparison.legacy_source_tools,
+        "kernel_source_tools",
+        *comparison.kernel_source_tools,
     )
 
 
@@ -1892,6 +1955,7 @@ __all__ = [
     "DirectorRepairConvergenceRoundResultV1",
     "DirectorRepairConvergenceVerifierFn",
     "DirectorRepairConvergenceVerifierRequestV1",
+    "DirectorRepairCutoverReadinessResultV1",
     "DirectorRepairKernelSummaryProjectionResultV1",
     "DirectorRepairMaterializationQualityScheduleResultV1",
     "DirectorRepairMaterializationQualityStepV1",
@@ -1902,11 +1966,13 @@ __all__ = [
     "DirectorRepairRevalidationRequestV1",
     "DirectorRepairRevalidatorFn",
     "DirectorRepairVerifierSnapshotInputV1",
+    "EvaluateDirectorRepairCutoverReadinessV1",
     "ProjectDirectorRepairKernelSummaryV1",
     "RunDirectorRepairConvergenceCommandV1",
     "attach_director_repair_revalidation_evidence",
     "build_director_repair_kernel_summary",
     "compare_director_repair_shadow_run",
+    "evaluate_director_repair_cutover_readiness",
     "plan_director_repair",
     "project_director_repair_kernel_summary",
     "project_director_repair_revalidation_evidence",

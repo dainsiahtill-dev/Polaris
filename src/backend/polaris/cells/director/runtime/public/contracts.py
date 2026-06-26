@@ -1952,6 +1952,75 @@ class DirectorRepairShadowComparisonResultV1:
 
 
 @dataclass(frozen=True)
+class EvaluateDirectorRepairCutoverReadinessV1:
+    """Read-only command for requiring repeated independent shadow success before cutover."""
+
+    comparisons: tuple[DirectorRepairShadowComparisonResultV1, ...] = ()
+    required_successful_runs: int = 2
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "comparisons", tuple(self.comparisons or ()))
+        required = int(self.required_successful_runs or 0)
+        object.__setattr__(self, "required_successful_runs", max(1, required))
+
+
+@dataclass(frozen=True)
+class DirectorRepairCutoverReadinessResultV1:
+    """Public read-only gate result for deterministic repair cutover readiness."""
+
+    schema_version: str
+    source: str
+    access: str
+    cutover_ready: bool
+    required_successful_runs: int
+    comparison_count: int
+    successful_comparison_count: int
+    cutover_blockers: tuple[str, ...] = ()
+    owner_cell: str = "director.runtime"
+    execution_boundary: str = "read_only_cutover_gate_no_writes"
+    writes_allowed: bool = False
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        object.__setattr__(self, "access", _require_non_empty("access", self.access))
+        object.__setattr__(self, "cutover_ready", bool(self.cutover_ready))
+        object.__setattr__(self, "required_successful_runs", max(1, int(self.required_successful_runs or 0)))
+        object.__setattr__(self, "comparison_count", max(0, int(self.comparison_count or 0)))
+        object.__setattr__(
+            self,
+            "successful_comparison_count",
+            max(0, int(self.successful_comparison_count or 0)),
+        )
+        object.__setattr__(self, "cutover_blockers", _to_tuple_str(list(self.cutover_blockers)))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+        object.__setattr__(self, "writes_allowed", False)
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "access": self.access,
+            "owner_cell": self.owner_cell,
+            "execution_boundary": self.execution_boundary,
+            "writes_allowed": False,
+            "cutover_ready": self.cutover_ready,
+            "required_successful_runs": self.required_successful_runs,
+            "comparison_count": self.comparison_count,
+            "successful_comparison_count": self.successful_comparison_count,
+            "cutover_blockers": list(self.cutover_blockers),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
 class DirectorRepairResultV1:
     """Result shape for Director Runtime repair execution."""
 
@@ -2190,6 +2259,7 @@ __all__ = [
     "DirectorRepairConvergenceRoundResultV1",
     "DirectorRepairConvergenceVerifierRequestV1",
     "DirectorRepairCoverageReportV1",
+    "DirectorRepairCutoverReadinessResultV1",
     "DirectorRepairDiagnosticCoverageV1",
     "DirectorRepairKernelSummaryProjectionResultV1",
     "DirectorRepairLanguageSlotV1",
@@ -2211,6 +2281,7 @@ __all__ = [
     "DirectorRepairStrategyCatalogResultV1",
     "DirectorRepairVerifierSnapshotInputV1",
     "DirectorRuntimeError",
+    "EvaluateDirectorRepairCutoverReadinessV1",
     "PlanDirectorRepairCommandV1",
     "ProjectDirectorRepairKernelSummaryV1",
     "QueryDirectorRepairAdvisoryPolicyV1",
