@@ -347,6 +347,26 @@ async def execute_transaction_kernel_turn(
     context_os_audit_summary = summarize_context_os_audit_from_ledger(ledger)
     if context_os_audit_summary:
         metadata["context_os_audit"] = context_os_audit_summary
+    llm_response_metadata = tk_result.get("llm_response_metadata")
+    if isinstance(llm_response_metadata, dict):
+        for key in (
+            "final_request_context_audit",
+            "context_snapshot_ref",
+            "context_snapshot_degraded",
+            "context_snapshot_degraded_reason",
+            "context_tokens_after",
+            "contextTokens",
+            "usage",
+            "usage_source",
+        ):
+            if key in llm_response_metadata and key not in metadata:
+                value = llm_response_metadata.get(key)
+                metadata[key] = dict(value) if isinstance(value, dict) else value
+        if "context_os_audit" in llm_response_metadata and "context_os_audit" not in metadata:
+            raw_context_os_audit = llm_response_metadata.get("context_os_audit")
+            metadata["context_os_audit"] = (
+                dict(raw_context_os_audit) if isinstance(raw_context_os_audit, dict) else raw_context_os_audit
+            )
     if kind == "handoff_workflow" and workflow_context is not None:
         handoff_pack = kernel._build_context_handoff_pack(tk_result, role, request)
         metadata["handoff_pack"] = handoff_pack.to_dict()

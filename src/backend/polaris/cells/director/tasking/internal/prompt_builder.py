@@ -156,6 +156,124 @@ class PromptBuilder:
                 break
         return items
 
+    @staticmethod
+    def _metadata_mapping(value: Any) -> dict[str, Any]:
+        return dict(value) if isinstance(value, dict) else {}
+
+    def _contract_mapping(self, metadata: dict[str, Any], key: str) -> dict[str, Any]:
+        direct = self._metadata_mapping(metadata.get(key))
+        if direct:
+            return direct
+        task_payload = self._metadata_mapping(metadata.get("task"))
+        nested = self._metadata_mapping(task_payload.get(key))
+        if nested:
+            return nested
+        task_metadata = self._metadata_mapping(task_payload.get("metadata"))
+        return self._metadata_mapping(task_metadata.get(key))
+
+    def _contract_text_items(
+        self,
+        value: Any,
+        *,
+        limit: int = 6,
+        max_chars: int = 240,
+    ) -> list[str]:
+        if isinstance(value, dict):
+            raw_items: list[Any] = []
+            for key, item in value.items():
+                if isinstance(item, (list, tuple, dict)):
+                    raw_items.append({str(key): item})
+                else:
+                    raw_items.append(f"{key}: {item}")
+        elif isinstance(value, (list, tuple)):
+            raw_items = list(value)
+        elif isinstance(value, str):
+            raw_items = [item.strip() for item in re.split(r"[\n;]+", value) if item.strip()]
+        else:
+            return []
+
+        items: list[str] = []
+        for item in raw_items:
+            if isinstance(item, dict):
+                parts: list[str] = []
+                for key, val in item.items():
+                    if isinstance(val, (list, tuple)):
+                        text_value = ", ".join(str(entry) for entry in val[:4])
+                    elif isinstance(val, dict):
+                        text_value = "; ".join(f"{child_key}={child_val}" for child_key, child_val in list(val.items())[:4])
+                    else:
+                        text_value = str(val or "")
+                    if text_value.strip():
+                        parts.append(f"{key}: {text_value}")
+                text = "; ".join(parts)
+            else:
+                text = str(item or "")
+            text = self._compact_prompt_fragment(text.strip(), max_chars=max_chars)
+            if text:
+                items.append(text)
+            if len(items) >= limit:
+                break
+        return items
+
+    def _delivery_plan_rows(self, metadata: dict[str, Any]) -> list[str]:
+        document = self._contract_mapping(metadata, "delivery_plan_document")
+        if not document:
+            return []
+        rows: list[str] = []
+        product_summary = self._metadata_mapping(document.get("product_summary"))
+        intent = str(product_summary.get("intent") or document.get("intent") or "").strip()
+        if intent:
+            rows.append("Intent: " + self._compact_prompt_fragment(intent, max_chars=300))
+        for label, key, limit in (
+            ("User journey", "user_journey", 5),
+            ("Capability plan", "capability_plan", 6),
+            ("Behavior plan", "behavior_plan", 6),
+            ("Verification plan", "verification_plan", 6),
+            ("Evolution notes", "evolution_notes", 4),
+        ):
+            items = self._contract_text_items(document.get(key), limit=limit, max_chars=260)
+            if items:
+                rows.append(f"{label}: " + " | ".join(items))
+        return rows
+
+    def _delivery_depth_rows(self, metadata: dict[str, Any]) -> list[str]:
+        depth_contract = self._contract_mapping(metadata, "delivery_depth_contract")
+        behavior_contract = self._contract_mapping(metadata, "behavior_contract")
+        if not behavior_contract:
+            behavior_contract = self._metadata_mapping(depth_contract.get("behavior_contract"))
+        rows: list[str] = []
+        product_intent = self._metadata_mapping(depth_contract.get("product_intent"))
+        for label, key, limit in (
+            ("Core user journey", "core_user_journey", 4),
+            ("Primary entities", "primary_entities", 6),
+        ):
+            items = self._contract_text_items(product_intent.get(key), limit=limit, max_chars=220)
+            if items:
+                rows.append(f"{label}: " + " | ".join(items))
+        if behavior_contract:
+            for label, key, limit in (
+                ("Rule matrix", "rule_matrix", 8),
+                ("Sample dataset", "sample_dataset", 6),
+                ("Edge cases", "edge_cases", 8),
+                ("Required behavior tests", "required_behavior_tests", 8),
+                ("Minimum depth signals", "minimum_depth_signals", 6),
+                ("Anti-hollow delivery", "anti_hollow_delivery", 6),
+            ):
+                items = self._contract_text_items(behavior_contract.get(key), limit=limit, max_chars=260)
+                if items:
+                    rows.append(f"{label}: " + " | ".join(items))
+        acceptance_contract = self._metadata_mapping(depth_contract.get("acceptance_contract"))
+        for label, key, limit in (
+            ("Depth acceptance tests", "required_behavior_tests", 6),
+            ("Deterministic checks", "deterministic_checks", 8),
+            ("Minimum depth signals", "minimum_depth_signals", 6),
+            ("Anti-hollow delivery", "anti_hollow_delivery", 6),
+        ):
+            items = self._contract_text_items(acceptance_contract.get(key), limit=limit, max_chars=240)
+            if items and not any(row.startswith(label + ":") for row in rows):
+                rows.append(f"{label}: " + " | ".join(items))
+        return rows
+
     def _architecture_decision_items(
         self,
         value: Any,
@@ -226,6 +344,14 @@ class PromptBuilder:
             lines.append(f"- Factory bench: {project_label} ({bench_label}){title_suffix}")
             if workspace:
                 lines.append(f"- Target workspace: {self._compact_prompt_fragment(workspace, max_chars=220)}")
+
+        delivery_plan_rows = self._delivery_plan_rows(metadata)
+        if delivery_plan_rows:
+            lines.append("- Delivery plan document: " + " || ".join(delivery_plan_rows))
+
+        delivery_depth_rows = self._delivery_depth_rows(metadata)
+        if delivery_depth_rows:
+            lines.append("- Delivery depth/behavior contract: " + " || ".join(delivery_depth_rows))
 
         section_specs = (
             ("Acceptance criteria", "acceptance_criteria", 10),

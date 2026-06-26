@@ -606,6 +606,118 @@ class TestFrontendTestRepairContracts:
         assert recovered_quality["ok"] is True
         assert int(recovered_quality["score"]) >= 80
 
+    def test_python_contract_with_generic_ts_boilerplate_does_not_trigger_typescript_guard(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+# Product Requirements — 迷你行星天气球
+
+## Project Metadata
+- 主语言: python
+- 项目类型: cli
+
+## Goal
+- 用 Python 实现「迷你行星天气球」核心引擎与 CLI 入口。
+
+## Acceptance Criteria
+- `python src/main.py` 与 `python -m src.main` 都可执行并返回成功。
+- 关键验收维度: planet, weather, cloud, wind。
+
+## Deterministic Checks
+- py_compile
+- min_files:3
+- content_any:planet|weather|cloud|wind
+- source_target_coverage:src/**/*.py
+
+## Generic source tree examples that must not select the project language
+- package.json, tsconfig.json, index.html, src/**/*.ts, src/models/*.ts, tests/*.test.ts
+""".strip()
+        contracts = [
+            {
+                "id": "TASK-1",
+                "title": "实现 迷你行星天气球 Python 引擎与 CLI 入口",
+                "goal": "实现核心规则引擎、广播输出和可执行 Python 入口。",
+                "description": "补齐 forecast/radio/main，让 CLI 运行真实规则。",
+                "scope": "src/engine/forecast.py, src/radio.py, src/main.py",
+                "target_files": [
+                    "src/engine/__init__.py",
+                    "src/engine/forecast.py",
+                    "src/radio.py",
+                    "src/main.py",
+                    "tests/test_product.py",
+                    "README.md",
+                ],
+                "steps": [
+                    "实现 mood 到 forecast 的映射规则",
+                    "实现 radio 播报文本",
+                    "实现 python src/main.py 和 python -m src.main 入口",
+                ],
+                "acceptance": [
+                    "python src/main.py 返回成功",
+                    "python -m src.main 返回成功",
+                    "源码或输出覆盖 planet/weather/cloud/wind",
+                ],
+            }
+        ]
+
+        _normalized, quality = adapter._evaluate_contract_quality(contracts, directive=directive)
+
+        serialized_quality = json.dumps(quality, ensure_ascii=False)
+        assert quality["ok"] is True
+        assert "factory_typescript_contract_missing" not in serialized_quality
+
+    def test_pm_execute_blocks_critical_quality_without_creating_board_tasks(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        contracts = [
+            {
+                "id": "TASK-1",
+                "title": "Bad task",
+                "goal": "Bad task",
+                "target_files": ["src/main.py"],
+            }
+        ]
+
+        def fake_synthesize(*, directive: str, projection_hint: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+            return contracts
+
+        def fake_quality(
+            quality_contracts: list[dict[str, Any]],
+            *,
+            directive: str = "",
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            return quality_contracts, {
+                "ok": False,
+                "score": 40,
+                "critical_issues": ["factory_typescript_contract_missing:package.json"],
+                "warnings": [],
+                "summary": "critical contract defect",
+            }
+
+        def fail_if_board_tasks_are_created(task_contracts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            raise AssertionError(f"PM should not create board tasks for blocked quality: {task_contracts!r}")
+
+        adapter._synthesize_task_contracts_from_directive = fake_synthesize
+        adapter._evaluate_contract_quality = fake_quality
+        adapter._create_board_tasks = fail_if_board_tasks_are_created
+
+        result = asyncio.run(
+            adapter.execute(
+                "pm-task",
+                {
+                    "stage": "pm",
+                    "input": "Generate invalid contracts",
+                    "deterministic_pm_contracts": True,
+                },
+                {"deterministic_pm_contracts": True},
+            )
+        )
+
+        assert result["success"] is False
+        assert result["tasks_created"] == 0
+        assert result["quality_gate"]["blocked"] is True
+
     def test_synthesizes_focused_frontend_test_repair_contracts(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         contracts = adapter._synthesize_task_contracts_from_directive(

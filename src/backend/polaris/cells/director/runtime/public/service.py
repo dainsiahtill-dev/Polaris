@@ -72,6 +72,7 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairMaterializationQualityScheduleResultV1,
     DirectorRepairMaterializationQualityScheduleRunResultV1,
     DirectorRepairMaterializationQualityStepV1,
+    DirectorRepairMetricsResultV1,
     DirectorRepairPatchSummaryV1,
     DirectorRepairPlanningResultV1,
     DirectorRepairPlanSummaryV1,
@@ -88,6 +89,7 @@ from polaris.cells.director.runtime.public.contracts import (
     EvaluateDirectorRepairCutoverReadinessV1,
     PlanDirectorRepairCommandV1,
     ProjectDirectorRepairKernelSummaryV1,
+    ProjectDirectorRepairMetricsV1,
     QueryDirectorRepairAdvisoryPolicyV1,
     QueryDirectorRepairAdvisoryValidationV1,
     QueryDirectorRepairCoverageV1,
@@ -663,6 +665,52 @@ def _repair_advisory_validation_summary(*, accepted_suggested_rule_count: int) -
     }
 
 
+def project_director_repair_metrics(command: ProjectDirectorRepairMetricsV1) -> DirectorRepairMetricsResultV1:
+    """Project repair kernel health metrics from existing receipts and reports."""
+
+    receipts = tuple(command.receipts or ())
+    receipt_count = len(receipts)
+    applied_receipt_count = sum(1 for receipt in receipts if receipt.status == "applied")
+    failed_receipt_count = sum(1 for receipt in receipts if receipt.status != "applied")
+    ineffective_receipts = tuple(
+        receipt
+        for receipt in receipts
+        if receipt.errors_before is not None
+        and receipt.errors_after is not None
+        and (receipt.net_error_reduction or 0) <= 0
+    )
+    schedule_rounds = tuple(
+        int(summary.get("rounds_run") or 0)
+        for summary in command.schedule_run_summaries
+        if int(summary.get("rounds_run") or 0) > 0
+    )
+    coverage_reports = tuple(command.coverage_reports or ())
+    uncovered_diagnostic_count = sum(report.uncovered_diagnostic_count for report in coverage_reports)
+    coverage_gap_count = sum(len(report.to_dict().get("coverage_gaps") or []) for report in coverage_reports)
+    return DirectorRepairMetricsResultV1(
+        schema_version="director.repair_metrics.v1",
+        source="director.runtime.repair_kernel.metrics",
+        access="read_only",
+        receipt_count=receipt_count,
+        applied_receipt_count=applied_receipt_count,
+        failed_receipt_count=failed_receipt_count,
+        ineffective_receipt_count=len(ineffective_receipts),
+        success_rate=(applied_receipt_count / receipt_count) if receipt_count else 0.0,
+        average_convergence_rounds=(sum(schedule_rounds) / len(schedule_rounds)) if schedule_rounds else 0.0,
+        uncovered_diagnostic_count=uncovered_diagnostic_count,
+        coverage_gap_count=coverage_gap_count,
+        metadata={
+            "ineffective_receipt_ids": [receipt.receipt_id for receipt in ineffective_receipts],
+            "failed_receipt_ids": [receipt.receipt_id for receipt in receipts if receipt.status != "applied"],
+            "source_tools": sorted({receipt.source_tool for receipt in receipts if receipt.source_tool}),
+            "schedule_rounds": list(schedule_rounds),
+            "coverage_report_count": len(coverage_reports),
+            "advisory_metrics_only": True,
+            "agi_execution_authority": False,
+        },
+    )
+
+
 def compare_director_repair_shadow_run(
     command: CompareDirectorRepairShadowRunV1,
 ) -> DirectorRepairShadowComparisonResultV1:
@@ -720,7 +768,9 @@ def evaluate_director_repair_cutover_readiness(
     blockers: list[str] = []
     if len(successful) < required_successful_runs:
         blockers.append("insufficient_successful_independent_shadow_runs")
-    failed_indices = tuple(index for index, comparison in enumerate(comparisons) if not _shadow_comparison_is_successful(comparison))
+    failed_indices = tuple(
+        index for index, comparison in enumerate(comparisons) if not _shadow_comparison_is_successful(comparison)
+    )
     if failed_indices:
         blockers.append("shadow_comparison_not_cutover_ready")
     scope_signatures = tuple(_shadow_comparison_scope_signature(comparison) for comparison in successful)
@@ -1959,6 +2009,7 @@ __all__ = [
     "DirectorRepairKernelSummaryProjectionResultV1",
     "DirectorRepairMaterializationQualityScheduleResultV1",
     "DirectorRepairMaterializationQualityStepV1",
+    "DirectorRepairMetricsResultV1",
     "DirectorRepairPostExecutionScheduleResultV1",
     "DirectorRepairPostExecutionStepV1",
     "DirectorRepairRevalidationInputV1",
@@ -1968,6 +2019,7 @@ __all__ = [
     "DirectorRepairVerifierSnapshotInputV1",
     "EvaluateDirectorRepairCutoverReadinessV1",
     "ProjectDirectorRepairKernelSummaryV1",
+    "ProjectDirectorRepairMetricsV1",
     "RunDirectorRepairConvergenceCommandV1",
     "attach_director_repair_revalidation_evidence",
     "build_director_repair_kernel_summary",
@@ -1975,6 +2027,7 @@ __all__ = [
     "evaluate_director_repair_cutover_readiness",
     "plan_director_repair",
     "project_director_repair_kernel_summary",
+    "project_director_repair_metrics",
     "project_director_repair_revalidation_evidence",
     "query_director_repair_advisory_policy",
     "query_director_repair_coverage",

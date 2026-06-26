@@ -527,6 +527,77 @@ class PMAdapter(
                     }
                 )
 
+            if critical_issues or not normalized_contracts:
+                block_reason = (
+                    f"PM quality gate blocked execution; score={score}; critical={len(critical_issues)}; "
+                    f"tasks={len(normalized_contracts)}"
+                )
+                quality_signals.append(
+                    {
+                        "code": "pm.quality.blocked",
+                        "severity": "error",
+                        "detail": block_reason,
+                        "critical_issues": [str(item) for item in critical_issues[:8]],
+                    }
+                )
+                plan_path = self._write_plan_artifact(
+                    directive=directive,
+                    task_contracts=normalized_contracts,
+                    quality=quality,
+                    quality_signals=quality_signals,
+                )
+                signal_rows = list(quality_signals)
+                signal_rows.append(
+                    {
+                        "code": "pm.execution.summary",
+                        "severity": "error",
+                        "detail": (
+                            f"tasks_created=0; score={score}; critical={len(critical_issues)}; "
+                            "qa_required_for_final_verdict=true"
+                        ),
+                    }
+                )
+                signal_artifact = self._append_runtime_stage_signals(
+                    stage="pm_planning",
+                    task_id=task_id,
+                    signals=signal_rows,
+                    context=context,
+                    source="pm_adapter",
+                )
+                artifacts: list[str] = [str(plan_path)]
+                if signal_artifact:
+                    artifacts.append(signal_artifact)
+                self._update_task_progress(task_id, "failed")
+                self._update_board_task(
+                    task_id,
+                    status="failed",
+                    metadata={
+                        "pm_quality_gate": {
+                            "score": score,
+                            "critical_issue_count": len(critical_issues),
+                            "summary": str(quality.get("summary") or "").strip(),
+                            "blocked": True,
+                        }
+                    },
+                )
+                return {
+                    "success": False,
+                    "stage": "pm",
+                    "tasks_created": 0,
+                    "tasks": [],
+                    "director_dispatched": False,
+                    "qa_required_for_final_verdict": True,
+                    "quality_gate": {
+                        "score": score,
+                        "critical_issue_count": len(critical_issues),
+                        "summary": str(quality.get("summary") or "").strip(),
+                        "signals": quality_signals,
+                        "blocked": True,
+                    },
+                    "artifacts": artifacts,
+                    "content_length": len(raw_output),
+                }
+
             self._update_task_progress(task_id, "executing")
             created_tasks: list[dict[str, Any]] = self._create_board_tasks(normalized_contracts)
             plan_path = self._write_plan_artifact(

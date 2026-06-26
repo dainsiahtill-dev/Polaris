@@ -67,6 +67,17 @@ _TASK_TYPE_PATTERNS: tuple[tuple[str, str], ...] = (
     ("write_code", r"\b(implement|create|build|generate|function|class|module|api|endpoint|实现|创建|新增)\b"),
 )
 
+_QUALITY_REPAIR_MARKER_RE = re.compile(
+    r"(?i)(?:"
+    r"materialization\s+quality\s+repair|"
+    r"director_quality_repair|"
+    r"write_only_single_target|"
+    r"missing\s+target\s+files|"
+    r"quality\s+errors:|"
+    r"failed\s+polaris\s+artifact\s+quality\s+gates"
+    r")"
+)
+
 _PROJECT_TYPE_PATTERNS: tuple[tuple[str, str], ...] = (
     ("api", r"\b(api|endpoint|route|controller|handler|rest|graphql|http|接口|端点)\b"),
     ("cli", r"\b(cli|command|terminal|argparse|cobra|commander|click|脚本|命令行)\b"),
@@ -196,6 +207,8 @@ def _infer_task_type(text: str) -> str:
 
 
 def _resolve_task_type(metadata: dict[str, Any], text: str) -> tuple[str, str]:
+    if _QUALITY_REPAIR_MARKER_RE.search(text):
+        return "bugfix", "quality_repair_marker"
     explicit = _explicit_task_type(metadata)
     if explicit:
         return explicit, "metadata"

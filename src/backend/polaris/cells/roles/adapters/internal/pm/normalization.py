@@ -21,6 +21,7 @@ from polaris.kernelone.planning import (
 )
 
 from ._protocol import _PMAdapterMixinBase
+from .language_contracts import directive_requires_typescript_package_contract
 from .pm_text_utils import (
     _ACTION_MARKERS,
     _DEFAULT_PHASE_SEQUENCE,
@@ -44,38 +45,7 @@ from .pm_text_utils import (
 
 
 def _directive_requires_typescript_package_contract(directive: str) -> bool:
-    text = str(directive or "")
-    lower = text.lower()
-    has_non_typescript_language_contract = any(
-        token in lower
-        for token in (
-            "主语言: java",
-            "main language: java",
-            "java_compile",
-            "src/main/java",
-            "主语言: rust",
-            "main language: rust",
-            "rust_compile",
-            "cargo.toml",
-            "主语言: c++",
-            "main language: c++",
-            "cpp_compile",
-            "c++17",
-            ".cpp",
-            ".hpp",
-        )
-    )
-    if has_non_typescript_language_contract:
-        return False
-    has_typescript = "typescript" in lower or "ts_syntax" in lower or ".ts" in lower
-    has_package_contract = (
-        "package.json" in lower
-        or "npm" in lower
-        or "build/test/start" in lower
-        or "build, test, and start" in lower
-        or "build/test" in lower
-    )
-    return has_typescript and has_package_contract
+    return directive_requires_typescript_package_contract(directive)
 
 
 def _pm_contract_target_files(contracts: list[dict[str, Any]]) -> list[str]:

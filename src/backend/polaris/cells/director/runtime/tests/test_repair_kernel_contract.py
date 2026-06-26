@@ -104,6 +104,7 @@ from polaris.cells.director.runtime.public import (
     DirectorRepairLanguageSlotsResultV1,
     DirectorRepairLanguageSlotV1,
     DirectorRepairMaterializationQualityScheduleResultV1,
+    DirectorRepairMetricsResultV1,
     DirectorRepairPlanningResultV1,
     DirectorRepairPostExecutionScheduleResultV1,
     DirectorRepairRevalidationProjectionResultV1,
@@ -111,6 +112,7 @@ from polaris.cells.director.runtime.public import (
     EvaluateDirectorRepairCutoverReadinessV1,
     PlanDirectorRepairCommandV1,
     ProjectDirectorRepairKernelSummaryV1,
+    ProjectDirectorRepairMetricsV1,
     QueryDirectorRepairAdvisoryPolicyV1,
     QueryDirectorRepairAdvisoryValidationV1,
     QueryDirectorRepairCoverageV1,
@@ -127,6 +129,7 @@ from polaris.cells.director.runtime.public import (
     evaluate_director_repair_cutover_readiness,
     plan_director_repair,
     project_director_repair_kernel_summary,
+    project_director_repair_metrics,
     project_director_repair_revalidation_evidence,
     query_director_repair_advisory_policy,
     query_director_repair_coverage,
@@ -5321,6 +5324,72 @@ def test_receipt_context_marks_agi_advisory_non_authoritative(tmp_path: Path) ->
             "suggested_rules_are_advisory_only": True,
         }
     ]
+
+
+def test_public_repair_metrics_project_success_rounds_coverage_and_agi_boundaries() -> None:
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(
+            artifact_quality_errors=("futurelang compiler: error FX9999: unknown repair gap",),
+        )
+    )
+    result = project_director_repair_metrics(
+        ProjectDirectorRepairMetricsV1(
+            receipts=(
+                RepairReceiptV1(
+                    receipt_id="receipt_ok",
+                    plan_id="plan_ok",
+                    source_tool="deterministic_typescript_missing_export_repair",
+                    status="applied",
+                    authoritative=True,
+                    errors_before=3,
+                    errors_after=1,
+                    net_error_reduction=2,
+                ),
+                RepairReceiptV1(
+                    receipt_id="receipt_ineffective",
+                    plan_id="plan_ineffective",
+                    source_tool="deterministic_typescript_missing_export_repair",
+                    status="applied",
+                    authoritative=True,
+                    errors_before=1,
+                    errors_after=1,
+                    net_error_reduction=0,
+                ),
+                RepairReceiptV1(
+                    receipt_id="receipt_failed",
+                    plan_id="plan_failed",
+                    source_tool="deterministic_go_module_import_repair",
+                    status="failed_revalidation",
+                    authoritative=True,
+                    errors_before=2,
+                    errors_after=2,
+                    net_error_reduction=0,
+                ),
+            ),
+            coverage_reports=(coverage,),
+            schedule_run_summaries=({"rounds_run": 2}, {"rounds_run": 4}),
+        )
+    )
+    payload = result.to_dict()
+
+    assert isinstance(result, DirectorRepairMetricsResultV1)
+    assert payload["schema_version"] == "director.repair_metrics.v1"
+    assert payload["access"] == "read_only"
+    assert payload["advisory_only"] is True
+    assert payload["agi_execution_authority"] is False
+    assert payload["writes_allowed"] is False
+    assert payload["registration_allowed"] is False
+    assert payload["receipt_count"] == 3
+    assert payload["applied_receipt_count"] == 2
+    assert payload["failed_receipt_count"] == 1
+    assert payload["ineffective_receipt_count"] == 2
+    assert payload["success_rate"] == pytest.approx(2 / 3)
+    assert payload["average_convergence_rounds"] == pytest.approx(3.0)
+    assert payload["uncovered_diagnostic_count"] == 1
+    assert payload["coverage_gap_count"] == 1
+    assert payload["metadata"]["failed_receipt_ids"] == ["receipt_failed"]
+    assert payload["metadata"]["ineffective_receipt_ids"] == ["receipt_ineffective", "receipt_failed"]
+    assert payload["metadata"]["schedule_rounds"] == [2, 4]
 
 
 def test_advisor_overlay_does_not_change_authority_hash(tmp_path: Path) -> None:

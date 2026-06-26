@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ._protocol import _PMAdapterMixinBase
+from .language_contracts import directive_requires_typescript_package_contract
 from .pm_text_utils import (
     _pm_extract_requirement_subject,
     _pm_path_token_from_subject,
@@ -18,17 +19,7 @@ from .pm_text_utils import (
 
 
 def _directive_requires_typescript_package_contract(directive: str) -> bool:
-    text = str(directive or "")
-    lower = text.lower()
-    has_typescript = "typescript" in lower or "ts_syntax" in lower or ".ts" in lower
-    has_package_contract = (
-        "package.json" in lower
-        or "npm" in lower
-        or "build/test/start" in lower
-        or "build, test, and start" in lower
-        or "build/test" in lower
-    )
-    return has_typescript and has_package_contract
+    return directive_requires_typescript_package_contract(directive)
 
 
 def _directive_requires_rust_package_contract(directive: str) -> bool:

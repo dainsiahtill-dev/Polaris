@@ -2446,6 +2446,15 @@ class OrchestrationStageExecutor:
                 signal[key] = evidence[key]
 
     @staticmethod
+    def _ce_missing_final_request_evidence(evidence: dict[str, Any]) -> list[str]:
+        missing: list[str] = []
+        if not isinstance(evidence.get("final_request_context_audit"), dict):
+            missing.append("final_request_context_audit")
+        if not str(evidence.get("context_snapshot_ref") or "").strip():
+            missing.append("context_snapshot_ref")
+        return missing
+
+    @staticmethod
     def _architecture_decision_payloads(values: Any) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         source_values = values if isinstance(values, (list, tuple)) else []
@@ -2638,14 +2647,34 @@ class OrchestrationStageExecutor:
                     )
                 else:
                     # Emit audit event for LLM call once real provider/model evidence exists.
+                    audit_payload: dict[str, Any] = {
+                        "provider": ce_provider,
+                        "model": ce_model,
+                        "cache_hit": bool(ce_evidence.get("cache_hit")),
+                        "task_id": task_id,
+                        "run_id": run.id,
+                    }
+                    self._attach_ce_llm_evidence(audit_payload, ce_evidence)
                     self._emit_audit_event(
                         "chief_engineer.llm_call",
-                        provider=ce_provider,
-                        model=ce_model,
-                        cache_hit=bool(ce_evidence.get("cache_hit")),
-                        task_id=task_id,
-                        run_id=run.id,
+                        **audit_payload,
                     )
+                    missing_final_request_evidence = self._ce_missing_final_request_evidence(ce_evidence)
+                    if missing_final_request_evidence:
+                        missing_signal = {
+                            "code": "chief_engineer.final_request_audit_missing",
+                            "severity": "error",
+                            "detail": (
+                                "CE LLM result did not expose required final provider-request evidence: "
+                                + ", ".join(missing_final_request_evidence)
+                            ),
+                            "task_id": task_id,
+                            "provider": ce_provider,
+                            "model": ce_model,
+                            "missing": missing_final_request_evidence,
+                        }
+                        self._attach_ce_llm_evidence(missing_signal, ce_evidence)
+                        stage_signals.append(missing_signal)
 
                 if not recovered_review_schema_failure and (
                     "<SESSION_PATCH" in raw_output or "</SESSION_PATCH>" in raw_output

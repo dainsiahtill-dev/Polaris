@@ -1083,18 +1083,39 @@ class TurnTransactionController:
         response = await self.llm_provider(request_payload)
         response_usage = response.get("usage", {}) if isinstance(response.get("usage", {}), dict) else {}
         response_context_os_audit = response_usage.get("context_os_audit") if isinstance(response_usage, dict) else None
+        response_llm_metadata: dict[str, Any] = {}
+        if isinstance(response_usage, dict):
+            for key in (
+                "context_os_audit",
+                "final_request_context_audit",
+                "context_snapshot_ref",
+                "context_snapshot_degraded",
+                "context_snapshot_degraded_reason",
+                "context_tokens_after",
+                "contextTokens",
+                "usage",
+                "usage_source",
+            ):
+                if key in response_usage:
+                    value = response_usage.get(key)
+                    response_llm_metadata[key] = dict(value) if isinstance(value, dict) else value
 
         # Phase 3.3: Track usage
-        tokens_used = response_usage.get("prompt_tokens", 0) + response_usage.get("completion_tokens", 0)
+        provider_usage = response_usage.get("usage") if isinstance(response_usage.get("usage"), dict) else {}
+        prompt_tokens = int(response_usage.get("prompt_tokens") or provider_usage.get("prompt_tokens") or 0)
+        completion_tokens = int(
+            response_usage.get("completion_tokens") or provider_usage.get("completion_tokens") or 0
+        )
+        tokens_used = prompt_tokens + completion_tokens
         cost = response.get("cost", 0.0)
         self._track_token_usage(tokens_used, cost)
 
         ledger.record_llm_call(
             phase="decision",
             model=response.get("model", "unknown"),
-            tokens_in=response_usage.get("prompt_tokens", 0),
-            tokens_out=response_usage.get("completion_tokens", 0),
-            metadata=(
+            tokens_in=prompt_tokens,
+            tokens_out=completion_tokens,
+            metadata=response_llm_metadata or (
                 {"context_os_audit": dict(response_context_os_audit)}
                 if isinstance(response_context_os_audit, dict)
                 else None
@@ -1229,6 +1250,12 @@ class TurnTransactionController:
             result["finalization"] = finalization
         if workflow_context:
             result["workflow_context"] = workflow_context
+
+        for llm_call in reversed(ledger.llm_calls):
+            raw_metadata = llm_call.get("metadata") if isinstance(llm_call, dict) else None
+            if isinstance(raw_metadata, dict) and raw_metadata:
+                result["llm_response_metadata"] = dict(raw_metadata)
+                break
 
         # Expose the full ledger so callers can commit it to the ContextOS snapshot
         result["ledger"] = ledger

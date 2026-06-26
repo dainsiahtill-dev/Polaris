@@ -318,6 +318,29 @@ def test_prompt_includes_pm_ce_contract_context() -> None:
             "quality_gates": ["npm test"],
             "verification_commands": ["npm run build"],
             "entrypoints": ["npm run dev"],
+            "delivery_plan_document": {
+                "schema_version": "polaris.delivery_plan_document.v1",
+                "product_summary": {"intent": "Fireflies react to flower mood and moon phase."},
+                "user_journey": ["Open garden", "Change moon phase", "Watch light dance"],
+                "capability_plan": ["simulate flower mood", "render light choreography"],
+                "behavior_plan": ["calm flowers make slow pulses", "storm flowers make erratic sparks"],
+                "verification_plan": ["assert at least three visible behavior rules"],
+            },
+            "delivery_depth_contract": {
+                "schema_version": "polaris.delivery_depth_contract.v1",
+                "product_intent": {
+                    "core_user_journey": ["choose mood", "inspect forecast"],
+                    "primary_entities": ["flower", "firefly", "moon phase"],
+                },
+                "behavior_contract": {
+                    "rule_matrix": [
+                        {"rule": "calm moon", "expected": "slow synchronized glow"},
+                        {"rule": "storm mood", "expected": "erratic warning pattern"},
+                    ],
+                    "edge_cases": ["unknown mood uses explicit fallback"],
+                    "anti_hollow_delivery": ["no static keyword-only output"],
+                },
+            },
         }
     )
 
@@ -330,6 +353,12 @@ def test_prompt_includes_pm_ce_contract_context() -> None:
     assert "Quality gates: npm test" in prompt
     assert "Verification commands: npm run build" in prompt
     assert "Entrypoints: npm run dev" in prompt
+    assert "Delivery plan document:" in prompt
+    assert "Fireflies react to flower mood and moon phase" in prompt
+    assert "Delivery depth/behavior contract:" in prompt
+    assert "Rule matrix:" in prompt
+    assert "unknown mood uses explicit fallback" in prompt
+    assert "no static keyword-only output" in prompt
 
 
 def test_prompt_includes_ce_architecture_decisions() -> None:

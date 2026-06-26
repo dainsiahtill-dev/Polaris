@@ -14,6 +14,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -1160,6 +1161,46 @@ class TestArtifactStore:
             )
             is False
         )
+
+    def test_chief_engineer_llm_evidence_extracts_final_request_audit(self) -> None:
+        ce_result = SimpleNamespace(
+            metadata={
+                "provider": "openai",
+                "model": "gpt-5",
+                "final_request_context_audit": {
+                    "schema_version": "llm.final_request_context_audit.v1",
+                    "final_request_token_estimate": 42000,
+                },
+                "context_snapshot_ref": "runtime/contexts/ab/cdef.json",
+            },
+            usage={"cache_hit": False},
+        )
+
+        evidence = OrchestrationStageExecutor._ce_extract_llm_evidence(
+            ce_result,
+            task_id="TASK-1",
+            run_id="factory-run",
+        )
+
+        assert evidence["provider"] == "openai"
+        assert evidence["model"] == "gpt-5"
+        assert evidence["context_snapshot_ref"] == "runtime/contexts/ab/cdef.json"
+        assert evidence["final_request_context_audit"]["final_request_token_estimate"] == 42000
+        assert OrchestrationStageExecutor._ce_missing_final_request_evidence(evidence) == []
+
+    def test_chief_engineer_llm_evidence_marks_missing_final_request_audit(self) -> None:
+        ce_result = SimpleNamespace(metadata={"provider": "openai", "model": "gpt-5"}, usage={})
+
+        evidence = OrchestrationStageExecutor._ce_extract_llm_evidence(
+            ce_result,
+            task_id="TASK-1",
+            run_id="factory-run",
+        )
+
+        assert OrchestrationStageExecutor._ce_missing_final_request_evidence(evidence) == [
+            "final_request_context_audit",
+            "context_snapshot_ref",
+        ]
 
     def test_emit_audit_event_appends(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)

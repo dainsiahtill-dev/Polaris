@@ -171,6 +171,25 @@ def test_execution_profile_is_single_source_for_dispatch_guidance_and_temperatur
     assert "test" in profile.file_roles
 
 
+def test_quality_repair_marker_overrides_review_words_for_precise_repair_profile() -> None:
+    profile = resolve_director_execution_profile(
+        subject="Artifact quality scan review failed",
+        description=(
+            "MATERIALIZATION QUALITY REPAIR MODE: previous write failed Polaris artifact quality gates. "
+            "MISSING TARGET FILES - create src/main.py. Quality errors: declared target file missing."
+        ),
+        metadata={"phase": "code_review"},
+        target_files=["src/main.py"],
+        scope_paths=[],
+    )
+
+    assert profile.task_type == "bugfix"
+    assert profile.phase == "repair"
+    assert profile.temperature_phase == "repair"
+    assert profile.temperature == 0.05
+    assert profile.signal_evidence["task_type_source"] == "quality_repair_marker"
+
+
 def test_execution_strategy_derives_large_budget_from_profile() -> None:
     profile = resolve_director_execution_profile(
         subject="Implement TypeScript dashboard feature",
