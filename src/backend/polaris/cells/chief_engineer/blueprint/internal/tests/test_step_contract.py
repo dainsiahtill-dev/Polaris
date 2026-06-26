@@ -187,7 +187,14 @@ class TestGate:
     def test_list_verify_joined_into_one_command(self) -> None:
         """Cloud models drift between string and array verify shapes — a
         bare str() turns the array into Python-repr garbage that bash can
-        never pass (live I3-r10 poisoned every QA check of the run)."""
+        never pass (live I3-r10 poisoned every QA check of the run).
+
+        The array is joined with `` && `` into a single runnable command. The
+        ``grep -q`` clause is additionally hardened to ``grep -Fq`` because its
+        pattern (``id="gameCanvas"``) is a literal — this fixed-string
+        normalization is owned by ``_normalize_literal_grep_clauses`` and
+        covered directly in test_step_verify; here it is incidental to the join.
+        """
         step = normalize_construction_step(
             {
                 "step_id": "S1",
@@ -197,7 +204,7 @@ class TestGate:
             parent_pm_task="PM-1",
             index=0,
         )
-        assert step["verify"] == "test -f ./index.html && grep -q 'id=\"gameCanvas\"' ./index.html"
+        assert step["verify"] == "test -f ./index.html && grep -Fq 'id=\"gameCanvas\"' ./index.html"
 
     def test_empty_list_verify_blocked_by_gate(self) -> None:
         step = normalize_construction_step(

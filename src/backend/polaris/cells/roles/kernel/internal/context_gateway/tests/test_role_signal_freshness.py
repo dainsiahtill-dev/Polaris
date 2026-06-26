@@ -55,11 +55,18 @@ def test_cache_empty_record_noop() -> None:
 
 
 def _ctx(structure: str, history: str) -> SignalBuildContext:
+    # Opt out of the director-default blueprint signal (D-10 always-on degraded
+    # fallback) so these freshness/budget tests assert against the two seed
+    # signals in isolation.
     return SignalBuildContext(
         role="director",
         phase="exploring",
         task_id="task1",
-        policy_flags={"include_project_structure": True, "include_task_history": True},
+        policy_flags={
+            "include_project_structure": True,
+            "include_task_history": True,
+            "include_blueprint_overview": False,
+        },
         get_project_structure=lambda: structure,
         get_task_history=lambda tid: history,
     )

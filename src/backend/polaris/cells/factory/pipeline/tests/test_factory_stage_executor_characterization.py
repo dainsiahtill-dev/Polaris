@@ -1297,7 +1297,7 @@ class TestPackageJsonParsing:
             [sys.executable, "main.py"],
         ]
 
-    def test_workspace_quality_commands_python_src_entrypoint_include_script_and_module_smoke(
+    def test_workspace_quality_commands_python_src_entrypoint_include_script_smoke(
         self,
         tmp_path: Path,
     ) -> None:
@@ -1310,11 +1310,14 @@ class TestPackageJsonParsing:
 
         commands = executor._workspace_quality_commands({})
 
+        # NOTE: the ``python -m src.main`` module-style smoke was intentionally
+        # removed — it raised ModuleNotFoundError for generated project layouts
+        # whose entrypoint uses ``from src.x import ...`` style imports. Only the
+        # direct ``python src/main.py`` script smoke remains.
         assert commands == [
             [sys.executable, "-m", "compileall", "-q", "src", "tests"],
             [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
             [sys.executable, "src/main.py"],
-            [sys.executable, "-m", "src.main"],
         ]
 
     def test_workspace_quality_commands_python_project_install_when_requirements_exists(self, tmp_path: Path) -> None:

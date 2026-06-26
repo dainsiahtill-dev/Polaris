@@ -158,7 +158,7 @@ class TestResolveDirectorBindingFanout:
         executor = self._make_executor()
 
         with patch(
-            "polaris.cells.runtime.projection.internal.llm_status.build_llm_status",
+            "polaris.cells.runtime.projection.public.build_llm_status",
             return_value={
                 "roles": {
                     "director": {

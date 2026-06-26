@@ -13,11 +13,23 @@ from polaris.kernelone.context.receipt_store import ReceiptStore
 
 
 def _ctx(role: str, *, task_id: str = "T1", flags: dict[str, bool] | None = None) -> SignalBuildContext:
+    # These baseline/isolation tests exercise the seed signals, repo_identity and
+    # budget behavior — NOT the blueprint. Since D-10, the director role defaults
+    # ``include_blueprint_overview=True`` and BlueprintOverviewSignal emits an
+    # always-on degraded fallback, which would otherwise pollute the exact
+    # ``res.sources`` assertions here. Opt out so the signal-under-test is isolated.
+    # (The director default + degraded-fallback path is covered separately by
+    # test_blueprint_overview_director_default_degraded_fallback.)
+    default_flags = {
+        "include_project_structure": True,
+        "include_task_history": True,
+        "include_blueprint_overview": False,
+    }
     return SignalBuildContext(
         role=role,
         phase="exploring",
         task_id=task_id,
-        policy_flags=flags if flags is not None else {"include_project_structure": True, "include_task_history": True},
+        policy_flags=flags if flags is not None else default_flags,
         get_project_structure=lambda: "src/\n  a.py\n  b.py",
         get_task_history=lambda tid: f"task {tid}: 3 done / 2 open",
     )
@@ -170,6 +182,61 @@ def test_blueprint_signal_for_chief_engineer_and_director_when_enabled() -> None
     assert "blueprint_overview" not in pm.sources
 
 
+def test_blueprint_overview_director_default_degraded_fallback() -> None:
+    """D-10: director 默认开启 blueprint_overview；无 CE 蓝图时注入降级架构指引。
+
+    director 角色即便没有 ``get_blueprint_overview`` 访问器（缺省 None），也会从
+    项目结构 / 任务历史合成一个"降级"蓝图块，确保弱执行者拿到基本定向而非零指引。
+    其他角色（pm/qa）不受影响。
+    """
+    reg = RoleSignalRegistry()
+    # 不显式传 include_blueprint_overview → 走 director 默认 True
+    ctx = SignalBuildContext(
+        role="director",
+        phase="exploring",
+        task_id="T1",
+        policy_flags={"include_project_structure": True, "include_task_history": True},
+        get_project_structure=lambda: "src/\n  app.py\n  models.py",
+        get_task_history=lambda tid: f"task {tid}: implement src/service.py",
+    )
+    res = allocate_role_signals(registry=reg, ctx=ctx, receipt_store=ReceiptStore())
+    assert "blueprint_overview" in res.sources
+    bp_turn = next(t for t in res.turns if t["name"] == "blueprint_overview")
+    assert "【蓝图/技术架构（降级）】" in bp_turn["content"]
+    assert "非 CE 权威蓝图" in bp_turn["content"]
+
+    # PM 角色即便有同样数据也拿不到 blueprint（role-bound）。
+    pm_ctx = SignalBuildContext(
+        role="pm",
+        phase="exploring",
+        task_id="T1",
+        policy_flags={"include_project_structure": True, "include_task_history": True},
+        get_project_structure=lambda: "src/\n  app.py",
+        get_task_history=lambda tid: "task open",
+    )
+    pm_res = allocate_role_signals(registry=reg, ctx=pm_ctx, receipt_store=ReceiptStore())
+    assert "blueprint_overview" not in pm_res.sources
+
+
+def test_blueprint_overview_director_explicit_opt_out_keeps_baseline() -> None:
+    """director 显式 include_blueprint_overview=False → 回到双 seed baseline。"""
+    reg = RoleSignalRegistry()
+    ctx = SignalBuildContext(
+        role="director",
+        phase="exploring",
+        task_id="T1",
+        policy_flags={
+            "include_project_structure": True,
+            "include_task_history": True,
+            "include_blueprint_overview": False,
+        },
+        get_project_structure=lambda: "src/\n  app.py",
+        get_task_history=lambda tid: "task open",
+    )
+    res = allocate_role_signals(registry=reg, ctx=ctx, receipt_store=ReceiptStore())
+    assert res.sources == ["project_structure", "task_history"]
+
+
 def test_verdict_signal_only_for_qa_and_is_must_have() -> None:
     reg = RoleSignalRegistry()
     flags = {"include_verdict_history": True}
@@ -234,11 +301,18 @@ _IDENTITY = "【仓库身份】(确定性扫描结果)\n- 主要语言: Python 9
 
 
 def _ctx_with_identity(role: str, *, flags: dict[str, bool] | None = None) -> SignalBuildContext:
+    # Opt out of the director-default blueprint signal (see _ctx note) so these
+    # repo_identity tests assert against an isolated source list.
+    default_flags = {
+        "include_project_structure": True,
+        "include_task_history": True,
+        "include_blueprint_overview": False,
+    }
     return SignalBuildContext(
         role=role,
         phase="exploring",
         task_id="T1",
-        policy_flags=flags if flags is not None else {"include_project_structure": True, "include_task_history": True},
+        policy_flags=flags if flags is not None else default_flags,
         get_project_structure=lambda: "src/\n  a.py\n  b.py",
         get_task_history=lambda tid: f"task {tid}: 3 done / 2 open",
         get_repo_identity=lambda: _IDENTITY,

@@ -122,7 +122,7 @@ class TestFanoutMetadataPropagation:
         await executor._execute_director_binding_fanout(
             service=mock_service,
             workspace=str(tmp_path),
-            tasks=["task-1"],
+            tasks=["task-1", "task-2"],
             base_options={"execution_mode": "parallel", "max_workers": 3},
             bindings=bindings,
         )
@@ -186,7 +186,7 @@ class TestFanoutMetadataPropagation:
         await executor._execute_director_binding_fanout(
             service=mock_service,
             workspace=str(tmp_path),
-            tasks=["task-1"],
+            tasks=["task-1", "task-2"],
             base_options={"execution_mode": "parallel", "max_workers": 2},
             bindings=bindings,
         )
@@ -602,8 +602,14 @@ class TestFanoutQuarantineEvidence:
         assert quarantined_entry["model"] == "m1"
 
     @pytest.mark.asyncio
-    async def test_timeout_count_accumulation_in_metadata(self, tmp_path: Path) -> None:
+    async def test_timeout_count_accumulation_in_metadata(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Timeout count accumulates in executor state across fanout calls."""
+        # Pin the quarantine threshold to 2 so this test deterministically
+        # exercises accumulation -> quarantine regardless of the configurable
+        # default (KERNELONE_FACTORY_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT).
+        monkeypatch.setenv("KERNELONE_FACTORY_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT", "2")
         executor = _make_executor(tmp_path)
 
         bindings = [
