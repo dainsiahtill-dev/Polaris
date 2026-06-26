@@ -4838,6 +4838,64 @@ def test_validate_generated_output_uses_target_path_as_domain_signal_for_config(
     assert error is None
 
 
+def test_validate_generated_output_allows_forbidden_token_list_naming_notimplemented(tmp_path: Any) -> None:
+    """A test that NAMES notimplemented/stub as forbidden tokens is not a placeholder.
+
+    Regression (factory-bench L1-02 r10): the Director wrote a correct
+    anti-placeholder test whose FORBIDDEN_TOKENS list contained "notimplemented";
+    the bare NotImplemented scan flagged it as placeholder content, failing
+    materialization quality and trapping the Director in an unfixable rewrite loop.
+    The string-literal naming must pass; a genuine ``raise NotImplementedError``
+    must still be rejected.
+    """
+    executor = DirectorPatchExecutor(str(tmp_path))
+    target = tmp_path / "tests" / "test_product.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        '"""Product quality gate tests for the dream-note alchemy project."""\n'
+        "import unittest\n\n"
+        'FORBIDDEN_TOKENS = ("todo", "fixme", "notimplemented", "no test specified", "stub")\n\n\n'
+        "class ProductScriptTest(unittest.TestCase):\n"
+        "    def test_no_forbidden_tokens(self) -> None:\n"
+        '        source = open("src/index.js", encoding="utf-8").read().lower()\n'
+        "        for token in FORBIDDEN_TOKENS:\n"
+        "            self.assertNotIn(token, source)\n",
+        encoding="utf-8",
+    )
+
+    error = executor.validate_generated_output(
+        {
+            "subject": "Dream note alchemy product quality test",
+            "description": "Implement tests/test_product.py validating the dream alchemy product",
+        },
+        ["tests/test_product.py"],
+    )
+
+    assert error is None
+
+
+def test_validate_generated_output_rejects_real_notimplemented_body(tmp_path: Any) -> None:
+    """A genuine ``raise NotImplementedError`` body is still placeholder content."""
+    executor = DirectorPatchExecutor(str(tmp_path))
+    target = tmp_path / "src" / "engine" / "rules.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "def fuse_dream_recipe(dream, recipe):\n    raise NotImplementedError\n",
+        encoding="utf-8",
+    )
+
+    error = executor.validate_generated_output(
+        {
+            "subject": "Dream recipe fusion rules",
+            "description": "Implement src/engine/rules.py dream recipe fusion",
+        },
+        ["src/engine/rules.py"],
+    )
+
+    assert error is not None
+    assert "generic/placeholder content detected" in error
+
+
 # ---------------------------------------------------------------------------
 # Strategy selection
 # ---------------------------------------------------------------------------
