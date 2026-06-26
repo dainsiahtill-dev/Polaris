@@ -200,7 +200,9 @@ class PromptBuilder:
                     if isinstance(val, (list, tuple)):
                         text_value = ", ".join(str(entry) for entry in val[:4])
                     elif isinstance(val, dict):
-                        text_value = "; ".join(f"{child_key}={child_val}" for child_key, child_val in list(val.items())[:4])
+                        text_value = "; ".join(
+                            f"{child_key}={child_val}" for child_key, child_val in list(val.items())[:4]
+                        )
                     else:
                         text_value = str(val or "")
                     if text_value.strip():

@@ -237,7 +237,10 @@ def test_final_request_context_audit_flags_under_applied_execution_strategy() ->
     )
 
     finding_codes = {item["code"] for item in audit["context_quality"]["findings"]}
+    findings_by_code = {item["code"]: item for item in audit["context_quality"]["findings"]}
     assert audit["has_execution_strategy"] is True
     assert audit["request_metadata_summary"]["has_execution_strategy"] is True
     assert "execution_profile_temperature_mismatch" in finding_codes
     assert "execution_strategy_output_budget_under_applied" in finding_codes
+    assert findings_by_code["execution_strategy_output_budget_under_applied"]["severity"] == "error"
+    assert findings_by_code["execution_strategy_output_budget_under_applied"]["budget_ratio"] < 0.05

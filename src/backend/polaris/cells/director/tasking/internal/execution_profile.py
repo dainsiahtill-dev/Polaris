@@ -344,6 +344,9 @@ def resolve_director_execution_profile(
     task_type, task_type_source = _resolve_task_type(normalized_metadata, text)
     project_type, project_type_source = _resolve_project_type(normalized_metadata, text)
     phase, phase_source = _resolve_phase(normalized_metadata, task_type)
+    if task_type_source == "quality_repair_marker":
+        phase = "repair"
+        phase_source = "quality_repair_marker"
     temperature_phase, temperature = _temperature_for(task_type, phase)
     dispatch_type = _dispatch_type(
         subject=subject,

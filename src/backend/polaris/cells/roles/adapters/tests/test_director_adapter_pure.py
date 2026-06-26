@@ -7529,6 +7529,31 @@ class TestExistingWorkspaceTaskEvidence:
         assert evidence["ok"] is False
         assert evidence["reason"] == "declared_scope_incomplete"
 
+    def test_high_coverage_scope_with_missing_declared_targets_is_not_enough(self) -> None:
+        task = {
+            "target_files": [
+                "go.mod",
+                "models/entity.go",
+                "engine/service.go",
+                "main.go",
+                "main_test.go",
+                "README.md",
+            ]
+        }
+        current_files = {
+            "go.mod": "1",
+            "models/entity.go": "1",
+            "engine/service.go": "1",
+            "main.go": "1",
+        }
+
+        evidence = _build_existing_workspace_task_evidence(task=task, current_files=current_files)
+
+        assert evidence["ok"] is False
+        assert evidence["reason"] == "declared_scope_incomplete"
+        assert evidence["coverage"] > 0.5
+        assert evidence["missing_paths"] == ["main_test.go", "README.md"]
+
     def test_no_scope_paths_is_not_evidence(self) -> None:
         evidence = _build_existing_workspace_task_evidence(
             task={"goal": "Implement a UI"},

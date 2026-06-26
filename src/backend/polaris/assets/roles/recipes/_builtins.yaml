@@ -41,7 +41,7 @@ recipes:
   chief_engineer:
     anchor: polaris_chief_engineer
     persona: gongbu_shangshu
-    profession: software_engineer
+    profession: chief_engineer_blueprint
     description: 总工程师，负责技术分析和实施蓝图
     backward_compatible: true
     legacy_id: chief_engineer

@@ -194,6 +194,34 @@ class TestL1CacheHitRate:
         assert "你同时是一位**Go (Golang) 资深软件架构师**。" in role_block
         assert "Effective Go" in role_block
         assert "你同时是一位**软件工程师**。" not in role_block
+        assert "使用 pytest 框架" not in prompt
+        assert "严禁 bare except" not in prompt
+
+    def test_chief_engineer_go_blueprint_uses_language_identity_without_python_standards(self) -> None:
+        builder = PromptBuilder()
+        prompt = builder.build_system_prompt(
+            _make_profile(template_id="chief_engineer", role_id="chief_engineer"),
+            prompt_appendix=(
+                '{"language": "go", "target_files": ["go.mod", "engine/museum.go", "main_test.go"], '
+                '"task_type": "verification"}'
+            ),
+            domain="document",
+            include_working_memory_contract=False,
+        )
+        role_block = PromptBuilder._extract_role_definition_block(prompt)
+
+        assert "你是 Polaris 体系中的 **Chief Engineer**" in role_block
+        assert "你同时是一位**Go (Golang) 资深软件架构师**。" in role_block
+        assert "Effective Go" in role_block
+        assert "你同时是一位**软件工程师**。" not in role_block
+        assert "工作流程类型: contract_to_blueprint" in prompt
+        assert "任务类型: verification" in prompt
+        assert "任务类型: default" not in prompt
+        assert "阶段 1: 合同审查 (contract_review)" in prompt
+        assert "蓝图必须引用 PM 合同" in prompt
+        assert "使用 pytest 框架" not in prompt
+        assert "严禁 bare except" not in prompt
+        assert "当前任务以文档/蓝图/写作为主" in prompt
 
     def test_director_language_profession_identity_is_part_of_l1_cache_key(self) -> None:
         builder = PromptBuilder()

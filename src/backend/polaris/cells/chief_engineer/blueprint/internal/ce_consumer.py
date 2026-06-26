@@ -212,8 +212,59 @@ def _first_string_list(*values: Any) -> list[str]:
     return []
 
 
+def _merge_string_lists(*values: Any) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for item in _string_list(value):
+            token = str(item or "").strip()
+            key = token.casefold()
+            if not token or key in seen:
+                continue
+            seen.add(key)
+            rows.append(token)
+    return rows
+
+
 def _payload_task(payload: dict[str, Any]) -> dict[str, Any]:
     return _mapping(payload.get("pm_contract")) or _mapping(payload.get("task"))
+
+
+def _scope_paths_from_payload(payload: dict[str, Any], blueprint_result: dict[str, Any] | None = None) -> list[str]:
+    task = _payload_task(payload)
+    blueprint = blueprint_result or {}
+    return _merge_string_lists(
+        blueprint.get("scope_paths"),
+        payload.get("scope_paths"),
+        task.get("scope_paths"),
+        blueprint.get("scope"),
+        payload.get("scope"),
+        task.get("scope"),
+    )
+
+
+def _target_files_from_payload(
+    payload: dict[str, Any],
+    blueprint_result: dict[str, Any] | None = None,
+    *,
+    scope_paths: list[str] | None = None,
+) -> list[str]:
+    task = _payload_task(payload)
+    blueprint = blueprint_result or {}
+    target_like = _merge_string_lists(
+        blueprint.get("target_files"),
+        payload.get("target_files"),
+        task.get("target_files"),
+        blueprint.get("files"),
+        payload.get("files"),
+        task.get("files"),
+        blueprint.get("affected_files"),
+        payload.get("affected_files"),
+        task.get("affected_files"),
+    )
+    if target_like:
+        return target_like
+    return _merge_string_lists(scope_paths or [], blueprint.get("scope_paths"), payload.get("scope_paths"), task.get("scope_paths"))
 
 
 def _contract_fields(payload: dict[str, Any]) -> dict[str, Any]:
@@ -371,12 +422,8 @@ class CEConsumer:
             blueprint_result = self._run_ce_preflight(task_id, payload)
 
             blueprint_id = str(blueprint_result.get("blueprint_id", f"bp-{task_id}"))
-            scope_paths = _string_list(blueprint_result.get("scope_paths")) or _string_list(payload.get("scope_paths"))
-            target_files = (
-                _string_list(blueprint_result.get("target_files"))
-                or _string_list(payload.get("target_files"))
-                or list(scope_paths)
-            )
+            scope_paths = _scope_paths_from_payload(payload, blueprint_result)
+            target_files = _target_files_from_payload(payload, blueprint_result, scope_paths=scope_paths)
             contract = _contract_fields(payload)
             acceptance_criteria = list(contract["acceptance_criteria"])
             execution_checklist = list(contract["execution_checklist"])
@@ -681,11 +728,12 @@ class CEConsumer:
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
         contract = _contract_fields(payload)
+        scope_paths = _scope_paths_from_payload(payload)
         task_brief = {
             "task_id": task_id,
             "title": str(payload.get("title") or ""),
             "goal": str(payload.get("goal") or payload.get("description") or ""),
-            "target_files": _string_list(payload.get("target_files")),
+            "target_files": _target_files_from_payload(payload, scope_paths=scope_paths),
             "acceptance_criteria": list(contract["acceptance_criteria"]),
         }
         message = (

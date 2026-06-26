@@ -343,15 +343,21 @@ class PromptBuilder:
         Returns:
             完整系统提示词字符串
         """
+        effective_task_type = self._resolve_prompt_task_type(
+            task_type=task_type,
+            message=message,
+            prompt_appendix=prompt_appendix,
+        )
+
         # Tri-Axis L1 缓存键：recipe_id:version:task_type
-        profession_identity = self._resolve_director_language_profession_identity(
+        profession_identity = self._resolve_language_profession_identity(
             profile=profile,
             domain=domain,
             message=message,
             prompt_appendix=prompt_appendix,
         )
         language_cache_token = profession_identity.cache_token if profession_identity else "recipe"
-        cache_key = f"tri_axis:{recipe_id}:{profile.version}:{task_type}:{language_cache_token}"
+        cache_key = f"tri_axis:{recipe_id}:{profile.version}:{effective_task_type}:{language_cache_token}"
         content_hash = hashlib.sha256(cache_key.encode()).hexdigest()[:16]
 
         # 检查 L1 缓存（Tri-Axis 专用缓存）
@@ -378,7 +384,7 @@ class PromptBuilder:
             composer = get_role_composer()
             composed = composer.compose_by_recipe(
                 recipe_id,
-                task_type=task_type,
+                task_type=effective_task_type,
                 profession_name_override=(
                     profession_identity.profession_name if profession_identity is not None else None
                 ),
@@ -442,7 +448,55 @@ class PromptBuilder:
         )
 
     @staticmethod
-    def _resolve_director_language_profession_identity(
+    def _resolve_prompt_task_type(*, task_type: str, message: str, prompt_appendix: str) -> str:
+        explicit = str(task_type or "").strip()
+        if explicit and explicit != "default":
+            return PromptBuilder._normalize_prompt_task_type(explicit)
+
+        haystack = f"{message}\n{prompt_appendix}"
+        for key in ("task_type", "phase", "stage"):
+            match = re.search(rf"['\"]?{key}['\"]?\s*[:=]\s*['\"]?([A-Za-z0-9_-]+)", haystack, flags=re.IGNORECASE)
+            if match:
+                token = PromptBuilder._normalize_prompt_task_type(match.group(1))
+                if token != "default":
+                    return token
+        lowered = haystack.lower()
+        for token, keywords in (
+            (
+                "verification",
+                ("verification", "verify", "testing", "tests", "go test", "pytest", "unittest", "验收", "测试"),
+            ),
+            ("code_review", ("code_review", "review", "audit", "审查", "评审")),
+            ("bug_fix", ("bugfix", "bug_fix", "repair", "fix bug", "修 bug", "修复")),
+            ("refactor", ("refactor", "重构")),
+            ("implement", ("implement", "implementation", "materialize", "实现", "落地")),
+        ):
+            if any(keyword in lowered for keyword in keywords):
+                return token
+        return "default"
+
+    @staticmethod
+    def _normalize_prompt_task_type(value: str) -> str:
+        token = re.sub(r"[\s-]+", "_", str(value or "").strip().lower())
+        return {
+            "bugfix": "bug_fix",
+            "bug": "bug_fix",
+            "fix": "bug_fix",
+            "repair": "bug_fix",
+            "quality_repair": "bug_fix",
+            "implementation": "implement",
+            "materialization": "implement",
+            "materialize": "implement",
+            "testing": "verification",
+            "tests": "verification",
+            "test": "verification",
+            "verify": "verification",
+            "audit": "code_review",
+            "review": "code_review",
+        }.get(token, token or "default")
+
+    @staticmethod
+    def _resolve_language_profession_identity(
         *,
         profile: RoleProfile,
         domain: str,
@@ -450,10 +504,11 @@ class PromptBuilder:
         prompt_appendix: str,
     ) -> LanguageProfessionalIdentity | None:
         role_id = str(getattr(profile, "role_id", "") or "").strip().lower()
-        if role_id != "director":
+        if role_id not in {"architect", "chief_engineer", "director"}:
             return None
-        if str(domain or "").strip().lower() not in {"", "code"}:
-            return None
+        # CE/Architect blueprints are often delivered as document-shaped
+        # prompts, but their engineering language still determines the
+        # profession identity and best-practice contract.
         return infer_language_professional_identity(text=f"{message}\n{prompt_appendix}")
 
     def _assemble_with_chunks(
@@ -649,7 +704,10 @@ class PromptBuilder:
     def _build_domain_hint(self, domain: str) -> str:
         token = str(domain or "").strip().lower()
         if token == "document":
-            return "【领域模式】当前任务以文档/写作为主，优先结构清晰、可复用段落和可审计结论。"
+            return (
+                "【领域模式】当前任务以文档/蓝图/写作为主；若上下文包含工程语言、目标文件或任务画像，"
+                "仍必须遵循对应语言 Best Practices、可执行验收和交接证据。"
+            )
         if token == "research":
             return "【领域模式】当前任务以分析/调研为主，优先证据链、假设边界和结论可追溯性。"
         if token == "general":

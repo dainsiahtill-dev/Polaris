@@ -1756,6 +1756,29 @@ def _start_isolated_bench_project_instance(
     return instance
 
 
+def _runtime_project_contamination(project_workspace: str) -> list[str]:
+    """Return foreign workspace keys found under a bench project's local runtime base."""
+
+    try:
+        from polaris.kernelone.storage import workspace_key
+    except (ImportError, RuntimeError):
+        return []
+    workspace_path = Path(project_workspace).expanduser().resolve()
+    projects_root = workspace_path / "runtime" / ".polaris" / "projects"
+    if not projects_root.is_dir():
+        return []
+    current_key = workspace_key(str(workspace_path))
+    foreign_keys: list[str] = []
+    try:
+        children = sorted(projects_root.iterdir(), key=lambda item: item.name)
+    except OSError:
+        return []
+    for child in children:
+        if child.is_dir() and child.name != current_key:
+            foreign_keys.append(child.name)
+    return foreign_keys
+
+
 def _bench_gate(gate: str, ok: bool, detail: str) -> dict[str, Any]:
     return {"gate": gate, "ok": bool(ok), "detail": detail}
 
@@ -3161,6 +3184,13 @@ def main() -> int:
                 backend_token=backend_token,
             )
             launcher_instance_meta.update({"ok": True, "backend_binding": "shared_backend_workspace_switch"})
+        runtime_foreign_keys = _runtime_project_contamination(project_workspace)
+        if runtime_foreign_keys:
+            workspace_switch_ok = False
+            launcher_instance_meta["runtime_contamination"] = {
+                "foreign_workspace_keys": runtime_foreign_keys[:12],
+                "foreign_workspace_key_count": len(runtime_foreign_keys),
+            }
         _emit_bench_event(
             workspace=base,
             project_id=pid,
@@ -3178,6 +3208,7 @@ def main() -> int:
                     "attempted": bool(project_backend_url) and launcher_instance_mode != "isolated",
                     "ok": bool(workspace_switch_ok),
                     "endpoint": "/settings" if launcher_instance_mode != "isolated" else "instance_supervisor",
+                    "runtime_contamination": launcher_instance_meta.get("runtime_contamination"),
                 },
             },
         )
@@ -3239,7 +3270,13 @@ def main() -> int:
 
         if project_backend_url and not workspace_switch_ok:
             error = (
-                "isolated_instance_start_failed" if launcher_instance_mode == "isolated" else "workspace_switch_failed"
+                "runtime_project_contamination"
+                if runtime_foreign_keys
+                else (
+                    "isolated_instance_start_failed"
+                    if launcher_instance_mode == "isolated"
+                    else "workspace_switch_failed"
+                )
             )
             run_errors.append(error)
             chain = {
@@ -3254,6 +3291,7 @@ def main() -> int:
                     "ok": False,
                     "endpoint": "/settings" if launcher_instance_mode != "isolated" else "instance_supervisor",
                     "workspace": project_workspace,
+                    "runtime_contamination": launcher_instance_meta.get("runtime_contamination"),
                 },
             }
             _emit_bench_event(

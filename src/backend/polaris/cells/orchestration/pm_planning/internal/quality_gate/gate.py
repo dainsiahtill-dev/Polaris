@@ -497,6 +497,11 @@ def autofix_pm_contract_for_quality(
     verify_command = detect_integration_verify_command(workspace_full)
     normalized_tasks = [task for task in tasks if isinstance(task, dict)]
     primary_language = _infer_primary_contract_language(normalized, normalized_tasks)
+    if primary_language == "go":
+        stats["language_contract_paths_sanitized"] += _sanitize_language_contract_paths_in_place(
+            normalized,
+            normalized_tasks,
+        )
     stats["paths_normalized"] += _sanitize_pm_task_paths_in_place(normalized_tasks, workspace_full)
     stats["language_contract_paths_sanitized"] += _sanitize_language_contract_paths_in_place(
         normalized,

@@ -133,6 +133,20 @@ def _first_string_list(*values: Any) -> list[str]:
     return []
 
 
+def _merge_string_lists(*values: Any) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for item in _string_list(value):
+            token = str(item or "").strip()
+            key = token.casefold()
+            if not token or key in seen:
+                continue
+            seen.add(key)
+            merged.append(token)
+    return merged
+
+
 def _task_payload_from_context(context: dict[str, Any]) -> dict[str, Any]:
     for key in ("task", "pm_task", "source_task", "contract_task"):
         nested = _mapping(context.get(key))
@@ -168,11 +182,17 @@ def _normalize_delivery_depth_payload(payload: dict[str, Any], *, source: str) -
 
 def _target_files_from_context(context: dict[str, Any]) -> list[str]:
     task_payload = _task_payload_from_context(context)
-    for key in ("target_files", "scope_paths", "files", "affected_files"):
-        rows = _first_string_list(context.get(key), task_payload.get(key))
-        if rows:
-            return rows
-    return []
+    target_like = _merge_string_lists(
+        context.get("target_files"),
+        task_payload.get("target_files"),
+        context.get("files"),
+        task_payload.get("files"),
+        context.get("affected_files"),
+        task_payload.get("affected_files"),
+    )
+    if target_like:
+        return target_like
+    return _merge_string_lists(context.get("scope_paths"), task_payload.get("scope_paths"))
 
 
 def _qa_acceptance_from_task(task_payload: dict[str, Any]) -> list[str]:

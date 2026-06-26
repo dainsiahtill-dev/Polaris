@@ -950,6 +950,83 @@ class TestAutofixPmContractForQuality:
         assert "verify src/models/task.ts exists" in payload["tasks"][0]["acceptance_criteria"]
         assert not any("requires executable command or file evidence" in item for item in report["critical_issues"])
 
+    def test_sanitizes_go_contract_respects_root_go_layout_without_pet_template(self) -> None:
+        payload: dict[str, Any] = {
+            "overall_goal": "主语言: go；实现使用 root-level models 与 engine 包的 Go 模块",
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "实现 Go 模块与 root-level 包布局",
+                    "goal": "实现 root-level models 与 engine 包，不引入 src 镜像目录。",
+                    "acceptance_criteria": [
+                        "`go.mod` 与 `models/*.go` 存在且非空",
+                        "`go test ./...` 返回成功",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": [
+                        "编写 models/entity.go",
+                        "编写 engine/service.go",
+                        "执行 go test ./...",
+                    ],
+                    "scope_paths": ["models/entity.go", "engine/service.go"],
+                    "target_files": ["models/entity.go", "engine/service.go"],
+                }
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")
+        serialized = json.dumps(payload, ensure_ascii=False)
+
+        assert stats["language_contract_paths_sanitized"] >= 1
+        assert "src/models/pet.go" not in serialized
+        assert "src/engine/engine.go" not in serialized
+        assert payload["tasks"][0]["target_files"] == [
+            "models/entity.go",
+            "engine/service.go",
+            "go.mod",
+        ]
+
+    def test_sanitizes_go_contract_uses_neutral_representatives_for_directory_only_scopes(self) -> None:
+        payload: dict[str, Any] = {
+            "overall_goal": "主语言: go；实现一个包含模型层与引擎层的 Go 模块",
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "实现 root-level Go 包",
+                    "goal": "创建 models 与 engine 包。",
+                    "acceptance_criteria": ["go test ./... passes"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["编写 models 包", "编写 engine 包"],
+                    "scope_paths": ["models", "engine"],
+                    "target_files": [],
+                },
+                {
+                    "id": "TASK-2",
+                    "title": "实现 src Go 包",
+                    "goal": "创建 src/models 与 src/engine 包。",
+                    "acceptance_criteria": ["go test ./... passes"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["TASK-1"],
+                    "execution_checklist": ["编写 src/models 包", "编写 src/engine 包"],
+                    "scope_paths": ["src/models", "src/engine"],
+                    "target_files": [],
+                },
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")
+        serialized = json.dumps(payload, ensure_ascii=False)
+
+        assert stats["language_contract_paths_sanitized"] >= 1
+        assert "pet.go" not in serialized
+        assert payload["tasks"][0]["target_files"] == ["models/model.go", "engine/engine.go"]
+        assert payload["tasks"][1]["target_files"] == ["src/models/model.go", "src/engine/engine.go"]
+
     def test_sanitizes_go_contract_directory_evidence_without_typescript_drift(self) -> None:
         payload: dict[str, Any] = {
             "overall_goal": "用 Go 实现 ASCII 魔法宠物终端，终端宠物学习咒语并用文本动画反馈情绪",
@@ -1015,6 +1092,7 @@ class TestAutofixPmContractForQuality:
             "src/models/spell.go",
             "src/models/models_test.go",
             "go.mod",
+            "src/models/model.go",
         ]
         assert payload["tasks"][1]["target_files"] == ["main.go"]
         assert "verify main.go exists" in payload["tasks"][1]["acceptance_criteria"]
@@ -1187,7 +1265,7 @@ class TestAutofixPmContractForQuality:
             "README.md",
             "go.mod",
             "main.go",
-            "src/models/pet.go",
+            "src/models/model.go",
             "src/engine/engine.go",
         ]
 

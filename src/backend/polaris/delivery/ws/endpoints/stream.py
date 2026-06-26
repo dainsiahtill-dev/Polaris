@@ -24,9 +24,20 @@ from polaris.delivery.ws.endpoints.helpers import (
     is_process_channel,
     parse_json_line,
 )
+from polaris.delivery.ws.endpoints.json_utils import elide_oversized_frame
 from polaris.delivery.ws.endpoints.models import WebSocketSendError, is_websocket_disconnect_runtime_error
 
 logger = logging.getLogger(__name__)
+
+# Keep every runtime.v2 frame below the WebSocket client receive limit. The
+# ``websockets`` library defaults to ``max_size=1,048,576`` and drops the whole
+# connection (close 1009, "message too big") on any larger frame — severing
+# realtime delivery for the factory-bench chain waiter and the live frontend
+# alike. Unbounded payloads (e.g. the factory ``stage_completed`` event embedding
+# the full Director ``StageResult.output``) trip this. We bound each frame to the
+# value below (margin under the 1 MiB limit) and elide oversized payloads in
+# place, preserving small control-plane fields so consumers still parse status.
+_WS_FRAME_MAX_BYTES = 900_000
 
 
 # =============================================================================
@@ -68,6 +79,14 @@ async def send_json(
     try:
         safe_payload = jsonable_encoder(payload)
         json_text = json.dumps(safe_payload, ensure_ascii=False)
+        if len(json_text.encode("utf-8")) > _WS_FRAME_MAX_BYTES:
+            safe_payload = elide_oversized_frame(safe_payload, _WS_FRAME_MAX_BYTES)
+            json_text = json.dumps(safe_payload, ensure_ascii=False)
+            logger.warning(
+                "runtime.v2 frame exceeded %d bytes; elided oversized payload before send",
+                _WS_FRAME_MAX_BYTES,
+                extra=error_context,
+            )
         await websocket.send_text(json_text)
         return True
 

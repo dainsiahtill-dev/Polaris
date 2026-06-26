@@ -12,15 +12,15 @@ import re
 
 _TYPESCRIPT_LANGUAGE_RE = re.compile(
     r"(?im)^\s*[-*]?\s*(?:主语言|main language|language)\s*[:：]\s*"
-    r"(?:typescript|javascript|node(?:\.js)?|ts|js)\b"
+    r"(?:typescript|ts)\b"
 )
 _TYPESCRIPT_GOAL_RE = re.compile(
-    r"(?i)(?:用\s*(?:typescript|javascript|node(?:\.js)?)\s*实现|"
-    r"implement(?:ed)?\s+in\s+(?:typescript|javascript|node(?:\.js)?))"
+    r"(?i)(?:用\s*(?:typescript|ts)\s*实现|"
+    r"implement(?:ed)?\s+in\s+(?:typescript|ts))"
 )
 _NON_TYPESCRIPT_LANGUAGE_RE = re.compile(
     r"(?im)^\s*[-*]?\s*(?:主语言|main language|language)\s*[:：]\s*"
-    r"(?:python|go|golang|rust|java|c\+\+|cpp|c#|csharp|kotlin|swift|php|shell|bash|sql)\b"
+    r"(?:javascript|node(?:\.js)?|js|python|go|golang|rust|java|c\+\+|cpp|c#|csharp|kotlin|swift|php|shell|bash|sql)\b"
 )
 _TYPESCRIPT_PATH_RE = re.compile(r"(?i)(?:^|[\s`'\"(:])[\w./*{}-]+\.(?:ts|tsx)\b")
 
@@ -69,6 +69,9 @@ def directive_requires_typescript_package_contract(directive: str) -> bool:
             "java_compile",
             "src/main/java",
             ".java",
+            "js_syntax",
+            "source_target_coverage:src/**/*.js",
+            ".js",
             "cpp_compile",
             "c++17",
             ".cpp",
@@ -81,8 +84,6 @@ def directive_requires_typescript_package_contract(directive: str) -> bool:
     return any(
         (
             "typescript" in lower,
-            "javascript" in lower,
-            "node.js" in lower,
             "ts_syntax" in lower,
             "source_target_coverage:src/**/*.ts" in lower,
             "source_target_coverage:src/**/*.tsx" in lower,

@@ -435,12 +435,15 @@ def _execution_strategy_consistency_findings(
     actual_max_tokens = _coerce_int(sampling.get("max_tokens"))
     expected_max_tokens = _coerce_int(execution_strategy.get("output_budget_tokens"))
     if actual_max_tokens is not None and expected_max_tokens is not None and actual_max_tokens < expected_max_tokens:
+        budget_ratio = actual_max_tokens / expected_max_tokens if expected_max_tokens > 0 else 0.0
         findings.append(
             {
                 "code": "execution_strategy_output_budget_under_applied",
-                "severity": "warning",
+                "severity": "error",
                 "expected_max_tokens": expected_max_tokens,
                 "actual_max_tokens": actual_max_tokens,
+                "budget_ratio": round(budget_ratio, 4),
+                "remediation": "select a model/provider binding whose max output budget can satisfy the task execution strategy",
                 "strategy_schema": str(execution_strategy.get("schema_version") or ""),
             }
         )

@@ -135,12 +135,14 @@ _GO_CONTRACT_UI_STEERING_NOTE_RE = re.compile(
     r"\s*\[quality-gate\]\s*禁止单文件大产物：HTML.*?无法收敛。",
     re.DOTALL,
 )
+_GO_CONTRACT_PY_TEST_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9_./-])tests/test_[A-Za-z0-9_.-]+\.py(?![A-Za-z0-9_./-])",
+    re.IGNORECASE,
+)
 _GO_CONTRACT_PATH_REWRITES = {
-    "src/models/index.ts": "src/models/pet.go",
+    "src/models/index.ts": "src/models/model.go",
     "src/engine/index.ts": "src/engine/engine.go",
     "src/cli/index.ts": "main.go",
-    "tests/test_ascii.py": "src/models/models_test.go",
-    "tests/test_cli_entry.py": "main.go",
     "./readme.md": "README.md",
     "readme.md": "README.md",
 }
@@ -674,7 +676,7 @@ def _is_go_foreign_file_path(path: str) -> bool:
 
 
 def _collapse_go_file_as_directory_path(path: str) -> str:
-    """Collapse impossible paths like ``src/models/pet.go/index.ts``.
+    """Collapse impossible paths like ``src/models/model.go/index.ts``.
 
     PM/CE/Director contracts must not treat a source file as a directory.
     Returning the concrete file segment preserves the intended Go target while
@@ -699,6 +701,10 @@ def _collapse_go_file_as_directory_path(path: str) -> str:
 
 def _infer_go_target_files_for_task(task: dict[str, Any]) -> list[str]:
     targets: list[str] = []
+    existing_targets = _normalize_path_list(task.get("target_files") or [])
+    text_targets = _go_text_target_files_for_task(task)
+    representative_reference_targets = _dedupe_paths([*existing_targets, *text_targets])
+    prefer_src_layout = _go_contract_prefers_src_layout(task, representative_reference_targets)
     for path in _normalize_path_list(task.get("scope_paths") or []):
         normalized = _normalize_path(path)
         if not normalized:
@@ -709,19 +715,85 @@ def _infer_go_target_files_for_task(task: dict[str, Any]) -> list[str]:
             continue
         if _is_file_like_pm_scope_path(normalized):
             continue
-        representative = _go_representative_file_for_scope(normalized, task)
+        if _go_scope_has_existing_target(normalized, representative_reference_targets):
+            targets.extend(_go_existing_targets_for_scope(normalized, representative_reference_targets))
+            continue
+        representative = _go_representative_file_for_scope(
+            normalized,
+            task,
+            prefer_src_layout=prefer_src_layout,
+        )
         if representative:
             targets.append(representative)
-    targets.extend(_go_text_target_files_for_task(task))
+    targets.extend(text_targets)
     return _dedupe_paths(targets)
 
 
-def _go_representative_file_for_scope(scope_path: str, task: dict[str, Any]) -> str:
+def _go_scope_has_existing_target(scope_path: str, target_files: list[str]) -> bool:
+    return bool(_go_existing_targets_for_scope(scope_path, target_files))
+
+
+def _go_existing_targets_for_scope(scope_path: str, target_files: list[str]) -> list[str]:
     normalized = _normalize_path(scope_path).rstrip("/")
-    if normalized in {"src/models", "models"}:
-        return "src/models/pet.go"
-    if normalized in {"src/engine", "engine"}:
-        return "src/engine/engine.go"
+    if not normalized:
+        return []
+    prefix = f"{normalized}/"
+    targets: list[str] = []
+    for target in target_files:
+        normalized_target = _normalize_path(target)
+        if not normalized_target.startswith(prefix):
+            continue
+        if Path(normalized_target).suffix.lower() == ".go":
+            targets.append(target)
+    return _dedupe_paths(targets)
+
+
+def _go_contract_prefers_src_layout(task: dict[str, Any], target_files: list[str]) -> bool:
+    candidates = [
+        *_normalize_path_list(task.get("context_files") or []),
+        *_normalize_path_list(task.get("scope_paths") or []),
+        *_normalize_path_list(task.get("target_files") or []),
+        *target_files,
+    ]
+    normalized = [_normalize_path(path).rstrip("/") for path in candidates if _normalize_path(path)]
+    has_src_layout = any(
+        path in {"src/models", "src/engine", "src/cli"} or path.startswith(("src/models/", "src/engine/", "src/cli/"))
+        for path in normalized
+    )
+    has_root_layout = any(
+        path in {"models", "engine", "cmd"} or path.startswith(("models/", "engine/", "cmd/")) for path in normalized
+    )
+    if not has_src_layout:
+        text = _go_contract_task_text(task).lower().replace("\\", "/")
+        has_src_layout = bool(re.search(r"(?<![a-z0-9_./-])src/(?:models|engine|cli)(?:/|\\b)", text))
+    return has_src_layout and not has_root_layout
+
+
+def _go_model_representative_file(*, prefer_src_layout: bool) -> str:
+    directory = "src/models" if prefer_src_layout else "models"
+    return f"{directory}/model.go"
+
+
+def _go_engine_representative_file(*, prefer_src_layout: bool) -> str:
+    directory = "src/engine" if prefer_src_layout else "engine"
+    return f"{directory}/engine.go"
+
+
+def _go_representative_file_for_scope(
+    scope_path: str,
+    task: dict[str, Any],
+    *,
+    prefer_src_layout: bool,
+) -> str:
+    normalized = _normalize_path(scope_path).rstrip("/")
+    if normalized == "src/models":
+        return _go_model_representative_file(prefer_src_layout=True)
+    if normalized == "models":
+        return _go_model_representative_file(prefer_src_layout=False)
+    if normalized == "src/engine":
+        return _go_engine_representative_file(prefer_src_layout=True)
+    if normalized == "engine":
+        return _go_engine_representative_file(prefer_src_layout=False)
     if normalized in {"src/cli", "cmd", "cmd/pet"}:
         return "main.go"
     if normalized in {"tests", "test"}:
@@ -744,9 +816,9 @@ def _go_representative_file_for_scope(scope_path: str, task: dict[str, Any]) -> 
     ) and not _go_task_is_verification_only(task):
         return "main.go"
     if "engine" in lowered or "引擎" in lowered:
-        return "src/engine/engine.go"
+        return _go_engine_representative_file(prefer_src_layout=prefer_src_layout)
     if "model" in lowered or "模型" in lowered:
-        return "src/models/pet.go"
+        return _go_model_representative_file(prefer_src_layout=prefer_src_layout)
     return ""
 
 
@@ -769,7 +841,15 @@ def _go_contract_task_text(task: dict[str, Any], *, include_acceptance: bool = T
 def _go_text_target_files_for_task(task: dict[str, Any]) -> list[str]:
     lowered = _go_contract_task_text(task).lower()
     implementation_lowered = _go_contract_task_text(task, include_acceptance=False).lower()
-    targets: list[str] = []
+    targets: list[str] = _extract_go_contract_file_paths_from_text(_go_contract_task_text(task))
+    known_targets = _dedupe_paths(
+        [
+            *_normalize_path_list(task.get("target_files") or []),
+            *_normalize_path_list(task.get("scope_paths") or []),
+            *targets,
+        ]
+    )
+    prefer_src_layout = _go_contract_prefers_src_layout(task, known_targets)
     if "go.mod" in lowered or (
         "go" in lowered and ("module" in lowered or "bootstrap" in lowered or "骨架" in lowered)
     ):
@@ -784,13 +864,36 @@ def _go_text_target_files_for_task(task: dict[str, Any]) -> list[str]:
         targets.append("scripts/qa.sh")
     if "seed" in lowered and ("spell" in lowered or "spells" in lowered or "咒语" in lowered):
         targets.append("seed/spells.json")
-    if "src/models" in implementation_lowered or "models/" in implementation_lowered:
-        targets.append("src/models/pet.go")
-    if "src/engine" in implementation_lowered or "engine/" in implementation_lowered:
-        targets.append("src/engine/engine.go")
+    if ("src/models" in implementation_lowered or "models/" in implementation_lowered) and not (
+        _go_scope_has_existing_target("src/models", known_targets)
+        or _go_scope_has_existing_target("models", known_targets)
+    ):
+        targets.append(_go_model_representative_file(prefer_src_layout=prefer_src_layout))
+    if ("src/engine" in implementation_lowered or "engine/" in implementation_lowered) and not (
+        _go_scope_has_existing_target("src/engine", known_targets)
+        or _go_scope_has_existing_target("engine", known_targets)
+    ):
+        targets.append(_go_engine_representative_file(prefer_src_layout=prefer_src_layout))
     if "readme" in lowered or "文档" in lowered:
         targets.append("README.md")
-    return targets
+    return _dedupe_paths(targets)
+
+
+def _extract_go_contract_file_paths_from_text(text: str) -> list[str]:
+    normalized_text = str(text or "").replace("\\", "/")
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9_./-])(?:[A-Za-z0-9_.-]+/)*"
+        r"(?:[A-Za-z0-9_.-]+\.go|go\.mod|go\.sum|README\.md|readme\.md|scripts/[A-Za-z0-9_.-]+\.sh)"
+        r"(?![A-Za-z0-9_./-])",
+        re.IGNORECASE,
+    )
+    return _dedupe_paths(
+        [
+            _normalize_path(match.group(0))
+            for match in pattern.finditer(normalized_text)
+            if not _is_go_foreign_file_path(match.group(0))
+        ]
+    )
 
 
 def _go_task_is_verification_only(task: dict[str, Any]) -> bool:
@@ -830,6 +933,8 @@ def _sanitize_go_contract_text(value: str) -> tuple[str, int]:
     changed = 0
     result, note_changes = _GO_CONTRACT_UI_STEERING_NOTE_RE.subn("", result)
     changed += note_changes
+    result, py_test_changes = _GO_CONTRACT_PY_TEST_PATH_RE.subn("main_test.go", result)
+    changed += py_test_changes
     for source, replacement in _GO_CONTRACT_PATH_REWRITES.items():
         if source in result:
             result = result.replace(source, replacement)

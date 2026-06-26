@@ -3553,7 +3553,7 @@ def _build_existing_workspace_task_evidence(
     existing_count = len(existing)
     coverage = existing_count / max(candidate_count, 1)
     minimum_existing = min(3, max(1, candidate_count))
-    ok = existing_count >= minimum_existing and (coverage >= 0.5 or existing_count >= 5)
+    ok = existing_count >= minimum_existing and not missing
     artifact_quality_errors: list[str] = []
     if ok and str(workspace_full or "").strip() and existing:
         artifact_quality_errors = _em.scan_workspace_artifact_quality(

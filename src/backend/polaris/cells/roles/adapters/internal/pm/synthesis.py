@@ -22,7 +22,38 @@ def _directive_requires_typescript_package_contract(directive: str) -> bool:
     return directive_requires_typescript_package_contract(directive)
 
 
+def _explicit_primary_language_from_directive(directive: str) -> str:
+    text = str(directive or "")
+    match = re.search(
+        r"(?im)^\s*[-*]?\s*(?:主语言|main language)\s*[:：]\s*([A-Za-z0-9_+#.-]+)\s*(?:$|[;,.，。])",
+        text,
+    )
+    if not match:
+        return ""
+    token = match.group(1).strip().lower()
+    aliases = {
+        "golang": "go",
+        "js": "javascript",
+        "node": "javascript",
+        "nodejs": "javascript",
+        "node.js": "javascript",
+        "ts": "typescript",
+        "py": "python",
+        "c++": "cpp",
+    }
+    return aliases.get(token, token)
+
+
+def _directive_has_other_explicit_primary_language(directive: str, *expected: str) -> bool:
+    primary = _explicit_primary_language_from_directive(directive)
+    if not primary:
+        return False
+    return primary not in {item.lower() for item in expected}
+
+
 def _directive_requires_rust_package_contract(directive: str) -> bool:
+    if _directive_has_other_explicit_primary_language(directive, "rust"):
+        return False
     lower = str(directive or "").lower()
     return any(
         token in lower
@@ -37,6 +68,8 @@ def _directive_requires_rust_package_contract(directive: str) -> bool:
 
 
 def _directive_requires_cpp_package_contract(directive: str) -> bool:
+    if _directive_has_other_explicit_primary_language(directive, "cpp"):
+        return False
     lower = str(directive or "").lower()
     return any(
         token in lower
@@ -53,6 +86,8 @@ def _directive_requires_cpp_package_contract(directive: str) -> bool:
 
 
 def _directive_requires_go_workspace_contract(directive: str) -> bool:
+    if _directive_has_other_explicit_primary_language(directive, "go"):
+        return False
     text = str(directive or "")
     lower = text.lower()
     has_explicit_go_metadata = bool(
@@ -75,6 +110,8 @@ def _directive_requires_go_workspace_contract(directive: str) -> bool:
 
 
 def _directive_requires_java_package_contract(directive: str) -> bool:
+    if _directive_has_other_explicit_primary_language(directive, "java"):
+        return False
     text = str(directive or "")
     lower = str(directive or "").lower()
     has_explicit_java_metadata = bool(
@@ -98,21 +135,32 @@ def _directive_requires_java_package_contract(directive: str) -> bool:
 
 
 def _directive_requires_javascript_package_contract(directive: str) -> bool:
+    explicit_primary_language = _explicit_primary_language_from_directive(directive)
+    if explicit_primary_language and explicit_primary_language != "javascript":
+        return False
     lower = str(directive or "").lower()
     if (
-        _directive_requires_typescript_package_contract(directive)
-        or _directive_requires_rust_package_contract(directive)
+        _directive_requires_rust_package_contract(directive)
         or _directive_requires_cpp_package_contract(directive)
         or _directive_requires_go_workspace_contract(directive)
         or _directive_requires_java_package_contract(directive)
+        or _directive_requires_python_workspace_contract(directive)
     ):
         return False
     has_javascript = any(
         token in lower
         for token in (
             "主语言: javascript",
+            "主语言: js",
+            "主语言: node",
+            "主语言: node.js",
             "main language: javascript",
+            "main language: js",
+            "main language: node",
+            "main language: node.js",
             "用 javascript 实现",
+            "用 js 实现",
+            "用 node.js 实现",
             "js_syntax",
             "source_target_coverage:src/**/*.js",
             "src/index.js",
@@ -133,6 +181,8 @@ def _directive_requires_javascript_package_contract(directive: str) -> bool:
 
 
 def _directive_requires_python_workspace_contract(directive: str) -> bool:
+    if _directive_has_other_explicit_primary_language(directive, "python"):
+        return False
     lower = str(directive or "").lower()
     return any(
         token in lower

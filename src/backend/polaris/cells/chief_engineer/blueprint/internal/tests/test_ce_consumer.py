@@ -155,6 +155,71 @@ class TestCEConsumerPollOnce:
         assert any("vector" in item.lower() for item in database["options_considered"])
 
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    def test_successful_claim_preserves_pm_task_test_targets(self, mock_get_svc: MagicMock) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-js"
+        claim_result.lease_token = "lease-js"
+        claim_result.payload = {
+            "title": "JavaScript task",
+            "description": "Build JavaScript source and tests.",
+            "target_files": ["src/index.js"],
+            "acceptance_criteria": ["npm test passes"],
+            "execution_checklist": ["Implement source", "Add tests", "Run npm test"],
+            "pm_contract": {
+                "id": "task-js",
+                "target_files": [
+                    "src/index.js",
+                    "src/engine/rules.js",
+                    "tests/product.test.js",
+                    "tests/test_product.py",
+                    "README.md",
+                ],
+                "scope_paths": ["src/index.js", "tests/product.test.js"],
+                "acceptance_criteria": ["npm test passes"],
+                "execution_checklist": ["Implement source", "Add tests", "Run npm test"],
+            },
+        }
+        no_claim_result = MagicMock()
+        no_claim_result.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim_result]
+        ack_result = MagicMock()
+        ack_result.ok = True
+        ack_result.status = "pending_exec"
+        mock_svc.acknowledge_task_stage.return_value = ack_result
+
+        consumer = CEConsumer(workspace="/test", worker_id="w1")
+
+        with patch.object(
+            consumer,
+            "_run_ce_preflight",
+            return_value={
+                "blueprint_id": "bp-task-js",
+                "target_files": ["src/index.js"],
+                "scope_paths": ["src/index.js"],
+            },
+        ):
+            results = consumer.poll_once()
+
+        assert results[0]["ok"] is True
+        ack_call_args = mock_svc.acknowledge_task_stage.call_args
+        assert ack_call_args is not None
+        cmd = ack_call_args[0][0]
+        assert cmd.metadata["target_files"] == [
+            "src/index.js",
+            "src/engine/rules.js",
+            "tests/product.test.js",
+            "tests/test_product.py",
+            "README.md",
+        ]
+        assert cmd.metadata["job_token"]["target_files"] == cmd.metadata["target_files"]
+        assert "tests/product.test.js" in cmd.metadata["job_token"]["allowed_paths"]
+        assert "tests/test_product.py" in cmd.metadata["job_token"]["required_artifacts"]
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
     def test_claim_then_preflight_failure_requeues(self, mock_get_svc: MagicMock) -> None:
         """Verify failure path requeues to pending_design."""
         mock_svc = MagicMock()

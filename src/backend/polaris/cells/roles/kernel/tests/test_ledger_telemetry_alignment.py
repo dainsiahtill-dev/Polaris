@@ -75,6 +75,37 @@ class TestLedgerTelemetryAlignment:
         assert ledger.llm_calls[0]["metadata"]["context_os_audit"] == audit
 
     @pytest.mark.asyncio
+    async def test_execute_result_carries_final_request_audit_metadata(self) -> None:
+        final_audit = {
+            "schema_version": "llm.final_request_context_audit.v1",
+            "final_request_token_estimate": 48000,
+        }
+        llm = AsyncMock(
+            return_value={
+                "content": "Final answer.",
+                "model": "test-model",
+                "usage": {
+                    "usage": {"prompt_tokens": 120, "completion_tokens": 24},
+                    "final_request_context_audit": final_audit,
+                    "context_snapshot_ref": "runtime/contexts/aa/bbbb.json",
+                },
+            }
+        )
+        tool_runtime = AsyncMock(return_value={"success": True, "result": "content"})
+        controller = TurnTransactionController(
+            llm_provider=llm,
+            tool_runtime=tool_runtime,
+            config=TransactionConfig(domain="code"),
+        )
+
+        result = await controller.execute("turn_final_audit", [{"role": "user", "content": "answer"}], [])
+
+        metadata = result["llm_response_metadata"]
+        assert metadata["final_request_context_audit"] == final_audit
+        assert metadata["context_snapshot_ref"] == "runtime/contexts/aa/bbbb.json"
+        assert result["ledger"].llm_calls[0]["metadata"]["final_request_context_audit"] == final_audit
+
+    @pytest.mark.asyncio
     async def test_execute_stream_carries_provider_context_os_audit_into_completion_monitoring(self) -> None:
         audit = {
             "ok": True,

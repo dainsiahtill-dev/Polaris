@@ -413,6 +413,46 @@ class TestChiefEngineerBlueprintPublicService:
         assert persisted["behavior_contract"]["required_behavior_tests"] == ["normal", "boundary", "invalid"]
         assert persisted["behavior_contract"]["rule_matrix"][0]["expected"] == "priority"
 
+    def test_generate_task_blueprint_preserves_pm_task_test_targets(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-JS",
+            workspace=str(tmp_path),
+            objective="Build JavaScript product contract",
+            context={
+                "target_files": ["src/index.js"],
+                "acceptance_criteria": ["`npm test` and external validation pass"],
+                "execution_checklist": ["Implement source", "Add tests", "Run validation"],
+                "task": {
+                    "id": "TASK-JS",
+                    "target_files": [
+                        "src/index.js",
+                        "src/engine/rules.js",
+                        "tests/product.test.js",
+                        "tests/test_product.py",
+                        "README.md",
+                    ],
+                    "scope_paths": ["src/index.js", "tests/product.test.js"],
+                    "acceptance_criteria": ["`npm test` and external validation pass"],
+                    "execution_checklist": ["Implement source", "Add tests", "Run validation"],
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        assert result.target_files == (
+            "src/index.js",
+            "src/engine/rules.js",
+            "tests/product.test.js",
+            "tests/test_product.py",
+            "README.md",
+        )
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["target_files"] == list(result.target_files)
+        assert persisted["contract_completeness"]["handoff_ready"] is True
+
     def test_query_missing_task_blueprint(self, tmp_path) -> None:
         status = get_blueprint_status(
             GetBlueprintStatusQueryV1(

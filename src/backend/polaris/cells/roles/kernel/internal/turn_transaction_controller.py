@@ -1101,10 +1101,20 @@ class TurnTransactionController:
                     response_llm_metadata[key] = dict(value) if isinstance(value, dict) else value
 
         # Phase 3.3: Track usage
-        provider_usage = response_usage.get("usage") if isinstance(response_usage.get("usage"), dict) else {}
-        prompt_tokens = int(response_usage.get("prompt_tokens") or provider_usage.get("prompt_tokens") or 0)
-        completion_tokens = int(
-            response_usage.get("completion_tokens") or provider_usage.get("completion_tokens") or 0
+        raw_provider_usage = response_usage.get("usage")
+        provider_usage: dict[str, Any] = dict(raw_provider_usage) if isinstance(raw_provider_usage, dict) else {}
+
+        def _safe_token_count(value: Any) -> int:
+            if isinstance(value, bool) or value is None:
+                return 0
+            try:
+                return max(0, int(value))
+            except (TypeError, ValueError):
+                return 0
+
+        prompt_tokens = _safe_token_count(response_usage.get("prompt_tokens") or provider_usage.get("prompt_tokens"))
+        completion_tokens = _safe_token_count(
+            response_usage.get("completion_tokens") or provider_usage.get("completion_tokens")
         )
         tokens_used = prompt_tokens + completion_tokens
         cost = response.get("cost", 0.0)
@@ -1115,7 +1125,8 @@ class TurnTransactionController:
             model=response.get("model", "unknown"),
             tokens_in=prompt_tokens,
             tokens_out=completion_tokens,
-            metadata=response_llm_metadata or (
+            metadata=response_llm_metadata
+            or (
                 {"context_os_audit": dict(response_context_os_audit)}
                 if isinstance(response_context_os_audit, dict)
                 else None

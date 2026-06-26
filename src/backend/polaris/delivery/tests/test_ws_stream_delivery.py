@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 from fastapi import WebSocketDisconnect
 from polaris.delivery.ws.endpoints.client_message import handle_client_message
-from polaris.delivery.ws.endpoints.stream import emit_stream_line
+from polaris.delivery.ws.endpoints.stream import _WS_FRAME_MAX_BYTES, emit_stream_line, send_json
 from polaris.delivery.ws.endpoints.websocket_loop import run_main_loop
 from polaris.infrastructure.messaging.nats.nats_types import RuntimeEventEnvelope
 
@@ -16,8 +16,10 @@ from polaris.infrastructure.messaging.nats.nats_types import RuntimeEventEnvelop
 class FakeWebSocket:
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []
+        self.raw_frames: list[str] = []
 
     async def send_text(self, data: str) -> None:
+        self.raw_frames.append(data)
         self.messages.append(json.loads(data))
 
 
@@ -95,6 +97,57 @@ def test_emit_stream_line_routes_canonical_dialogue_source_to_dialogue_event() -
     assert payload["type"] == "dialogue_event"
     assert payload["channel"] == "dialogue"
     assert payload["event"]["text"] == "hello from dialogue"
+
+
+def test_send_json_elides_oversized_runtime_frame_under_ws_limit() -> None:
+    # Reproduces r05: a factory ``stage_completed`` event embeds the full Director
+    # ``StageResult.output`` twice → frame > 1 MiB → the websockets client drops the
+    # connection (close 1009). send_json must bound the frame and keep control fields.
+    async def _run() -> tuple[str, dict[str, Any]]:
+        websocket = FakeWebSocket()
+        huge_output = "GENERATED SOURCE LINE\n" * 80_000
+        payload = {
+            "type": "EVENT",
+            "channel": "event.factory:run-1",
+            "cursor": 11,
+            "event": {
+                "run_id": "run-1",
+                "channel": "event.factory:run-1",
+                "kind": "stage_completed",
+                "payload": {
+                    "type": "stage_completed",
+                    "stage": "director",
+                    "message": huge_output,
+                    "result": {"stage": "director", "status": "success", "output": huge_output},
+                    "timestamp": "2026-06-27T00:00:00Z",
+                },
+            },
+        }
+        sent = await send_json(cast(Any, websocket), payload)
+        assert sent is True
+        return websocket.raw_frames[-1], websocket.messages[-1]
+
+    raw_frame, parsed = asyncio.run(_run())
+
+    assert len(raw_frame.encode("utf-8")) <= _WS_FRAME_MAX_BYTES
+    assert parsed["type"] == "EVENT"
+    assert parsed["channel"] == "event.factory:run-1"
+    assert parsed["cursor"] == 11
+    inner = parsed["event"]["payload"]
+    assert inner["type"] == "stage_completed"
+    assert inner["result"]["status"] == "success"
+    assert "ws-elided" in inner["result"]["output"]
+
+
+def test_send_json_leaves_small_frame_byte_identical() -> None:
+    async def _run() -> str:
+        websocket = FakeWebSocket()
+        await send_json(cast(Any, websocket), {"type": "status", "ok": True, "n": 3})
+        return websocket.raw_frames[-1]
+
+    raw_frame = asyncio.run(_run())
+    assert json.loads(raw_frame) == {"type": "status", "ok": True, "n": 3}
+    assert len(raw_frame.encode("utf-8")) <= _WS_FRAME_MAX_BYTES
 
 
 def test_runtime_websocket_entrypoint_exposes_only_runtime_v2_loop_kwargs(monkeypatch: pytest.MonkeyPatch) -> None:
