@@ -62,13 +62,14 @@ def _directive_requires_cpp_package_contract(directive: str) -> bool:
 
 
 def _directive_requires_java_package_contract(directive: str) -> bool:
+    text = str(directive or "")
     lower = str(directive or "").lower()
-    return any(
+    has_explicit_java_metadata = bool(
+        re.search(r"(?im)^\s*[-*]?\s*(?:主语言|main language)\s*[:：]\s*java\s*(?:$|[;,.，。])", text)
+    )
+    has_explicit_java_artifact = any(
         token in lower
         for token in (
-            "主语言: java",
-            "main language: java",
-            " java ",
             ".java",
             "javac",
             "java_compile",
@@ -76,6 +77,43 @@ def _directive_requires_java_package_contract(directive: str) -> bool:
             "source_target_coverage:src/main/java",
         )
     )
+    return has_explicit_java_metadata or has_explicit_java_artifact or bool(
+        re.search(r"(?<!script)\bjava\b(?!script)", lower)
+    )
+
+
+def _directive_requires_javascript_package_contract(directive: str) -> bool:
+    lower = str(directive or "").lower()
+    if (
+        _directive_requires_typescript_package_contract(directive)
+        or _directive_requires_rust_package_contract(directive)
+        or _directive_requires_cpp_package_contract(directive)
+        or _directive_requires_java_package_contract(directive)
+    ):
+        return False
+    has_javascript = any(
+        token in lower
+        for token in (
+            "主语言: javascript",
+            "main language: javascript",
+            "用 javascript 实现",
+            "js_syntax",
+            "source_target_coverage:src/**/*.js",
+            "src/index.js",
+        )
+    )
+    has_package_contract = any(
+        token in lower
+        for token in (
+            "package.json",
+            "package_scripts",
+            "npm",
+            "build/test/start",
+            "build, test, and start",
+            "build/test",
+        )
+    )
+    return has_javascript and has_package_contract
 
 
 _DETERMINISTIC_CHECK_RE = re.compile(
@@ -135,6 +173,24 @@ def _typescript_model_targets_from_keywords(keywords: list[str], *, domain_token
     source_keywords = keywords[:4] if keywords else [domain_token]
     targets = [
         _typescript_model_target_from_keyword(
+            keyword,
+            fallback=_pascal_identifier_token(domain_token, fallback="DomainModel"),
+        )
+        for keyword in source_keywords
+    ]
+    return _dedupe_limited_texts(targets, limit=6)
+
+
+def _javascript_model_target_from_keyword(keyword: str, *, fallback: str) -> str:
+    normalized = str(keyword or "").strip().lower()
+    name = _pascal_identifier_token(normalized, fallback=fallback)
+    return f"src/models/{name}.js"
+
+
+def _javascript_model_targets_from_keywords(keywords: list[str], *, domain_token: str) -> list[str]:
+    source_keywords = keywords[:4] if keywords else [domain_token]
+    targets = [
+        _javascript_model_target_from_keyword(
             keyword,
             fallback=_pascal_identifier_token(domain_token, fallback="DomainModel"),
         )
@@ -278,6 +334,19 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             "source_context_redacted": True,
             "source_directive_length": len(str(directive or "")),
         }
+        if _directive_requires_javascript_package_contract(directive):
+            javascript_contracts = self._synthesize_javascript_workspace_contracts(
+                directive=directive,
+                domain_label=str(domain_label),
+                domain_token=str(domain or "app"),
+                source_metadata=source_metadata,
+            )
+            contracts = [
+                self._normalize_task_contract(item, idx + 1, directive)
+                for idx, item in enumerate(javascript_contracts)
+            ]
+            return [item for item in contracts if isinstance(item, dict)]
+
         if _directive_requires_java_package_contract(directive):
             java_contracts = self._synthesize_java_workspace_contracts(
                 directive=directive,
@@ -688,6 +757,96 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
 
         contracts = [self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(raw_contracts)]
         return [item for item in contracts if isinstance(item, dict)]
+
+    def _synthesize_javascript_workspace_contracts(
+        self,
+        *,
+        directive: str,
+        domain_label: str,
+        domain_token: str,
+        source_metadata: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        deterministic_checks = _extract_deterministic_checks_from_directive(directive)
+        content_keywords = _extract_content_any_keywords_from_directive(directive)
+        if not content_keywords:
+            content_keywords = self._extract_domain_keywords(directive, limit=6)
+        keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
+        check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "js_syntax; package_scripts"
+        model_targets = _javascript_model_targets_from_keywords(content_keywords, domain_token=domain_token)
+        source_targets = [
+            "package.json",
+            "src/index.js",
+            "src/engine/rules.js",
+            "src/engine/runner.js",
+            *model_targets,
+        ]
+        verification_targets = [
+            "tests/product.test.js",
+            "tests/test_product.py",
+            "README.md",
+        ]
+        return [
+            {
+                "id": "TASK-1",
+                "title": f"实现 {domain_label} JavaScript/npm 项目骨架与核心模块",
+                "goal": (
+                    f"在工作区根交付 {domain_label} 的 JavaScript/npm 项目骨架、真实 package 脚本和"
+                    "需求驱动的核心业务源码。"
+                ),
+                "description": (
+                    "创建 package.json、src/index.js、src/engine/ 与需求派生的 src/models/*.js，"
+                    f"覆盖需求关键词和确定性检查：{keyword_summary}。"
+                ),
+                "scope": source_targets,
+                "target_files": source_targets,
+                "steps": [
+                    "创建 package.json，声明真实 build/test/start 脚本，禁止 echo-only 或 manifest-only 脚本",
+                    "实现 src/index.js 作为 Node-safe CLI 或模块入口，可通过 npm start 执行",
+                    "实现 src/engine/rules.js 与 src/engine/runner.js，封装核心匹配、计算或流程规则",
+                    "实现 src/models/ 下的需求派生领域模型，源码必须真实使用需求关键词",
+                    "执行 `node --check` 或等价语法检查覆盖 src/**/*.js",
+                ],
+                "acceptance": [
+                    "`package.json`、`src/index.js`、`src/engine/` 与 `src/models/` JavaScript 源码存在且非空",
+                    "`npm run build`、`npm test` 与 `npm start` 都执行真实入口或验证逻辑",
+                    f"源码或测试覆盖需求关键词：{keyword_summary}",
+                    f"确定性检查进入任务验收：{check_summary}",
+                ],
+                "phase": "requirements",
+                "depends_on": [],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+            {
+                "id": "TASK-2",
+                "title": f"实现 {domain_label} JavaScript 验证脚本与交付说明",
+                "goal": f"固化 {domain_label} 的 npm 验证、Python 外部验收和 README 运行路径。",
+                "description": (
+                    "补齐 tests/product.test.js、tests/test_product.py 与 README，"
+                    f"确保 package_scripts、js_syntax 和 source_target_coverage 可被自动验证：{check_summary}。"
+                ),
+                "scope": [*source_targets, *verification_targets],
+                "target_files": [*source_targets, *verification_targets],
+                "steps": [
+                    "实现 tests/product.test.js，使用 Node 标准库 assert 或内置 test runner 验证核心规则",
+                    "实现 tests/test_product.py，使用 Python unittest 检查 package.json 脚本、src/**/*.js 覆盖和 node 入口",
+                    "更新 package.json 的 test/build/start 脚本，使其运行当前存在的 JavaScript 文件",
+                    "编写 README，说明 npm install、npm run build、npm test、npm start 和验证脚本",
+                    f"验证脚本覆盖确定性检查：{check_summary}",
+                ],
+                "acceptance": [
+                    "`tests/product.test.js` 与 `tests/test_product.py` 存在且可执行",
+                    "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
+                    "`npm test` 返回 PASS，且不是空脚本或 echo-only 脚本",
+                    "`README.md` 包含安装、构建、测试和启动步骤",
+                    f"确定性检查进入任务验收：{check_summary}",
+                ],
+                "phase": "implementation",
+                "depends_on": ["TASK-1"],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+        ]
 
     def _synthesize_rust_workspace_contracts(
         self,

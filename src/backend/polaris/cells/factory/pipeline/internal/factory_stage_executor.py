@@ -50,6 +50,28 @@ from .factory_workspace_quality import WorkspaceQualityRunner
 
 logger = logging.getLogger(__name__)
 
+# Language-to-extension mapping for PM plan language consistency validation.
+# Used to detect when the PM model plans files in the wrong language
+# (e.g. Java files for a JavaScript project — context bleed from other projects).
+_LANGUAGE_SOURCE_EXTENSIONS: dict[str, frozenset[str]] = {
+    "javascript": frozenset({".js", ".mjs", ".cjs", ".jsx"}),
+    "typescript": frozenset({".ts", ".tsx", ".mts", ".cts"}),
+    "python": frozenset({".py"}),
+    "rust": frozenset({".rs"}),
+    "go": frozenset({".go"}),
+    "java": frozenset({".java"}),
+    "cpp": frozenset({".cpp", ".cc", ".cxx", ".c", ".h", ".hpp", ".hxx"}),
+    "csharp": frozenset({".cs"}),
+    "ruby": frozenset({".rb"}),
+    "swift": frozenset({".swift"}),
+    "kotlin": frozenset({".kt", ".kts"}),
+    "scala": frozenset({".scala"}),
+}
+# Extensions that are language-agnostic and should not trigger a mismatch.
+_LANGUAGE_NEUTRAL_EXTENSIONS: frozenset[str] = frozenset(
+    {".json", ".yaml", ".yml", ".toml", ".md", ".txt", ".html", ".css", ".xml", ".csv", ".lock"}
+)
+
 _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
 _WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_ENV = "KERNELONE_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS"
 _DEFAULT_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS = 90.0
@@ -452,6 +474,54 @@ class OrchestrationStageExecutor:
     @staticmethod
     def _is_pm_meta_diagnostic_task(task: dict[str, Any]) -> bool:
         return helpers.is_pm_meta_diagnostic_task(task)
+
+    def _validate_pm_plan_language_consistency(self, relative_path: str = "tasks/plan.json") -> str:
+        """Check that PM plan target_files match the catalog primary_language.
+
+        Detects context bleed where the PM model plans files in the wrong
+        language (e.g. ``.java`` files for a ``javascript`` project).
+        Returns an empty string when consistent, or a diagnostic message.
+        """
+        catalog_path = self.workspace / ".polaris" / "catalog_contract.json"
+        if not catalog_path.exists():
+            return ""
+        try:
+            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return ""
+        primary_language = str(catalog.get("primary_language") or "").strip().lower()
+        if not primary_language:
+            return ""
+        expected_extensions = _LANGUAGE_SOURCE_EXTENSIONS.get(primary_language)
+        if not expected_extensions:
+            return ""
+        tasks = self._load_pm_plan_tasks(relative_path)
+        if not tasks:
+            return ""
+        wrong_lang_files: list[str] = []
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            target_files = task.get("target_files")
+            if not isinstance(target_files, list):
+                continue
+            for file_path in target_files:
+                if not isinstance(file_path, str):
+                    continue
+                ext = Path(file_path).suffix.lower()
+                if ext in _LANGUAGE_NEUTRAL_EXTENSIONS or not ext:
+                    continue
+                if ext not in expected_extensions:
+                    wrong_lang_files.append(file_path)
+        if not wrong_lang_files:
+            return ""
+        sample = wrong_lang_files[:5]
+        return (
+            f"pm_plan_language_mismatch: catalog primary_language={primary_language!r} "
+            f"but {len(wrong_lang_files)} target_files use wrong extensions "
+            f"(e.g. {sample}). "
+            f"PM likely confused this project with a different language project."
+        )
 
     def _load_pm_plan_tasks(self, relative_path: str = "tasks/plan.json") -> list[dict[str, Any]]:
         target = self._artifact_path(relative_path)
@@ -2014,6 +2084,17 @@ class OrchestrationStageExecutor:
                     "detail": contract_issue,
                 }
             )
+        if not contract_issue:
+            language_issue = self._validate_pm_plan_language_consistency("tasks/plan.json")
+            if language_issue:
+                contract_issue = language_issue
+                stage_signals.append(
+                    {
+                        "code": "pm.language_mismatch_detected",
+                        "severity": "error",
+                        "detail": language_issue,
+                    }
+                )
         pm_tasks = self._load_pm_plan_tasks("tasks/plan.json")
         if not contract_issue and pm_tasks:
             materialize_summary = self._materialize_pm_plan_taskboard(

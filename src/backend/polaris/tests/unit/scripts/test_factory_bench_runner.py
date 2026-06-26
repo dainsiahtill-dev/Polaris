@@ -931,6 +931,36 @@ def test_main_rejects_unknown_explicit_project_ids(
     assert "refusing to run partial explicit selection" in captured.out
 
 
+def test_level_local_explicit_project_ids_resolve_to_catalog_index() -> None:
+    projects = [
+        {"id": f"L1-{idx:02d}", "level": 1, "title": f"L1 Project {idx}", "brief": "Build L1"}
+        for idx in range(1, 11)
+    ]
+    projects.extend(
+        [
+            {"id": "L2-11", "level": 2, "title": "First L2", "brief": "Build first L2"},
+            {"id": "L2-12", "level": 2, "title": "Second L2", "brief": "Build second L2"},
+        ]
+    )
+
+    selected, missing_ids, alias_to_canonical = bench._resolve_explicit_project_selection(projects, ["L2-01"])
+
+    assert missing_ids == []
+    assert alias_to_canonical == {"L2-01": "L2-11"}
+    assert selected == [
+        {
+            "id": "L2-01",
+            "level": 2,
+            "title": "First L2",
+            "brief": "Build first L2",
+            "requested_project_id": "L2-01",
+            "canonical_catalog_project_id": "L2-11",
+        }
+    ]
+    assert projects[10]["id"] == "L2-11"
+    assert "requested_project_id" not in projects[10]
+
+
 def test_main_defaults_to_l1_through_l12_catalog(monkeypatch: Any, tmp_path: Path) -> None:
     captured: dict[str, Any] = {}
     projects = [
@@ -1077,7 +1107,9 @@ def _setup_run_factory_chain_mocks(
         reason: str = "",
         token: str = "",
         workspace: str = "",
+        return_errors: bool = False,
     ) -> dict[str, Any]:
+        del return_errors
         assert reason
         assert workspace == expected_workspace
         return {"status": "cancelled"}
@@ -2366,7 +2398,9 @@ def test_run_factory_chain_fallback_on_audit_bundle_timeout(monkeypatch: Any, tm
         reason: str = "",
         token: str = "",
         workspace: str = "",
+        return_errors: bool = False,
     ) -> dict[str, Any]:
+        del reason, token, workspace, return_errors
         return {"status": "cancelled"}
 
     monkeypatch.setattr(bench, "start_factory_run", _fake_start_factory_run)

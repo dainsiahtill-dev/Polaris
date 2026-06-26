@@ -220,6 +220,68 @@ class TestFrontendTestRepairContracts:
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
+    def test_javascript_directive_does_not_match_java_contracts(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+请基于 Architect 阶段产物生成 PM 执行任务合同。
+
+## Original Requirement Excerpt
+# Product Requirements — 星际失物招领站
+
+## Goal
+- 用 JavaScript 实现「星际失物招领站」。创意钩子: 跨星系遗失物按能量读数和线索匹配主人。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。
+
+## Project Metadata
+- 主语言: javascript
+- 领域: creative
+- 项目类型: story_tool
+
+## Acceptance Criteria
+- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。
+- 必须提供至少一种真实可执行入口, 且验收脚本可自动发现: CLI 项目提供 package.json 脚本或可直接执行的 main 文件。
+- 附 README.md 说明如何运行。
+- 关键验收维度: 跨星系遗失物按能量读数和线索匹配主人; 同时验证 JavaScript 产物结构、入口可运行性和核心领域规则。
+
+## Deterministic Checks
+- js_syntax
+- package_scripts
+- min_files:4
+- content_any:lost|alien|galaxy|clue
+- source_target_coverage:src/**/*.js
+
+## Source Tree Structure Contract (MANDATORY)
+- 必须包含 `src/` 目录, 核心业务逻辑在 `src/` 下的 `.js` 文件中。
+- 必须包含 `src/index.js` 应用入口。
+""".strip()
+
+        contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+        _normalized, quality = adapter._evaluate_contract_quality(contracts, directive=directive)
+        targets = [target for item in contracts for target in item.get("target_files", [])]
+        serialized = json.dumps(contracts, ensure_ascii=False)
+
+        assert len(contracts) == 2
+        assert "package.json" in targets
+        assert "src/index.js" in targets
+        assert "src/engine/rules.js" in targets
+        assert "src/engine/runner.js" in targets
+        assert "tests/product.test.js" in targets
+        assert "tests/test_product.py" in targets
+        assert "README.md" in targets
+        assert any(target.startswith("src/models/") and target.endswith(".js") for target in targets)
+        assert all("src/main/java" not in target for target in targets)
+        assert "RhythmMonster" not in serialized
+        assert "BeatPattern" not in serialized
+        assert "javac" not in serialized.lower()
+        assert "js_syntax" in serialized
+        assert "package_scripts" in serialized
+        assert "source_target_coverage:src/**/*.js" in serialized
+        assert "lost" in serialized
+        assert "alien" in serialized
+        assert "galaxy" in serialized
+        assert "clue" in serialized
+        assert quality["ok"] is True
+        assert (quality.get("score") or 0) >= 80
+
     def test_rust_root_workspace_directive_prefers_cargo_contracts(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         directive = """

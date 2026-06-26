@@ -528,6 +528,72 @@ def load_projects(projects_file: str | Path | None = None) -> list[dict[str, Any
     return projects
 
 
+def _level_local_project_aliases(projects: list[dict[str, Any]]) -> dict[str, str]:
+    """Map level-local ids like L2-01 to the catalog's actual project id."""
+
+    aliases: dict[str, str] = {}
+    by_level: dict[int, list[dict[str, Any]]] = {}
+    for project in projects:
+        try:
+            level = int(project.get("level") or 0)
+        except (TypeError, ValueError):
+            continue
+        if level <= 0:
+            continue
+        by_level.setdefault(level, []).append(project)
+
+    for level, level_projects in by_level.items():
+        for index, project in enumerate(level_projects, start=1):
+            project_id = str(project.get("id") or "").strip()
+            if not project_id:
+                continue
+            alias = f"L{level}-{index:02d}"
+            aliases.setdefault(alias, project_id)
+    return aliases
+
+
+def _resolve_explicit_project_selection(
+    projects: list[dict[str, Any]],
+    wanted_ids: list[str],
+) -> tuple[list[dict[str, Any]], list[str], dict[str, str]]:
+    available_ids = {str(p["id"]) for p in projects}
+    level_local_aliases = _level_local_project_aliases(projects)
+    resolved_ids: list[str] = []
+    alias_to_canonical: dict[str, str] = {}
+    missing_ids: list[str] = []
+    for project_id in wanted_ids:
+        if project_id in available_ids:
+            resolved_ids.append(project_id)
+            continue
+        canonical_id = level_local_aliases.get(project_id)
+        if canonical_id and canonical_id in available_ids:
+            resolved_ids.append(canonical_id)
+            alias_to_canonical[project_id] = canonical_id
+            continue
+        missing_ids.append(project_id)
+    if missing_ids:
+        return [], missing_ids, alias_to_canonical
+    if len(set(resolved_ids)) != len(resolved_ids):
+        duplicates = sorted({item for item in resolved_ids if resolved_ids.count(item) > 1})
+        return [], [f"duplicate resolved project id(s): {', '.join(duplicates)}"], alias_to_canonical
+
+    wanted_id_by_canonical = {canonical: alias for alias, canonical in alias_to_canonical.items()}
+    wanted_id_set = set(resolved_ids)
+    selected: list[dict[str, Any]] = []
+    for project in projects:
+        canonical_id = str(project["id"])
+        if canonical_id not in wanted_id_set:
+            continue
+        requested_id = wanted_id_by_canonical.get(canonical_id, canonical_id)
+        item = dict(project)
+        if requested_id != canonical_id:
+            item["id"] = requested_id
+            item["requested_project_id"] = requested_id
+            item["canonical_catalog_project_id"] = canonical_id
+        selected.append(item)
+    return selected, [], alias_to_canonical
+
+
 def resolve_runtime_dir_for_workspace(workspace: Path) -> Path | None:
     """Find this workspace's runtime dir by its deterministic name key."""
     runtime_dirs = resolve_runtime_dirs_for_workspace(workspace)
@@ -2770,8 +2836,7 @@ def main() -> int:
     projects = load_projects() if args.projects_file == str(_FIXTURE) else load_projects(args.projects_file)
     if args.project_ids.strip():
         wanted_ids = [s.strip() for s in args.project_ids.split(",") if s.strip()]
-        available_ids = {str(p["id"]) for p in projects}
-        missing_ids = [project_id for project_id in wanted_ids if project_id not in available_ids]
+        selected, missing_ids, alias_to_canonical = _resolve_explicit_project_selection(projects, wanted_ids)
         if missing_ids:
             print(
                 "[factory-bench] unknown project id(s): "
@@ -2780,8 +2845,9 @@ def main() -> int:
                 flush=True,
             )
             return 1
-        wanted_id_set = set(wanted_ids)
-        selected = [p for p in projects if p["id"] in wanted_id_set]
+        if alias_to_canonical:
+            alias_summary = ", ".join(f"{alias}->{canonical}" for alias, canonical in sorted(alias_to_canonical.items()))
+            print(f"[factory-bench] resolved level-local project id(s): {alias_summary}", flush=True)
     else:
         wanted_levels = {int(s) for s in args.levels.split(",") if s.strip()}
         selected = [p for p in projects if int(p["level"]) in wanted_levels]
@@ -2910,6 +2976,8 @@ def main() -> int:
 
     for project in selected:
         pid = project["id"]
+        canonical_pid = str(project.get("canonical_catalog_project_id") or pid)
+        requested_pid = str(project.get("requested_project_id") or pid)
         workspace = base / pid
         # Purge project directory completely to prevent stale contamination
         import shutil as _shutil
@@ -2925,6 +2993,8 @@ def main() -> int:
             "catalog_hash": catalog_hash,
             "run_id": run_id,
             "project_id": pid,
+            "requested_project_id": requested_pid,
+            "canonical_catalog_project_id": canonical_pid,
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         (workspace / ".catalog_meta.json").write_text(
