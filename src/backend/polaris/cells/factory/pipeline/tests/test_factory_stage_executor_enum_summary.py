@@ -1,0 +1,81 @@
+"""Regression: dependency export summaries carry enum members and class attrs.
+
+factory-bench L1-03 (r07): ``src/engine/forecast.py`` referenced
+``SkyCondition.CLEAR`` but the ``SkyCondition`` enum only defined
+``CALM/FAIR/CLOUDY/WINDY/STORMY`` (``CLEAR`` lived on a sibling enum). The
+entrypoint crashed with
+``AttributeError: type object 'SkyCondition' has no attribute 'CLEAR'``.
+
+Root cause: the cross-file dependency signature injected into the Director listed
+only ``class SkyCondition(Enum):`` — not its members — so the Director guessed a
+plausible-but-non-existent member. The export summary must enumerate enum members
+(and class attributes) so dependent files reference real symbols.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
+
+
+def _executor(workspace: Path) -> OrchestrationStageExecutor:
+    return OrchestrationStageExecutor(workspace)
+
+
+class TestPyExportSummaryEnumMembers:
+    def test_enum_members_are_included(self, tmp_path: Path) -> None:
+        summary = _executor(tmp_path)._extract_py_export_summary(
+            "from enum import Enum\n\n\n"
+            "class SkyCondition(Enum):\n"
+            "    CALM = 'calm'\n"
+            "    FAIR = 'fair'\n"
+            "    CLOUDY = 'cloudy'\n"
+            "    WINDY = 'windy'\n"
+            "    STORMY = 'stormy'\n"
+        )
+        assert "class SkyCondition(Enum):" in summary
+        for member in ("CALM", "FAIR", "CLOUDY", "WINDY", "STORMY"):
+            assert member in summary
+        # The hallucinated member that crashed r07 must NOT be implied as valid.
+        assert "CLEAR" not in summary
+
+    def test_sibling_enums_keep_distinct_members(self, tmp_path: Path) -> None:
+        summary = _executor(tmp_path)._extract_py_export_summary(
+            "from enum import Enum\n\n\n"
+            "class SkyCondition(Enum):\n    CALM = 'calm'\n    STORMY = 'stormy'\n\n\n"
+            "class Weather(Enum):\n    CLEAR = 'clear'\n    RAINY = 'rainy'\n"
+        )
+        assert "class SkyCondition(Enum): members: CALM, STORMY" in summary
+        assert "class Weather(Enum): members: CLEAR, RAINY" in summary
+
+    def test_function_signature_includes_arg_names(self, tmp_path: Path) -> None:
+        summary = _executor(tmp_path)._extract_py_export_summary(
+            "def derive_mood(weather, *, intensity=0.5):\n    return weather\n"
+        )
+        assert "def derive_mood(weather, intensity)" in summary
+
+    def test_dataclass_attributes_are_included(self, tmp_path: Path) -> None:
+        summary = _executor(tmp_path)._extract_py_export_summary(
+            "from dataclasses import dataclass\n\n\n@dataclass\nclass WeatherReport:\n    sky: str\n    temperature: float = 0.0\n"
+        )
+        assert "class WeatherReport:" in summary
+        assert "sky" in summary
+        assert "temperature" in summary
+
+    def test_intenum_base_is_treated_as_enum(self, tmp_path: Path) -> None:
+        summary = _executor(tmp_path)._extract_py_export_summary(
+            "from enum import IntEnum\n\n\nclass Level(IntEnum):\n    LOW = 1\n    HIGH = 2\n"
+        )
+        assert "class Level(IntEnum): members: LOW, HIGH" in summary
+
+    def test_unparseable_source_falls_back_without_raising(self, tmp_path: Path) -> None:
+        summary = _executor(tmp_path)._extract_py_export_summary("class Broken(:\n    def method(self)\n")
+        assert isinstance(summary, str)
+
+    def test_module_level_constants_are_included(self, tmp_path: Path) -> None:
+        summary = _executor(tmp_path)._extract_py_export_summary(
+            "MAX_WIND = 120\n\n\ndef gust():\n    return MAX_WIND\n"
+        )
+        assert "MAX_WIND = ..." in summary
+        assert "def gust()" in summary

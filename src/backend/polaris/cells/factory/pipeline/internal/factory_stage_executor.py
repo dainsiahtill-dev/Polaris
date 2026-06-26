@@ -976,7 +976,82 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _extract_py_export_summary(content: str) -> str:
-        """Extract Python export signatures: class and function definitions."""
+        """Extract Python export signatures so a dependent file's Director sees the
+        *valid* cross-file symbols, not just declaration names.
+
+        Includes enum members and class attributes alongside class/function
+        signatures. Without enum members, the Director receives only
+        ``class SkyCondition(Enum):`` and guesses non-existent members like
+        ``SkyCondition.CLEAR`` — the factory-bench L1-03 entrypoint crash
+        (``AttributeError: type object 'SkyCondition' has no attribute 'CLEAR'``).
+        Falls back to a line scan when the source does not parse.
+        """
+        import ast as _ast
+
+        try:
+            tree = _ast.parse(content)
+        except (SyntaxError, ValueError):
+            return OrchestrationStageExecutor._extract_py_export_summary_fallback(content)
+
+        enum_bases = {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag", "ReprEnum"}
+        lines: list[str] = []
+
+        def _base_names(class_node: _ast.ClassDef) -> list[str]:
+            names: list[str] = []
+            for base in class_node.bases:
+                if isinstance(base, _ast.Name):
+                    names.append(base.id)
+                elif isinstance(base, _ast.Attribute):
+                    names.append(base.attr)
+            return names
+
+        def _func_signature(fn: _ast.FunctionDef | _ast.AsyncFunctionDef) -> str:
+            params: list[str] = [a.arg for a in fn.args.posonlyargs] + [a.arg for a in fn.args.args]
+            if fn.args.vararg is not None:
+                params.append("*" + fn.args.vararg.arg)
+            params.extend(a.arg for a in fn.args.kwonlyargs)
+            if fn.args.kwarg is not None:
+                params.append("**" + fn.args.kwarg.arg)
+            keyword = "async def" if isinstance(fn, _ast.AsyncFunctionDef) else "def"
+            return f"{keyword} {fn.name}({', '.join(params)})"
+
+        for node in tree.body:
+            if isinstance(node, _ast.ClassDef):
+                bases = _base_names(node)
+                header = f"class {node.name}({', '.join(bases)}):" if bases else f"class {node.name}:"
+                is_enum = any(base in enum_bases for base in bases)
+                members: list[str] = []
+                methods: list[str] = []
+                for item in node.body:
+                    if isinstance(item, _ast.Assign):
+                        members.extend(tgt.id for tgt in item.targets if isinstance(tgt, _ast.Name))
+                    elif isinstance(item, _ast.AnnAssign) and isinstance(item.target, _ast.Name):
+                        members.append(item.target.id)
+                    elif isinstance(item, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                        methods.append(item.name)
+                if is_enum and members:
+                    lines.append(f"{header} members: {', '.join(members[:40])}")
+                else:
+                    detail: list[str] = []
+                    if members:
+                        detail.append("attrs: " + ", ".join(members[:24]))
+                    if methods:
+                        detail.append("methods: " + ", ".join(methods[:24]))
+                    lines.append(f"{header} {' | '.join(detail)}" if detail else header)
+            elif isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                lines.append(_func_signature(node))
+            elif isinstance(node, _ast.Assign):
+                lines.extend(
+                    f"{tgt.id} = ..." for tgt in node.targets if isinstance(tgt, _ast.Name) and tgt.id.isupper()
+                )
+
+        if not lines:
+            return OrchestrationStageExecutor._extract_py_export_summary_fallback(content)
+        return "\n".join(lines[:60])
+
+    @staticmethod
+    def _extract_py_export_summary_fallback(content: str) -> str:
+        """Line-scan fallback when the dependency source does not parse as Python."""
         import re as _re
 
         lines: list[str] = []
