@@ -475,6 +475,8 @@ def _module_literal_string_frozenset(path: Path, variable_name: str) -> list[str
         if value is None:
             continue
         if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "frozenset":
+            if len(value.args) == 0:
+                return []
             if len(value.args) != 1:
                 raise AssertionError(f"{variable_name} frozenset must have one literal set arg")
             value = value.args[0]

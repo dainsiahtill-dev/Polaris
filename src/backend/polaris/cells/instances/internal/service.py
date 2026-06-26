@@ -432,11 +432,32 @@ class InstanceSupervisor:
                 request_for_attempt["_excluded_frontend_ports"] = sorted(excluded_frontend_ports)
             record = self._build_record(request_for_attempt)
             existing = self.registry.get(record.instance_id)
-            if existing and is_process_alive(existing.backend_pid):
+            # Reuse an existing record ONLY when its recorded backend PID is still
+            # *this instance's* backend process. A bare ``is_process_alive`` check is
+            # PID-recycling-unsafe: ``pid_max`` is small (often <100k) and bench runs
+            # churn many short-lived backends, so a long-dead instance's PID is
+            # routinely recycled to an unrelated live process. Trusting that made the
+            # supervisor hand back a stale record pointing at a dead port (the
+            # backend was never re-spawned), and the bench chain then connection-
+            # refused on that port. ``_pid_looks_like_instance_process`` verifies via
+            # /proc/<pid>/cmdline that the PID really is the polaris backend bound to
+            # this workspace+port, so a recycled PID falls through to a fresh start.
+            if existing and self._pid_looks_like_instance_process(
+                existing, existing.backend_pid, process_kind="backend"
+            ):
                 if self._record_matches_start_request(existing, record):
                     return self._with_health(existing, probe_http=True).to_dict()
                 self._terminate_record_processes_for_replacement(existing)
                 self._wait_for_record_ports_free(existing)
+                existing.frontend_pid = None
+                existing.backend_pid = None
+                existing.status = "stopped"
+                existing.last_stopped_at = utc_timestamp()
+                self.registry.save(existing)
+            elif existing and is_process_alive(existing.backend_pid):
+                # Recorded PID is alive but is NOT our backend (recycled) — clear the
+                # stale liveness so downstream spawn/identity logic starts clean and
+                # never targets the unrelated process.
                 existing.frontend_pid = None
                 existing.backend_pid = None
                 existing.status = "stopped"

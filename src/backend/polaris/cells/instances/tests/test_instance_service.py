@@ -399,6 +399,99 @@ def test_start_instance_builds_backend_and_frontend_processes(
     assert backend_call["env"]["POLARIS_INSTANCE_WATCHDOG_ENABLED"] == "0"
 
 
+def test_start_instance_recycled_pid_does_not_reuse_dead_backend(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """A stale record whose backend PID was recycled must NOT be reused.
+
+    Regression: ``pid_max`` is small and bench runs churn short-lived backends,
+    so a long-dead instance's recorded PID is routinely recycled to an unrelated
+    live process. The old reuse guard trusted a bare ``is_process_alive`` check
+    and handed back the stale record pointing at a dead port — the backend was
+    never re-spawned and the bench chain connection-refused on that port. The
+    supervisor must instead verify the PID really is *this instance's* backend
+    (via cmdline) and otherwise spawn a fresh process.
+    """
+    root = _make_polaris_root(tmp_path)
+    workspace = tmp_path / "bench" / "L1-02"
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+
+    # Seed a stale record exactly as a prior run would have left it: a recorded
+    # backend PID that is now "alive" only because it was recycled to something
+    # else, and a backend_url whose port no longer serves HTTP. Use a low PID so
+    # the identity mock below (fresh spawns are >= 70000) cleanly distinguishes
+    # the recycled imposter from a genuinely-ours backend process.
+    recycled_pid = 8327
+    registry.save(
+        InstanceRecord(
+            instance_id="bench-l1-02",
+            name="L1-02",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str(workspace.resolve()),
+            runtime_root=str((workspace / "runtime").resolve()),
+            backend_port=50161,
+            frontend_port=5258,
+            backend_pid=recycled_pid,
+            backend_url="http://127.0.0.1:50161",
+            frontend_url="http://127.0.0.1:5258",
+            token="bench-token",
+            start_frontend=True,
+            status="stopped",
+            metadata={"backend_binding": "isolated_backend_instance"},
+        )
+    )
+
+    calls: list[dict[str, Any]] = []
+
+    class FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+        calls.append({"command": command, **kwargs})
+        return FakeProcess(70000 + len(calls))
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
+    # The recycled PID *is* alive (recycled to an unrelated process)...
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
+    # ...but it is NOT our backend: the /proc cmdline identity check fails for it.
+    # Newly spawned backend PIDs (>= 70000) are accepted as ours so _with_health
+    # reports the fresh instance as running.
+    monkeypatch.setattr(
+        InstanceSupervisor,
+        "_pid_looks_like_instance_process",
+        staticmethod(lambda _record, pid, *, process_kind: bool(pid) and int(pid) >= 70000),
+    )
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
+
+    supervisor = InstanceSupervisor(registry)
+    record = supervisor.start_instance(
+        {
+            "instance_id": "bench-l1-02",
+            "kind": "bench_project",
+            "polaris_root": str(root),
+            "workspace": str(workspace),
+            # The factory_bench runner passes runtime_root explicitly (workspace/runtime),
+            # which makes the incoming record match the stale one — exactly the
+            # condition under which the old guard early-returned the dead record.
+            "runtime_root": str((workspace / "runtime").resolve()),
+            "backend_port": 50161,
+            "frontend_port": 5258,
+            "start_frontend": True,
+            "metadata": {"backend_binding": "isolated_backend_instance"},
+        }
+    )
+
+    # A fresh backend (and frontend) MUST have been spawned — the stale dead
+    # record must not be returned as-is.
+    assert len(calls) == 2, "expected a fresh backend+frontend spawn, not stale reuse"
+    assert record["status"] == "running"
+    assert int(record["backend_pid"]) >= 70000
+    assert int(record["backend_pid"]) != recycled_pid
+
+
 def test_instance_watchdog_default_scope(monkeypatch: Any) -> None:
     monkeypatch.delenv("POLARIS_INSTANCE_ID", raising=False)
     monkeypatch.delenv("POLARIS_INSTANCE_KIND", raising=False)
