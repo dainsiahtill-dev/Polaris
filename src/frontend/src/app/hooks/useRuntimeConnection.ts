@@ -26,6 +26,7 @@ interface UseRuntimeConnectionOptions {
   autoConnect?: boolean;
   workspace?: string;
   includeInternalBench?: boolean;
+  tailLines?: number;
 }
 
 const BASE_RUNTIME_STREAM_CHANNELS = [
@@ -43,7 +44,14 @@ const BASE_RUNTIME_STREAM_CHANNELS = [
   "event.file_edit",
 ] as const;
 const INTERNAL_BENCH_CHANNEL = "event.bench";
-const RUNTIME_LIVE_TAIL_LINES = 0;
+const DEFAULT_RUNTIME_HISTORY_TAIL_LINES = 0;
+
+function normalizeTailLines(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_RUNTIME_HISTORY_TAIL_LINES;
+  }
+  return Math.max(0, Math.floor(value));
+}
 
 function runtimeStreamChannels(includeInternalBench = false): string[] {
   const channels: string[] = [...BASE_RUNTIME_STREAM_CHANNELS];
@@ -77,6 +85,7 @@ export function useRuntimeConnection(
     autoConnect = true,
     workspace: workspaceProp,
     includeInternalBench = false,
+    tailLines,
   } = options;
 
   const isWorkspaceControlled = workspaceProp !== undefined;
@@ -89,6 +98,7 @@ export function useRuntimeConnection(
     () => normalizedRoles.join("|"),
     [normalizedRoles],
   );
+  const historyTailLines = normalizeTailLines(tailLines);
   const [subscriptionRoles, setSubscriptionRoles] =
     useState<RuntimeRole[]>(normalizedRoles);
   const subscriptionRolesSignature = useMemo(
@@ -143,14 +153,14 @@ export function useRuntimeConnection(
     const unsubscribe = subscribeChannels(
       channels.map((channel) => ({
         channel,
-        tailLines: RUNTIME_LIVE_TAIL_LINES,
+        tailLines: historyTailLines,
       })),
       rolesRef.current,
     );
     return () => {
       unsubscribe();
     };
-  }, [includeInternalBench, subscribeChannels]);
+  }, [historyTailLines, includeInternalBench, subscribeChannels]);
 
   // Connect action
   const connect = useCallback(
@@ -188,12 +198,12 @@ export function useRuntimeConnection(
         type: "SUBSCRIBE",
         protocol: "runtime.v2",
         roles: normalizedNextRoles,
-        tail: RUNTIME_LIVE_TAIL_LINES,
+        tail: historyTailLines,
         channels: runtimeStreamChannels(includeInternalBench),
         cursor: getLastCursor(),
       });
     },
-    [includeInternalBench, sendCommand, getLastCursor],
+    [historyTailLines, includeInternalBench, sendCommand, getLastCursor],
   );
 
   // Keep effective subscription roles in sync with prop changes.

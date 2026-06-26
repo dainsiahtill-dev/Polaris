@@ -94,6 +94,7 @@ const InterventionCenter = lazy(() =>
 );
 
 const RUN_ID_PREFIX = 'pm-';
+const RUNTIME_CONTEXT_HISTORY_TAIL_LINES = 240;
 const TERMINAL_FACTORY_RUN_TOKENS = new Set(['completed', 'failed', 'error', 'blocked', 'timeout', 'cancelled', 'canceled']);
 const IDLE_FACTORY_RUN_TOKENS = new Set(['', 'idle', 'pending', 'waiting', 'stopped', 'unknown', 'none']);
 
@@ -300,6 +301,7 @@ function AppContent() {
     roles: ['pm', 'chief_engineer', 'director', 'qa'],
     workspace,
     includeInternalBench: internalBenchEnabled,
+    tailLines: RUNTIME_CONTEXT_HISTORY_TAIL_LINES,
   });
   const {
     connected: live,

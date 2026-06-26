@@ -648,6 +648,98 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(result.current.llmStreamEvents[0]?.meta?.contextSnapshotRef).toBe('f0d7634bde21b6fdd3fdfa03');
   });
 
+  it('hydrates completed PM and Chief Engineer LLM history from websocket snapshots', () => {
+    const activeWorkspace = '/tmp/factory-bench-l1-10-r02/L1-10';
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: activeWorkspace, includeInternalBench: true, tailLines: 240 })
+    );
+
+    emitRuntimeMessage({
+      type: 'snapshot',
+      channel: 'llm',
+      lines: [
+        JSON.stringify({
+          schema_version: 2,
+          channel: 'llm',
+          domain: 'llm',
+          workspace: '/tmp/factory-bench-L1-05-r01/L1-05',
+          actor: 'pm',
+          raw: {
+            stream_event: 'llm_completed',
+            data: {
+              model: 'kimi-for-coding',
+              prompt_tokens: 500,
+              completion_tokens: 100,
+              context_tokens_after: 600,
+              metadata: {
+                elapsed_ms: 9000,
+                context_snapshot_ref: '999999999999999999999999',
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          schema_version: 2,
+          channel: 'llm',
+          domain: 'llm',
+          workspace: activeWorkspace,
+          actor: 'pm',
+          refs: {
+            context_snapshot_ref: 'aaaaaaaaaaaaaaaaaaaaaaaa',
+          },
+          raw: {
+            stream_event: 'llm_completed',
+            data: {
+              model: 'kimi-for-coding',
+              prompt_tokens: 2300,
+              completion_tokens: 700,
+              context_tokens_after: 3000,
+              metadata: {
+                elapsed_ms: 17000,
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          schema_version: 2,
+          channel: 'llm',
+          domain: 'llm',
+          project_workspace: activeWorkspace,
+          actor: 'chief_engineer',
+          refs: {
+            context_snapshot_ref: 'bbbbbbbbbbbbbbbbbbbbbbbb',
+          },
+          raw: {
+            stream_event: 'llm_completed',
+            data: {
+              model: 'kimi-for-coding',
+              prompt_tokens: 4100,
+              completion_tokens: 900,
+              context_tokens_after: 5000,
+              metadata: {
+                elapsed_ms: 31000,
+              },
+            },
+          },
+        }),
+      ],
+    });
+
+    expect(result.current.llmStreamEvents).toHaveLength(2);
+    expect(result.current.llmStreamEvents.map((entry) => entry.source)).toEqual([
+      'PM',
+      'chief_engineer',
+    ]);
+    expect(result.current.llmStreamEvents.map((entry) => entry.meta?.contextSnapshotRef)).toEqual([
+      'aaaaaaaaaaaaaaaaaaaaaaaa',
+      'bbbbbbbbbbbbbbbbbbbbbbbb',
+    ]);
+    expect(result.current.llmStreamEvents.map((entry) => entry.meta?.contextTokens)).toEqual([
+      3000,
+      5000,
+    ]);
+  });
+
   it('parses the canonical journal llm_completed line: real tokens + latency into meta', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace' })

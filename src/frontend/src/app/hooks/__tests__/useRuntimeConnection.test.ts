@@ -256,6 +256,25 @@ describe("useRuntimeConnection", () => {
       ).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     });
 
+    it("can request bounded runtime history without changing the default", async () => {
+      renderHook(() =>
+        useRuntimeConnection({
+          autoConnect: false,
+          workspace: "/test",
+          tailLines: 240,
+        }),
+      );
+
+      await waitFor(() => {
+        expect(mockSubscribeChannels).toHaveBeenCalled();
+      });
+
+      const subscriptions = mockSubscribeChannels.mock.calls[0]?.[0] ?? [];
+      expect(
+        subscriptions.map((item: { tailLines?: number }) => item.tailLines),
+      ).toEqual(Array(12).fill(240));
+    });
+
     it("subscribes bench events only when internal bench mode is explicitly enabled", async () => {
       renderHook(() =>
         useRuntimeConnection({
@@ -393,6 +412,42 @@ describe("useRuntimeConnection", () => {
           "event.file_edit",
         ],
         cursor: 128,
+      });
+    });
+
+    it("updateSubscription should preserve bounded runtime history tail", async () => {
+      const { result } = renderHook(() =>
+        useRuntimeConnection({
+          autoConnect: false,
+          workspace: "/test",
+          tailLines: 240,
+        }),
+      );
+
+      act(() => {
+        result.current.updateSubscription(["pm", "chief_engineer"]);
+      });
+
+      expect(mockSendCommand).toHaveBeenCalledWith({
+        type: "SUBSCRIBE",
+        protocol: "runtime.v2",
+        roles: ["chief_engineer", "pm"],
+        tail: 240,
+        channels: [
+          "system",
+          "process",
+          "llm",
+          "dialogue",
+          "runtime_events",
+          "status.workflow",
+          "status.process",
+          "status.control_plane",
+          "status.resident",
+          "status.snapshot",
+          "event.factory",
+          "event.file_edit",
+        ],
+        cursor: 0,
       });
     });
 

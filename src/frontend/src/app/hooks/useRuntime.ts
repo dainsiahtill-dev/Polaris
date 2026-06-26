@@ -1495,6 +1495,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
     baseDelay = 1000,
     workspace: workspaceProp,
     includeInternalBench = false,
+    tailLines,
   } = options;
 
   // Settings
@@ -1556,6 +1557,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
     autoConnect,
     workspace: workspaceProp,
     includeInternalBench,
+    tailLines,
   });
 
   // Refs for message processing
