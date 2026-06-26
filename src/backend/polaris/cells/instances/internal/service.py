@@ -36,12 +36,42 @@ DEFAULT_WATCHDOG_INTERVAL_SECONDS = 2.0
 PROCESS_TERMINATE_TIMEOUT_SECONDS = 5.0
 PORT_RELEASE_TIMEOUT_SECONDS = 8.0
 BACKEND_IDENTITY_TIMEOUT_SECONDS = 75.0
+PARTIAL_STARTUP_GRACE_SECONDS = 120.0
 
 logger = logging.getLogger(__name__)
 
 
 def utc_timestamp() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def parse_utc_timestamp(value: str) -> float | None:
+    token = str(value or "").strip()
+    if not token:
+        return None
+    try:
+        normalized = token.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        try:
+            return datetime.strptime(token, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def instance_start_age_seconds(record: InstanceRecord) -> float:
+    candidates = (
+        record.last_started_at,
+        record.updated_at,
+        record.created_at,
+    )
+    started_at = next((parsed for value in candidates if (parsed := parse_utc_timestamp(value)) is not None), None)
+    if started_at is None:
+        return 0.0
+    return max(0.0, time.time() - started_at)
 
 
 def sanitize_instance_id(value: str) -> str:
@@ -85,8 +115,11 @@ def is_port_free(port: int, host: str = DEFAULT_HOST) -> bool:
     if port <= 0:
         return False
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.2)
-        return sock.connect_ex((host, port)) != 0
+        try:
+            sock.bind((host, int(port)))
+        except OSError:
+            return False
+        return True
 
 
 def allocate_port(start: int, *, excluded_ports: set[int] | None = None) -> int:
@@ -707,16 +740,31 @@ class InstanceSupervisor:
     def _with_health(self, record: InstanceRecord, *, probe_http: bool) -> InstanceRecord:
         backend_alive = is_process_alive(record.backend_pid)
         frontend_pid_alive = is_process_alive(record.frontend_pid)
+        partial_startup_timed_out = (
+            (backend_alive != frontend_pid_alive)
+            and record.start_frontend
+            and instance_start_age_seconds(record) > PARTIAL_STARTUP_GRACE_SECONDS
+        )
+        if not partial_startup_timed_out:
+            record.metadata.pop("status_reason", None)
         if not probe_http:
             if backend_alive and (not record.start_frontend or frontend_pid_alive):
                 record.status = "running"
+            elif partial_startup_timed_out:
+                record.status = "failed"
             elif backend_alive or frontend_pid_alive:
                 record.status = "starting"
             else:
                 record.status = "stopped"
             record.metadata["backend_health"] = "process" if backend_alive else "stopped"
+            if partial_startup_timed_out and not backend_alive:
+                record.metadata["backend_health"] = "failed"
+                record.metadata["status_reason"] = "backend process did not survive startup"
             if frontend_pid_alive:
                 record.metadata["frontend_health"] = "process"
+            elif partial_startup_timed_out and record.start_frontend:
+                record.metadata["frontend_health"] = "failed"
+                record.metadata["status_reason"] = "frontend process did not survive startup"
             elif record.start_frontend:
                 record.metadata["frontend_health"] = "stopped"
             else:
@@ -742,6 +790,8 @@ class InstanceSupervisor:
             record.status = "observed"
         elif backend_http_ok and frontend_alive:
             record.status = "running"
+        elif partial_startup_timed_out:
+            record.status = "failed"
         elif backend_alive or frontend_pid_alive:
             record.status = "starting"
         else:
@@ -750,12 +800,18 @@ class InstanceSupervisor:
             record.metadata["backend_health"] = "ok"
         elif backend_alive:
             record.metadata["backend_health"] = "starting"
+        elif partial_startup_timed_out and record.start_frontend:
+            record.metadata["backend_health"] = "failed"
+            record.metadata["status_reason"] = "backend did not become healthy during startup"
         else:
             record.metadata["backend_health"] = "stopped"
         if frontend_http_ok:
             record.metadata["frontend_health"] = "ok"
         elif frontend_pid_alive:
             record.metadata["frontend_health"] = "starting"
+        elif partial_startup_timed_out and record.start_frontend:
+            record.metadata["frontend_health"] = "failed"
+            record.metadata["status_reason"] = "frontend did not become healthy during startup"
         elif record.frontend_url or record.start_frontend:
             record.metadata["frontend_health"] = "stopped"
         else:

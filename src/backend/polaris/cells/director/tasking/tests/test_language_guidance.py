@@ -5,10 +5,14 @@ All text file operations in these tests use explicit UTF-8 encoding.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 from polaris.cells.director.tasking.internal.execution_profile import (
     resolve_director_execution_profile,
+)
+from polaris.cells.director.tasking.internal.execution_strategy import (
+    resolve_director_execution_strategy,
 )
 from polaris.cells.director.tasking.internal.language_guidance import (
     build_language_section,
@@ -165,6 +169,59 @@ def test_execution_profile_is_single_source_for_dispatch_guidance_and_temperatur
     assert profile.temperature == 0.05
     assert "source" in profile.file_roles
     assert "test" in profile.file_roles
+
+
+def test_execution_strategy_derives_large_budget_from_profile() -> None:
+    profile = resolve_director_execution_profile(
+        subject="Implement TypeScript dashboard feature",
+        description="Create React UI, state management, tests, and repair build failures",
+        metadata={"project_type": "frontend", "framework": "react"},
+        target_files=[
+            "src/App.tsx",
+            "src/state/store.ts",
+            "src/components/Panel.tsx",
+            "tests/App.test.tsx",
+            "package.json",
+        ],
+        scope_paths=["src", "tests"],
+    )
+
+    strategy = resolve_director_execution_strategy(profile, metadata={"quality_gates": ["npm test"]})
+
+    assert strategy.schema_version == "task.execution_strategy.v1"
+    assert strategy.temperature == profile.temperature
+    assert strategy.output_budget_tokens == 128_000
+    assert strategy.input_budget_tokens >= 128_000
+    assert strategy.prompt_max_chars >= strategy.input_budget_tokens * 4
+    assert "architecture_or_file_plan" in strategy.evidence_requirements
+
+
+def test_execution_strategy_overrides_project_to_context_gateway_controls() -> None:
+    from polaris.cells.director.tasking.internal.execution_strategy import apply_execution_strategy_overrides
+
+    profile = resolve_director_execution_profile(
+        subject="Fix Python service regression",
+        description="Repair failing pytest coverage in the API handler",
+        metadata={"project_type": "api"},
+        target_files=["src/api.py", "tests/test_api.py"],
+        scope_paths=["src", "tests"],
+    )
+    strategy = resolve_director_execution_strategy(profile)
+    context: dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
+
+    apply_execution_strategy_overrides(
+        context=context,
+        metadata=metadata,
+        profile=profile,
+        strategy=strategy,
+    )
+
+    assert context["llm_max_tokens"] == strategy.output_budget_tokens
+    assert context["_transaction_kernel_temperature_override"] == profile.temperature
+    assert context["cognitive_strategy_override"]["cognitive_runtime"]["applied"] is True
+    assert context["cognitive_strategy_override"]["read_escalation"]["full_read_allowed"] is True
+    assert metadata["cognitive_strategy_override"]["task_execution"]["schema_version"] == strategy.schema_version
 
 
 def test_legacy_task_classifier_delegates_to_execution_profile() -> None:

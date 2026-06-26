@@ -28,6 +28,7 @@ def _make_profile(
     template_id: str = "pm",
     version: str = "1.0.0",
     responsibilities: list[str] | None = None,
+    role_id: str = "stub",
 ):
     """Return a minimal RoleProfile-like object that PromptBuilder accepts."""
     import types
@@ -70,7 +71,7 @@ def _make_profile(
         pass
 
     obj = types.SimpleNamespace(
-        role_id="stub",
+        role_id=role_id,
         display_name="Stub",
         description="Stub role",
         version=_version,
@@ -178,6 +179,43 @@ class TestL1CacheHitRate:
 
         assert "你是 Polaris 体系中的 **Architect**" in prompt
         assert "你是 Polaris 体系中的 **Director**" not in prompt
+
+    def test_director_prompt_role_definition_uses_language_profession_identity(self) -> None:
+        builder = PromptBuilder()
+        prompt = builder.build_system_prompt(
+            _make_profile(template_id="director", role_id="director"),
+            prompt_appendix='{"target_files": ["cmd/server/main.go"], "detected_language": "go"}',
+            domain="code",
+            include_working_memory_contract=False,
+        )
+        role_block = PromptBuilder._extract_role_definition_block(prompt)
+
+        assert "你是 Polaris 体系中的 **Director**" in role_block
+        assert "你同时是一位**Go (Golang) 资深软件架构师**。" in role_block
+        assert "Effective Go" in role_block
+        assert "你同时是一位**软件工程师**。" not in role_block
+
+    def test_director_language_profession_identity_is_part_of_l1_cache_key(self) -> None:
+        builder = PromptBuilder()
+        profile = _make_profile(template_id="director", role_id="director")
+
+        go_prompt = builder.build_system_prompt(
+            profile,
+            prompt_appendix='{"target_files": ["cmd/server/main.go"], "detected_language": "go"}',
+            domain="code",
+            include_working_memory_contract=False,
+        )
+        ts_prompt = builder.build_system_prompt(
+            profile,
+            prompt_appendix='{"target_files": ["src/App.tsx"], "detected_language": "typescript"}',
+            domain="code",
+            include_working_memory_contract=False,
+        )
+
+        assert "你同时是一位**Go (Golang) 资深软件架构师**。" in go_prompt
+        assert "你同时是一位**TypeScript 前端/全栈架构师**。" in ts_prompt
+        assert "你同时是一位**Go (Golang) 资深软件架构师**。" not in ts_prompt
+        assert builder.get_cache_stats()["l1_cached_roles"] == 2
 
     def test_core_role_identity_mismatch_fails_closed(self) -> None:
         builder = PromptBuilder()

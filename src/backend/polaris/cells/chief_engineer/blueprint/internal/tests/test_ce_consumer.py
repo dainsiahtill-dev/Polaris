@@ -282,8 +282,8 @@ class TestCEFissionMaxOutputTokens:
         from polaris.cells.chief_engineer.blueprint.internal.ce_consumer import _ce_fission_max_output_tokens
 
         monkeypatch.delenv("KERNELONE_CE_FISSION_MAX_TOKENS", raising=False)
-        # well above the shared 4000 role default that starved the fission call
-        assert _ce_fission_max_output_tokens() == 16000
+        # maximum platform floor so large CE fission JSON is not truncated.
+        assert _ce_fission_max_output_tokens() == 128_000
 
     def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from polaris.cells.chief_engineer.blueprint.internal.ce_consumer import _ce_fission_max_output_tokens
@@ -295,9 +295,9 @@ class TestCEFissionMaxOutputTokens:
         from polaris.cells.chief_engineer.blueprint.internal.ce_consumer import _ce_fission_max_output_tokens
 
         monkeypatch.setenv("KERNELONE_CE_FISSION_MAX_TOKENS", "not-a-number")
-        assert _ce_fission_max_output_tokens() == 16000
+        assert _ce_fission_max_output_tokens() == 128_000
         monkeypatch.setenv("KERNELONE_CE_FISSION_MAX_TOKENS", "0")
-        assert _ce_fission_max_output_tokens() == 16000
+        assert _ce_fission_max_output_tokens() == 128_000
 
 
 class TestCrossParentFileOwnershipInjection:

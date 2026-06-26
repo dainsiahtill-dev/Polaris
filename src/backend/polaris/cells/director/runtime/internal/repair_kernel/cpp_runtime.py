@@ -19,11 +19,13 @@ from .cpp_syntax import (
     CPP_INCLUDE_PATH_SOURCE_TOOL,
     CPP_MISSING_PRIVATE_MEMBERS_SOURCE_TOOL,
     CPP_PLACEHOLDER_DECLARATION_SOURCE_TOOL,
+    CPP_POST_SOURCE_TOOL,
     CPP_STANDARD_INCLUDE_SOURCE_TOOL,
     CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL,
     build_cpp_include_path_plan,
     build_cpp_missing_private_members_plan,
     build_cpp_placeholder_declaration_plan,
+    build_cpp_post_plan,
     build_cpp_standard_include_plan,
     build_cpp_struct_getter_field_access_plan,
 )
@@ -167,6 +169,33 @@ class CppStructGetterFieldAccessRun:
     error_message: str | None = None
 
 
+@dataclass(frozen=True)
+class CppPostPlanning:
+    """Internal planning result for conservative C++ post repairs."""
+
+    diagnostics: tuple[RepairDiagnostic, ...]
+    plan: RepairPlan | None
+    composition: CompositionResult | None
+    advisor_notes: tuple[RepairAdvisorNote, ...] = ()
+
+    @property
+    def source_tool(self) -> str:
+        return self.plan.source_tool if self.plan is not None else CPP_POST_SOURCE_TOOL
+
+
+@dataclass(frozen=True)
+class CppPostRun:
+    """Internal execution result for conservative C++ post repairs."""
+
+    planning: CppPostPlanning
+    ok: bool
+    execution_result: RepairExecutionResult | None = None
+    plan_decision: PolicyDecision | None = None
+    composition_decision: PolicyDecision | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
 def plan_cpp_include_path_repair(
     *,
     base_files: Mapping[str, str],
@@ -280,6 +309,30 @@ def plan_cpp_struct_getter_field_access_repair(
         planner=build_cpp_struct_getter_field_access_plan,
     )
     return CppStructGetterFieldAccessPlanning(
+        diagnostics=planning.diagnostics,
+        plan=planning.plan,
+        composition=planning.composition,
+        advisor_notes=planning.advisor_notes,
+    )
+
+
+def plan_cpp_post_repair(
+    *,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> CppPostPlanning:
+    """Plan conservative C++ post repairs inside the runtime kernel."""
+
+    planning = _plan_cpp_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        planner=build_cpp_post_plan,
+    )
+    return CppPostPlanning(
         diagnostics=planning.diagnostics,
         plan=planning.plan,
         composition=planning.composition,
@@ -501,6 +554,42 @@ def run_cpp_struct_getter_field_access_repair(
     )
 
 
+def run_cpp_post_repair(
+    *,
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> CppPostRun:
+    """Run conservative C++ post repair through Plan→Compose→Policy→Execute."""
+
+    normalized_base = _normalize_base_files(base_files)
+    planning = plan_cpp_post_repair(
+        base_files=normalized_base,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return cast(
+        CppPostRun,
+        _run_cpp_repair(
+            workspace=workspace,
+            normalized_base=normalized_base,
+            planning=planning,
+            writer=writer,
+            editor=editor,
+            allowed_paths=allowed_paths,
+            not_planned_message="No matching conservative C++ post repair plan.",
+            composition_missing_message="C++ post repair composition was not produced.",
+            run_cls=CppPostRun,
+        ),
+    )
+
+
 def _run_cpp_repair(
     *,
     workspace: str | Path,
@@ -587,6 +676,8 @@ __all__ = [
     "CppMissingPrivateMembersRun",
     "CppPlaceholderDeclarationPlanning",
     "CppPlaceholderDeclarationRun",
+    "CppPostPlanning",
+    "CppPostRun",
     "CppStandardIncludePlanning",
     "CppStandardIncludeRun",
     "CppStructGetterFieldAccessPlanning",
@@ -594,11 +685,13 @@ __all__ = [
     "plan_cpp_include_path_repair",
     "plan_cpp_missing_private_members_repair",
     "plan_cpp_placeholder_declaration_repair",
+    "plan_cpp_post_repair",
     "plan_cpp_standard_include_repair",
     "plan_cpp_struct_getter_field_access_repair",
     "run_cpp_include_path_repair",
     "run_cpp_missing_private_members_repair",
     "run_cpp_placeholder_declaration_repair",
+    "run_cpp_post_repair",
     "run_cpp_standard_include_repair",
     "run_cpp_struct_getter_field_access_repair",
 ]

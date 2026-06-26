@@ -13,6 +13,11 @@ from dataclasses import replace
 from typing import Any
 
 from polaris.cells.director.tasking.internal.execution_profile import resolve_director_execution_profile
+from polaris.cells.director.tasking.internal.execution_strategy import (
+    apply_execution_strategy_overrides,
+    resolve_director_execution_strategy,
+)
+from polaris.cells.director.tasking.public.contracts import TaskExecutionProfileV1
 
 from ..base import BaseRoleAdapter
 from ..director_execution_backend import (
@@ -582,7 +587,10 @@ class DirectorAdapter(BaseRoleAdapter):
         if not isinstance(existing, dict):
             existing = metadata.get("director_execution_profile")
         if isinstance(existing, dict) and existing:
-            profile_payload = dict(existing)
+            profile_fields = {
+                key: existing[key] for key in TaskExecutionProfileV1.__dataclass_fields__ if key in existing
+            }
+            profile = TaskExecutionProfileV1(**profile_fields)
         else:
             profile = resolve_director_execution_profile(
                 subject=str(metadata.get("title") or metadata.get("subject") or message or ""),
@@ -598,13 +606,18 @@ class DirectorAdapter(BaseRoleAdapter):
                 scope_paths=DirectorAdapter._metadata_path_list(metadata, context, "scope_paths"),
                 workspace=str(workspace or ""),
             )
-            profile_payload = profile.to_dict()
-        metadata["director_execution_profile"] = profile_payload
-        metadata.setdefault("task_execution_profile", profile_payload)
+        strategy = resolve_director_execution_strategy(
+            profile,
+            metadata=metadata,
+        )
+        apply_execution_strategy_overrides(
+            context=context,
+            metadata=metadata,
+            profile=profile,
+            strategy=strategy,
+        )
         metadata.setdefault("task_execution_profile_source", "director.tasking.resolve_director_execution_profile")
-        context["director_execution_profile"] = profile_payload
-        context.setdefault("task_execution_profile", profile_payload)
-        return profile_payload
+        return profile.to_dict()
 
     @staticmethod
     def _metadata_path_list(

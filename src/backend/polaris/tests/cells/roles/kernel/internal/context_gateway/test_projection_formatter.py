@@ -8,6 +8,7 @@ Coverage targets:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -284,6 +285,31 @@ def test_expand_transcript_sanitizes_tool_failure_receipts() -> None:
     assert "handler_error_type" not in messages[0]["content"]
 
 
+def test_expand_transcript_compacts_repeated_tool_failure_summaries() -> None:
+    """Repeated prompt-safe tool failures must not flood the next LLM request."""
+    snapshot = {
+        "transcript_log": [
+            {
+                "role": "tool_result",
+                "content": f"**write_file**: Error - {{'ok': False, 'error': 'disk full #{index}'}}",
+            }
+            for index in range(20)
+        ]
+    }
+
+    messages = ProjectionFormatter.expand_transcript_to_messages(snapshot)
+
+    assert len(messages) == 1
+    assert messages[0]["role"] == "system"
+    assert messages[0]["name"] == "tool_failure_summary_digest"
+    assert messages[0]["content"].count("[tool_failure_summary]") == 1
+    payload = json.loads(messages[0]["content"].split("\n", 1)[1])
+    assert payload["schema_version"] == "tool_failure_summary_digest.v1"
+    assert payload["failure_count"] == 20
+    assert payload["unique_failure_count"] == 20
+    assert payload["failures"][0]["tool"] == "write_file"
+
+
 # ---------------------------------------------------------------------------
 # 4. dedupe_messages
 # ---------------------------------------------------------------------------
@@ -536,3 +562,31 @@ def test_messages_from_projection_sanitizes_tool_failure_receipts() -> None:
     assert "[tool_failure_summary]" in messages[0]["content"]
     assert "director_policy" not in messages[0]["content"]
     assert "handler_error_type" not in messages[0]["content"]
+
+
+def test_messages_from_projection_compacts_repeated_tool_failure_summaries() -> None:
+    """Active-window projection must compact repeated tool failures before LLM injection."""
+    projection = MagicMock()
+    projection.head_anchor = ""
+    projection.tail_anchor = ""
+    projection.run_card = None
+    projection.active_window = tuple(
+        MagicMock(
+            sequence=index,
+            route="patch",
+            role="assistant",
+            content=f"**write_file**: Error - {{'ok': False, 'error': 'tool execution failed #{index}'}}",
+            metadata=(("route", "patch"),),
+            artifact_id=None,
+            event_id=f"e{index}",
+        )
+        for index in range(1, 18)
+    )
+
+    messages = ProjectionFormatter.messages_from_projection(projection)
+
+    assert len([message for message in messages if "[tool_failure_summary]" in message["content"]]) == 1
+    digest = next(message for message in messages if message.get("name") == "tool_failure_summary_digest")
+    payload = json.loads(digest["content"].split("\n", 1)[1])
+    assert payload["failure_count"] == 17
+    assert {failure["tool"] for failure in payload["failures"]} == {"write_file"}

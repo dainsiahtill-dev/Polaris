@@ -11,6 +11,7 @@ from .contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_tex
 CPP_INCLUDE_PATH_SOURCE_TOOL = "deterministic_cpp_include_path_repair"
 CPP_MISSING_PRIVATE_MEMBERS_SOURCE_TOOL = "deterministic_cpp_missing_private_members_repair"
 CPP_PLACEHOLDER_DECLARATION_SOURCE_TOOL = "deterministic_cpp_placeholder_declaration_repair"
+CPP_POST_SOURCE_TOOL = "deterministic_cpp_post_repair"
 CPP_STANDARD_INCLUDE_SOURCE_TOOL = "deterministic_cpp_standard_include_repair"
 CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL = "deterministic_cpp_struct_getter_field_access_repair"
 
@@ -370,6 +371,57 @@ def build_cpp_placeholder_declaration_plan(
     )
 
 
+def build_cpp_post_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build a conservative aggregate C++ post repair plan from runtime child rules."""
+
+    child_plans = tuple(
+        plan
+        for plan in (
+            build_cpp_include_path_plan(base_files=base_files, diagnostics=diagnostics, mode=mode),
+            build_cpp_standard_include_plan(base_files=base_files, diagnostics=diagnostics, mode=mode),
+            build_cpp_missing_private_members_plan(base_files=base_files, diagnostics=diagnostics, mode=mode),
+            build_cpp_struct_getter_field_access_plan(base_files=base_files, diagnostics=diagnostics, mode=mode),
+            build_cpp_placeholder_declaration_plan(base_files=base_files, diagnostics=diagnostics, mode=mode),
+        )
+        if plan is not None
+    )
+    operations: list[RepairOperation] = []
+    child_rule_ids: list[str] = []
+    child_source_tools: list[str] = []
+    seen_operation_ids: set[str] = set()
+    for plan in child_plans:
+        child_rule_ids.append(plan.rule_id)
+        child_source_tools.append(plan.source_tool)
+        for operation in plan.operations:
+            if operation.operation_id in seen_operation_ids:
+                continue
+            seen_operation_ids.add(operation.operation_id)
+            operations.append(operation)
+    if not operations:
+        return None
+    return RepairPlan(
+        rule_id="cpp.no_such_file_or_directory",
+        source_tool=CPP_POST_SOURCE_TOOL,
+        operations=tuple(operations),
+        diagnostics=tuple(diagnostics or ()),
+        mode=mode,
+        risk_level="medium",
+        priority=2,
+        depends_on=tuple(child_rule_ids),
+        metadata={
+            "repair_kind": "cpp_post_execution_conservative",
+            "aggregate_runtime_child_rules": tuple(child_rule_ids),
+            "aggregate_runtime_child_source_tools": tuple(child_source_tools),
+            "legacy_post_helper_used": False,
+        },
+    )
+
+
 def _public_struct_field_names(base_files: Mapping[str, str]) -> tuple[str, ...]:
     fields: set[str] = set()
     for path, content in base_files.items():
@@ -509,11 +561,13 @@ __all__ = [
     "CPP_INCLUDE_PATH_SOURCE_TOOL",
     "CPP_MISSING_PRIVATE_MEMBERS_SOURCE_TOOL",
     "CPP_PLACEHOLDER_DECLARATION_SOURCE_TOOL",
+    "CPP_POST_SOURCE_TOOL",
     "CPP_STANDARD_INCLUDE_SOURCE_TOOL",
     "CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL",
     "build_cpp_include_path_plan",
     "build_cpp_missing_private_members_plan",
     "build_cpp_placeholder_declaration_plan",
+    "build_cpp_post_plan",
     "build_cpp_standard_include_plan",
     "build_cpp_struct_getter_field_access_plan",
     "repair_cpp_include_paths_text",

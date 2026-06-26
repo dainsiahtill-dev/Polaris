@@ -3850,8 +3850,7 @@ def test_materialization_quality_scheduler_bridge_projects_callback_receipts_wit
     assert scheduler_bridge["callback_projection_claimed_typed_receipt_path_count"] == 2
     assert scheduler_bridge["typed_receipt_path_available"] is False
     assert (
-        scheduler_bridge["migration_blocker"]
-        == "callback runners still return tool_results instead of RepairReceipt"
+        scheduler_bridge["migration_blocker"] == "callback runners still return tool_results instead of RepairReceipt"
     )
     assert scheduler_bridge["repair_kernel_migration_debt"] == summary["repair_kernel_migration_debt"]
     assert scheduler_bridge["legacy_callback_debt"] == summary["legacy_callback_debt"]
@@ -3886,9 +3885,7 @@ def test_materialization_quality_scheduler_bridge_prefers_public_result_callback
     )
     ordered_steps = tuple(runtime_schedule.items)
     runtime_step_ids = tuple(step.step_id for step in ordered_steps)
-    node_manifest_step = next(
-        step for step in ordered_steps if step.step_id == "materialization.node_manifest"
-    )
+    node_manifest_step = next(step for step in ordered_steps if step.step_id == "materialization.node_manifest")
     tool_result = {
         "tool": "write_file",
         "tool_name": "write_file",
@@ -9937,6 +9934,100 @@ def test_python_runtime_smoke_traceback_quality_repair_preserves_batch(tmp_path:
     assert selected == targets
 
 
+def test_javascript_runtime_smoke_traceback_targets_workspace_entrypoint(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _javascript_runtime_smoke_repair_target_files,
+    )
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "index.js").write_text("const galaxy = {};\ngalaxy.registerAlien();\n", encoding="utf-8")
+    external_path = "/var/tmp/not-this-workspace/src/escape.js"
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm run start): "
+        "> interstellar-lost-and-found@1.0.0 start\n"
+        "> node src/index.js\n\n"
+        f"{tmp_path / 'src' / 'index.js'}:27\n"
+        "  galaxy.registerAlien(\n"
+        "         ^\n\n"
+        "TypeError: galaxy.registerAlien is not a function\n"
+        f"    at createDefaultStation ({tmp_path / 'src' / 'index.js'}:27:10)\n"
+        f"    at ignored ({external_path}:4:2)\n"
+        "Node.js v22.21.1"
+    )
+
+    targets = _javascript_runtime_smoke_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=["package.json", "src/index.js"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert targets == ["src/index.js"]
+
+
+def test_python_module_entrypoint_traceback_prefers_executing_file(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _explicit_artifact_quality_repair_target_files,
+        _ordered_materialization_quality_repair_target_candidates,
+        _python_runtime_smoke_repair_target_files,
+        _select_materialization_quality_repair_target_batch,
+        _should_preserve_materialization_quality_repair_batch,
+    )
+
+    src = tmp_path / "src"
+    engine = src / "engine"
+    engine.mkdir(parents=True)
+    (src / "__init__.py").write_text("", encoding="utf-8")
+    (src / "main.py").write_text(
+        "from engine.forecast import build_forecast\nprint(build_forecast('happy'))\n",
+        encoding="utf-8",
+    )
+    (engine / "__init__.py").write_text("", encoding="utf-8")
+    (engine / "forecast.py").write_text("def build_forecast(mood):\n    return mood\n", encoding="utf-8")
+    error = (
+        "Artifact quality scan failed: workspace validation command failed "
+        f"(/usr/bin/python -m src.main): Traceback (most recent call last):\n"
+        '  File "<frozen runpy>", line 198, in _run_module_as_main\n'
+        '  File "<frozen runpy>", line 88, in _run_code\n'
+        f'  File "{src / "main.py"}", line 1, in <module>\n'
+        "    from engine.forecast import build_forecast\n"
+        "ModuleNotFoundError: No module named 'engine'"
+    )
+    changed_files = ["src/__init__.py", "src/main.py", "src/engine/__init__.py", "src/engine/forecast.py"]
+
+    runtime_targets = _python_runtime_smoke_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=changed_files,
+        workspace_full=str(tmp_path),
+    )
+    explicit_targets = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=changed_files,
+        workspace_full=str(tmp_path),
+    )
+    ordered = _ordered_materialization_quality_repair_target_candidates(
+        missing_target_files=[],
+        runtime_smoke_target_files=runtime_targets,
+        semantic_quality_target_files=[],
+        explicit_quality_target_files=explicit_targets,
+        should_merge_missing_targets=False,
+    )
+    preserve_batch = _should_preserve_materialization_quality_repair_batch([error])
+    selected = _select_materialization_quality_repair_target_batch(
+        ordered,
+        repair_attempt=2,
+        preserve_batch_after_first_attempt=preserve_batch,
+    )
+
+    assert runtime_targets[0] == "src/main.py"
+    assert explicit_targets[0] == "src/main.py"
+    assert "src/engine/__init__.py" in ordered
+    assert ordered[0] == "src/main.py"
+    assert preserve_batch is True
+    assert selected[0] == "src/main.py"
+    assert selected == ordered
+
+
 def test_esmodule_commonjs_entrypoint_failure_preserves_repair_batch(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.quality_gate import (
         _explicit_artifact_quality_repair_target_files,
@@ -14455,9 +14546,7 @@ class TestCollectStepVerifyErrors:
         assert "step verify failed" in errors[0]
         assert "game-canvas" in errors[0]
 
-    def test_unsafe_verify_rejected_before_shell_or_clause_diagnosis(
-        self, tmp_path: Any, monkeypatch: Any
-    ) -> None:
+    def test_unsafe_verify_rejected_before_shell_or_clause_diagnosis(self, tmp_path: Any, monkeypatch: Any) -> None:
         from polaris.cells.roles.adapters.internal.director import quality_gate
 
         calls: list[str] = []
@@ -14495,9 +14584,7 @@ class TestCollectStepVerifyErrors:
         assert "step verify command rejected by safety policy" in errors[0]
         assert "step verify target mismatch" not in errors[0]
 
-    def test_legacy_safe_wc_verify_reaches_failure_diagnosis(
-        self, tmp_path: Any, monkeypatch: Any
-    ) -> None:
+    def test_legacy_safe_wc_verify_reaches_failure_diagnosis(self, tmp_path: Any, monkeypatch: Any) -> None:
         from polaris.cells.roles.adapters.internal.director import quality_gate
 
         (tmp_path / "style.css").write_text("#game {}\n" * 200, encoding="utf-8")

@@ -46,19 +46,29 @@ def test_convergence_gate_records_report_and_fails_all_uncovered_diagnostics(tmp
     assert result.receipts == ()
     assert result.metadata["coverage_report"]["total_diagnostics"] == 1
     assert result.metadata["coverage_gap_count"] == 1
+    assert result.metadata["coverage_report"]["coverage_gap_recommended_routes"] == ["llm_repair"]
+    assert result.metadata["coverage_report"]["coverage_gap_slot_statuses"] == ["reserved_slot_available"]
     assert result.metadata["uncovered_diagnostics"][0]["code"] == "declared_target_missing"
     gap = result.metadata["coverage_gaps"][0]
+    assert gap["known_rule_matched"] is False
+    assert gap["metadata_only_match"] is False
+    assert gap["executable_runtime_plan_matched"] is False
+    assert gap["language"] == "ruby"
     assert gap["reserved_language_slot_matched"] is True
+    assert gap["reserved_slot_available"] is True
+    assert gap["slot_status"] == "reserved_slot_available"
     assert gap["reserved_language_slot"]["language"] == "ruby"
+    assert gap["recommended_route"] == "llm_repair"
     assert gap["recommended_next_owner"] == "runtime_rule"
+    assert gap["coverage_status"] == "coverage_gap"
+    assert gap["audit_reason"] == "known_rule_matched=false"
 
 
 def test_convergence_gate_distinguishes_unselected_executable_runtime_match_from_metadata_only(
     tmp_path: Path,
 ) -> None:
     unselected_executable_error = (
-        "error[E0277]: the trait bound `Widget: Copy` is not satisfied\n"
-        "  --> src/lib.rs:12:10"
+        "error[E0277]: the trait bound `Widget: Copy` is not satisfied\n  --> src/lib.rs:12:10"
     )
 
     def verifier(_round_number: int, _receipts: tuple[object, ...]) -> RepairVerifierSnapshot:
@@ -81,6 +91,8 @@ def test_convergence_gate_distinguishes_unselected_executable_runtime_match_from
     assert item["known_rule_matched"] is True
     assert item["metadata_only_match"] is False
     assert item["executable_runtime_plan_matched"] is True
+    assert item["coverage_status"] == "executable_runtime"
+    assert item["recommended_route"] == "runtime_rule"
     assert item["matched_rule_ids"] == ["rust.missing_trait_derive"]
     assert item["matched_source_tools"] == ["deterministic_rust_derive_repair"]
     assert item["runtime_plan_rule_ids"] == ["rust.missing_trait_derive"]
@@ -97,6 +109,8 @@ def test_convergence_gate_distinguishes_unselected_executable_runtime_match_from
     assert executable["executable_runtime_plan_diagnostic_count"] == 1
     assert executable["items"][0]["metadata_only_match"] is False
     assert executable["items"][0]["executable_runtime_plan_matched"] is True
+    assert executable["items"][0]["coverage_status"] == "executable_runtime"
+    assert executable["items"][0]["recommended_route"] == "runtime_rule"
 
 
 def test_public_coverage_matches_rust_e0761_duplicate_module_as_executable_runtime() -> None:
@@ -114,7 +128,7 @@ def test_public_coverage_matches_rust_e0761_duplicate_module_as_executable_runti
     item = payload["items"][0]
 
     assert RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL in runtime_repair_source_tools()
-    assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
+    assert "deterministic_rust_post_repair" in runtime_repair_source_tools()
     assert payload["covered_diagnostic_count"] == 1
     assert payload["metadata_only_diagnostic_count"] == 0
     assert payload["executable_runtime_plan_diagnostic_count"] == 1
@@ -126,12 +140,12 @@ def test_public_coverage_matches_rust_e0761_duplicate_module_as_executable_runti
     assert item["runtime_plan_rule_ids"] == ["rust.duplicate_module_file"]
 
 
-def test_public_coverage_matches_rust_missing_fields_as_metadata_only() -> None:
+def test_public_coverage_matches_rust_missing_fields_as_executable_runtime_with_type_inference_blocker() -> None:
     e0609_without_similar_name_help = (
         "error[E0609]: no field `duration` on type `&Flight`\n"
         " --> src/lib.rs:8:22\n"
         "  |\n"
-        "8 |     println!(\"{}\", flight.duration);\n"
+        '8 |     println!("{}", flight.duration);\n'
         "  |                      ^^^^^^^^ unknown field\n"
     )
 
@@ -140,49 +154,41 @@ def test_public_coverage_matches_rust_missing_fields_as_metadata_only() -> None:
     ).to_dict()
     e0609_item = payload["items"][0]
 
-    assert RUST_MISSING_FIELDS_SOURCE_TOOL not in runtime_repair_source_tools()
-    assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
+    assert RUST_MISSING_FIELDS_SOURCE_TOOL in runtime_repair_source_tools()
+    assert "deterministic_rust_post_repair" in runtime_repair_source_tools()
     assert payload["covered_diagnostic_count"] == 1
     assert payload["uncovered_diagnostic_count"] == 0
-    assert payload["metadata_only_diagnostic_count"] == 1
-    assert payload["executable_runtime_plan_diagnostic_count"] == 0
+    assert payload["metadata_only_diagnostic_count"] == 0
+    assert payload["executable_runtime_plan_diagnostic_count"] == 1
 
     assert e0609_item["known_rule_matched"] is True
-    assert e0609_item["metadata_only_match"] is True
-    assert e0609_item["executable_runtime_plan_matched"] is False
+    assert e0609_item["metadata_only_match"] is False
+    assert e0609_item["executable_runtime_plan_matched"] is True
+    assert e0609_item["coverage_status"] == "executable_runtime"
+    assert e0609_item["recommended_route"] == "runtime_rule"
+    assert e0609_item["reserved_slot_available"] is True
+    assert e0609_item["slot_status"] == "reserved_slot_available"
     assert e0609_item["matched_rule_ids"] == ["rust.missing_struct_field_declaration"]
     assert e0609_item["matched_source_tools"] == [RUST_MISSING_FIELDS_SOURCE_TOOL]
-    assert e0609_item["runtime_plan_rule_ids"] == []
+    assert e0609_item["runtime_plan_rule_ids"] == ["rust.missing_struct_field_declaration"]
     internal_coverage_payload = build_repair_coverage_report(
         normalize_artifact_quality_errors([e0609_without_similar_name_help])
     ).to_dict()
     internal_e0609_item = internal_coverage_payload["items"][0]
-    assert internal_e0609_item["runtime_blocker_reasons"] == ["type_inference_required"]
-    assert internal_e0609_item["runtime_blockers"] == [
-        {
-            "reason": "type_inference_required",
-            "source_tool": RUST_MISSING_FIELDS_SOURCE_TOOL,
-            "rule_id": "rust.missing_struct_field_declaration",
-            "message": "Rust E0609 does not provide a reliable type for the missing struct field.",
-            "metadata": {
-                "field_type_source": "not_inferred",
-                "type_guessing_allowed": False,
-                "runtime_executable": False,
-            },
-        }
-    ]
+    assert internal_e0609_item["runtime_blocker_reasons"] == []
+    assert internal_e0609_item["runtime_blockers"] == []
 
     e0609_with_similar_name_help = (
         "error[E0609]: no field `duraton` on type `&Flight`\n"
         " --> src/lib.rs:8:22\n"
         "  |\n"
-        "8 |     println!(\"{}\", flight.duraton);\n"
+        '8 |     println!("{}", flight.duraton);\n'
         "  |                      ^^^^^^^ unknown field\n"
         "  |\n"
         "help: a field with a similar name exists\n"
         "  |\n"
-        "8 -     println!(\"{}\", flight.duraton);\n"
-        "8 +     println!(\"{}\", flight.duration);"
+        '8 -     println!("{}", flight.duraton);\n'
+        '8 +     println!("{}", flight.duration);'
     )
     similar_name_payload = query_director_repair_coverage(
         QueryDirectorRepairCoverageV1(artifact_quality_errors=(e0609_with_similar_name_help,))
@@ -210,7 +216,7 @@ def test_public_coverage_matches_rust_struct_literal_missing_field_as_executable
     e0063_item = payload["items"][0]
 
     assert RUST_STRUCT_LITERAL_MISSING_FIELD_SOURCE_TOOL in runtime_repair_source_tools()
-    assert RUST_MISSING_FIELDS_SOURCE_TOOL not in runtime_repair_source_tools()
+    assert RUST_MISSING_FIELDS_SOURCE_TOOL in runtime_repair_source_tools()
     assert payload["covered_diagnostic_count"] == 1
     assert payload["uncovered_diagnostic_count"] == 0
     assert payload["metadata_only_diagnostic_count"] == 0
@@ -230,9 +236,7 @@ def test_public_coverage_matches_rust_missing_lib_target_src_lib_as_runtime_subs
         "  |\n"
         "  = note: the configured library target file does not exist\n"
     )
-    manifest_lib_path_missing = (
-        "Cargo manifest [lib].path src/custom_lib.rs is missing for Rust library target"
-    )
+    manifest_lib_path_missing = "Cargo manifest [lib].path src/custom_lib.rs is missing for Rust library target"
     e0583_module_missing = (
         "error[E0583]: file not found for module `models`\n"
         " --> src/lib.rs:1:1\n"
@@ -240,7 +244,7 @@ def test_public_coverage_matches_rust_missing_lib_target_src_lib_as_runtime_subs
         "1 | pub mod models;\n"
         "  | ^^^^^^^^^^^^^^^\n"
         "  |\n"
-        "  = help: to create the module `models`, create file \"src/models.rs\" or \"src/models/mod.rs\"\n"
+        '  = help: to create the module `models`, create file "src/models.rs" or "src/models/mod.rs"\n'
     )
 
     payload = query_director_repair_coverage(
@@ -322,7 +326,7 @@ def test_public_coverage_matches_rust_lib_root_facade_signals_with_path_rewrite_
         assert item["executable_runtime_plan_matched"] is True
         assert expected_rule_id in item["matched_rule_ids"]
         assert RUST_LIB_ROOT_FACADE_SOURCE_TOOL in item["matched_source_tools"]
-        assert item["runtime_plan_rule_ids"] == [expected_rule_id]
+        assert expected_rule_id in item["runtime_plan_rule_ids"]
     assert "rust.unresolved_pub_use" not in root_item["matched_rule_ids"]
 
 
@@ -340,22 +344,34 @@ def test_public_coverage_gap_projects_reserved_slot_and_recommended_owner_fields
     assert payload["coverage_gap_archetypes"] == ["unknown"]
     assert payload["coverage_gap_diagnostic_codes"] == ["declared_target_missing"]
     assert payload["coverage_gap_handoff_recommendations"] == ["llm_triage_then_runtime_rule"]
+    assert payload["coverage_gap_recommended_routes"] == ["llm_repair"]
+    assert payload["coverage_gap_slot_statuses"] == ["reserved_slot_available"]
+    assert gap["language"] == "ruby"
     assert gap["diagnostic_language"] == "ruby"
     assert gap["diagnostic_code"] == "declared_target_missing"
+    assert gap["phase_suggestion"] == "target_contract"
+    assert gap["archetype_suggestion"] == "unknown"
+    assert gap["reserved_slot_available"] is True
+    assert gap["slot_status"] == "reserved_slot_available"
     assert gap["reserved_language_slot_matched"] is True
     assert gap["reserved_language_slot"]["language"] == "ruby"
     assert gap["reserved_repairer_module"].endswith(".ruby_runtime")
     assert gap["reserved_slot_registration_policy"] == "bench_verified_rule_required"
     assert gap["recommended_next_owner"] == "runtime_rule"
+    assert gap["recommended_route"] == "llm_repair"
     assert gap["handoff_recommendation"] == "llm_triage_then_runtime_rule"
     assert gap["llm_advisory_recommended"] is True
     assert gap["agi_advisory_recommended"] is False
     assert gap["authoritative_rule_registration_allowed"] is False
     assert gap["recommended_registration_path"] == "bench_verified_rule_required"
     assert item["reserved_language_slot_matched"] is True
+    assert item["reserved_slot_available"] is True
+    assert item["slot_status"] == "reserved_slot_available"
     assert item["reserved_language_slot"]["language"] == "ruby"
     assert item["recommended_next_owner"] == "runtime_rule"
+    assert item["recommended_route"] == "llm_repair"
     assert item["handoff_recommendation"] == "llm_triage_then_runtime_rule"
+    assert item["coverage_status"] == "coverage_gap"
     assert item["authoritative_rule_registration_allowed"] is False
 
 

@@ -511,6 +511,11 @@ class OrchestrationStageExecutor:
                 ext = Path(file_path).suffix.lower()
                 if ext in _LANGUAGE_NEUTRAL_EXTENSIONS or not ext:
                     continue
+                # Bench injects tests/test_product.py as a validation script;
+                # it is not project source code, so skip test directories.
+                normalized = file_path.replace("\\", "/")
+                if normalized.startswith("tests/") or "/tests/" in normalized:
+                    continue
                 if ext not in expected_extensions:
                     wrong_lang_files.append(file_path)
         if not wrong_lang_files:
@@ -833,7 +838,89 @@ class OrchestrationStageExecutor:
         scope = self._task_string(task, "scope")
         if scope:
             context.setdefault("scope_paths", [scope])
+        # Inject existing target file contents so the CE blueprint (and Director)
+        # can see the actual API of files created by earlier tasks. Without this,
+        # test-generation tasks guess at class/function names and produce broken tests.
+        existing_file_context = self._read_existing_target_file_summaries(task)
+        if existing_file_context:
+            context["existing_target_files"] = existing_file_context
         return context
+
+    def _read_existing_target_file_summaries(self, task: dict[str, Any], *, max_chars_per_file: int = 1500) -> list[dict[str, str]]:
+        """Read existing target files and extract compact export summaries.
+
+        For each target file that already exists in the workspace, reads its
+        content and extracts a compact summary (module.exports, class/function
+        declarations) so downstream Director tasks know the actual API.
+        """
+        target_files = task.get("target_files")
+        if not isinstance(target_files, list):
+            return []
+        summaries: list[dict[str, str]] = []
+        for rel_path in target_files:
+            if not isinstance(rel_path, str) or not rel_path.strip():
+                continue
+            full_path = self.workspace / rel_path
+            if not full_path.is_file():
+                continue
+            try:
+                content = full_path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if not content.strip():
+                continue
+            # For source code files, extract export signatures
+            suffix = full_path.suffix.lower()
+            if suffix in (".js", ".ts", ".mjs", ".cjs"):
+                summary = self._extract_js_export_summary(content)
+            elif suffix == ".py":
+                summary = self._extract_py_export_summary(content)
+            else:
+                summary = content[:max_chars_per_file]
+            summaries.append({"path": rel_path, "exports": summary})
+        return summaries
+
+    @staticmethod
+    def _extract_js_export_summary(content: str) -> str:
+        """Extract JS/TS export signatures: module.exports, class, function declarations."""
+        import re as _re
+
+        lines: list[str] = []
+        for raw_line in content.split("\n"):
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("//") or stripped.startswith("/*"):
+                continue
+            # module.exports = ...
+            if _re.match(r"module\.exports\s*=", stripped) or _re.match(r"exports\.\w+", stripped) or _re.match(r"(?:export\s+)?class\s+\w+", stripped) or _re.match(r"(?:export\s+)?(?:async\s+)?function\s+\w+", stripped) or _re.match(r"(?:export\s+)?(?:const|let)\s+\w+\s*=\s*(?:async\s+)?\(", stripped):
+                lines.append(stripped[:200])
+        if not lines:
+            # Fallback: first 30 non-empty lines
+            for raw_line in content.split("\n"):
+                if raw_line.strip():
+                    lines.append(raw_line.strip()[:200])
+                if len(lines) >= 30:
+                    break
+        return "\n".join(lines[:50])
+
+    @staticmethod
+    def _extract_py_export_summary(content: str) -> str:
+        """Extract Python export signatures: class and function definitions."""
+        import re as _re
+
+        lines: list[str] = []
+        for raw_line in content.split("\n"):
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if _re.match(r"(?:class|def|async def)\s+\w+", stripped):
+                lines.append(stripped[:200])
+        if not lines:
+            for raw_line in content.split("\n"):
+                if raw_line.strip():
+                    lines.append(raw_line.strip()[:200])
+                if len(lines) >= 30:
+                    break
+        return "\n".join(lines[:50])
 
     def _task_blueprint_constraints(self, task: dict[str, Any]) -> dict[str, Any]:
         constraints: dict[str, Any] = {}
@@ -3929,7 +4016,32 @@ class OrchestrationStageExecutor:
             result["phase"] = "prepare"
             results.append(result)
             if not bool(result.get("passed")):
-                prepare_failed = True
+                # If npm install failed due to hallucinated dependencies, repair and retry.
+                is_npm_install = (
+                    isinstance(command, list)
+                    and command
+                    and str(command[0]).strip().lower() == "npm"
+                    and any(str(part).strip().lower() == "install" for part in command)
+                )
+                if is_npm_install:
+                    stderr_text = str(result.get("stderr_tail") or "")
+                    removed = self._workspace_quality.repair_hallucinated_npm_dependencies(stderr_text)
+                    if removed:
+                        result["repair"] = {"action": "remove_hallucinated_deps", "removed": removed}
+                        retry_result = await asyncio.to_thread(
+                            self._run_workspace_quality_command, command, timeout_seconds
+                        )
+                        retry_result["phase"] = "prepare"
+                        retry_result["repair_retry"] = True
+                        results.append(retry_result)
+                        if bool(retry_result.get("passed")):
+                            result["passed"] = True  # Mark original as repaired
+                        else:
+                            prepare_failed = True
+                    else:
+                        prepare_failed = True
+                else:
+                    prepare_failed = True
 
         run_commands = [] if prepare_failed else commands
         for command in run_commands:
@@ -3961,6 +4073,52 @@ class OrchestrationStageExecutor:
         }
         rerun_results: list[dict[str, Any]] = []
         if run_commands and not prepare_failed and not all(bool(item.get("passed")) for item in results):
+            # Deterministic repairs before LLM repair loop.
+            # 1) CJS export/import mismatch: module.exports = X vs const { X } = require("./x")
+            # 2) Test trim mismatch: assertEqual fails due to whitespace-only difference
+            cjs_repairs = self._workspace_quality.repair_cjs_export_import_mismatch()
+            # Collect test stderr for trim repair
+            test_stderr_parts: list[str] = []
+            for item in results:
+                if str(item.get("phase") or "") == "check" and not bool(item.get("passed")):
+                    test_stderr_parts.append(str(item.get("stderr_tail") or ""))
+                    test_stderr_parts.append(str(item.get("stdout_tail") or ""))
+            trim_repairs = self._workspace_quality.repair_test_trim_mismatch("\n".join(test_stderr_parts))
+            deterministic_repairs = {
+                "cjs_export_import": cjs_repairs,
+                "test_trim": trim_repairs,
+            }
+            has_deterministic_repairs = bool(cjs_repairs or trim_repairs)
+            if has_deterministic_repairs:
+                repair_summary["deterministic_repairs"] = deterministic_repairs
+                # Re-run check commands after deterministic repairs
+                det_rerun: list[dict[str, Any]] = []
+                for command in run_commands:
+                    rerun_result = await asyncio.to_thread(
+                        self._run_workspace_quality_command, command, timeout_seconds
+                    )
+                    rerun_result["phase"] = "check_after_deterministic_repair"
+                    det_rerun.append(rerun_result)
+                results.extend(det_rerun)
+                # If all checks pass after deterministic repairs — skip LLM repair loop
+                if all(bool(item.get("passed")) for item in det_rerun):
+                    effective_results = [
+                        item for item in results if str(item.get("phase") or "") == "prepare"
+                    ] + det_rerun
+                    payload = {
+                        "schema_version": "factory.workspace_quality_checks.v1",
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                        "source": "factory_stage_executor",
+                        "factory_run_id": run.id,
+                        "workspace": str(self.workspace),
+                        "passed": True,
+                        "commands": results,
+                        "repair": repair_summary,
+                    }
+                    artifact = "runtime/qa/workspace-validation.json"
+                    self._write_json_artifact(artifact, payload)
+                    return True, artifact
+
             max_rounds = int(context.get("workspace_quality_repair_max_rounds") or _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS)
             max_rounds = max(1, min(max_rounds, _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS))
             latest_check_results = [item for item in results if str(item.get("phase") or "") == "check"]

@@ -99,8 +99,13 @@ def _as_dict(value: object) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _run_command(command: list[str], cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+def _run_command(
+    command: list[str], cwd: Path, *, timeout_s: int, extra_env: dict[str, str] | None = None
+) -> dict[str, Any]:
     started = time.time()
+    env = None
+    if extra_env:
+        env = {**_os.environ, **extra_env}
     try:
         proc = subprocess.run(
             command,
@@ -111,6 +116,7 @@ def _run_command(command: list[str], cwd: Path, *, timeout_s: int) -> dict[str, 
             errors="replace",
             timeout=max(1, int(timeout_s)),
             check=False,
+            env=env,
         )
         return {
             "command": command,
@@ -1375,13 +1381,17 @@ def _run_python_test_suite(workspace: Path, test_files: list[str], *, timeout_s:
 
 
 def _smoke_python_cli(workspace: Path, entrypoint: str, *, timeout_s: int) -> dict[str, Any]:
+    # Set PYTHONPATH to workspace root so that `from src.xxx import yyy` resolves.
+    py_env = {"PYTHONPATH": str(workspace)}
     command = [sys.executable, entrypoint, "--help"]
-    result = _run_command(command, workspace, timeout_s=min(max(2, int(timeout_s)), 10))
+    result = _run_command(command, workspace, timeout_s=min(max(2, int(timeout_s)), 10), extra_env=py_env)
     if result["ok"]:
         if _entrypoint_has_failure_marker(result):
             return _mark_entrypoint_failure({"kind": "python_cli", "entrypoint": entrypoint, **result})
         return {"kind": "python_cli", "entrypoint": entrypoint, **result}
-    fallback = _run_command([sys.executable, entrypoint], workspace, timeout_s=min(max(2, int(timeout_s)), 5))
+    fallback = _run_command(
+        [sys.executable, entrypoint], workspace, timeout_s=min(max(2, int(timeout_s)), 5), extra_env=py_env
+    )
     fallback_output = f"{fallback.get('stdout_tail') or ''}\n{fallback.get('stderr_tail') or ''}".lower()
     if (
         fallback.get("returncode") in {1, 2}

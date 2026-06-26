@@ -1297,6 +1297,26 @@ class TestPackageJsonParsing:
             [sys.executable, "main.py"],
         ]
 
+    def test_workspace_quality_commands_python_src_entrypoint_include_script_and_module_smoke(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "__init__.py").write_text("", encoding="utf-8")
+        (tmp_path / "src" / "main.py").write_text("print('ok')\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_smoke.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+        commands = executor._workspace_quality_commands({})
+
+        assert commands == [
+            [sys.executable, "-m", "compileall", "-q", "src", "tests"],
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
+            [sys.executable, "src/main.py"],
+            [sys.executable, "-m", "src.main"],
+        ]
+
     def test_workspace_quality_commands_python_project_install_when_requirements_exists(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         (tmp_path / "requirements.txt").write_text("requests\n", encoding="utf-8")

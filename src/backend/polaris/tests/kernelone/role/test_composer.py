@@ -96,6 +96,39 @@ class TestRoleComposer:
         assert composed is not None
         assert "Python 首席架构师" in composed.system_prompt
 
+    def test_compose_by_recipe_profession_identity_override(self) -> None:
+        """Runtime language identity override must affect role_definition and cache metadata."""
+        composed = self.composer.compose_by_recipe(
+            "director",
+            profession_name_override="Go (Golang) 资深软件架构师",
+            profession_identity_override="你是一位精通 Go (Golang) 语言的资深软件架构师。",
+            profession_identity_source="kernelone.role.language_identity",
+            profession_identity_language="go",
+        )
+
+        assert composed is not None
+        assert "你是 Polaris 体系中的 **Director**" in composed.system_prompt
+        assert "你同时是一位**Go (Golang) 资深软件架构师**。" in composed.system_prompt
+        assert "你是一位精通 Go (Golang) 语言的资深软件架构师。" in composed.system_prompt
+        assert "你同时是一位**软件工程师**。" not in composed.system_prompt
+        assert composed.metadata.profession_override_applied is True
+        assert composed.metadata.profession_identity_language == "go"
+        assert composed.metadata.profession_identity_source == "kernelone.role.language_identity"
+
+    def test_profession_identity_override_changes_cache_key(self) -> None:
+        """Language-specific role_definition variants must not share one cache key."""
+        generic = self.composer.compose_by_recipe("director")
+        go = self.composer.compose_by_recipe(
+            "director",
+            profession_name_override="Go (Golang) 资深软件架构师",
+            profession_identity_override="你是一位精通 Go (Golang) 语言的资深软件架构师。",
+            profession_identity_language="go",
+        )
+
+        assert generic is not None
+        assert go is not None
+        assert generic.metadata.cache_key != go.metadata.cache_key
+
     def test_compose_by_recipe_security_architect(self) -> None:
         """Test compose_by_recipe with security_architect."""
         composed = self.composer.compose_by_recipe("security_architect")

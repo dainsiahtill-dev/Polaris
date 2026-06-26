@@ -808,6 +808,7 @@ class LLMCaller:
         prompt_profile_audit: dict[str, Any] = {}
         selected_prompt_profile_ids: list[str] = []
         director_execution_profile: dict[str, Any] = {}
+        director_execution_strategy: dict[str, Any] = {}
         resident_agi_audit_context: dict[str, Any] = {}
         prompt_profile_context_override = getattr(context, "context_override", None)
         if isinstance(prompt_profile_context_override, dict):
@@ -815,6 +816,11 @@ class LLMCaller:
             raw_director_execution_profile = prompt_profile_context_override.get("director_execution_profile")
             if isinstance(raw_director_execution_profile, dict):
                 director_execution_profile = dict(raw_director_execution_profile)
+            raw_director_execution_strategy = prompt_profile_context_override.get(
+                "director_execution_strategy"
+            ) or prompt_profile_context_override.get("task_execution_strategy")
+            if isinstance(raw_director_execution_strategy, dict):
+                director_execution_strategy = dict(raw_director_execution_strategy)
             raw_prompt_profile_audit = prompt_profile_context_override.get("prompt_profile_audit")
             if isinstance(raw_prompt_profile_audit, dict):
                 prompt_profile_audit = dict(raw_prompt_profile_audit)
@@ -846,6 +852,7 @@ class LLMCaller:
                 "context_projection_id": context_projection_id,
                 "context_result_id": context_result_id,
                 "director_execution_profile": director_execution_profile,
+                "director_execution_strategy": director_execution_strategy,
                 "resident_agi_audit_context": resident_agi_audit_context,
                 "prompt_profile_audit": prompt_profile_audit,
                 "selected_prompt_profile_ids": selected_prompt_profile_ids,

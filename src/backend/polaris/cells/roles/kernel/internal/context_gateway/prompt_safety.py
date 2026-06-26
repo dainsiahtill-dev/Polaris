@@ -15,6 +15,7 @@ _TOOL_FAILURE_PROMPT_TOKENS = (
     '"ok": false',
     "'ok': false",
 )
+_TOOL_FAILURE_SUMMARY_PREFIX = "[tool_failure_summary]\n"
 
 
 def _trim_prompt_safe_text(text: str, *, max_chars: int = 220) -> str:
@@ -36,8 +37,22 @@ def _extract_tool_failure_field(text: str, field: str) -> str:
     return ""
 
 
-def prompt_safe_tool_failure_summary(role: str, content: str) -> str | None:
-    """Return a compact failure summary when raw tool receipts would leak."""
+def _infer_tool_failure_tool(text: str) -> str:
+    explicit = _extract_tool_failure_field(text, "tool") or _extract_tool_failure_field(text, "tool_name")
+    if explicit:
+        return explicit
+    markdown_tool = re.search(r"\*\*(?P<tool>[A-Za-z_][A-Za-z0-9_.-]*)\*\*\s*:\s*error", text, re.IGNORECASE)
+    if markdown_tool:
+        return str(markdown_tool.group("tool") or "").strip()
+    lowered = text.lower()
+    for candidate in ("write_file", "edit_file", "read_file", "execute_command", "delete_file"):
+        if candidate in lowered:
+            return candidate
+    return "unknown"
+
+
+def tool_failure_summary_payload(role: str, content: str) -> dict[str, Any] | None:
+    """Return a prompt-safe failure payload when raw tool receipts would leak."""
 
     text = str(content or "")
     lowered = text.lower()
@@ -46,7 +61,7 @@ def prompt_safe_tool_failure_summary(role: str, content: str) -> str | None:
     if not any(token in lowered for token in _TOOL_FAILURE_PROMPT_TOKENS):
         return None
 
-    tool = _extract_tool_failure_field(text, "tool") or "unknown"
+    tool = _infer_tool_failure_tool(text)
     error_type = _extract_tool_failure_field(text, "error_type") or _extract_tool_failure_field(
         text, "handler_error_type"
     )
@@ -55,14 +70,41 @@ def prompt_safe_tool_failure_summary(role: str, content: str) -> str | None:
     error = _extract_tool_failure_field(text, "error")
     if not error and "write_file" in lowered and "error" in lowered:
         error = "write_file failed"
-    summary = {
+    return {
         "tool": tool,
         "error_type": error_type or "tool_failure",
         "reason": _trim_prompt_safe_text(error or "tool execution failed"),
         "prompt_safe": True,
         "receipt_detail": "omitted; see runtime tool_result event for audit evidence",
     }
-    return "[tool_failure_summary]\n" + json.dumps(summary, ensure_ascii=False)
+
+
+def parse_tool_failure_summary(content: Any) -> dict[str, Any] | None:
+    """Parse an already-sanitized tool failure summary."""
+
+    text = str(content or "")
+    if not text.startswith(_TOOL_FAILURE_SUMMARY_PREFIX):
+        return None
+    try:
+        payload = json.loads(text[len(_TOOL_FAILURE_SUMMARY_PREFIX) :])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return dict(payload)
+
+
+def format_tool_failure_summary(payload: dict[str, Any]) -> str:
+    return _TOOL_FAILURE_SUMMARY_PREFIX + json.dumps(payload, ensure_ascii=False)
+
+
+def prompt_safe_tool_failure_summary(role: str, content: str) -> str | None:
+    """Return a compact failure summary when raw tool receipts would leak."""
+
+    summary = tool_failure_summary_payload(role, content)
+    if summary is None:
+        return None
+    return format_tool_failure_summary(summary)
 
 
 def prompt_safe_message_content(role: str, content: Any) -> str:

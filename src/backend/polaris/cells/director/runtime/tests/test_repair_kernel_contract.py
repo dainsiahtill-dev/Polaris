@@ -27,20 +27,27 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     build_cpp_standard_include_plan,
     build_cpp_struct_getter_field_access_plan,
     build_go_bare_import_string_plan,
+    build_go_bare_local_import_plan,
+    build_go_nested_import_plan,
+    build_go_subpath_import_plan,
     build_java_accessor_alias_plan,
     build_patch_residue_cleanup_plan,
     build_repair_receipt_context,
     build_rust_dependency_plan,
     build_rust_missing_binary_entrypoint_plan,
+    build_typescript_canvas_scale_return_type_plan,
     build_typescript_duplicate_object_property_plan,
     build_typescript_enum_member_separator_plan,
+    build_typescript_missing_closing_brace_plan,
     build_typescript_nullable_canvas_context_plan,
+    build_typescript_number_to_string_argument_plan,
     build_typescript_object_literal_comma_plan,
     default_repair_rule_registry,
     deterministic_repair_source_tool_known,
     normalize_artifact_quality_errors,
     order_repair_plans,
     plan_runtime_repair,
+    plan_typescript_canvas_scale_return_type_repair,
     plan_typescript_duplicate_object_property_repair,
     plan_typescript_enum_member_separator_repair,
     plan_typescript_nullable_canvas_context_repair,
@@ -52,7 +59,9 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     repair_cpp_missing_standard_includes_text,
     repair_cpp_struct_getter_field_access_text,
     repair_go_bare_import_strings_text,
+    repair_go_nested_import_keywords_text,
     repair_java_common_accessor_aliases_text,
+    repair_typescript_missing_closing_braces,
     repair_typescript_nullable_canvas_context_guards,
     repair_typescript_object_literal_commas,
     run_materialization_quality_repair_schedule_callbacks,
@@ -61,6 +70,7 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     runtime_dispatch as runtime_dispatch_module,
     runtime_repair_bindings,
     runtime_repair_source_tools,
+    typescript_syntax as ts_syntax,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy import (
     FORBIDDEN_REPAIR_ADVISORY_METADATA_FIELDS,
@@ -318,8 +328,8 @@ def test_repair_rule_registry_matches_existing_multilanguage_legacy_strategy_met
     matched_source_tools = [item["matched_source_tools"] for item in payload["items"]]
 
     assert payload["covered_diagnostic_count"] == 7
-    assert payload["metadata_only_diagnostic_count"] == 6
-    assert payload["executable_runtime_plan_diagnostic_count"] == 1
+    assert payload["metadata_only_diagnostic_count"] == 0
+    assert payload["executable_runtime_plan_diagnostic_count"] == 7
     assert matched_source_tools[0] == ["deterministic_cpp_include_path_repair"]
     assert payload["items"][0]["runtime_plan_rule_ids"] == ["cpp.include_path"]
     assert payload["items"][0]["diagnostic_language"] == "cpp"
@@ -328,9 +338,10 @@ def test_repair_rule_registry_matches_existing_multilanguage_legacy_strategy_met
     assert matched_source_tools[2] == ["deterministic_python_package_shadow_bridge_repair"]
     assert payload["items"][2]["diagnostic_language"] == "python"
     assert matched_source_tools[3] == ["deterministic_node_test_script_contract_repair"]
+    assert payload["items"][3]["runtime_plan_rule_ids"] == ["javascript.cannot_find_module"]
     assert payload["items"][3]["diagnostic_language"] == "javascript"
     assert matched_source_tools[4] == ["deterministic_javascript_missing_export_repair"]
-    assert matched_source_tools[5] == ["deterministic_typescript_missing_export_repair"]
+    assert "deterministic_typescript_missing_export_repair" in matched_source_tools[5]
     assert matched_source_tools[6] == ["deterministic_typescript_vitest_globals_repair"]
 
 
@@ -662,6 +673,13 @@ def test_repair_convergence_scheduler_downgrades_failed_revalidation_receipts(tm
     receipt = result.receipts[0]
 
     assert result.status == "cycle_detected"
+    assert result.metadata["post_check_evidence_complete"] is True
+    assert result.metadata["evidence_status_counts"]["failed_evidence"] == 1
+    assert result.metadata["evidence_status_counts"]["missing_evidence"] == 0
+    assert result.metadata["failed_evidence_receipt_ids"] == [receipt.receipt_id]
+    assert result.metadata["failed_evidence_source_tools"] == ["deterministic_typescript_missing_export_repair"]
+    assert result.metadata["missing_evidence_receipt_ids"] == []
+    assert result.metadata["revalidation_coverage"]["failed_evidence_receipt_ids"] == [receipt.receipt_id]
     assert receipt.status == "failed_revalidation"
     assert receipt.authoritative is False
     assert receipt.evidence_status == "failed_evidence"
@@ -673,6 +691,41 @@ def test_repair_convergence_scheduler_downgrades_failed_revalidation_receipts(tm
     assert receipt.errors_before == 1
     assert receipt.errors_after == 1
     assert receipt.net_error_reduction == 0
+
+
+def test_repair_convergence_scheduler_projects_missing_previous_receipt_evidence() -> None:
+    pending_receipt = RepairReceipt(
+        receipt_id="repair_receipt.pending_missing_evidence",
+        plan_id="plan.pending_missing_evidence",
+        rule_id="typescript.pending",
+        source_tool="deterministic_typescript_missing_export_repair",
+        status="pending_revalidation",
+        mode="commit",
+        authoritative=False,
+        files_changed=("src/app.ts",),
+        metadata={"requires_revalidation": True},
+    )
+
+    def verifier(round_number: int, receipts: tuple[object, ...]) -> RepairVerifierSnapshot:
+        del round_number, receipts
+        return RepairVerifierSnapshot(diagnostics=(), command=("npm", "test"), exit_code=0)
+
+    result = RepairConvergenceScheduler(max_rounds=1).run(
+        workspace=Path("."),
+        verifier=verifier,
+        planner=lambda _diagnostics, _round_number: (),
+        base_files_provider=lambda _plan: {},
+        previous_receipts=(pending_receipt,),
+    )
+
+    assert result.status == "already_clean"
+    assert result.metadata["post_check_evidence_complete"] is False
+    assert result.metadata["evidence_status_counts"]["missing_evidence"] == 1
+    assert result.metadata["evidence_status_counts"]["failed_evidence"] == 0
+    assert result.metadata["missing_evidence_receipt_ids"] == [pending_receipt.receipt_id]
+    assert result.metadata["missing_evidence_source_tools"] == ["deterministic_typescript_missing_export_repair"]
+    assert result.metadata["failed_evidence_receipt_ids"] == []
+    assert result.metadata["revalidation_coverage"]["requires_revalidation"] is True
 
 
 def test_repair_receipt_revalidation_evidence_is_authoritative_hash_material() -> None:
@@ -745,6 +798,80 @@ def test_repair_receipt_revalidation_evidence_is_authoritative_hash_material() -
     assert payload["projection_hash"] == resolved_receipt.projection_hash()
     assert payload["revalidation_evidence"]["evidence_status"] == "resolved_evidence"
     assert payload["revalidation_evidence"]["net_error_reduction"] == 1
+
+
+def test_public_repair_receipt_native_revalidation_fields_round_trip() -> None:
+    diagnostic_payload = {
+        "source": "artifact_quality",
+        "code": "typescript_ts2304",
+        "message": "Cannot find name 'done'.",
+        "path": "src/app.ts",
+        "diagnostic_id": "diag_ts2304_done",
+    }
+    evidence_payload = {
+        "command": ["npm", "test"],
+        "exit_code": 0,
+        "round_number": 1,
+        "evidence_status": "resolved_evidence",
+        "errors_before": 1,
+        "errors_after": 0,
+        "net_error_reduction": 1,
+        "resolved_diagnostic_ids": ["diag_ts2304_done"],
+        "residual_diagnostic_ids": [],
+        "diagnostics_before": [diagnostic_payload],
+        "diagnostics_after": [],
+        "raw_output_ref": "runtime/verifier/round-1.log",
+        "metadata": {"verifier": "npm_test"},
+    }
+
+    receipt = RepairReceiptV1(
+        receipt_id="repair_receipt.public.native",
+        plan_id="plan.public.native",
+        rule_id="typescript.missing_done_export",
+        source_tool="deterministic_typescript_missing_export_repair",
+        status="applied",
+        authoritative=True,
+        files_changed=("src/app.ts",),
+        revalidation_evidence=evidence_payload,
+    )
+    payload = receipt.to_dict()
+
+    assert receipt.evidence_status == "resolved_evidence"
+    assert receipt.verifier_command == ("npm", "test")
+    assert receipt.verifier_exit_code == 0
+    assert receipt.diagnostics_before == (diagnostic_payload,)
+    assert receipt.diagnostics_after == ()
+    assert receipt.resolved_diagnostic_ids == ("diag_ts2304_done",)
+    assert receipt.residual_diagnostic_ids == ()
+    assert payload["verifier_command"] == ["npm", "test"]
+    assert payload["verifier_exit_code"] == 0
+    assert payload["diagnostics_before"] == [diagnostic_payload]
+    assert payload["resolved_diagnostic_ids"] == ["diag_ts2304_done"]
+
+    native_only_receipt = RepairReceiptV1(
+        receipt_id="repair_receipt.public.native_only",
+        plan_id="plan.public.native_only",
+        rule_id="typescript.missing_done_export",
+        source_tool="deterministic_typescript_missing_export_repair",
+        status="applied",
+        authoritative=True,
+        files_changed=("src/app.ts",),
+        evidence_status="resolved_evidence",
+        errors_before=1,
+        errors_after=0,
+        net_error_reduction=1,
+        verifier_command=("npm", "test"),
+        verifier_exit_code=0,
+        diagnostics_before=(diagnostic_payload,),
+        diagnostics_after=(),
+        resolved_diagnostic_ids=("diag_ts2304_done",),
+        residual_diagnostic_ids=(),
+    )
+
+    assert native_only_receipt.revalidation_evidence["command"] == ["npm", "test"]
+    assert native_only_receipt.revalidation_evidence["exit_code"] == 0
+    assert native_only_receipt.revalidation_evidence["diagnostics_before"] == [diagnostic_payload]
+    assert native_only_receipt.revalidation_evidence["resolved_diagnostic_ids"] == ["diag_ts2304_done"]
 
 
 def test_repair_receipt_authority_hash_excludes_agi_advisory_projection_material() -> None:
@@ -1093,6 +1220,488 @@ def test_typescript_enum_member_separator_runtime_plans_composition_inside_kerne
     assert "  Full," in planning.composition.patches[0].content_after
 
 
+def test_typescript_missing_closing_brace_rule_plans_precise_eof_insert() -> None:
+    content = "export function run(): number {\n  return 1;\n"
+    diagnostics = normalize_artifact_quality_errors(["src/app.ts(2,12): error TS1005: '}' expected."])
+
+    repaired = repair_typescript_missing_closing_braces(content)
+    plan = build_typescript_missing_closing_brace_plan(
+        base_files={"src/app.ts": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert repaired == "export function run(): number {\n  return 1;\n}\n"
+    assert plan is not None
+    assert plan.rule_id == "typescript.missing_closing_brace"
+    assert plan.source_tool == "deterministic_typescript_missing_closing_brace_repair"
+    assert {operation.kind for operation in plan.operations} == {"text_replace"}
+    assert plan.operations[0].expected == "\n"
+    assert plan.operations[0].replacement == "\n}\n"
+    composition = PatchComposer().compose({"src/app.ts": content}, plan.operations)
+    assert composition.ok
+    assert composition.patches[0].content_after == repaired
+
+
+def test_typescript_missing_closing_brace_rule_fails_closed_for_unbalanced_overflow() -> None:
+    content = "\n".join(f"export function f{index}() {{" for index in range(9)) + "\n"
+    diagnostics = normalize_artifact_quality_errors(["src/app.ts(9,1): error TS1005: '}' expected."])
+
+    plan = build_typescript_missing_closing_brace_plan(
+        base_files={"src/app.ts": content},
+        diagnostics=diagnostics,
+    )
+
+    assert plan is None
+
+
+def test_typescript_number_to_string_argument_rule_plans_precise_line_replace() -> None:
+    content = "const label = makeLabel(42, width);\n"
+    column = content.index("42") + 1
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "src/garden.ts"
+            f"(1,{column}): error TS2345: Argument of type 'number' is not assignable "
+            "to parameter of type 'string'."
+        ]
+    )
+
+    plan = build_typescript_number_to_string_argument_plan(
+        base_files={"src/garden.ts": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "typescript.number_to_string_argument"
+    assert plan.source_tool == "deterministic_typescript_number_to_string_argument_repair"
+    assert {operation.kind for operation in plan.operations} == {"text_replace"}
+    assert plan.operations[0].expected == content
+    assert plan.operations[0].replacement == "const label = makeLabel(String(42), width);\n"
+    composition = PatchComposer().compose({"src/garden.ts": content}, plan.operations)
+    assert composition.ok
+    assert "makeLabel(String(42), width)" in composition.patches[0].content_after
+
+
+def test_typescript_number_to_string_argument_runtime_uses_editor_without_write_file(tmp_path: Path) -> None:
+    relative_path = "src/garden.ts"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    content = "const label = makeLabel(42, width);\n"
+    target.write_text(content, encoding="utf-8")
+    column = content.index("42") + 1
+    writes: list[str] = []
+    edits: list[str] = []
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        writes.append(path)
+        raise AssertionError("number-to-string repair must prefer edit_file over write_file")
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        current = target.read_text(encoding="utf-8")
+        assert operation.span_start is not None
+        assert operation.span_end is not None
+        target.write_text(
+            current[: operation.span_start] + str(operation.replacement or "") + current[operation.span_end :],
+            encoding="utf-8",
+        )
+        edits.append(operation.operation_id)
+        return {"ok": True}
+
+    result = run_runtime_repair(
+        source_tool="deterministic_typescript_number_to_string_argument_repair",
+        workspace=tmp_path,
+        base_files={relative_path: content},
+        artifact_quality_errors=(
+            "src/garden.ts"
+            f"(1,{column}): error TS2345: Argument of type 'number' is not assignable "
+            "to parameter of type 'string'.",
+        ),
+        writer=writer,
+        editor=editor,
+        allowed_paths=(relative_path,),
+    )
+
+    assert result.ok is True
+    assert writes == []
+    assert edits
+    assert target.read_text(encoding="utf-8") == "const label = makeLabel(String(42), width);\n"
+    assert result.execution_result is not None
+    record = result.execution_result.receipt.metadata["execution_records"][0]
+    assert record["operation"] == "edit_file"
+    assert result.execution_result.receipt.metadata["write_file_reasons_by_path"] == {}
+
+
+def test_typescript_canvas_scale_return_type_rule_plans_precise_type_replace_and_coverage() -> None:
+    content = (
+        "export function scaleToCanvas(state: unknown, width: number, height: number): "
+        "{ sx: number; sy: number; scale: number } {\n"
+        "  const scale = Math.min(width, height);\n"
+        "  return { sx: (x: number) => x * scale, sy: (y: number) => y * scale, scale };\n"
+        "}\n"
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "src/engine/renderer.ts(178,37): error TS2345: Argument of type 'number' is not assignable "
+            "to parameter of type '(n: number) => number'."
+        ]
+    )
+
+    coverage = default_repair_rule_registry().coverage(diagnostics).to_dict()
+    plan = build_typescript_canvas_scale_return_type_plan(
+        base_files={"src/engine/simulation.ts": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+    planning = plan_typescript_canvas_scale_return_type_repair(
+        base_files={"src/engine/simulation.ts": content},
+        artifact_quality_errors=(diagnostics[0].raw,),
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "typescript.canvas_scale_return_type"
+    assert plan.source_tool == "deterministic_typescript_canvas_scale_return_type_repair"
+    assert {operation.kind for operation in plan.operations} == {"text_replace"}
+    assert plan.operations[0].expected == "{ sx: number; sy: number; scale: number }"
+    assert plan.operations[0].replacement == ("{ sx: (n: number) => number; sy: (n: number) => number; scale: number }")
+    composition = PatchComposer().compose({"src/engine/simulation.ts": content}, plan.operations)
+    assert composition.ok
+    assert "{ sx: (n: number) => number; sy: (n: number) => number; scale: number }" in (
+        composition.patches[0].content_after
+    )
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert coverage["items"][0]["runtime_plan_rule_ids"] == ["typescript.canvas_scale_return_type"]
+    assert planning.plan is not None
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+
+
+def _ts_diag(raw: str, *, path: str = "", code: str = "artifact_quality") -> RepairDiagnostic:
+    return RepairDiagnostic(source="artifact_quality", code=code, message=raw, raw=raw, path=path)
+
+
+def _typescript_conservative_planner_safe_cases() -> dict[str, tuple[dict[str, str], tuple[RepairDiagnostic, ...]]]:
+    return {
+        ts_syntax.HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL: (
+            {"index.html": '<script type="module" src="src/main.ts"></script>\n'},
+            (
+                _ts_diag(
+                    "HTML module script references TypeScript source 'src/main.ts' in index.html; "
+                    "static entrypoints must load JavaScript"
+                ),
+            ),
+        ),
+        ts_syntax.JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL: (
+            {"dist/app.js": "function greet(name: string): void {\n  return name;\n}\n"},
+            (_ts_diag("dist/app.js: SyntaxError: Unexpected token ':'"),),
+        ),
+        ts_syntax.TYPEORM_MODEL_NORMALIZATION_SOURCE_TOOL: (
+            {
+                "src/user.ts": (
+                    "import { Entity } from 'typeorm';\n\n@Entity()\nexport class User {\n  id: number;\n}\n"
+                )
+            },
+            (_ts_diag("undeclared runtime import 'typeorm' in src/user.ts"),),
+        ),
+        ts_syntax.TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL: (
+            {
+                "package.json": '{"type":"module"}\n',
+                "tsconfig.json": '{"compilerOptions":{"module":"CommonJS"}}\n',
+            },
+            (_ts_diag("TypeScript CommonJS module output requires package type commonjs, not module."),),
+        ),
+        ts_syntax.TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL: (
+            {
+                "package.json": '{"main":"dist/index.js"}\n',
+                "src/feature.ts": "export const feature = true;\n",
+            },
+            (_ts_diag("TypeScript entrypoint missing for dist/index.js."),),
+        ),
+        ts_syntax.TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL: (
+            {"src/app.ts": "// generated\\nexport const value = 1;\n"},
+            (_ts_diag("TypeScript escaped newline in line comment before code in src/app.ts"),),
+        ),
+        ts_syntax.TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL: (
+            {
+                "src/app.ts": (
+                    "interface Sprite { position: { x: number; y: number } }\n"
+                    "function draw(sprite: Sprite) {\n"
+                    "  console.log(sprite.x);\n"
+                    "}\n"
+                )
+            },
+            (
+                _ts_diag(
+                    "src/app.ts(3,22): error TS2339: Property 'x' does not exist on type 'Sprite'.",
+                    path="src/app.ts",
+                    code="typescript_ts2339",
+                ),
+            ),
+        ),
+        ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL: (
+            {
+                "src/app.ts": "import { Widget } from './model';\nconsole.log(Widget);\n",
+                "src/model.ts": "class Widget {}\n",
+            },
+            (
+                _ts_diag(
+                    "src/app.ts(1,10): error TS2305: Module '\"./model\"' has no exported member 'Widget'.",
+                    path="src/app.ts",
+                    code="typescript_ts2305",
+                ),
+            ),
+        ),
+        ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL: (
+            {
+                "src/app.ts": "interface Sprite {\n}\nfunction draw(sprite: Sprite) {\n  sprite.glow();\n}\n",
+            },
+            (
+                _ts_diag(
+                    "src/app.ts(4,10): error TS2339: Property 'glow' does not exist on type 'Sprite'.",
+                    path="src/app.ts",
+                    code="typescript_ts2339",
+                ),
+            ),
+        ),
+        ts_syntax.TYPESCRIPT_REEXPORT_SOURCE_TOOL: (
+            {
+                "src/app.ts": "import { Glow } from './barrel';\nconsole.log(Glow);\n",
+                "src/barrel.ts": "export interface GlowOptions { level: number }\n",
+                "src/glow.ts": "export class Glow {}\n",
+            },
+            (_ts_diag("TypeScript runtime re-export missing export: Glow is undefined in src/app.ts."),),
+        ),
+        ts_syntax.TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL: (
+            {
+                "src/barrel.ts": "export { Widget } from './types';\nconst item: Widget = {} as Widget;\n",
+            },
+            (
+                _ts_diag(
+                    "src/barrel.ts(2,13): error TS2304: Cannot find name 'Widget'.",
+                    path="src/barrel.ts",
+                    code="typescript_ts2304",
+                ),
+            ),
+        ),
+        ts_syntax.TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL: (
+            {
+                "src/Garden.ts": "import { Moon } from './Moon';\nexport class Garden { moon = new Moon(); }\n",
+                "src/moon.ts": "export class Moon {}\n",
+            },
+            (_ts_diag("unresolved relative import './Moon' in src/Garden.ts"),),
+        ),
+        ts_syntax.TYPESCRIPT_SCAFFOLD_SOURCE_TOOL: (
+            {},
+            (_ts_diag("TypeScript scaffold missing package.json and tsconfig.json."),),
+        ),
+        ts_syntax.TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL: (
+            {
+                "src/parser.ts": (
+                    "import ts from 'typescript';\n"
+                    "const sourceFile = ts.createSourceFile('x.ts', '', ts.ScriptTarget.Latest);\n"
+                    "const diagnostics = sourceFile.parseDiagnostics;\n"
+                )
+            },
+            (
+                _ts_diag(
+                    "src/parser.ts(3,32): error TS2339: Property 'parseDiagnostics' does not exist.",
+                    path="src/parser.ts",
+                    code="typescript_ts2339",
+                ),
+            ),
+        ),
+        ts_syntax.TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL: (
+            {
+                "src/engine.ts": (
+                    "function clamp(value: number, min: number, max: number): number {\n"
+                    "  return Math.max(min, Math.min(max, value));\n"
+                    "}\n"
+                    "let y = clamp(42, 600);\n"
+                )
+            },
+            (
+                _ts_diag(
+                    "src/engine.ts(4,9): error TS2554: Expected 3 arguments, but got 2.",
+                    path="src/engine.ts",
+                    code="typescript_ts2554",
+                ),
+            ),
+        ),
+        ts_syntax.TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL: (
+            {"tsconfig.json": '{"compilerOptions":{"target":"ES2020"}}\n'},
+            (
+                _ts_diag(
+                    "src/app.ts(1,1): error TS2584: Cannot find name 'document'. "
+                    "Try changing the 'lib' compiler option to include 'dom'.",
+                    path="src/app.ts",
+                    code="typescript_ts2584",
+                ),
+            ),
+        ),
+        ts_syntax.TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL: (
+            {"src/user.ts": "class User {\n  name: string;\n}\n"},
+            (
+                _ts_diag(
+                    "src/user.ts(2,3): error TS2564: Property 'name' has no initializer.",
+                    path="src/user.ts",
+                    code="typescript_ts2564",
+                ),
+            ),
+        ),
+        ts_syntax.TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL: (
+            {
+                "src/main.ts": "import { Garden } from './missing';\nconst garden = new Garden();\n",
+                "src/garden.ts": "export class Garden {}\n",
+            },
+            (_ts_diag("unresolved relative import './missing' in src/main.ts"),),
+        ),
+        ts_syntax.TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL: (
+            {"src/app.ts": "function setLabel(label: string) {\n  return newLabel.trim();\n}\n"},
+            (
+                _ts_diag(
+                    "src/app.ts(2,10): error TS2304: Cannot find name 'newLabel'.",
+                    path="src/app.ts",
+                    code="typescript_ts2304",
+                ),
+            ),
+        ),
+        ts_syntax.TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL: (
+            {"src/main.ts": "import { Garden } from './missing';\nconsole.log('ready');\n"},
+            (_ts_diag("unresolved relative import './missing' in src/main.ts"),),
+        ),
+        ts_syntax.TYPESCRIPT_VITEST_GLOBALS_SOURCE_TOOL: (
+            {
+                "src/app.test.ts": "describe('app', () => {\n  it('works', () => expect(true).toBe(true));\n});\n",
+                "package.json": '{"scripts":{"test":"node --test"},"devDependencies":{}}\n',
+            },
+            (
+                _ts_diag(
+                    "src/app.test.ts(1,1): error TS2582: Cannot find name 'describe'.",
+                    path="src/app.test.ts",
+                    code="typescript_ts2582",
+                ),
+            ),
+        ),
+        ts_syntax.TYPESCRIPT_ZOD_TYPE_CLASS_COLLISION_SOURCE_TOOL: (
+            {
+                "src/user.ts": (
+                    "import { z } from 'zod';\nexport class User {}\nexport type User = z.infer<typeof UserSchema>;\n"
+                )
+            },
+            (_ts_diag("TypeScript zod inferred type collides with class User in src/user.ts"),),
+        ),
+    }
+
+
+def test_typescript_conservative_planner_recognizes_all_legacy_ts_html_source_tools() -> None:
+    cases = _typescript_conservative_planner_safe_cases()
+    expected_source_tools = {
+        ts_syntax.HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL,
+        ts_syntax.JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL,
+        ts_syntax.TYPEORM_MODEL_NORMALIZATION_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_REEXPORT_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_SCAFFOLD_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_VITEST_GLOBALS_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_ZOD_TYPE_CLASS_COLLISION_SOURCE_TOOL,
+    }
+
+    assert set(cases) == expected_source_tools
+    assert len(cases) == 22
+
+    plans = []
+    for source_tool, (base_files, diagnostics) in cases.items():
+        plan = ts_syntax.build_typescript_runtime_plan_for_source_tool(
+            source_tool=source_tool,
+            base_files=base_files,
+            diagnostics=diagnostics,
+            mode="shadow",
+        )
+
+        assert plan is not None, source_tool
+        assert plan.source_tool == source_tool
+        assert plan.operations, source_tool
+        plans.append(plan)
+
+    operation_kinds = {operation.kind for plan in plans for operation in plan.operations}
+    assert "text_replace" in operation_kinds
+    assert "json_set" in operation_kinds
+
+
+def test_typescript_conservative_planner_fails_closed_for_unknown_source_tool_and_unknown_inputs() -> None:
+    unknown_diagnostics = (
+        _ts_diag(
+            "src/app.ts(1,1): error TS9999: Unknown future compiler error.",
+            path="src/app.ts",
+            code="typescript_ts9999",
+        ),
+    )
+    base_files = {
+        "package.json": '{"main":"dist/index.js","type":"module","scripts":{"test":"node --test"}}\n',
+        "tsconfig.json": '{"compilerOptions":{"module":"CommonJS"}}\n',
+        "src/app.ts": "export const value = 1;\n",
+        "src/feature.ts": "export const feature = true;\n",
+        "src/app.test.ts": "describe('app', () => expect(true).toBe(true));\n",
+        "index.html": '<script type="module" src="src/main.ts"></script>\n',
+    }
+
+    assert (
+        ts_syntax.build_typescript_runtime_plan_for_source_tool(
+            source_tool="deterministic_typescript_future_repair",
+            base_files=base_files,
+            diagnostics=unknown_diagnostics,
+            mode="shadow",
+        )
+        is None
+    )
+    for source_tool in _typescript_conservative_planner_safe_cases():
+        assert (
+            ts_syntax.build_typescript_runtime_plan_for_source_tool(
+                source_tool=source_tool,
+                base_files=base_files,
+                diagnostics=unknown_diagnostics,
+                mode="shadow",
+            )
+            is None
+        ), source_tool
+
+
+def test_typescript_runtime_migrated_rules_fail_closed_for_unknown_inputs() -> None:
+    base_files = {"src/app.ts": "export const value = 1;\n"}
+    unknown_errors = ("src/app.ts(1,1): error TS9999: Unknown future compiler error.",)
+
+    for source_tool in (
+        "deterministic_typescript_missing_closing_brace_repair",
+        "deterministic_typescript_number_to_string_argument_repair",
+        "deterministic_typescript_canvas_scale_return_type_repair",
+    ):
+        planning = plan_runtime_repair(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=unknown_errors,
+            mode="shadow",
+        )
+
+        assert planning.source_tool == source_tool
+        assert planning.plan is None
+        assert planning.composition is None
+
+
 def test_patch_residue_cleanup_rule_plans_precise_text_replacements() -> None:
     content = (
         "export const cardAssetsReady = true;\n>>>> REPLACE src/assets/card-assets.ts\nexport const assetCount = 52;\n"
@@ -1169,201 +1778,34 @@ def test_java_test_dependency_rule_builds_whole_file_fallback_runtime_plan() -> 
 def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
     bindings = runtime_repair_bindings()
 
-    assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
+    assert "deterministic_rust_post_repair" in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert len(runtime_repair_source_tools()) == len(bindings)
-    assert len(runtime_repair_source_tools()) == 31
-    assert sum(1 for binding in bindings if binding["language"] == "rust") == 18
-    assert runtime_repair_source_tools() == (
-        "deterministic_cpp_include_path_repair",
-        "deterministic_cpp_missing_private_members_repair",
-        "deterministic_cpp_placeholder_declaration_repair",
-        "deterministic_cpp_standard_include_repair",
-        "deterministic_cpp_struct_getter_field_access_repair",
-        "deterministic_go_bare_import_string_repair",
-        "deterministic_java_accessor_alias_repair",
-        "deterministic_java_test_dependency_repair",
-        "deterministic_patch_residue_cleanup",
-        "deterministic_rust_crate_import_rewrite_repair",
-        "deterministic_rust_dependency_repair",
-        "deterministic_rust_derive_repair",
-        "deterministic_rust_duplicate_module_file_repair",
-        "deterministic_rust_field_rename_suggestion_repair",
-        "deterministic_rust_incompatible_copy_derive_repair",
-        "deterministic_rust_lib_root_facade_repair",
-        "deterministic_rust_line_suggestion_repair",
-        "deterministic_rust_method_self_signature_repair",
-        "deterministic_rust_missing_binary_entrypoint_repair",
-        "deterministic_rust_missing_lib_target_repair",
-        "deterministic_rust_missing_module_file_repair",
-        "deterministic_rust_serde_derive_repair",
-        "deterministic_rust_struct_literal_missing_field_repair",
-        "deterministic_rust_trait_import_repair",
-        "deterministic_rust_unresolved_pub_use_repair",
-        "deterministic_rust_unused_import_repair",
-        "deterministic_rust_wrong_crate_path_repair",
-        "deterministic_typescript_duplicate_object_property_repair",
-        "deterministic_typescript_enum_member_separator_repair",
-        "deterministic_typescript_nullable_canvas_context_repair",
-        "deterministic_typescript_return_object_semicolon_repair",
-    )
-    assert bindings == (
-        {
-            "source_tool": "deterministic_cpp_include_path_repair",
-            "language": "cpp",
-            "rule_id": "cpp.include_path",
-        },
-        {
-            "source_tool": "deterministic_cpp_missing_private_members_repair",
-            "language": "cpp",
-            "rule_id": "cpp.missing_private_members",
-        },
-        {
-            "source_tool": "deterministic_cpp_placeholder_declaration_repair",
-            "language": "cpp",
-            "rule_id": "cpp.placeholder_declaration",
-        },
-        {
-            "source_tool": "deterministic_cpp_standard_include_repair",
-            "language": "cpp",
-            "rule_id": "cpp.standard_include",
-        },
-        {
-            "source_tool": "deterministic_cpp_struct_getter_field_access_repair",
-            "language": "cpp",
-            "rule_id": "cpp.struct_getter_field_access",
-        },
-        {
-            "source_tool": "deterministic_go_bare_import_string_repair",
-            "language": "go",
-            "rule_id": "go.bare_import_string",
-        },
-        {
-            "source_tool": "deterministic_java_accessor_alias_repair",
-            "language": "java",
-            "rule_id": "java.common_accessor_aliases",
-        },
-        {
-            "source_tool": "deterministic_java_test_dependency_repair",
-            "language": "java",
-            "rule_id": "java.junit_test_dependency",
-        },
-        {
-            "source_tool": "deterministic_patch_residue_cleanup",
-            "language": "generic",
-            "rule_id": "generic.patch_residue_cleanup",
-        },
-        {
-            "source_tool": "deterministic_rust_crate_import_rewrite_repair",
-            "language": "rust",
-            "rule_id": "rust.crate_import_rewrite",
-        },
-        {
-            "source_tool": "deterministic_rust_dependency_repair",
-            "language": "rust",
-            "rule_id": "rust.unlinked_crate_dependency",
-        },
-        {
-            "source_tool": "deterministic_rust_derive_repair",
-            "language": "rust",
-            "rule_id": "rust.missing_trait_derive",
-        },
-        {
-            "source_tool": "deterministic_rust_duplicate_module_file_repair",
-            "language": "rust",
-            "rule_id": "rust.duplicate_module_file",
-        },
-        {
-            "source_tool": "deterministic_rust_field_rename_suggestion_repair",
-            "language": "rust",
-            "rule_id": "rust.field_rename_suggestion",
-        },
-        {
-            "source_tool": "deterministic_rust_incompatible_copy_derive_repair",
-            "language": "rust",
-            "rule_id": "rust.incompatible_copy_derive",
-        },
-        {
-            "source_tool": "deterministic_rust_lib_root_facade_repair",
-            "language": "rust",
-            "rule_id": "rust.lib_root_facade_path_rewrite",
-        },
-        {
-            "source_tool": "deterministic_rust_line_suggestion_repair",
-            "language": "rust",
-            "rule_id": "rust.line_suggestion",
-        },
-        {
-            "source_tool": "deterministic_rust_method_self_signature_repair",
-            "language": "rust",
-            "rule_id": "rust.method_self_signature",
-        },
-        {
-            "source_tool": "deterministic_rust_missing_binary_entrypoint_repair",
-            "language": "rust",
-            "rule_id": "rust.missing_binary_entrypoint",
-        },
-        {
-            "source_tool": "deterministic_rust_missing_lib_target_repair",
-            "language": "rust",
-            "rule_id": "rust.missing_lib_target_src_lib",
-        },
-        {
-            "source_tool": "deterministic_rust_missing_module_file_repair",
-            "language": "rust",
-            "rule_id": "rust.missing_module_file",
-        },
-        {
-            "source_tool": "deterministic_rust_serde_derive_repair",
-            "language": "rust",
-            "rule_id": "rust.serde_derive",
-        },
-        {
-            "source_tool": "deterministic_rust_struct_literal_missing_field_repair",
-            "language": "rust",
-            "rule_id": "rust.struct_literal_missing_field_initializer",
-        },
-        {
-            "source_tool": "deterministic_rust_trait_import_repair",
-            "language": "rust",
-            "rule_id": "rust.trait_import",
-        },
-        {
-            "source_tool": "deterministic_rust_unresolved_pub_use_repair",
-            "language": "rust",
-            "rule_id": "rust.unresolved_pub_use",
-        },
-        {
-            "source_tool": "deterministic_rust_unused_import_repair",
-            "language": "rust",
-            "rule_id": "rust.unused_import",
-        },
-        {
-            "source_tool": "deterministic_rust_wrong_crate_path_repair",
-            "language": "rust",
-            "rule_id": "rust.wrong_crate_path",
-        },
-        {
-            "source_tool": "deterministic_typescript_duplicate_object_property_repair",
-            "language": "typescript",
-            "rule_id": "typescript.duplicate_object_property",
-        },
-        {
-            "source_tool": "deterministic_typescript_enum_member_separator_repair",
-            "language": "typescript",
-            "rule_id": "typescript.enum_member_separator",
-        },
-        {
-            "source_tool": "deterministic_typescript_nullable_canvas_context_repair",
-            "language": "typescript",
-            "rule_id": "typescript.nullable_canvas_context",
-        },
-        {
-            "source_tool": "deterministic_typescript_return_object_semicolon_repair",
-            "language": "typescript",
-            "rule_id": "typescript.object_literal_missing_comma",
-        },
-    )
+    assert len(runtime_repair_source_tools()) == 85
+    assert sum(1 for binding in bindings if binding["language"] == "rust") == 21
+    assert runtime_repair_source_tools() == tuple(binding["source_tool"] for binding in bindings)
+    assert all(set(binding) == {"source_tool", "language", "rule_id"} for binding in bindings)
+    bindings_by_tool = {binding["source_tool"]: binding for binding in bindings}
+    assert {
+        "deterministic_javascript_esm_commonjs_entrypoint_repair",
+        "deterministic_javascript_missing_export_repair",
+        "deterministic_javascript_missing_method_runtime_repair",
+        "deterministic_javascript_test_missing_target_repair",
+        "deterministic_python_package_child_reexport_repair",
+        "deterministic_python_package_shadow_bridge_repair",
+        "deterministic_python_unittest_runtime_failure_repair",
+        "deterministic_unresolved_import_symbol_repair",
+    } <= set(bindings_by_tool)
+    assert bindings_by_tool["deterministic_javascript_missing_export_repair"] == {
+        "source_tool": "deterministic_javascript_missing_export_repair",
+        "language": "javascript",
+        "rule_id": "javascript.missing_named_export",
+    }
+    assert bindings_by_tool["deterministic_unresolved_import_symbol_repair"] == {
+        "source_tool": "deterministic_unresolved_import_symbol_repair",
+        "language": "python",
+        "rule_id": "python.unresolved_import_symbol",
+    }
 
 
 def test_runtime_executable_source_tools_are_registered_in_strategy_catalog() -> None:
@@ -1459,10 +1901,10 @@ def test_public_repair_unknown_source_tool_exposes_fail_closed_error_without_wri
     assert writes == []
 
 
-def test_public_repair_metadata_only_rust_missing_fields_source_tools_fail_closed_as_unsupported_source_tool(
+def test_public_repair_rust_aggregate_bindings_fail_closed_without_safe_plan(
     tmp_path: Path,
 ) -> None:
-    metadata_only_cases = (
+    cases = (
         (
             "deterministic_rust_missing_fields_repair",
             "error[E0609]: no field `duration` on type `&Flight`\n"
@@ -1471,14 +1913,18 @@ def test_public_repair_metadata_only_rust_missing_fields_source_tools_fail_close
             '8 |     println!("{}", flight.duration);\n'
             "  |                      ^^^^^^^^ unknown field\n",
         ),
+        (
+            "deterministic_rust_post_repair",
+            "error[E0433]: failed to resolve: use of unresolved module or unlinked crate `serde`\n",
+        ),
     )
     writes: list[tuple[str, str]] = []
 
     def writer(path: str, content: str) -> dict[str, object]:
         writes.append((path, content))
-        raise AssertionError("metadata-only rust source_tool must not write files")
+        raise AssertionError("unsafe rust missing-fields input must not write files")
 
-    for source_tool, raw_error in metadata_only_cases:
+    for source_tool, raw_error in cases:
         planning_result = plan_director_repair(
             PlanDirectorRepairCommandV1(
                 source_tool=source_tool,
@@ -1489,12 +1935,12 @@ def test_public_repair_metadata_only_rust_missing_fields_source_tools_fail_close
         )
         planning_payload = planning_result.to_dict()
 
-        assert source_tool not in runtime_repair_source_tools()
+        assert source_tool in runtime_repair_source_tools()
         assert planning_payload["ok"] is False
         assert planning_payload["planned"] is False
         assert planning_payload["source_tool"] == source_tool
-        assert planning_payload["error_code"] == "unsupported_repair_source_tool"
-        assert "No runtime planner is registered" in planning_payload["error_message"]
+        assert planning_payload["error_code"] is None
+        assert planning_payload["error_message"] is None
         assert planning_payload["plan_summary"] is None
         assert planning_payload["composition_summary"]["ok"] is False
 
@@ -1511,19 +1957,19 @@ def test_public_repair_metadata_only_rust_missing_fields_source_tools_fail_close
         )
 
         assert run_result.ok is False
-        assert run_result.error_code == "unsupported_repair_source_tool"
+        assert run_result.error_code == "repair_not_planned"
         assert run_result.receipts == ()
-        assert run_result.metadata["planning"]["error_code"] == "unsupported_repair_source_tool"
-        assert run_result.metadata["planning_error"]["error_code"] == "unsupported_repair_source_tool"
+        assert run_result.metadata["planning"]["planned"] is False
 
         if source_tool == "deterministic_rust_missing_fields_repair":
             coverage_payload = (
                 default_repair_rule_registry().coverage(normalize_artifact_quality_errors([raw_error])).to_dict()
             )
             coverage_item = coverage_payload["items"][0]
-            assert coverage_item["metadata_only_match"] is True
-            assert coverage_item["runtime_plan_rule_ids"] == []
-            assert coverage_item["runtime_blocker_reasons"] == ["type_inference_required"]
+            assert coverage_item["metadata_only_match"] is False
+            assert coverage_item["executable_runtime_plan_matched"] is True
+            assert coverage_item["runtime_plan_rule_ids"] == ["rust.missing_struct_field_declaration"]
+            assert coverage_item["coverage_status"] == "executable_runtime"
 
     assert writes == []
 
@@ -1693,7 +2139,6 @@ def test_runtime_dispatcher_bindings_match_registry_runtime_plan_flags() -> None
     assert set(bindings_by_tool) == set(runtime_rules_by_tool)
     for source_tool, binding in bindings_by_tool.items():
         rules = runtime_rules_by_tool[source_tool]
-        assert binding["rule_id"] in {rule.rule_id for rule in rules}
         assert binding["language"] in {rule.language for rule in rules}
 
 
@@ -1851,6 +2296,86 @@ def test_go_bare_import_string_rule_builds_canonical_plan_without_diagnostics() 
     assert len(plan.operations) == 1
     assert plan.operations[0].path == "cmd/app/main.go"
     assert plan.operations[0].metadata["repair_kind"] == "go_bare_import_string"
+
+
+def test_go_import_followup_rules_build_precise_plans_with_ordering_and_coverage() -> None:
+    content = (
+        'package main\n\nimport (\n    import "fmt"\n    "example.com/demo/pet-ascii/src/engine"\n    "src/models"\n)\n'
+    )
+    base_files = {
+        "go.mod": "module example.com/demo\n",
+        "cmd/app/main.go": content,
+        "src/engine/engine.go": "package engine\n",
+        "src/models/model.go": "package models\n",
+    }
+
+    nested_repaired = repair_go_nested_import_keywords_text(content)
+    nested_plan = build_go_nested_import_plan(base_files=base_files, diagnostics=(), mode="shadow")
+    bare_local_plan = build_go_bare_local_import_plan(base_files=base_files, diagnostics=(), mode="shadow")
+    subpath_plan = build_go_subpath_import_plan(base_files=base_files, diagnostics=(), mode="shadow")
+    coverage = (
+        default_repair_rule_registry()
+        .coverage(
+            (
+                RepairDiagnostic(
+                    source="go test",
+                    code="go_compile_error",
+                    message="package src/models is not in std",
+                    path="cmd/app/main.go",
+                    raw="cmd/app/main.go:5:5: package src/models is not in std (/usr/local/go/src/src/models)",
+                ),
+                RepairDiagnostic(
+                    source="go test",
+                    code="go_compile_error",
+                    message="no required module provides package example.com/demo/pet-ascii/src/engine",
+                    path="cmd/app/main.go",
+                    raw=(
+                        "cmd/app/main.go:4:5: no required module provides package example.com/demo/pet-ascii/src/engine"
+                    ),
+                ),
+                RepairDiagnostic(
+                    source="go test",
+                    code="go_compile_error",
+                    message='expected declaration, found "import"',
+                    path="cmd/app/main.go",
+                    raw='import (\n    import "fmt"\n)',
+                ),
+            )
+        )
+        .to_dict()
+    )
+
+    assert '    "fmt"\n' in nested_repaired
+    assert nested_plan is not None
+    assert nested_plan.source_tool == "deterministic_go_nested_import_repair"
+    assert nested_plan.priority == 1
+    assert nested_plan.depends_on == ("go.bare_import_string",)
+    assert nested_plan.operations[0].kind == "text_replace"
+    assert nested_plan.operations[0].metadata["precision_strategy"] == "span_context_text_patch"
+    assert nested_plan.operations[0].expected == '    import "fmt"'
+    assert nested_plan.operations[0].replacement == '    "fmt"'
+
+    assert bare_local_plan is not None
+    assert bare_local_plan.source_tool == "deterministic_go_bare_import_repair"
+    assert bare_local_plan.priority == 2
+    assert bare_local_plan.depends_on == ("go.nested_import_keyword",)
+    assert bare_local_plan.operations[0].kind == "text_replace"
+    assert bare_local_plan.operations[0].expected == '"src/models"'
+    assert bare_local_plan.operations[0].replacement == '"example.com/demo/src/models"'
+
+    assert subpath_plan is not None
+    assert subpath_plan.source_tool == "deterministic_go_subpath_repair"
+    assert subpath_plan.priority == 3
+    assert subpath_plan.depends_on == ("go.bare_local_import",)
+    assert subpath_plan.operations[0].kind == "text_replace"
+    assert subpath_plan.operations[0].expected == '"example.com/demo/pet-ascii/src/engine"'
+    assert subpath_plan.operations[0].replacement == '"example.com/demo/src/engine"'
+
+    coverage_items = coverage["items"]
+    assert "deterministic_go_bare_import_repair" in coverage_items[0]["matched_source_tools"]
+    assert "deterministic_go_subpath_repair" in coverage_items[1]["matched_source_tools"]
+    assert "deterministic_go_nested_import_repair" in coverage_items[2]["matched_source_tools"]
+    assert all(item["executable_runtime_plan_matched"] is True for item in coverage_items)
 
 
 def test_rust_dependency_rule_builds_canonical_plan_from_diagnostics() -> None:
@@ -2388,7 +2913,7 @@ def test_rust_copy_derive_coverage_matches_executable_runtime_plan() -> None:
         mode="shadow",
     )
 
-    assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
+    assert "deterministic_rust_post_repair" in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert coverage["items"][0]["known_rule_matched"] is True
     assert coverage["items"][0]["executable_runtime_plan_matched"] is True
@@ -3823,6 +4348,114 @@ def test_public_go_bare_import_string_run_executes_with_receipt(tmp_path: Path) 
     assert result.metadata["execution_error"] is None
 
 
+def test_public_go_subpath_run_uses_precise_editor_and_receipt(tmp_path: Path) -> None:
+    relative_path = "cmd/app/main.go"
+    package_path = "src/engine/engine.go"
+    go_mod_path = "go.mod"
+    content = 'package main\n\nimport (\n    "example.com/demo/pet-ascii/src/engine"\n)\n\nfunc main() {}\n'
+    base_files = {
+        go_mod_path: "module example.com/demo\n",
+        relative_path: content,
+        package_path: "package engine\n",
+    }
+    for path, text in base_files.items():
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+
+    writes: list[str] = []
+    edits: list[RepairOperation] = []
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        writes.append(path)
+        write_target = tmp_path / path
+        write_target.write_text(updated, encoding="utf-8")
+        return {
+            "ok": True,
+            "file": path,
+            "bytes_written": len(updated.encode("utf-8")),
+            "operation": "modify",
+        }
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        edit_target = tmp_path / operation.path
+        current = edit_target.read_text(encoding="utf-8")
+        assert operation.span_start is not None
+        assert operation.span_end is not None
+        assert current[operation.span_start : operation.span_end] == operation.expected
+        updated = current[: operation.span_start] + str(operation.replacement or "") + current[operation.span_end :]
+        edit_target.write_text(updated, encoding="utf-8")
+        edits.append(operation)
+        return {"ok": True, "file": operation.path, "operation": "edit_file"}
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-go-subpath",
+            workspace=str(tmp_path),
+            source_tool="deterministic_go_subpath_repair",
+            base_files=base_files,
+            allowed_paths=tuple(base_files),
+        ),
+        writer=writer,
+        editor=editor,
+    )
+
+    assert result.ok is True
+    assert result.error_code is None
+    assert writes == []
+    assert [operation.metadata["repair_kind"] for operation in edits] == ["go_import_subpath"]
+    assert len(result.receipts) == 1
+    receipt = result.receipts[0]
+    _assert_direct_runtime_receipt_pending_revalidation(receipt)
+    assert receipt.source_tool == "deterministic_go_subpath_repair"
+    assert receipt.files_changed == (relative_path,)
+    assert receipt.before_hashes[relative_path] == sha256_text(content)
+    assert receipt.after_hashes[relative_path] == sha256_text((tmp_path / relative_path).read_text(encoding="utf-8"))
+    assert '"example.com/demo/src/engine"' in (tmp_path / relative_path).read_text(encoding="utf-8")
+    assert result.metadata["planning"]["planned"] is True
+    assert result.metadata["planning"]["plan_summary"]["rule_id"] == "go.import_subpath"
+    assert result.metadata["planning"]["plan_summary"]["source_tool"] == "deterministic_go_subpath_repair"
+    assert result.metadata["plan_policy"]["allowed"] is True
+    assert result.metadata["composition_policy"]["allowed"] is True
+    assert result.metadata["execution_error"] is None
+    assert receipt.metadata["execution_records"][0]["operation"] == "edit_file"
+    assert receipt.metadata["precise_edit_strategy_by_path"][relative_path]["strategy"] == "span_based"
+    assert receipt.metadata["precise_edit_strategy_by_path"][relative_path]["editor_used"] is True
+
+
+def test_public_go_bare_local_import_missing_go_mod_fails_closed_without_writes(tmp_path: Path) -> None:
+    relative_path = "cmd/app/main.go"
+    content = 'package main\n\nimport "src/models"\n'
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    target.write_text(content, encoding="utf-8")
+    writes: list[str] = []
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        writes.append(path)
+        (tmp_path / path).write_text(updated, encoding="utf-8")
+        return {"ok": True, "file": path, "operation": "modify"}
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-go-bare-local-fail-closed",
+            workspace=str(tmp_path),
+            source_tool="deterministic_go_bare_import_repair",
+            base_files={relative_path: content},
+            allowed_paths=(relative_path,),
+        ),
+        writer=writer,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "repair_not_planned"
+    assert result.receipts == ()
+    assert writes == []
+    assert target.read_text(encoding="utf-8") == content
+    assert result.metadata["planning"]["source_tool"] == "deterministic_go_bare_import_repair"
+    assert result.metadata["planning"]["planned"] is False
+
+
 def test_public_rust_dependency_run_executes_with_receipt(tmp_path: Path) -> None:
     cargo_path = "Cargo.toml"
     source_path = "src/main.rs"
@@ -4769,6 +5402,25 @@ def test_public_repair_advisory_validation_normalizes_non_authoritative_suggesti
     assert payload["authoritative_receipts_allowed"] is False
     assert payload["normalized_advisory"]["authoritative"] is False
     assert payload["normalized_advisory"]["suggested_rules"][0]["language"] == "shell"
+    forbidden_capability_fields = {
+        "mode",
+        "operation",
+        "operations",
+        "patch",
+        "patches",
+        "policy_override",
+        "receipt",
+        "receipts",
+        "registered",
+        "repair_plan",
+        "rule_id",
+        "source_tool",
+        "success_verdict",
+        "write_file",
+    }
+    assert forbidden_capability_fields.isdisjoint(payload)
+    assert forbidden_capability_fields.isdisjoint(payload["normalized_advisory"])
+    assert forbidden_capability_fields.isdisjoint(payload["normalized_advisory"]["suggested_rules"][0])
     assert payload["summary"]["accepted_suggested_rule_count"] == 1
     assert payload["summary"]["advisory_only"] is True
     assert payload["summary"]["suggested_rules_are_advisory_only"] is True
@@ -4803,6 +5455,20 @@ def test_public_repair_advisory_validation_rejects_authoritative_fields() -> Non
     assert payload["writes_allowed"] is False
     assert payload["registration_allowed"] is False
     assert payload["authoritative_receipts_allowed"] is False
+    forbidden_capability_fields = {
+        "operation",
+        "operations",
+        "patch",
+        "patches",
+        "receipt",
+        "receipts",
+        "registered",
+        "repair_plan",
+        "source_tool",
+        "success_verdict",
+        "write_file",
+    }
+    assert forbidden_capability_fields.isdisjoint(payload)
     assert payload["summary"]["accepted_suggested_rule_count"] == 0
     assert payload["summary"]["advisory_only"] is True
     assert payload["summary"]["suggested_rules_are_advisory_only"] is True
@@ -5537,17 +6203,41 @@ def test_public_repair_coverage_report_exposes_uncovered_diagnostics() -> None:
     assert payload["coverage_gap_count"] == 1
     assert payload["rule_discovery_required"] is True
     assert payload["coverage_gap_languages"] == ["typescript"]
+    assert payload["coverage_gap_recommended_routes"] == ["runtime_rule"]
+    assert payload["coverage_gap_slot_statuses"] == ["reserved_slot_available"]
     assert payload["executable_runtime_plan_diagnostic_count"] == 1
     assert payload["metadata_only_diagnostic_count"] == 0
     assert payload["items"][0]["known_rule_matched"] is True
     assert payload["items"][0]["executable_runtime_plan_matched"] is True
+    assert payload["items"][0]["metadata_only_match"] is False
+    assert payload["items"][0]["recommended_route"] == "runtime_rule"
+    assert payload["items"][0]["coverage_status"] == "executable_runtime"
     assert payload["items"][0]["matched_source_tools"] == ["deterministic_typescript_return_object_semicolon_repair"]
     assert payload["items"][1]["known_rule_matched"] is False
+    assert payload["items"][1]["metadata_only_match"] is False
+    assert payload["items"][1]["executable_runtime_plan_matched"] is False
+    assert payload["items"][1]["language"] == "typescript"
     assert payload["items"][1]["diagnostic_language"] == "typescript"
+    assert payload["items"][1]["diagnostic_code"] == "typescript_ts9999"
     assert payload["items"][1]["diagnostic_phase"] == "quality_repair"
+    assert payload["items"][1]["phase_suggestion"] == "quality_repair"
     assert payload["items"][1]["diagnostic_archetype"] == "object_literal_syntax"
+    assert payload["items"][1]["archetype_suggestion"] == "object_literal_syntax"
+    assert payload["items"][1]["reserved_slot_available"] is True
+    assert payload["items"][1]["slot_status"] == "reserved_slot_available"
+    assert payload["items"][1]["recommended_route"] == "runtime_rule"
+    assert payload["items"][1]["coverage_status"] == "coverage_gap"
     assert payload["uncovered_diagnostics"][0]["code"] == "typescript_ts9999"
     assert payload["coverage_gaps"][0]["diagnostic"]["code"] == "typescript_ts9999"
+    assert payload["coverage_gaps"][0]["language"] == "typescript"
+    assert payload["coverage_gaps"][0]["diagnostic_code"] == "typescript_ts9999"
+    assert payload["coverage_gaps"][0]["phase_suggestion"] == "quality_repair"
+    assert payload["coverage_gaps"][0]["archetype_suggestion"] == "object_literal_syntax"
+    assert payload["coverage_gaps"][0]["reserved_slot_available"] is True
+    assert payload["coverage_gaps"][0]["slot_status"] == "reserved_slot_available"
+    assert payload["coverage_gaps"][0]["recommended_route"] == "runtime_rule"
+    assert payload["coverage_gaps"][0]["coverage_status"] == "coverage_gap"
+    assert payload["coverage_gaps"][0]["audit_reason"] == "known_rule_matched=false"
     assert payload["coverage_gaps"][0]["missing_capability"] == "deterministic_repair_rule"
 
 
@@ -5651,6 +6341,7 @@ def test_public_repair_language_slots_reserve_future_languages_without_registeri
     assert slots_by_language["cpp"]["implementation_status"] == "executable_runtime"
     assert slots_by_language["rust"]["implementation_status"] == "executable_runtime"
     assert slots_by_language["rust"]["executable_runtime_source_tools"] == [
+        "deterministic_rust_crate_import_repair",
         "deterministic_rust_crate_import_rewrite_repair",
         "deterministic_rust_dependency_repair",
         "deterministic_rust_derive_repair",
@@ -5661,8 +6352,10 @@ def test_public_repair_language_slots_reserve_future_languages_without_registeri
         "deterministic_rust_line_suggestion_repair",
         "deterministic_rust_method_self_signature_repair",
         "deterministic_rust_missing_binary_entrypoint_repair",
+        "deterministic_rust_missing_fields_repair",
         "deterministic_rust_missing_lib_target_repair",
         "deterministic_rust_missing_module_file_repair",
+        "deterministic_rust_post_repair",
         "deterministic_rust_serde_derive_repair",
         "deterministic_rust_struct_literal_missing_field_repair",
         "deterministic_rust_trait_import_repair",
@@ -5670,7 +6363,6 @@ def test_public_repair_language_slots_reserve_future_languages_without_registeri
         "deterministic_rust_unused_import_repair",
         "deterministic_rust_wrong_crate_path_repair",
     ]
-    assert "deterministic_rust_post_repair" not in slots_by_language["rust"]["executable_runtime_source_tools"]
     assert "deterministic_rust_derive_repair" in slots_by_language["rust"]["executable_runtime_source_tools"]
     assert set(payload["summary"]["authoritative_rule_languages"]).issubset(languages)
     assert payload["summary"]["language_count"] >= 45
@@ -5684,7 +6376,16 @@ def test_public_repair_language_slots_reserve_future_languages_without_registeri
         "rust",
         "typescript",
     ]
-    assert payload["summary"]["executable_runtime_languages"] == ["cpp", "go", "java", "rust", "typescript"]
+    assert payload["summary"]["executable_runtime_languages"] == [
+        "cpp",
+        "go",
+        "html",
+        "java",
+        "javascript",
+        "python",
+        "rust",
+        "typescript",
+    ]
     assert "scala" in payload["summary"]["reserved_only_languages"]
     assert "php" in payload["summary"]["reserved_only_languages"]
     assert "kotlin" in payload["summary"]["reserved_only_languages"]
@@ -5693,8 +6394,8 @@ def test_public_repair_language_slots_reserve_future_languages_without_registeri
     assert "dockerfile" in payload["summary"]["reserved_only_languages"]
     assert "graphql" in payload["summary"]["reserved_only_languages"]
     assert payload["summary"]["reserved_only_language_count"] >= 40
-    assert payload["summary"]["implementation_status_counts"]["executable_runtime"] == 5
-    assert payload["summary"]["implementation_status_counts"]["metadata_rule_registered"] == 3
+    assert payload["summary"]["implementation_status_counts"]["executable_runtime"] == 8
+    assert payload["summary"]["implementation_status_counts"].get("metadata_rule_registered", 0) == 0
     assert payload["summary"]["implementation_status_counts"]["reserved_only"] >= 40
     assert payload["summary"]["implementation_status_by_language"]["dockerfile"] == "reserved_only"
     assert payload["summary"]["implementation_status_by_language"]["cpp"] == "executable_runtime"
@@ -6077,30 +6778,97 @@ def test_public_strategy_catalog_is_read_only_and_non_agi_authoritative() -> Non
     for binding in runtime_repair_bindings():
         language = str(binding["language"])
         expected_runtime_by_language[language] = expected_runtime_by_language.get(language, 0) + 1
+    legacy_source_tools = payload["summary"]["legacy_strategy_host_source_tools"]
+    summary_failure_message = (
+        "expected public strategy catalog ledger to have no legacy_strategy_host source_tools; "
+        f"observed implementation_status_counts={payload['summary']['implementation_status_counts']}; "
+        "legacy_strategy_host_source_tools:\n- " + "\n- ".join(str(source_tool) for source_tool in legacy_source_tools)
+    )
     assert payload["summary"]["executable_runtime_binding_count"] == len(expected_runtime_source_tools)
     assert payload["summary"]["executable_runtime_source_tools"] == expected_runtime_source_tools
-    assert "deterministic_rust_post_repair" not in payload["summary"]["executable_runtime_source_tools"]
+    assert "deterministic_rust_post_repair" in payload["summary"]["executable_runtime_source_tools"]
     assert "deterministic_rust_derive_repair" in payload["summary"]["executable_runtime_source_tools"]
     assert payload["summary"]["executable_runtime_by_language"] == expected_runtime_by_language
-    executable_status_count = payload["summary"]["implementation_status_counts"]["executable_runtime"]
+    executable_status_count = payload["summary"]["implementation_status_counts"].get("executable_runtime", 0)
     assert executable_status_count <= payload["summary"]["executable_runtime_binding_count"]
-    assert (
-        payload["summary"]["implementation_status_counts"]["legacy_strategy_host"]
-        == payload["summary"]["legacy_strategy_host_count"]
+    assert payload["summary"]["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, (
+        summary_failure_message
     )
+    assert payload["summary"]["legacy_strategy_host_count"] == 0, summary_failure_message
+    assert legacy_source_tools == [], summary_failure_message
     assert payload["summary"]["legacy_strategy_host_count"] == payload["summary"]["total"] - executable_status_count
-    assert payload["summary"]["bench_driven_migration_required"] is True
+    assert payload["summary"]["bench_driven_migration_required"] is False, summary_failure_message
     assert payload["summary"]["legacy_strategy_host_owner"] == (
         "roles.adapters.internal.director.deterministic_repairs"
     )
     assert payload["summary"]["migration_target_owner"] == "director.runtime.repair_kernel"
-    assert "deterministic_typescript_missing_export_repair" in payload["summary"]["legacy_strategy_host_source_tools"]
-    assert (
-        "deterministic_typescript_return_object_semicolon_repair"
-        not in payload["summary"]["legacy_strategy_host_source_tools"]
-    )
+    assert "deterministic_typescript_missing_export_repair" not in legacy_source_tools
+    assert "deterministic_typescript_return_object_semicolon_repair" not in legacy_source_tools
     assert payload["summary"]["executable_runtime_bindings"][0] == {
         "source_tool": "deterministic_cpp_include_path_repair",
         "language": "cpp",
         "rule_id": "cpp.include_path",
     }
+
+
+def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_explicit() -> None:
+    catalog_payload = query_director_repair_strategy_catalog(
+        QueryDirectorRepairStrategyCatalogV1(include_items=True, max_items=10_000)
+    ).to_dict()
+    slots_payload = query_director_repair_language_slots(
+        QueryDirectorRepairLanguageSlotsV1(include_items=True)
+    ).to_dict()
+    catalog_summary = catalog_payload["summary"]
+    slot_summary = slots_payload["summary"]
+    legacy_source_tools = [str(source_tool) for source_tool in catalog_summary["legacy_strategy_host_source_tools"]]
+    legacy_typescript_source_tools = [
+        source_tool
+        for source_tool in legacy_source_tools
+        if source_tool.startswith(("deterministic_typescript", "deterministic_html_typescript"))
+        or source_tool.startswith("deterministic_typeorm")
+        or source_tool == "deterministic_javascript_typescript_annotation_repair"
+    ]
+    catalog_failure_message = (
+        "expected public strategy catalog ledger total=85 executable_runtime=85 legacy_strategy_host=0; "
+        f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
+        "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
+    )
+    legacy_typescript_failure_message = (
+        "TypeScript migration source_tools must not be in legacy_strategy_host_source_tools:\n- "
+        + "\n- ".join(legacy_typescript_source_tools)
+    )
+
+    assert catalog_summary["total"] == 85
+    assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
+    assert legacy_source_tools == [], catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 85, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, catalog_failure_message
+    assert catalog_summary["executable_runtime_binding_count"] == 85, catalog_failure_message
+    assert catalog_summary["legacy_strategy_host_count"] == 0, catalog_failure_message
+    assert len(catalog_summary["executable_runtime_source_tools"]) == 85, catalog_failure_message
+    assert set(catalog_summary["implementation_status_counts"]).issubset({"executable_runtime", "legacy_strategy_host"})
+    assert "reserved_only" not in catalog_summary["implementation_status_counts"]
+    assert "metadata_rule_registered" not in catalog_summary["implementation_status_counts"]
+
+    assert slot_summary["language_count"] == 54
+    assert slot_summary["implementation_status_counts"] == {
+        "executable_runtime": 8,
+        "reserved_only": 46,
+    }
+    assert slot_summary["executable_runtime_language_count"] == 8
+    assert slot_summary["reserved_only_language_count"] == 46
+    assert "legacy_strategy_host" not in slot_summary["implementation_status_counts"]
+    assert set(slot_summary["executable_runtime_languages"]) == {
+        "cpp",
+        "go",
+        "html",
+        "java",
+        "javascript",
+        "python",
+        "rust",
+        "typescript",
+    }
+    assert all(
+        item["implementation_status"] in {"executable_runtime", "metadata_rule_registered", "reserved_only"}
+        for item in slots_payload["items"]
+    )

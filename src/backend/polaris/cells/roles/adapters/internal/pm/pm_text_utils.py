@@ -73,6 +73,7 @@ _PM_SCOPE_PATH_FILENAMES = {
     "cmakelists.txt",
     "package.json",
     "README.md",
+    "requirements.txt",
     "tsconfig.json",
     "vite.config.ts",
     "vitest.config.ts",

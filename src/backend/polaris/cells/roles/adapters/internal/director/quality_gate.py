@@ -1208,10 +1208,19 @@ async def _run_materialization_quality_repair_retry(
         workspace_full=workspace_full,
     )
     missing_target_files = _dedupe_preserve_order([*missing_target_files, *missing_script_entrypoint_files])
-    runtime_smoke_target_files = _python_runtime_smoke_repair_target_files(
-        artifact_quality_errors=repair_quality_errors,
-        changed_files=changed_files,
-        workspace_full=workspace_full,
+    runtime_smoke_target_files = _dedupe_preserve_order(
+        [
+            *_python_runtime_smoke_repair_target_files(
+                artifact_quality_errors=repair_quality_errors,
+                changed_files=changed_files,
+                workspace_full=workspace_full,
+            ),
+            *_javascript_runtime_smoke_repair_target_files(
+                artifact_quality_errors=repair_quality_errors,
+                changed_files=changed_files,
+                workspace_full=workspace_full,
+            ),
+        ]
     )
     semantic_quality_target_files = _semantic_quality_repair_target_files(
         artifact_quality_errors=repair_quality_errors,
@@ -1606,6 +1615,10 @@ def _should_preserve_materialization_quality_repair_batch(artifact_quality_error
         return True
     if "unresolved import symbol" in joined_errors or "has no exported member" in joined_errors:
         return True
+    if _looks_like_python_missing_module_failure(joined_errors) and _has_non_test_python_traceback_source(
+        joined_errors
+    ):
+        return True
     if "ts18046" in joined_errors or "is of type 'unknown'" in joined_errors or 'is of type "unknown"' in joined_errors:
         return True
     if "ts2693" in joined_errors or "only refers to a type" in joined_errors:
@@ -1764,6 +1777,12 @@ def _python_runtime_smoke_repair_target_files(
         if not _looks_like_python_runtime_smoke_quality_error(text):
             continue
         if workspace_root is not None and workspace_root.is_dir() and _looks_like_python_test_behavior_failure(text):
+            if _looks_like_python_missing_module_failure(text):
+                targets.extend(
+                    rel
+                    for rel in _python_runtime_smoke_traceback_repair_target_files(text, workspace_root)
+                    if not _is_test_like_python_path(rel)
+                )
             if _looks_like_python_regex_source_quality_failure(text):
                 targets.extend(_changed_source_repair_target_files(changed_files, workspace_root))
             if _looks_like_cli_subcommand_quality_failure(text):
@@ -1805,11 +1824,103 @@ def _python_runtime_smoke_repair_target_files(
                                 include_missing_src_imports=True,
                             )
                         )
+                        targets.append(rel)
+                    elif _looks_like_python_missing_module_failure(text):
+                        targets.append(rel)
+                        targets.extend(_python_runtime_smoke_imported_source_target_files(rel, workspace_root))
                     elif _looks_like_python_module_coupling_failure(text):
                         targets.extend(_python_runtime_smoke_imported_source_target_files(rel, workspace_root))
-                targets.append(rel)
+                        targets.append(rel)
+                    else:
+                        targets.append(rel)
+                else:
+                    targets.append(rel)
             break
     return _dedupe_preserve_order(targets)
+
+
+_NODE_STACK_JS_PATH_RE = re.compile(r"(?P<path>(?:[A-Za-z]:)?[/\\][^\s()'\"\n]+?\.js):\d+:\d+")
+_NODE_COMMAND_JS_TARGET_RE = re.compile(r"(?:^|[\s(>])node\s+(?P<target>(?!-)[^\s'\"\n]+?\.js)\b")
+
+
+def _javascript_runtime_smoke_repair_target_files(
+    *,
+    artifact_quality_errors: list[str],
+    changed_files: list[str],
+    workspace_full: str = "",
+) -> list[str]:
+    """Extract workspace JavaScript entrypoints that failed Node/npm smoke."""
+
+    changed_js_files = {
+        rel for item in changed_files if (rel := _normalize_declared_task_path(str(item or ""))) and rel.endswith(".js")
+    }
+    workspace_root = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
+    targets: list[str] = []
+    for item in artifact_quality_errors:
+        text = str(item or "")
+        if not _looks_like_javascript_runtime_smoke_quality_error(text):
+            continue
+        for raw_path in _javascript_runtime_smoke_path_candidates(text):
+            rel = _workspace_relative_javascript_repair_target(
+                raw_path,
+                changed_js_files=changed_js_files,
+                workspace_root=workspace_root,
+            )
+            if rel:
+                targets.append(rel)
+    return _dedupe_preserve_order(targets)
+
+
+def _looks_like_javascript_runtime_smoke_quality_error(text: str) -> bool:
+    token = str(text or "").lower()
+    if "workspace validation command failed" not in token:
+        return False
+    has_node_command = "npm run start" in token or "npm start" in token or re.search(r"\bnode\s+\S+\.js\b", token)
+    if not has_node_command:
+        return False
+    return "node.js v" in token or "typeerror:" in token or "referenceerror:" in token or "syntaxerror:" in token
+
+
+def _javascript_runtime_smoke_path_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    for pattern in (_NODE_COMMAND_JS_TARGET_RE, _NODE_STACK_JS_PATH_RE):
+        candidates.extend(
+            str(match.group("target" if "target" in match.groupdict() else "path") or "")
+            for match in pattern.finditer(text)
+        )
+    return _dedupe_preserve_order(candidates)
+
+
+def _workspace_relative_javascript_repair_target(
+    raw_path: str,
+    *,
+    changed_js_files: set[str],
+    workspace_root: Path | None,
+) -> str:
+    token = str(raw_path or "").strip().strip("'\"`")
+    if not token:
+        return ""
+    rel = ""
+    candidate = Path(token)
+    if candidate.is_absolute():
+        if workspace_root is None or not workspace_root.is_dir():
+            return ""
+        try:
+            rel = str(candidate.resolve().relative_to(workspace_root)).replace("\\", "/")
+        except (OSError, ValueError):
+            return ""
+    else:
+        rel = _normalize_declared_task_path(token)
+    if not rel.endswith(".js") or rel.startswith("../") or "/../" in rel:
+        return ""
+    workspace_target_exists = (
+        workspace_root is not None
+        and workspace_root.is_dir()
+        and _workspace_path_exists_case_insensitive(workspace_root, rel)
+    )
+    if rel in changed_js_files or workspace_target_exists:
+        return rel
+    return ""
 
 
 def _looks_like_python_runtime_smoke_quality_error(text: str) -> bool:
@@ -2158,6 +2269,7 @@ def _explicit_artifact_quality_repair_target_files(
     changed_source_set = set(changed_source_files)
     changed_by_lower = {item.lower(): item for item in changed_source_files}
     candidates: list[str] = []
+    traceback_source_candidates: list[str] = []
     imported_source_candidates: list[str] = []
     for item in artifact_quality_errors:
         text = str(item or "")
@@ -2177,10 +2289,16 @@ def _explicit_artifact_quality_repair_target_files(
                 candidates.extend(imported_sources)
                 imported_source_candidates.extend(imported_sources)
                 candidates.append(rel)
+            traceback_targets = _python_runtime_smoke_traceback_repair_target_files(text, workspace_root)
+            if _looks_like_python_missing_module_failure(text):
+                traceback_sources = [rel for rel in traceback_targets if not _is_test_like_python_path(rel)]
+                candidates.extend(traceback_sources)
+                traceback_source_candidates.extend(traceback_sources)
             missing_module_sources = _python_runtime_smoke_missing_module_source_targets(text, workspace_root)
             candidates.extend(missing_module_sources)
-            imported_source_candidates.extend(missing_module_sources)
-            explicit_paths.extend(_python_runtime_smoke_traceback_repair_target_files(text, workspace_root))
+            if not _looks_like_python_missing_module_failure(text):
+                imported_source_candidates.extend(missing_module_sources)
+            explicit_paths.extend(traceback_targets)
         for raw_path in explicit_paths:
             rel = _map_quality_error_path_to_changed_file(raw_path, changed_by_lower)
             if not rel:
@@ -2190,6 +2308,7 @@ def _explicit_artifact_quality_repair_target_files(
             if changed_source_set and rel not in changed_source_set:
                 continue
             if _workspace_path_exists_case_insensitive(workspace_root, rel):
+                appended_rel = False
                 if _is_test_like_javascript_path(rel) and _looks_like_javascript_test_behavior_failure(text):
                     imported_sources = _javascript_test_imported_source_target_files(rel, workspace_root)
                     candidates.extend(imported_sources)
@@ -2197,6 +2316,11 @@ def _explicit_artifact_quality_repair_target_files(
                 if (_is_test_like_python_path(rel) and _looks_like_python_test_behavior_failure(text)) or (
                     rel.endswith(".py") and _looks_like_python_module_coupling_failure(text)
                 ):
+                    if rel.endswith(".py") and _looks_like_python_missing_module_failure(text):
+                        candidates.append(rel)
+                        appended_rel = True
+                        if rel.lower() in {item.lower() for item in traceback_source_candidates}:
+                            traceback_source_candidates.append(rel)
                     imported_sources = _python_runtime_smoke_imported_source_target_files(
                         rel,
                         workspace_root,
@@ -2204,7 +2328,8 @@ def _explicit_artifact_quality_repair_target_files(
                     )
                     candidates.extend(imported_sources)
                     imported_source_candidates.extend(imported_sources)
-                candidates.append(rel)
+                if not appended_rel:
+                    candidates.append(rel)
     deduped_candidates = _dedupe_preserve_order(candidates)
     if not changed_source_files:
         return deduped_candidates
@@ -2213,10 +2338,14 @@ def _explicit_artifact_quality_repair_target_files(
     imported_source_order = {
         item.lower(): index for index, item in enumerate(_dedupe_preserve_order(imported_source_candidates))
     }
+    traceback_source_order = {
+        item.lower(): index for index, item in enumerate(_dedupe_preserve_order(traceback_source_candidates))
+    }
     return sorted(
         deduped_candidates,
         key=lambda item: (
-            0 if item.lower() in imported_source_order else 1,
+            0 if item.lower() in traceback_source_order else 1 if item.lower() in imported_source_order else 2,
+            traceback_source_order.get(item.lower(), len(traceback_source_order)),
             imported_source_order.get(item.lower(), len(imported_source_order)),
             changed_order.get(item.lower(), len(changed_order)),
             original_order.get(item.lower(), len(original_order)),
@@ -2321,6 +2450,19 @@ def _looks_like_python_module_coupling_failure(text: str) -> bool:
             "has no attribute",
         )
     )
+
+
+def _looks_like_python_missing_module_failure(text: str) -> bool:
+    token = str(text or "").lower()
+    return "modulenotfounderror" in token or "no module named" in token
+
+
+def _has_non_test_python_traceback_source(text: str) -> bool:
+    for match in _PYTHON_TRACEBACK_FILE_RE.finditer(str(text or "")):
+        raw_path = str(match.group("path") or "").strip()
+        if raw_path.endswith(".py") and not _is_test_like_python_path(raw_path):
+            return True
+    return False
 
 
 def _is_test_like_javascript_path(rel_path: str) -> bool:

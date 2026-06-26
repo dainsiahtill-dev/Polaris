@@ -69,6 +69,7 @@ from polaris.cells.director.tasking.public.contracts import (
     DirectorTaskingError,
     TaskCreatedResultV1,
     TaskExecutionProfileV1,
+    TaskExecutionStrategyV1,
     TaskResultQueryV1,
     TaskResultResultV1,
     TaskStatusQueryV1,
@@ -109,6 +110,7 @@ __all__ = [
     "RepairService",
     "TaskCreatedResultV1",
     "TaskExecutionProfileV1",
+    "TaskExecutionStrategyV1",
     # Task lifecycle
     "TaskLifecycleService",
     # Services

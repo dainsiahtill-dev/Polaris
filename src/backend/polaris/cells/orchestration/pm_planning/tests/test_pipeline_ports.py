@@ -759,11 +759,11 @@ def test_cell_pm_invoke_port_propagates_timeout_to_role_runtime(
     assert command.context["_transaction_kernel_forced_tool_definitions"] == []
     assert command.context["_transaction_kernel_forced_tool_choice"] == "none"
     assert command.context["disable_internal_tool_rounds"] is True
-    assert command.metadata["max_tokens"] == 16_000
+    assert command.metadata["max_tokens"] == 128_000
     assert command.metadata["timeout_seconds"] == 300
-    assert command.context["llm_max_tokens"] == 16_000
-    assert command.context["max_output_tokens"] == 16_000
-    assert command.context["max_tokens"] == 16_000
+    assert command.context["llm_max_tokens"] == 128_000
+    assert command.context["max_output_tokens"] == 128_000
+    assert command.context["max_tokens"] == 128_000
     assert command.context["llm_call_timeout_seconds"] == 300
     assert command.context["request_timeout_seconds"] == 300
     assert command.context["suppress_tool_policy_prompt"] is True

@@ -689,7 +689,7 @@ class CellPmInvokePort:
             # the engine output clamp and the provider context-overflow
             # self-heal (2026-06-12) shrink max_tokens to the window instead of
             # dying on a 400.
-            pm_planning_max_tokens = 16_000
+            pm_planning_max_tokens = 128_000
             provider_policy = self._provider_policy_for_backend(resolved_backend)
             role_context: dict[str, Any] = {
                 "_transaction_kernel_forced_tool_definitions": [],

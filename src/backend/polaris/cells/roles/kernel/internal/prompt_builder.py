@@ -44,6 +44,10 @@ from polaris.kernelone.context.chunks import (
 from polaris.kernelone.role.composer import (
     get_role_composer,
 )
+from polaris.kernelone.role.language_identity import (
+    LanguageProfessionalIdentity,
+    infer_language_professional_identity,
+)
 from polaris.kernelone.storage.persona_store import load_workspace_persona
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 
@@ -340,7 +344,14 @@ class PromptBuilder:
             完整系统提示词字符串
         """
         # Tri-Axis L1 缓存键：recipe_id:version:task_type
-        cache_key = f"tri_axis:{recipe_id}:{profile.version}:{task_type}"
+        profession_identity = self._resolve_director_language_profession_identity(
+            profile=profile,
+            domain=domain,
+            message=message,
+            prompt_appendix=prompt_appendix,
+        )
+        language_cache_token = profession_identity.cache_token if profession_identity else "recipe"
+        cache_key = f"tri_axis:{recipe_id}:{profile.version}:{task_type}:{language_cache_token}"
         content_hash = hashlib.sha256(cache_key.encode()).hexdigest()[:16]
 
         # 检查 L1 缓存（Tri-Axis 专用缓存）
@@ -365,7 +376,22 @@ class PromptBuilder:
         # 缓存未命中，生成新内容
         if l1_content is None:
             composer = get_role_composer()
-            composed = composer.compose_by_recipe(recipe_id, task_type=task_type)
+            composed = composer.compose_by_recipe(
+                recipe_id,
+                task_type=task_type,
+                profession_name_override=(
+                    profession_identity.profession_name if profession_identity is not None else None
+                ),
+                profession_identity_override=(
+                    profession_identity.identity if profession_identity is not None else None
+                ),
+                profession_identity_source=(
+                    profession_identity.source if profession_identity is not None else "recipe"
+                ),
+                profession_identity_language=(
+                    profession_identity.language if profession_identity is not None else None
+                ),
+            )
 
             if composed is None:
                 raise RuntimeError(f"role_composer_recipe_unavailable:{recipe_id}")
@@ -414,6 +440,21 @@ class PromptBuilder:
             appendix_prompt=appendix_prompt,
             domain=domain,
         )
+
+    @staticmethod
+    def _resolve_director_language_profession_identity(
+        *,
+        profile: RoleProfile,
+        domain: str,
+        message: str,
+        prompt_appendix: str,
+    ) -> LanguageProfessionalIdentity | None:
+        role_id = str(getattr(profile, "role_id", "") or "").strip().lower()
+        if role_id != "director":
+            return None
+        if str(domain or "").strip().lower() not in {"", "code"}:
+            return None
+        return infer_language_professional_identity(text=f"{message}\n{prompt_appendix}")
 
     def _assemble_with_chunks(
         self,
@@ -543,8 +584,7 @@ class PromptBuilder:
             for candidate, (anchor, persona) in cls._CORE_ROLE_IDENTITY_MARKERS.items()
             if candidate != role_id
             and (
-                f"你是 Polaris 体系中的 **{anchor}**" in role_block
-                or f"请保持 **{persona}** 的性格特点" in role_block
+                f"你是 Polaris 体系中的 **{anchor}**" in role_block or f"请保持 **{persona}** 的性格特点" in role_block
             )
         ]
         if conflicting_roles:

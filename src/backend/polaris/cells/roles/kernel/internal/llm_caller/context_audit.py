@@ -319,6 +319,9 @@ def _context_quality_findings(
     context_underutilized: bool,
     final_request_token_estimate: int,
     context_window_tokens: int,
+    sampling: dict[str, Any],
+    execution_profile: dict[str, Any],
+    execution_strategy: dict[str, Any],
 ) -> dict[str, Any]:
     missing = [key for key, ok in coverage.items() if not ok]
     findings: list[dict[str, Any]] = []
@@ -340,11 +343,81 @@ def _context_quality_findings(
                 "context_window_tokens": context_window_tokens,
             }
         )
+    findings.extend(
+        _execution_strategy_consistency_findings(
+            sampling=sampling,
+            execution_profile=execution_profile,
+            execution_strategy=execution_strategy,
+        )
+    )
     return {
         "missing_coverage": missing,
         "context_needs_review": bool(findings),
         "findings": findings,
     }
+
+
+def _coerce_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _execution_strategy_consistency_findings(
+    *,
+    sampling: dict[str, Any],
+    execution_profile: dict[str, Any],
+    execution_strategy: dict[str, Any],
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    if not execution_profile and not execution_strategy:
+        return findings
+
+    actual_temperature = _coerce_float(sampling.get("temperature"))
+    expected_temperature = _coerce_float(execution_strategy.get("temperature"))
+    if expected_temperature is None:
+        expected_temperature = _coerce_float(execution_profile.get("temperature"))
+    if (
+        actual_temperature is not None
+        and expected_temperature is not None
+        and abs(actual_temperature - expected_temperature) > 0.001
+    ):
+        findings.append(
+            {
+                "code": "execution_profile_temperature_mismatch",
+                "severity": "warning",
+                "expected_temperature": expected_temperature,
+                "actual_temperature": actual_temperature,
+                "profile_schema": str(execution_profile.get("schema_version") or ""),
+                "strategy_schema": str(execution_strategy.get("schema_version") or ""),
+            }
+        )
+
+    actual_max_tokens = _coerce_int(sampling.get("max_tokens"))
+    expected_max_tokens = _coerce_int(execution_strategy.get("output_budget_tokens"))
+    if actual_max_tokens is not None and expected_max_tokens is not None and actual_max_tokens < expected_max_tokens:
+        findings.append(
+            {
+                "code": "execution_strategy_output_budget_under_applied",
+                "severity": "warning",
+                "expected_max_tokens": expected_max_tokens,
+                "actual_max_tokens": actual_max_tokens,
+                "strategy_schema": str(execution_strategy.get("schema_version") or ""),
+            }
+        )
+    return findings
 
 
 def _request_option_payloads(ai_request: Any, prepared: PreparedLLMRequest) -> tuple[Any, Any, Any]:
@@ -393,6 +466,19 @@ def _execution_profile(ai_request: Any) -> dict[str, Any]:
         raw_profile = context_payload.get(key)
         if isinstance(raw_profile, dict):
             return dict(raw_profile)
+    return {}
+
+
+def _execution_strategy(ai_request: Any) -> dict[str, Any]:
+    context_payload = _request_context(ai_request)
+    for key in (
+        "director_execution_strategy",
+        "task_execution_strategy",
+        "execution_strategy",
+    ):
+        raw_strategy = context_payload.get(key)
+        if isinstance(raw_strategy, dict):
+            return dict(raw_strategy)
     return {}
 
 
@@ -467,6 +553,7 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
     context_payload = _request_context(ai_request)
     options = _request_options(ai_request, prepared)
     execution_profile = _execution_profile(ai_request)
+    execution_strategy = _execution_strategy(ai_request)
     execution_profile_summary = _execution_profile_summary(ai_request)
     task_metadata = _task_metadata(ai_request)
     resident_agi_audit_context = _resident_agi_audit_context_summary(ai_request)
@@ -484,6 +571,23 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
         "has_execution_profile": bool(execution_profile),
         "execution_profile_summary": execution_profile_summary,
         "execution_profile_hash": _stable_digest(execution_profile) if execution_profile else "",
+        "has_execution_strategy": bool(execution_strategy),
+        "execution_strategy_summary": {
+            key: execution_strategy.get(key)
+            for key in (
+                "schema_version",
+                "source",
+                "temperature",
+                "temperature_phase",
+                "output_budget_tokens",
+                "input_budget_tokens",
+                "prompt_max_chars",
+                "min_context_utilization",
+                "context_underutilized_policy",
+            )
+            if execution_strategy.get(key) not in (None, "")
+        },
+        "execution_strategy_hash": _stable_digest(execution_strategy) if execution_strategy else "",
         "has_task_metadata": bool(task_metadata),
         "task_metadata_keys": sorted(str(key) for key in task_metadata),
         "task_metadata_hash": _stable_digest(task_metadata) if task_metadata else "",
@@ -685,11 +789,16 @@ def build_final_request_context_audit_for_request(
     sampling = _request_sampling_audit(ai_request, prepared)
     request_metadata_summary = _request_metadata_summary(ai_request, prepared)
     execution_profile_summary = request_metadata_summary.get("execution_profile_summary", {})
+    execution_profile = _execution_profile(ai_request)
+    execution_strategy = _execution_strategy(ai_request)
     quality = _context_quality_findings(
         coverage=coverage,
         context_underutilized=context_underutilized,
         final_request_token_estimate=final_request_token_estimate,
         context_window_tokens=window_tokens,
+        sampling=sampling,
+        execution_profile=execution_profile,
+        execution_strategy=execution_strategy,
     )
 
     return {
@@ -715,6 +824,7 @@ def build_final_request_context_audit_for_request(
         "execution_profile_hash": request_metadata_summary.get("execution_profile_hash", ""),
         "task_metadata_hash": request_metadata_summary.get("task_metadata_hash", ""),
         "has_execution_profile": bool(request_metadata_summary.get("has_execution_profile")),
+        "has_execution_strategy": bool(request_metadata_summary.get("has_execution_strategy")),
         "has_language_guidance": bool(request_metadata_summary.get("has_language_guidance")),
         "has_output_contract": bool(request_metadata_summary.get("has_output_contract")),
         "prompt_profile_selection": prompt_profile_selection,

@@ -282,6 +282,67 @@ class TestFrontendTestRepairContracts:
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
+    def test_python_directive_prefers_src_package_over_html_fallback(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+请基于 Architect 阶段产物生成 PM 执行任务合同。
+
+## Original Requirement Excerpt
+# Product Requirements — 情绪天气电台
+
+## Goal
+- 用 Python 实现「情绪天气电台」。创意钩子: 心情日志以天气和私人广播形式回放。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。
+
+## Project Metadata
+- 主语言: python
+- 领域: creative
+- 项目类型: wellbeing_tool
+
+## Acceptance Criteria
+- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。
+- 必须提供至少一种真实可执行入口, 且验收脚本可自动发现: Web/visual/simulation/game 项目提供含 <html> 的 index.html 或等价 HTML 入口; CLI 项目提供 package.json 脚本或可直接执行的 main 文件。
+- 附 README.md 说明如何运行。
+- 关键验收维度: 心情日志以天气和私人广播形式回放; 同时验证 Python 产物结构、入口可运行性和核心领域规则。
+
+## Deterministic Checks
+- py_compile
+- min_files:4
+- content_any:mood|weather|radio|forecast
+- source_target_coverage:src/**/*.py
+
+## Source Tree Structure Contract (MANDATORY)
+- 必须包含 `src/` 目录(或项目级 Python 包), 核心业务逻辑在 `.py` 文件中。
+- 必须包含 `tests/` 目录下的至少一个 `test_*.py` 测试文件。
+""".strip()
+
+        contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+        _normalized, quality = adapter._evaluate_contract_quality(contracts, directive=directive)
+        targets = [target for item in contracts for target in item.get("target_files", [])]
+        serialized = json.dumps(contracts, ensure_ascii=False)
+
+        assert len(contracts) == 3
+        assert "requirements.txt" in targets
+        assert "src/__init__.py" in targets
+        assert "src/models/mood.py" in targets
+        assert "src/models/weather.py" in targets
+        assert "src/engine/forecast.py" in targets
+        assert "src/radio.py" in targets
+        assert "src/main.py" in targets
+        assert "tests/test_product.py" in targets
+        assert "README.md" in targets
+        assert "index.html" not in targets
+        assert "styles.css" not in targets
+        assert "py_compile" in serialized
+        assert "source_target_coverage:src/**/*.py" in serialized
+        assert "python src/main.py" in serialized
+        assert "python -m src.main" in serialized
+        assert "mood" in serialized
+        assert "weather" in serialized
+        assert "radio" in serialized
+        assert "forecast" in serialized
+        assert quality["ok"] is True
+        assert (quality.get("score") or 0) >= 80
+
     def test_rust_root_workspace_directive_prefers_cargo_contracts(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         directive = """

@@ -146,3 +146,61 @@ def test_final_provider_snapshot_includes_execution_profile_summary_and_hash() -
     )
     assert snapshot["final_request_context_audit"]["has_language_guidance"] is True
     assert snapshot["final_request_context_audit"]["has_output_contract"] is True
+
+
+def test_final_request_context_audit_flags_under_applied_execution_strategy() -> None:
+    execution_profile = {
+        "schema_version": "task.execution_profile.v1",
+        "source": "director.tasking",
+        "task_type": "bugfix",
+        "phase": "repair",
+        "temperature": 0.05,
+        "temperature_phase": "repair",
+        "temperature_source": "task.execution_profile.v1",
+    }
+    execution_strategy = {
+        "schema_version": "task.execution_strategy.v1",
+        "source": "director.tasking",
+        "temperature": 0.05,
+        "temperature_phase": "repair",
+        "output_budget_tokens": 96_000,
+        "input_budget_tokens": 128_000,
+        "prompt_max_chars": 512_000,
+    }
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.7, "max_tokens": 4000},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Fix src/app.py."},
+            ],
+            "director_execution_profile": execution_profile,
+            "director_execution_strategy": execution_strategy,
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Fix src/app.py."},
+        ],
+        input_text="You are Director.\nFix src/app.py.",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=1_000_000),
+    )
+
+    finding_codes = {item["code"] for item in audit["context_quality"]["findings"]}
+    assert audit["has_execution_strategy"] is True
+    assert audit["request_metadata_summary"]["has_execution_strategy"] is True
+    assert "execution_profile_temperature_mismatch" in finding_codes
+    assert "execution_strategy_output_budget_under_applied" in finding_codes

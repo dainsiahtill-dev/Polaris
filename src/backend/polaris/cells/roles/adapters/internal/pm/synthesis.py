@@ -77,8 +77,10 @@ def _directive_requires_java_package_contract(directive: str) -> bool:
             "source_target_coverage:src/main/java",
         )
     )
-    return has_explicit_java_metadata or has_explicit_java_artifact or bool(
-        re.search(r"(?<!script)\bjava\b(?!script)", lower)
+    return (
+        has_explicit_java_metadata
+        or has_explicit_java_artifact
+        or bool(re.search(r"(?<!script)\bjava\b(?!script)", lower))
     )
 
 
@@ -116,8 +118,22 @@ def _directive_requires_javascript_package_contract(directive: str) -> bool:
     return has_javascript and has_package_contract
 
 
+def _directive_requires_python_workspace_contract(directive: str) -> bool:
+    lower = str(directive or "").lower()
+    return any(
+        token in lower
+        for token in (
+            "主语言: python",
+            "main language: python",
+            "用 python 实现",
+            "py_compile",
+            "source_target_coverage:src/**/*.py",
+        )
+    )
+
+
 _DETERMINISTIC_CHECK_RE = re.compile(
-    r"(?i)(html|ts_syntax|package_scripts|rust_compile|cpp_compile|java_compile|min_files:\d+|source_target_coverage:[^\s]+|content_any:[A-Za-z0-9_|-]+)"
+    r"(?i)(html|ts_syntax|js_syntax|py_compile|package_scripts|rust_compile|cpp_compile|java_compile|min_files:\d+|source_target_coverage:[^\s]+|content_any:[A-Za-z0-9_|-]+)"
 )
 _CONTENT_ANY_RE = re.compile(r"(?i)content_any:([A-Za-z0-9_|-]+)")
 
@@ -342,8 +358,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 source_metadata=source_metadata,
             )
             contracts = [
-                self._normalize_task_contract(item, idx + 1, directive)
-                for idx, item in enumerate(javascript_contracts)
+                self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(javascript_contracts)
             ]
             return [item for item in contracts if isinstance(item, dict)]
 
@@ -355,6 +370,17 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             )
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(java_contracts)
+            ]
+            return [item for item in contracts if isinstance(item, dict)]
+
+        if _directive_requires_python_workspace_contract(directive):
+            python_contracts = self._synthesize_python_workspace_contracts(
+                directive=directive,
+                domain_label=str(domain_label),
+                source_metadata=source_metadata,
+            )
+            contracts = [
+                self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(python_contracts)
             ]
             return [item for item in contracts if isinstance(item, dict)]
 
@@ -843,6 +869,120 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 ],
                 "phase": "implementation",
                 "depends_on": ["TASK-1"],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+        ]
+
+    def _synthesize_python_workspace_contracts(
+        self,
+        *,
+        directive: str,
+        domain_label: str,
+        source_metadata: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        deterministic_checks = _extract_deterministic_checks_from_directive(directive)
+        content_keywords = _extract_content_any_keywords_from_directive(directive)
+        if not content_keywords:
+            content_keywords = self._extract_domain_keywords(directive, limit=6)
+        keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
+        check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "py_compile; min_files"
+        model_targets = [
+            "src/__init__.py",
+            "src/models/__init__.py",
+            "src/models/mood.py",
+            "src/models/weather.py",
+        ]
+        engine_targets = [
+            "src/engine/__init__.py",
+            "src/engine/forecast.py",
+            "src/radio.py",
+            "src/main.py",
+        ]
+        verification_targets = [
+            "requirements.txt",
+            "tests/test_product.py",
+            "README.md",
+        ]
+        return [
+            {
+                "id": "TASK-1",
+                "title": f"实现 {domain_label} Python 包结构与领域模型",
+                "goal": f"在工作区根交付 {domain_label} 的 Python src/ 包、领域模型和可导入核心源码。",
+                "description": (
+                    "创建 requirements.txt、src/__init__.py、src/models/ 与需求派生模型文件，"
+                    f"确保 src/**/*.py 覆盖需求关键词和确定性检查：{keyword_summary}。"
+                ),
+                "scope": ["requirements.txt", *model_targets],
+                "target_files": ["requirements.txt", *model_targets],
+                "steps": [
+                    "创建 requirements.txt；如无第三方依赖也必须保留可执行的空依赖文件或注释说明",
+                    "实现 src/__init__.py 与 src/models/__init__.py，公开核心模型入口",
+                    "实现 src/models/mood.py 与 src/models/weather.py，表达 mood、weather、radio、forecast 等需求概念",
+                    "执行 `python -m compileall -q src` 验证 src/**/*.py 可编译",
+                ],
+                "acceptance": [
+                    "`requirements.txt`、`src/__init__.py` 与 `src/models/*.py` 存在且非空",
+                    f"src/**/*.py 源码包含需求关键词：{keyword_summary}",
+                    f"确定性检查进入任务验收：{check_summary}",
+                ],
+                "phase": "requirements",
+                "depends_on": [],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+            {
+                "id": "TASK-2",
+                "title": f"实现 {domain_label} Python 引擎与 CLI 入口",
+                "goal": f"实现 {domain_label} 的核心规则引擎、广播输出和可执行 Python 入口。",
+                "description": (
+                    "补齐 src/engine/forecast.py、src/radio.py 与 src/main.py，"
+                    f"让 CLI 入口真实运行并输出覆盖需求关键词的结果：{keyword_summary}。"
+                ),
+                "scope": engine_targets,
+                "target_files": engine_targets,
+                "steps": [
+                    "实现 src/engine/forecast.py，将 mood 输入映射为 weather/forecast 结果",
+                    "实现 src/radio.py，将 forecast 组织成私人 radio 播报文本或数据结构",
+                    "实现 src/main.py，必须同时支持 `python src/main.py` 与 `python -m src.main` 两种入口",
+                    "入口必须运行真实核心规则，不能只打印静态占位文本",
+                ],
+                "acceptance": [
+                    "`src/engine/forecast.py`、`src/radio.py` 与 `src/main.py` 存在且非空",
+                    "`python src/main.py` 与 `python -m src.main` 都可执行并返回成功",
+                    f"源码或入口输出覆盖需求关键词：{keyword_summary}",
+                ],
+                "phase": "implementation",
+                "depends_on": ["TASK-1"],
+                "assigned_to": "Director",
+                "metadata": dict(source_metadata),
+            },
+            {
+                "id": "TASK-3",
+                "title": f"实现 {domain_label} Python 验证脚本与 README",
+                "goal": f"固化 {domain_label} 的编译、单元测试、入口 smoke 和交付说明。",
+                "description": (
+                    "创建 tests/test_product.py 与 README，验证 src/**/*.py 覆盖、py_compile、"
+                    f"真实入口和核心领域规则：{check_summary}。"
+                ),
+                "scope": [*model_targets, *engine_targets, *verification_targets],
+                "target_files": [*model_targets, *engine_targets, *verification_targets],
+                "steps": [
+                    "实现 tests/test_product.py，使用 Python unittest 覆盖模型、forecast 引擎、radio 输出和 CLI 入口",
+                    "测试必须检查 src/**/*.py 至少存在多个源文件，避免只生成 tests/ 或 HTML/CSS 脚手架",
+                    "README 记录依赖安装、compileall、unittest、`python src/main.py` 和 `python -m src.main`",
+                    f"验证脚本覆盖确定性检查：{check_summary}",
+                ],
+                "acceptance": [
+                    "`tests/test_product.py` 存在且可执行",
+                    "`python -m compileall -q src tests` 返回成功",
+                    "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
+                    "`python src/main.py` 与 `python -m src.main` 都返回 PASS",
+                    "`README.md` 包含依赖安装、编译、测试和启动步骤",
+                    f"确定性检查进入任务验收：{check_summary}",
+                ],
+                "phase": "verification",
+                "depends_on": ["TASK-2"],
                 "assigned_to": "Director",
                 "metadata": dict(source_metadata),
             },

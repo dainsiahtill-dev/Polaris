@@ -693,6 +693,93 @@ def build_rust_struct_literal_missing_field_plan(
     )
 
 
+def build_rust_missing_fields_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build a narrow executable plan for generated Rust struct field declarations."""
+
+    normalized_base = {
+        _normalize_repair_path(path): str(content or "")
+        for path, content in dict(base_files or {}).items()
+        if _normalize_repair_path(path).endswith(".rs")
+    }
+    shadow = plan_rust_missing_fields_shadow(base_files=normalized_base, diagnostics=diagnostics)
+    if shadow.ast_index.parse_blockers:
+        return None
+
+    diagnostics_by_id = {diagnostic.diagnostic_id: diagnostic for diagnostic in diagnostics}
+    structs_by_key = {(item.path, item.name): item for item in shadow.ast_index.structs}
+    operations: list[RepairOperation] = []
+    planned_diagnostics: list[RepairDiagnostic] = []
+    for candidate in shadow.candidates:
+        if (
+            candidate.source_tool != RUST_MISSING_FIELDS_SOURCE_TOOL
+            or candidate.candidate_kind != "missing_struct_field_declaration"
+            or not candidate.generated_or_marker_file
+        ):
+            continue
+        blockers = tuple(
+            blocker
+            for blocker in shadow.blockers
+            if blocker.diagnostic_id == candidate.diagnostic_id and blocker.reason != "type_inference_required"
+        )
+        if blockers:
+            continue
+        diagnostic = diagnostics_by_id.get(candidate.diagnostic_id)
+        if diagnostic is None:
+            continue
+        field_type = _explicit_rust_missing_field_type(diagnostic)
+        if field_type is None:
+            continue
+        struct_item = structs_by_key.get((candidate.path, candidate.struct_name))
+        if (
+            struct_item is None
+            or not struct_item.generated_or_marker_file
+            or struct_item.public_api_visible
+            or any(field.name == candidate.field_name for field in struct_item.fields)
+        ):
+            continue
+        content = normalized_base.get(struct_item.path)
+        if content is None:
+            continue
+        operation = _record_struct_missing_field_operation(
+            content=content,
+            struct_item=struct_item,
+            field_name=candidate.field_name,
+            field_type=field_type,
+            diagnostic_id=candidate.diagnostic_id,
+        )
+        if operation is None:
+            continue
+        operations.append(operation)
+        planned_diagnostics.append(diagnostic)
+
+    if not operations:
+        return None
+
+    return RepairPlan(
+        rule_id="rust.missing_field_declaration",
+        source_tool=RUST_MISSING_FIELDS_SOURCE_TOOL,
+        operations=tuple(operations),
+        diagnostics=tuple(planned_diagnostics),
+        mode=mode,
+        risk_level="low",
+        priority=3,
+        metadata={
+            "repair_kind": "rust_missing_field_declaration",
+            "edit_strategy": "text_replace",
+            "span_based": True,
+            "generated_or_marker_file_required": True,
+            "public_api_expansion_allowed": False,
+            "field_type_source": "diagnostic_metadata",
+            "diagnostic_count": len(planned_diagnostics),
+        },
+    )
+
+
 def _load_tree_sitter_rust_parser() -> Any | None:
     try:
         module = import_module("tree_sitter_language_pack")
@@ -825,7 +912,9 @@ def _parse_struct_literal(
 ) -> RustStructLiteral | None:
     children = tuple(_node_children(node))
     field_list = _first_child_with_kind(children, {"field_initializer_list"})
-    type_node = next((child for child in children if child is not field_list and _node_kind(child).endswith("identifier")), None)
+    type_node = next(
+        (child for child in children if child is not field_list and _node_kind(child).endswith("identifier")), None
+    )
     if type_node is None or field_list is None:
         return None
     struct_name = _simple_rust_type_name(_node_text(type_node, source_bytes))
@@ -906,7 +995,9 @@ def _parse_field_access(
     field_name = _node_text(field_node, source_bytes).strip()
     if not field_name:
         return None
-    receiver_text = source_bytes[_node_start_byte(node) : _node_start_byte(field_node)].decode("utf-8").rstrip(". \t\r\n")
+    receiver_text = (
+        source_bytes[_node_start_byte(node) : _node_start_byte(field_node)].decode("utf-8").rstrip(". \t\r\n")
+    )
     line, column = _line_column_for_byte(line_starts, _node_start_byte(field_node))
     return RustFieldAccess(
         path=path,
@@ -974,7 +1065,9 @@ def _match_diagnostic_field_accesses(
                 continue
             if target.line is not None and access.line != target.line:
                 continue
-            if target.column is not None and not (access.column <= target.column <= access.column + len(access.field_name)):
+            if target.column is not None and not (
+                access.column <= target.column <= access.column + len(access.field_name)
+            ):
                 continue
             matches.append(
                 RustDiagnosticFieldAccess(
@@ -1084,7 +1177,9 @@ def _struct_literal_missing_field_operation(
     if closing_indent.strip():
         return None
     field_line_start = content.rfind("\n", 0, _char_index_for_byte_offset(content, last_field.start_byte) or 0) + 1
-    field_indent = content[field_line_start : _char_index_for_byte_offset(content, last_field.start_byte) or field_line_start]
+    field_indent = content[
+        field_line_start : _char_index_for_byte_offset(content, last_field.start_byte) or field_line_start
+    ]
     if field_indent.strip():
         return None
     newline = "\r\n" if "\r\n" in content else "\n"
@@ -1111,6 +1206,129 @@ def _struct_literal_missing_field_operation(
             "initializer_source": "field_type_whitelist",
         },
     )
+
+
+def _record_struct_missing_field_operation(
+    *,
+    content: str,
+    struct_item: RustRecordStruct,
+    field_name: str,
+    field_type: str,
+    diagnostic_id: str,
+) -> RepairOperation | None:
+    if not _RUST_IDENTIFIER_RE.fullmatch(field_name):
+        return None
+    source_bytes = content.encode("utf-8")
+    close_brace_byte = source_bytes.rfind(b"}", struct_item.start_byte, struct_item.end_byte)
+    if close_brace_byte < struct_item.start_byte:
+        return None
+    close_brace = _char_index_for_byte_offset(content, close_brace_byte)
+    if close_brace is None:
+        return None
+
+    struct_start = _char_index_for_byte_offset(content, struct_item.start_byte)
+    if struct_start is None:
+        return None
+    single_line = "\n" not in content[struct_start:close_brace]
+    if single_line:
+        span_start = close_brace
+        while span_start > 0 and content[span_start - 1] in " \t":
+            span_start -= 1
+        expected = content[span_start:close_brace]
+        prefix = ", " if struct_item.fields else " "
+        suffix = expected if expected else (" " if not struct_item.fields else "")
+        replacement = f"{prefix}{field_name}: {field_type}{suffix}"
+        context = _unique_context_for_text_span(content, span_start, close_brace)
+        if context is None:
+            return None
+        return RepairOperation(
+            kind="text_replace",
+            path=struct_item.path,
+            span_start=span_start,
+            span_end=close_brace,
+            expected=expected,
+            replacement=replacement,
+            before_hash=sha256_text(content),
+            metadata={
+                "repair_kind": "rust_missing_field_declaration",
+                "edit_strategy": "text_replace",
+                "span_based": True,
+                "expected_context_before": context[0],
+                "expected_context_after": context[1],
+                "diagnostic_id": diagnostic_id,
+                "field_name": field_name,
+                "field_type_source": "diagnostic_metadata",
+            },
+        )
+
+    close_line_start = content.rfind("\n", 0, close_brace) + 1
+    closing_indent = content[close_line_start:close_brace]
+    if closing_indent.strip():
+        return None
+    if struct_item.fields:
+        last_field = struct_item.fields[-1]
+        last_field_end = _char_index_for_byte_offset(content, last_field.end_byte)
+        if last_field_end is None or last_field_end > close_brace:
+            return None
+        between_last_field_and_close = content[last_field_end:close_brace]
+        if "," not in between_last_field_and_close:
+            return None
+        field_start = _char_index_for_byte_offset(content, last_field.start_byte)
+        if field_start is None:
+            return None
+        field_line_start = content.rfind("\n", 0, field_start) + 1
+        field_indent = content[field_line_start:field_start]
+        if field_indent.strip():
+            return None
+    else:
+        field_indent = f"{closing_indent}    "
+    newline = "\r\n" if "\r\n" in content else "\n"
+    replacement = f"{field_indent}{field_name}: {field_type},{newline}"
+    context = _unique_context_for_text_span(content, close_line_start, close_line_start)
+    if context is None:
+        return None
+    return RepairOperation(
+        kind="text_replace",
+        path=struct_item.path,
+        span_start=close_line_start,
+        span_end=close_line_start,
+        expected="",
+        replacement=replacement,
+        before_hash=sha256_text(content),
+        metadata={
+            "repair_kind": "rust_missing_field_declaration",
+            "edit_strategy": "text_replace",
+            "span_based": True,
+            "expected_context_before": context[0],
+            "expected_context_after": context[1],
+            "diagnostic_id": diagnostic_id,
+            "field_name": field_name,
+            "field_type_source": "diagnostic_metadata",
+        },
+    )
+
+
+def _explicit_rust_missing_field_type(diagnostic: RepairDiagnostic) -> str | None:
+    metadata = dict(diagnostic.metadata or {})
+    for key in ("field_type_text", "field_type", "rust_missing_field_type", "rust_field_type"):
+        value = str(metadata.get(key) or "").strip()
+        safe_value = _safe_rust_field_type_text(value)
+        if safe_value is not None:
+            return safe_value
+    raw = "\n".join(part for part in (diagnostic.raw, diagnostic.message) if str(part or "").strip())
+    match = re.search(r"\bfield\s+type\s*:\s*(?P<type>[A-Za-z0-9_:<>, ()]+)", raw, re.IGNORECASE)
+    if match is not None:
+        return _safe_rust_field_type_text(match.group("type"))
+    return None
+
+
+def _safe_rust_field_type_text(type_text: str) -> str | None:
+    compact = re.sub(r"\s+", "", str(type_text or ""))
+    if not compact or "\n" in str(type_text) or "\r" in str(type_text):
+        return None
+    if _safe_rust_missing_field_initializer(compact) is None:
+        return None
+    return compact
 
 
 def _safe_rust_missing_field_initializer(type_text: str | None) -> str | None:

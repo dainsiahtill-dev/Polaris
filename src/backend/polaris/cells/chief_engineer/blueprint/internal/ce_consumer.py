@@ -51,7 +51,7 @@ from polaris.kernelone.quality.interface_ledger import (
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_CE_FISSION_MAX_OUTPUT_TOKENS = 16000
+_DEFAULT_CE_FISSION_MAX_OUTPUT_TOKENS = 128_000
 
 
 def _ce_fission_max_output_tokens() -> int:

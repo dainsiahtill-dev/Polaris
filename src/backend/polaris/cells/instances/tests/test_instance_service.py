@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,14 @@ def test_instance_registry_round_trip(tmp_path: Path) -> None:
 
     data = json.loads((tmp_path / "instances" / "registry.json").read_text(encoding="utf-8"))
     assert data["instances"][0]["instance_id"] == "project-a"
+
+
+def test_is_port_free_detects_bound_non_listening_socket() -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as held:
+        held.bind((instance_service.DEFAULT_HOST, 0))
+        port = int(held.getsockname()[1])
+
+        assert instance_service.is_port_free(port) is False
 
 
 def test_current_backend_instance_cannot_stop_restart_or_delete_itself(
@@ -195,6 +204,99 @@ def test_refresh_instance_states_publishes_natural_process_death(
     assert payload["payload"]["action"] == "health_changed"
     assert payload["payload"]["instance"]["instance_id"] == "dead-bench"
     assert "token" not in payload["payload"]["instance"]
+
+
+def test_refresh_instance_states_keeps_recent_partial_startup_as_starting(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: pid == 61001)
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    registry.save(
+        InstanceRecord(
+            instance_id="fresh-partial",
+            name="Fresh Partial",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "bench" / "L1-09").resolve()),
+            runtime_root=str((tmp_path / "bench" / "L1-09" / "runtime").resolve()),
+            backend_port=59931,
+            frontend_port=59932,
+            backend_url="http://127.0.0.1:59931",
+            frontend_url="http://127.0.0.1:59932",
+            token="secret-token",
+            backend_pid=61001,
+            frontend_pid=61002,
+            start_frontend=True,
+            status="starting",
+            last_started_at=instance_service.utc_timestamp(),
+            metadata={"backend_health": "starting", "frontend_health": "starting"},
+        )
+    )
+
+    changed = InstanceSupervisor(registry).refresh_instance_states()
+
+    stored = registry.get("fresh-partial")
+    assert stored is not None
+    assert stored.status == "starting"
+    assert stored.metadata["backend_health"] == "process"
+    assert stored.metadata["frontend_health"] == "stopped"
+    assert changed[0]["status"] == "starting"
+
+
+def test_refresh_instance_states_fails_stale_partial_startup(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    published: list[dict[str, Any]] = []
+
+    class FakePublisher:
+        def publish(self, *, subject: str, payload: dict[str, Any]) -> bool:
+            published.append({"subject": subject, "payload": payload})
+            return True
+
+    monkeypatch.setattr(
+        "polaris.infrastructure.log_pipeline.jetstream_publisher.get_log_jetstream_publisher",
+        lambda: FakePublisher(),
+    )
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: pid == 61001)
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=True)
+    registry.save(
+        InstanceRecord(
+            instance_id="stale-partial",
+            name="Stale Partial",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "bench" / "L1-10").resolve()),
+            runtime_root=str((tmp_path / "bench" / "L1-10" / "runtime").resolve()),
+            backend_port=59941,
+            frontend_port=59942,
+            backend_url="http://127.0.0.1:59941",
+            frontend_url="http://127.0.0.1:59942",
+            token="secret-token",
+            backend_pid=61001,
+            frontend_pid=61002,
+            start_frontend=True,
+            status="starting",
+            last_started_at="2000-01-01T00:00:00Z",
+            metadata={"backend_health": "starting", "frontend_health": "starting"},
+        )
+    )
+    published.clear()
+
+    changed = InstanceSupervisor(registry).refresh_instance_states()
+
+    stored = registry.get("stale-partial")
+    assert stored is not None
+    assert changed[0]["instance_id"] == "stale-partial"
+    assert stored.status == "failed"
+    assert stored.metadata["backend_health"] == "process"
+    assert stored.metadata["frontend_health"] == "failed"
+    assert stored.metadata["status_reason"] == "frontend process did not survive startup"
+    assert published[0]["subject"] == "hp.runtime.instances.status.instances"
+    assert published[0]["payload"]["payload"]["instance"]["status"] == "failed"
 
 
 def test_refresh_instance_states_does_not_publish_without_state_change(

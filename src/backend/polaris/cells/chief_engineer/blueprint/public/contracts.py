@@ -290,6 +290,9 @@ class TaskBlueprintResultV1:
     dependencies: tuple[str, ...] = field(default_factory=tuple)
     architecture_decisions: tuple[ArchitectureDecisionV1, ...] = field(default_factory=tuple)
     selected_libraries: tuple[str, ...] = field(default_factory=tuple)
+    # Existing target file export summaries so downstream Director tasks
+    # (e.g. test generation) know the actual API of files created by earlier tasks.
+    existing_target_files: tuple[dict[str, str], ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))

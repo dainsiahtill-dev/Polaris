@@ -82,6 +82,7 @@ class TransactionalRepairExecutor:
         workspace_root = workspace.resolve()
         written: list[dict[str, Any]] = []
         execution_records: list[dict[str, Any]] = []
+        rollback_records: list[dict[str, Any]] = []
         try:
             for patch in composition.patches:
                 target = (workspace_root / patch.path).resolve()
@@ -122,6 +123,14 @@ class TransactionalRepairExecutor:
                         if not bool(result.get("ok")):
                             raise RuntimeError(f"repair editor rejected {patch.path}")
                     written.append(_rollback_entry_for_patch(patch))
+                    edit_strategy = _precise_edit_strategy(
+                        patch=patch,
+                        operation="edit_file",
+                        operation_ids=[operation.operation_id for operation in text_operations],
+                        unique_context_checked=any(
+                            _operation_has_context_metadata(operation) for operation in text_operations
+                        ),
+                    )
                     execution_records.append(
                         _execution_record(
                             patch=patch,
@@ -129,9 +138,8 @@ class TransactionalRepairExecutor:
                             operation_ids=[operation.operation_id for operation in text_operations],
                             large_file_safe=True,
                             span_based=True,
-                            unique_context_checked=any(
-                                _operation_has_context_metadata(operation) for operation in text_operations
-                            ),
+                            unique_context_checked=bool(edit_strategy["unique_context_checked"]),
+                            precise_edit_strategy=edit_strategy,
                         )
                     )
                     continue
@@ -141,12 +149,21 @@ class TransactionalRepairExecutor:
                 if not bool(result.get("ok")):
                     raise RuntimeError(f"repair writer rejected {patch.path}")
                 written.append(_rollback_entry_for_patch(patch))
+                precise_edit_strategy = None
+                if bool(patch.metadata.get("span_based")):
+                    precise_edit_strategy = _precise_edit_strategy(
+                        patch=patch,
+                        operation="write_file",
+                        operation_ids=list(patch.operation_ids),
+                        unique_context_checked=bool(patch.metadata.get("unique_context_checked")),
+                    )
                 execution_records.append(
                     _execution_record(
                         patch=patch,
                         operation="write_file",
                         operation_ids=list(patch.operation_ids),
                         rollback_requires_delete_tool=not patch.exists_before and deleter is None,
+                        precise_edit_strategy=precise_edit_strategy,
                     )
                 )
         except (OSError, RuntimeError, ValueError) as exc:
@@ -155,28 +172,45 @@ class TransactionalRepairExecutor:
             for entry in reversed(written):
                 path = str(entry["path"])
                 rollback_strategy = str(entry["rollback_strategy"])
+                rollback_record = _rollback_operation_record(entry)
                 if rollback_strategy == _ROLLBACK_DELETE_CREATED_STRATEGY:
                     if deleter is None:
                         rollback_failures.append(f"{path}:rollback_requires_delete_tool")
+                        rollback_record["ok"] = False
+                        rollback_record["error"] = "rollback_requires_delete_tool"
+                        rollback_records.append(rollback_record)
                         continue
                     try:
                         rollback_result = dict(deleter(path))
                     except (OSError, RuntimeError, ValueError) as rollback_exc:
                         rollback_failures.append(f"{path}:{rollback_exc}")
+                        rollback_record["ok"] = False
+                        rollback_record["error"] = str(rollback_exc)
+                        rollback_records.append(rollback_record)
                         continue
                 else:
                     if writer is None:
                         rollback_failures.append(f"{path}:rollback_requires_writer")
+                        rollback_record["ok"] = False
+                        rollback_record["error"] = "rollback_requires_writer"
+                        rollback_records.append(rollback_record)
                         continue
                     try:
                         rollback_result = dict(writer(path, str(entry["content_before"])))
                     except (OSError, RuntimeError, ValueError) as rollback_exc:
                         rollback_failures.append(f"{path}:{rollback_exc}")
+                        rollback_record["ok"] = False
+                        rollback_record["error"] = str(rollback_exc)
+                        rollback_records.append(rollback_record)
                         continue
                 if bool(rollback_result.get("ok")):
                     rollback_success_count += 1
+                    rollback_record["ok"] = True
                 else:
                     rollback_failures.append(path)
+                    rollback_record["ok"] = False
+                    rollback_record["error"] = "rollback_tool_rejected"
+                rollback_records.append(rollback_record)
             rollback_attempted = bool(written)
             rolled_back = rollback_attempted and not rollback_failures
             status = "rolled_back" if rolled_back else "rollback_failed" if rollback_attempted else "failed"
@@ -190,9 +224,14 @@ class TransactionalRepairExecutor:
                     "rollback_attempted": rollback_attempted,
                     "rollback_restore_strategy": _ROLLBACK_RESTORE_STRATEGY if rollback_attempted else "",
                     "rollback_delete_created_strategy": _ROLLBACK_DELETE_CREATED_STRATEGY if rollback_attempted else "",
+                    "rollback_strategy": _rollback_strategy_summary(written) if rollback_attempted else "",
+                    "rollback_patch": _rollback_patch_summary(written),
+                    "rollback_operations": rollback_records,
                     "rollback_failed_paths": rollback_failures,
                     "rollback_success_count": rollback_success_count,
                     "execution_records": execution_records,
+                    "precise_edit_strategy": _precise_edit_strategy_summary(execution_records),
+                    "precise_edit_strategy_by_path": _precise_edit_strategy_by_path(execution_records),
                 },
             )
             return RepairExecutionResult(ok=False, receipt=receipt, rolled_back=rolled_back, error=str(exc))
@@ -206,7 +245,12 @@ class TransactionalRepairExecutor:
                 "writes_performed": True,
                 "rollback_restore_strategy": _ROLLBACK_RESTORE_STRATEGY,
                 "rollback_delete_created_strategy": _ROLLBACK_DELETE_CREATED_STRATEGY,
+                "rollback_strategy": _rollback_strategy_summary(written),
+                "rollback_patch": _rollback_patch_summary(written),
+                "rollback_operations": [],
                 "execution_records": execution_records,
+                "precise_edit_strategy": _precise_edit_strategy_summary(execution_records),
+                "precise_edit_strategy_by_path": _precise_edit_strategy_by_path(execution_records),
                 "write_file_reasons_by_path": {
                     record["path"]: record["write_file_reason"]
                     for record in execution_records
@@ -228,9 +272,7 @@ def _text_replace_operations_for_patch(
         if operation.kind == "text_replace" and str(operation.path or "").strip().replace("\\", "/") == normalized_path
     )
     all_path_operations = tuple(
-        operation
-        for operation in operations
-        if str(operation.path or "").strip().replace("\\", "/") == normalized_path
+        operation for operation in operations if str(operation.path or "").strip().replace("\\", "/") == normalized_path
     )
     if len(path_operations) != len(all_path_operations):
         return ()
@@ -274,6 +316,11 @@ def _rollback_entry_for_patch(patch: Any) -> dict[str, Any]:
     return {
         "path": patch.path,
         "content_before": patch.content_before,
+        "content_before_hash": patch.before_hash if patch.exists_before else FILE_ABSENT_HASH,
+        "content_after_hash": patch.after_hash if patch.exists_after else FILE_ABSENT_HASH,
+        "exists_before": bool(patch.exists_before),
+        "exists_after": bool(patch.exists_after),
+        "operation_ids": list(patch.operation_ids),
         "rollback_strategy": _rollback_strategy_for_patch(patch),
     }
 
@@ -293,6 +340,7 @@ def _execution_record(
     span_based: bool | None = None,
     unique_context_checked: bool | None = None,
     rollback_requires_delete_tool: bool = False,
+    precise_edit_strategy: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     created_file = not bool(patch.exists_before) and bool(patch.exists_after)
     deleted_file = bool(patch.exists_before) and not bool(patch.exists_after)
@@ -303,7 +351,7 @@ def _execution_record(
     else:
         created_or_deleted = ""
     rollback_strategy = _rollback_strategy_for_patch(patch)
-    return {
+    record = {
         "path": patch.path,
         "operation": operation,
         "operation_ids": operation_ids,
@@ -324,11 +372,127 @@ def _execution_record(
         "rollback_strategy": rollback_strategy,
         "rollback_requires_delete_tool": rollback_requires_delete_tool,
     }
+    if operation == "write_file":
+        record.update(_write_file_policy_metadata(patch, str(record["write_file_reason"])))
+    if precise_edit_strategy is not None:
+        record["precise_edit_strategy"] = dict(precise_edit_strategy)
+    return record
+
+
+def _precise_edit_strategy(
+    *,
+    patch: Any,
+    operation: str,
+    operation_ids: list[str],
+    unique_context_checked: bool,
+) -> dict[str, Any]:
+    span_based = bool(patch.metadata.get("span_based"))
+    write_file_used = operation == "write_file"
+    if operation == "edit_file":
+        strategy = "span_based"
+    elif span_based and write_file_used:
+        strategy = "write_file_fallback"
+    else:
+        strategy = ""
+    return {
+        "strategy": strategy,
+        "span_based": span_based,
+        "unique_context_checked": unique_context_checked,
+        "editor_preferred": span_based,
+        "editor_used": operation == "edit_file",
+        "write_file_used": write_file_used,
+        "write_file_fallback_source": _write_file_fallback_source(patch) if write_file_used else "",
+        "large_file_safe": bool(patch.metadata.get("large_file_safe")),
+        "operation_ids": operation_ids,
+    }
+
+
+def _precise_edit_strategy_by_path(records: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    strategies: dict[str, dict[str, Any]] = {}
+    for record in records:
+        strategy = record.get("precise_edit_strategy")
+        if isinstance(strategy, Mapping):
+            strategies[str(record["path"])] = dict(strategy)
+    return strategies
+
+
+def _precise_edit_strategy_summary(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    strategies_by_path = _precise_edit_strategy_by_path(records)
+    if not strategies_by_path:
+        return {}
+    strategies = list(strategies_by_path.values())
+    return {
+        "strategy": "span_based" if all(bool(strategy["span_based"]) for strategy in strategies) else "mixed",
+        "span_based": all(bool(strategy["span_based"]) for strategy in strategies),
+        "unique_context_checked": all(bool(strategy["unique_context_checked"]) for strategy in strategies),
+        "editor_preferred": all(bool(strategy["editor_preferred"]) for strategy in strategies),
+        "editor_used": all(bool(strategy["editor_used"]) for strategy in strategies),
+        "write_file_used": any(bool(strategy["write_file_used"]) for strategy in strategies),
+        "write_file_fallback_paths": sorted(
+            path for path, strategy in strategies_by_path.items() if bool(strategy["write_file_used"])
+        ),
+        "large_file_safe": all(bool(strategy["large_file_safe"]) for strategy in strategies),
+        "paths": sorted(strategies_by_path),
+    }
+
+
+def _rollback_strategy_summary(entries: Sequence[Mapping[str, Any]]) -> str:
+    strategies = sorted(
+        {str(entry.get("rollback_strategy") or "") for entry in entries if entry.get("rollback_strategy")}
+    )
+    if not strategies:
+        return ""
+    if len(strategies) == 1:
+        return strategies[0]
+    return "mixed"
+
+
+def _rollback_patch_summary(entries: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "path": str(entry["path"]),
+            "rollback_patch_id": _rollback_patch_id(entry),
+            "rollback_strategy": str(entry["rollback_strategy"]),
+            "rollback_operation": "delete_file"
+            if entry["rollback_strategy"] == _ROLLBACK_DELETE_CREATED_STRATEGY
+            else "write_file",
+            "rollback_reason": "transaction_failure",
+            "rollback_policy_decision": "allowed_rollback",
+            "before_hash": str(entry["content_after_hash"]),
+            "after_hash": str(entry["content_before_hash"]),
+            "exists_before": bool(entry["exists_after"]),
+            "exists_after": bool(entry["exists_before"]),
+            "operation_ids": list(entry.get("operation_ids") or ()),
+        }
+        for entry in entries
+    ]
+
+
+def _rollback_operation_record(entry: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "path": str(entry["path"]),
+        "rollback_patch_id": _rollback_patch_id(entry),
+        "operation": "delete_file" if entry["rollback_strategy"] == _ROLLBACK_DELETE_CREATED_STRATEGY else "write_file",
+        "rollback_strategy": str(entry["rollback_strategy"]),
+        "rollback_reason": "transaction_failure",
+        "rollback_policy_decision": "allowed_rollback",
+        "write_file_allowed_category": "rollback"
+        if entry["rollback_strategy"] != _ROLLBACK_DELETE_CREATED_STRATEGY
+        else "",
+        "write_file_reason": "rollback_full_restore"
+        if entry["rollback_strategy"] != _ROLLBACK_DELETE_CREATED_STRATEGY
+        else "",
+        "before_hash": str(entry["content_after_hash"]),
+        "after_hash": str(entry["content_before_hash"]),
+        "exists_before": bool(entry["exists_after"]),
+        "exists_after": bool(entry["exists_before"]),
+        "operation_ids": list(entry.get("operation_ids") or ()),
+    }
 
 
 def _operation_has_context_metadata(operation: RepairOperation) -> bool:
     return any(
-        str(operation.metadata.get(key) or "")
+        _metadata_text(operation.metadata, key)
         for key in (
             "expected_context_before",
             "context_before",
@@ -364,6 +528,34 @@ def _operation_context_matches(content: str, operation: RepairOperation, start: 
 def _metadata_text(metadata: Mapping[str, Any], *keys: str) -> str:
     for key in keys:
         value = metadata.get(key)
-        if value is not None:
+        if isinstance(value, str) and value:
             return str(value)
     return ""
+
+
+def _write_file_policy_metadata(patch: Any, reason: str) -> dict[str, Any]:
+    category = _write_file_allowed_category(patch, reason)
+    return {
+        "write_file_allowed": True,
+        "write_file_allowed_category": category,
+        "write_file_policy_decision": f"allowed_{category}",
+        "write_file_fallback_source": _write_file_fallback_source(patch) if category == "fallback" else "",
+    }
+
+
+def _write_file_allowed_category(patch: Any, reason: str) -> str:
+    if not bool(patch.exists_before):
+        return "new_file"
+    if reason == "structured_json_serialization" or str(patch.metadata.get("structured_operation") or ""):
+        return "structured_serialization"
+    return "fallback"
+
+
+def _write_file_fallback_source(patch: Any) -> str:
+    if bool(patch.metadata.get("span_based")):
+        return "span_context_text_patch_editor_unavailable_or_rejected"
+    return str(patch.metadata.get("write_file_fallback_source") or "explicit_write_file_operation")
+
+
+def _rollback_patch_id(entry: Mapping[str, Any]) -> str:
+    return f"rollback:{entry['rollback_strategy']}:{entry['path']}"

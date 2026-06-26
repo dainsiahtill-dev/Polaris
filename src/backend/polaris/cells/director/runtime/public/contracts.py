@@ -59,6 +59,15 @@ def _optional_non_negative_int(value: Any) -> int | None:
         return None
 
 
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _to_tuple_str_from_any(value: Any) -> tuple[str, ...]:
     if value is None:
         return ()
@@ -70,6 +79,19 @@ def _to_tuple_str_from_any(value: Any) -> tuple[str, ...]:
         except TypeError:
             items = (value,)
     return tuple(str(item) for item in items if str(item or "").strip())
+
+
+def _to_tuple_mapping_from_any(value: Any) -> tuple[Mapping[str, Any], ...]:
+    if value is None:
+        return ()
+    if isinstance(value, Mapping):
+        items = (value,)
+    else:
+        try:
+            items = tuple(value)
+        except TypeError:
+            return ()
+    return tuple(_to_dict_copy(item) for item in items if isinstance(item, Mapping))
 
 
 def _strict_bool_claim(value: Any) -> bool:
@@ -154,6 +176,12 @@ class RepairReceiptV1:
     authority_hash: str = ""
     projection_hash: str = ""
     revalidation_evidence: Mapping[str, Any] = field(default_factory=dict)
+    verifier_command: tuple[str, ...] = ()
+    verifier_exit_code: int | None = None
+    diagnostics_before: tuple[Mapping[str, Any], ...] = ()
+    diagnostics_after: tuple[Mapping[str, Any], ...] = ()
+    resolved_diagnostic_ids: tuple[str, ...] = ()
+    residual_diagnostic_ids: tuple[str, ...] = ()
     advisor_notes: tuple[RepairAdvisoryV1, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
     rule_id: str = ""
@@ -169,23 +197,90 @@ class RepairReceiptV1:
         object.__setattr__(self, "before_hashes", dict(self.before_hashes or {}))
         object.__setattr__(self, "after_hashes", dict(self.after_hashes or {}))
         object.__setattr__(self, "round_number", None if self.round_number is None else max(0, int(self.round_number)))
+        revalidation_evidence = _to_dict_copy(self.revalidation_evidence)
+        verifier_command = _to_tuple_str_from_any(self.verifier_command or revalidation_evidence.get("command"))
+        verifier_exit_code = _optional_non_negative_int(
+            self.verifier_exit_code if self.verifier_exit_code is not None else revalidation_evidence.get("exit_code")
+        )
+        diagnostics_before = _to_tuple_mapping_from_any(
+            self.diagnostics_before or revalidation_evidence.get("diagnostics_before")
+        )
+        diagnostics_after = _to_tuple_mapping_from_any(
+            self.diagnostics_after or revalidation_evidence.get("diagnostics_after")
+        )
+        resolved_diagnostic_ids = _to_tuple_str_from_any(
+            self.resolved_diagnostic_ids or revalidation_evidence.get("resolved_diagnostic_ids")
+        )
+        residual_diagnostic_ids = _to_tuple_str_from_any(
+            self.residual_diagnostic_ids or revalidation_evidence.get("residual_diagnostic_ids")
+        )
+        evidence_status = str(self.evidence_status or "missing_evidence").strip() or "missing_evidence"
+        if evidence_status == "missing_evidence" and revalidation_evidence.get("evidence_status"):
+            evidence_status = str(revalidation_evidence.get("evidence_status") or "missing_evidence").strip()
+        errors_before = _optional_non_negative_int(
+            self.errors_before if self.errors_before is not None else revalidation_evidence.get("errors_before")
+        )
+        errors_after = _optional_non_negative_int(
+            self.errors_after if self.errors_after is not None else revalidation_evidence.get("errors_after")
+        )
+        net_error_reduction = _optional_int(
+            self.net_error_reduction
+            if self.net_error_reduction is not None
+            else revalidation_evidence.get("net_error_reduction")
+        )
+        if net_error_reduction is None and errors_before is not None and errors_after is not None:
+            net_error_reduction = errors_before - errors_after
+
+        has_native_revalidation = bool(
+            verifier_command
+            or verifier_exit_code is not None
+            or diagnostics_before
+            or diagnostics_after
+            or resolved_diagnostic_ids
+            or residual_diagnostic_ids
+            or errors_before is not None
+            or errors_after is not None
+        )
+        if revalidation_evidence or has_native_revalidation:
+            revalidation_evidence = dict(revalidation_evidence)
+            revalidation_evidence.setdefault("command", list(verifier_command))
+            revalidation_evidence.setdefault("exit_code", verifier_exit_code)
+            revalidation_evidence.setdefault("round_number", self.round_number)
+            revalidation_evidence.setdefault("evidence_status", evidence_status)
+            revalidation_evidence.setdefault("errors_before", errors_before)
+            revalidation_evidence.setdefault("errors_after", errors_after)
+            revalidation_evidence.setdefault("net_error_reduction", net_error_reduction)
+            revalidation_evidence.setdefault("resolved_diagnostic_ids", list(resolved_diagnostic_ids))
+            revalidation_evidence.setdefault("residual_diagnostic_ids", list(residual_diagnostic_ids))
+            revalidation_evidence.setdefault("diagnostics_before", [dict(item) for item in diagnostics_before])
+            revalidation_evidence.setdefault("diagnostics_after", [dict(item) for item in diagnostics_after])
+            verifier_command = _to_tuple_str_from_any(revalidation_evidence.get("command"))
+            verifier_exit_code = _optional_non_negative_int(revalidation_evidence.get("exit_code"))
+            diagnostics_before = _to_tuple_mapping_from_any(revalidation_evidence.get("diagnostics_before"))
+            diagnostics_after = _to_tuple_mapping_from_any(revalidation_evidence.get("diagnostics_after"))
+            resolved_diagnostic_ids = _to_tuple_str_from_any(revalidation_evidence.get("resolved_diagnostic_ids"))
+            residual_diagnostic_ids = _to_tuple_str_from_any(revalidation_evidence.get("residual_diagnostic_ids"))
+            errors_before = _optional_non_negative_int(revalidation_evidence.get("errors_before"))
+            errors_after = _optional_non_negative_int(revalidation_evidence.get("errors_after"))
+            net_error_reduction = _optional_int(revalidation_evidence.get("net_error_reduction"))
+            evidence_status = str(revalidation_evidence.get("evidence_status") or evidence_status).strip()
         object.__setattr__(
             self,
             "evidence_status",
-            str(self.evidence_status or "missing_evidence").strip() or "missing_evidence",
+            evidence_status or "missing_evidence",
         )
-        object.__setattr__(
-            self, "errors_before", None if self.errors_before is None else max(0, int(self.errors_before))
-        )
-        object.__setattr__(self, "errors_after", None if self.errors_after is None else max(0, int(self.errors_after)))
-        object.__setattr__(
-            self,
-            "net_error_reduction",
-            None if self.net_error_reduction is None else int(self.net_error_reduction),
-        )
+        object.__setattr__(self, "errors_before", errors_before)
+        object.__setattr__(self, "errors_after", errors_after)
+        object.__setattr__(self, "net_error_reduction", net_error_reduction)
         object.__setattr__(self, "authority_hash", str(self.authority_hash or "").strip())
         object.__setattr__(self, "projection_hash", str(self.projection_hash or "").strip())
-        object.__setattr__(self, "revalidation_evidence", _to_dict_copy(self.revalidation_evidence))
+        object.__setattr__(self, "revalidation_evidence", revalidation_evidence)
+        object.__setattr__(self, "verifier_command", verifier_command)
+        object.__setattr__(self, "verifier_exit_code", verifier_exit_code)
+        object.__setattr__(self, "diagnostics_before", diagnostics_before)
+        object.__setattr__(self, "diagnostics_after", diagnostics_after)
+        object.__setattr__(self, "resolved_diagnostic_ids", resolved_diagnostic_ids)
+        object.__setattr__(self, "residual_diagnostic_ids", residual_diagnostic_ids)
         object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
 
@@ -208,6 +303,12 @@ class RepairReceiptV1:
             "authority_hash": self.authority_hash,
             "projection_hash": self.projection_hash,
             "revalidation_evidence": dict(self.revalidation_evidence),
+            "verifier_command": list(self.verifier_command),
+            "verifier_exit_code": self.verifier_exit_code,
+            "diagnostics_before": [dict(item) for item in self.diagnostics_before],
+            "diagnostics_after": [dict(item) for item in self.diagnostics_after],
+            "resolved_diagnostic_ids": list(self.resolved_diagnostic_ids),
+            "residual_diagnostic_ids": list(self.residual_diagnostic_ids),
             "advisor_notes": [note.to_dict() for note in self.advisor_notes],
             "metadata": dict(self.metadata),
         }
@@ -620,21 +721,28 @@ class DirectorRepairDiagnosticCoverageV1:
     archetypes: tuple[str, ...] = ()
     phases: tuple[str, ...] = ()
     languages: tuple[str, ...] = ()
+    language: str = "unknown"
     diagnostic_archetype: str = "unknown"
     diagnostic_phase: str = "unknown"
     diagnostic_language: str = "unknown"
     diagnostic_code: str = "unknown"
+    archetype_suggestion: str = "unknown"
+    phase_suggestion: str = "unknown"
     suggested_rule_family: str = "unknown"
+    reserved_slot_available: bool = False
+    slot_status: str = "reserved_slot_missing"
     reserved_language_slot_matched: bool = False
     reserved_language_slot: Mapping[str, Any] = field(default_factory=dict)
     reserved_repairer_module: str = ""
     reserved_slot_registration_policy: str = ""
     recommended_next_owner: str = ""
+    recommended_route: str = "llm_repair"
     handoff_recommendation: str = ""
     llm_advisory_recommended: bool = False
     agi_advisory_recommended: bool = False
     authoritative_rule_registration_allowed: bool = False
     recommended_registration_path: str = ""
+    coverage_status: str = "coverage_gap"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "diagnostic", _to_dict_copy(self.diagnostic))
@@ -650,12 +758,28 @@ class DirectorRepairDiagnosticCoverageV1:
         object.__setattr__(self, "diagnostic_archetype", str(self.diagnostic_archetype or "unknown").strip())
         object.__setattr__(self, "diagnostic_phase", str(self.diagnostic_phase or "unknown").strip())
         object.__setattr__(self, "diagnostic_language", str(self.diagnostic_language or "unknown").strip())
+        language = str(self.language or "").strip()
+        if not language or language == "unknown":
+            language = self.diagnostic_language
+        object.__setattr__(self, "language", language)
         object.__setattr__(
             self,
             "diagnostic_code",
             str(self.diagnostic_code or self.diagnostic.get("code") or "unknown").strip(),
         )
+        object.__setattr__(
+            self,
+            "archetype_suggestion",
+            str(self.archetype_suggestion or self.diagnostic_archetype or "unknown").strip(),
+        )
+        object.__setattr__(
+            self,
+            "phase_suggestion",
+            str(self.phase_suggestion or self.diagnostic_phase or "unknown").strip(),
+        )
         object.__setattr__(self, "suggested_rule_family", str(self.suggested_rule_family or "unknown").strip())
+        object.__setattr__(self, "reserved_slot_available", bool(self.reserved_slot_available))
+        object.__setattr__(self, "slot_status", str(self.slot_status or "reserved_slot_missing").strip())
         object.__setattr__(self, "reserved_language_slot_matched", bool(self.reserved_language_slot_matched))
         object.__setattr__(self, "reserved_language_slot", _to_dict_copy(self.reserved_language_slot))
         object.__setattr__(self, "reserved_repairer_module", str(self.reserved_repairer_module or "").strip())
@@ -665,6 +789,7 @@ class DirectorRepairDiagnosticCoverageV1:
             str(self.reserved_slot_registration_policy or "").strip(),
         )
         object.__setattr__(self, "recommended_next_owner", str(self.recommended_next_owner or "").strip())
+        object.__setattr__(self, "recommended_route", str(self.recommended_route or "llm_repair").strip())
         object.__setattr__(self, "handoff_recommendation", str(self.handoff_recommendation or "").strip())
         object.__setattr__(self, "llm_advisory_recommended", bool(self.llm_advisory_recommended))
         object.__setattr__(self, "agi_advisory_recommended", bool(self.agi_advisory_recommended))
@@ -674,6 +799,7 @@ class DirectorRepairDiagnosticCoverageV1:
             "recommended_registration_path",
             str(self.recommended_registration_path or "").strip(),
         )
+        object.__setattr__(self, "coverage_status", str(self.coverage_status or "coverage_gap").strip())
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -687,21 +813,28 @@ class DirectorRepairDiagnosticCoverageV1:
             "archetypes": list(self.archetypes),
             "phases": list(self.phases),
             "languages": list(self.languages),
+            "language": self.language,
             "diagnostic_archetype": self.diagnostic_archetype,
             "diagnostic_phase": self.diagnostic_phase,
             "diagnostic_language": self.diagnostic_language,
             "diagnostic_code": self.diagnostic_code,
+            "archetype_suggestion": self.archetype_suggestion,
+            "phase_suggestion": self.phase_suggestion,
             "suggested_rule_family": self.suggested_rule_family,
+            "reserved_slot_available": self.reserved_slot_available,
+            "slot_status": self.slot_status,
             "reserved_language_slot_matched": self.reserved_language_slot_matched,
             "reserved_language_slot": dict(self.reserved_language_slot),
             "reserved_repairer_module": self.reserved_repairer_module,
             "reserved_slot_registration_policy": self.reserved_slot_registration_policy,
             "recommended_next_owner": self.recommended_next_owner,
+            "recommended_route": self.recommended_route,
             "handoff_recommendation": self.handoff_recommendation,
             "llm_advisory_recommended": self.llm_advisory_recommended,
             "agi_advisory_recommended": self.agi_advisory_recommended,
             "authoritative_rule_registration_allowed": False,
             "recommended_registration_path": self.recommended_registration_path,
+            "coverage_status": self.coverage_status,
         }
 
 
@@ -777,6 +910,12 @@ class DirectorRepairCoverageReportV1:
             "coverage_gap_handoff_recommendations": sorted(
                 {str(gap.get("handoff_recommendation") or "coverage_triage_required") for gap in coverage_gaps}
             ),
+            "coverage_gap_recommended_routes": sorted(
+                {str(gap.get("recommended_route") or "llm_repair") for gap in coverage_gaps}
+            ),
+            "coverage_gap_slot_statuses": sorted(
+                {str(gap.get("slot_status") or "reserved_slot_missing") for gap in coverage_gaps}
+            ),
             "executable_runtime_plan_diagnostic_count": self.executable_runtime_plan_diagnostic_count,
             "metadata_only_diagnostic_count": self.metadata_only_diagnostic_count,
             "items": [item.to_dict() for item in self.items],
@@ -791,16 +930,23 @@ def _public_coverage_gap_payload(item: DirectorRepairDiagnosticCoverageV1) -> di
         "diagnostic_id": str(item.diagnostic.get("diagnostic_id") or ""),
         "known_rule_matched": False,
         "executable_runtime_plan_matched": False,
+        "metadata_only_match": False,
+        "language": item.language,
         "diagnostic_language": item.diagnostic_language,
         "diagnostic_code": item.diagnostic_code,
         "diagnostic_phase": item.diagnostic_phase,
         "diagnostic_archetype": item.diagnostic_archetype,
+        "phase_suggestion": item.phase_suggestion,
+        "archetype_suggestion": item.archetype_suggestion,
         "suggested_rule_family": item.suggested_rule_family,
+        "reserved_slot_available": item.reserved_slot_available,
+        "slot_status": item.slot_status,
         "reserved_language_slot_matched": item.reserved_language_slot_matched,
         "reserved_language_slot": dict(item.reserved_language_slot),
         "reserved_repairer_module": item.reserved_repairer_module,
         "reserved_slot_registration_policy": item.reserved_slot_registration_policy,
         "recommended_next_owner": item.recommended_next_owner,
+        "recommended_route": item.recommended_route,
         "handoff_recommendation": item.handoff_recommendation,
         "llm_advisory_recommended": item.llm_advisory_recommended,
         "agi_advisory_recommended": item.agi_advisory_recommended,
@@ -808,6 +954,7 @@ def _public_coverage_gap_payload(item: DirectorRepairDiagnosticCoverageV1) -> di
         "recommended_registration_path": item.recommended_registration_path,
         "missing_capability": "deterministic_repair_rule",
         "audit_reason": "known_rule_matched=false",
+        "coverage_status": "coverage_gap",
     }
 
 

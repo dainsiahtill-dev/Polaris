@@ -1,4 +1,4 @@
-"""Runtime-owned Go repair execution flows."""
+"""Runtime-owned JavaScript/Node repair execution flows."""
 
 from __future__ import annotations
 
@@ -16,43 +16,41 @@ from .contracts import (
 )
 from .diagnostics import normalize_artifact_quality_errors
 from .executor import EditFileFn, TransactionalRepairExecutor, WriteFileFn
-from .go_syntax import (
-    GO_BARE_IMPORT_STRING_SOURCE_TOOL,
-    GO_BARE_LOCAL_IMPORT_SOURCE_TOOL,
-    GO_DEDUP_SOURCE_TOOL,
-    GO_MODULE_IMPORT_SOURCE_TOOL,
-    GO_NESTED_IMPORT_SOURCE_TOOL,
-    GO_SUBPATH_IMPORT_SOURCE_TOOL,
-    build_go_bare_import_string_plan,
-    build_go_bare_local_import_plan,
-    build_go_dedup_plan,
-    build_go_module_import_plan,
-    build_go_nested_import_plan,
-    build_go_subpath_import_plan,
+from .javascript_syntax import (
+    JAVASCRIPT_ESM_COMMONJS_ENTRYPOINT_SOURCE_TOOL,
+    JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+    JAVASCRIPT_MISSING_METHOD_RUNTIME_SOURCE_TOOL,
+    JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL,
+    NODE_TEST_SCRIPT_CONTRACT_SOURCE_TOOL,
+    NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
+    build_javascript_esm_commonjs_entrypoint_plan,
+    build_javascript_missing_export_plan,
+    build_javascript_missing_method_runtime_plan,
+    build_javascript_test_missing_target_plan,
+    build_node_test_script_contract_plan,
+    build_npm_script_contract_plan,
 )
 from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
 
+PlanBuilderFn = Callable[..., RepairPlan | None]
+
 
 @dataclass(frozen=True)
-class GoBareImportStringPlanning:
-    """Internal planning result for Go bare import string repairs."""
+class JavaScriptRepairPlanning:
+    """Internal planning result for JavaScript/Node repairs."""
 
+    source_tool: str
     diagnostics: tuple[RepairDiagnostic, ...]
     plan: RepairPlan | None
     composition: CompositionResult | None
     advisor_notes: tuple[RepairAdvisorNote, ...] = ()
-    source_tool_hint: str = GO_BARE_IMPORT_STRING_SOURCE_TOOL
-
-    @property
-    def source_tool(self) -> str:
-        return self.plan.source_tool if self.plan is not None else self.source_tool_hint
 
 
 @dataclass(frozen=True)
-class GoBareImportStringRun:
-    """Internal execution result for Go bare import string repairs."""
+class JavaScriptRepairRun:
+    """Internal execution result for JavaScript/Node repairs."""
 
-    planning: GoBareImportStringPlanning
+    planning: JavaScriptRepairPlanning
     ok: bool
     execution_result: RepairExecutionResult | None = None
     plan_decision: PolicyDecision | None = None
@@ -61,137 +59,121 @@ class GoBareImportStringRun:
     error_message: str | None = None
 
 
-def plan_go_bare_import_string_repair(
+def plan_npm_script_contract_repair(
     *,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
-) -> GoBareImportStringPlanning:
-    """Plan Go bare import string repairs inside the runtime kernel."""
+) -> JavaScriptRepairPlanning:
+    """Plan package.json script contract repairs inside the runtime kernel."""
 
-    normalized_base = _normalize_base_files(base_files)
-    diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
-    notes = tuple(advisor_notes or ())
-    plan = build_go_bare_import_string_plan(
-        base_files=normalized_base,
-        diagnostics=diagnostics,
-        mode=mode,
-    )
-    if plan is None:
-        return GoBareImportStringPlanning(
-            diagnostics=diagnostics,
-            plan=None,
-            composition=None,
-            advisor_notes=notes,
-        )
-    if notes:
-        plan = replace(plan, advisor_notes=notes)
-    composition = PatchComposer().compose(normalized_base, plan.operations)
-    return GoBareImportStringPlanning(
-        diagnostics=tuple(plan.diagnostics),
-        plan=plan,
-        composition=composition,
-        advisor_notes=notes,
-    )
-
-
-def plan_go_nested_import_repair(
-    *,
-    base_files: Mapping[str, str],
-    artifact_quality_errors: Sequence[str],
-    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
-    mode: str = "commit",
-) -> GoBareImportStringPlanning:
-    """Plan nested Go import keyword repairs inside the runtime kernel."""
-
-    return _plan_go_repair(
+    return _plan_javascript_repair(
+        source_tool=NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         advisor_notes=advisor_notes,
         mode=mode,
-        source_tool=GO_NESTED_IMPORT_SOURCE_TOOL,
-        planner=build_go_nested_import_plan,
+        builder=build_npm_script_contract_plan,
     )
 
 
-def plan_go_module_import_repair(
+def plan_node_test_script_contract_repair(
     *,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
-) -> GoBareImportStringPlanning:
-    """Plan Go module import prefix repairs inside the runtime kernel."""
+) -> JavaScriptRepairPlanning:
+    """Plan generated Node test script contract repairs inside the runtime kernel."""
 
-    return _plan_go_repair(
+    return _plan_javascript_repair(
+        source_tool=NODE_TEST_SCRIPT_CONTRACT_SOURCE_TOOL,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         advisor_notes=advisor_notes,
         mode=mode,
-        source_tool=GO_MODULE_IMPORT_SOURCE_TOOL,
-        planner=build_go_module_import_plan,
+        builder=build_node_test_script_contract_plan,
     )
 
 
-def plan_go_dedup_repair(
+def plan_javascript_test_missing_target_repair(
     *,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
-) -> GoBareImportStringPlanning:
-    """Plan conservative generated Go intra-file dedup repairs."""
+) -> JavaScriptRepairPlanning:
+    """Plan missing JavaScript smoke test targets inside the runtime kernel."""
 
-    return _plan_go_repair(
+    return _plan_javascript_repair(
+        source_tool=JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         advisor_notes=advisor_notes,
         mode=mode,
-        source_tool=GO_DEDUP_SOURCE_TOOL,
-        planner=build_go_dedup_plan,
+        builder=build_javascript_test_missing_target_plan,
     )
 
 
-def plan_go_bare_local_import_repair(
+def plan_javascript_missing_export_repair(
     *,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
-) -> GoBareImportStringPlanning:
-    """Plan Go bare local import prefix repairs inside the runtime kernel."""
+) -> JavaScriptRepairPlanning:
+    """Plan conservative JavaScript named-export repairs inside the runtime kernel."""
 
-    return _plan_go_repair(
+    return _plan_javascript_repair(
+        source_tool=JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         advisor_notes=advisor_notes,
         mode=mode,
-        source_tool=GO_BARE_LOCAL_IMPORT_SOURCE_TOOL,
-        planner=build_go_bare_local_import_plan,
+        builder=build_javascript_missing_export_plan,
     )
 
 
-def plan_go_subpath_import_repair(
+def plan_javascript_esm_commonjs_entrypoint_repair(
     *,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
-) -> GoBareImportStringPlanning:
-    """Plan hallucinated Go import subpath repairs inside the runtime kernel."""
+) -> JavaScriptRepairPlanning:
+    """Plan conservative CommonJS-to-ESM entrypoint repairs inside the runtime kernel."""
 
-    return _plan_go_repair(
+    return _plan_javascript_repair(
+        source_tool=JAVASCRIPT_ESM_COMMONJS_ENTRYPOINT_SOURCE_TOOL,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         advisor_notes=advisor_notes,
         mode=mode,
-        source_tool=GO_SUBPATH_IMPORT_SOURCE_TOOL,
-        planner=build_go_subpath_import_plan,
+        builder=build_javascript_esm_commonjs_entrypoint_plan,
     )
 
 
-def run_go_bare_import_string_repair(
+def plan_javascript_missing_method_runtime_repair(
+    *,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> JavaScriptRepairPlanning:
+    """Plan conservative JavaScript missing-method runtime repairs inside the runtime kernel."""
+
+    return _plan_javascript_repair(
+        source_tool=JAVASCRIPT_MISSING_METHOD_RUNTIME_SOURCE_TOOL,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        builder=build_javascript_missing_method_runtime_plan,
+    )
+
+
+def run_npm_script_contract_repair(
     *,
     workspace: str | Path,
     base_files: Mapping[str, str],
@@ -201,81 +183,10 @@ def run_go_bare_import_string_repair(
     allowed_paths: Sequence[str] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
-) -> GoBareImportStringRun:
-    """Run Go bare import string repair through Plan→Compose→Policy→Execute."""
+) -> JavaScriptRepairRun:
+    """Run package.json script contract repair through Plan->Compose->Policy->Execute."""
 
-    normalized_base = _normalize_base_files(base_files)
-    planning = plan_go_bare_import_string_repair(
-        base_files=normalized_base,
-        artifact_quality_errors=artifact_quality_errors,
-        advisor_notes=advisor_notes,
-        mode=mode,
-    )
-    if planning.plan is None:
-        return GoBareImportStringRun(
-            planning=planning,
-            ok=False,
-            error_code="repair_not_planned",
-            error_message="No matching Go bare import string repair plan.",
-        )
-    if planning.composition is None:
-        return GoBareImportStringRun(
-            planning=planning,
-            ok=False,
-            error_code="repair_composition_missing",
-            error_message="Go bare import string repair composition was not produced.",
-        )
-
-    policy = RepairPolicyGate()
-    policy_context = RepairPolicyContext(
-        allowed_paths=tuple(
-            _normalize_repair_path(str(path or "")) for path in (allowed_paths or normalized_base.keys())
-        )
-    )
-    plan_decision = policy.evaluate_plan(planning.plan, policy_context)
-    composition_decision = policy.evaluate_composition(planning.plan, planning.composition)
-    if not plan_decision.allowed or not composition_decision.allowed:
-        return GoBareImportStringRun(
-            planning=planning,
-            ok=False,
-            plan_decision=plan_decision,
-            composition_decision=composition_decision,
-            error_code="repair_policy_denied",
-            error_message="Director Runtime repair policy denied the plan or composition.",
-        )
-
-    execution_result = TransactionalRepairExecutor().execute(
-        workspace=Path(str(workspace)).resolve(),
-        plan=planning.plan,
-        composition=planning.composition,
-        writer=writer,
-        editor=editor,
-    )
-    return GoBareImportStringRun(
-        planning=planning,
-        ok=execution_result.ok,
-        execution_result=execution_result,
-        plan_decision=plan_decision,
-        composition_decision=composition_decision,
-        error_code=None if execution_result.ok else "repair_execution_failed",
-        error_message=None if execution_result.ok else execution_result.error,
-    )
-
-
-def run_go_nested_import_repair(
-    *,
-    workspace: str | Path,
-    base_files: Mapping[str, str],
-    artifact_quality_errors: Sequence[str],
-    writer: WriteFileFn,
-    editor: EditFileFn | None = None,
-    allowed_paths: Sequence[str] | None = None,
-    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
-    mode: str = "commit",
-) -> GoBareImportStringRun:
-    """Run nested Go import keyword repair through Plan→Compose→Policy→Execute."""
-
-    return _run_go_repair(
+    return _run_javascript_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
@@ -284,13 +195,13 @@ def run_go_nested_import_repair(
         allowed_paths=allowed_paths,
         advisor_notes=advisor_notes,
         mode=mode,
-        planner=plan_go_nested_import_repair,
-        missing_plan_message="No matching Go nested import keyword repair plan.",
-        missing_composition_message="Go nested import keyword repair composition was not produced.",
+        planner=plan_npm_script_contract_repair,
+        not_planned_message="No matching npm script contract repair plan.",
+        composition_missing_message="NPM script contract repair composition was not produced.",
     )
 
 
-def run_go_bare_local_import_repair(
+def run_node_test_script_contract_repair(
     *,
     workspace: str | Path,
     base_files: Mapping[str, str],
@@ -300,10 +211,10 @@ def run_go_bare_local_import_repair(
     allowed_paths: Sequence[str] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
-) -> GoBareImportStringRun:
-    """Run Go bare local import prefix repair through Plan→Compose→Policy→Execute."""
+) -> JavaScriptRepairRun:
+    """Run generated Node test contract repair through Plan->Compose->Policy->Execute."""
 
-    return _run_go_repair(
+    return _run_javascript_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
@@ -312,13 +223,13 @@ def run_go_bare_local_import_repair(
         allowed_paths=allowed_paths,
         advisor_notes=advisor_notes,
         mode=mode,
-        planner=plan_go_bare_local_import_repair,
-        missing_plan_message="No matching Go bare local import repair plan.",
-        missing_composition_message="Go bare local import repair composition was not produced.",
+        planner=plan_node_test_script_contract_repair,
+        not_planned_message="No matching Node test script contract repair plan.",
+        composition_missing_message="Node test script contract repair composition was not produced.",
     )
 
 
-def run_go_module_import_repair(
+def run_javascript_test_missing_target_repair(
     *,
     workspace: str | Path,
     base_files: Mapping[str, str],
@@ -328,10 +239,10 @@ def run_go_module_import_repair(
     allowed_paths: Sequence[str] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
-) -> GoBareImportStringRun:
-    """Run Go module import prefix repair through Plan→Compose→Policy→Execute."""
+) -> JavaScriptRepairRun:
+    """Run missing JavaScript smoke test target repair through Plan->Compose->Policy->Execute."""
 
-    return _run_go_repair(
+    return _run_javascript_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
@@ -340,13 +251,13 @@ def run_go_module_import_repair(
         allowed_paths=allowed_paths,
         advisor_notes=advisor_notes,
         mode=mode,
-        planner=plan_go_module_import_repair,
-        missing_plan_message="No matching Go module import repair plan.",
-        missing_composition_message="Go module import repair composition was not produced.",
+        planner=plan_javascript_test_missing_target_repair,
+        not_planned_message="No matching JavaScript missing test target repair plan.",
+        composition_missing_message="JavaScript missing test target repair composition was not produced.",
     )
 
 
-def run_go_dedup_repair(
+def run_javascript_missing_export_repair(
     *,
     workspace: str | Path,
     base_files: Mapping[str, str],
@@ -356,10 +267,10 @@ def run_go_dedup_repair(
     allowed_paths: Sequence[str] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
-) -> GoBareImportStringRun:
-    """Run conservative generated Go intra-file dedup through Plan→Compose→Policy→Execute."""
+) -> JavaScriptRepairRun:
+    """Run conservative JavaScript named-export repair through Plan->Compose->Policy->Execute."""
 
-    return _run_go_repair(
+    return _run_javascript_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
@@ -368,13 +279,13 @@ def run_go_dedup_repair(
         allowed_paths=allowed_paths,
         advisor_notes=advisor_notes,
         mode=mode,
-        planner=plan_go_dedup_repair,
-        missing_plan_message="No matching safe Go dedup repair plan.",
-        missing_composition_message="Go dedup repair composition was not produced.",
+        planner=plan_javascript_missing_export_repair,
+        not_planned_message="No matching JavaScript missing export repair plan.",
+        composition_missing_message="JavaScript missing export repair composition was not produced.",
     )
 
 
-def run_go_subpath_import_repair(
+def run_javascript_esm_commonjs_entrypoint_repair(
     *,
     workspace: str | Path,
     base_files: Mapping[str, str],
@@ -384,10 +295,10 @@ def run_go_subpath_import_repair(
     allowed_paths: Sequence[str] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
-) -> GoBareImportStringRun:
-    """Run hallucinated Go import subpath repair through Plan→Compose→Policy→Execute."""
+) -> JavaScriptRepairRun:
+    """Run conservative CommonJS-to-ESM entrypoint repair through Plan->Compose->Policy->Execute."""
 
-    return _run_go_repair(
+    return _run_javascript_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
@@ -396,50 +307,74 @@ def run_go_subpath_import_repair(
         allowed_paths=allowed_paths,
         advisor_notes=advisor_notes,
         mode=mode,
-        planner=plan_go_subpath_import_repair,
-        missing_plan_message="No matching Go import subpath repair plan.",
-        missing_composition_message="Go import subpath repair composition was not produced.",
+        planner=plan_javascript_esm_commonjs_entrypoint_repair,
+        not_planned_message="No matching JavaScript ESM/CommonJS entrypoint repair plan.",
+        composition_missing_message="JavaScript ESM/CommonJS entrypoint repair composition was not produced.",
     )
 
 
-def _plan_go_repair(
+def run_javascript_missing_method_runtime_repair(
     *,
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> JavaScriptRepairRun:
+    """Run conservative JavaScript missing-method runtime repair through Plan->Compose->Policy->Execute."""
+
+    return _run_javascript_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        planner=plan_javascript_missing_method_runtime_repair,
+        not_planned_message="No matching JavaScript missing-method runtime repair plan.",
+        composition_missing_message="JavaScript missing-method runtime repair composition was not produced.",
+    )
+
+
+def _plan_javascript_repair(
+    *,
+    source_tool: str,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
-    source_tool: str,
-    planner: Callable[..., RepairPlan | None],
-) -> GoBareImportStringPlanning:
+    builder: PlanBuilderFn,
+) -> JavaScriptRepairPlanning:
     normalized_base = _normalize_base_files(base_files)
     diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
     notes = tuple(advisor_notes or ())
-    plan = planner(
-        base_files=normalized_base,
-        diagnostics=diagnostics,
-        mode=mode,
-    )
+    plan = builder(base_files=normalized_base, diagnostics=diagnostics, mode=mode)
     if plan is None:
-        return GoBareImportStringPlanning(
+        return JavaScriptRepairPlanning(
+            source_tool=source_tool,
             diagnostics=diagnostics,
             plan=None,
             composition=None,
             advisor_notes=notes,
-            source_tool_hint=source_tool,
         )
     if notes:
         plan = replace(plan, advisor_notes=notes)
     composition = PatchComposer().compose(normalized_base, plan.operations)
-    return GoBareImportStringPlanning(
+    return JavaScriptRepairPlanning(
+        source_tool=plan.source_tool,
         diagnostics=tuple(plan.diagnostics),
         plan=plan,
         composition=composition,
         advisor_notes=notes,
-        source_tool_hint=source_tool,
     )
 
 
-def _run_go_repair(
+def _run_javascript_repair(
     *,
     workspace: str | Path,
     base_files: Mapping[str, str],
@@ -449,10 +384,10 @@ def _run_go_repair(
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
-    planner: Callable[..., GoBareImportStringPlanning],
-    missing_plan_message: str,
-    missing_composition_message: str,
-) -> GoBareImportStringRun:
+    planner: Callable[..., JavaScriptRepairPlanning],
+    not_planned_message: str,
+    composition_missing_message: str,
+) -> JavaScriptRepairRun:
     normalized_base = _normalize_base_files(base_files)
     planning = planner(
         base_files=normalized_base,
@@ -461,30 +396,28 @@ def _run_go_repair(
         mode=mode,
     )
     if planning.plan is None:
-        return GoBareImportStringRun(
+        return JavaScriptRepairRun(
             planning=planning,
             ok=False,
             error_code="repair_not_planned",
-            error_message=missing_plan_message,
+            error_message=not_planned_message,
         )
     if planning.composition is None:
-        return GoBareImportStringRun(
+        return JavaScriptRepairRun(
             planning=planning,
             ok=False,
             error_code="repair_composition_missing",
-            error_message=missing_composition_message,
+            error_message=composition_missing_message,
         )
 
     policy = RepairPolicyGate()
     policy_context = RepairPolicyContext(
-        allowed_paths=tuple(
-            _normalize_repair_path(str(path or "")) for path in (allowed_paths or normalized_base.keys())
-        )
+        allowed_paths=tuple(_normalize_repair_path(str(path or "")) for path in (allowed_paths or normalized_base))
     )
     plan_decision = policy.evaluate_plan(planning.plan, policy_context)
     composition_decision = policy.evaluate_composition(planning.plan, planning.composition)
     if not plan_decision.allowed or not composition_decision.allowed:
-        return GoBareImportStringRun(
+        return JavaScriptRepairRun(
             planning=planning,
             ok=False,
             plan_decision=plan_decision,
@@ -500,7 +433,7 @@ def _run_go_repair(
         writer=writer,
         editor=editor,
     )
-    return GoBareImportStringRun(
+    return JavaScriptRepairRun(
         planning=planning,
         ok=execution_result.ok,
         execution_result=execution_result,
@@ -513,9 +446,9 @@ def _run_go_repair(
 
 def _normalize_base_files(base_files: Mapping[str, str]) -> dict[str, str]:
     return {
-        _normalize_repair_path(str(path or "")): str(content or "")
+        normalized: str(content or "")
         for path, content in dict(base_files or {}).items()
-        if _normalize_repair_path(str(path or ""))
+        if (normalized := _normalize_repair_path(str(path or "")))
     }
 
 
@@ -523,22 +456,24 @@ def _normalize_repair_path(path: str) -> str:
     normalized = str(path or "").strip().replace("\\", "/")
     while normalized.startswith("./"):
         normalized = normalized[2:]
+    if normalized.startswith("/") or normalized.startswith("../") or "/../" in normalized:
+        return ""
     return normalized
 
 
 __all__ = [
-    "GoBareImportStringPlanning",
-    "GoBareImportStringRun",
-    "plan_go_bare_import_string_repair",
-    "plan_go_bare_local_import_repair",
-    "plan_go_dedup_repair",
-    "plan_go_module_import_repair",
-    "plan_go_nested_import_repair",
-    "plan_go_subpath_import_repair",
-    "run_go_bare_import_string_repair",
-    "run_go_bare_local_import_repair",
-    "run_go_dedup_repair",
-    "run_go_module_import_repair",
-    "run_go_nested_import_repair",
-    "run_go_subpath_import_repair",
+    "JavaScriptRepairPlanning",
+    "JavaScriptRepairRun",
+    "plan_javascript_esm_commonjs_entrypoint_repair",
+    "plan_javascript_missing_export_repair",
+    "plan_javascript_missing_method_runtime_repair",
+    "plan_javascript_test_missing_target_repair",
+    "plan_node_test_script_contract_repair",
+    "plan_npm_script_contract_repair",
+    "run_javascript_esm_commonjs_entrypoint_repair",
+    "run_javascript_missing_export_repair",
+    "run_javascript_missing_method_runtime_repair",
+    "run_javascript_test_missing_target_repair",
+    "run_node_test_script_contract_repair",
+    "run_npm_script_contract_repair",
 ]

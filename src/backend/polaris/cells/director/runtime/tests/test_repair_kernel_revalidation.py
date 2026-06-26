@@ -6,7 +6,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.director.runtime.internal.repair_kernel.legacy_bridge import build_legacy_repair_kernel_summary
+from polaris.cells.director.runtime.internal.repair_kernel.legacy_bridge import (
+    build_legacy_repair_kernel_summary,
+    summarize_repair_revalidation_coverage,
+)
 from polaris.cells.director.runtime.public.contracts import (
     AttachDirectorRepairRevalidationEvidenceV1,
     DirectorRepairResultV1,
@@ -68,6 +71,7 @@ def _run_repair(workspace: Path, *, revalidator: _Revalidator | None = None) -> 
 
 def _assert_receipt_evidence_material(receipt: RepairReceiptV1) -> dict[str, Any]:
     evidence = dict(receipt.revalidation_evidence)
+    payload = receipt.to_dict()
 
     assert receipt.authority_hash
     assert receipt.projection_hash
@@ -80,6 +84,18 @@ def _assert_receipt_evidence_material(receipt: RepairReceiptV1) -> dict[str, Any
     assert "errors_after" in evidence
     assert "net_error_reduction" in evidence
     assert evidence["evidence_status"] == receipt.evidence_status
+    assert receipt.verifier_command == tuple(evidence["command"])
+    assert receipt.verifier_exit_code == evidence["exit_code"]
+    assert [dict(item) for item in receipt.diagnostics_before] == evidence["diagnostics_before"]
+    assert [dict(item) for item in receipt.diagnostics_after] == evidence["diagnostics_after"]
+    assert list(receipt.resolved_diagnostic_ids) == evidence["resolved_diagnostic_ids"]
+    assert list(receipt.residual_diagnostic_ids) == evidence["residual_diagnostic_ids"]
+    assert payload["verifier_command"] == evidence["command"]
+    assert payload["verifier_exit_code"] == evidence["exit_code"]
+    assert payload["diagnostics_before"] == evidence["diagnostics_before"]
+    assert payload["diagnostics_after"] == evidence["diagnostics_after"]
+    assert payload["resolved_diagnostic_ids"] == evidence["resolved_diagnostic_ids"]
+    assert payload["residual_diagnostic_ids"] == evidence["residual_diagnostic_ids"]
     return evidence
 
 
@@ -168,6 +184,12 @@ def test_run_director_repair_without_revalidator_still_requires_revalidation(tmp
     assert receipt.authoritative is False
     assert receipt.evidence_status == "missing_evidence"
     assert receipt.revalidation_evidence == {}
+    assert receipt.verifier_command == ()
+    assert receipt.verifier_exit_code is None
+    assert receipt.diagnostics_before == ()
+    assert receipt.diagnostics_after == ()
+    assert receipt.resolved_diagnostic_ids == ()
+    assert receipt.residual_diagnostic_ids == ()
     assert receipt.metadata["requires_revalidation"] is True
     assert receipt.authority_hash
     assert receipt.projection_hash
@@ -338,6 +360,12 @@ def test_legacy_revalidation_zero_exit_with_residual_ids_counts_failed() -> None
     assert receipt["status"] == "failed_revalidation"
     assert receipt["authoritative"] is False
     assert receipt["evidence_status"] == "failed_evidence"
+    assert receipt["verifier_command"] == ["rtk", "tsc", "--noEmit"]
+    assert receipt["verifier_exit_code"] == 0
+    assert receipt["diagnostics_before"]
+    assert receipt["diagnostics_after"] == []
+    assert receipt["resolved_diagnostic_ids"] == []
+    assert receipt["residual_diagnostic_ids"] == ["diag-residual"]
     assert receipt["revalidation_evidence"]["evidence_status"] == "failed_evidence"
     assert receipt["revalidation_evidence"]["exit_code"] == 0
     assert receipt["revalidation_evidence"]["errors_after"] == 1
@@ -348,6 +376,37 @@ def test_legacy_revalidation_zero_exit_with_residual_ids_counts_failed() -> None
     assert coverage["evidence_status_counts"]["failed_evidence"] == 1
     assert coverage["failed_revalidation_receipt_ids"] == [receipt["receipt_id"]]
     assert summary["authoritative"] is False
+
+
+def test_revalidation_coverage_failed_evidence_is_not_missing_with_stale_requires_flag() -> None:
+    coverage = summarize_repair_revalidation_coverage(
+        [
+            {
+                "receipt_id": "receipt-with-failed-evidence",
+                "source_tool": _SOURCE_TOOL,
+                "status": "failed_revalidation",
+                "authoritative": False,
+                "metadata": {"requires_revalidation": True},
+                "revalidation_evidence": {
+                    "command": ["rtk", "npm", "test"],
+                    "exit_code": 1,
+                    "evidence_status": "failed_evidence",
+                    "errors_before": 1,
+                    "errors_after": 1,
+                    "resolved_diagnostic_ids": [],
+                    "residual_diagnostic_ids": ["diag-residual"],
+                },
+            }
+        ]
+    )
+
+    assert coverage["receipts_missing_revalidation"] == 0
+    assert coverage["post_check_evidence_complete"] is True
+    assert coverage["requires_revalidation"] is False
+    assert coverage["evidence_status_counts"]["failed_evidence"] == 1
+    assert coverage["evidence_status_counts"]["missing_evidence"] == 0
+    assert coverage["failed_evidence_receipt_ids"] == ["receipt-with-failed-evidence"]
+    assert coverage["missing_evidence_receipt_ids"] == []
 
 
 def test_public_revalidation_projection_keeps_missing_receipt_errors_before_at_zero() -> None:
@@ -389,6 +448,12 @@ def test_public_revalidation_projection_keeps_missing_receipt_errors_before_at_z
     assert evidence["metadata"]["coverage_report_total_diagnostics"] == 7
     assert evidence["metadata"]["coverage_report_total_diagnostics_used_for_errors_before"] is False
     assert receipt["errors_before"] == 0
+    assert receipt["verifier_command"] == ["rtk", "tsc", "--noEmit"]
+    assert receipt["verifier_exit_code"] == 0
+    assert receipt["diagnostics_before"] == []
+    assert receipt["diagnostics_after"] == evidence["diagnostics_after"]
+    assert receipt["resolved_diagnostic_ids"] == []
+    assert receipt["residual_diagnostic_ids"] == []
     assert receipt["evidence_status"] == "failed_evidence"
     assert evidence["evidence_status"] == "failed_evidence"
     assert receipt["status"] == "failed_revalidation"

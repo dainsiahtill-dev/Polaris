@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import SupportsIndex
 
 from polaris.cells.director.runtime.internal.repair_kernel import (
     PatchComposer,
@@ -56,11 +57,30 @@ def test_patch_composer_applies_multispan_text_replacements_and_detects_conflict
 
     assert not conflict.ok
     assert conflict.issues[0].code == "overlapping_text_spans"
+    assert len(conflict.issues[0].operation_ids) == 2
+    assert conflict.issues[0].metadata["same_file_multi_patch_conflict"] is True
+    assert conflict.issues[0].metadata["current_span"] == {"start": 1, "end": 4}
+    assert conflict.issues[0].metadata["previous_span"] == {"start": 3, "end": 5}
 
 
 def test_patch_composer_requires_unique_context_when_expected_is_missing() -> None:
     content = "call target();\ncall target();\n"
     start = content.index("target")
+    missing_precondition = RepairOperation(
+        kind="text_replace",
+        path="src/app.ts",
+        span_start=start,
+        span_end=start + len("target"),
+        replacement="fixed",
+    )
+
+    missing_result = PatchComposer().compose({"src/app.ts": content}, (missing_precondition,))
+
+    assert not missing_result.ok
+    assert missing_result.patches == ()
+    assert missing_result.issues[0].code == "missing_text_precondition"
+    assert missing_result.issues[0].metadata["requires_expected_or_unique_context"] is True
+
     ambiguous = RepairOperation(
         kind="text_replace",
         path="src/app.ts",
@@ -96,6 +116,8 @@ def test_patch_composer_requires_unique_context_when_expected_is_missing() -> No
     assert unique_result.ok
     assert unique_result.patches[0].content_after == "only call fixed();\nother call target();\n"
     assert unique_result.patches[0].metadata["unique_context_checked"] is True
+    assert unique_result.patches[0].metadata["precision_strategy"] == "span_context_text_patch"
+    assert unique_result.patches[0].metadata["write_file_fallback_allowed"] is True
 
 
 def test_unique_context_duplicate_probe_stops_after_second_occurrence() -> None:
@@ -107,11 +129,17 @@ def test_unique_context_duplicate_probe_stops_after_second_occurrence() -> None:
             instance.find_calls = 0
             return instance
 
-        def find(self, sub: str, start: int = 0, end: int = -1) -> int:
+        def find(
+            self,
+            sub: str,
+            start: SupportsIndex | None = 0,
+            end: SupportsIndex | None = -1,
+        ) -> int:
             self.find_calls += 1
-            if end == -1:
-                return super().find(sub, start)
-            return super().find(sub, start, end)
+            normalized_start: SupportsIndex = 0 if start is None else start
+            if end is None or end.__index__() == -1:
+                return super().find(sub, normalized_start)
+            return super().find(sub, normalized_start, end)
 
     content = FindCountingContent("target" + ("x" * 4096) + "target" + (" target" * 32))
 
@@ -219,6 +247,233 @@ def test_executor_prefers_policy_gated_editor_and_records_write_file_reason(tmp_
     assert whole_file_result.receipt.metadata["write_file_reasons_by_path"] == {
         relative_path: "fallback_whole_file_repair"
     }
+    whole_file_record = whole_file_result.receipt.metadata["execution_records"][0]
+    assert whole_file_record["write_file_allowed_category"] == "fallback"
+    assert whole_file_record["write_file_policy_decision"] == "allowed_fallback"
+    assert whole_file_record["write_file_fallback_source"] == "explicit_write_file_operation"
+
+
+def test_executor_records_write_file_fallback_when_precise_editor_is_unavailable(tmp_path: Path) -> None:
+    relative_path = "src/app.ts"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    original = "export const feature = false;\n"
+    target.write_text(original, encoding="utf-8")
+    start = original.index("false")
+    operation = RepairOperation(
+        kind="text_replace",
+        path=relative_path,
+        span_start=start,
+        span_end=start + len("false"),
+        expected="false",
+        replacement="true",
+        metadata={"unique_context": "export const feature = false;\n"},
+    )
+    plan = RepairPlan(
+        rule_id="typescript.precise_writer_fallback",
+        source_tool="deterministic_typescript_nullable_canvas_context_repair",
+        operations=(operation,),
+    )
+    composition = PatchComposer().compose({relative_path: original}, plan.operations)
+    write_calls: list[tuple[str, str]] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        write_calls.append((path, content))
+        (tmp_path / path).write_text(content, encoding="utf-8")
+        return {"ok": True}
+
+    result = TransactionalRepairExecutor().execute(
+        workspace=tmp_path,
+        plan=plan,
+        composition=composition,
+        writer=writer,
+    )
+
+    assert result.ok
+    assert target.read_text(encoding="utf-8") == "export const feature = true;\n"
+    assert write_calls == [(relative_path, "export const feature = true;\n")]
+    record = result.receipt.metadata["execution_records"][0]
+    assert record["operation"] == "write_file"
+    assert record["span_based"] is True
+    assert record["unique_context_checked"] is True
+    assert record["write_file_reason"] == "fallback_whole_file_repair"
+    assert record["write_file_allowed_category"] == "fallback"
+    assert record["write_file_policy_decision"] == "allowed_fallback"
+    assert record["write_file_fallback_source"] == "span_context_text_patch_editor_unavailable_or_rejected"
+    assert record["precise_edit_strategy"] == {
+        "strategy": "write_file_fallback",
+        "span_based": True,
+        "unique_context_checked": True,
+        "editor_preferred": True,
+        "editor_used": False,
+        "write_file_used": True,
+        "write_file_fallback_source": "span_context_text_patch_editor_unavailable_or_rejected",
+        "large_file_safe": True,
+        "operation_ids": [operation.operation_id],
+    }
+    assert result.receipt.metadata["precise_edit_strategy"] == {
+        "strategy": "span_based",
+        "span_based": True,
+        "unique_context_checked": True,
+        "editor_preferred": True,
+        "editor_used": False,
+        "write_file_used": True,
+        "write_file_fallback_paths": [relative_path],
+        "large_file_safe": True,
+        "paths": [relative_path],
+    }
+
+
+def test_executor_large_file_span_edit_uses_editor_and_projects_rollback_evidence(tmp_path: Path) -> None:
+    large_path = "src/a-large.ts"
+    fail_path = "src/b-fail.ts"
+    large_target = tmp_path / large_path
+    fail_target = tmp_path / fail_path
+    large_target.parent.mkdir(parents=True)
+    large_lines = [f"export const value_{index} = {index};\n" for index in range(2200)]
+    target_line = "export const target_1999 = false;\n"
+    large_lines.insert(1999, target_line)
+    large_original = "".join(large_lines)
+    fail_original = "export const fail = false;\n"
+    large_target.write_text(large_original, encoding="utf-8")
+    fail_target.write_text(fail_original, encoding="utf-8")
+
+    large_start = large_original.index("false")
+    fail_start = fail_original.index("false")
+    large_operation = RepairOperation(
+        kind="text_replace",
+        path=large_path,
+        span_start=large_start,
+        span_end=large_start + len("false"),
+        expected="false",
+        replacement="true",
+        metadata={"unique_context": target_line},
+    )
+    fail_operation = RepairOperation(
+        kind="text_replace",
+        path=fail_path,
+        span_start=fail_start,
+        span_end=fail_start + len("false"),
+        expected="false",
+        replacement="true",
+    )
+    plan = RepairPlan(
+        rule_id="typescript.large_file_precise_edit_rollback",
+        source_tool="deterministic_typescript_missing_export_repair",
+        operations=(large_operation, fail_operation),
+    )
+    composition = PatchComposer().compose(
+        {
+            large_path: large_original,
+            fail_path: fail_original,
+        },
+        plan.operations,
+    )
+    write_calls: list[tuple[str, str]] = []
+    edit_calls: list[str] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        write_calls.append((path, content))
+        (tmp_path / path).write_text(content, encoding="utf-8")
+        return {"ok": True}
+
+    def editor(edit_operation: RepairOperation) -> dict[str, object]:
+        edit_calls.append(edit_operation.path)
+        if edit_operation.path == fail_path:
+            return {"ok": False}
+        assert edit_operation.span_start is not None
+        assert edit_operation.span_end is not None
+        target = tmp_path / edit_operation.path
+        current = target.read_text(encoding="utf-8")
+        updated = (
+            current[: edit_operation.span_start]
+            + str(edit_operation.replacement or "")
+            + current[edit_operation.span_end :]
+        )
+        target.write_text(updated, encoding="utf-8")
+        return {"ok": True}
+
+    result = TransactionalRepairExecutor().execute(
+        workspace=tmp_path,
+        plan=plan,
+        composition=composition,
+        writer=writer,
+        editor=editor,
+    )
+
+    assert not result.ok
+    assert result.rolled_back is True
+    assert large_target.read_text(encoding="utf-8") == large_original
+    assert fail_target.read_text(encoding="utf-8") == fail_original
+    assert edit_calls == [large_path, fail_path]
+    assert write_calls == [(large_path, large_original)]
+
+    metadata = result.receipt.metadata
+    assert metadata["rollback_strategy"] == "write_file_full_restore"
+    assert metadata["rollback_success_count"] == 1
+    assert metadata["rollback_failed_paths"] == []
+    assert metadata["rollback_patch"] == [
+        {
+            "path": large_path,
+            "rollback_patch_id": f"rollback:write_file_full_restore:{large_path}",
+            "rollback_strategy": "write_file_full_restore",
+            "rollback_operation": "write_file",
+            "rollback_reason": "transaction_failure",
+            "rollback_policy_decision": "allowed_rollback",
+            "before_hash": sha256_text(large_original.replace("false", "true", 1)),
+            "after_hash": sha256_text(large_original),
+            "exists_before": True,
+            "exists_after": True,
+            "operation_ids": [large_operation.operation_id],
+        }
+    ]
+    assert metadata["rollback_operations"] == [
+        {
+            "path": large_path,
+            "rollback_patch_id": f"rollback:write_file_full_restore:{large_path}",
+            "operation": "write_file",
+            "rollback_strategy": "write_file_full_restore",
+            "rollback_reason": "transaction_failure",
+            "rollback_policy_decision": "allowed_rollback",
+            "write_file_allowed_category": "rollback",
+            "write_file_reason": "rollback_full_restore",
+            "before_hash": sha256_text(large_original.replace("false", "true", 1)),
+            "after_hash": sha256_text(large_original),
+            "exists_before": True,
+            "exists_after": True,
+            "operation_ids": [large_operation.operation_id],
+            "ok": True,
+        }
+    ]
+
+    record = metadata["execution_records"][0]
+    assert record["operation"] == "edit_file"
+    assert record["span_based"] is True
+    assert record["unique_context_checked"] is True
+    assert record["write_file_reason"] == ""
+    assert record["precise_edit_strategy"] == {
+        "strategy": "span_based",
+        "span_based": True,
+        "unique_context_checked": True,
+        "editor_preferred": True,
+        "editor_used": True,
+        "write_file_used": False,
+        "write_file_fallback_source": "",
+        "large_file_safe": True,
+        "operation_ids": [large_operation.operation_id],
+    }
+    assert metadata["precise_edit_strategy"] == {
+        "strategy": "span_based",
+        "span_based": True,
+        "unique_context_checked": True,
+        "editor_preferred": True,
+        "editor_used": True,
+        "write_file_used": False,
+        "write_file_fallback_paths": [],
+        "large_file_safe": True,
+        "paths": [large_path],
+    }
+    assert metadata["precise_edit_strategy_by_path"][large_path]["write_file_used"] is False
 
 
 def test_executor_records_full_file_rollback_strategy_after_editor_forward_failure(tmp_path: Path) -> None:
@@ -527,8 +782,41 @@ def test_executor_create_file_rollback_requires_delete_tool_after_later_failure(
         (config_path, "export const config = true;\n"),
     ]
     assert result.receipt.status == "rollback_failed"
-    assert result.receipt.metadata["rollback_failed_paths"] == [
-        f"{created_path}:rollback_requires_delete_tool"
+    assert result.receipt.metadata["rollback_failed_paths"] == [f"{created_path}:rollback_requires_delete_tool"]
+    assert result.receipt.metadata["rollback_strategy"] == "delete_created_file"
+    assert result.receipt.metadata["rollback_patch"] == [
+        {
+            "path": created_path,
+            "rollback_patch_id": f"rollback:delete_created_file:{created_path}",
+            "rollback_strategy": "delete_created_file",
+            "rollback_operation": "delete_file",
+            "rollback_reason": "transaction_failure",
+            "rollback_policy_decision": "allowed_rollback",
+            "before_hash": sha256_text("export const created = true;\n"),
+            "after_hash": FILE_ABSENT_HASH,
+            "exists_before": True,
+            "exists_after": False,
+            "operation_ids": [plan.operations[0].operation_id],
+        }
+    ]
+    assert result.receipt.metadata["rollback_operations"] == [
+        {
+            "path": created_path,
+            "rollback_patch_id": f"rollback:delete_created_file:{created_path}",
+            "operation": "delete_file",
+            "rollback_strategy": "delete_created_file",
+            "rollback_reason": "transaction_failure",
+            "rollback_policy_decision": "allowed_rollback",
+            "write_file_allowed_category": "",
+            "write_file_reason": "",
+            "before_hash": sha256_text("export const created = true;\n"),
+            "after_hash": FILE_ABSENT_HASH,
+            "exists_before": True,
+            "exists_after": False,
+            "operation_ids": [plan.operations[0].operation_id],
+            "ok": False,
+            "error": "rollback_requires_delete_tool",
+        }
     ]
     record = result.receipt.metadata["execution_records"][0]
     assert record["operation"] == "write_file"
@@ -543,7 +831,14 @@ def test_composer_reserves_toml_and_yaml_structured_operations_fail_closed(tmp_p
         ("toml_set", "pyproject.toml", ("tool", "example", "enabled"), True, "[tool.example]\n", "toml"),
         ("toml_delete", "pyproject.toml", ("tool", "example", "enabled"), None, "[tool.example]\n", "toml"),
         ("yaml_set", "config.yaml", ("tool", "example", "enabled"), True, "tool:\n  example: {}\n", "yaml"),
-        ("yaml_delete", "config.yaml", ("tool", "example", "enabled"), None, "tool:\n  example:\n    enabled: true\n", "yaml"),
+        (
+            "yaml_delete",
+            "config.yaml",
+            ("tool", "example", "enabled"),
+            None,
+            "tool:\n  example:\n    enabled: true\n",
+            "yaml",
+        ),
     )
     write_calls: list[str] = []
 
@@ -677,19 +972,58 @@ def test_coverage_gap_includes_reserved_slot_and_recommended_owner() -> None:
     assert payload["coverage_gap_archetypes"] == ["unknown"]
     assert payload["coverage_gap_diagnostic_codes"] == ["ruby_future_error"]
     assert payload["coverage_gap_handoff_recommendations"] == ["llm_triage_then_runtime_rule"]
+    assert payload["coverage_gap_recommended_routes"] == ["llm_repair"]
+    assert payload["coverage_gap_slot_statuses"] == ["reserved_slot_available"]
+    assert gap["language"] == "ruby"
     assert gap["diagnostic_language"] == "ruby"
     assert gap["diagnostic_code"] == "ruby_future_error"
     assert gap["diagnostic_archetype"] == "unknown"
+    assert gap["archetype_suggestion"] == "unknown"
+    assert gap["reserved_slot_available"] is True
+    assert gap["slot_status"] == "reserved_slot_available"
     assert gap["reserved_language_slot_matched"] is True
     assert gap["reserved_language_slot"]["language"] == "ruby"
     assert gap["reserved_repairer_module"].endswith(".ruby_runtime")
     assert gap["reserved_slot_registration_policy"] == "bench_verified_rule_required"
     assert gap["recommended_next_owner"] == "runtime_rule"
+    assert gap["recommended_route"] == "llm_repair"
     assert gap["handoff_recommendation"] == "llm_triage_then_runtime_rule"
     assert gap["llm_advisory_recommended"] is True
     assert gap["agi_advisory_recommended"] is False
     assert gap["authoritative_rule_registration_allowed"] is False
     assert gap["recommended_registration_path"] == "bench_verified_rule_required"
+    assert gap["coverage_status"] == "coverage_gap"
+
+
+def test_coverage_gap_for_language_without_slot_recommends_reserved_slot_addition() -> None:
+    diagnostic = RepairDiagnostic(
+        source="compiler",
+        code="ballerina_future_error",
+        message="undefined symbol Widget",
+        path="src/main.bal",
+        raw="src/main.bal:3: undefined symbol Widget",
+        metadata={"language": "ballerina"},
+    )
+
+    payload = default_repair_rule_registry().coverage((diagnostic,)).to_dict()
+    gap = payload["coverage_gaps"][0]
+
+    assert payload["covered_diagnostic_count"] == 0
+    assert payload["coverage_gap_languages"] == ["ballerina"]
+    assert payload["coverage_gap_recommended_routes"] == ["add_reserved_slot"]
+    assert payload["coverage_gap_slot_statuses"] == ["reserved_slot_missing"]
+    assert gap["known_rule_matched"] is False
+    assert gap["metadata_only_match"] is False
+    assert gap["executable_runtime_plan_matched"] is False
+    assert gap["language"] == "ballerina"
+    assert gap["diagnostic_language"] == "ballerina"
+    assert gap["diagnostic_code"] == "ballerina_future_error"
+    assert gap["reserved_slot_available"] is False
+    assert gap["reserved_language_slot_matched"] is False
+    assert gap["slot_status"] == "reserved_slot_missing"
+    assert gap["recommended_route"] == "add_reserved_slot"
+    assert gap["recommended_registration_path"] == "coverage_report_then_bench_verified_rule"
+    assert gap["audit_reason"] == "known_rule_matched=false"
 
 
 def test_future_language_slots_are_reserved_only_without_runtime_false_positive() -> None:

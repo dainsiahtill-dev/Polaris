@@ -46,7 +46,7 @@ def build_legacy_repair_kernel_summary(
         "receipts_with_revalidation": revalidation_coverage["receipts_with_revalidation"],
         "revalidation_coverage": revalidation_coverage,
         "receipt_count": len(receipts),
-        "receipts": [receipt.to_dict() for receipt in receipts],
+        "receipts": [_receipt_summary_payload(receipt) for receipt in receipts],
         "receipt_context": build_repair_receipt_context(receipts),
         "source_tool_profiles": summarize_deterministic_repair_source_tools(
             [receipt.source_tool for receipt in receipts]
@@ -63,6 +63,30 @@ def build_legacy_repair_kernel_summary(
 
 
 ReceiptLike = RepairReceipt | Mapping[str, Any]
+
+
+def _receipt_summary_payload(receipt: RepairReceipt) -> dict[str, Any]:
+    payload = receipt.to_dict()
+    evidence = payload.get("revalidation_evidence")
+    evidence_payload = evidence if isinstance(evidence, dict) else {}
+    if evidence_payload:
+        diagnostics = [dict(item) for item in payload.get("diagnostics") or () if isinstance(item, Mapping)]
+        if diagnostics and not evidence_payload.get("diagnostics_before"):
+            evidence_payload = dict(evidence_payload)
+            evidence_payload["diagnostics_before"] = diagnostics
+            evidence_payload.setdefault("errors_before", len(diagnostics))
+            payload["revalidation_evidence"] = evidence_payload
+        _attach_native_revalidation_projection(payload, evidence_payload)
+    return payload
+
+
+def _attach_native_revalidation_projection(payload: dict[str, Any], evidence: Mapping[str, Any]) -> None:
+    payload["verifier_command"] = list(evidence.get("command") or ())
+    payload["verifier_exit_code"] = evidence.get("exit_code")
+    payload["diagnostics_before"] = [dict(item) for item in evidence.get("diagnostics_before") or ()]
+    payload["diagnostics_after"] = [dict(item) for item in evidence.get("diagnostics_after") or ()]
+    payload["resolved_diagnostic_ids"] = list(evidence.get("resolved_diagnostic_ids") or ())
+    payload["residual_diagnostic_ids"] = list(evidence.get("residual_diagnostic_ids") or ())
 
 
 def _legacy_projection_shadow_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -111,6 +135,16 @@ def summarize_repair_revalidation_coverage(receipts: Sequence[ReceiptLike]) -> d
         "failed_evidence": 0,
         "resolved_evidence": 0,
     }
+    evidence_receipt_ids: dict[str, list[str]] = {
+        "missing_evidence": [],
+        "failed_evidence": [],
+        "resolved_evidence": [],
+    }
+    evidence_source_tools: dict[str, set[str]] = {
+        "missing_evidence": set(),
+        "failed_evidence": set(),
+        "resolved_evidence": set(),
+    }
 
     for receipt in receipts:
         status = _receipt_status(receipt)
@@ -121,6 +155,12 @@ def summarize_repair_revalidation_coverage(receipts: Sequence[ReceiptLike]) -> d
         has_evidence = bool(evidence)
         evidence_status = _receipt_evidence_status(receipt, evidence=evidence, has_evidence=has_evidence)
         evidence_status_counts[evidence_status] = evidence_status_counts.get(evidence_status, 0) + 1
+        evidence_receipt_ids.setdefault(evidence_status, [])
+        evidence_source_tools.setdefault(evidence_status, set())
+        if receipt_id:
+            evidence_receipt_ids[evidence_status].append(receipt_id)
+        if source_tool:
+            evidence_source_tools[evidence_status].add(source_tool)
         if has_evidence:
             receipts_with_revalidation += 1
             if source_tool:
@@ -152,6 +192,12 @@ def summarize_repair_revalidation_coverage(receipts: Sequence[ReceiptLike]) -> d
     missing_source_tool_list = sorted(missing_source_tools)
     failed_revalidation_receipt_ids = sorted(receipt_id for receipt_id in failed_revalidation_receipt_ids if receipt_id)
     failed_revalidation_source_tool_list = sorted(failed_revalidation_source_tools)
+    missing_evidence_receipt_ids = sorted(evidence_receipt_ids.get("missing_evidence", ()))
+    failed_evidence_receipt_ids = sorted(evidence_receipt_ids.get("failed_evidence", ()))
+    resolved_evidence_receipt_ids = sorted(evidence_receipt_ids.get("resolved_evidence", ()))
+    missing_evidence_source_tools = sorted(evidence_source_tools.get("missing_evidence", ()))
+    failed_evidence_source_tools = sorted(evidence_source_tools.get("failed_evidence", ()))
+    resolved_evidence_source_tools = sorted(evidence_source_tools.get("resolved_evidence", ()))
     return {
         "receipt_count": receipt_count,
         "evidence_required_count": evidence_required_count,
@@ -169,6 +215,12 @@ def summarize_repair_revalidation_coverage(receipts: Sequence[ReceiptLike]) -> d
         "source_tools_missing_revalidation": missing_source_tool_list,
         "status_counts": dict(sorted(status_counts.items())),
         "evidence_status_counts": dict(sorted(evidence_status_counts.items())),
+        "missing_evidence_receipt_ids": missing_evidence_receipt_ids,
+        "missing_evidence_source_tools": missing_evidence_source_tools,
+        "failed_evidence_receipt_ids": failed_evidence_receipt_ids,
+        "failed_evidence_source_tools": failed_evidence_source_tools,
+        "resolved_evidence_receipt_ids": resolved_evidence_receipt_ids,
+        "resolved_evidence_source_tools": resolved_evidence_source_tools,
         "residual_diagnostic_receipt_count": residual_diagnostic_receipt_count,
         "failed_revalidation_receipt_count": failed_revalidation_receipt_count,
         "failed_revalidation_receipt_ids": failed_revalidation_receipt_ids,
@@ -199,8 +251,49 @@ def _receipt_revalidation_evidence(receipt: ReceiptLike) -> dict[str, Any]:
     if isinstance(value, RepairRevalidationEvidence):
         return value.to_dict()
     if isinstance(value, dict):
-        return dict(value)
+        payload = dict(value)
+        if payload:
+            return payload
+    native_payload = _native_revalidation_payload(receipt)
+    if native_payload:
+        return native_payload
     return {}
+
+
+def _native_revalidation_payload(receipt: ReceiptLike) -> dict[str, Any]:
+    command = _coerce_str_tuple(_receipt_value(receipt, "verifier_command"))
+    exit_code = _coerce_optional_int(_receipt_value(receipt, "verifier_exit_code"))
+    diagnostics_before = _coerce_diagnostic_dicts(_receipt_value(receipt, "diagnostics_before"))
+    diagnostics_after = _coerce_diagnostic_dicts(_receipt_value(receipt, "diagnostics_after"))
+    resolved_diagnostic_ids = _coerce_str_tuple(_receipt_value(receipt, "resolved_diagnostic_ids"))
+    residual_diagnostic_ids = _coerce_str_tuple(_receipt_value(receipt, "residual_diagnostic_ids"))
+    errors_before = _coerce_optional_int(_receipt_value(receipt, "errors_before"))
+    errors_after = _coerce_optional_int(_receipt_value(receipt, "errors_after"))
+    if not (
+        command
+        or exit_code is not None
+        or diagnostics_before
+        or diagnostics_after
+        or resolved_diagnostic_ids
+        or residual_diagnostic_ids
+        or errors_before is not None
+        or errors_after is not None
+    ):
+        return {}
+    return {
+        "command": list(command),
+        "exit_code": exit_code,
+        "round_number": _coerce_optional_int(_receipt_value(receipt, "round_number")),
+        "evidence_status": str(_receipt_value(receipt, "evidence_status") or "missing_evidence"),
+        "errors_before": errors_before,
+        "errors_after": errors_after,
+        "net_error_reduction": _coerce_optional_int(_receipt_value(receipt, "net_error_reduction")),
+        "resolved_diagnostic_ids": list(resolved_diagnostic_ids),
+        "residual_diagnostic_ids": list(residual_diagnostic_ids),
+        "diagnostics_before": diagnostics_before,
+        "diagnostics_after": diagnostics_after,
+        "metadata": {},
+    }
 
 
 def _receipt_evidence_status(
@@ -210,7 +303,7 @@ def _receipt_evidence_status(
     has_evidence: bool,
 ) -> str:
     explicit = str(_receipt_value(receipt, "evidence_status") or "").strip()
-    if explicit:
+    if explicit and (explicit != "missing_evidence" or not has_evidence):
         return explicit
     if not has_evidence:
         return "missing_evidence"
@@ -227,6 +320,8 @@ def _receipt_evidence_status(
 
 
 def _receipt_requires_revalidation(receipt: ReceiptLike, *, status: str, has_evidence: bool) -> bool:
+    if has_evidence:
+        return False
     metadata = _receipt_value(receipt, "metadata")
     metadata_dict = metadata if isinstance(metadata, dict) else {}
     if bool(metadata_dict.get("requires_revalidation")):
@@ -569,6 +664,12 @@ def _coerce_revalidation_diagnostics(value: object) -> tuple[RepairDiagnostic, .
     if raw_messages:
         diagnostics.extend(normalize_artifact_quality_errors(raw_messages))
     return tuple(diagnostics)
+
+
+def _coerce_diagnostic_dicts(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list | tuple):
+        return []
+    return [dict(item) for item in value if isinstance(item, Mapping)]
 
 
 def _coerce_str_tuple(value: object) -> tuple[str, ...]:

@@ -395,6 +395,12 @@ def project_director_repair_revalidation_evidence(
         receipt["errors_before"] = errors_before
         receipt["errors_after"] = errors_after
         receipt["net_error_reduction"] = errors_before - errors_after
+        receipt["verifier_command"] = _string_list(evidence.get("command"))
+        receipt["verifier_exit_code"] = _optional_int(evidence.get("exit_code"))
+        receipt["diagnostics_before"] = _mapping_list(evidence.get("diagnostics_before"))
+        receipt["diagnostics_after"] = _mapping_list(evidence.get("diagnostics_after"))
+        receipt["resolved_diagnostic_ids"] = _string_list(evidence.get("resolved_diagnostic_ids"))
+        receipt["residual_diagnostic_ids"] = _string_list(evidence.get("residual_diagnostic_ids"))
         receipt["round_number"] = evidence["round_number"]
         revalidation_failed = _repair_revalidation_payload_failed(evidence)
         if receipt.get("status") == "pending_revalidation":
@@ -477,6 +483,18 @@ def _diagnostic_ids_for_signatures(
         if diagnostic_id:
             diagnostic_ids.append(diagnostic_id)
     return sorted(diagnostic_ids)
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list | tuple):
+        return []
+    return [str(item) for item in value if str(item or "").strip()]
+
+
+def _mapping_list(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list | tuple):
+        return []
+    return [dict(item) for item in value if isinstance(item, Mapping)]
 
 
 def _repair_revalidation_payload_failed(evidence: Mapping[str, Any] | None) -> bool:
@@ -783,10 +801,7 @@ def query_director_repair_coverage(query: QueryDirectorRepairCoverageV1) -> Dire
         uncovered_diagnostic_count=report.uncovered_diagnostic_count,
         executable_runtime_plan_diagnostic_count=report.executable_runtime_plan_diagnostic_count,
         metadata_only_diagnostic_count=report.metadata_only_diagnostic_count,
-        items=tuple(
-            _project_director_repair_diagnostic_coverage(item, coverage_gaps_by_id)
-            for item in report.items
-        ),
+        items=tuple(_project_director_repair_diagnostic_coverage(item, coverage_gaps_by_id) for item in report.items),
     )
 
 
@@ -812,21 +827,28 @@ def _project_director_repair_diagnostic_coverage(
         archetypes=tuple(sorted({rule.archetype.value for rule in item.matched_rules})),
         phases=tuple(sorted({rule.phase for rule in item.matched_rules})),
         languages=tuple(sorted({rule.language for rule in item.matched_rules})),
+        language=str(coverage_payload["language"]),
         diagnostic_archetype=str(coverage_payload["diagnostic_archetype"]),
         diagnostic_phase=str(coverage_payload["diagnostic_phase"]),
         diagnostic_language=str(coverage_payload["diagnostic_language"]),
         diagnostic_code=str(gap_payload.get("diagnostic_code") or diagnostic.get("code") or "unknown"),
+        archetype_suggestion=str(coverage_payload["archetype_suggestion"]),
+        phase_suggestion=str(coverage_payload["phase_suggestion"]),
         suggested_rule_family=str(coverage_payload["suggested_rule_family"]),
+        reserved_slot_available=bool(coverage_payload.get("reserved_slot_available")),
+        slot_status=str(coverage_payload.get("slot_status") or "reserved_slot_missing"),
         reserved_language_slot_matched=bool(gap_payload.get("reserved_language_slot_matched")),
         reserved_language_slot=dict(gap_payload.get("reserved_language_slot") or {}),
         reserved_repairer_module=str(gap_payload.get("reserved_repairer_module") or ""),
         reserved_slot_registration_policy=str(gap_payload.get("reserved_slot_registration_policy") or ""),
         recommended_next_owner=str(gap_payload.get("recommended_next_owner") or ""),
+        recommended_route=str(coverage_payload.get("recommended_route") or gap_payload.get("recommended_route") or ""),
         handoff_recommendation=str(gap_payload.get("handoff_recommendation") or ""),
         llm_advisory_recommended=bool(gap_payload.get("llm_advisory_recommended")),
         agi_advisory_recommended=bool(gap_payload.get("agi_advisory_recommended")),
         authoritative_rule_registration_allowed=bool(gap_payload.get("authoritative_rule_registration_allowed")),
         recommended_registration_path=str(gap_payload.get("recommended_registration_path") or ""),
+        coverage_status=str(coverage_payload.get("coverage_status") or "coverage_gap"),
     )
 
 
@@ -1289,9 +1311,7 @@ def run_director_repair_convergence(
             )
 
         _validate_public_convergence_verifier_evidence(verifier_input, round_number=round_number)
-        diagnostics = tuple(
-            normalize_artifact_quality_errors(list(verifier_input.residual_artifact_quality_errors))
-        )
+        diagnostics = tuple(normalize_artifact_quality_errors(list(verifier_input.residual_artifact_quality_errors)))
         return RepairVerifierSnapshot(
             diagnostics=diagnostics,
             command=verifier_input.command,
@@ -1705,19 +1725,45 @@ def _public_receipt_to_internal(receipt: RepairReceiptV1) -> RepairReceipt:
         before_hashes=receipt.before_hashes,
         after_hashes=receipt.after_hashes,
         round_number=receipt.round_number,
-        revalidation_evidence=_public_revalidation_evidence_to_internal(receipt.revalidation_evidence),
+        revalidation_evidence=_public_revalidation_evidence_to_internal(receipt),
         metadata=receipt.metadata,
     )
 
 
-def _public_revalidation_evidence_to_internal(evidence: Mapping[str, Any]) -> RepairRevalidationEvidence | None:
-    payload = dict(evidence or {})
+def _public_revalidation_evidence_to_internal(receipt: RepairReceiptV1) -> RepairRevalidationEvidence | None:
+    payload = dict(receipt.revalidation_evidence or {})
+    if not payload and (
+        receipt.verifier_command
+        or receipt.verifier_exit_code is not None
+        or receipt.diagnostics_before
+        or receipt.diagnostics_after
+        or receipt.resolved_diagnostic_ids
+        or receipt.residual_diagnostic_ids
+        or receipt.errors_before is not None
+        or receipt.errors_after is not None
+    ):
+        payload = {
+            "command": list(receipt.verifier_command),
+            "exit_code": receipt.verifier_exit_code,
+            "diagnostics_before": [dict(item) for item in receipt.diagnostics_before],
+            "diagnostics_after": [dict(item) for item in receipt.diagnostics_after],
+            "errors_before": receipt.errors_before,
+            "errors_after": receipt.errors_after,
+            "net_error_reduction": receipt.net_error_reduction,
+            "resolved_diagnostic_ids": list(receipt.resolved_diagnostic_ids),
+            "residual_diagnostic_ids": list(receipt.residual_diagnostic_ids),
+            "round_number": receipt.round_number,
+            "evidence_status": receipt.evidence_status,
+            "metadata": {},
+        }
     if not payload:
         return None
     command = payload.get("command")
     return RepairRevalidationEvidence(
         command=tuple(str(item) for item in command) if isinstance(command, list | tuple) else (),
         exit_code=_optional_int(payload.get("exit_code")),
+        diagnostics_before=_public_revalidation_diagnostics_to_internal(payload.get("diagnostics_before")),
+        diagnostics_after=_public_revalidation_diagnostics_to_internal(payload.get("diagnostics_after")),
         errors_before_count=_optional_int(payload.get("errors_before")),
         errors_after_count=_optional_int(payload.get("errors_after")),
         resolved_diagnostic_ids=tuple(str(item) for item in payload.get("resolved_diagnostic_ids") or ()),
@@ -1726,6 +1772,28 @@ def _public_revalidation_evidence_to_internal(evidence: Mapping[str, Any]) -> Re
         raw_output_ref=str(payload.get("raw_output_ref") or "").strip() or None,
         metadata=dict(payload.get("metadata") or {}),
     )
+
+
+def _public_revalidation_diagnostics_to_internal(value: object) -> tuple[RepairDiagnostic, ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    diagnostics: list[RepairDiagnostic] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        diagnostics.append(
+            RepairDiagnostic(
+                source=str(item.get("source") or "public_revalidation"),
+                code=str(item.get("code") or "unknown"),
+                message=str(item.get("message") or item.get("raw") or ""),
+                severity=str(item.get("severity") or "error"),
+                path=str(item.get("path")) if item.get("path") else None,
+                raw=str(item.get("raw") or item.get("message") or ""),
+                diagnostic_id=str(item.get("diagnostic_id") or ""),
+                metadata=dict(item.get("metadata") or {}),
+            )
+        )
+    return tuple(diagnostics)
 
 
 def _optional_int(value: object) -> int | None:

@@ -226,6 +226,23 @@ def render_blueprint_overview(result: Any) -> str | None:
             "- 先写定义共享类型的文件，再写依赖它的文件\n"
             "- 每个文件的 import/依赖必须使用与定义文件完全一致的类型名"
         )
+    # Inject existing target file export summaries so the Director knows
+    # the actual API of files created by earlier tasks (critical for test generation).
+    existing_files = tuple(getattr(result, "existing_target_files", ()) or ())
+    if existing_files:
+        existing_parts: list[str] = []
+        for item in existing_files:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path", "")).strip()
+            exports = str(item.get("exports", "")).strip()
+            if path and exports:
+                existing_parts.append(f"--- {path} ---\n{exports}")
+        if existing_parts:
+            parts.append(
+                "【已有源文件导出签名】(以下文件已由前序任务创建，你的 import 必须与这些签名一致)\n"
+                + "\n\n".join(existing_parts)
+            )
     text = "\n".join(parts).strip()
     return text or None
 

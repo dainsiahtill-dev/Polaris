@@ -6,13 +6,16 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from .scheduler import convergence_envelope_metadata
+from .scheduler import CONVERGENCE_PIPELINE_ORDER, convergence_envelope_metadata
 
 DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS = 1
 _MAX_REPAIR_SCHEDULE_MAX_ROUNDS = 10
 _CALLBACK_RECEIPT_PROJECTION_SCHEMA_VERSION = "director.repair_callback_receipt_projection.v1"
 _CALLBACK_RECEIPT_PROJECTION_AUTHORITY = "non_authoritative_callback_projection"
 _CALLBACK_RECEIPT_PROJECTION_MIGRATION_BLOCKER = "callback runners still return tool_results instead of RepairReceipt"
+_CANONICAL_CONVERGENCE_EXECUTOR = "RepairConvergenceScheduler"
+_FINAL_TYPED_RECEIPT_ENTRYPOINT = "run_runtime_repair_convergence"
+_CALLBACK_ROUND_ACCOUNTING_FIELDS = ("max_rounds", "rounds_run", "convergence_status", "stopped_reason")
 
 
 def _non_empty(value: str) -> str:
@@ -131,6 +134,7 @@ class PostExecutionRepairScheduleRun:
                 convergence_status=self.convergence_status,
                 stopped_reason=self.stopped_reason,
                 receipt_projection_count=len(receipt_projections),
+                receipt_projections=receipt_projections,
             ),
         }
 
@@ -180,6 +184,7 @@ class MaterializationQualityRepairScheduleRun:
                 convergence_status=self.convergence_status,
                 stopped_reason=self.stopped_reason,
                 receipt_projection_count=len(receipt_projections),
+                receipt_projections=receipt_projections,
             ),
         }
 
@@ -311,7 +316,9 @@ def _callback_schedule_summary(
     convergence_status: str,
     stopped_reason: str,
     receipt_projection_count: int = 0,
+    receipt_projections: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
+    evidence_summary = _callback_projection_evidence_summary(receipt_projections)
     return {
         **convergence_envelope_metadata(
             preferred_entrypoint="run_runtime_repair_convergence",
@@ -326,16 +333,85 @@ def _callback_schedule_summary(
         "rounds_run": max(0, int(rounds_run)),
         "convergence_status": convergence_status,
         "stopped_reason": stopped_reason,
+        "callback_bridge_uses_repair_convergence_scheduler": False,
+        "typed_convergence_scheduler_cutover_required": True,
+        "callback_runner_self_loop_allowed": False,
+        "bounded_round_accounting_visible": True,
+        "round_accounting_fields": list(_CALLBACK_ROUND_ACCOUNTING_FIELDS),
         "receipt_projection_count": max(0, int(receipt_projection_count)),
         "callback_receipt_projection_available": receipt_projection_count > 0,
+        "native_receipt_count": 0,
+        "post_check_evidence_complete": False,
+        "native_post_check_evidence_complete": False,
+        "missing_native_revalidation_evidence": receipt_projection_count > 0,
+        "non_authoritative_projection": True,
+        "cutover_ready": False,
+        "cutover_blockers": ["missing_native_revalidation_evidence", "callback_projection_not_authoritative_receipt"],
+        **evidence_summary,
         "legacy_callback_bridge": True,
         "migration_callback_envelope": True,
         "runner_binding_owner": "roles.adapters",
         "produces_tool_results_only": True,
-        "final_typed_receipt_path": "run_runtime_repair_convergence",
+        "final_typed_receipt_path": _FINAL_TYPED_RECEIPT_ENTRYPOINT,
         "typed_receipt_path": "unavailable_in_callback_bridge",
         "migration_blocker": _CALLBACK_RECEIPT_PROJECTION_MIGRATION_BLOCKER,
     }
+
+
+def _callback_projection_evidence_summary(receipt_projections: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    evidence_status_counts = {
+        "missing_evidence": 0,
+        "failed_evidence": 0,
+        "resolved_evidence": 0,
+    }
+    projection_ids: dict[str, list[str]] = {
+        "missing_evidence": [],
+        "failed_evidence": [],
+        "resolved_evidence": [],
+    }
+    source_tools: dict[str, set[str]] = {
+        "missing_evidence": set(),
+        "failed_evidence": set(),
+        "resolved_evidence": set(),
+    }
+    for projection in receipt_projections:
+        status = _callback_projection_evidence_status(projection)
+        evidence_status_counts[status] = evidence_status_counts.get(status, 0) + 1
+        projection_id = _first_non_empty(projection.get("projection_id"))
+        source_tool = _first_non_empty(projection.get("source_tool"))
+        if projection_id:
+            projection_ids.setdefault(status, []).append(projection_id)
+        if source_tool:
+            source_tools.setdefault(status, set()).add(source_tool)
+
+    return {
+        "evidence_status_counts": dict(sorted(evidence_status_counts.items())),
+        "callback_projection_evidence_status_counts": dict(sorted(evidence_status_counts.items())),
+        "missing_evidence_receipt_ids": [],
+        "missing_evidence_source_tools": [],
+        "failed_evidence_receipt_ids": [],
+        "failed_evidence_source_tools": [],
+        "resolved_evidence_receipt_ids": [],
+        "resolved_evidence_source_tools": [],
+        "missing_evidence_projection_ids": sorted(projection_ids.get("missing_evidence", ())),
+        "missing_evidence_projection_source_tools": sorted(source_tools.get("missing_evidence", ())),
+        "failed_evidence_projection_ids": sorted(projection_ids.get("failed_evidence", ())),
+        "failed_evidence_projection_source_tools": sorted(source_tools.get("failed_evidence", ())),
+        "resolved_evidence_projection_ids": sorted(projection_ids.get("resolved_evidence", ())),
+        "resolved_evidence_projection_source_tools": sorted(source_tools.get("resolved_evidence", ())),
+    }
+
+
+def _callback_projection_evidence_status(projection: Mapping[str, Any]) -> str:
+    if not bool(projection.get("revalidation_evidence_present")):
+        return "missing_evidence"
+    exit_code = _optional_int(projection.get("revalidation_exit_code"))
+    residual_count = _optional_int(projection.get("revalidation_residual_count"))
+    if exit_code is None:
+        return "missing_evidence"
+    if exit_code != 0 or (residual_count is not None and residual_count > 0):
+        return "failed_evidence"
+    return "resolved_evidence"
 
 
 def _project_callback_schedule_receipts(
@@ -399,6 +475,13 @@ def _project_callback_schedule_receipts(
                 "projection_only": True,
                 "typed_receipt_path_available": False,
                 "authoritative": False,
+                "canonical_convergence_executor": _CANONICAL_CONVERGENCE_EXECUTOR,
+                "pipeline_order": CONVERGENCE_PIPELINE_ORDER,
+                "hidden_language_loop_allowed": False,
+                "language_self_loop_allowed": False,
+                "callback_runner_self_loop_allowed": False,
+                "typed_convergence_scheduler_cutover_required": True,
+                "preferred_typed_receipt_entrypoint": _FINAL_TYPED_RECEIPT_ENTRYPOINT,
                 "migration_blocker": _CALLBACK_RECEIPT_PROJECTION_MIGRATION_BLOCKER,
                 **revalidation_projection,
             }
@@ -492,9 +575,13 @@ def _project_callback_revalidation(payload: Mapping[str, Any]) -> dict[str, Any]
         revalidation.get("residual_diagnostic_count"),
     )
     residual_diagnostic_ids = revalidation.get("residual_diagnostic_ids")
-    if residual_count is None and isinstance(residual_diagnostic_ids, Sequence) and not isinstance(
-        residual_diagnostic_ids,
-        (str, bytes, bytearray),
+    if (
+        residual_count is None
+        and isinstance(residual_diagnostic_ids, Sequence)
+        and not isinstance(
+            residual_diagnostic_ids,
+            (str, bytes, bytearray),
+        )
     ):
         residual_count = len(residual_diagnostic_ids)
     if residual_count is None:
@@ -726,21 +813,33 @@ def _annotate_tool_result(
     payload.setdefault("scheduler_round_number", round_number)
     payload.setdefault("scheduler_max_rounds", max_rounds)
     payload.setdefault("convergence_scheduler_required", True)
+    payload.setdefault("canonical_convergence_executor", _CANONICAL_CONVERGENCE_EXECUTOR)
+    payload.setdefault("pipeline_order", CONVERGENCE_PIPELINE_ORDER)
     payload.setdefault("typed_receipt_path_available", False)
     payload.setdefault("callback_migration_envelope", True)
     payload.setdefault("migration_callback_envelope", True)
     payload.setdefault("legacy_callback_bridge", True)
     payload.setdefault("produces_tool_results_only", True)
-    payload.setdefault("preferred_typed_receipt_entrypoint", "run_runtime_repair_convergence")
-    payload.setdefault("final_typed_receipt_path", "run_runtime_repair_convergence")
+    payload.setdefault("hidden_language_loop_allowed", False)
+    payload.setdefault("language_self_loop_allowed", False)
+    payload.setdefault("callback_runner_self_loop_allowed", False)
+    payload.setdefault("typed_convergence_scheduler_cutover_required", True)
+    payload.setdefault("bounded_round_accounting_visible", True)
+    payload.setdefault("round_accounting_fields", list(_CALLBACK_ROUND_ACCOUNTING_FIELDS))
+    payload.setdefault("preferred_typed_receipt_entrypoint", _FINAL_TYPED_RECEIPT_ENTRYPOINT)
+    payload.setdefault("final_typed_receipt_path", _FINAL_TYPED_RECEIPT_ENTRYPOINT)
     payload.setdefault("typed_receipt_path", "unavailable_in_callback_bridge")
     revalidation = payload.get("revalidation")
     if isinstance(revalidation, dict):
         revalidation.setdefault("round_number", payload.get("round_number"))
         revalidation.setdefault("max_rounds", max_rounds)
         revalidation.setdefault("convergence_scheduler_required", True)
+        revalidation.setdefault("canonical_convergence_executor", _CANONICAL_CONVERGENCE_EXECUTOR)
+        revalidation.setdefault("pipeline_order", CONVERGENCE_PIPELINE_ORDER)
         revalidation.setdefault("typed_receipt_path_available", False)
         revalidation.setdefault("callback_migration_envelope", True)
+        revalidation.setdefault("hidden_language_loop_allowed", False)
+        revalidation.setdefault("callback_runner_self_loop_allowed", False)
 
 
 def _annotate_convergence_result(
@@ -760,6 +859,8 @@ def _annotate_convergence_result(
         payload.setdefault("convergence_status", convergence_status)
         payload.setdefault("convergence_stopped_reason", stopped_reason)
         payload.setdefault("convergence_scheduler_required", True)
+        payload.setdefault("canonical_convergence_executor", _CANONICAL_CONVERGENCE_EXECUTOR)
+        payload.setdefault("pipeline_order", CONVERGENCE_PIPELINE_ORDER)
         payload.setdefault("typed_receipt_path_available", False)
         payload.setdefault("callback_migration_envelope", True)
         payload.setdefault("migration_callback_envelope", True)
@@ -767,8 +868,14 @@ def _annotate_convergence_result(
         payload.setdefault("produces_tool_results_only", True)
         payload.setdefault("callback_receipt_projection_available", True)
         payload.setdefault("callback_receipt_projection_schema_version", _CALLBACK_RECEIPT_PROJECTION_SCHEMA_VERSION)
-        payload.setdefault("preferred_typed_receipt_entrypoint", "run_runtime_repair_convergence")
-        payload.setdefault("final_typed_receipt_path", "run_runtime_repair_convergence")
+        payload.setdefault("hidden_language_loop_allowed", False)
+        payload.setdefault("language_self_loop_allowed", False)
+        payload.setdefault("callback_runner_self_loop_allowed", False)
+        payload.setdefault("typed_convergence_scheduler_cutover_required", True)
+        payload.setdefault("bounded_round_accounting_visible", True)
+        payload.setdefault("round_accounting_fields", list(_CALLBACK_ROUND_ACCOUNTING_FIELDS))
+        payload.setdefault("preferred_typed_receipt_entrypoint", _FINAL_TYPED_RECEIPT_ENTRYPOINT)
+        payload.setdefault("final_typed_receipt_path", _FINAL_TYPED_RECEIPT_ENTRYPOINT)
         payload.setdefault("typed_receipt_path", "unavailable_in_callback_bridge")
         revalidation = payload.get("revalidation")
         if isinstance(revalidation, dict):
@@ -777,9 +884,13 @@ def _annotate_convergence_result(
             revalidation.setdefault("convergence_stopped_reason", stopped_reason)
             revalidation.setdefault("max_rounds", max_rounds)
             revalidation.setdefault("convergence_scheduler_required", True)
+            revalidation.setdefault("canonical_convergence_executor", _CANONICAL_CONVERGENCE_EXECUTOR)
+            revalidation.setdefault("pipeline_order", CONVERGENCE_PIPELINE_ORDER)
             revalidation.setdefault("typed_receipt_path_available", False)
             revalidation.setdefault("callback_migration_envelope", True)
             revalidation.setdefault("callback_receipt_projection_available", True)
+            revalidation.setdefault("hidden_language_loop_allowed", False)
+            revalidation.setdefault("callback_runner_self_loop_allowed", False)
 
 
 __all__ = [

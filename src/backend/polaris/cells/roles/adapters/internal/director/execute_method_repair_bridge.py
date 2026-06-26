@@ -88,13 +88,7 @@ from .deterministic_repairs import (
 _LEGACY_DETERMINISTIC_REPAIR_COMPAT_PREFIXES = ("_apply_deterministic_", "repair_")
 # Migration-only surface for old ``execute_method`` imports. Production calls
 # must use the explicit run_* wrappers below or director.runtime public service.
-_LEGACY_EXECUTE_METHOD_REPAIR_HELPER_ALLOWLIST = frozenset(
-    {
-        "_apply_deterministic_python_unittest_missing_target_repair",
-        "_apply_deterministic_scaffold_marker_cleanup",
-        "_apply_deterministic_typescript_reexport_repair",
-    }
-)
+_LEGACY_EXECUTE_METHOD_REPAIR_HELPER_ALLOWLIST = frozenset({})
 _RUNTIME_EXECUTABLE_REPAIR_SOURCE_TOOL_FALLBACKS = frozenset(
     {
         "deterministic_cpp_include_path_repair",

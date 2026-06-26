@@ -292,9 +292,9 @@ fn build() -> Flight {
     assert payload["plan_summary"]["operation_count"] == 1
     assert payload["composition_summary"]["ok"] is True
     assert payload["composition_summary"]["patches"][0]["path"] == "src/lib.rs"
-    assert "Flight { name: String::new(), duration: 0 }" in payload["composition_summary"]["patches"][0][
-        "content_after"
-    ]
+    assert (
+        "Flight { name: String::new(), duration: 0 }" in payload["composition_summary"]["patches"][0]["content_after"]
+    )
 
 
 def test_public_struct_literal_missing_field_run_uses_editor_not_writer(tmp_path: Path) -> None:

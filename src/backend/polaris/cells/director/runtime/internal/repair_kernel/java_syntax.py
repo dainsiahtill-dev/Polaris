@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from .contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
 
 JAVA_ACCESSOR_ALIAS_SOURCE_TOOL = "deterministic_java_accessor_alias_repair"
+JAVA_POST_SOURCE_TOOL = "deterministic_java_post_repair"
 JAVA_TEST_DEPENDENCY_SOURCE_TOOL = "deterministic_java_test_dependency_repair"
 
 
@@ -189,6 +190,54 @@ def build_java_test_dependency_plan(
     )
 
 
+def build_java_post_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build a conservative aggregate Java post repair plan from runtime child rules."""
+
+    child_plans = tuple(
+        plan
+        for plan in (
+            build_java_accessor_alias_plan(base_files=base_files, diagnostics=diagnostics, mode=mode),
+            build_java_test_dependency_plan(base_files=base_files, diagnostics=diagnostics, mode=mode),
+        )
+        if plan is not None
+    )
+    operations: list[RepairOperation] = []
+    child_rule_ids: list[str] = []
+    child_source_tools: list[str] = []
+    seen_operation_ids: set[str] = set()
+    for plan in child_plans:
+        child_rule_ids.append(plan.rule_id)
+        child_source_tools.append(plan.source_tool)
+        for operation in plan.operations:
+            if operation.operation_id in seen_operation_ids:
+                continue
+            seen_operation_ids.add(operation.operation_id)
+            operations.append(operation)
+    if not operations:
+        return None
+    return RepairPlan(
+        rule_id="java.cannot_find_symbol",
+        source_tool=JAVA_POST_SOURCE_TOOL,
+        operations=tuple(operations),
+        diagnostics=tuple(diagnostics or ()),
+        mode=mode,
+        risk_level="medium",
+        priority=2,
+        depends_on=tuple(child_rule_ids),
+        metadata={
+            "repair_kind": "java_post_execution_conservative",
+            "aggregate_runtime_child_rules": tuple(child_rule_ids),
+            "aggregate_runtime_child_source_tools": tuple(child_source_tools),
+            "legacy_post_helper_used": False,
+        },
+    )
+
+
 def _insert_java_methods_before_final_class_brace(content: str, methods: list[str]) -> str:
     last_brace = content.rfind("}")
     if last_brace < 0:
@@ -218,8 +267,10 @@ def _normalize_repair_path(path: str) -> str:
 
 __all__ = [
     "JAVA_ACCESSOR_ALIAS_SOURCE_TOOL",
+    "JAVA_POST_SOURCE_TOOL",
     "JAVA_TEST_DEPENDENCY_SOURCE_TOOL",
     "build_java_accessor_alias_plan",
+    "build_java_post_plan",
     "build_java_test_dependency_plan",
     "repair_java_common_accessor_aliases_text",
     "repair_java_test_dependencies_text",

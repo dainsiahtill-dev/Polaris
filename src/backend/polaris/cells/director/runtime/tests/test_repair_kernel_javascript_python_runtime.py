@@ -1,0 +1,242 @@
+"""Runtime repair coverage for JavaScript/Node and Python migrations."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from polaris.cells.director.runtime.internal.repair_kernel import (
+    PatchComposer,
+    normalize_artifact_quality_errors,
+    run_runtime_repair,
+)
+from polaris.cells.director.runtime.internal.repair_kernel.javascript_syntax import (
+    build_npm_script_contract_plan,
+)
+from polaris.cells.director.runtime.public import (
+    DirectorRepairRevalidationInputV1,
+    DirectorRepairRevalidationRequestV1,
+    QueryDirectorRepairCoverageV1,
+    QueryDirectorRepairStrategyCatalogV1,
+    RunDirectorRepairCommandV1,
+    query_director_repair_coverage,
+    query_director_repair_strategy_catalog,
+    run_director_repair,
+)
+
+
+def test_npm_script_contract_uses_structured_json_plan_and_fail_closed_run(tmp_path: Path) -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "devDependencies": {"typescript": "^5.0.0"},
+            "scripts": {"test": 'echo "Error: no test specified" && exit 1'},
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        ["Artifact quality scan failed: npm package manifest script 'test' is a placeholder command"]
+    )
+
+    plan = build_npm_script_contract_plan(
+        base_files={"package.json": package_text, "tsconfig.json": "{}\n", "src/index.ts": "export {};\n"},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.source_tool == "deterministic_npm_script_contract_repair"
+    assert {operation.kind for operation in plan.operations} == {"json_set"}
+    assert all(operation.path == "package.json" for operation in plan.operations)
+    assert all(operation.kind != "write_file" for operation in plan.operations)
+    composition = PatchComposer().compose(
+        {"package.json": package_text, "tsconfig.json": "{}\n", "src/index.ts": "export {};\n"},
+        plan.operations,
+    )
+    assert composition.ok
+    assert composition.patches[0].metadata["structured_operation"] == "json"
+    assert composition.patches[0].metadata["write_file_reason"] == "structured_json_serialization"
+
+    write_calls: list[str] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        write_calls.append(path)
+        (tmp_path / path).write_text(content, encoding="utf-8")
+        return {"ok": True}
+
+    failed = run_runtime_repair(
+        source_tool="deterministic_npm_script_contract_repair",
+        workspace=tmp_path,
+        base_files={"package.json": package_text},
+        artifact_quality_errors=("future unrelated verifier failure",),
+        writer=writer,
+        allowed_paths=("package.json",),
+    )
+
+    assert failed.ok is False
+    assert failed.error_code == "repair_not_planned"
+    assert failed.execution_result is None
+    assert write_calls == []
+
+
+def test_npm_script_contract_public_run_records_receipt_revalidation_evidence(tmp_path: Path) -> None:
+    package_path = tmp_path / "package.json"
+    tsconfig_path = tmp_path / "tsconfig.json"
+    source_path = tmp_path / "src" / "index.ts"
+    source_path.parent.mkdir()
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "devDependencies": {"typescript": "^5.0.0"},
+            "scripts": {"test": 'echo "Error: no test specified" && exit 1'},
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    package_path.write_text(package_text, encoding="utf-8")
+    tsconfig_path.write_text("{}\n", encoding="utf-8")
+    source_path.write_text("export const ok = true;\n", encoding="utf-8")
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        (tmp_path / path).write_text(content, encoding="utf-8")
+        return {"ok": True}
+
+    def revalidator(request: DirectorRepairRevalidationRequestV1) -> DirectorRepairRevalidationInputV1:
+        assert request.source_tool == "deterministic_npm_script_contract_repair"
+        assert request.files_changed == ("package.json",)
+        return DirectorRepairRevalidationInputV1(
+            residual_artifact_quality_errors=(),
+            command=("npm", "test"),
+            exit_code=0,
+            raw_output_ref="runtime/verifier/npm-test.log",
+            metadata={"evidence_source": "unit_test_revalidator"},
+        )
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-npm-script-contract",
+            workspace=str(tmp_path),
+            source_tool="deterministic_npm_script_contract_repair",
+            base_files={
+                "package.json": package_text,
+                "tsconfig.json": "{}\n",
+                "src/index.ts": "export const ok = true;\n",
+            },
+            artifact_quality_errors=(
+                "Artifact quality scan failed: npm package manifest script 'test' is a placeholder command",
+            ),
+            allowed_paths=("package.json",),
+        ),
+        writer=writer,
+        revalidator=revalidator,
+    )
+
+    assert result.ok is True
+    receipt = result.receipts[0]
+    assert receipt.source_tool == "deterministic_npm_script_contract_repair"
+    assert receipt.status == "applied"
+    assert receipt.authoritative is True
+    assert receipt.files_changed == ("package.json",)
+    assert receipt.evidence_status == "resolved_evidence"
+    assert receipt.errors_before == 1
+    assert receipt.errors_after == 0
+    assert receipt.net_error_reduction == 1
+    assert receipt.verifier_command == ("npm", "test")
+    assert receipt.verifier_exit_code == 0
+    assert receipt.revalidation_evidence["raw_output_ref"] == "runtime/verifier/npm-test.log"
+
+
+def test_python_unittest_missing_target_runtime_creates_new_test_and_records_receipt(tmp_path: Path) -> None:
+    source_path = tmp_path / "app.py"
+    source_path.write_text("VALUE = 1\n", encoding="utf-8")
+    writes: list[str] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        writes.append(path)
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        return {"ok": True}
+
+    result = run_runtime_repair(
+        source_tool="deterministic_python_unittest_missing_target_repair",
+        workspace=tmp_path,
+        base_files={"app.py": "VALUE = 1\n"},
+        artifact_quality_errors=("declared target file missing 'tests/test_app.py' is missing",),
+        writer=writer,
+        allowed_paths=("tests/test_app.py",),
+    )
+
+    assert result.ok is True
+    assert writes == ["tests/test_app.py"]
+    assert (
+        (tmp_path / "tests" / "test_app.py")
+        .read_text(encoding="utf-8")
+        .startswith('"""Contract smoke tests for declared Python modules."""')
+    )
+    assert result.execution_result is not None
+    receipt = result.execution_result.receipt
+    assert receipt.source_tool == "deterministic_python_unittest_missing_target_repair"
+    assert receipt.status == "applied"
+    assert receipt.files_changed == ("tests/test_app.py",)
+    assert receipt.metadata["requires_revalidation"] is True
+    assert receipt.metadata["execution_records"][0]["operation"] == "write_file"
+    assert receipt.metadata["write_file_reasons_by_path"] == {
+        "tests/test_app.py": "new_python_unittest_contract_target"
+    }
+
+
+def test_javascript_python_migrations_are_executable_in_coverage_and_catalog() -> None:
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(
+            artifact_quality_errors=(
+                "Artifact quality scan failed: npm package manifest script 'test' is a placeholder command",
+                "declared target file missing 'tests/test_app.py' is missing",
+            )
+        )
+    ).to_dict()
+    catalog = query_director_repair_strategy_catalog(
+        QueryDirectorRepairStrategyCatalogV1(include_items=True, max_items=10_000)
+    ).to_dict()
+    items_by_source_tool = {item["source_tool"]: item for item in catalog["items"]}
+
+    coverage_items = coverage["items"]
+    assert coverage_items[0]["known_rule_matched"] is True
+    assert coverage_items[0]["executable_runtime_plan_matched"] is True
+    assert "deterministic_npm_script_contract_repair" in coverage_items[0]["matched_source_tools"]
+    assert coverage_items[1]["known_rule_matched"] is True
+    assert coverage_items[1]["executable_runtime_plan_matched"] is True
+    assert "deterministic_python_unittest_missing_target_repair" in coverage_items[1]["matched_source_tools"]
+    for source_tool in (
+        "deterministic_node_test_script_contract_repair",
+        "deterministic_npm_script_contract_repair",
+        "deterministic_python_unittest_missing_target_repair",
+    ):
+        assert items_by_source_tool[source_tool]["implementation_status"] == "executable_runtime"
+        assert items_by_source_tool[source_tool]["execution_owner"] == "director.runtime"
+        assert items_by_source_tool[source_tool]["bench_driven_migration_required"] is False
+
+
+def test_node_test_script_contract_run_fails_closed_without_content_match(tmp_path: Path) -> None:
+    writes: list[str] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        writes.append(path)
+        return {"ok": True}
+
+    result = run_runtime_repair(
+        source_tool="deterministic_node_test_script_contract_repair",
+        workspace=tmp_path,
+        base_files={"scripts/test.mjs": "console.log('ordinary test');\n"},
+        artifact_quality_errors=("scripts/test.mjs missing validation contract",),
+        writer=writer,
+        allowed_paths=("scripts/test.mjs",),
+    )
+
+    assert result.ok is False
+    assert result.error_code == "repair_not_planned"
+    assert result.execution_result is None
+    assert writes == []

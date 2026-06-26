@@ -39,6 +39,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
     messages_to_input,
     resolve_max_tokens,
     resolve_platform_retry_max,
+    resolve_temperature,
     resolve_timeout_seconds,
     resolve_tool_call_provider,
 )
@@ -200,6 +201,52 @@ class TestResolveMaxTokens:
 
     def test_clamps_context_override_to_hard_limit(self) -> None:
         assert resolve_max_tokens(4000, {"llm_max_tokens": 999_999}) == 128_000
+
+    def test_execution_strategy_output_budget_wins_over_requested(self) -> None:
+        assert (
+            resolve_max_tokens(
+                4000,
+                {
+                    "task_execution_strategy": {
+                        "schema_version": "task.execution_strategy.v1",
+                        "output_budget_tokens": 96_000,
+                    }
+                },
+            )
+            == 96_000
+        )
+
+
+class TestResolveTemperature:
+    """resolve_temperature consumes execution profile and strategy controls."""
+
+    def test_execution_strategy_temperature_wins_over_requested(self) -> None:
+        assert (
+            resolve_temperature(
+                0.7,
+                {
+                    "task_execution_strategy": {
+                        "schema_version": "task.execution_strategy.v1",
+                        "temperature": 0.05,
+                    }
+                },
+            )
+            == 0.05
+        )
+
+    def test_execution_profile_temperature_is_backstop(self) -> None:
+        assert (
+            resolve_temperature(
+                0.7,
+                {
+                    "director_execution_profile": {
+                        "schema_version": "task.execution_profile.v1",
+                        "temperature": 0.15,
+                    }
+                },
+            )
+            == 0.15
+        )
 
 
 class TestResolveToolCallProvider:

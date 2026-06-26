@@ -9,8 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-
-import pytest
+from unittest.mock import patch
 
 
 class TestPMPlanLanguageConsistency:
@@ -26,26 +25,15 @@ class TestPMPlanLanguageConsistency:
         polaris_dir = tmp_path / ".polaris"
         polaris_dir.mkdir(parents=True, exist_ok=True)
         catalog_contract = {"primary_language": language, "project_id": "TEST-01"}
-        (polaris_dir / "catalog_contract.json").write_text(
-            json.dumps(catalog_contract), encoding="utf-8"
-        )
+        (polaris_dir / "catalog_contract.json").write_text(json.dumps(catalog_contract), encoding="utf-8")
 
-        # Write tasks/plan.json
-        runtime_dir = tmp_path / "runtime"
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        plan = {"tasks": tasks}
-        (runtime_dir / "tasks").mkdir(parents=True, exist_ok=True)
-        (runtime_dir / "tasks" / "plan.json").write_text(
-            json.dumps(plan, encoding="utf-8"), encoding="utf-8"
-        )
-
-        # Build minimal executor
+        # Build minimal executor via __new__ (skip __init__)
         executor = OrchestrationStageExecutor.__new__(OrchestrationStageExecutor)
         executor.workspace = tmp_path
         return executor
 
     def test_javascript_project_with_java_files_detected(self, tmp_path: Path) -> None:
-        """PM plans .java files for a javascript project → mismatch."""
+        """PM plans .java files for a javascript project -> mismatch."""
         tasks = [
             {
                 "id": "TASK-1",
@@ -59,13 +47,14 @@ class TestPMPlanLanguageConsistency:
             }
         ]
         executor = self._build_executor(tmp_path, tasks, "javascript")
-        result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
+        with patch.object(type(executor), "_load_pm_plan_tasks", return_value=tasks):
+            result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
         assert result != ""
         assert "pm_plan_language_mismatch" in result
         assert "javascript" in result
 
     def test_javascript_project_with_js_files_passes(self, tmp_path: Path) -> None:
-        """PM plans .js files for a javascript project → consistent."""
+        """PM plans .js files for a javascript project -> consistent."""
         tasks = [
             {
                 "id": "TASK-1",
@@ -81,11 +70,12 @@ class TestPMPlanLanguageConsistency:
             }
         ]
         executor = self._build_executor(tmp_path, tasks, "javascript")
-        result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
+        with patch.object(type(executor), "_load_pm_plan_tasks", return_value=tasks):
+            result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
         assert result == ""
 
     def test_rust_project_with_rust_files_passes(self, tmp_path: Path) -> None:
-        """PM plans .rs files for a rust project → consistent."""
+        """PM plans .rs files for a rust project -> consistent."""
         tasks = [
             {
                 "id": "TASK-1",
@@ -99,11 +89,12 @@ class TestPMPlanLanguageConsistency:
             }
         ]
         executor = self._build_executor(tmp_path, tasks, "rust")
-        result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
+        with patch.object(type(executor), "_load_pm_plan_tasks", return_value=tasks):
+            result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
         assert result == ""
 
     def test_rust_project_with_python_files_detected(self, tmp_path: Path) -> None:
-        """PM plans .py files for a rust project → mismatch."""
+        """PM plans .py files for a rust project -> mismatch."""
         tasks = [
             {
                 "id": "TASK-1",
@@ -116,12 +107,13 @@ class TestPMPlanLanguageConsistency:
             }
         ]
         executor = self._build_executor(tmp_path, tasks, "rust")
-        result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
+        with patch.object(type(executor), "_load_pm_plan_tasks", return_value=tasks):
+            result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
         assert result != ""
         assert "pm_plan_language_mismatch" in result
 
     def test_no_catalog_contract_skips_validation(self, tmp_path: Path) -> None:
-        """Missing catalog_contract.json → skip validation (non-bench project)."""
+        """Missing catalog_contract.json -> skip validation (non-bench project)."""
         from polaris.cells.factory.pipeline.internal.factory_stage_executor import (
             OrchestrationStageExecutor,
         )
@@ -132,17 +124,11 @@ class TestPMPlanLanguageConsistency:
         assert result == ""
 
     def test_unknown_language_skips_validation(self, tmp_path: Path) -> None:
-        """Unknown primary_language → skip validation."""
+        """Unknown primary_language -> skip validation."""
         polaris_dir = tmp_path / ".polaris"
         polaris_dir.mkdir(parents=True, exist_ok=True)
         catalog_contract = {"primary_language": "haskell", "project_id": "TEST-01"}
-        (polaris_dir / "catalog_contract.json").write_text(
-            json.dumps(catalog_contract), encoding="utf-8"
-        )
-        runtime_dir = tmp_path / "runtime" / "tasks"
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        plan = {"tasks": [{"id": "TASK-1", "goal": "x", "target_files": ["src/Main.hs"]}]}
-        (runtime_dir / "plan.json").write_text(json.dumps(plan, encoding="utf-8"), encoding="utf-8")
+        (polaris_dir / "catalog_contract.json").write_text(json.dumps(catalog_contract), encoding="utf-8")
 
         from polaris.cells.factory.pipeline.internal.factory_stage_executor import (
             OrchestrationStageExecutor,
@@ -150,7 +136,9 @@ class TestPMPlanLanguageConsistency:
 
         executor = OrchestrationStageExecutor.__new__(OrchestrationStageExecutor)
         executor.workspace = tmp_path
-        result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
+        tasks = [{"id": "TASK-1", "goal": "x", "target_files": ["src/Main.hs"]}]
+        with patch.object(type(executor), "_load_pm_plan_tasks", return_value=tasks):
+            result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
         assert result == ""
 
     def test_neutral_extensions_ignored(self, tmp_path: Path) -> None:
@@ -169,11 +157,12 @@ class TestPMPlanLanguageConsistency:
             }
         ]
         executor = self._build_executor(tmp_path, tasks, "javascript")
-        result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
+        with patch.object(type(executor), "_load_pm_plan_tasks", return_value=tasks):
+            result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
         assert result == ""
 
     def test_mixed_correct_and_wrong_extensions(self, tmp_path: Path) -> None:
-        """Some correct + some wrong → mismatch detected."""
+        """Some correct + some wrong -> mismatch detected."""
         tasks = [
             {
                 "id": "TASK-1",
@@ -181,11 +170,49 @@ class TestPMPlanLanguageConsistency:
                 "target_files": [
                     "src/index.js",
                     "src/engine.js",
-                    "src/wrong.java",  # wrong language
+                    "src/wrong.java",
                 ],
             }
         ]
         executor = self._build_executor(tmp_path, tasks, "javascript")
-        result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
+        with patch.object(type(executor), "_load_pm_plan_tasks", return_value=tasks):
+            result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
         assert result != ""
         assert "wrong.java" in result
+
+    def test_go_project_with_go_files_passes(self, tmp_path: Path) -> None:
+        """PM plans .go files for a go project -> consistent."""
+        tasks = [
+            {
+                "id": "TASK-1",
+                "goal": "Implement Go CLI",
+                "target_files": [
+                    "main.go",
+                    "internal/engine.go",
+                    "internal/model.go",
+                    "tests/test_product.py",
+                ],
+            }
+        ]
+        executor = self._build_executor(tmp_path, tasks, "go")
+        with patch.object(type(executor), "_load_pm_plan_tasks", return_value=tasks):
+            result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
+        assert result == ""
+
+    def test_cpp_project_with_java_files_detected(self, tmp_path: Path) -> None:
+        """PM plans .java files for a cpp project -> mismatch."""
+        tasks = [
+            {
+                "id": "TASK-1",
+                "goal": "Implement C++ tool",
+                "target_files": [
+                    "src/Main.java",
+                    "src/Engine.java",
+                ],
+            }
+        ]
+        executor = self._build_executor(tmp_path, tasks, "cpp")
+        with patch.object(type(executor), "_load_pm_plan_tasks", return_value=tasks):
+            result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
+        assert result != ""
+        assert "pm_plan_language_mismatch" in result

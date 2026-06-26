@@ -16,7 +16,11 @@ from polaris.cells.director.runtime.internal.repair_kernel.schedule_catalog impo
     run_materialization_quality_repair_schedule_callbacks,
     run_post_execution_repair_schedule_callbacks,
 )
-from polaris.cells.director.runtime.internal.repair_kernel.scheduler import RepairVerifierSnapshot
+from polaris.cells.director.runtime.internal.repair_kernel.scheduler import (
+    CONVERGENCE_PIPELINE_ORDER,
+    CONVERGENCE_PIPELINE_STAGES,
+    RepairVerifierSnapshot,
+)
 from polaris.cells.director.runtime.public import (
     DirectorRepairCallbackReceiptProjectionV1,
     DirectorRepairMaterializationQualityScheduleRunResultV1,
@@ -51,6 +55,7 @@ def test_runtime_repair_convergence_runs_two_rounds_with_typed_receipts(tmp_path
     def verifier(round_number: int, receipts: tuple[object, ...]) -> RepairVerifierSnapshot:
         del receipts
         current = target.read_text(encoding="utf-8")
+        diagnostics: tuple[RepairDiagnostic, ...]
         if "step_one" not in current:
             diagnostics = (first_diagnostic,)
         elif "step_two" not in current:
@@ -119,7 +124,16 @@ def test_runtime_repair_convergence_runs_two_rounds_with_typed_receipts(tmp_path
     assert result.receipts[1].revalidation_evidence.raw_output_ref == "runtime/verifier/fake-round-2.log"
     assert result.metadata["typed_receipt_path_available"] is True
     assert result.metadata["planner_override"] is True
-    assert result.metadata["pipeline_order"].startswith("Diagnostics -> Coverage -> Plan")
+    assert result.metadata["canonical_convergence_executor"] == "RepairConvergenceScheduler"
+    assert result.metadata["typed_convergence_scheduler_active"] is True
+    assert result.metadata["pipeline"] == list(CONVERGENCE_PIPELINE_STAGES)
+    assert result.metadata["pipeline_order"] == CONVERGENCE_PIPELINE_ORDER
+    assert result.metadata["coverage_stage_required"] is True
+    assert result.metadata["coverage_before_plan_required"] is True
+    assert result.metadata["policy_before_execute_required"] is True
+    assert result.metadata["revalidation_receipt_binding_required"] is True
+    assert result.metadata["hidden_language_loop_allowed"] is False
+    assert result.metadata["language_self_loop_allowed"] is False
     assert target.read_text(encoding="utf-8") == "export const step_one = true;\nexport const step_two = true;\n"
 
 
@@ -324,11 +338,47 @@ def test_callback_schedule_to_dict_and_annotations_mark_migration_envelope() -> 
     assert summary["callback_migration_envelope"] is True
     assert summary["typed_receipt_path_available"] is False
     assert summary["convergence_scheduler_required"] is True
+    assert summary["canonical_convergence_executor"] == "RepairConvergenceScheduler"
+    assert summary["typed_convergence_scheduler_active"] is False
+    assert summary["pipeline_order"] == CONVERGENCE_PIPELINE_ORDER
+    assert summary["hidden_language_loop_allowed"] is False
+    assert summary["language_self_loop_allowed"] is False
+    assert summary["callback_bridge_uses_repair_convergence_scheduler"] is False
+    assert summary["typed_convergence_scheduler_cutover_required"] is True
+    assert summary["callback_runner_self_loop_allowed"] is False
+    assert summary["bounded_round_accounting_visible"] is True
+    assert summary["round_accounting_fields"] == [
+        "max_rounds",
+        "rounds_run",
+        "convergence_status",
+        "stopped_reason",
+    ]
     assert summary["produces_tool_results_only"] is True
     assert summary["final_typed_receipt_path"] == "run_runtime_repair_convergence"
     assert summary["receipt_projection_count"] == 1
+    assert summary["native_receipt_count"] == 0
+    assert summary["post_check_evidence_complete"] is False
+    assert summary["native_post_check_evidence_complete"] is False
+    assert summary["missing_native_revalidation_evidence"] is True
+    assert summary["non_authoritative_projection"] is True
+    assert summary["cutover_ready"] is False
+    assert summary["cutover_blockers"] == [
+        "missing_native_revalidation_evidence",
+        "callback_projection_not_authoritative_receipt",
+    ]
+    assert summary["evidence_status_counts"]["resolved_evidence"] == 1
+    assert summary["evidence_status_counts"]["missing_evidence"] == 0
+    assert summary["resolved_evidence_projection_source_tools"] == ["deterministic_rust_dependency_repair"]
+    assert summary["resolved_evidence_receipt_ids"] == []
     assert payload["callback_migration_envelope"] is True
     assert payload["typed_receipt_path_available"] is False
+    assert payload["canonical_convergence_executor"] == "RepairConvergenceScheduler"
+    assert payload["pipeline_order"] == CONVERGENCE_PIPELINE_ORDER
+    assert payload["hidden_language_loop_allowed"] is False
+    assert payload["language_self_loop_allowed"] is False
+    assert payload["callback_runner_self_loop_allowed"] is False
+    assert payload["typed_convergence_scheduler_cutover_required"] is True
+    assert payload["bounded_round_accounting_visible"] is True
     assert payload["preferred_typed_receipt_entrypoint"] == "run_runtime_repair_convergence"
     assert payload["callback_receipt_projection_available"] is True
     assert receipt_projection["schema_version"] == "director.repair_callback_receipt_projection.v1"
@@ -346,7 +396,16 @@ def test_callback_schedule_to_dict_and_annotations_mark_migration_envelope() -> 
     assert receipt_projection["projection_only"] is True
     assert receipt_projection["typed_receipt_path_available"] is False
     assert receipt_projection["authoritative"] is False
-    assert receipt_projection["migration_blocker"] == "callback runners still return tool_results instead of RepairReceipt"
+    assert receipt_projection["canonical_convergence_executor"] == "RepairConvergenceScheduler"
+    assert receipt_projection["pipeline_order"] == CONVERGENCE_PIPELINE_ORDER
+    assert receipt_projection["hidden_language_loop_allowed"] is False
+    assert receipt_projection["language_self_loop_allowed"] is False
+    assert receipt_projection["callback_runner_self_loop_allowed"] is False
+    assert receipt_projection["typed_convergence_scheduler_cutover_required"] is True
+    assert receipt_projection["preferred_typed_receipt_entrypoint"] == "run_runtime_repair_convergence"
+    assert (
+        receipt_projection["migration_blocker"] == "callback runners still return tool_results instead of RepairReceipt"
+    )
     assert receipt_projection["revalidation_evidence_present"] is True
     assert receipt_projection["revalidation_exit_code"] == 0
     assert receipt_projection["revalidation_residual_count"] == 0
@@ -388,7 +447,22 @@ def test_materialization_callback_schedule_to_dict_projects_non_authoritative_re
     receipt_projection = run_dict["receipt_projections"][0]
 
     assert summary["schedule_kind"] == "materialization_quality"
+    assert summary["canonical_convergence_executor"] == "RepairConvergenceScheduler"
+    assert summary["typed_convergence_scheduler_active"] is False
+    assert summary["pipeline_order"] == CONVERGENCE_PIPELINE_ORDER
+    assert summary["hidden_language_loop_allowed"] is False
+    assert summary["callback_bridge_uses_repair_convergence_scheduler"] is False
+    assert summary["typed_convergence_scheduler_cutover_required"] is True
+    assert summary["callback_runner_self_loop_allowed"] is False
     assert summary["receipt_projection_count"] == 1
+    assert summary["post_check_evidence_complete"] is False
+    assert summary["missing_native_revalidation_evidence"] is True
+    assert summary["non_authoritative_projection"] is True
+    assert summary["cutover_ready"] is False
+    assert summary["evidence_status_counts"]["missing_evidence"] == 1
+    assert summary["evidence_status_counts"]["failed_evidence"] == 0
+    assert summary["missing_evidence_projection_source_tools"] == ["deterministic_typescript_materialization_repair"]
+    assert summary["missing_evidence_receipt_ids"] == []
     assert receipt_projection["schema_version"] == "director.repair_callback_receipt_projection.v1"
     assert receipt_projection["receipt_authority"] == "non_authoritative_callback_projection"
     assert receipt_projection["schedule_kind"] == "materialization_quality"
@@ -402,7 +476,59 @@ def test_materialization_callback_schedule_to_dict_projects_non_authoritative_re
     assert receipt_projection["projection_only"] is True
     assert receipt_projection["typed_receipt_path_available"] is False
     assert receipt_projection["authoritative"] is False
-    assert receipt_projection["migration_blocker"] == "callback runners still return tool_results instead of RepairReceipt"
+    assert receipt_projection["canonical_convergence_executor"] == "RepairConvergenceScheduler"
+    assert receipt_projection["hidden_language_loop_allowed"] is False
+    assert receipt_projection["callback_runner_self_loop_allowed"] is False
+    assert receipt_projection["typed_convergence_scheduler_cutover_required"] is True
+    assert (
+        receipt_projection["migration_blocker"] == "callback runners still return tool_results instead of RepairReceipt"
+    )
+
+
+def test_callback_schedule_summary_keeps_failed_projection_evidence_distinct_from_missing() -> None:
+    runner_step_ids = (
+        "go.module_import",
+        "rust.dependency_resolution",
+        "rust.post_execution_convergence",
+        "cpp.post_execution",
+        "java.post_execution",
+    )
+
+    def runner(step) -> list[dict[str, object]]:
+        if step.step_id != "rust.dependency_resolution":
+            return []
+        return [
+            {
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "source_tool": "deterministic_rust_dependency_repair",
+                    "file": "Cargo.toml",
+                    "after_hash": "hash-failed",
+                    "revalidation": {
+                        "command": ["cargo", "check"],
+                        "exit_code": 1,
+                        "errors_before": 2,
+                        "errors_after": 1,
+                    },
+                },
+            }
+        ]
+
+    run = run_post_execution_repair_schedule_callbacks(
+        runner_step_ids=runner_step_ids,
+        runner=runner,
+    )
+    summary = run.to_dict()["summary"]
+
+    assert summary["post_check_evidence_complete"] is False
+    assert summary["missing_native_revalidation_evidence"] is True
+    assert summary["non_authoritative_projection"] is True
+    assert summary["cutover_ready"] is False
+    assert summary["evidence_status_counts"]["failed_evidence"] == 1
+    assert summary["evidence_status_counts"]["missing_evidence"] == 0
+    assert summary["failed_evidence_projection_source_tools"] == ["deterministic_rust_dependency_repair"]
+    assert summary["failed_evidence_receipt_ids"] == []
 
 
 def test_public_post_execution_schedule_run_result_exposes_summary_and_receipts() -> None:
@@ -449,6 +575,14 @@ def test_public_post_execution_schedule_run_result_exposes_summary_and_receipts(
     assert payload["authoritative_receipts_allowed"] is False
     assert payload["summary"]["receipt_projection_count"] == 1
     assert payload["summary"]["schedule_kind"] == "post_execution"
+    assert payload["summary"]["callback_bridge_uses_repair_convergence_scheduler"] is False
+    assert payload["summary"]["typed_convergence_scheduler_cutover_required"] is True
+    assert payload["summary"]["callback_runner_self_loop_allowed"] is False
+    assert payload["summary"]["post_check_evidence_complete"] is False
+    assert payload["summary"]["missing_native_revalidation_evidence"] is True
+    assert payload["summary"]["non_authoritative_projection"] is True
+    assert payload["summary"]["cutover_ready"] is False
+    assert payload["summary"]["evidence_status_counts"]["missing_evidence"] == 1
     assert payload["receipt_projections"][0]["projection_only"] is True
     assert payload["receipt_projections"][0]["typed_receipt_path_available"] is False
     assert payload["receipt_projections"][0]["authoritative"] is False
@@ -562,6 +696,11 @@ def test_public_materialization_schedule_run_result_exposes_summary_and_receipts
     assert payload["authoritative_receipts_allowed"] is False
     assert payload["summary"]["receipt_projection_count"] == 1
     assert payload["summary"]["schedule_kind"] == "materialization_quality"
+    assert payload["summary"]["post_check_evidence_complete"] is False
+    assert payload["summary"]["missing_native_revalidation_evidence"] is True
+    assert payload["summary"]["non_authoritative_projection"] is True
+    assert payload["summary"]["cutover_ready"] is False
+    assert payload["summary"]["evidence_status_counts"]["missing_evidence"] == 1
     assert payload["receipt_projections"][0]["projection_only"] is True
     assert payload["receipt_projections"][0]["typed_receipt_path_available"] is False
     assert payload["receipt_projections"][0]["authoritative"] is False

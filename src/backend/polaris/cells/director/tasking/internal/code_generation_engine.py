@@ -674,6 +674,10 @@ class CodeGenerationEngine:
     ) -> dict[str, Any]:
         """Invoke the canonical Director role runtime for one generation round."""
         from polaris.cells.director.tasking.internal.execution_profile import resolve_director_execution_profile
+        from polaris.cells.director.tasking.internal.execution_strategy import (
+            apply_execution_strategy_overrides,
+            resolve_director_execution_strategy,
+        )
         from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
@@ -689,6 +693,11 @@ class CodeGenerationEngine:
             workspace=self.workspace,
         )
         execution_profile_payload = execution_profile.to_dict()
+        execution_strategy = resolve_director_execution_strategy(
+            execution_profile,
+            metadata=task_metadata,
+        )
+        execution_strategy_payload = execution_strategy.to_dict()
         context = {
             "task_id": task_id,
             "run_id": run_id,
@@ -701,7 +710,8 @@ class CodeGenerationEngine:
             "director_execution_profile": execution_profile_payload,
             "director_execution_profile_schema": execution_profile.schema_version,
             "director_execution_profile_source": execution_profile.source,
-            "_transaction_kernel_temperature_override": execution_profile.temperature,
+            "director_execution_strategy": execution_strategy_payload,
+            "task_execution_strategy": execution_strategy_payload,
             "llm_call_timeout_seconds": timeout,
             "director_runtime_codegen": True,
             "director_runtime_codegen_mode": execution_profile.generation_mode,
@@ -712,6 +722,29 @@ class CodeGenerationEngine:
             "_transaction_kernel_forced_tool_definitions": [],
             "_transaction_kernel_forced_tool_choice": "none",
         }
+        metadata = {
+            "source": "director.execution.code_generation_engine",
+            "role_runtime_required": True,
+            "cognitive_runtime_required": True,
+            "context_os_expected": True,
+            "director_runtime_codegen": True,
+            "director_execution_profile": execution_profile_payload,
+            "director_execution_strategy": execution_strategy_payload,
+            "task_execution_strategy": execution_strategy_payload,
+            "task_type": execution_profile.task_type,
+            "phase": execution_profile.phase,
+            "temperature": execution_strategy.temperature,
+            "temperature_phase": execution_strategy.temperature_phase,
+            "temperature_source": execution_strategy.source,
+            "validate_output": False,
+            "max_retries": 0,
+        }
+        apply_execution_strategy_overrides(
+            context=context,
+            metadata=metadata,
+            profile=execution_profile,
+            strategy=execution_strategy,
+        )
         user_message = "[mode:propose] Do not call tools. Please complete the assigned implementation task."
         workspace_policy_prompt = self._build_workspace_policy_prompt()
         proposal_prompt = self._normalize_proposal_prompt(
@@ -738,22 +771,7 @@ class CodeGenerationEngine:
             task_id=task_id or None,
             domain="code",
             context=context,
-            metadata={
-                "source": "director.execution.code_generation_engine",
-                "role_runtime_required": True,
-                "cognitive_runtime_required": True,
-                "context_os_expected": True,
-                "director_runtime_codegen": True,
-                "director_execution_profile": execution_profile_payload,
-                "task_type": execution_profile.task_type,
-                "phase": execution_profile.phase,
-                "temperature": execution_profile.temperature,
-                "temperature_phase": execution_profile.temperature_phase,
-                "temperature_source": execution_profile.temperature_source,
-                "validate_output": False,
-                "max_retries": 0,
-                "prompt_appendix": appendix,
-            },
+            metadata={**metadata, "prompt_appendix": appendix},
             stream=False,
             host_kind="director_runtime_codegen",
         )

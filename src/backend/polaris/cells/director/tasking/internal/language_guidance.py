@@ -24,6 +24,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.role.language_identity import (
+    get_language_professional_identity,
+    normalize_language_token,
+)
+
 
 @dataclass(frozen=True)
 class LanguageProfile:
@@ -893,7 +898,7 @@ def _normalize_token(value: Any) -> str:
 
 
 def _normalize_language(value: Any) -> str:
-    token = _normalize_token(value)
+    token = normalize_language_token(value)
     if not token:
         return ""
     return _LANG_ALIASES.get(token, token)
@@ -1184,8 +1189,10 @@ def get_language_guidance(language: str) -> str:
 def get_role_identity(language: str) -> str:
     """Get the Director role identity for a normalized language code."""
 
-    normalized = _normalize_language(language)
-    return _ROLE_IDENTITIES.get(normalized, _ROLE_IDENTITIES["generic"])
+    identity = get_language_professional_identity(language)
+    if identity is not None:
+        return identity.identity
+    return _ROLE_IDENTITIES["generic"]
 
 
 def _dedupe_identity_fragments(values: tuple[str, ...], *, limit: int = 4) -> tuple[str, ...]:

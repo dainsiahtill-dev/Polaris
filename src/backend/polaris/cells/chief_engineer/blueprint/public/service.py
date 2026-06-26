@@ -374,6 +374,9 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         dependencies=tuple(dependencies),
         architecture_decisions=architecture_decisions,
         selected_libraries=tuple(selected_libraries),
+        existing_target_files=tuple(
+            dict(item) for item in context.get("existing_target_files", []) if isinstance(item, dict)
+        ),
     )
 
 

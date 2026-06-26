@@ -1394,9 +1394,11 @@ class LLMInvoker:
         task_id = task_id or getattr(context, "task_id", None)
         role_id = str(getattr(profile, "role_id", "unknown") or "unknown")
         model = profile.model or "default"
-        from .helpers import resolve_max_tokens
+        from .helpers import resolve_max_tokens, resolve_temperature
 
-        effective_max_tokens = resolve_max_tokens(max_tokens, getattr(context, "context_override", None))
+        context_override = getattr(context, "context_override", None)
+        effective_max_tokens = resolve_max_tokens(max_tokens, context_override)
+        effective_temperature = resolve_temperature(temperature, context_override)
 
         start_time = time.perf_counter()
         prepared: PreparedLLMRequest | None = None
@@ -1421,7 +1423,7 @@ class LLMInvoker:
                 profile=profile,
                 system_prompt=system_prompt,
                 context=context,
-                temperature=temperature,
+                temperature=effective_temperature,
                 max_tokens=effective_max_tokens,
                 stream=False,
                 response_model=response_model,
@@ -1463,7 +1465,7 @@ class LLMInvoker:
                 metadata=_with_context_os_audit(
                     _with_context_snapshot_diagnostics(
                         {
-                            "temperature": temperature,
+                            "temperature": effective_temperature,
                             "max_tokens": effective_max_tokens,
                             "prompt_fingerprint": prompt_fingerprint,
                             "native_tool_mode": prepared.native_tool_mode,
@@ -2200,6 +2202,11 @@ class LLMInvoker:
         task_id = task_id or getattr(context, "task_id", None)
         role_id = str(getattr(profile, "role_id", "unknown") or "unknown")
         model = profile.model or "default"
+        from .helpers import resolve_max_tokens, resolve_temperature
+
+        context_override = getattr(context, "context_override", None)
+        effective_max_tokens = resolve_max_tokens(max_tokens, context_override)
+        effective_temperature = resolve_temperature(temperature, context_override)
 
         start_time = time.perf_counter()
         prepared: PreparedLLMRequest | None = None
@@ -2221,8 +2228,8 @@ class LLMInvoker:
                 profile=profile,
                 system_prompt=system_prompt,
                 context=context,
-                temperature=temperature,
-                max_tokens=max_tokens,
+                temperature=effective_temperature,
+                max_tokens=effective_max_tokens,
                 stream=False,
                 response_model=response_model,
                 platform_retry_max=max_retries,
@@ -2299,8 +2306,8 @@ class LLMInvoker:
                     messages=messages,
                     response_model=response_model,
                     model=model,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
+                    temperature=effective_temperature,
+                    max_tokens=effective_max_tokens,
                     max_retries=max_retries,
                     prompt_tokens=prompt_tokens,
                     turn_round=turn_round,
@@ -2477,6 +2484,11 @@ class LLMInvoker:
         role_id = str(getattr(profile, "role_id", "unknown") or "unknown")
         model = profile.model or "default"
         start_time = time.perf_counter()
+        from .helpers import resolve_max_tokens, resolve_temperature
+
+        context_override = getattr(context, "context_override", None)
+        effective_max_tokens = resolve_max_tokens(max_tokens, context_override)
+        effective_temperature = resolve_temperature(temperature, context_override)
 
         runtime_cfg = resolve_stream_runtime_config(context)
 
@@ -2530,8 +2542,8 @@ class LLMInvoker:
                 profile=profile,
                 system_prompt=system_prompt,
                 context=context,
-                temperature=temperature,
-                max_tokens=max_tokens,
+                temperature=effective_temperature,
+                max_tokens=effective_max_tokens,
                 stream=True,
             )
             resolved_provider_id = str(
@@ -2561,8 +2573,8 @@ class LLMInvoker:
                         "provider_id": resolved_provider_id,
                         "model": resolved_model,
                         "call_id": call_id,
-                        "temperature": temperature,
-                        "max_tokens": max_tokens,
+                        "temperature": effective_temperature,
+                        "max_tokens": effective_max_tokens,
                         "message_count": len(prepared_messages),
                         "message_roles": message_roles,
                         "message_content_sha256": message_content_sha256,

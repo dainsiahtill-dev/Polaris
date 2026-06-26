@@ -2846,7 +2846,9 @@ def main() -> int:
             )
             return 1
         if alias_to_canonical:
-            alias_summary = ", ".join(f"{alias}->{canonical}" for alias, canonical in sorted(alias_to_canonical.items()))
+            alias_summary = ", ".join(
+                f"{alias}->{canonical}" for alias, canonical in sorted(alias_to_canonical.items())
+            )
             print(f"[factory-bench] resolved level-local project id(s): {alias_summary}", flush=True)
     else:
         wanted_levels = {int(s) for s in args.levels.split(",") if s.strip()}

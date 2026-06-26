@@ -36,6 +36,10 @@ class PromptMetadata:
     task_type: str = "default"
     version: str = "1.0"
     cache_key: str = ""
+    profession_name: str = ""
+    profession_identity_source: str = "recipe"
+    profession_identity_language: str | None = None
+    profession_override_applied: bool = False
 
 
 @dataclass
@@ -85,6 +89,10 @@ class RoleComposer:
         task_type: str = "default",
         domain: str | None = None,
         skip_cache: bool = False,
+        profession_name_override: str | None = None,
+        profession_identity_override: str | None = None,
+        profession_identity_source: str = "recipe",
+        profession_identity_language: str | None = None,
     ) -> ComposedPrompt | None:
         """
         Compose a complete System Prompt from three axes.
@@ -100,8 +108,22 @@ class RoleComposer:
         Returns:
             ComposedPrompt with system_prompt and metadata, or None if any config is missing
         """
-        # Generate cache key
-        cache_key = self._make_cache_key(anchor_id, profession_id, persona_id, domain, task_type)
+        override_name = str(profession_name_override or "").strip()
+        override_identity = str(profession_identity_override or "").strip()
+        override_applied = bool(override_name or override_identity)
+
+        # Generate cache key. Runtime language identities must be part of the key,
+        # otherwise a Director Go task can reuse a cached generic software-engineer
+        # role_definition from a previous task.
+        cache_key = self._make_cache_key(
+            anchor_id,
+            profession_id,
+            persona_id,
+            domain,
+            task_type,
+            profession_name_override=override_name,
+            profession_identity_override=override_identity,
+        )
 
         if not skip_cache and cache_key in self._cache:
             logger.debug(f"Cache hit for {cache_key}")
@@ -123,7 +145,13 @@ class RoleComposer:
             return None
 
         # Build the prompt layers
-        identity_prompt = self._build_identity_prompt(anchor, profession, persona)
+        identity_prompt = self._build_identity_prompt(
+            anchor,
+            profession,
+            persona,
+            profession_name_override=override_name,
+            profession_identity_override=override_identity,
+        )
         workflow_prompt = self._build_workflow_prompt(anchor, profession, task_type)
         standards_prompt = self._build_standards_prompt(profession)
         protocols_prompt = self._build_protocols_prompt(profession, task_type)
@@ -149,6 +177,10 @@ class RoleComposer:
                 task_type=task_type,
                 version=profession.version,
                 cache_key=cache_key,
+                profession_name=override_name or profession.name,
+                profession_identity_source=profession_identity_source if override_applied else "recipe",
+                profession_identity_language=str(profession_identity_language or "").strip() or None,
+                profession_override_applied=override_applied,
             ),
             workflow=profession.workflow,
             engineering_standards=profession.engineering_standards,
@@ -162,7 +194,16 @@ class RoleComposer:
 
         return composed
 
-    def compose_by_recipe(self, recipe_id: str, task_type: str = "default") -> ComposedPrompt | None:
+    def compose_by_recipe(
+        self,
+        recipe_id: str,
+        task_type: str = "default",
+        *,
+        profession_name_override: str | None = None,
+        profession_identity_override: str | None = None,
+        profession_identity_source: str = "recipe",
+        profession_identity_language: str | None = None,
+    ) -> ComposedPrompt | None:
         """
         Compose a prompt using a Recipe (predefined combination).
 
@@ -190,6 +231,10 @@ class RoleComposer:
             persona_id=recipe.persona,
             task_type=task_type,
             domain=recipe.domain,
+            profession_name_override=profession_name_override,
+            profession_identity_override=profession_identity_override,
+            profession_identity_source=profession_identity_source,
+            profession_identity_language=profession_identity_language,
         )
 
     def _make_cache_key(
@@ -199,29 +244,42 @@ class RoleComposer:
         persona_id: str,
         domain: str | None,
         task_type: str,
+        *,
+        profession_name_override: str = "",
+        profession_identity_override: str = "",
     ) -> str:
         """Generate a cache key for the composition."""
         key_parts = [anchor_id, profession_id, persona_id, task_type]
         if domain:
             key_parts.append(domain)
+        if profession_name_override or profession_identity_override:
+            override_hash = hashlib.sha256(
+                f"{profession_name_override}\n{profession_identity_override}".encode()
+            ).hexdigest()[:16]
+            key_parts.extend(["profession_override", override_hash])
         key_string = ":".join(key_parts)
-        return hashlib.md5(key_string.encode()).hexdigest()[:16]
+        return hashlib.md5(key_string.encode("utf-8")).hexdigest()[:16]
 
     def _build_identity_prompt(
         self,
         anchor: AnchorConfig,
         profession: ProfessionConfig,
         persona: PersonaConfig,
+        *,
+        profession_name_override: str = "",
+        profession_identity_override: str = "",
     ) -> str:
         """Build the identity definition prompt."""
+        profession_name = profession_name_override or profession.name
+        profession_identity = profession_identity_override or profession.identity
         return f"""<role_definition>
 # 系统定位
 你是 Polaris 体系中的 **{anchor.name}**。
 {anchor.description}
 
 # 专业能力
-你同时是一位**{profession.name}**。
-{profession.identity}
+你同时是一位**{profession_name}**。
+{profession_identity}
 
 # 表达方式
 请保持 **{persona.name}** 的性格特点:

@@ -15,10 +15,20 @@ from typing import Any
 import yaml
 from polaris.cells.director.runtime.internal.repair_kernel.runtime_dispatch import runtime_repair_bindings
 from polaris.cells.director.runtime.public import (
+    QueryDirectorRepairAdvisoryValidationV1,
+    QueryDirectorRepairCoverageV1,
+    QueryDirectorRepairLanguageSlotsV1,
     QueryDirectorRepairMaterializationQualityScheduleV1,
     QueryDirectorRepairPostExecutionScheduleV1,
+    QueryDirectorRepairStrategyCatalogV1,
+    query_director_repair_coverage,
+    query_director_repair_language_slots,
     query_director_repair_materialization_quality_schedule,
     query_director_repair_post_execution_schedule,
+    query_director_repair_strategy_catalog,
+    run_director_materialization_quality_repair_schedule_result,
+    run_director_post_execution_repair_schedule_result,
+    validate_director_repair_advisory,
 )
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
@@ -28,15 +38,11 @@ ROLES_ADAPTERS_PUBLIC_ROOT = BACKEND_ROOT / "polaris" / "cells" / "roles" / "ada
 ROLES_ADAPTERS_PUBLIC_SERVICE_PATH = ROLES_ADAPTERS_PUBLIC_ROOT / "service.py"
 ROLES_ADAPTERS_PUBLIC_INIT_PATH = ROLES_ADAPTERS_PUBLIC_ROOT / "__init__.py"
 ROLES_ADAPTERS_TESTS_ROOT = BACKEND_ROOT / "polaris" / "cells" / "roles" / "adapters" / "tests"
-ROLES_ADAPTERS_STRATEGY_CATALOG_TEST_PATH = (
-    ROLES_ADAPTERS_TESTS_ROOT / "test_deterministic_repair_strategy_catalog.py"
-)
+ROLES_ADAPTERS_STRATEGY_CATALOG_TEST_PATH = ROLES_ADAPTERS_TESTS_ROOT / "test_deterministic_repair_strategy_catalog.py"
 QA_ROOT = BACKEND_ROOT / "polaris" / "cells" / "qa"
 EXECUTE_METHOD_PATH = ROLES_DIRECTOR_ROOT / "execute_method.py"
 EXECUTE_METHOD_REPAIR_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "execute_method_repair_bridge.py"
-EXECUTE_METHOD_REPAIR_BRIDGE_MODULE = (
-    "polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge"
-)
+EXECUTE_METHOD_REPAIR_BRIDGE_MODULE = "polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge"
 POST_EXECUTION_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "post_execution_repair_bridge.py"
 MATERIALIZATION_QUALITY_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_repair_bridge.py"
 DETERMINISTIC_REPAIRS_INIT_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "__init__.py"
@@ -47,8 +53,14 @@ QUALITY_GATE_PATH = ROLES_DIRECTOR_ROOT / "quality_gate.py"
 DIRECTOR_RUNTIME_PUBLIC_SERVICE_PATH = (
     BACKEND_ROOT / "polaris" / "cells" / "director" / "runtime" / "public" / "service.py"
 )
+DIRECTOR_RUNTIME_PUBLIC_CONTRACTS_PATH = (
+    BACKEND_ROOT / "polaris" / "cells" / "director" / "runtime" / "public" / "contracts.py"
+)
 DIRECTOR_RUNTIME_PUBLIC_INIT_PATH = (
     BACKEND_ROOT / "polaris" / "cells" / "director" / "runtime" / "public" / "__init__.py"
+)
+DIRECTOR_RUNTIME_INTERNAL_REPAIR_KERNEL_ROOT = (
+    BACKEND_ROOT / "polaris" / "cells" / "director" / "runtime" / "internal" / "repair_kernel"
 )
 FACTORY_STAGE_EXECUTOR_PATH = (
     BACKEND_ROOT / "polaris" / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor.py"
@@ -67,25 +79,33 @@ FORBIDDEN_IMPORT_PREFIXES = (
 ALLOWED_EXECUTE_METHOD_DIRECTOR_RUNTIME_IMPORTS = {
     "polaris.cells.director.runtime.public.service",
 }
-CONCRETE_LEGACY_REPAIR_NAME_PREFIXES = (
-    "_apply_deterministic_",
-    "repair_",
-)
+CONCRETE_LEGACY_REPAIR_NAME_PREFIXES = ("_apply_deterministic_",)
 CONCRETE_LEGACY_REPAIR_EXPORT_PREFIXES = (
     "_apply_deterministic_",
     "_repair_",
     "repair_",
 )
-LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST = {
-    EXECUTE_METHOD_REPAIR_BRIDGE_PATH,
+LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST_REASONS = {
+    EXECUTE_METHOD_REPAIR_BRIDGE_PATH: "migration-only execute_method compatibility bridge",
+    MATERIALIZATION_QUALITY_BRIDGE_PATH: (
+        "migration bridge may bind step_id -> runner, but runtime owns materialization schedule catalog"
+    ),
+    POST_EXECUTION_BRIDGE_PATH: (
+        "migration bridge may bind step_id -> runner, but runtime owns post-execution schedule catalog"
+    ),
+}
+LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST = set(LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST_REASONS)
+SCHEDULE_RUNNER_BINDING_BRIDGES = {
     MATERIALIZATION_QUALITY_BRIDGE_PATH,
     POST_EXECUTION_BRIDGE_PATH,
 }
+DIRECTOR_RUNTIME_INTERNAL_REPAIR_KERNEL_IMPORT_ALLOWLIST = {
+    DIRECTOR_RUNTIME_PUBLIC_CONTRACTS_PATH,
+    DIRECTOR_RUNTIME_PUBLIC_SERVICE_PATH,
+}
 PUBLIC_MIGRATION_ONLY_REPAIR_SHIMS = {
     "apply_deterministic_cpp_post_repairs": "run_director_cpp_post_execution_repairs",
-    "apply_deterministic_materialization_quality_repairs": (
-        "run_director_materialization_quality_repair_schedule"
-    ),
+    "apply_deterministic_materialization_quality_repairs": ("run_director_materialization_quality_repair_schedule"),
 }
 PUBLIC_MIGRATION_SHIM_TEST_REFERENCE_ALLOWLIST = {
     (
@@ -110,11 +130,15 @@ MIGRATED_RUNTIME_REPAIR_EXPORTS_FORBIDDEN_IN_EXECUTE_METHOD = {
     "_parse_typescript_return_object_semicolon_paths",
     "_repair_typescript_return_object_semicolon_lines",
 }
-EXPECTED_EXECUTE_METHOD_REPAIR_BRIDGE_COMPAT_ALLOWLIST = {
-    "_apply_deterministic_python_unittest_missing_target_repair",
-    "_apply_deterministic_scaffold_marker_cleanup",
-    "_apply_deterministic_typescript_reexport_repair",
+MIGRATED_TYPESCRIPT_SOURCE_TOOL_PREFIXES = (
+    "deterministic_typescript",
+    "deterministic_html_typescript",
+    "deterministic_typeorm",
+)
+MIGRATED_TYPESCRIPT_SOURCE_TOOL_NAMES = {
+    "deterministic_javascript_typescript_annotation_repair",
 }
+EXPECTED_EXECUTE_METHOD_REPAIR_BRIDGE_COMPAT_ALLOWLIST: set[str] = set()
 MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
     "_apply_deterministic_javascript_test_missing_target_repair",
     "_apply_deterministic_python_package_shadow_bridge_repair",
@@ -147,11 +171,7 @@ def _python_source_files(root: Path) -> list[Path]:
 
 
 def _production_python_source_files(root: Path) -> list[Path]:
-    return [
-        path
-        for path in _python_source_files(root)
-        if "tests" not in path.parts and "generated" not in path.parts
-    ]
+    return [path for path in _python_source_files(root) if "tests" not in path.parts and "generated" not in path.parts]
 
 
 def _test_python_source_files() -> list[Path]:
@@ -279,6 +299,11 @@ def _is_public_old_named_repair_wrapper(name: str) -> bool:
 
 def _called_deterministic_repair_names(path: Path) -> set[str]:
     tree = ast.parse(_read_text(path))
+    imports_legacy_repair_host = any(
+        reference == "polaris.cells.roles.adapters.internal.director.deterministic_repairs"
+        or reference.startswith("polaris.cells.roles.adapters.internal.director.deterministic_repairs.")
+        for reference in _import_references(path)
+    )
     names: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -286,6 +311,18 @@ def _called_deterministic_repair_names(path: Path) -> set[str]:
         if isinstance(node.func, ast.Name) and _is_concrete_legacy_repair_name(node.func.id):
             names.add(node.func.id)
         elif isinstance(node.func, ast.Attribute) and _is_concrete_legacy_repair_name(node.func.attr):
+            names.add(node.func.attr)
+        elif (
+            imports_legacy_repair_host
+            and isinstance(node.func, ast.Name)
+            and str(node.func.id or "").startswith("repair_")
+        ):
+            names.add(node.func.id)
+        elif (
+            imports_legacy_repair_host
+            and isinstance(node.func, ast.Attribute)
+            and str(node.func.attr or "").startswith("repair_")
+        ):
             names.add(node.func.attr)
     return names
 
@@ -351,6 +388,27 @@ def _repair_boundary_import_source_files() -> list[Path]:
                 continue
             files.append(path)
     return sorted(set(files))
+
+
+def _product_python_source_files() -> list[Path]:
+    roots = [
+        BACKEND_ROOT / "polaris",
+        BACKEND_ROOT / "scripts",
+    ]
+    files: list[Path] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        files.extend(_production_python_source_files(root))
+    return sorted(set(files))
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def _function_source(path: Path, function_name: str) -> str:
@@ -500,6 +558,27 @@ def test_roles_adapters_never_imports_director_runtime_internal_repair_kernel() 
     assert violations == [], f"{REPAIR_BOUNDARY_FAILURE_HINT} Violations: {violations}"
 
 
+def test_product_code_imports_director_repair_kernel_only_through_runtime_public_boundary() -> None:
+    violations: list[str] = []
+    for path in _product_python_source_files():
+        if _path_is_under(path, DIRECTOR_RUNTIME_INTERNAL_REPAIR_KERNEL_ROOT):
+            continue
+        if path in DIRECTOR_RUNTIME_INTERNAL_REPAIR_KERNEL_IMPORT_ALLOWLIST:
+            continue
+        for module in _imported_modules(path):
+            if module == "polaris.cells.director.runtime.internal.repair_kernel" or module.startswith(
+                "polaris.cells.director.runtime.internal.repair_kernel."
+            ):
+                rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+                violations.append(f"{rel_path}: {module}")
+
+    assert violations == [], (
+        f"{REPAIR_BOUNDARY_FAILURE_HINT} product code must use director.runtime.public; "
+        f"only the runtime internal package and public facade may import repair_kernel internals. "
+        f"Violations: {violations}"
+    )
+
+
 def test_execute_method_uses_director_runtime_repair_kernel_only_via_public_service() -> None:
     director_runtime_imports = sorted(
         {
@@ -529,6 +608,29 @@ def test_execute_method_does_not_import_specific_deterministic_repair_modules() 
     )
 
 
+def test_execute_factory_qa_and_bench_never_direct_call_legacy_deterministic_repairs() -> None:
+    disallowed_paths = [EXECUTE_METHOD_PATH, *_factory_qa_bench_source_files()]
+    violations: list[str] = []
+    for path in sorted(set(disallowed_paths)):
+        rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+        direct_imports = sorted(
+            reference
+            for reference in _import_references(path)
+            if reference == "polaris.cells.roles.adapters.internal.director.deterministic_repairs"
+            or reference.startswith("polaris.cells.roles.adapters.internal.director.deterministic_repairs.")
+        )
+        if direct_imports:
+            violations.extend(f"{rel_path}: import {reference}" for reference in direct_imports)
+        direct_calls = sorted(_called_deterministic_repair_names(path))
+        if direct_calls:
+            violations.extend(f"{rel_path}: call {call_name}" for call_name in direct_calls)
+
+    assert violations == [], (
+        f"{REPAIR_BOUNDARY_FAILURE_HINT} execute_method.py, Factory, QA, and factory_bench must go through "
+        f"director.runtime.public or controlled bridge entrypoints. Violations: {violations}"
+    )
+
+
 def test_only_director_repair_bridges_import_concrete_legacy_repair_functions() -> None:
     violations: list[str] = []
     for path in _repair_boundary_import_source_files():
@@ -539,6 +641,38 @@ def test_only_director_repair_bridges_import_concrete_legacy_repair_functions() 
         violations.extend(f"{rel_path}: {item}" for item in concrete_imports)
 
     assert violations == [], f"{REPAIR_BOUNDARY_FAILURE_HINT} Violations: {violations}"
+
+
+def test_legacy_repair_bridge_allowlist_is_explicit_and_schedule_limited() -> None:
+    expected_bridge_import_allowlist = {
+        EXECUTE_METHOD_REPAIR_BRIDGE_PATH,
+        MATERIALIZATION_QUALITY_BRIDGE_PATH,
+        POST_EXECUTION_BRIDGE_PATH,
+    }
+    assert set(LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST_REASONS) == LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST
+    assert expected_bridge_import_allowlist == LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST
+    assert len(LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST) == 3
+    assert LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST_REASONS[EXECUTE_METHOD_REPAIR_BRIDGE_PATH] == (
+        "migration-only execute_method compatibility bridge"
+    )
+    assert {
+        MATERIALIZATION_QUALITY_BRIDGE_PATH,
+        POST_EXECUTION_BRIDGE_PATH,
+    } == SCHEDULE_RUNNER_BINDING_BRIDGES
+    for path in SCHEDULE_RUNNER_BINDING_BRIDGES:
+        reason = LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST_REASONS[path]
+        source = _read_text(path)
+        assert "may bind step_id -> runner" in reason
+        assert "runtime owns" in reason
+        assert "schedule catalog" in reason
+        assert "query_director_repair_" in source
+        assert "run_director_" in source
+        assert "_REPAIR_RUNNERS" in source
+        assert "_REPAIR_STEPS" not in source
+        assert "_ordered_post_execution_steps" not in source
+        assert "_ordered_materialization_quality_steps" not in source
+        assert "class PostExecutionRepairStep" not in source
+        assert "class MaterializationQualityRepairStep" not in source
 
 
 def test_execute_method_repair_bridge_is_migration_only_and_not_a_public_fact_source() -> None:
@@ -594,9 +728,7 @@ def test_execute_method_repair_bridge_compat_allowlist_is_narrow_and_blocks_runt
 
 def test_roles_public_old_named_repair_wrappers_are_migration_only() -> None:
     service_function_names = {node.name for node in _function_definitions(ROLES_ADAPTERS_PUBLIC_SERVICE_PATH)}
-    old_named_wrappers = {
-        name for name in service_function_names if _is_public_old_named_repair_wrapper(name)
-    }
+    old_named_wrappers = {name for name in service_function_names if _is_public_old_named_repair_wrapper(name)}
     service_exports = set(_module_literal_string_list(ROLES_ADAPTERS_PUBLIC_SERVICE_PATH, "__all__"))
     package_exports = set(_module_literal_string_list(ROLES_ADAPTERS_PUBLIC_INIT_PATH, "__all__"))
     service_source = _read_text(ROLES_ADAPTERS_PUBLIC_SERVICE_PATH)
@@ -867,10 +999,10 @@ def test_rust_post_execution_callback_does_not_own_convergence_loop() -> None:
     assert '"revalidation"' in rust_annotation_source
 
 
-def test_rust_aggregate_post_repair_is_not_executable_runtime_binding() -> None:
+def test_rust_aggregate_post_repair_is_executable_runtime_binding() -> None:
     source_tools = {binding["source_tool"] for binding in runtime_repair_bindings()}
 
-    assert "deterministic_rust_post_repair" not in source_tools
+    assert "deterministic_rust_post_repair" in source_tools
     assert "deterministic_rust_method_self_signature_repair" in source_tools
     assert "deterministic_rust_missing_module_file_repair" in source_tools
 
@@ -910,6 +1042,40 @@ def test_materialization_quality_bridge_consumes_runtime_owned_schedule() -> Non
     assert "materialization.quality_repair_host" not in bridge_source
     assert "materialization.typescript_compiler" in bridge_source
     assert "_apply_deterministic_materialization_quality_repairs" not in bridge_source
+
+
+def test_bridge_runner_keys_match_runtime_schedule_run_items_exactly() -> None:
+    post_runner_step_ids = _module_level_dict_keys(POST_EXECUTION_BRIDGE_PATH, "_POST_EXECUTION_REPAIR_RUNNERS")
+    materialization_runner_step_ids = _module_level_dict_keys(
+        MATERIALIZATION_QUALITY_BRIDGE_PATH,
+        "_MATERIALIZATION_QUALITY_REPAIR_RUNNERS",
+    )
+    post_schedule = query_director_repair_post_execution_schedule(
+        QueryDirectorRepairPostExecutionScheduleV1(include_items=True)
+    )
+    materialization_schedule = query_director_repair_materialization_quality_schedule(
+        QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
+    )
+    post_runtime_step_ids = [step.step_id for step in post_schedule.items]
+    materialization_runtime_step_ids = [step.step_id for step in materialization_schedule.items]
+
+    post_run_result = run_director_post_execution_repair_schedule_result(
+        runner_step_ids=post_runner_step_ids,
+        runner=lambda step: [],
+        max_rounds=1,
+    )
+    materialization_run_result = run_director_materialization_quality_repair_schedule_result(
+        runner_step_ids=materialization_runner_step_ids,
+        runner=lambda step: [],
+        max_rounds=1,
+    )
+    post_result_step_ids = [step.step_id for step in post_run_result.ordered_steps]
+    materialization_result_step_ids = [step.step_id for step in materialization_run_result.ordered_steps]
+
+    assert post_runner_step_ids == post_runtime_step_ids
+    assert post_result_step_ids == post_runtime_step_ids
+    assert materialization_runner_step_ids == materialization_runtime_step_ids
+    assert materialization_result_step_ids == materialization_runtime_step_ids
 
 
 def test_post_execution_schedule_catalog_stays_inside_runtime_internal_kernel() -> None:
@@ -961,6 +1127,70 @@ def test_runtime_public_service_exposes_strategy_catalog_only_as_query_projectio
     assert "query_director_repair_strategy_catalog" in public_init_source
     assert all(token not in public_service_source for token in forbidden_public_helpers)
     assert all(token not in public_init_source for token in forbidden_public_helpers)
+
+
+def test_typescript_source_tools_do_not_return_to_legacy_strategy_host() -> None:
+    catalog_payload = query_director_repair_strategy_catalog(
+        QueryDirectorRepairStrategyCatalogV1(include_items=True, max_items=10_000)
+    ).to_dict()
+    catalog_summary = catalog_payload["summary"]
+    legacy_source_tools = [str(source_tool) for source_tool in catalog_summary["legacy_strategy_host_source_tools"]]
+    legacy_typescript_source_tools = [
+        source_tool
+        for source_tool in legacy_source_tools
+        if source_tool.startswith(MIGRATED_TYPESCRIPT_SOURCE_TOOL_PREFIXES)
+        or source_tool in MIGRATED_TYPESCRIPT_SOURCE_TOOL_NAMES
+    ]
+    legacy_failure_message = (
+        "expected public strategy catalog ledger total=85 executable_runtime=85 legacy_strategy_host=0; "
+        f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
+        "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
+    )
+    legacy_typescript_failure_message = (
+        "TypeScript migration source_tools must not be in legacy_strategy_host_source_tools:\n- "
+        + "\n- ".join(legacy_typescript_source_tools)
+    )
+
+    assert catalog_summary["total"] == 85, legacy_failure_message
+    assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
+    assert legacy_source_tools == [], legacy_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 85, legacy_failure_message
+    assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, legacy_failure_message
+    assert catalog_summary["legacy_strategy_host_count"] == 0, legacy_failure_message
+
+
+def test_runtime_public_discovery_and_advisory_surfaces_are_read_only() -> None:
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=()))
+    slots = query_director_repair_language_slots(QueryDirectorRepairLanguageSlotsV1(include_items=True))
+    advisory = validate_director_repair_advisory(
+        QueryDirectorRepairAdvisoryValidationV1(
+            advisor_source="architecture-boundary-test",
+            message="suggest coverage gap only",
+        )
+    )
+    advisory_summary = dict(advisory.summary)
+    slot_status_counts = dict(slots.summary["implementation_status_counts"])
+    non_executable_slot_statuses = {"metadata_rule_registered", "reserved_only"}
+    non_executable_slots = [slot for slot in slots.items if slot.implementation_status in non_executable_slot_statuses]
+
+    assert coverage.access == "read_only"
+    assert coverage.total_diagnostics == 0
+    assert slots.access == "read_only"
+    assert slots.summary["bench_driven_rule_addition_required"] is True
+    assert {"executable_runtime", "reserved_only"} <= set(slot_status_counts)
+    assert "legacy_strategy_host" not in slot_status_counts
+    assert non_executable_slots
+    assert all(not slot.executable_runtime_source_tools for slot in non_executable_slots)
+    assert advisory.ok is True
+    assert advisory.access == "read_only"
+    assert advisory.execution_boundary == "read_only_advisory_validation_no_writes_no_registration"
+    assert advisory.agi_execution_authority is False
+    assert advisory.writes_allowed is False
+    assert advisory.registration_allowed is False
+    assert advisory.authoritative_receipts_allowed is False
+    assert advisory_summary["advisory_only"] is True
+    assert advisory_summary["suggested_rules_are_advisory_only"] is True
+    assert advisory_summary["director_runtime_remains_authoritative"] is True
 
 
 def test_roles_adapters_consumes_repair_strategy_profiles_through_projection_helper() -> None:

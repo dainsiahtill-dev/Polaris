@@ -19,7 +19,9 @@ from .diagnostics import normalize_artifact_quality_errors
 from .executor import DeleteFileFn, EditFileFn, TransactionalRepairExecutor, WriteFileFn
 from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
 from .rust_ast import (
+    RUST_MISSING_FIELDS_SOURCE_TOOL,
     RUST_STRUCT_LITERAL_MISSING_FIELD_SOURCE_TOOL,
+    build_rust_missing_fields_plan,
     build_rust_struct_literal_missing_field_plan,
 )
 from .rust_export_facade import (
@@ -29,6 +31,7 @@ from .rust_export_facade import (
     build_rust_missing_lib_target_plan,
 )
 from .rust_syntax import (
+    RUST_CRATE_IMPORT_SOURCE_TOOL,
     RUST_CRATE_IMPORT_REWRITE_SOURCE_TOOL,
     RUST_DEPENDENCY_SOURCE_TOOL,
     RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL,
@@ -44,6 +47,7 @@ from .rust_syntax import (
     RUST_UNRESOLVED_PUB_USE_SOURCE_TOOL,
     RUST_UNUSED_IMPORT_SOURCE_TOOL,
     RUST_WRONG_CRATE_PATH_SOURCE_TOOL,
+    build_rust_crate_import_plan,
     build_rust_crate_import_rewrite_plan,
     build_rust_dependency_plan,
     build_rust_duplicate_module_file_plan,
@@ -74,10 +78,34 @@ class RustCrateImportRewritePlanning:
 
 
 @dataclass(frozen=True)
+class RustCrateImportPlanning:
+    """Planning result for the legacy Rust crate import repair source tool."""
+
+    source_tool: str
+    diagnostics: tuple[RepairDiagnostic, ...]
+    plan: RepairPlan | None
+    composition: CompositionResult | None
+    advisor_notes: tuple[RepairAdvisorNote, ...] = ()
+
+
+@dataclass(frozen=True)
 class RustCrateImportRewriteRun:
     """Execution result for Rust local crate import rewrite repair."""
 
     planning: RustCrateImportRewritePlanning
+    ok: bool
+    execution_result: RepairExecutionResult | None = None
+    plan_decision: PolicyDecision | None = None
+    composition_decision: PolicyDecision | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class RustCrateImportRun:
+    """Execution result for the legacy Rust crate import repair source tool."""
+
+    planning: RustCrateImportPlanning
     ok: bool
     execution_result: RepairExecutionResult | None = None
     plan_decision: PolicyDecision | None = None
@@ -494,6 +522,30 @@ class RustStructLiteralMissingFieldRun:
     error_message: str | None = None
 
 
+@dataclass(frozen=True)
+class RustMissingFieldsPlanning:
+    """Planning result for explicit-type Rust missing-field declaration repair."""
+
+    source_tool: str
+    diagnostics: tuple[RepairDiagnostic, ...]
+    plan: RepairPlan | None
+    composition: CompositionResult | None
+    advisor_notes: tuple[RepairAdvisorNote, ...] = ()
+
+
+@dataclass(frozen=True)
+class RustMissingFieldsRun:
+    """Execution result for explicit-type Rust missing-field declaration repair."""
+
+    planning: RustMissingFieldsPlanning
+    ok: bool
+    execution_result: RepairExecutionResult | None = None
+    plan_decision: PolicyDecision | None = None
+    composition_decision: PolicyDecision | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
 def plan_rust_dependency_repair(
     *,
     base_files: Mapping[str, str],
@@ -668,6 +720,58 @@ def plan_rust_struct_literal_missing_field_repair(
     composition = PatchComposer().compose(normalized_base, plan.operations) if plan is not None else None
     return RustStructLiteralMissingFieldPlanning(
         source_tool=RUST_STRUCT_LITERAL_MISSING_FIELD_SOURCE_TOOL,
+        diagnostics=diagnostics,
+        plan=plan,
+        composition=composition,
+        advisor_notes=tuple(advisor_notes or ()),
+    )
+
+
+def plan_rust_missing_fields_repair(
+    *,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> RustMissingFieldsPlanning:
+    """Plan explicit-type Rust missing-field declaration repair through AST spans."""
+
+    normalized_base = _normalize_base_files(base_files)
+    diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
+    plan = build_rust_missing_fields_plan(
+        base_files=normalized_base,
+        diagnostics=diagnostics,
+        mode=mode,
+    )
+    composition = PatchComposer().compose(normalized_base, plan.operations) if plan is not None else None
+    return RustMissingFieldsPlanning(
+        source_tool=RUST_MISSING_FIELDS_SOURCE_TOOL,
+        diagnostics=diagnostics,
+        plan=plan,
+        composition=composition,
+        advisor_notes=tuple(advisor_notes or ()),
+    )
+
+
+def plan_rust_crate_import_repair(
+    *,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> RustCrateImportPlanning:
+    """Plan the legacy Rust crate import repair through typed diagnostics."""
+
+    normalized_base = _normalize_base_files(base_files)
+    diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
+    plan = build_rust_crate_import_plan(
+        base_files=normalized_base,
+        diagnostics=diagnostics,
+        mode=mode,
+    )
+    composition = PatchComposer().compose(normalized_base, plan.operations) if plan is not None else None
+    return RustCrateImportPlanning(
+        source_tool=RUST_CRATE_IMPORT_SOURCE_TOOL,
         diagnostics=diagnostics,
         plan=plan,
         composition=composition,
@@ -1502,6 +1606,144 @@ def run_rust_struct_literal_missing_field_repair(
         editor=editor,
     )
     return RustStructLiteralMissingFieldRun(
+        planning=planning,
+        ok=execution_result.ok,
+        execution_result=execution_result,
+        plan_decision=plan_decision,
+        composition_decision=composition_decision,
+        error_code=None if execution_result.ok else "repair_execution_failed",
+        error_message=None if execution_result.ok else execution_result.error,
+    )
+
+
+def run_rust_missing_fields_repair(
+    *,
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> RustMissingFieldsRun:
+    """Run explicit-type Rust missing-field repair through Plan->Compose->Policy->Execute."""
+
+    normalized_base = _normalize_base_files(base_files)
+    planning = plan_rust_missing_fields_repair(
+        base_files=normalized_base,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    if planning.plan is None:
+        return RustMissingFieldsRun(
+            planning=planning,
+            ok=False,
+            error_code="repair_not_planned",
+            error_message="No safe explicit-type Rust missing-field repair plan.",
+        )
+    if planning.composition is None:
+        return RustMissingFieldsRun(
+            planning=planning,
+            ok=False,
+            error_code="repair_composition_missing",
+            error_message="Rust missing-field repair composition was not produced.",
+        )
+
+    policy = RepairPolicyGate()
+    policy_context = RepairPolicyContext(
+        allowed_paths=tuple(_normalize_repair_path(str(path or "")) for path in (allowed_paths or normalized_base))
+    )
+    plan_decision = policy.evaluate_plan(planning.plan, policy_context)
+    composition_decision = policy.evaluate_composition(planning.plan, planning.composition)
+    if not plan_decision.allowed or not composition_decision.allowed:
+        return RustMissingFieldsRun(
+            planning=planning,
+            ok=False,
+            plan_decision=plan_decision,
+            composition_decision=composition_decision,
+            error_code="repair_policy_denied",
+            error_message="Director Runtime repair policy denied the plan or composition.",
+        )
+
+    execution_result = TransactionalRepairExecutor().execute(
+        workspace=Path(str(workspace)).resolve(),
+        plan=planning.plan,
+        composition=planning.composition,
+        writer=writer,
+        editor=editor,
+    )
+    return RustMissingFieldsRun(
+        planning=planning,
+        ok=execution_result.ok,
+        execution_result=execution_result,
+        plan_decision=plan_decision,
+        composition_decision=composition_decision,
+        error_code=None if execution_result.ok else "repair_execution_failed",
+        error_message=None if execution_result.ok else execution_result.error,
+    )
+
+
+def run_rust_crate_import_repair(
+    *,
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> RustCrateImportRun:
+    """Run the legacy Rust crate import repair through Plan->Compose->Policy->Execute."""
+
+    normalized_base = _normalize_base_files(base_files)
+    planning = plan_rust_crate_import_repair(
+        base_files=normalized_base,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    if planning.plan is None:
+        return RustCrateImportRun(
+            planning=planning,
+            ok=False,
+            error_code="repair_not_planned",
+            error_message="No matching Rust crate import repair plan.",
+        )
+    if planning.composition is None:
+        return RustCrateImportRun(
+            planning=planning,
+            ok=False,
+            error_code="repair_composition_missing",
+            error_message="Rust crate import repair composition was not produced.",
+        )
+
+    policy = RepairPolicyGate()
+    policy_context = RepairPolicyContext(
+        allowed_paths=tuple(_normalize_repair_path(str(path or "")) for path in (allowed_paths or normalized_base))
+    )
+    plan_decision = policy.evaluate_plan(planning.plan, policy_context)
+    composition_decision = policy.evaluate_composition(planning.plan, planning.composition)
+    if not plan_decision.allowed or not composition_decision.allowed:
+        return RustCrateImportRun(
+            planning=planning,
+            ok=False,
+            plan_decision=plan_decision,
+            composition_decision=composition_decision,
+            error_code="repair_policy_denied",
+            error_message="Director Runtime repair policy denied the plan or composition.",
+        )
+
+    execution_result = TransactionalRepairExecutor().execute(
+        workspace=Path(str(workspace)).resolve(),
+        plan=planning.plan,
+        composition=planning.composition,
+        writer=writer,
+        editor=editor,
+    )
+    return RustCrateImportRun(
         planning=planning,
         ok=execution_result.ok,
         execution_result=execution_result,

@@ -9,6 +9,7 @@ import tomllib
 
 from .contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
 
+RUST_CRATE_IMPORT_SOURCE_TOOL = "deterministic_rust_crate_import_repair"
 RUST_CRATE_IMPORT_REWRITE_SOURCE_TOOL = "deterministic_rust_crate_import_rewrite_repair"
 RUST_DEPENDENCY_SOURCE_TOOL = "deterministic_rust_dependency_repair"
 RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL = "deterministic_rust_duplicate_module_file_repair"
@@ -19,14 +20,14 @@ RUST_METHOD_SELF_SIGNATURE_SOURCE_TOOL = "deterministic_rust_method_self_signatu
 RUST_MISSING_BINARY_ENTRYPOINT_SOURCE_TOOL = "deterministic_rust_missing_binary_entrypoint_repair"
 RUST_MISSING_MODULE_FILE_SOURCE_TOOL = "deterministic_rust_missing_module_file_repair"
 RUST_MISSING_TRAIT_DERIVE_SOURCE_TOOL = "deterministic_rust_derive_repair"
+RUST_POST_SOURCE_TOOL = "deterministic_rust_post_repair"
 RUST_SERDE_DERIVE_SOURCE_TOOL = "deterministic_rust_serde_derive_repair"
 RUST_TRAIT_IMPORT_SOURCE_TOOL = "deterministic_rust_trait_import_repair"
 RUST_UNUSED_IMPORT_SOURCE_TOOL = "deterministic_rust_unused_import_repair"
 RUST_UNRESOLVED_PUB_USE_SOURCE_TOOL = "deterministic_rust_unresolved_pub_use_repair"
 RUST_WRONG_CRATE_PATH_SOURCE_TOOL = "deterministic_rust_wrong_crate_path_repair"
 RUST_MISSING_MODULE_FILE_STUB = (
-    "// Polaris marker: rust.missing_module_file\n"
-    "// Created from rustc E0583 as an empty module topology stub.\n"
+    "// Polaris marker: rust.missing_module_file\n// Created from rustc E0583 as an empty module topology stub.\n"
 )
 
 _RUST_UNRESOLVED_IMPORT_RE = re.compile(
@@ -154,6 +155,46 @@ def build_rust_crate_import_rewrite_plan(
 ) -> RepairPlan | None:
     """Build span-based edits rewriting wrong local crate prefixes."""
 
+    return _build_rust_crate_import_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode=mode,
+        source_tool=RUST_CRATE_IMPORT_REWRITE_SOURCE_TOOL,
+        rule_id="rust.crate_import_rewrite",
+        repair_kind="rust_crate_import_rewrite",
+        depends_on=("rust.unlinked_crate_dependency",),
+    )
+
+
+def build_rust_crate_import_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build span-based edits for the legacy Rust crate import source tool."""
+
+    return _build_rust_crate_import_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode=mode,
+        source_tool=RUST_CRATE_IMPORT_SOURCE_TOOL,
+        rule_id="rust.unresolved_import_path",
+        repair_kind="rust_crate_import_path",
+        depends_on=(),
+    )
+
+
+def _build_rust_crate_import_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+    source_tool: str,
+    rule_id: str,
+    repair_kind: str,
+    depends_on: Sequence[str],
+) -> RepairPlan | None:
     normalized_base = {
         _normalize_repair_path(path): str(content or "")
         for path, content in dict(base_files or {}).items()
@@ -202,16 +243,16 @@ def build_rust_crate_import_rewrite_plan(
         return None
 
     return RepairPlan(
-        rule_id="rust.crate_import_rewrite",
-        source_tool=RUST_CRATE_IMPORT_REWRITE_SOURCE_TOOL,
+        rule_id=rule_id,
+        source_tool=source_tool,
         operations=tuple(operations),
         diagnostics=tuple(planned_diagnostics),
         mode=mode,
         risk_level="low",
         priority=0,
-        depends_on=("rust.unlinked_crate_dependency",),
+        depends_on=tuple(depends_on),
         metadata={
-            "repair_kind": "rust_crate_import_rewrite",
+            "repair_kind": repair_kind,
             "edit_strategy": "text_replace",
             "span_based": True,
             "canonical_crate": canonical_crate,
@@ -289,9 +330,7 @@ def build_rust_missing_binary_entrypoint_plan(
 
     binary_paths = _declared_rust_binary_entrypoint_paths(cargo)
     missing_paths = tuple(
-        path
-        for path in binary_paths
-        if _rust_binary_entrypoint_path_is_safe(path) and not normalized_base.get(path)
+        path for path in binary_paths if _rust_binary_entrypoint_path_is_safe(path) and not normalized_base.get(path)
     )
     if not missing_paths:
         return None
@@ -694,9 +733,14 @@ def build_rust_field_rename_suggestion_plan(
     seen_spans: set[tuple[str, int, int]] = set()
     for diagnostic in diagnostics:
         diagnostic_planned = False
-        for path, line_number, column_number, wrong_field, correct_field, suggested_code in (
-            _parse_rust_field_rename_suggestions((diagnostic,))
-        ):
+        for (
+            path,
+            line_number,
+            column_number,
+            wrong_field,
+            correct_field,
+            suggested_code,
+        ) in _parse_rust_field_rename_suggestions((diagnostic,)):
             content = normalized_base.get(path)
             if content is None:
                 continue
@@ -1284,10 +1328,7 @@ def _parse_rust_missing_trait_derive_targets(
             traits, first_diagnostic = targets.setdefault(symbol, (set(), diagnostic))
             traits.add(trait_name)
             targets[symbol] = (traits, first_diagnostic)
-    return tuple(
-        (symbol, frozenset(sorted(traits)), diagnostic)
-        for symbol, (traits, diagnostic) in targets.items()
-    )
+    return tuple((symbol, frozenset(sorted(traits)), diagnostic) for symbol, (traits, diagnostic) in targets.items())
 
 
 def _rust_file_for_module_symbol(
@@ -1335,7 +1376,7 @@ def _rust_missing_trait_derive_operation(
             unique_context = f"{expected}{struct_line}"
         else:
             expected = line
-            indent = re.match(r"^(\s*)", line).group(1)
+            indent = line[: len(line) - len(line.lstrip())]
             newline = _line_ending(line) or "\n"
             replacement = f"{indent}#[derive({', '.join(sorted(traits))})]{newline}{line}"
             added = len(traits)
@@ -1389,7 +1430,7 @@ def _rust_serde_derive_operation(
             target_index = derive_index
         else:
             expected = line
-            indent = re.match(r"^(\s*)", line).group(1)
+            indent = line[: len(line) - len(line.lstrip())]
             newline = _line_ending(line) or "\n"
             replacement = f"{indent}#[derive({', '.join(sorted(traits))})]{newline}{line}"
             added = len(traits)
@@ -1833,10 +1874,7 @@ def _rust_field_rename_suggestion_operation(
             candidate
             for candidate in (
                 correct_field,
-                *(
-                    str(match.group("field") or "")
-                    for match in _RUST_FIELD_ACCESS_RE.finditer(suggested_body)
-                ),
+                *(str(match.group("field") or "") for match in _RUST_FIELD_ACCESS_RE.finditer(suggested_body)),
             )
             if _is_rust_identifier(candidate) and candidate != wrong_field
         )
@@ -1850,7 +1888,7 @@ def _rust_field_rename_suggestion_operation(
             break
         for candidate_field in correct_candidates:
             replacement_access = f".{candidate_field}"
-            candidate = f"{line_body[:found]}{replacement_access}{line_body[found + len(field_access):]}"
+            candidate = f"{line_body[:found]}{replacement_access}{line_body[found + len(field_access) :]}"
             if candidate.strip() == suggested_body.strip():
                 candidate_spans.append((found + 1, found + len(field_access), candidate_field))
         search_start = found + len(field_access)

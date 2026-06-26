@@ -22,7 +22,9 @@ _JSON_KINDS = {"json_set", "json_delete"}
 _RESERVED_STRUCTURED_KINDS = {"toml_set", "toml_delete", "yaml_set", "yaml_delete"}
 _WRITE_KINDS = {"write_file"}
 _DELETE_KINDS = {"delete_file"}
-_SUPPORTED_KINDS = _TEXT_KINDS | _JSON_KINDS | _RESERVED_STRUCTURED_KINDS | _WRITE_KINDS | _DELETE_KINDS | {"observation"}
+_SUPPORTED_KINDS = (
+    _TEXT_KINDS | _JSON_KINDS | _RESERVED_STRUCTURED_KINDS | _WRITE_KINDS | _DELETE_KINDS | {"observation"}
+)
 
 
 class PatchComposer:
@@ -168,8 +170,13 @@ class PatchComposer:
             key=lambda op: -1 if op.span_start is None else int(op.span_start),
             reverse=True,
         )
+        overlap_issue = _first_overlapping_text_span_issue(path, content_before, ordered)
+        if overlap_issue is not None:
+            return None, [overlap_issue]
         content_after = content_before
+        previous_operation: RepairOperation | None = None
         previous_start: int | None = None
+        previous_end: int | None = None
         unique_context_operation_ids: list[str] = []
         for operation in ordered:
             if operation.span_start is None or operation.span_end is None:
@@ -196,11 +203,14 @@ class PatchComposer:
                 continue
             if previous_start is not None and end > previous_start:
                 issues.append(
-                    CompositionIssue(
-                        code="overlapping_text_spans",
-                        message="Text repair spans overlap and cannot be safely composed.",
+                    _overlapping_text_spans_issue(
                         path=path,
-                        operation_ids=(operation.operation_id,),
+                        operation=operation,
+                        start=start,
+                        end=end,
+                        previous_operation=previous_operation,
+                        previous_start=previous_start,
+                        previous_end=previous_end,
                     )
                 )
                 continue
@@ -215,6 +225,21 @@ class PatchComposer:
                     )
                 )
                 continue
+            if not _has_text_location_precondition(operation):
+                issues.append(
+                    CompositionIssue(
+                        code="missing_text_precondition",
+                        message="Text repair requires expected content or unique text context metadata.",
+                        path=path,
+                        operation_ids=(operation.operation_id,),
+                        metadata={
+                            "requires_expected_or_unique_context": True,
+                            "span_based": True,
+                            "unique_context_checked": False,
+                        },
+                    )
+                )
+                continue
             context_issue, context_checked = _check_unique_context(path, content_before, operation, start, end)
             if context_checked:
                 unique_context_operation_ids.append(operation.operation_id)
@@ -222,7 +247,9 @@ class PatchComposer:
                 issues.append(context_issue)
                 continue
             content_after = content_after[:start] + str(operation.replacement or "") + content_after[end:]
+            previous_operation = operation
             previous_start = start
+            previous_end = end
         if issues:
             return None, issues
         return (
@@ -234,6 +261,9 @@ class PatchComposer:
                 metadata={
                     "large_file_safe": True,
                     "span_based": True,
+                    "precision_strategy": "span_context_text_patch",
+                    "write_file_fallback_allowed": True,
+                    "write_file_fallback_reason": "precision_editor_unavailable_or_rejected",
                     "unique_context_checked": bool(unique_context_operation_ids),
                     "unique_context_operation_ids": unique_context_operation_ids,
                     "write_file_reason": "",
@@ -300,6 +330,8 @@ class PatchComposer:
                     "large_file_safe": False,
                     "span_based": False,
                     "structured_operation": "json",
+                    "write_file_allowed_category": "structured_serialization",
+                    "write_file_policy_decision": "allowed_structured_serialization",
                     "unique_context_checked": False,
                     "write_file_reason": "structured_json_serialization",
                 },
@@ -339,6 +371,8 @@ class PatchComposer:
                     "span_based": False,
                     "unique_context_checked": False,
                     "write_file_reason": _write_file_reason(operation=operation, content_before=content_before),
+                    "write_file_allowed_category": "new_file" if not file_existed_before else "fallback",
+                    "write_file_policy_decision": "allowed_new_file" if not file_existed_before else "allowed_fallback",
                     "created_file": not file_existed_before,
                     "deleted_file": False,
                     "created_or_deleted": "created" if not file_existed_before else "",
@@ -385,6 +419,7 @@ class PatchComposer:
                     "deleted_file": True,
                     "created_or_deleted": "deleted",
                     "rollback_restore_strategy": "write_file_full_restore",
+                    "rollback_write_file_reason": "rollback_full_restore",
                 },
             ),
             [],
@@ -412,6 +447,68 @@ def _check_before_hash(
         message="Repair operation before_hash does not match current file content.",
         path=path,
         operation_ids=tuple(mismatched),
+    )
+
+
+def _has_text_location_precondition(operation: RepairOperation) -> bool:
+    expected = operation.expected
+    if expected is not None and expected != "":
+        return True
+    return bool(_text_context_probe(operation.metadata))
+
+
+def _first_overlapping_text_span_issue(
+    path: str,
+    content_before: str,
+    ordered: Sequence[RepairOperation],
+) -> CompositionIssue | None:
+    previous_operation: RepairOperation | None = None
+    previous_start: int | None = None
+    previous_end: int | None = None
+    for operation in ordered:
+        if operation.span_start is None or operation.span_end is None:
+            continue
+        start = int(operation.span_start)
+        end = int(operation.span_end)
+        if start < 0 or end < start or end > len(content_before):
+            continue
+        if previous_start is not None and end > previous_start:
+            return _overlapping_text_spans_issue(
+                path=path,
+                operation=operation,
+                start=start,
+                end=end,
+                previous_operation=previous_operation,
+                previous_start=previous_start,
+                previous_end=previous_end,
+            )
+        previous_operation = operation
+        previous_start = start
+        previous_end = end
+    return None
+
+
+def _overlapping_text_spans_issue(
+    *,
+    path: str,
+    operation: RepairOperation,
+    start: int,
+    end: int,
+    previous_operation: RepairOperation | None,
+    previous_start: int | None,
+    previous_end: int | None,
+) -> CompositionIssue:
+    return CompositionIssue(
+        code="overlapping_text_spans",
+        message="Text repair spans overlap and cannot be safely composed.",
+        path=path,
+        operation_ids=tuple(op.operation_id for op in (operation, previous_operation) if op is not None),
+        metadata={
+            "conflict_type": "overlapping_text_spans",
+            "current_span": {"start": start, "end": end},
+            "previous_span": {"start": previous_start, "end": previous_end},
+            "same_file_multi_patch_conflict": True,
+        },
     )
 
 
@@ -519,9 +616,16 @@ def _unique_occurrence_count_limited(content: str, probe: str) -> tuple[int, int
 def _metadata_text(metadata: Mapping[str, Any], *keys: str) -> str:
     for key in keys:
         value = metadata.get(key)
-        if value is not None:
+        if isinstance(value, str) and value:
             return str(value)
     return ""
+
+
+def _text_context_probe(metadata: Mapping[str, Any]) -> str:
+    before = _metadata_text(metadata, "expected_context_before", "context_before")
+    after = _metadata_text(metadata, "expected_context_after", "context_after")
+    unique_context = _metadata_text(metadata, "unique_context")
+    return unique_context or f"{before}{after}"
 
 
 def _structured_operation_issue_metadata(

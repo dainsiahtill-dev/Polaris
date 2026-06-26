@@ -10,7 +10,7 @@ from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder
 
 def _make_profile():
     class _PromptPolicy:
-        core_template_id = "pm"
+        core_template_id = "director"
         quality_checklist: list[str] = []
 
     class _ToolPolicy:
@@ -66,5 +66,5 @@ def test_build_system_prompt_fails_closed_when_chunk_assembly_fails(monkeypatch)
         raise RuntimeError("chunk path unavailable")
 
     monkeypatch.setattr(builder, "_assemble_with_chunks", _raise)
-    with pytest.raises(RuntimeError, match="tri_axis_prompt_composition_failed:pm"):
+    with pytest.raises(RuntimeError, match="tri_axis_prompt_composition_failed:director"):
         builder.build_system_prompt(profile, prompt_appendix="补充说明")

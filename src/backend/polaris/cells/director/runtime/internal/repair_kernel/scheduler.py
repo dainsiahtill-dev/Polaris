@@ -17,6 +17,7 @@ from .contracts import (
     sha256_text,
 )
 from .executor import EditFileFn, TransactionalRepairExecutor, WriteFileFn
+from .legacy_bridge import summarize_repair_revalidation_coverage
 from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
 from .receipts import attach_revalidation_evidence, build_receipt
 
@@ -34,6 +35,7 @@ CONVERGENCE_PIPELINE_STAGES = (
     "Receipt",
     "Next Round",
 )
+CONVERGENCE_PIPELINE_ORDER = " -> ".join(CONVERGENCE_PIPELINE_STAGES)
 
 
 def convergence_envelope_metadata(
@@ -46,12 +48,20 @@ def convergence_envelope_metadata(
 
     return {
         "envelope_owner": "director.runtime.repair_kernel.scheduler",
+        "canonical_convergence_executor": "RepairConvergenceScheduler",
         "preferred_entrypoint": preferred_entrypoint,
         "convergence_scheduler_required": True,
+        "typed_convergence_scheduler_active": bool(typed_receipt_path_available and not callback_migration_envelope),
         "typed_receipt_path_available": bool(typed_receipt_path_available),
         "callback_migration_envelope": bool(callback_migration_envelope),
         "pipeline": list(CONVERGENCE_PIPELINE_STAGES),
-        "pipeline_order": "Diagnostics -> Coverage -> Plan -> Compose -> Policy -> Execute -> Revalidate -> Receipt -> Next Round",
+        "pipeline_order": CONVERGENCE_PIPELINE_ORDER,
+        "coverage_stage_required": True,
+        "coverage_before_plan_required": True,
+        "policy_before_execute_required": True,
+        "revalidation_receipt_binding_required": True,
+        "hidden_language_loop_allowed": False,
+        "language_self_loop_allowed": False,
     }
 
 
@@ -231,13 +241,22 @@ def _scheduler_result_metadata(
     receipts: Sequence[RepairReceipt] = (),
     extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    failed_revalidation_count = sum(1 for receipt in receipts if receipt.status == "failed_revalidation")
+    revalidation_coverage = summarize_repair_revalidation_coverage(receipts)
     return {
         **convergence_envelope_metadata(),
         "status": str(status or "unknown"),
         "converged": status in {"already_clean", "converged"},
         "final_error_count": len(tuple(final_diagnostics or ())),
-        "failed_revalidation_receipt_count": failed_revalidation_count,
+        "post_check_evidence_complete": bool(revalidation_coverage["post_check_evidence_complete"]),
+        "evidence_status_counts": dict(revalidation_coverage["evidence_status_counts"]),
+        "missing_evidence_receipt_ids": list(revalidation_coverage["missing_evidence_receipt_ids"]),
+        "missing_evidence_source_tools": list(revalidation_coverage["missing_evidence_source_tools"]),
+        "failed_evidence_receipt_ids": list(revalidation_coverage["failed_evidence_receipt_ids"]),
+        "failed_evidence_source_tools": list(revalidation_coverage["failed_evidence_source_tools"]),
+        "resolved_evidence_receipt_ids": list(revalidation_coverage["resolved_evidence_receipt_ids"]),
+        "resolved_evidence_source_tools": list(revalidation_coverage["resolved_evidence_source_tools"]),
+        "revalidation_coverage": revalidation_coverage,
+        "failed_revalidation_receipt_count": int(revalidation_coverage["failed_revalidation_receipt_count"]),
         "unconverged": status not in {"already_clean", "converged"},
         **dict(extra or {}),
     }
@@ -527,6 +546,7 @@ def _with_round_number(
 
 
 __all__ = [
+    "CONVERGENCE_PIPELINE_ORDER",
     "CONVERGENCE_PIPELINE_STAGES",
     "BaseFilesProviderFn",
     "PlannerFn",

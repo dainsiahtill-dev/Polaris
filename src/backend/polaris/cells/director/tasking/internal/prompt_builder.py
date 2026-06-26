@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from polaris.cells.director.tasking.internal.codegen_rounds import CodegenRoundPlanner
     from polaris.cells.director.tasking.internal.target_file_resolver import TargetFileResolver
     from polaris.cells.director.tasking.internal.verification_repair import VerificationRepair
+    from polaris.cells.director.tasking.public.contracts import TaskExecutionStrategyV1
 
 
 class _CompactFragment(Protocol):
@@ -85,7 +86,11 @@ class PromptBuilder:
         current_module = metadata.get("current_module", "unknown")
         return current_module if isinstance(current_module, str) else "unknown"
 
-    def _resolve_prompt_max_chars(self, task: Task) -> int:
+    def _resolve_prompt_max_chars(
+        self,
+        task: Task,
+        strategy: TaskExecutionStrategyV1 | None = None,
+    ) -> int:
         """Resolve the codegen prompt cap, escalating factory bench tasks."""
         raw_max_chars = os.environ.get("KERNELONE_WORKER_PROMPT_MAX_CHARS", str(_DEFAULT_PROMPT_MAX_CHARS))
         try:
@@ -93,6 +98,8 @@ class PromptBuilder:
         except ValueError:
             max_chars = _DEFAULT_PROMPT_MAX_CHARS
         max_chars = min(max(max_chars, _MIN_PROMPT_MAX_CHARS), _MAX_PROMPT_MAX_CHARS)
+        if strategy is not None:
+            max_chars = max(max_chars, int(strategy.prompt_max_chars))
 
         metadata = task.metadata if isinstance(task.metadata, dict) else {}
         if not self._is_factory_bench_task(metadata):
@@ -105,7 +112,7 @@ class PromptBuilder:
             factory_floor = _FACTORY_BENCH_L4_PROMPT_MIN_CHARS
         else:
             factory_floor = _FACTORY_BENCH_L1_PROMPT_MIN_CHARS
-        return min(max(max_chars, factory_floor), _MAX_PROMPT_MAX_CHARS)
+        return max(max_chars, factory_floor)
 
     @staticmethod
     def _is_factory_bench_task(metadata: dict[str, Any]) -> bool:
@@ -411,6 +418,7 @@ class PromptBuilder:
 
         # Language-specific role identity + expert guidance
         from .execution_profile import resolve_director_execution_profile
+        from .execution_strategy import resolve_director_execution_strategy
         from .language_guidance import build_language_section
 
         execution_profile = resolve_director_execution_profile(
@@ -450,6 +458,21 @@ class PromptBuilder:
                 f"- output_contract_id: {execution_profile.output_contract_id}",
             ]
         )
+        execution_strategy = resolve_director_execution_strategy(
+            execution_profile,
+            metadata=metadata,
+        )
+        execution_strategy_section = "\n".join(
+            [
+                f"- schema: {execution_strategy.schema_version}",
+                f"- output_budget_tokens: {execution_strategy.output_budget_tokens}",
+                f"- input_budget_tokens: {execution_strategy.input_budget_tokens}",
+                f"- prompt_max_chars: {execution_strategy.prompt_max_chars}",
+                f"- min_context_utilization: {execution_strategy.min_context_utilization:.2f}",
+                f"- underutilized_policy: {execution_strategy.context_underutilized_policy}",
+                "- evidence_requirements: " + ", ".join(execution_strategy.evidence_requirements),
+            ]
+        )
 
         prompt_body = f"""{role_identity}
 
@@ -458,6 +481,9 @@ class PromptBuilder:
 
 === Director Execution Profile ===
 {execution_profile_section}
+
+=== Director Execution Strategy ===
+{execution_strategy_section}
 
 Task: {task_subject}
 Description: {task_description}
@@ -537,7 +563,7 @@ Requirements:
   verification after file application.
 """
 
-        max_chars = self._resolve_prompt_max_chars(task)
+        max_chars = self._resolve_prompt_max_chars(task, execution_strategy)
         protected_suffix_budget = len(output_contract) + 2
         body_budget = max(500, max_chars - protected_suffix_budget)
         compact_body = self._compact_prompt_fragment(prompt_body, max_chars=body_budget)

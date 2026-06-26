@@ -933,8 +933,7 @@ def test_main_rejects_unknown_explicit_project_ids(
 
 def test_level_local_explicit_project_ids_resolve_to_catalog_index() -> None:
     projects = [
-        {"id": f"L1-{idx:02d}", "level": 1, "title": f"L1 Project {idx}", "brief": "Build L1"}
-        for idx in range(1, 11)
+        {"id": f"L1-{idx:02d}", "level": 1, "title": f"L1 Project {idx}", "brief": "Build L1"} for idx in range(1, 11)
     ]
     projects.extend(
         [

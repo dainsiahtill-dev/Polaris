@@ -13,7 +13,7 @@ from polaris.kernelone.context.context_os.helpers import get_metadata_value
 from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
 
 from .constants import HIGH_PRIORITY_DIALOG_ACTS, ROUTE_PRIORITY
-from .prompt_safety import prompt_safe_message_content
+from .prompt_safety import format_tool_failure_summary, parse_tool_failure_summary, prompt_safe_message_content
 
 
 class ProjectionFormatter:
@@ -129,7 +129,7 @@ class ProjectionFormatter:
     @staticmethod
     def expand_transcript_to_messages(
         snapshot: dict[str, Any],
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, Any]]:
         """Expand context_os_snapshot.transcript_log into full dialogue messages.
 
         This is the core fix for Phase 5 context loss: transcript_log contains
@@ -141,7 +141,7 @@ class ProjectionFormatter:
         if not transcript:
             return []
 
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, Any]] = []
         for event in transcript:
             role = str(event.get("role") or "").strip().lower()
             content = str(event.get("content") or "")
@@ -156,7 +156,7 @@ class ProjectionFormatter:
 
             messages.append({"role": role, "content": prompt_safe_message_content(role, content)})
 
-        return messages
+        return ProjectionFormatter.compact_tool_failure_summaries(messages)
 
     @staticmethod
     def dedupe_messages(
@@ -187,6 +187,68 @@ class ProjectionFormatter:
                 seen[content_hash] = len(result)
                 result.append(msg)
 
+        return result
+
+    @staticmethod
+    def compact_tool_failure_summaries(
+        messages: list[dict[str, Any]],
+        *,
+        max_failure_kinds: int = 4,
+    ) -> list[dict[str, Any]]:
+        """Collapse repeated prompt-safe tool failures into one digest message."""
+
+        if not messages:
+            return []
+
+        original_messages = [dict(message) for message in messages]
+        aggregate: dict[tuple[str, str, str], dict[str, Any]] = {}
+        first_failure_index: int | None = None
+        result: list[dict[str, Any]] = []
+        failure_count = 0
+        for msg in messages:
+            payload = parse_tool_failure_summary(msg.get("content", ""))
+            if payload is None:
+                result.append(msg)
+                continue
+            failure_count += 1
+            if first_failure_index is None:
+                first_failure_index = len(result)
+                result.append({})
+            key = (
+                str(payload.get("tool") or "unknown"),
+                str(payload.get("error_type") or "tool_failure"),
+                str(payload.get("reason") or "tool execution failed"),
+            )
+            entry = aggregate.setdefault(
+                key,
+                {
+                    "tool": key[0],
+                    "error_type": key[1],
+                    "reason": key[2],
+                    "count": 0,
+                },
+            )
+            entry["count"] = int(entry["count"]) + 1
+
+        if first_failure_index is None or failure_count <= 1:
+            return original_messages
+
+        failures = sorted(aggregate.values(), key=lambda item: (-int(item["count"]), str(item["tool"])))
+        included = failures[: max(1, int(max_failure_kinds))]
+        digest = {
+            "schema_version": "tool_failure_summary_digest.v1",
+            "failure_count": sum(int(item["count"]) for item in failures),
+            "unique_failure_count": len(failures),
+            "failures": included,
+            "omitted_failure_kinds": max(0, len(failures) - len(included)),
+            "prompt_safe": True,
+            "receipt_detail": "omitted; see runtime tool_result event for audit evidence",
+        }
+        result[first_failure_index] = {
+            "role": "system",
+            "content": format_tool_failure_summary(digest),
+            "name": "tool_failure_summary_digest",
+        }
         return result
 
     @staticmethod
@@ -358,6 +420,7 @@ class ProjectionFormatter:
         # This prevents the LLM from seeing the same assistant content N times.
         before_dedupe = len(messages)
         messages = cls.dedupe_messages(messages)
+        messages = cls.compact_tool_failure_summaries(messages)
         _logger.debug(
             "[DEBUG][ProjectionFormatter] messages_from_projection end: before_dedupe=%d after_dedupe=%d system=%d user=%d assistant=%d tool=%d",
             before_dedupe,

@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -192,6 +193,7 @@ _PRIORITY_LABEL_TO_VALUE: dict[str, int] = {
 }
 
 _PRIORITY_VALUE_TO_LABEL: dict[int, str] = {v: k for k, v in _PRIORITY_LABEL_TO_VALUE.items()}
+_TASK_ID_TOKEN_RE = re.compile(r"(?:^|[^0-9A-Za-z])(?P<id>\d+)(?:$|[^0-9A-Za-z])")
 
 
 def _normalize_priority(priority: Any) -> int:
@@ -232,6 +234,34 @@ def _normalize_status(value: Any) -> TaskStatus:
         return TaskStatus(token)
     except ValueError:
         return TaskStatus.PENDING
+
+
+def _normalize_task_id(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"invalid task id: {value!r}")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+        raise ValueError(f"invalid task id: {value!r}")
+    token = str(value or "").strip()
+    if not token:
+        raise ValueError("task id is required")
+    if token.isdigit():
+        return int(token)
+    match = _TASK_ID_TOKEN_RE.search(token)
+    if match:
+        return int(match.group("id"))
+    raise ValueError(f"invalid task id: {value!r}")
+
+
+def _normalize_task_id_list(value: Any) -> list[int]:
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"invalid task id list: {value!r}")
+    return [_normalize_task_id(item) for item in value]
 
 
 # ---------------------------------------------------------------------------
@@ -316,20 +346,30 @@ class Task:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Task:
+        raw_id = data["id"]
+        task_id = _normalize_task_id(raw_id)
+        subject = str(data.get("subject") or data.get("title") or f"task-{task_id}")
+        metadata = data.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        elif str(raw_id).strip() != str(task_id):
+            metadata = dict(metadata)
+            metadata.setdefault("external_task_id", str(raw_id).strip())
+        raw_blocked_by = data.get("blocked_by", data.get("blockedBy", []))
         return cls(
-            id=int(data["id"]),
-            subject=data["subject"],
+            id=task_id,
+            subject=subject,
             description=data.get("description", ""),
             status=_normalize_status(data.get("status", "pending")),
-            created_at=float(data["created_at"]),
-            blocked_by=data.get("blocked_by", data.get("blockedBy", [])),
-            blocks=data.get("blocks", []),
+            created_at=float(data.get("created_at", 0.0)),
+            blocked_by=_normalize_task_id_list(raw_blocked_by),
+            blocks=_normalize_task_id_list(data.get("blocks", [])),
             owner=data.get("owner", ""),
             assignee=data.get("assignee", ""),
             claimed_by=data.get("claimed_by"),
             priority=_normalize_priority(data.get("priority", data.get("priority_label", 1))),
             tags=data.get("tags", []),
-            metadata=data.get("metadata", {}),
+            metadata=metadata,
             estimated_hours=data.get("estimated_hours", 0.0),
             started_at=data.get("started_at"),
             completed_at=data.get("completed_at"),
@@ -458,8 +498,8 @@ class TaskBoard:
 
     @staticmethod
     def _replace_task_file(tmp_path: Path, task_path: Path) -> None:
-        """Replace task JSON with short Windows retry for transient file locks."""
-        attempts = 8 if os.name == "nt" else 1
+        """Replace task JSON with short retry for transient file locks."""
+        attempts = 8
         delay = 0.025
         for attempt in range(attempts):
             try:

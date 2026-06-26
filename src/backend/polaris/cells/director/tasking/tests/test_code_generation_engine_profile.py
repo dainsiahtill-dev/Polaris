@@ -59,10 +59,18 @@ async def test_director_runtime_codegen_passes_execution_profile_temperature(
 
     command = captured["command"]
     profile = command.context["director_execution_profile"]
+    strategy = command.context["director_execution_strategy"]
     assert command.context["_transaction_kernel_temperature_override"] == 0.05
+    assert command.context["llm_max_tokens"] == strategy["output_budget_tokens"]
+    assert command.context["max_output_tokens"] == strategy["output_budget_tokens"]
+    assert command.context["task_execution_prompt_max_chars"] == strategy["prompt_max_chars"]
+    assert command.context["cognitive_strategy_override"]["cognitive_runtime"]["applied"] is True
+    assert command.context["cognitive_strategy_override"]["read_escalation"]["full_read_allowed"] is True
+    assert strategy["schema_version"] == "task.execution_strategy.v1"
+    assert strategy["output_budget_tokens"] >= 64_000
     assert command.context["task_type"] == "bugfix"
     assert command.context["phase"] == "repair"
     assert profile["schema_version"] == "task.execution_profile.v1"
     assert profile["task_type"] == "bugfix"
     assert profile["temperature"] == 0.05
-    assert command.metadata["temperature_source"] == "task.execution_profile.v1"
+    assert command.metadata["temperature_source"] == "director.tasking"

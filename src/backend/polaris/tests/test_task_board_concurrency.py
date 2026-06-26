@@ -1,3 +1,4 @@
+import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -66,6 +67,69 @@ def test_task_board_load_all_ignores_execution_session_files(tmp_path) -> None:
 
     assert reloaded.get(task.id) is not None
     assert len(reloaded.list_all()) == 1
+
+
+def test_task_board_load_all_normalizes_external_task_ids_for_claim(tmp_path) -> None:
+    TaskBoard(str(tmp_path))
+    tasks_dir = Path(resolve_runtime_path(str(tmp_path), "runtime/tasks"))
+    (tasks_dir / "task_1.json").write_text(
+        json.dumps(
+            {
+                "id": "TASK-1",
+                "subject": "legacy PM task",
+                "description": "created from PM contract",
+                "status": "pending",
+                "created_at": 1.0,
+                "blocked_by": [],
+                "blocks": ["TASK-3"],
+                "metadata": {"pm_task_id": "TASK-1"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    reloaded = TaskBoard(str(tmp_path))
+    task = reloaded.get(1)
+
+    assert task is not None
+    assert task.id == 1
+    assert task.blocks == [3]
+    assert task.metadata["pm_task_id"] == "TASK-1"
+    assert task.metadata["external_task_id"] == "TASK-1"
+    assert reloaded.claim(1, "director") is True
+
+
+def test_task_board_load_all_preserves_legacy_partial_rows(tmp_path) -> None:
+    TaskBoard(str(tmp_path))
+    tasks_dir = Path(resolve_runtime_path(str(tmp_path), "runtime/tasks"))
+    (tasks_dir / "task_1.json").write_text(
+        json.dumps(
+            {
+                "id": "TASK-1",
+                "status": "failed",
+                "metadata": {
+                    "last_execution_error": "director_materialization_quality_failed",
+                    "pm_task_id": "TASK-1",
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    reloaded = TaskBoard(str(tmp_path))
+    task = reloaded.get(1)
+
+    assert task is not None
+    assert task.id == 1
+    assert task.subject == "task-1"
+    assert task.status == TaskStatus.FAILED
+    assert task.created_at == 0.0
+    assert task.metadata["external_task_id"] == "TASK-1"
+    assert task.metadata["last_execution_error"] == "director_materialization_quality_failed"
 
 
 def test_task_board_rejects_invalid_transition(tmp_path) -> None:
