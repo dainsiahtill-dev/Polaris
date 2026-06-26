@@ -1125,6 +1125,10 @@ class DirectorRepairLanguageSlotV1:
     authoritative_source_tools: tuple[str, ...] = ()
     executable_runtime_source_tools: tuple[str, ...] = ()
     notes: str = ""
+    slot_owner_cell: str = "director.runtime"
+    bench_evidence_required: bool = True
+    rule_authoring_status: str = "reserved_only"
+    next_action: str = "add_bench_verified_rule_metadata_then_runtime_binding"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "language", _require_non_empty("language", self.language))
@@ -1156,6 +1160,14 @@ class DirectorRepairLanguageSlotV1:
             _to_tuple_str(list(self.executable_runtime_source_tools)),
         )
         object.__setattr__(self, "notes", str(self.notes or "").strip())
+        object.__setattr__(self, "slot_owner_cell", _require_non_empty("slot_owner_cell", self.slot_owner_cell))
+        object.__setattr__(self, "bench_evidence_required", bool(self.bench_evidence_required))
+        object.__setattr__(
+            self,
+            "rule_authoring_status",
+            _require_non_empty("rule_authoring_status", self.rule_authoring_status),
+        )
+        object.__setattr__(self, "next_action", _require_non_empty("next_action", self.next_action))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1171,6 +1183,10 @@ class DirectorRepairLanguageSlotV1:
             "authoritative_source_tools": list(self.authoritative_source_tools),
             "executable_runtime_source_tools": list(self.executable_runtime_source_tools),
             "notes": self.notes,
+            "slot_owner_cell": self.slot_owner_cell,
+            "bench_evidence_required": self.bench_evidence_required,
+            "rule_authoring_status": self.rule_authoring_status,
+            "next_action": self.next_action,
         }
 
 

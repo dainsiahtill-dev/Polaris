@@ -880,6 +880,14 @@ def query_director_repair_language_slots(
             return "metadata_rule_registered"
         return "reserved_only"
 
+    def _slot_next_action(language: str) -> str:
+        status = _implementation_status(language)
+        if status == "executable_runtime":
+            return "extend_existing_runtime_rule_with_bench_evidence"
+        if status == "metadata_rule_registered":
+            return "promote_metadata_rule_to_executable_runtime_binding"
+        return "add_bench_verified_rule_metadata_then_runtime_binding"
+
     items = (
         tuple(
             DirectorRepairLanguageSlotV1(
@@ -895,6 +903,10 @@ def query_director_repair_language_slots(
                 authoritative_source_tools=tuple(sorted(authoritative_source_tools_by_language.get(slot.language, ()))),
                 executable_runtime_source_tools=tuple(sorted(runtime_source_tools_by_language.get(slot.language, ()))),
                 notes=slot.notes,
+                slot_owner_cell="director.runtime",
+                bench_evidence_required=True,
+                rule_authoring_status=_implementation_status(slot.language),
+                next_action=_slot_next_action(slot.language),
             )
             for slot in slots
         )
@@ -913,6 +925,7 @@ def query_director_repair_language_slots(
         "implementation_status",
     )
     repairer_modules = {slot.language: slot.repairer_module for slot in slots}
+    next_actions_by_language = {slot.language: _slot_next_action(slot.language) for slot in slots}
     return DirectorRepairLanguageSlotsResultV1(
         schema_version="director.repair_language_slots.v1",
         source="director.runtime.repair_kernel.registry",
@@ -934,6 +947,7 @@ def query_director_repair_language_slots(
             "implementation_status_by_language": implementation_status_by_language,
             "implementation_status_counts": implementation_status_counts,
             "repairer_modules": repairer_modules,
+            "next_actions_by_language": next_actions_by_language,
             "reserved_only_repairer_modules": {
                 language: repairer_modules[language] for language in reserved_only_languages
             },
@@ -1838,6 +1852,7 @@ def _to_public_repair_receipt(receipt: RepairReceipt) -> RepairReceiptV1:
         )
         for note in receipt.advisor_notes
     )
+    revalidation_evidence = receipt.revalidation_evidence.to_dict() if receipt.revalidation_evidence is not None else {}
     return RepairReceiptV1(
         receipt_id=receipt.receipt_id,
         plan_id=receipt.plan_id,
@@ -1855,9 +1870,17 @@ def _to_public_repair_receipt(receipt: RepairReceipt) -> RepairReceiptV1:
         net_error_reduction=receipt.net_error_reduction,
         authority_hash=receipt.authority_hash(),
         projection_hash=receipt.projection_hash(),
-        revalidation_evidence=receipt.revalidation_evidence.to_dict()
-        if receipt.revalidation_evidence is not None
-        else {},
+        revalidation_evidence=revalidation_evidence,
+        verifier_command=tuple(str(item) for item in revalidation_evidence.get("command") or ()),
+        verifier_exit_code=_optional_int(revalidation_evidence.get("exit_code")),
+        diagnostics_before=tuple(
+            dict(item) for item in revalidation_evidence.get("diagnostics_before") or () if isinstance(item, Mapping)
+        ),
+        diagnostics_after=tuple(
+            dict(item) for item in revalidation_evidence.get("diagnostics_after") or () if isinstance(item, Mapping)
+        ),
+        resolved_diagnostic_ids=tuple(str(item) for item in revalidation_evidence.get("resolved_diagnostic_ids") or ()),
+        residual_diagnostic_ids=tuple(str(item) for item in revalidation_evidence.get("residual_diagnostic_ids") or ()),
         advisor_notes=advisor_notes,
         metadata=receipt.metadata,
     )

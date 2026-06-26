@@ -169,6 +169,172 @@ def _extract_content_any_keywords_from_directive(directive: str, *, limit: int =
     return _dedupe_limited_texts(values, limit=limit)
 
 
+def _delivery_depth_contract(
+    *,
+    domain_label: str,
+    language: str,
+    project_type: str,
+    keywords: list[str],
+    checks: list[str],
+) -> dict[str, Any]:
+    """Build the shared contract that prevents runnable-but-hollow delivery."""
+
+    normalized_keywords = _dedupe_limited_texts([str(item).lower() for item in keywords], limit=6)
+    keyword_text = ", ".join(normalized_keywords) if normalized_keywords else str(domain_label)
+    return {
+        "schema_version": "polaris.delivery_depth_contract.v1",
+        "source": "pm.deterministic_synthesis",
+        "language": language,
+        "project_type": project_type,
+        "product_intent": {
+            "subject": domain_label,
+            "core_user_journey": [
+                f"用户通过可执行入口运行 {domain_label} 并获得可观察结果",
+                "用户输入或使用一组代表性样例数据触发核心领域规则",
+                "系统输出能解释关键决策、计算结果或状态变化，而不是静态占位文本",
+            ],
+            "primary_entities": normalized_keywords,
+        },
+        "behavior_contract": {
+            "rule_matrix": [
+                f"至少实现 3 条与 {keyword_text} 相关的可解释业务规则",
+                "每条核心规则必须能被入口或测试观察到输入、处理和输出",
+                "规则不能只做字段存在校验或关键词拼接，必须体现需求中的映射、匹配、评分、状态变化或生成逻辑",
+            ],
+            "sample_dataset": [
+                "提供最小但有代表性的示例数据或种子内容",
+                "样例必须覆盖正常路径、边界路径和错误路径",
+            ],
+            "edge_cases": [
+                "空输入或缺失字段",
+                "未知/不支持的领域值",
+                "极端但合法的数值、长度或状态组合",
+            ],
+        },
+        "acceptance_contract": {
+            "required_behavior_tests": [
+                "至少 1 个正常路径测试",
+                "至少 1 个边界情况测试",
+                "至少 1 个错误/非法输入测试",
+            ],
+            "minimum_depth_signals": [
+                "核心逻辑与 I/O 或 CLI/Web 入口分离",
+                "测试断言业务结果而不是只检查文件存在或关键词存在",
+                "README 包含真实运行命令和代表性示例输出",
+            ],
+            "deterministic_checks": checks,
+        },
+        "anti_hollow_delivery": [
+            "禁止只生成文件骨架、静态打印、关键词堆砌或测试自证空逻辑",
+            "禁止让测试只验证源码存在、脚本存在、README 存在或关键词命中",
+            "如果需求信息不足，必须基于现有 brief 做最小合理产品规则假设并写入 README/测试",
+        ],
+    }
+
+
+def _delivery_plan_document(
+    *,
+    domain_label: str,
+    language: str,
+    project_type: str,
+    keywords: list[str],
+    checks: list[str],
+) -> dict[str, Any]:
+    normalized_keywords = _dedupe_limited_texts([str(item).lower() for item in keywords], limit=6)
+    keyword_text = ", ".join(normalized_keywords) if normalized_keywords else str(domain_label)
+    return {
+        "schema_version": "polaris.delivery_plan_document.v1",
+        "source": "pm.deterministic_synthesis",
+        "title": f"{domain_label} 交付计划",
+        "language": language,
+        "project_type": project_type,
+        "product_summary": {
+            "intent": f"交付一个真实可运行的 {domain_label}，而不是只满足文件结构检查的脚手架。",
+            "core_terms": normalized_keywords,
+        },
+        "user_journey": [
+            f"用户启动 {domain_label} 的 CLI/Web/脚本入口",
+            f"用户通过示例数据或输入触发 {keyword_text} 相关核心规则",
+            "系统返回可解释的业务结果、状态变化或生成内容",
+        ],
+        "capability_plan": [
+            "领域模型表达主要实体和合法状态",
+            "核心引擎实现需求中的映射、匹配、评分、状态变化或生成规则",
+            "入口层只做 I/O 编排，不能替代核心业务逻辑",
+            "测试层验证行为结果，不能只验证文件存在或关键词命中",
+        ],
+        "behavior_plan": [
+            "定义至少 3 条可观察业务规则",
+            "为每条核心规则准备至少 1 个代表性样例",
+            "覆盖正常、边界、非法输入三类场景",
+        ],
+        "verification_plan": [
+            "执行语言对应的编译/语法检查",
+            "执行真实入口 smoke test",
+            "执行行为测试并断言业务输出",
+            *checks,
+        ],
+        "evolution_notes": [
+            "当前交付应保持轻量，但模块边界要支持后续增加更多规则和数据源",
+            "不要预先强套 MVC/MVVM/微服务等架构；只有实际 UI、持久化或外部 I/O 需要时才引入相应结构",
+        ],
+    }
+
+
+def _with_delivery_depth_metadata(
+    metadata: dict[str, Any],
+    delivery_depth_contract: dict[str, Any],
+    delivery_plan_document: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(metadata)
+    merged["delivery_plan_document"] = delivery_plan_document
+    merged["delivery_depth_contract"] = delivery_depth_contract
+    merged["behavior_contract"] = delivery_depth_contract.get("behavior_contract", {})
+    return merged
+
+
+def _append_delivery_depth_to_contracts(
+    contracts: list[dict[str, Any]],
+    *,
+    delivery_plan_document: dict[str, Any],
+    delivery_depth_contract: dict[str, Any],
+) -> list[dict[str, Any]]:
+    implementation_steps = [
+        "根据 delivery_depth_contract 落地核心行为矩阵，至少实现 3 条可解释业务规则",
+        "提供代表性样例数据或种子内容，让入口输出体现真实业务决策而非静态占位",
+        "实现空输入、未知值、非法输入或边界数值的清晰处理路径",
+    ]
+    verification_steps = [
+        "测试必须断言核心业务结果，覆盖正常路径、边界路径和错误路径",
+        "验收脚本不得只检查文件存在、关键词存在或脚本存在；必须运行真实入口或核心 API",
+    ]
+    acceptance_items = [
+        "核心引擎至少包含 3 条可观察业务规则，并由入口或测试覆盖",
+        "测试覆盖正常路径、边界情况和错误/非法输入，且断言业务结果",
+        "交付物不是空骨架、静态打印、关键词堆砌或只靠测试自证的浅实现",
+    ]
+    updated: list[dict[str, Any]] = []
+    for raw in contracts:
+        item = dict(raw)
+        metadata_raw = item.get("metadata")
+        metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+        item["metadata"] = _with_delivery_depth_metadata(metadata, delivery_depth_contract, delivery_plan_document)
+        steps = list(item.get("steps") or [])
+        phase_text = str(item.get("phase") or "").lower()
+        title_text = str(item.get("title") or "").lower()
+        if any(token in phase_text or token in title_text for token in ("test", "验收", "验证", "verification")):
+            steps.extend(step for step in verification_steps if step not in steps)
+        else:
+            steps.extend(step for step in implementation_steps if step not in steps)
+        item["steps"] = steps
+        acceptance = list(item.get("acceptance") or item.get("acceptance_criteria") or [])
+        acceptance.extend(entry for entry in acceptance_items if entry not in acceptance)
+        item["acceptance"] = acceptance
+        item["acceptance_criteria"] = acceptance
+        updated.append(item)
+    return updated
+
+
 def _pascal_identifier_token(value: str, *, fallback: str) -> str:
     parts = re.findall(r"[A-Za-z0-9]+", str(value or ""))
     token = "".join(part[:1].upper() + part[1:].lower() for part in parts if part)
@@ -811,68 +977,86 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             "tests/test_product.py",
             "README.md",
         ]
-        return [
-            {
-                "id": "TASK-1",
-                "title": f"实现 {domain_label} JavaScript/npm 项目骨架与核心模块",
-                "goal": (
-                    f"在工作区根交付 {domain_label} 的 JavaScript/npm 项目骨架、真实 package 脚本和"
-                    "需求驱动的核心业务源码。"
-                ),
-                "description": (
-                    "创建 package.json、src/index.js、src/engine/ 与需求派生的 src/models/*.js，"
-                    f"覆盖需求关键词和确定性检查：{keyword_summary}。"
-                ),
-                "scope": source_targets,
-                "target_files": source_targets,
-                "steps": [
-                    "创建 package.json，声明真实 build/test/start 脚本，禁止 echo-only 或 manifest-only 脚本",
-                    "实现 src/index.js 作为 Node-safe CLI 或模块入口，可通过 npm start 执行",
-                    "实现 src/engine/rules.js 与 src/engine/runner.js，封装核心匹配、计算或流程规则",
-                    "实现 src/models/ 下的需求派生领域模型，源码必须真实使用需求关键词",
-                    "执行 `node --check` 或等价语法检查覆盖 src/**/*.js",
-                ],
-                "acceptance": [
-                    "`package.json`、`src/index.js`、`src/engine/` 与 `src/models/` JavaScript 源码存在且非空",
-                    "`npm run build`、`npm test` 与 `npm start` 都执行真实入口或验证逻辑",
-                    f"源码或测试覆盖需求关键词：{keyword_summary}",
-                    f"确定性检查进入任务验收：{check_summary}",
-                ],
-                "phase": "requirements",
-                "depends_on": [],
-                "assigned_to": "Director",
-                "metadata": dict(source_metadata),
-            },
-            {
-                "id": "TASK-2",
-                "title": f"实现 {domain_label} JavaScript 验证脚本与交付说明",
-                "goal": f"固化 {domain_label} 的 npm 验证、Python 外部验收和 README 运行路径。",
-                "description": (
-                    "补齐 tests/product.test.js、tests/test_product.py 与 README，"
-                    f"确保 package_scripts、js_syntax 和 source_target_coverage 可被自动验证：{check_summary}。"
-                ),
-                "scope": [*source_targets, *verification_targets],
-                "target_files": [*source_targets, *verification_targets],
-                "steps": [
-                    "实现 tests/product.test.js，使用 Node 标准库 assert 或内置 test runner 验证核心规则",
-                    "实现 tests/test_product.py，使用 Python unittest 检查 package.json 脚本、src/**/*.js 覆盖和 node 入口",
-                    "更新 package.json 的 test/build/start 脚本，使其运行当前存在的 JavaScript 文件",
-                    "编写 README，说明 npm install、npm run build、npm test、npm start 和验证脚本",
-                    f"验证脚本覆盖确定性检查：{check_summary}",
-                ],
-                "acceptance": [
-                    "`tests/product.test.js` 与 `tests/test_product.py` 存在且可执行",
-                    "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
-                    "`npm test` 返回 PASS，且不是空脚本或 echo-only 脚本",
-                    "`README.md` 包含安装、构建、测试和启动步骤",
-                    f"确定性检查进入任务验收：{check_summary}",
-                ],
-                "phase": "implementation",
-                "depends_on": ["TASK-1"],
-                "assigned_to": "Director",
-                "metadata": dict(source_metadata),
-            },
-        ]
+        delivery_depth_contract = _delivery_depth_contract(
+            domain_label=domain_label,
+            language="javascript",
+            project_type="npm_workspace",
+            keywords=content_keywords,
+            checks=deterministic_checks,
+        )
+        delivery_plan_document = _delivery_plan_document(
+            domain_label=domain_label,
+            language="javascript",
+            project_type="npm_workspace",
+            keywords=content_keywords,
+            checks=deterministic_checks,
+        )
+        return _append_delivery_depth_to_contracts(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": f"实现 {domain_label} JavaScript/npm 项目骨架与核心模块",
+                    "goal": (
+                        f"在工作区根交付 {domain_label} 的 JavaScript/npm 项目骨架、真实 package 脚本和"
+                        "需求驱动的核心业务源码。"
+                    ),
+                    "description": (
+                        "创建 package.json、src/index.js、src/engine/ 与需求派生的 src/models/*.js，"
+                        f"覆盖需求关键词和确定性检查：{keyword_summary}。"
+                    ),
+                    "scope": source_targets,
+                    "target_files": source_targets,
+                    "steps": [
+                        "创建 package.json，声明真实 build/test/start 脚本，禁止 echo-only 或 manifest-only 脚本",
+                        "实现 src/index.js 作为 Node-safe CLI 或模块入口，可通过 npm start 执行",
+                        "实现 src/engine/rules.js 与 src/engine/runner.js，封装核心匹配、计算或流程规则",
+                        "实现 src/models/ 下的需求派生领域模型，源码必须真实使用需求关键词",
+                        "执行 `node --check` 或等价语法检查覆盖 src/**/*.js",
+                    ],
+                    "acceptance": [
+                        "`package.json`、`src/index.js`、`src/engine/` 与 `src/models/` JavaScript 源码存在且非空",
+                        "`npm run build`、`npm test` 与 `npm start` 都执行真实入口或验证逻辑",
+                        f"源码或测试覆盖需求关键词：{keyword_summary}",
+                        f"确定性检查进入任务验收：{check_summary}",
+                    ],
+                    "phase": "requirements",
+                    "depends_on": [],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+                {
+                    "id": "TASK-2",
+                    "title": f"实现 {domain_label} JavaScript 验证脚本与交付说明",
+                    "goal": f"固化 {domain_label} 的 npm 验证、Python 外部验收和 README 运行路径。",
+                    "description": (
+                        "补齐 tests/product.test.js、tests/test_product.py 与 README，"
+                        f"确保 package_scripts、js_syntax 和 source_target_coverage 可被自动验证：{check_summary}。"
+                    ),
+                    "scope": [*source_targets, *verification_targets],
+                    "target_files": [*source_targets, *verification_targets],
+                    "steps": [
+                        "实现 tests/product.test.js，使用 Node 标准库 assert 或内置 test runner 验证核心规则",
+                        "实现 tests/test_product.py，使用 Python unittest 检查 package.json 脚本、src/**/*.js 覆盖和 node 入口",
+                        "更新 package.json 的 test/build/start 脚本，使其运行当前存在的 JavaScript 文件",
+                        "编写 README，说明 npm install、npm run build、npm test、npm start 和验证脚本",
+                        f"验证脚本覆盖确定性检查：{check_summary}",
+                    ],
+                    "acceptance": [
+                        "`tests/product.test.js` 与 `tests/test_product.py` 存在且可执行",
+                        "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
+                        "`npm test` 返回 PASS，且不是空脚本或 echo-only 脚本",
+                        "`README.md` 包含安装、构建、测试和启动步骤",
+                        f"确定性检查进入任务验收：{check_summary}",
+                    ],
+                    "phase": "implementation",
+                    "depends_on": ["TASK-1"],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+            ],
+            delivery_plan_document=delivery_plan_document,
+            delivery_depth_contract=delivery_depth_contract,
+        )
 
     def _synthesize_python_workspace_contracts(
         self,
@@ -904,89 +1088,107 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             "tests/test_product.py",
             "README.md",
         ]
-        return [
-            {
-                "id": "TASK-1",
-                "title": f"实现 {domain_label} Python 包结构与领域模型",
-                "goal": f"在工作区根交付 {domain_label} 的 Python src/ 包、领域模型和可导入核心源码。",
-                "description": (
-                    "创建 requirements.txt、src/__init__.py、src/models/ 与需求派生模型文件，"
-                    f"确保 src/**/*.py 覆盖需求关键词和确定性检查：{keyword_summary}。"
-                ),
-                "scope": ["requirements.txt", *model_targets],
-                "target_files": ["requirements.txt", *model_targets],
-                "steps": [
-                    "创建 requirements.txt；如无第三方依赖也必须保留可执行的空依赖文件或注释说明",
-                    "实现 src/__init__.py 与 src/models/__init__.py，公开核心模型入口",
-                    "实现 src/models/mood.py 与 src/models/weather.py，表达 mood、weather、radio、forecast 等需求概念",
-                    "执行 `python -m compileall -q src` 验证 src/**/*.py 可编译",
-                ],
-                "acceptance": [
-                    "`requirements.txt`、`src/__init__.py` 与 `src/models/*.py` 存在且非空",
-                    f"src/**/*.py 源码包含需求关键词：{keyword_summary}",
-                    f"确定性检查进入任务验收：{check_summary}",
-                ],
-                "phase": "requirements",
-                "depends_on": [],
-                "assigned_to": "Director",
-                "metadata": dict(source_metadata),
-            },
-            {
-                "id": "TASK-2",
-                "title": f"实现 {domain_label} Python 引擎与 CLI 入口",
-                "goal": f"实现 {domain_label} 的核心规则引擎、广播输出和可执行 Python 入口。",
-                "description": (
-                    "补齐 src/engine/forecast.py、src/radio.py 与 src/main.py，"
-                    f"让 CLI 入口真实运行并输出覆盖需求关键词的结果：{keyword_summary}。"
-                ),
-                "scope": engine_targets,
-                "target_files": engine_targets,
-                "steps": [
-                    "实现 src/engine/forecast.py，将 mood 输入映射为 weather/forecast 结果",
-                    "实现 src/radio.py，将 forecast 组织成私人 radio 播报文本或数据结构",
-                    "实现 src/main.py，必须同时支持 `python src/main.py` 与 `python -m src.main` 两种入口",
-                    "入口必须运行真实核心规则，不能只打印静态占位文本",
-                ],
-                "acceptance": [
-                    "`src/engine/forecast.py`、`src/radio.py` 与 `src/main.py` 存在且非空",
-                    "`python src/main.py` 与 `python -m src.main` 都可执行并返回成功",
-                    f"源码或入口输出覆盖需求关键词：{keyword_summary}",
-                ],
-                "phase": "implementation",
-                "depends_on": ["TASK-1"],
-                "assigned_to": "Director",
-                "metadata": dict(source_metadata),
-            },
-            {
-                "id": "TASK-3",
-                "title": f"实现 {domain_label} Python 验证脚本与 README",
-                "goal": f"固化 {domain_label} 的编译、单元测试、入口 smoke 和交付说明。",
-                "description": (
-                    "创建 tests/test_product.py 与 README，验证 src/**/*.py 覆盖、py_compile、"
-                    f"真实入口和核心领域规则：{check_summary}。"
-                ),
-                "scope": [*model_targets, *engine_targets, *verification_targets],
-                "target_files": [*model_targets, *engine_targets, *verification_targets],
-                "steps": [
-                    "实现 tests/test_product.py，使用 Python unittest 覆盖模型、forecast 引擎、radio 输出和 CLI 入口",
-                    "测试必须检查 src/**/*.py 至少存在多个源文件，避免只生成 tests/ 或 HTML/CSS 脚手架",
-                    "README 记录依赖安装、compileall、unittest、`python src/main.py` 和 `python -m src.main`",
-                    f"验证脚本覆盖确定性检查：{check_summary}",
-                ],
-                "acceptance": [
-                    "`tests/test_product.py` 存在且可执行",
-                    "`python -m compileall -q src tests` 返回成功",
-                    "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
-                    "`python src/main.py` 与 `python -m src.main` 都返回 PASS",
-                    "`README.md` 包含依赖安装、编译、测试和启动步骤",
-                    f"确定性检查进入任务验收：{check_summary}",
-                ],
-                "phase": "verification",
-                "depends_on": ["TASK-2"],
-                "assigned_to": "Director",
-                "metadata": dict(source_metadata),
-            },
-        ]
+        delivery_depth_contract = _delivery_depth_contract(
+            domain_label=domain_label,
+            language="python",
+            project_type="python_workspace",
+            keywords=content_keywords,
+            checks=deterministic_checks,
+        )
+        delivery_plan_document = _delivery_plan_document(
+            domain_label=domain_label,
+            language="python",
+            project_type="python_workspace",
+            keywords=content_keywords,
+            checks=deterministic_checks,
+        )
+        return _append_delivery_depth_to_contracts(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": f"实现 {domain_label} Python 包结构与领域模型",
+                    "goal": f"在工作区根交付 {domain_label} 的 Python src/ 包、领域模型和可导入核心源码。",
+                    "description": (
+                        "创建 requirements.txt、src/__init__.py、src/models/ 与需求派生模型文件，"
+                        f"确保 src/**/*.py 覆盖需求关键词和确定性检查：{keyword_summary}。"
+                    ),
+                    "scope": ["requirements.txt", *model_targets],
+                    "target_files": ["requirements.txt", *model_targets],
+                    "steps": [
+                        "创建 requirements.txt；如无第三方依赖也必须保留可执行的空依赖文件或注释说明",
+                        "实现 src/__init__.py 与 src/models/__init__.py，公开核心模型入口",
+                        "实现 src/models/mood.py 与 src/models/weather.py，表达 mood、weather、radio、forecast 等需求概念",
+                        "执行 `python -m compileall -q src` 验证 src/**/*.py 可编译",
+                    ],
+                    "acceptance": [
+                        "`requirements.txt`、`src/__init__.py` 与 `src/models/*.py` 存在且非空",
+                        f"src/**/*.py 源码包含需求关键词：{keyword_summary}",
+                        f"确定性检查进入任务验收：{check_summary}",
+                    ],
+                    "phase": "requirements",
+                    "depends_on": [],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+                {
+                    "id": "TASK-2",
+                    "title": f"实现 {domain_label} Python 引擎与 CLI 入口",
+                    "goal": f"实现 {domain_label} 的核心规则引擎、广播输出和可执行 Python 入口。",
+                    "description": (
+                        "补齐 src/engine/forecast.py、src/radio.py 与 src/main.py，"
+                        f"让 CLI 入口真实运行并输出覆盖需求关键词的结果：{keyword_summary}。"
+                    ),
+                    "scope": engine_targets,
+                    "target_files": engine_targets,
+                    "steps": [
+                        "实现 src/engine/forecast.py，将 mood 输入映射为 weather/forecast 结果",
+                        "实现 src/radio.py，将 forecast 组织成私人 radio 播报文本或数据结构",
+                        "实现 src/main.py，必须同时支持 `python src/main.py` 与 `python -m src.main` 两种入口",
+                        "入口必须运行真实核心规则，不能只打印静态占位文本",
+                    ],
+                    "acceptance": [
+                        "`src/engine/forecast.py`、`src/radio.py` 与 `src/main.py` 存在且非空",
+                        "`python src/main.py` 与 `python -m src.main` 都可执行并返回成功",
+                        f"源码或入口输出覆盖需求关键词：{keyword_summary}",
+                    ],
+                    "phase": "implementation",
+                    "depends_on": ["TASK-1"],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+                {
+                    "id": "TASK-3",
+                    "title": f"实现 {domain_label} Python 验证脚本与 README",
+                    "goal": f"固化 {domain_label} 的编译、单元测试、入口 smoke 和交付说明。",
+                    "description": (
+                        "创建 tests/test_product.py 与 README，验证 src/**/*.py 覆盖、py_compile、"
+                        f"真实入口和核心领域规则：{check_summary}。"
+                    ),
+                    "scope": [*model_targets, *engine_targets, *verification_targets],
+                    "target_files": [*model_targets, *engine_targets, *verification_targets],
+                    "steps": [
+                        "实现 tests/test_product.py，使用 Python unittest 覆盖模型、forecast 引擎、radio 输出和 CLI 入口",
+                        "测试必须检查 src/**/*.py 至少存在多个源文件，避免只生成 tests/ 或 HTML/CSS 脚手架",
+                        "README 记录依赖安装、compileall、unittest、`python src/main.py` 和 `python -m src.main`",
+                        f"验证脚本覆盖确定性检查：{check_summary}",
+                    ],
+                    "acceptance": [
+                        "`tests/test_product.py` 存在且可执行",
+                        "`python -m compileall -q src tests` 返回成功",
+                        "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
+                        "`python src/main.py` 与 `python -m src.main` 都返回 PASS",
+                        "`README.md` 包含依赖安装、编译、测试和启动步骤",
+                        f"确定性检查进入任务验收：{check_summary}",
+                    ],
+                    "phase": "verification",
+                    "depends_on": ["TASK-2"],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+            ],
+            delivery_plan_document=delivery_plan_document,
+            delivery_depth_contract=delivery_depth_contract,
+        )
 
     def _synthesize_rust_workspace_contracts(
         self,
@@ -1020,83 +1222,101 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             "tests/test_product.py",
             "README.md",
         ]
-        return [
-            {
-                "id": "TASK-1",
-                "title": f"实现 {domain_label} Rust crate 与领域模型",
-                "goal": f"在工作区根交付 {domain_label} 的 Cargo/Rust 项目骨架和领域模型源码。",
-                "description": (
-                    "创建 Cargo.toml、src/lib.rs 与 src/models/ 下的 Rust 源文件，"
-                    f"确保源码覆盖需求关键词：{keyword_summary}。"
-                ),
-                "scope": model_targets,
-                "target_files": model_targets,
-                "steps": [
-                    "创建 Cargo.toml，声明 package、edition 和可构建的 lib/bin 目标",
-                    "创建 src/lib.rs，公开 models 与 engine 模块入口",
-                    "实现 src/models/ 下的 flavor、palette、ingredient、recipe 数据结构",
-                    f"在 Rust 源码中保留验收关键词：{keyword_summary}",
-                ],
-                "acceptance": [
-                    "`Cargo.toml`、`src/lib.rs` 与 `src/models/` Rust 源文件存在且非空",
-                    f"源码包含需求关键词：{keyword_summary}",
-                    f"确定性检查进入任务验收：{check_summary}",
-                ],
-                "phase": "requirements",
-                "depends_on": [],
-                "assigned_to": "Director",
-                "metadata": dict(source_metadata),
-            },
-            {
-                "id": "TASK-2",
-                "title": f"实现 {domain_label} Rust 映射引擎与 CLI 入口",
-                "goal": f"实现 {domain_label} 的味觉到色板/摆盘规则核心引擎和可执行入口。",
-                "description": (
-                    "补齐 src/engine/ 下的映射和摆盘逻辑，并创建 src/main.rs 调用公开 API 输出可验证结果。"
-                ),
-                "scope": engine_targets,
-                "target_files": engine_targets,
-                "steps": [
-                    "实现 src/engine/mapper.rs，将 flavor/taste 映射为 palette/color 结果",
-                    "实现 src/engine/plating.rs，根据 ingredient/recipe 生成摆盘规则",
-                    "实现 src/engine/mod.rs，导出 generate_palette_and_plating 或等价公开 API",
-                    "实现 src/main.rs，构造示例 recipe 并打印 palette 与 plating 输出",
-                    "执行 `cargo build` 或 `cargo check` 验证 Rust 编译通过",
-                ],
-                "acceptance": [
-                    "`src/main.rs` 可通过 `cargo run` 执行",
-                    "`src/engine/` 源码实现 flavor -> palette 和 ingredient/recipe -> plating 规则",
-                    "`cargo build` 或 `cargo check` 返回成功",
-                ],
-                "phase": "implementation",
-                "depends_on": ["TASK-1"],
-                "assigned_to": "Director",
-                "metadata": dict(source_metadata),
-            },
-            {
-                "id": "TASK-3",
-                "title": f"实现 {domain_label} Rust 验收测试与 README",
-                "goal": f"固化 {domain_label} 的自动验收脚本、运行说明和交付证据。",
-                "description": "创建 tests/test_product.py 与 README.md，验证 Rust 文件结构、cargo 入口和核心领域规则。",
-                "scope": verification_targets,
-                "target_files": verification_targets,
-                "steps": [
-                    "创建 tests/test_product.py，使用 Python unittest 调用 cargo check/run 或检查 Rust 产物结构",
-                    "测试覆盖 Rust 产物结构、入口可运行性和核心领域规则",
-                    "编写 README，说明 cargo build、cargo run 和测试命令",
-                    f"验证脚本覆盖确定性检查：{check_summary}",
-                ],
-                "acceptance": [
-                    "`tests/test_product.py` 存在且可执行",
-                    "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
-                    "`README.md` 包含 Cargo 构建、运行和验证步骤",
-                ],
-                "phase": "verification",
-                "depends_on": ["TASK-2"],
-                "assigned_to": "Director",
-                "metadata": dict(source_metadata),
-            },
-        ]
+        delivery_depth_contract = _delivery_depth_contract(
+            domain_label=domain_label,
+            language="rust",
+            project_type="cargo_workspace",
+            keywords=content_keywords,
+            checks=deterministic_checks,
+        )
+        delivery_plan_document = _delivery_plan_document(
+            domain_label=domain_label,
+            language="rust",
+            project_type="cargo_workspace",
+            keywords=content_keywords,
+            checks=deterministic_checks,
+        )
+        return _append_delivery_depth_to_contracts(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": f"实现 {domain_label} Rust crate 与领域模型",
+                    "goal": f"在工作区根交付 {domain_label} 的 Cargo/Rust 项目骨架和领域模型源码。",
+                    "description": (
+                        "创建 Cargo.toml、src/lib.rs 与 src/models/ 下的 Rust 源文件，"
+                        f"确保源码覆盖需求关键词：{keyword_summary}。"
+                    ),
+                    "scope": model_targets,
+                    "target_files": model_targets,
+                    "steps": [
+                        "创建 Cargo.toml，声明 package、edition 和可构建的 lib/bin 目标",
+                        "创建 src/lib.rs，公开 models 与 engine 模块入口",
+                        "实现 src/models/ 下的 flavor、palette、ingredient、recipe 数据结构",
+                        f"在 Rust 源码中保留验收关键词：{keyword_summary}",
+                    ],
+                    "acceptance": [
+                        "`Cargo.toml`、`src/lib.rs` 与 `src/models/` Rust 源文件存在且非空",
+                        f"源码包含需求关键词：{keyword_summary}",
+                        f"确定性检查进入任务验收：{check_summary}",
+                    ],
+                    "phase": "requirements",
+                    "depends_on": [],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+                {
+                    "id": "TASK-2",
+                    "title": f"实现 {domain_label} Rust 映射引擎与 CLI 入口",
+                    "goal": f"实现 {domain_label} 的味觉到色板/摆盘规则核心引擎和可执行入口。",
+                    "description": (
+                        "补齐 src/engine/ 下的映射和摆盘逻辑，并创建 src/main.rs 调用公开 API 输出可验证结果。"
+                    ),
+                    "scope": engine_targets,
+                    "target_files": engine_targets,
+                    "steps": [
+                        "实现 src/engine/mapper.rs，将 flavor/taste 映射为 palette/color 结果",
+                        "实现 src/engine/plating.rs，根据 ingredient/recipe 生成摆盘规则",
+                        "实现 src/engine/mod.rs，导出 generate_palette_and_plating 或等价公开 API",
+                        "实现 src/main.rs，构造示例 recipe 并打印 palette 与 plating 输出",
+                        "执行 `cargo build` 或 `cargo check` 验证 Rust 编译通过",
+                    ],
+                    "acceptance": [
+                        "`src/main.rs` 可通过 `cargo run` 执行",
+                        "`src/engine/` 源码实现 flavor -> palette 和 ingredient/recipe -> plating 规则",
+                        "`cargo build` 或 `cargo check` 返回成功",
+                    ],
+                    "phase": "implementation",
+                    "depends_on": ["TASK-1"],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+                {
+                    "id": "TASK-3",
+                    "title": f"实现 {domain_label} Rust 验收测试与 README",
+                    "goal": f"固化 {domain_label} 的自动验收脚本、运行说明和交付证据。",
+                    "description": "创建 tests/test_product.py 与 README.md，验证 Rust 文件结构、cargo 入口和核心领域规则。",
+                    "scope": verification_targets,
+                    "target_files": verification_targets,
+                    "steps": [
+                        "创建 tests/test_product.py，使用 Python unittest 调用 cargo check/run 或检查 Rust 产物结构",
+                        "测试覆盖 Rust 产物结构、入口可运行性和核心领域规则",
+                        "编写 README，说明 cargo build、cargo run 和测试命令",
+                        f"验证脚本覆盖确定性检查：{check_summary}",
+                    ],
+                    "acceptance": [
+                        "`tests/test_product.py` 存在且可执行",
+                        "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
+                        "`README.md` 包含 Cargo 构建、运行和验证步骤",
+                    ],
+                    "phase": "verification",
+                    "depends_on": ["TASK-2"],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+            ],
+            delivery_plan_document=delivery_plan_document,
+            delivery_depth_contract=delivery_depth_contract,
+        )
 
     def _synthesize_cpp_workspace_contracts(
         self,
@@ -1123,44 +1343,62 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             "tests/test_product.py",
             "README.md",
         ]
-        return [
-            {
-                "id": "TASK-1",
-                "title": f"实现 {domain_label} C++17 CLI、领域模型与验收",
-                "goal": f"在工作区根交付 {domain_label} 的完整 CMake/C++17 CLI、领域模型、验证脚本和 README。",
-                "description": (
-                    "创建 CMakeLists.txt、src/models/、src/engine/、src/main.cpp、tests/test_product.py 与 README.md，"
-                    f"确保源码覆盖需求关键词和确定性检查：{keyword_summary}。"
-                ),
-                "scope": delivery_targets,
-                "target_files": delivery_targets,
-                "steps": [
-                    "创建 CMakeLists.txt，声明 C++17 标准、可执行目标和所有 src/**/*.cpp 源文件",
-                    "实现 src/models/postcard.hpp 与 src/models/postcard.cpp 的明信片领域对象",
-                    "实现 src/models/stamp.hpp 与 src/models/stamp.cpp 的邮票或邮戳领域对象",
-                    "实现 src/engine/generator.hpp，声明 postcard generation 公开 API",
-                    "实现 src/engine/generator.cpp，将 moon/postcard/stamp/poem 等需求元素组合为输出文本",
-                    "实现 src/main.cpp，构造示例输入并打印生成的 postcard 或 poem 结果",
-                    "创建 tests/test_product.py，使用 Python unittest 调用 CMake/g++ 或检查 C++ 产物结构",
-                    "编写 README，说明 cmake build、直接 g++ 编译、运行和测试命令",
-                    f"验证脚本覆盖确定性检查：{check_summary}",
-                ],
-                "acceptance": [
-                    "`CMakeLists.txt`、`src/models/`、`src/engine/`、`src/main.cpp`、`tests/test_product.py` 与 `README.md` 存在且非空",
-                    "`src/main.cpp` 存在并可作为 C++17 CLI 入口编译运行",
-                    "`src/engine/` 源码实现 moon -> postcard/stamp/poem 生成规则",
-                    f"源码包含需求关键词：{keyword_summary}",
-                    "`cmake --build build` 或 `g++ -std=c++17` 返回成功",
-                    "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
-                    "`README.md` 包含 C++17 构建、运行和验证步骤",
-                    f"确定性检查进入任务验收：{check_summary}",
-                ],
-                "phase": "implementation",
-                "depends_on": [],
-                "assigned_to": "Director",
-                "metadata": dict(source_metadata),
-            },
-        ]
+        delivery_depth_contract = _delivery_depth_contract(
+            domain_label=domain_label,
+            language="cpp",
+            project_type="cmake_cli",
+            keywords=content_keywords,
+            checks=deterministic_checks,
+        )
+        delivery_plan_document = _delivery_plan_document(
+            domain_label=domain_label,
+            language="cpp",
+            project_type="cmake_cli",
+            keywords=content_keywords,
+            checks=deterministic_checks,
+        )
+        return _append_delivery_depth_to_contracts(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": f"实现 {domain_label} C++17 CLI、领域模型与验收",
+                    "goal": f"在工作区根交付 {domain_label} 的完整 CMake/C++17 CLI、领域模型、验证脚本和 README。",
+                    "description": (
+                        "创建 CMakeLists.txt、src/models/、src/engine/、src/main.cpp、tests/test_product.py 与 README.md，"
+                        f"确保源码覆盖需求关键词和确定性检查：{keyword_summary}。"
+                    ),
+                    "scope": delivery_targets,
+                    "target_files": delivery_targets,
+                    "steps": [
+                        "创建 CMakeLists.txt，声明 C++17 标准、可执行目标和所有 src/**/*.cpp 源文件",
+                        "实现 src/models/postcard.hpp 与 src/models/postcard.cpp 的明信片领域对象",
+                        "实现 src/models/stamp.hpp 与 src/models/stamp.cpp 的邮票或邮戳领域对象",
+                        "实现 src/engine/generator.hpp，声明 postcard generation 公开 API",
+                        "实现 src/engine/generator.cpp，将 moon/postcard/stamp/poem 等需求元素组合为输出文本",
+                        "实现 src/main.cpp，构造示例输入并打印生成的 postcard 或 poem 结果",
+                        "创建 tests/test_product.py，使用 Python unittest 调用 CMake/g++ 或检查 C++ 产物结构",
+                        "编写 README，说明 cmake build、直接 g++ 编译、运行和测试命令",
+                        f"验证脚本覆盖确定性检查：{check_summary}",
+                    ],
+                    "acceptance": [
+                        "`CMakeLists.txt`、`src/models/`、`src/engine/`、`src/main.cpp`、`tests/test_product.py` 与 `README.md` 存在且非空",
+                        "`src/main.cpp` 存在并可作为 C++17 CLI 入口编译运行",
+                        "`src/engine/` 源码实现 moon -> postcard/stamp/poem 生成规则",
+                        f"源码包含需求关键词：{keyword_summary}",
+                        "`cmake --build build` 或 `g++ -std=c++17` 返回成功",
+                        "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
+                        "`README.md` 包含 C++17 构建、运行和验证步骤",
+                        f"确定性检查进入任务验收：{check_summary}",
+                    ],
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+            ],
+            delivery_plan_document=delivery_plan_document,
+            delivery_depth_contract=delivery_depth_contract,
+        )
 
     def _synthesize_java_workspace_contracts(
         self,
@@ -1185,43 +1423,61 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             "tests/test_product.py",
             "README.md",
         ]
-        return [
-            {
-                "id": "TASK-1",
-                "title": f"实现 {domain_label} Java CLI、领域模型与验收",
-                "goal": f"在工作区根交付 {domain_label} 的完整 Java CLI、领域模型、自包含验证和 README。",
-                "description": (
-                    "创建 src/main/java/、src/test/java/、tests/test_product.py 与 README.md，"
-                    f"确保 Java 源码覆盖需求关键词和确定性检查：{keyword_summary}。"
-                ),
-                "scope": delivery_targets,
-                "target_files": delivery_targets,
-                "steps": [
-                    "创建 pom.xml 或等价 Java 项目元数据，但 java_compile 必须不依赖 Maven/Gradle 才能通过 javac",
-                    "实现 src/main/java/polaris/factory/Main.java，作为可直接 java 运行的 CLI 入口",
-                    "实现 src/main/java/polaris/factory/domain/ 下的领域模型，表达 rhythm、monster、beat、pattern 规则",
-                    "实现 src/main/java/polaris/factory/engine/RhythmEngine.java，计算节奏正确性对怪兽性格和鼓机 pattern 的影响",
-                    "实现 src/test/java/polaris/factory/RhythmEngineTest.java，使用 main/assert 或标准库自包含验证，禁止依赖未声明 JUnit",
-                    "创建 tests/test_product.py，使用 Python unittest 调用 javac/java 或检查 Java 产物结构",
-                    "编写 README，说明 javac 编译、java 运行和测试命令",
-                    f"验证脚本覆盖确定性检查：{check_summary}",
-                ],
-                "acceptance": [
-                    "`src/main/java/`、`src/test/java/`、`tests/test_product.py` 与 `README.md` 存在且非空",
-                    "`src/main/java/polaris/factory/Main.java` 存在并可作为 Java CLI 入口编译运行",
-                    "`src/main/java/` 源码实现 rhythm -> monster/beat/pattern 领域规则",
-                    f"源码包含需求关键词：{keyword_summary}",
-                    "`javac -encoding UTF-8` 对所有 `.java` 文件返回成功",
-                    "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
-                    "`README.md` 包含 Java 编译、运行和验证步骤",
-                    f"确定性检查进入任务验收：{check_summary}",
-                ],
-                "phase": "implementation",
-                "depends_on": [],
-                "assigned_to": "Director",
-                "metadata": dict(source_metadata),
-            },
-        ]
+        delivery_depth_contract = _delivery_depth_contract(
+            domain_label=domain_label,
+            language="java",
+            project_type="java_cli",
+            keywords=content_keywords,
+            checks=deterministic_checks,
+        )
+        delivery_plan_document = _delivery_plan_document(
+            domain_label=domain_label,
+            language="java",
+            project_type="java_cli",
+            keywords=content_keywords,
+            checks=deterministic_checks,
+        )
+        return _append_delivery_depth_to_contracts(
+            [
+                {
+                    "id": "TASK-1",
+                    "title": f"实现 {domain_label} Java CLI、领域模型与验收",
+                    "goal": f"在工作区根交付 {domain_label} 的完整 Java CLI、领域模型、自包含验证和 README。",
+                    "description": (
+                        "创建 src/main/java/、src/test/java/、tests/test_product.py 与 README.md，"
+                        f"确保 Java 源码覆盖需求关键词和确定性检查：{keyword_summary}。"
+                    ),
+                    "scope": delivery_targets,
+                    "target_files": delivery_targets,
+                    "steps": [
+                        "创建 pom.xml 或等价 Java 项目元数据，但 java_compile 必须不依赖 Maven/Gradle 才能通过 javac",
+                        "实现 src/main/java/polaris/factory/Main.java，作为可直接 java 运行的 CLI 入口",
+                        "实现 src/main/java/polaris/factory/domain/ 下的领域模型，表达 rhythm、monster、beat、pattern 规则",
+                        "实现 src/main/java/polaris/factory/engine/RhythmEngine.java，计算节奏正确性对怪兽性格和鼓机 pattern 的影响",
+                        "实现 src/test/java/polaris/factory/RhythmEngineTest.java，使用 main/assert 或标准库自包含验证，禁止依赖未声明 JUnit",
+                        "创建 tests/test_product.py，使用 Python unittest 调用 javac/java 或检查 Java 产物结构",
+                        "编写 README，说明 javac 编译、java 运行和测试命令",
+                        f"验证脚本覆盖确定性检查：{check_summary}",
+                    ],
+                    "acceptance": [
+                        "`src/main/java/`、`src/test/java/`、`tests/test_product.py` 与 `README.md` 存在且非空",
+                        "`src/main/java/polaris/factory/Main.java` 存在并可作为 Java CLI 入口编译运行",
+                        "`src/main/java/` 源码实现 rhythm -> monster/beat/pattern 领域规则",
+                        f"源码包含需求关键词：{keyword_summary}",
+                        "`javac -encoding UTF-8` 对所有 `.java` 文件返回成功",
+                        "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
+                        "`README.md` 包含 Java 编译、运行和验证步骤",
+                        f"确定性检查进入任务验收：{check_summary}",
+                    ],
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+            ],
+            delivery_plan_document=delivery_plan_document,
+            delivery_depth_contract=delivery_depth_contract,
+        )
 
     def _synthesize_placeholder_repair_contracts(
         self,

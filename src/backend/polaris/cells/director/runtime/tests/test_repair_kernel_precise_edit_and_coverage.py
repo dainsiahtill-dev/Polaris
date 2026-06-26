@@ -165,6 +165,47 @@ def test_unique_context_duplicate_probe_stops_after_second_occurrence() -> None:
     assert result.issues[0].metadata["match_count_limited"] is True
 
 
+def test_patch_composer_requires_unique_context_for_large_file_text_replace() -> None:
+    lines = [f"export const value_{index} = {index};\n" for index in range(1200)]
+    target_line = "export const targetFlag = false;\n"
+    lines.insert(900, target_line)
+    content = "".join(lines)
+    start = content.index("false")
+    bare_span = RepairOperation(
+        kind="text_replace",
+        path="src/large.ts",
+        span_start=start,
+        span_end=start + len("false"),
+        expected="false",
+        replacement="true",
+    )
+
+    missing_context = PatchComposer().compose({"src/large.ts": content}, (bare_span,))
+
+    assert not missing_context.ok
+    assert missing_context.issues[0].code == "missing_large_file_unique_context"
+    assert missing_context.issues[0].metadata["requires_unique_context_for_large_file"] is True
+    assert missing_context.issues[0].metadata["span_based"] is True
+    assert missing_context.issues[0].metadata["unique_context_checked"] is False
+
+    precise_span = RepairOperation(
+        kind="text_replace",
+        path="src/large.ts",
+        span_start=start,
+        span_end=start + len("false"),
+        expected="false",
+        replacement="true",
+        metadata={"unique_context": target_line},
+    )
+
+    precise_result = PatchComposer().compose({"src/large.ts": content}, (precise_span,))
+
+    assert precise_result.ok
+    assert "export const targetFlag = true;\n" in precise_result.patches[0].content_after
+    assert precise_result.patches[0].metadata["large_file_safe"] is True
+    assert precise_result.patches[0].metadata["unique_context_checked"] is True
+
+
 def test_executor_prefers_policy_gated_editor_and_records_write_file_reason(tmp_path: Path) -> None:
     relative_path = "src/app.ts"
     target = tmp_path / relative_path
@@ -826,11 +867,35 @@ def test_executor_create_file_rollback_requires_delete_tool_after_later_failure(
     assert record["rollback_requires_delete_tool"] is True
 
 
-def test_composer_reserves_toml_and_yaml_structured_operations_fail_closed(tmp_path: Path) -> None:
-    reserved_cases = (
-        ("toml_set", "pyproject.toml", ("tool", "example", "enabled"), True, "[tool.example]\n", "toml"),
-        ("toml_delete", "pyproject.toml", ("tool", "example", "enabled"), None, "[tool.example]\n", "toml"),
-        ("yaml_set", "config.yaml", ("tool", "example", "enabled"), True, "tool:\n  example: {}\n", "yaml"),
+def test_composer_executes_toml_and_yaml_structured_operations(tmp_path: Path) -> None:
+    structured_cases = (
+        (
+            "toml_set",
+            "pyproject.toml",
+            ("tool", "example", "enabled"),
+            True,
+            "[tool.example]\n",
+            "toml",
+            "[tool]\n\n[tool.example]\nenabled = true\n",
+        ),
+        (
+            "toml_delete",
+            "pyproject.toml",
+            ("tool", "example", "enabled"),
+            None,
+            "[tool.example]\nenabled = true\n",
+            "toml",
+            "[tool]\n\n[tool.example]\n",
+        ),
+        (
+            "yaml_set",
+            "config.yaml",
+            ("tool", "example", "enabled"),
+            True,
+            "tool:\n  example: {}\n",
+            "yaml",
+            "tool:\n  example:\n    enabled: true\n",
+        ),
         (
             "yaml_delete",
             "config.yaml",
@@ -838,6 +903,7 @@ def test_composer_reserves_toml_and_yaml_structured_operations_fail_closed(tmp_p
             None,
             "tool:\n  example:\n    enabled: true\n",
             "yaml",
+            "tool:\n  example: {}\n",
         ),
     )
     write_calls: list[str] = []
@@ -846,7 +912,7 @@ def test_composer_reserves_toml_and_yaml_structured_operations_fail_closed(tmp_p
         write_calls.append(path)
         return {"ok": True}
 
-    for kind, path, json_path, value, content, structured_format in reserved_cases:
+    for kind, path, json_path, value, content, structured_format, expected_content in structured_cases:
         operation = RepairOperation(
             kind=kind,
             path=path,
@@ -858,22 +924,17 @@ def test_composer_reserves_toml_and_yaml_structured_operations_fail_closed(tmp_p
             (operation,),
         )
 
-        assert not result.ok
-        assert result.patches == ()
-        issue = result.issues[0]
-        assert issue.code == "reserved_structured_operation"
-        assert issue.metadata["structured_operation_reserved"] is True
-        assert issue.metadata["structured_format"] == structured_format
-        assert issue.metadata["structured_formats"] == [structured_format]
-        assert issue.metadata["languages"] == [structured_format]
-        assert issue.metadata["requires_parser"] is True
-        assert issue.metadata["parser_available"] is False
-        assert issue.metadata["format_preservation_unproven"] is True
-        assert issue.metadata["manual_runtime_rule_required"] is True
-        assert issue.metadata["executable_structured_composer"] is False
-        assert issue.metadata["write_file_fallback_allowed"] is False
-        assert issue.metadata["write_file_reason"] == "reserved_structured_serialization_requires_parser"
+        assert result.ok
+        assert result.patches[0].content_after == expected_content
+        assert result.patches[0].metadata["structured_operation"] == structured_format
+        assert result.patches[0].metadata["executable_structured_composer"] is True
+        assert result.patches[0].metadata["parser_available"] is True
+        assert result.patches[0].metadata["write_file_allowed_category"] == "structured_serialization"
+        assert result.patches[0].metadata["write_file_reason"] == f"structured_{structured_format}_serialization"
 
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
         execution = TransactionalRepairExecutor().execute(
             workspace=tmp_path,
             plan=RepairPlan(
@@ -885,9 +946,8 @@ def test_composer_reserves_toml_and_yaml_structured_operations_fail_closed(tmp_p
             writer=writer,
         )
 
-        assert not execution.ok
-        assert execution.error == "composition_failed"
-        assert execution.receipt.status == "composition_failed"
+        assert execution.ok
+        assert execution.receipt.status == "applied"
 
     unsupported = PatchComposer().compose(
         {"config.yaml": "enabled: false\n"},
@@ -952,7 +1012,7 @@ def test_composer_reserves_toml_and_yaml_structured_operations_fail_closed(tmp_p
     assert not mixed_execution.ok
     assert mixed_execution.error == "composition_failed"
     assert mixed_execution.receipt.status == "composition_failed"
-    assert write_calls == []
+    assert sorted(write_calls) == ["config.yaml", "config.yaml", "pyproject.toml", "pyproject.toml"]
 
 
 def test_coverage_gap_includes_reserved_slot_and_recommended_owner() -> None:

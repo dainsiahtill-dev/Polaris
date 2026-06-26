@@ -555,6 +555,180 @@ def test_source_target_coverage_fails_for_scaffold_only(tmp_path: Path) -> None:
     assert "scaffold" in results[0]["detail"]
 
 
+def test_implementation_depth_fails_hollow_source(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.js").write_text(
+        "console.log('lost alien galaxy clue');\n",
+        encoding="utf-8",
+    )
+
+    record = build_factory_audit_record(
+        project={
+            "id": "L2-01",
+            "level": 2,
+            "checks": ["min_files:1", "content_any:lost|alien|galaxy|clue", "source_target_coverage:src/**/*.js"],
+        },
+        workspace=str(tmp_path),
+    )
+
+    assert record["all_checks_passed"] is False
+    depth = record["implementation_depth"]
+    assert depth["check"] == "implementation_depth"
+    assert depth["ok"] is False
+    assert "production_source_lines" in depth["detail"]
+
+
+def test_implementation_depth_passes_representative_project(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    tests = tmp_path / "tests"
+    src.mkdir()
+    tests.mkdir()
+    engine_lines = [
+        "function scoreLostAlienClue(item) {",
+        "  let score = 0;",
+        "  if (item.energy > 80) { score += 40; } else { score += 10; }",
+        "  if (item.galaxy === 'orion') { score += 20; }",
+        "  if (item.clue && item.clue.includes('signal')) { score += 30; }",
+        "  return score;",
+        "}",
+        "function matchOwner(item) {",
+        "  const score = scoreLostAlienClue(item);",
+        "  if (score >= 80) { return { owner: 'lost alien captain', score }; }",
+        "  if (score >= 40) { return { owner: 'galaxy clerk', score }; }",
+        "  return { owner: 'unknown', score };",
+        "}",
+        "function explainMatch(item) { return `${item.name}:${matchOwner(item).owner}`; }",
+        "function normalizeClue(value) { return String(value || '').trim().toLowerCase(); }",
+        "function buildLostRecord(name, clue) { return { name, clue: normalizeClue(clue), energy: 88, galaxy: 'orion' }; }",
+        "module.exports = { scoreLostAlienClue, matchOwner, explainMatch, normalizeClue, buildLostRecord };",
+    ]
+    (src / "engine.js").write_text(
+        "\n".join([*engine_lines, *engine_lines, *engine_lines]) + "\n",
+        encoding="utf-8",
+    )
+    (src / "model.js").write_text(
+        "\n".join(
+            [
+                "class LostItem { constructor(name, energy, clue) { this.name = name; this.energy = energy; this.clue = clue; } }",
+                "class AlienReport { constructor(galaxy, message) { this.galaxy = galaxy; this.message = message; } }",
+                "function createGalaxyClue(text) { if (!text) { throw new Error('clue required'); } return { clue: text }; }",
+            ]
+            * 8
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (src / "index.js").write_text(
+        "\n".join(
+            [
+                "const engine = require('./engine');",
+                "function main() {",
+                "  const record = engine.buildLostRecord('star compass', 'signal clue');",
+                "  const result = engine.matchOwner(record);",
+                "  if (!result.owner) { throw new Error('owner missing'); }",
+                "  console.log(engine.explainMatch(record));",
+                "}",
+                "if (require.main === module) { main(); }",
+                "module.exports = { main };",
+            ]
+            * 5
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tests / "test_product.py").write_text(
+        "\n".join(
+            [
+                "import unittest",
+                "",
+                "class ProductTest(unittest.TestCase):",
+                "    def test_normal_match(self):",
+                "        self.assertEqual('lost alien captain', 'lost alien captain')",
+                "",
+                "    def test_boundary_match(self):",
+                "        self.assertIn('alien', 'lost alien captain')",
+                "",
+                "if __name__ == '__main__':",
+                "    unittest.main()",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    record = build_factory_audit_record(
+        project={
+            "id": "L2-01",
+            "level": 2,
+            "checks": ["min_files:3", "content_any:lost|alien|galaxy|clue", "source_target_coverage:src/**/*.js"],
+        },
+        workspace=str(tmp_path),
+    )
+
+    assert record["all_checks_passed"] is True
+    assert record["implementation_depth"]["ok"] is True
+
+
+def test_implementation_depth_counts_language_native_test_files(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    production_template = [
+        "function scoreSignal(item) {",
+        "  let score = 0;",
+        "  if (item.signal > 80) { score += 40; } else { score += 10; }",
+        "  if (item.kind === 'priority') { score += 20; }",
+        "  for (const tag of item.tags || []) { if (tag === 'urgent') { score += 5; } }",
+        "  return score;",
+        "}",
+        "function classifySignal(item) {",
+        "  const score = scoreSignal(item);",
+        "  if (score >= 70) { return 'priority'; }",
+        "  if (score >= 30) { return 'watch'; }",
+        "  return 'ignore';",
+        "}",
+        "function explainSignal(item) { return `${item.name}:${classifySignal(item)}`; }",
+        "module.exports = { scoreSignal, classifySignal, explainSignal };",
+    ]
+    for name in ("engine.js", "rules.js", "index.js"):
+        (src / name).write_text("\n".join(production_template * 3) + "\n", encoding="utf-8")
+    (src / "engine_test.go").write_text(
+        "\n".join(
+            [
+                "package engine",
+                "",
+                'import "testing"',
+                "",
+                "func TestScoreSignal(t *testing.T) {",
+                '  if got := 1; got != 1 { t.Fatalf("assert normal: %d", got) }',
+                '  if got := 2; got != 2 { t.Fatalf("assert boundary: %d", got) }',
+                "}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    results = run_checks(str(tmp_path), ["implementation_depth"])
+
+    assert results[0]["ok"] is True
+    assert "test_files=1" in results[0]["detail"]
+    assert "test_assertions=3" in results[0]["detail"]
+
+
+def test_aggregate_reports_implementation_depth_counts() -> None:
+    agg = aggregate_factory_audits(
+        [
+            {"level": 1, "implementation_depth": {"ok": True}, "all_checks_passed": True, "source_file_count": 3},
+            {"level": 1, "implementation_depth": {"ok": False}, "all_checks_passed": False, "source_file_count": 1},
+            {"level": 2, "all_checks_passed": True, "source_file_count": 2},
+            {"level": 2, "implementation_depth": {}, "all_checks_passed": True, "source_file_count": 2},
+        ]
+    )
+
+    assert agg["implementation_depth_checked"] == 2
+    assert agg["implementation_depth_passed"] == 1
+    assert agg["implementation_depth_failed"] == 1
+
+
 def test_audit_record_includes_source_file_count(tmp_path: Path) -> None:
     (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
     (tmp_path / "package.json").write_text('{"name": "test"}', encoding="utf-8")

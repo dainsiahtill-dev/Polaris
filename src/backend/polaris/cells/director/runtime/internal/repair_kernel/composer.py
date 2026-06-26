@@ -8,6 +8,8 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import Any
 
+import tomllib
+
 from .contracts import (
     FILE_ABSENT_HASH,
     ComposedPatch,
@@ -19,12 +21,15 @@ from .contracts import (
 
 _TEXT_KINDS = {"text_replace"}
 _JSON_KINDS = {"json_set", "json_delete"}
-_RESERVED_STRUCTURED_KINDS = {"toml_set", "toml_delete", "yaml_set", "yaml_delete"}
+_TOML_KINDS = {"toml_set", "toml_delete"}
+_YAML_KINDS = {"yaml_set", "yaml_delete"}
+_STRUCTURED_KINDS = _JSON_KINDS | _TOML_KINDS | _YAML_KINDS
+_RESERVED_STRUCTURED_KINDS: set[str] = set()
 _WRITE_KINDS = {"write_file"}
 _DELETE_KINDS = {"delete_file"}
-_SUPPORTED_KINDS = (
-    _TEXT_KINDS | _JSON_KINDS | _RESERVED_STRUCTURED_KINDS | _WRITE_KINDS | _DELETE_KINDS | {"observation"}
-)
+_SUPPORTED_KINDS = _TEXT_KINDS | _STRUCTURED_KINDS | _WRITE_KINDS | _DELETE_KINDS | {"observation"}
+_LARGE_TEXT_FILE_MIN_BYTES = 64 * 1024
+_LARGE_TEXT_FILE_MIN_LINES = 1000
 
 
 class PatchComposer:
@@ -92,7 +97,7 @@ class PatchComposer:
                     )
                 )
                 continue
-            if operation_kinds & _TEXT_KINDS and operation_kinds & (_JSON_KINDS | _RESERVED_STRUCTURED_KINDS):
+            if operation_kinds & _TEXT_KINDS and operation_kinds & _STRUCTURED_KINDS:
                 issues.append(
                     CompositionIssue(
                         code="mixed_patch_kinds",
@@ -111,17 +116,10 @@ class PatchComposer:
                 patch, patch_issues = self._compose_text(path, content_before, path_operations)
             elif operation_kinds <= _JSON_KINDS:
                 patch, patch_issues = self._compose_json(path, content_before, path_operations)
-            elif operation_kinds <= _RESERVED_STRUCTURED_KINDS:
-                patch = None
-                patch_issues = [
-                    CompositionIssue(
-                        code="reserved_structured_operation",
-                        message="TOML/YAML structured repair operation is reserved but has no executable composer.",
-                        path=path,
-                        operation_ids=tuple(op.operation_id for op in path_operations),
-                        metadata=_structured_operation_issue_metadata(path_operations, reserved=True),
-                    )
-                ]
+            elif operation_kinds <= _TOML_KINDS:
+                patch, patch_issues = self._compose_toml(path, content_before, path_operations)
+            elif operation_kinds <= _YAML_KINDS:
+                patch, patch_issues = self._compose_yaml(path, content_before, path_operations)
             elif operation_kinds <= _WRITE_KINDS:
                 patch, patch_issues = self._compose_write(
                     path,
@@ -240,6 +238,24 @@ class PatchComposer:
                     )
                 )
                 continue
+            if _is_large_text_file(content_before) and not _text_context_probe(operation.metadata):
+                issues.append(
+                    CompositionIssue(
+                        code="missing_large_file_unique_context",
+                        message="Large-file text repair requires unique context metadata in addition to span.",
+                        path=path,
+                        operation_ids=(operation.operation_id,),
+                        metadata={
+                            "large_file": True,
+                            "large_file_min_bytes": _LARGE_TEXT_FILE_MIN_BYTES,
+                            "large_file_min_lines": _LARGE_TEXT_FILE_MIN_LINES,
+                            "requires_unique_context_for_large_file": True,
+                            "span_based": True,
+                            "unique_context_checked": False,
+                        },
+                    )
+                )
+                continue
             context_issue, context_checked = _check_unique_context(path, content_before, operation, start, end)
             if context_checked:
                 unique_context_operation_ids.append(operation.operation_id)
@@ -335,6 +351,104 @@ class PatchComposer:
                     "unique_context_checked": False,
                     "write_file_reason": "structured_json_serialization",
                 },
+            ),
+            [],
+        )
+
+    def _compose_toml(
+        self,
+        path: str,
+        content_before: str,
+        operations: Sequence[RepairOperation],
+    ) -> tuple[ComposedPatch | None, list[CompositionIssue]]:
+        try:
+            payload: Any = tomllib.loads(content_before or "")
+        except tomllib.TOMLDecodeError as exc:
+            return None, [
+                CompositionIssue(
+                    code="toml_parse_failed",
+                    message=str(exc),
+                    path=path,
+                    operation_ids=tuple(op.operation_id for op in operations),
+                )
+            ]
+        if not isinstance(payload, dict):
+            return None, [
+                CompositionIssue(
+                    code="toml_root_not_object",
+                    message="TOML repair requires a mapping document.",
+                    path=path,
+                    operation_ids=tuple(op.operation_id for op in operations),
+                )
+            ]
+        payload = deepcopy(payload)
+        issues = _apply_structured_mapping_operations("toml", path, payload, operations)
+        if issues:
+            return None, issues
+        content_after, serialization_issue = _toml_dumps(payload)
+        if serialization_issue:
+            return None, [
+                CompositionIssue(
+                    code=serialization_issue,
+                    message="TOML repair payload cannot be safely serialized.",
+                    path=path,
+                    operation_ids=tuple(op.operation_id for op in operations),
+                    metadata={"structured_format": "toml", "executable_structured_composer": True},
+                )
+            ]
+        return (
+            ComposedPatch(
+                path=path,
+                content_before=content_before,
+                content_after=content_after,
+                operation_ids=tuple(op.operation_id for op in operations),
+                metadata=_structured_patch_metadata("toml"),
+            ),
+            [],
+        )
+
+    def _compose_yaml(
+        self,
+        path: str,
+        content_before: str,
+        operations: Sequence[RepairOperation],
+    ) -> tuple[ComposedPatch | None, list[CompositionIssue]]:
+        yaml_module = __import__("yaml")
+        yaml_error = getattr(yaml_module, "YAMLError", RuntimeError)
+        try:
+            payload: Any = yaml_module.safe_load(content_before or "{}")
+        except yaml_error as exc:
+            return None, [
+                CompositionIssue(
+                    code="yaml_parse_failed",
+                    message=str(exc),
+                    path=path,
+                    operation_ids=tuple(op.operation_id for op in operations),
+                )
+            ]
+        if payload is None:
+            payload = {}
+        if not isinstance(payload, dict):
+            return None, [
+                CompositionIssue(
+                    code="yaml_root_not_object",
+                    message="YAML repair requires a mapping document.",
+                    path=path,
+                    operation_ids=tuple(op.operation_id for op in operations),
+                )
+            ]
+        payload = deepcopy(payload)
+        issues = _apply_structured_mapping_operations("yaml", path, payload, operations)
+        if issues:
+            return None, issues
+        content_after = yaml_module.safe_dump(payload, allow_unicode=True, default_flow_style=False, sort_keys=True)
+        return (
+            ComposedPatch(
+                path=path,
+                content_before=content_before,
+                content_after=str(content_after),
+                operation_ids=tuple(op.operation_id for op in operations),
+                metadata=_structured_patch_metadata("yaml"),
             ),
             [],
         )
@@ -455,6 +569,10 @@ def _has_text_location_precondition(operation: RepairOperation) -> bool:
     if expected is not None and expected != "":
         return True
     return bool(_text_context_probe(operation.metadata))
+
+
+def _is_large_text_file(content: str) -> bool:
+    return len(content) >= _LARGE_TEXT_FILE_MIN_BYTES or content.count("\n") + 1 >= _LARGE_TEXT_FILE_MIN_LINES
 
 
 def _first_overlapping_text_span_issue(
@@ -674,6 +792,151 @@ def _write_file_reason(*, operation: RepairOperation, content_before: str) -> st
     if content_before == "":
         return "new_file_or_empty_file"
     return "fallback_whole_file_repair"
+
+
+def _structured_patch_metadata(structured_format: str) -> dict[str, Any]:
+    return {
+        "large_file_safe": False,
+        "span_based": False,
+        "structured_operation": structured_format,
+        "structured_format": structured_format,
+        "write_file_allowed_category": "structured_serialization",
+        "write_file_policy_decision": "allowed_structured_serialization",
+        "unique_context_checked": False,
+        "write_file_reason": f"structured_{structured_format}_serialization",
+        "executable_structured_composer": True,
+        "parser_available": True,
+        "format_preservation_unproven": True,
+    }
+
+
+def _apply_structured_mapping_operations(
+    structured_format: str,
+    path: str,
+    payload: dict[str, Any],
+    operations: Sequence[RepairOperation],
+) -> list[CompositionIssue]:
+    issues: list[CompositionIssue] = []
+    for operation in operations:
+        if not operation.json_path:
+            issues.append(
+                CompositionIssue(
+                    code=f"missing_{structured_format}_path",
+                    message=f"{structured_format.upper()} repair requires a json_path-compatible path.",
+                    path=path,
+                    operation_ids=(operation.operation_id,),
+                )
+            )
+            continue
+        if operation.kind.endswith("_set"):
+            issue_code = _mapping_set(payload, operation.json_path, operation.value, prefix=structured_format)
+        elif operation.kind.endswith("_delete"):
+            issue_code = _mapping_delete(payload, operation.json_path, prefix=structured_format)
+        else:
+            issue_code = f"unsupported_{structured_format}_operation"
+        if issue_code:
+            issues.append(
+                CompositionIssue(
+                    code=issue_code,
+                    message=f"{structured_format.upper()} repair path cannot be safely applied.",
+                    path=path,
+                    operation_ids=(operation.operation_id,),
+                )
+            )
+    return issues
+
+
+def _mapping_set(payload: dict[str, Any], path: tuple[str, ...], value: Any, *, prefix: str) -> str | None:
+    current: Any = payload
+    for part in path[:-1]:
+        if not isinstance(current, dict):
+            return f"{prefix}_path_parent_not_object"
+        if part not in current:
+            current[part] = {}
+        elif not isinstance(current[part], dict):
+            return f"{prefix}_path_parent_not_object"
+        current = current[part]
+    if not isinstance(current, dict):
+        return f"{prefix}_path_parent_not_object"
+    current[path[-1]] = value
+    return None
+
+
+def _mapping_delete(payload: dict[str, Any], path: tuple[str, ...], *, prefix: str) -> str | None:
+    current: Any = payload
+    for part in path[:-1]:
+        if not isinstance(current, dict) or part not in current:
+            return f"{prefix}_path_not_found"
+        current = current.get(part)
+    if not isinstance(current, dict):
+        return f"{prefix}_path_parent_not_object"
+    if path[-1] not in current:
+        return f"{prefix}_path_not_found"
+    current.pop(path[-1])
+    return None
+
+
+def _toml_dumps(payload: Mapping[str, Any]) -> tuple[str, str | None]:
+    lines: list[str] = []
+    root_scalars: dict[str, Any] = {}
+    tables: list[tuple[tuple[str, ...], Mapping[str, Any]]] = []
+    _collect_toml_tables((), payload, root_scalars, tables)
+    for key in sorted(root_scalars):
+        rendered, issue = _toml_scalar(root_scalars[key])
+        if issue:
+            return "", issue
+        lines.append(f"{key} = {rendered}")
+    if root_scalars and tables:
+        lines.append("")
+    for index, (table_path, table_payload) in enumerate(tables):
+        if index:
+            lines.append("")
+        lines.append(f"[{'.'.join(table_path)}]")
+        scalar_items = {key: value for key, value in table_payload.items() if not isinstance(value, Mapping)}
+        for key in sorted(scalar_items):
+            rendered, issue = _toml_scalar(scalar_items[key])
+            if issue:
+                return "", issue
+            lines.append(f"{key} = {rendered}")
+    return "\n".join(lines).rstrip() + "\n", None
+
+
+def _collect_toml_tables(
+    prefix: tuple[str, ...],
+    payload: Mapping[str, Any],
+    root_scalars: dict[str, Any],
+    tables: list[tuple[tuple[str, ...], Mapping[str, Any]]],
+) -> None:
+    for key in sorted(payload):
+        value = payload[key]
+        if isinstance(value, Mapping):
+            table_path = (*prefix, str(key))
+            tables.append((table_path, value))
+            _collect_toml_tables(table_path, value, root_scalars, tables)
+        elif not prefix:
+            root_scalars[str(key)] = value
+
+
+def _toml_scalar(value: Any) -> tuple[str, str | None]:
+    if isinstance(value, bool):
+        return ("true" if value else "false"), None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value), None
+    if isinstance(value, float):
+        return repr(value), None
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False), None
+    if isinstance(value, list):
+        rendered_items: list[str] = []
+        for item in value:
+            rendered, issue = _toml_scalar(item)
+            if issue:
+                return "", issue
+            rendered_items.append(rendered)
+        return f"[{', '.join(rendered_items)}]", None
+    if value is None:
+        return "", "toml_null_value_not_supported"
+    return "", "toml_scalar_not_supported"
 
 
 def _json_set(payload: Any, path: tuple[str, ...], value: Any) -> str | None:

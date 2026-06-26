@@ -275,6 +275,10 @@ class TestFrontendTestRepairContracts:
         assert "js_syntax" in serialized
         assert "package_scripts" in serialized
         assert "source_target_coverage:src/**/*.js" in serialized
+        assert "polaris.delivery_plan_document.v1" in serialized
+        assert "polaris.delivery_depth_contract.v1" in serialized
+        assert "至少实现 3 条可解释业务规则" in serialized
+        assert "测试覆盖正常路径、边界情况和错误/非法输入" in serialized
         assert "lost" in serialized
         assert "alien" in serialized
         assert "galaxy" in serialized
@@ -1273,6 +1277,31 @@ class TestNormalizeTaskContract:
         result = adapter._normalize_task_contract(raw, 1, "")
 
         assert result["title"] == "实现需求锁定与工程骨架搭建"
+
+    def test_preserves_delivery_plan_and_depth_contract_fields(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        raw = {
+            "title": "实现核心规则",
+            "target_files": ["src/engine.js"],
+            "delivery_plan_document": {
+                "schema_version": "polaris.delivery_plan_document.v1",
+                "product_summary": "自然语言说明产品设计意图",
+            },
+            "delivery_depth_contract": {
+                "schema_version": "polaris.delivery_depth_contract.v1",
+                "behavior_contract": {"rule_matrix": [{"rule": "normal", "expected": "score"}]},
+            },
+            "behavior_contract": {"required_behavior_tests": ["normal", "boundary", "invalid"]},
+        }
+
+        result = adapter._normalize_task_contract(raw, 1, "")
+
+        assert result["delivery_plan_document"]["schema_version"] == "polaris.delivery_plan_document.v1"
+        assert result["delivery_depth_contract"]["schema_version"] == "polaris.delivery_depth_contract.v1"
+        assert result["behavior_contract"]["required_behavior_tests"] == ["normal", "boundary", "invalid"]
+        assert result["metadata"]["delivery_plan_document"] == result["delivery_plan_document"]
+        assert result["metadata"]["delivery_depth_contract"] == result["delivery_depth_contract"]
+        assert result["metadata"]["behavior_contract"] == result["behavior_contract"]
 
 
 # ---------------------------------------------------------------------------

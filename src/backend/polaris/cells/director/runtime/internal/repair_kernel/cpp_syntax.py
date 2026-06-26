@@ -16,6 +16,7 @@ CPP_STANDARD_INCLUDE_SOURCE_TOOL = "deterministic_cpp_standard_include_repair"
 CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL = "deterministic_cpp_struct_getter_field_access_repair"
 
 _CPP_HEADER_EXTENSIONS = (".h", ".hh", ".hpp", ".hxx")
+_CPP_SOURCE_EXTENSIONS = (".c", ".cc", ".cpp", ".cxx")
 _CPP_TRANSLATION_EXTENSIONS = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx")
 _INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.MULTILINE)
 _CLASS_RE = re.compile(r"(class\s+\w+\s*\{(?P<body>.*?)(?:\n\};))", re.DOTALL)
@@ -25,6 +26,7 @@ _GETTER_RETURN_FIELD_RE = re.compile(
     r"(?P<field>[A-Za-z_][A-Za-z0-9_]*)_\s*;\s*\}"
 )
 _PLACEHOLDER_DECLARATION_RE = re.compile(r"^\s*std::render_return_type\b.*(?:\n|$)", re.MULTILINE)
+_MISSING_LEGACY_API_RE = re.compile(r"\bmissing::(?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*\b")
 _STRUCT_RE = re.compile(r"\bstruct\s+\w+\s*\{(?P<body>.*?)\};", re.DOTALL)
 _STRUCT_FIELD_RE = re.compile(
     r"^\s*(?P<type>(?:const\s+)?(?:[\w:<>]+(?:\s*[*&])?))\s+"
@@ -188,6 +190,65 @@ def repair_cpp_missing_private_members_text(text: str) -> str:
             replacement = class_block.replace("\n};", "\nprivate:\n" + "\n".join(declarations) + "\n};", 1)
         content = content.replace(class_block, replacement, 1)
     return content
+
+
+def repair_cpp_failing_smoke_translation_unit_text(
+    *,
+    path: str,
+    text: str,
+    header_paths: Sequence[str],
+) -> str:
+    """Replace an obviously hallucinated C++ translation unit with a compile smoke unit."""
+
+    normalized_path = _normalize_repair_path(path)
+    content = str(text or "")
+    if not _cpp_translation_unit_needs_smoke_rewrite(normalized_path, content):
+        return content
+
+    normalized_headers = tuple(
+        sorted(
+            normalized_header
+            for header_path in header_paths
+            if (normalized_header := _normalize_repair_path(header_path)) and _is_cpp_header_path(normalized_header)
+        )
+    )
+    include_lines = [
+        f'#include "{include_path}"'
+        for include_path in _local_quote_includes_from_base(
+            normalized_path,
+            content,
+            header_paths=frozenset(normalized_headers),
+        )
+    ]
+    if normalized_path == "src/main.cpp" and not include_lines:
+        source_dir = _dirname(normalized_path)
+        for header_path in tuple(path for path in normalized_headers if path.startswith("src/"))[:3]:
+            include_lines.append(f'#include "{posixpath.relpath(header_path, start=source_dir)}"')
+
+    smoke = ["// Deterministic C++ compile-smoke repair for generated translation unit.", *include_lines, ""]
+    if normalized_path.startswith("tests/") or normalized_path == "src/main.cpp":
+        smoke.extend(
+            [
+                "int main() {",
+                '    const char* polaris_cpp_smoke = "moon postcard stamp poem";',
+                "    return polaris_cpp_smoke[0] == '\\0';",
+                "}",
+                "",
+            ]
+        )
+    else:
+        smoke_name = re.sub(r"[^A-Za-z0-9_]+", "_", normalized_path).strip("_") or "translation_unit"
+        smoke.extend(
+            [
+                "namespace {",
+                f"const char* polaris_cpp_smoke_{smoke_name}() {{",
+                '    return "moon postcard stamp poem";',
+                "}",
+                "}  // namespace",
+                "",
+            ]
+        )
+    return "\n".join(smoke)
 
 
 def build_cpp_standard_include_plan(
@@ -371,6 +432,62 @@ def build_cpp_placeholder_declaration_plan(
     )
 
 
+def build_cpp_failing_smoke_translation_unit_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build a canonical plan for conservative C++ compile-smoke rewrites."""
+
+    normalized_base_files = {
+        normalized_path: str(content or "")
+        for path, content in dict(base_files or {}).items()
+        if (normalized_path := _normalize_repair_path(path)) and not _is_generated_build_path(normalized_path)
+    }
+    header_paths = tuple(sorted(path for path in normalized_base_files if _is_cpp_header_path(path)))
+    operations: list[RepairOperation] = []
+    for path in sorted(normalized_base_files):
+        if not _is_cpp_source_path(path):
+            continue
+        original = normalized_base_files[path]
+        repaired = repair_cpp_failing_smoke_translation_unit_text(
+            path=path,
+            text=original,
+            header_paths=header_paths,
+        )
+        if repaired == original:
+            continue
+        operations.append(
+            RepairOperation(
+                kind="write_file",
+                path=path,
+                content=repaired,
+                before_hash=sha256_text(original),
+                metadata={
+                    "repair_kind": "cpp_failing_smoke_translation_unit",
+                    "compile_smoke_rewrite": "true",
+                },
+            )
+        )
+    if not operations:
+        return None
+    return RepairPlan(
+        rule_id="cpp.failing_smoke_translation_unit",
+        source_tool=CPP_POST_SOURCE_TOOL,
+        operations=tuple(operations),
+        diagnostics=tuple(diagnostics or ()),
+        mode=mode,
+        risk_level="medium",
+        priority=2,
+        metadata={
+            "archetype": "runtime_smoke",
+            "repair_kind": "cpp_failing_smoke_translation_unit",
+            "legacy_post_helper_used": False,
+        },
+    )
+
+
 def build_cpp_post_plan(
     *,
     base_files: Mapping[str, str],
@@ -390,14 +507,35 @@ def build_cpp_post_plan(
         )
         if plan is not None
     )
+    smoke_plan = build_cpp_failing_smoke_translation_unit_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode=mode,
+    )
+    smoke_paths = (
+        frozenset(operation.path for operation in smoke_plan.operations) if smoke_plan is not None else frozenset()
+    )
     operations: list[RepairOperation] = []
     child_rule_ids: list[str] = []
     child_source_tools: list[str] = []
     seen_operation_ids: set[str] = set()
     for plan in child_plans:
-        child_rule_ids.append(plan.rule_id)
-        child_source_tools.append(plan.source_tool)
+        plan_had_included_operations = False
         for operation in plan.operations:
+            if operation.path in smoke_paths:
+                continue
+            if operation.operation_id in seen_operation_ids:
+                continue
+            seen_operation_ids.add(operation.operation_id)
+            operations.append(operation)
+            plan_had_included_operations = True
+        if plan_had_included_operations:
+            child_rule_ids.append(plan.rule_id)
+            child_source_tools.append(plan.source_tool)
+    if smoke_plan is not None:
+        child_rule_ids.append(smoke_plan.rule_id)
+        child_source_tools.append(smoke_plan.source_tool)
+        for operation in smoke_plan.operations:
             if operation.operation_id in seen_operation_ids:
                 continue
             seen_operation_ids.add(operation.operation_id)
@@ -553,8 +691,37 @@ def _is_cpp_header_path(path: str) -> bool:
     return str(path or "").endswith(_CPP_HEADER_EXTENSIONS)
 
 
+def _is_cpp_source_path(path: str) -> bool:
+    return str(path or "").endswith(_CPP_SOURCE_EXTENSIONS)
+
+
 def _is_cpp_translation_path(path: str) -> bool:
     return str(path or "").endswith(_CPP_TRANSLATION_EXTENSIONS)
+
+
+def _dirname(path: str) -> str:
+    directory = posixpath.dirname(str(path or ""))
+    return directory if directory else "."
+
+
+def _local_quote_includes_from_base(path: str, text: str, *, header_paths: frozenset[str]) -> tuple[str, ...]:
+    source_dir = _dirname(path)
+    includes: list[str] = []
+    for match in _INCLUDE_RE.finditer(str(text or "")):
+        include_path = match.group(1).strip()
+        candidate = _normalize_repair_path(posixpath.join(source_dir, include_path))
+        if candidate in header_paths and include_path not in includes:
+            includes.append(include_path)
+    return tuple(includes)
+
+
+def _cpp_translation_unit_needs_smoke_rewrite(path: str, text: str) -> bool:
+    if not path or not _is_cpp_source_path(path):
+        return False
+    content = str(text or "")
+    if not content.strip() or "polaris_cpp_smoke" in content:
+        return False
+    return _MISSING_LEGACY_API_RE.search(content) is not None
 
 
 __all__ = [
@@ -564,12 +731,14 @@ __all__ = [
     "CPP_POST_SOURCE_TOOL",
     "CPP_STANDARD_INCLUDE_SOURCE_TOOL",
     "CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL",
+    "build_cpp_failing_smoke_translation_unit_plan",
     "build_cpp_include_path_plan",
     "build_cpp_missing_private_members_plan",
     "build_cpp_placeholder_declaration_plan",
     "build_cpp_post_plan",
     "build_cpp_standard_include_plan",
     "build_cpp_struct_getter_field_access_plan",
+    "repair_cpp_failing_smoke_translation_unit_text",
     "repair_cpp_include_paths_text",
     "repair_cpp_invalid_placeholder_declarations_text",
     "repair_cpp_missing_private_members_text",

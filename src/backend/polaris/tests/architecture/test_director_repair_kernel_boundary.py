@@ -938,6 +938,17 @@ def test_execute_method_delegates_post_execution_language_repairs_to_bridge() ->
         "deterministic_rust_dependency_repair",
         "run_all_rust_post_repairs",
     }
+    bridge_runtime_tokens = {
+        "deterministic_go_bare_import_string_repair",
+        "deterministic_go_nested_import_repair",
+        "deterministic_go_module_import_repair",
+        "deterministic_go_bare_import_repair",
+        "deterministic_go_subpath_repair",
+        "deterministic_go_dedup_repair",
+        "deterministic_rust_dependency_repair",
+        "deterministic_rust_missing_fields_repair",
+        "deterministic_rust_lib_root_facade_repair",
+    }
     public_schedule = query_director_repair_post_execution_schedule(
         QueryDirectorRepairPostExecutionScheduleV1(include_items=True)
     )
@@ -952,17 +963,22 @@ def test_execute_method_delegates_post_execution_language_repairs_to_bridge() ->
 
     assert "run_post_execution_language_repairs" in execute_method_source
     assert not any(token in execute_method_source for token in language_repair_tokens)
-    assert all(token in bridge_source for token in language_repair_tokens)
+    assert all(token in bridge_source for token in bridge_runtime_tokens)
+    assert "_apply_deterministic_go_module_import_repair" not in bridge_source
+    assert "_GO_POST_EXECUTION_RUNTIME_SOURCE_TOOLS" in bridge_source
+    assert "run_all_rust_post_repairs" not in bridge_source
     assert "_apply_deterministic_rust_dependency_repair" not in bridge_source
     assert public_runtime_step_ids == expected_runtime_step_ids
     assert runner_step_ids == expected_runtime_step_ids
     assert runner_step_ids == public_runtime_step_ids
     assert "run_all_cpp_post_repairs" not in bridge_source
+    assert "repair_cpp_failing_smoke_translation_units" not in bridge_source
     assert "repair_cpp_invalid_placeholder_declarations" not in bridge_source
     assert "repair_cpp_missing_private_members" not in bridge_source
     assert "repair_cpp_missing_standard_includes" not in bridge_source
     assert "repair_cpp_struct_getter_field_access" not in bridge_source
     assert "deterministic_cpp_include_path_repair" in bridge_source
+    assert "deterministic_cpp_post_repair" in bridge_source
     assert "deterministic_cpp_missing_private_members_repair" in bridge_source
     assert "deterministic_cpp_placeholder_declaration_repair" in bridge_source
     assert "deterministic_cpp_standard_include_repair" in bridge_source

@@ -71,6 +71,35 @@ _SCRIPT_PATH_EXTENSIONS = {".cjs", ".js", ".mjs", ".py", ".sh", ".ts", ".tsx"}
 _SHELL_OPERATORS = {"&&", "||", ";", "|"}
 _BUILD_OUTPUT_DIR_NAMES = {"dist", "build", "out", "bin"}
 _PLACEHOLDER_SCRIPT_COMMANDS = {"echo", "printf"}
+_DEPTH_EXCLUDED_DIRS = {
+    ".git",
+    ".polaris",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "venv",
+    "runtime",
+    "target",
+    "dist",
+    "build",
+    "out",
+}
+_BEHAVIOR_SYMBOL_RE = re.compile(
+    r"\b(function|func|def|fn|class|struct|enum|interface|record)\b|"
+    r"\b(public|private|protected)\s+[\w<>, ?\[\]]+\s+\w+\s*\(|"
+    r"\b(?!if\b|for\b|while\b|switch\b|catch\b)(?:[A-Za-z_]\w*::)?[A-Za-z_]\w+"
+    r"\s*\([^;{}]*\)\s*(?:const\s*)?\{",
+    re.IGNORECASE,
+)
+_BRANCH_RE = re.compile(r"\b(if|else\s+if|switch|match|case|for|while|try|catch|except)\b", re.IGNORECASE)
+_TEST_ASSERTION_RE = re.compile(
+    r"\b(assert|assertEqual|assertIn|expect|t\.Run|testing\.|@Test|TEST_F?)\b|#\s*\[\s*test\s*\]",
+    re.IGNORECASE,
+)
+_PLACEHOLDER_SOURCE_RE = re.compile(
+    r"\b(todo|fixme|notimplemented|not implemented|placeholder|stub)\b|^\s*pass\s*(?:#.*)?$",
+    re.IGNORECASE | re.MULTILINE,
+)
 _SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(
     r"(?:npm\s+run\s+(?:build|compile)|pnpm\s+(?:build|compile)|yarn\s+(?:build|compile)|\btsc\b)",
     re.IGNORECASE,
@@ -172,6 +201,149 @@ def collect_workspace_inventory(workspace: str) -> dict[str, Any]:
         "source_files": sorted(source_files),
         "doc_files": sorted(doc_files),
     }
+
+
+def _is_depth_excluded_path(rel: str) -> bool:
+    parts = {part.lower() for part in Path(rel).parts}
+    return bool(parts & _DEPTH_EXCLUDED_DIRS)
+
+
+def _is_test_source_path(rel: str) -> bool:
+    parts = {part.lower() for part in Path(rel).parts}
+    filename = Path(rel).name.lower()
+    return (
+        "tests" in parts
+        or "test" in parts
+        or filename.startswith("test_")
+        or ".test." in filename
+        or ".spec." in filename
+        or filename.endswith(
+            (
+                "_test.go",
+                "_test.rs",
+                "_test.py",
+                "_test.js",
+                "_test.ts",
+                "_test.tsx",
+                ".test.tsx",
+                ".spec.tsx",
+                "test.java",
+                "test.kt",
+                "test.cpp",
+                "test.cc",
+                "test.cxx",
+                "test.hpp",
+            )
+        )
+    )
+
+
+def _read_workspace_file(workspace: str, rel: str) -> str:
+    with open(os.path.join(workspace, rel), encoding="utf-8", errors="replace") as fh:
+        return fh.read()
+
+
+def _nonempty_source_line_count(text: str) -> int:
+    count = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("#", "//", "/*", "*", "*/")):
+            continue
+        count += 1
+    return count
+
+
+def _implementation_depth_metrics(workspace: str, inventory: dict[str, Any]) -> dict[str, Any]:
+    production_files: list[str] = []
+    test_files: list[str] = []
+    production_lines = 0
+    test_lines = 0
+    behavior_symbols = 0
+    branches = 0
+    test_assertions = 0
+    placeholder_hits: list[str] = []
+
+    for rel in inventory.get("source_files", []):
+        if not isinstance(rel, str) or _is_depth_excluded_path(rel):
+            continue
+        try:
+            text = _read_workspace_file(workspace, rel)
+        except OSError:
+            continue
+        line_count = _nonempty_source_line_count(text)
+        if _is_test_source_path(rel):
+            test_files.append(rel)
+            test_lines += line_count
+            test_assertions += len(_TEST_ASSERTION_RE.findall(text))
+            continue
+        production_files.append(rel)
+        production_lines += line_count
+        behavior_symbols += len(_BEHAVIOR_SYMBOL_RE.findall(text))
+        branches += len(_BRANCH_RE.findall(text))
+        if _PLACEHOLDER_SOURCE_RE.search(text):
+            placeholder_hits.append(rel)
+
+    return {
+        "production_source_files": len(production_files),
+        "production_source_lines": production_lines,
+        "test_source_files": len(test_files),
+        "test_source_lines": test_lines,
+        "behavior_symbol_count": behavior_symbols,
+        "branch_count": branches,
+        "test_assertion_count": test_assertions,
+        "placeholder_hits": placeholder_hits[:10],
+        "production_files": production_files[:40],
+        "test_files": test_files[:30],
+    }
+
+
+def _check_implementation_depth(workspace: str, inventory: dict[str, Any]) -> tuple[bool, str]:
+    metrics = _implementation_depth_metrics(workspace, inventory)
+    failures: list[str] = []
+
+    if int(metrics["production_source_files"]) < 3:
+        failures.append(f"production_source_files={metrics['production_source_files']} < 3")
+    if int(metrics["production_source_lines"]) < 120:
+        failures.append(f"production_source_lines={metrics['production_source_lines']} < 120")
+    if int(metrics["behavior_symbol_count"]) < 6:
+        failures.append(f"behavior_symbol_count={metrics['behavior_symbol_count']} < 6")
+    if int(metrics["branch_count"]) < 3:
+        failures.append(f"branch_count={metrics['branch_count']} < 3")
+    if int(metrics["test_source_files"]) < 1:
+        failures.append("test_source_files=0 < 1")
+    if int(metrics["test_assertion_count"]) < 2:
+        failures.append(f"test_assertion_count={metrics['test_assertion_count']} < 2")
+    placeholder_hits = metrics["placeholder_hits"]
+    if placeholder_hits:
+        failures.append("placeholder_or_stub_markers=" + ",".join(str(item) for item in placeholder_hits[:3]))
+
+    plan = _read_plan_json(workspace)
+    declared_source_targets = _extract_declared_source_targets(workspace, plan)
+    _, missing_targets = compute_declared_source_target_coverage(workspace, declared_source_targets)
+    if missing_targets:
+        failures.append(f"missing_declared_source_targets={len(missing_targets)}")
+
+    detail = (
+        "implementation depth metrics: "
+        f"prod_files={metrics['production_source_files']}, "
+        f"prod_lines={metrics['production_source_lines']}, "
+        f"test_files={metrics['test_source_files']}, "
+        f"test_assertions={metrics['test_assertion_count']}, "
+        f"behavior_symbols={metrics['behavior_symbol_count']}, "
+        f"branches={metrics['branch_count']}"
+    )
+    if failures:
+        return False, detail + "; failures: " + "; ".join(failures[:8])
+    return True, detail
+
+
+def _should_add_implementation_depth_check(configured_checks: list[str]) -> bool:
+    normalized = [str(item or "").strip().lower() for item in configured_checks]
+    if "implementation_depth" in normalized:
+        return False
+    return any(item.startswith(("source_target_coverage:", "content_any:")) for item in normalized)
 
 
 def _iter_files(workspace: str, suffix: str) -> list[str]:
@@ -607,6 +779,8 @@ def run_checks(workspace: str, checks: list[str]) -> list[dict[str, Any]]:
             ok, detail = _check_java_compile(workspace)
         elif kind == "package_scripts":
             ok, detail = _check_package_scripts(workspace)
+        elif kind == "implementation_depth":
+            ok, detail = _check_implementation_depth(workspace, inventory)
         elif kind == "runnable_any":
             # Shape-neutral runnability: briefs like "typing tester with live
             # highlighting" are legitimately delivered as either a Python
@@ -715,6 +889,8 @@ def build_factory_audit_record(
     supplemental_checks = []
     if os.path.exists(os.path.join(workspace, "package.json")) and "package_scripts" not in configured_checks:
         supplemental_checks.append("package_scripts")
+    if _should_add_implementation_depth_check(configured_checks):
+        supplemental_checks.append("implementation_depth")
     checks = run_checks(workspace, configured_checks + supplemental_checks)
     artifacts = artifact_globs or {}
 
@@ -722,6 +898,7 @@ def build_factory_audit_record(
     plan = _read_plan_json(workspace)
     declared_source_targets = _extract_declared_source_targets(workspace, plan)
     _, missing_targets = compute_declared_source_target_coverage(workspace, declared_source_targets)
+    implementation_depth_check = next((item for item in checks if item.get("check") == "implementation_depth"), None)
 
     # Snapshot kind: "terminal" when chain reached a final state, "non_terminal"
     # when the chain was still running / errored before a definitive outcome.
@@ -744,6 +921,7 @@ def build_factory_audit_record(
         "has_qa_verdict": bool(artifacts.get("verdict")),
         "checks": checks,
         "all_checks_passed": bool(configured_checks) and all(c["ok"] for c in checks),
+        "implementation_depth": implementation_depth_check or {},
         "declared_source_targets": declared_source_targets,
         "declared_source_target_count": len(declared_source_targets),
         "missing_declared_source_targets": missing_targets,
@@ -850,6 +1028,12 @@ def aggregate_factory_audits(records: list[dict[str, Any]]) -> dict[str, Any]:
         bucket["total"] += 1
         if record.get("all_checks_passed"):
             bucket["passed"] += 1
+    depth_records = [
+        depth
+        for record in records
+        for depth in (record.get("implementation_depth"),)
+        if isinstance(depth, dict) and (depth.get("check") == "implementation_depth" or "ok" in depth)
+    ]
     return {
         "schema_version": FACTORY_AUDIT_SCHEMA_VERSION,
         "total": total,
@@ -859,5 +1043,8 @@ def aggregate_factory_audits(records: list[dict[str, Any]]) -> dict[str, Any]:
         "with_qa_verdict": sum(1 for r in records if r.get("has_qa_verdict")),
         "with_source_files": sum(1 for r in records if r.get("source_file_count", 0) > 0),
         "zero_source_files": sum(1 for r in records if r.get("source_file_count", 0) == 0),
+        "implementation_depth_checked": len(depth_records),
+        "implementation_depth_passed": sum(1 for depth in depth_records if depth.get("ok") is True),
+        "implementation_depth_failed": sum(1 for depth in depth_records if depth.get("ok") is not True),
         "by_level": dict(sorted(by_level.items())),
     }

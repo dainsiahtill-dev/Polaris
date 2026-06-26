@@ -332,6 +332,17 @@ class TestChiefEngineerBlueprintPublicService:
                 "acceptance_criteria": ["Task board shows claimed/running/completed states"],
                 "execution_checklist": ["Create component", "Wire state", "Add focused tests"],
                 "target_files": ["src/frontend/src/app/components/director/DirectorTaskPanel.tsx"],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "title": "Director board delivery plan",
+                    "user_journey": ["Open board", "Inspect task states"],
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "behavior_contract": {
+                        "rule_matrix": ["claimed tasks render as claimed", "running tasks render progress"],
+                    },
+                },
                 "task": {
                     "id": "PM-42",
                     "acceptance_criteria": ["Task board shows claimed/running/completed states"],
@@ -355,6 +366,10 @@ class TestChiefEngineerBlueprintPublicService:
         assert persisted["execution_checklist"] == ["Create component", "Wire state", "Add focused tests"]
         assert persisted["pm_task"]["id"] == "PM-42"
         assert persisted["contract_completeness"]["handoff_ready"] is True
+        assert persisted["contract_completeness"]["depth_contract_ready"] is True
+        assert persisted["delivery_plan_document"]["schema_version"] == "polaris.delivery_plan_document.v1"
+        assert persisted["delivery_depth_contract"]["schema_version"] == "polaris.delivery_depth_contract.v1"
+        assert persisted["behavior_contract"]["rule_matrix"][0] == "claimed tasks render as claimed"
 
         status = get_blueprint_status(
             GetBlueprintStatusQueryV1(
@@ -368,6 +383,35 @@ class TestChiefEngineerBlueprintPublicService:
         assert status.blueprint_id == result.blueprint_id
         assert status.blueprint_hash == result.blueprint_hash
         assert status.summary.startswith("Chief Engineer blueprint for PM-42")
+
+    def test_generate_task_blueprint_wraps_bare_behavior_contract(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-7",
+            workspace=str(tmp_path),
+            objective="Build scoring engine",
+            context={
+                "acceptance_criteria": ["Score normal, boundary, and invalid inputs"],
+                "execution_checklist": ["Implement scorer", "Add behavior tests"],
+                "target_files": ["src/engine/scorer.ts", "tests/scorer.test.ts"],
+                "behavior_contract": {
+                    "rule_matrix": [{"input": "high signal", "expected": "priority"}],
+                    "edge_cases": ["missing signal", "negative weight"],
+                    "required_behavior_tests": ["normal", "boundary", "invalid"],
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        assert result.blueprint_id is not None
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["contract_completeness"]["depth_contract_ready"] is False
+        assert persisted["delivery_depth_contract"]["schema_version"] == "polaris.delivery_depth_contract.v1"
+        assert persisted["delivery_depth_contract"]["source"] == "context.behavior_contract"
+        assert persisted["behavior_contract"]["required_behavior_tests"] == ["normal", "boundary", "invalid"]
+        assert persisted["behavior_contract"]["rule_matrix"][0]["expected"] == "priority"
 
     def test_query_missing_task_blueprint(self, tmp_path) -> None:
         status = get_blueprint_status(

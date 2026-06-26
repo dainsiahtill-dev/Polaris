@@ -31,7 +31,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid as _uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Callable, cast
 from urllib.parse import urlparse
@@ -2019,6 +2019,101 @@ def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
     return gates
 
 
+def build_director_repair_coverage_gap_summary(
+    record: Mapping[str, Any],
+    audit_bundle: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project Director repair coverage gaps into the bench record for rule-authoring Agents."""
+
+    reports = _collect_repair_coverage_reports((record, audit_bundle))
+    gaps: list[dict[str, Any]] = []
+    languages: set[str] = set()
+    archetypes: set[str] = set()
+    diagnostic_codes: set[str] = set()
+    recommended_routes: set[str] = set()
+    handoff_recommendations: set[str] = set()
+    slot_statuses: set[str] = set()
+    for report in reports:
+        for raw_gap in report.get("coverage_gaps") or ():
+            if not isinstance(raw_gap, Mapping):
+                continue
+            gap = _bench_repair_coverage_gap_payload(raw_gap, record=record)
+            gaps.append(gap)
+            languages.add(str(gap.get("diagnostic_language") or "unknown"))
+            archetypes.add(str(gap.get("diagnostic_archetype") or "unknown"))
+            diagnostic_codes.add(str(gap.get("diagnostic_code") or "unknown"))
+            recommended_routes.add(str(gap.get("recommended_route") or "llm_repair"))
+            handoff_recommendations.add(str(gap.get("handoff_recommendation") or "coverage_triage_required"))
+            slot_statuses.add(str(gap.get("slot_status") or "reserved_slot_missing"))
+    return {
+        "schema_version": "factory_bench.director_repair_coverage_gap_summary.v1",
+        "source": "factory_bench.audit_bundle.director_runtime_repair_coverage",
+        "gate_affects_pass": False,
+        "rule_discovery_required": bool(gaps),
+        "coverage_gap_count": len(gaps),
+        "coverage_gap_languages": sorted(languages),
+        "coverage_gap_archetypes": sorted(archetypes),
+        "coverage_gap_diagnostic_codes": sorted(diagnostic_codes),
+        "coverage_gap_recommended_routes": sorted(recommended_routes),
+        "coverage_gap_handoff_recommendations": sorted(handoff_recommendations),
+        "coverage_gap_slot_statuses": sorted(slot_statuses),
+        "coverage_gaps": gaps,
+    }
+
+
+def _collect_repair_coverage_reports(sources: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    seen: set[int] = set()
+
+    def visit(value: Any) -> None:
+        if isinstance(value, Mapping):
+            identity = id(value)
+            if identity in seen:
+                return
+            seen.add(identity)
+            if isinstance(value.get("coverage_gaps"), list) and (
+                "coverage_gap_count" in value or "uncovered_diagnostic_count" in value
+            ):
+                reports.append(dict(value))
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                visit(child)
+
+    for source in sources:
+        visit(source)
+    return reports
+
+
+def _bench_repair_coverage_gap_payload(
+    gap: Mapping[str, Any],
+    *,
+    record: Mapping[str, Any],
+) -> dict[str, Any]:
+    diagnostic_raw = gap.get("diagnostic")
+    diagnostic: Mapping[str, Any] = diagnostic_raw if isinstance(diagnostic_raw, Mapping) else {}
+    return {
+        "project_id": str(record.get("project_id") or ""),
+        "run_id": str(record.get("run_id") or ""),
+        "diagnostic_id": str(gap.get("diagnostic_id") or diagnostic.get("diagnostic_id") or ""),
+        "diagnostic_code": str(gap.get("diagnostic_code") or diagnostic.get("code") or "unknown"),
+        "diagnostic_language": str(gap.get("diagnostic_language") or gap.get("language") or "unknown"),
+        "diagnostic_archetype": str(gap.get("diagnostic_archetype") or "unknown"),
+        "diagnostic_phase": str(gap.get("diagnostic_phase") or gap.get("phase_suggestion") or "unknown"),
+        "path": str(diagnostic.get("path") or ""),
+        "message": str(diagnostic.get("message") or ""),
+        "reserved_slot_available": bool(gap.get("reserved_slot_available")),
+        "slot_status": str(gap.get("slot_status") or "reserved_slot_missing"),
+        "recommended_route": str(gap.get("recommended_route") or "llm_repair"),
+        "handoff_recommendation": str(gap.get("handoff_recommendation") or "coverage_triage_required"),
+        "recommended_next_owner": str(gap.get("recommended_next_owner") or "llm"),
+        "audit_reason": str(gap.get("audit_reason") or "known_rule_matched=false"),
+        "coverage_status": str(gap.get("coverage_status") or "coverage_gap"),
+        "authoritative_rule_registration_allowed": False,
+    }
+
+
 def build_bench_backend_audit_context(
     backend_url: str,
     *,
@@ -3369,6 +3464,10 @@ def main() -> int:
             required_roles=required_llm_roles,
             require_all_director_routes=False,
         )
+        record["director_repair_coverage_gap_summary"] = build_director_repair_coverage_gap_summary(
+            record,
+            audit_bundle,
+        )
         apply_factory_bench_gates(record, chain)
         apply_factory_bench_failure_taxonomy(record)
         convergence = audit_bundle.get("director_convergence")
@@ -3409,6 +3508,16 @@ def main() -> int:
                     "ok": bool(gate["ok"]),
                     "detail": gate.get("detail") or "",
                 },
+            )
+        coverage_gap_summary = record.get("director_repair_coverage_gap_summary")
+        if isinstance(coverage_gap_summary, dict) and int(coverage_gap_summary.get("coverage_gap_count") or 0) > 0:
+            print(
+                "[factory-bench]   - repair coverage gaps: "
+                f"count={coverage_gap_summary['coverage_gap_count']} "
+                f"languages={coverage_gap_summary['coverage_gap_languages']} "
+                f"codes={coverage_gap_summary['coverage_gap_diagnostic_codes']} "
+                f"routes={coverage_gap_summary['coverage_gap_recommended_routes']}",
+                flush=True,
             )
         _emit_bench_event(
             workspace=base,

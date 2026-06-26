@@ -9,8 +9,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import re
-import shutil
-import tempfile
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -64,6 +62,14 @@ _RUST_LEGACY_AGGREGATE_SUBCASES_BY_SOURCE_TOOL: Mapping[str, frozenset[str]] = {
     ),
 }
 _RUST_LEGACY_AGGREGATE_SOURCE_TOOL_BLOCKER = "legacy_aggregate_shadow_replay_source_tool_not_remaining"
+_GO_POST_EXECUTION_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_go_bare_import_string_repair",
+    "deterministic_go_nested_import_repair",
+    "deterministic_go_module_import_repair",
+    "deterministic_go_bare_import_repair",
+    "deterministic_go_subpath_repair",
+    "deterministic_go_dedup_repair",
+)
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _RUST_E0583_HELP_LINE_RE = re.compile(
     r"to create the module [`'\"](?P<module>[A-Za-z_][A-Za-z0-9_]*)[`'\"].*?"
@@ -248,12 +254,14 @@ def run_cpp_post_repairs_as_tool_results(
         )
     )
     tool_results.extend(
-        _record_to_tool_result(
-            record,
+        _run_cpp_runtime_repair(
+            adapter,
+            workspace_path,
+            task_id=task_id,
             source_tool="deterministic_cpp_post_repair",
-            default_action="cpp_post_repair",
+            advisor_notes=advisor_notes,
+            convergence_verifier=convergence_verifier,
         )
-        for record in _run_remaining_cpp_legacy_post_repairs(workspace_path)
     )
     return tool_results
 
@@ -428,14 +436,6 @@ def _run_cpp_runtime_repair(
     )
 
 
-def _run_remaining_cpp_legacy_post_repairs(workspace: Path) -> list[dict[str, str]]:
-    from .deterministic_repairs.cpp_repairs import repair_cpp_failing_smoke_translation_units
-
-    repairs: list[dict[str, str]] = []
-    repairs.extend(repair_cpp_failing_smoke_translation_units(workspace))
-    return repairs
-
-
 def _run_go_post_repairs(
     adapter: Any,
     *,
@@ -443,35 +443,28 @@ def _run_go_post_repairs(
     advisor_notes: RuntimeAdvisorNotes = (),
     convergence_verifier: ConvergenceVerifier | None = None,
 ) -> list[dict[str, Any]]:
-    from .deterministic_repairs.generic_repairs import _apply_deterministic_go_module_import_repair
-
     results: list[dict[str, Any]] = []
-    if convergence_verifier is not None:
-        runtime_results = _run_go_bare_import_string_runtime_repair(
+    for source_tool in _GO_POST_EXECUTION_RUNTIME_SOURCE_TOOLS:
+        runtime_results = _run_go_runtime_repair(
             adapter,
             task_id=task_id,
+            source_tool=source_tool,
             advisor_notes=advisor_notes,
             convergence_verifier=convergence_verifier,
         )
         if any(not bool(item.get("success", False)) for item in runtime_results):
             return runtime_results
         results.extend(runtime_results)
-    results.extend(
-        _apply_deterministic_go_module_import_repair(
-            adapter,
-            task_id=task_id,
-            advisor_notes=advisor_notes,
-        )
-    )
     return results
 
 
-def _run_go_bare_import_string_runtime_repair(
+def _run_go_runtime_repair(
     adapter: Any,
     *,
     task_id: str,
+    source_tool: str,
     advisor_notes: RuntimeAdvisorNotes = (),
-    convergence_verifier: ConvergenceVerifier,
+    convergence_verifier: ConvergenceVerifier | None = None,
 ) -> list[dict[str, Any]]:
     workspace = Path(str(getattr(adapter, "workspace", "") or ""))
     if not workspace.is_dir():
@@ -484,12 +477,12 @@ def _run_go_bare_import_string_runtime_repair(
         adapter,
         workspace_path=workspace_path,
         task_id=task_id,
-        source_tool="deterministic_go_bare_import_string_repair",
+        source_tool=source_tool,
         executor_factory=DirectorToolExecutor,
         base_files=base_files,
         allowed_paths=tuple(base_files.keys()),
         advisor_notes=advisor_notes,
-        use_editor=False,
+        use_editor=True,
         convergence_verifier=convergence_verifier,
         max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
     )
@@ -504,7 +497,6 @@ def _run_rust_post_repairs(
     workspace_path = workspace.resolve()
     if not (workspace_path / "Cargo.toml").is_file():
         return []
-    from .deterministic_repairs.rust_repairs import run_all_rust_post_repairs
 
     tool_results = _run_rust_crate_import_rewrite_runtime_repair(
         adapter,
@@ -595,116 +587,20 @@ def _run_rust_post_repairs(
             task_id=task_id,
         )
     )
-
-    with tempfile.TemporaryDirectory(prefix="polaris-rust-post-") as shadow_root:
-        shadow_workspace = Path(shadow_root) / "workspace"
-        shutil.copytree(
+    tool_results.extend(
+        _run_rust_missing_fields_runtime_repair(
+            adapter,
             workspace_path,
-            shadow_workspace,
-            ignore=_rust_shadow_copy_ignore,
-        )
-        before_snapshot = _snapshot_rust_shadow_text_files(shadow_workspace)
-        records = list(run_all_rust_post_repairs(shadow_workspace))
-        after_snapshot = _snapshot_rust_shadow_text_files(shadow_workspace)
-
-    changed_paths = sorted(path for path, content in after_snapshot.items() if before_snapshot.get(path) != content)
-    deleted_paths = sorted(path for path in before_snapshot if path not in after_snapshot)
-    records_by_file: dict[str, list[dict[str, Any]]] = {}
-    for record in records:
-        record_file = str(record.get("file") or "").strip()
-        if record_file:
-            records_by_file.setdefault(record_file, []).append(record)
-
-    shadow_paths = sorted(set(changed_paths + deleted_paths))
-    runtime_source_tools = _runtime_executable_source_tools()
-    shadow_replay_guard = _rust_legacy_aggregate_shadow_replay_guard(
-        records=records,
-        records_by_file=records_by_file,
-        shadow_paths=shadow_paths,
-        runtime_executable_source_tools=runtime_source_tools,
-    )
-    blocked_source_tools = list(shadow_replay_guard["blocked_source_tools"])
-    if blocked_source_tools:
-        tool_results.append(
-            _rust_legacy_aggregate_source_tool_blocked_result(
-                relative_paths=shadow_paths,
-                source_tools=blocked_source_tools,
-                blocked_migrated_source_tools=list(shadow_replay_guard["blocked_migrated_source_tools"]),
-                blocked_subcases=list(shadow_replay_guard["blocked_subcases"]),
-                blocked_migrated_subcases=list(shadow_replay_guard["blocked_migrated_subcases"]),
-                runtime_executable_source_tools=runtime_source_tools,
-            )
-        )
-        return tool_results
-
-    if not changed_paths and not deleted_paths:
-        return tool_results
-
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    executor = DirectorToolExecutor(
-        str(workspace_path),
-        message_bus=message_bus,
-        worker_id="director",
-    )
-
-    for relative_path in changed_paths:
-        content = after_snapshot[relative_path]
-        applied_tool_name, write_result = _apply_rust_shadow_change_with_director_tool(
-            executor,
-            relative_path,
-            before_content=before_snapshot.get(relative_path),
-            after_content=content,
             task_id=task_id,
         )
-        if bool(write_result.get("ok")):
-            progress_update = getattr(adapter, "_update_task_progress", None)
-            if callable(progress_update):
-                with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-                    progress_update(task_id, "executing", current_file=relative_path)
-        tool_results.append(
-            _rust_record_to_tool_result(
-                _primary_rust_shadow_record(records_by_file.get(relative_path), relative_path),
-                write_result=write_result,
-                shadow_metadata={
-                    "applied_tool_name": applied_tool_name,
-                    "before_exists": relative_path in before_snapshot,
-                    "after_exists": True,
-                    "before_content": before_snapshot.get(relative_path, ""),
-                    "after_content": content,
-                    "record_count": len(records_by_file.get(relative_path, [])),
-                    "legacy_aggregate_remaining_source_tools": _rust_legacy_aggregate_remaining_source_tools(
-                        runtime_source_tools
-                    ),
-                    "legacy_aggregate_shadow_replay_allowed_source_tools": sorted(
-                        _rust_legacy_aggregate_allowed_source_tools(runtime_source_tools)
-                    ),
-                    "remaining_legacy_subcases": _rust_legacy_aggregate_remaining_subcases(runtime_source_tools),
-                    "runtime_migrated_subcases": _rust_legacy_aggregate_runtime_migrated_subcases(runtime_source_tools),
-                    "source_tools": sorted(
-                        {
-                            str(record.get("source_tool") or "deterministic_rust_post_repair")
-                            for record in records_by_file.get(relative_path, [])
-                        }
-                    ),
-                },
-            )
+    )
+    tool_results.extend(
+        _run_rust_lib_root_facade_runtime_repair(
+            adapter,
+            workspace_path,
+            task_id=task_id,
         )
-
-    for relative_path in deleted_paths:
-        tool_results.append(
-            _rust_shadow_delete_blocked_tool_result(
-                _primary_rust_shadow_record(records_by_file.get(relative_path), relative_path),
-                relative_path,
-                before_content=before_snapshot.get(relative_path),
-                source_tools=sorted(
-                    {
-                        str(record.get("source_tool") or "deterministic_rust_post_repair")
-                        for record in records_by_file.get(relative_path, [])
-                    }
-                ),
-                runtime_executable_source_tools=runtime_source_tools,
-            )
-        )
+    )
     return tool_results
 
 
@@ -1060,6 +956,54 @@ def _run_rust_duplicate_module_file_runtime_repair(
     )
 
 
+def _run_rust_missing_fields_runtime_repair(
+    adapter: Any,
+    workspace: Path,
+    *,
+    task_id: str,
+) -> list[dict[str, Any]]:
+    workspace_path = workspace.resolve()
+    base_files = _collect_rust_base_files(workspace_path)
+    artifact_quality_errors = _rust_post_execution_artifact_quality_errors(adapter)
+    if not base_files or not artifact_quality_errors:
+        return []
+    return run_runtime_repair_with_director_tools(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        source_tool=_RUST_MISSING_FIELDS_SOURCE_TOOL,
+        executor_factory=DirectorToolExecutor,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        allowed_paths=tuple(base_files.keys()),
+        use_editor=True,
+    )
+
+
+def _run_rust_lib_root_facade_runtime_repair(
+    adapter: Any,
+    workspace: Path,
+    *,
+    task_id: str,
+) -> list[dict[str, Any]]:
+    workspace_path = workspace.resolve()
+    base_files = _collect_rust_base_files(workspace_path)
+    artifact_quality_errors = _rust_post_execution_artifact_quality_errors(adapter)
+    if not base_files or not artifact_quality_errors:
+        return []
+    return run_runtime_repair_with_director_tools(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        source_tool=_RUST_LIB_ROOT_FACADE_SOURCE_TOOL,
+        executor_factory=DirectorToolExecutor,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        allowed_paths=tuple(base_files.keys()),
+        use_editor=True,
+    )
+
+
 def _run_java_post_repairs(
     adapter: Any,
     workspace: Path,
@@ -1361,6 +1305,10 @@ def _collect_cpp_base_files(workspace: Path) -> dict[str, str]:
 
 def _collect_go_base_files(workspace: Path) -> dict[str, str]:
     base_files: dict[str, str] = {}
+    go_manifest = workspace / "go.mod"
+    if go_manifest.is_file():
+        with contextlib.suppress(OSError, UnicodeDecodeError):
+            base_files["go.mod"] = go_manifest.read_text(encoding="utf-8")
     for path in sorted(workspace.rglob("*.go")):
         if not path.is_file() or _is_generated_build_path(path) or path.name.endswith("_test.go"):
             continue

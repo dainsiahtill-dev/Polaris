@@ -21,9 +21,11 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     RepairRuleRegistry,
     RepairVerifierSnapshot,
     TransactionalRepairExecutor,
+    build_cpp_failing_smoke_translation_unit_plan,
     build_cpp_include_path_plan,
     build_cpp_missing_private_members_plan,
     build_cpp_placeholder_declaration_plan,
+    build_cpp_post_plan,
     build_cpp_standard_include_plan,
     build_cpp_struct_getter_field_access_plan,
     build_go_bare_import_string_plan,
@@ -53,6 +55,7 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     plan_typescript_nullable_canvas_context_repair,
     plan_typescript_object_literal_comma_repair,
     remove_patch_residue_lines,
+    repair_cpp_failing_smoke_translation_unit_text,
     repair_cpp_include_paths_text,
     repair_cpp_invalid_placeholder_declarations_text,
     repair_cpp_missing_private_members_text,
@@ -2325,6 +2328,52 @@ def test_cpp_struct_getter_field_access_rule_builds_canonical_plan_without_diagn
     assert len(plan.operations) == 1
     assert plan.operations[0].path == "src/main.cpp"
     assert plan.operations[0].metadata["repair_kind"] == "cpp_struct_getter_field_access"
+
+
+def test_cpp_post_rule_builds_compile_smoke_plan_without_legacy_helper() -> None:
+    header = "#pragma once\nnamespace demo { struct Poem {}; }\n"
+    source = '#include "generator.hpp"\nvoid render() {\n    missing::legacy::Api value;\n}\n'
+    main_source = '#include "models/poem.hpp"\nint main() {\n    missing::legacy::Api value;\n    return 0;\n}\n'
+
+    repaired = repair_cpp_failing_smoke_translation_unit_text(
+        path="./src/engine/generator.cpp",
+        text=source,
+        header_paths=("src/engine/generator.hpp", "src/models/poem.hpp"),
+    )
+    smoke_plan = build_cpp_failing_smoke_translation_unit_plan(
+        base_files={
+            "src/engine/generator.hpp": header,
+            "src/engine/generator.cpp": source,
+            "src/main.cpp": main_source,
+            "src/models/poem.hpp": header,
+        },
+        diagnostics=(),
+        mode="shadow",
+    )
+    post_plan = build_cpp_post_plan(
+        base_files={
+            "src/engine/generator.hpp": header,
+            "src/engine/generator.cpp": source,
+            "src/main.cpp": main_source,
+            "src/models/poem.hpp": header,
+        },
+        diagnostics=(),
+        mode="shadow",
+    )
+
+    assert '#include "generator.hpp"' in repaired
+    assert "polaris_cpp_smoke_src_engine_generator_cpp" in repaired
+    assert smoke_plan is not None
+    assert smoke_plan.source_tool == "deterministic_cpp_post_repair"
+    assert smoke_plan.operations[0].metadata["repair_kind"] == "cpp_failing_smoke_translation_unit"
+    assert post_plan is not None
+    assert post_plan.source_tool == "deterministic_cpp_post_repair"
+    assert post_plan.metadata["legacy_post_helper_used"] is False
+    assert "cpp.failing_smoke_translation_unit" in post_plan.metadata["aggregate_runtime_child_rules"]
+    assert {operation.path for operation in post_plan.operations} == {
+        "src/engine/generator.cpp",
+        "src/main.cpp",
+    }
 
 
 def test_go_bare_import_string_rule_builds_canonical_plan_without_diagnostics() -> None:
@@ -6326,6 +6375,10 @@ def test_public_repair_language_slots_reserve_future_languages_without_registeri
     direct_slot_payload = DirectorRepairLanguageSlotV1(language="new-lang").to_dict()
     assert direct_slot_payload["repairer_module"].endswith(".new_lang_runtime")
     assert direct_slot_payload["implementation_status"] == "reserved_only"
+    assert direct_slot_payload["slot_owner_cell"] == "director.runtime"
+    assert direct_slot_payload["bench_evidence_required"] is True
+    assert direct_slot_payload["rule_authoring_status"] == "reserved_only"
+    assert direct_slot_payload["next_action"] == "add_bench_verified_rule_metadata_then_runtime_binding"
     languages = {item["language"] for item in payload["items"]}
     assert {
         "typescript",
@@ -6385,10 +6438,15 @@ def test_public_repair_language_slots_reserve_future_languages_without_registeri
     assert slots_by_language["dockerfile"]["repairer_module"].endswith(".dockerfile_runtime")
     assert slots_by_language["dockerfile"]["implementation_status"] == "reserved_only"
     assert slots_by_language["dockerfile"]["registration_policy"] == "bench_verified_rule_required"
+    assert slots_by_language["dockerfile"]["bench_evidence_required"] is True
+    assert slots_by_language["dockerfile"]["rule_authoring_status"] == "reserved_only"
+    assert slots_by_language["dockerfile"]["next_action"] == "add_bench_verified_rule_metadata_then_runtime_binding"
     assert slots_by_language["dockerfile"]["authoritative_source_tools"] == []
     assert slots_by_language["dockerfile"]["executable_runtime_source_tools"] == []
     assert slots_by_language["cpp"]["implementation_status"] == "executable_runtime"
+    assert slots_by_language["cpp"]["next_action"] == "extend_existing_runtime_rule_with_bench_evidence"
     assert slots_by_language["rust"]["implementation_status"] == "executable_runtime"
+    assert slots_by_language["rust"]["rule_authoring_status"] == "executable_runtime"
     assert slots_by_language["rust"]["executable_runtime_source_tools"] == [
         "deterministic_rust_crate_import_repair",
         "deterministic_rust_crate_import_rewrite_repair",
@@ -6415,6 +6473,10 @@ def test_public_repair_language_slots_reserve_future_languages_without_registeri
     assert "deterministic_rust_derive_repair" in slots_by_language["rust"]["executable_runtime_source_tools"]
     assert set(payload["summary"]["authoritative_rule_languages"]).issubset(languages)
     assert payload["summary"]["language_count"] >= 45
+    assert payload["summary"]["next_actions_by_language"]["dockerfile"] == (
+        "add_bench_verified_rule_metadata_then_runtime_binding"
+    )
+    assert payload["summary"]["next_actions_by_language"]["rust"] == "extend_existing_runtime_rule_with_bench_evidence"
     assert payload["summary"]["authoritative_rule_languages"] == [
         "cpp",
         "go",

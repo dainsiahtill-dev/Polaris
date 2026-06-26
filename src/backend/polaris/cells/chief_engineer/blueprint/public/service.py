@@ -141,6 +141,31 @@ def _task_payload_from_context(context: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _normalize_delivery_depth_payload(payload: dict[str, Any], *, source: str) -> dict[str, Any]:
+    if not payload:
+        return {}
+    if _mapping(payload.get("behavior_contract")):
+        return dict(payload)
+    if str(payload.get("schema_version") or "") == "polaris.delivery_depth_contract.v1":
+        return dict(payload)
+    if any(
+        key in payload
+        for key in (
+            "rule_matrix",
+            "sample_dataset",
+            "edge_cases",
+            "required_behavior_tests",
+            "behavior_rules",
+        )
+    ):
+        return {
+            "schema_version": "polaris.delivery_depth_contract.v1",
+            "source": source,
+            "behavior_contract": dict(payload),
+        }
+    return dict(payload)
+
+
 def _target_files_from_context(context: dict[str, Any]) -> list[str]:
     task_payload = _task_payload_from_context(context)
     for key in ("target_files", "scope_paths", "files", "affected_files"):
@@ -153,6 +178,42 @@ def _target_files_from_context(context: dict[str, Any]) -> list[str]:
 def _qa_acceptance_from_task(task_payload: dict[str, Any]) -> list[str]:
     qa_contract = _mapping(task_payload.get("qa_contract"))
     return _first_string_list(qa_contract.get("acceptance_criteria"), qa_contract.get("acceptance"))
+
+
+def _delivery_depth_contract_from_context(context: dict[str, Any]) -> dict[str, Any]:
+    task_payload = _task_payload_from_context(context)
+    context_metadata = _mapping(context.get("metadata"))
+    task_metadata = _mapping(task_payload.get("metadata"))
+    for source, value in (
+        ("context.delivery_depth_contract", context.get("delivery_depth_contract")),
+        ("context.metadata.delivery_depth_contract", context_metadata.get("delivery_depth_contract")),
+        ("task.delivery_depth_contract", task_payload.get("delivery_depth_contract")),
+        ("task.metadata.delivery_depth_contract", task_metadata.get("delivery_depth_contract")),
+        ("context.behavior_contract", context.get("behavior_contract")),
+        ("context.metadata.behavior_contract", context_metadata.get("behavior_contract")),
+        ("task.behavior_contract", task_payload.get("behavior_contract")),
+        ("task.metadata.behavior_contract", task_metadata.get("behavior_contract")),
+    ):
+        payload = _normalize_delivery_depth_payload(_mapping(value), source=source)
+        if payload:
+            return payload
+    return {}
+
+
+def _delivery_plan_document_from_context(context: dict[str, Any]) -> dict[str, Any]:
+    task_payload = _task_payload_from_context(context)
+    context_metadata = _mapping(context.get("metadata"))
+    task_metadata = _mapping(task_payload.get("metadata"))
+    for value in (
+        context.get("delivery_plan_document"),
+        context_metadata.get("delivery_plan_document"),
+        task_payload.get("delivery_plan_document"),
+        task_metadata.get("delivery_plan_document"),
+    ):
+        payload = _mapping(value)
+        if payload:
+            return payload
+    return {}
 
 
 def _blueprint_contract_fields(context: dict[str, Any]) -> dict[str, Any]:
@@ -191,6 +252,8 @@ def _blueprint_contract_fields(context: dict[str, Any]) -> dict[str, Any]:
         or task_payload.get("architecture_decisions")
         or task_payload.get("architectureDecision")
     )
+    delivery_depth_contract = _delivery_depth_contract_from_context(context)
+    delivery_plan_document = _delivery_plan_document_from_context(context)
     return {
         "task": task_payload,
         "acceptance_criteria": acceptance_criteria,
@@ -199,6 +262,8 @@ def _blueprint_contract_fields(context: dict[str, Any]) -> dict[str, Any]:
         "dependencies": dependencies,
         "risks": risks,
         "architecture_decisions": architecture_decisions,
+        "delivery_plan_document": delivery_plan_document,
+        "delivery_depth_contract": delivery_depth_contract,
     }
 
 
@@ -207,18 +272,28 @@ def _contract_completeness(
     target_files: list[str],
     acceptance_criteria: list[str],
     execution_checklist: list[str],
+    delivery_depth_contract: dict[str, Any] | None = None,
+    delivery_plan_document: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     missing_fields: list[str] = []
+    advisory_missing_fields: list[str] = []
     if not target_files:
         missing_fields.append("target_files")
     if not acceptance_criteria:
         missing_fields.append("acceptance_criteria")
     if not execution_checklist:
         missing_fields.append("execution_checklist")
+    if not delivery_depth_contract:
+        advisory_missing_fields.append("delivery_depth_contract")
+    if not delivery_plan_document:
+        advisory_missing_fields.append("delivery_plan_document")
     return {
         "handoff_ready": not missing_fields,
         "missing_fields": missing_fields,
+        "advisory_missing_fields": advisory_missing_fields,
+        "depth_contract_ready": not advisory_missing_fields,
         "requires": ["target_files", "acceptance_criteria", "execution_checklist"],
+        "advisory_requires": ["delivery_plan_document", "delivery_depth_contract"],
     }
 
 
@@ -282,6 +357,8 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     execution_checklist = list(contract_fields["execution_checklist"])
     scope_paths = list(contract_fields["scope_paths"])
     dependencies = list(contract_fields["dependencies"])
+    delivery_plan_document = dict(contract_fields["delivery_plan_document"])
+    delivery_depth_contract = dict(contract_fields["delivery_depth_contract"])
     inferred_decisions = infer_architecture_decisions(
         objective=command.objective,
         context=context,
@@ -300,6 +377,8 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         target_files=target_files,
         acceptance_criteria=acceptance_criteria,
         execution_checklist=execution_checklist,
+        delivery_depth_contract=delivery_depth_contract,
+        delivery_plan_document=delivery_plan_document,
     )
     context.setdefault("acceptance_criteria", acceptance_criteria)
     context.setdefault("execution_checklist", execution_checklist)
@@ -308,9 +387,14 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     context.setdefault("dependencies", dependencies)
     context.setdefault("architecture_decisions", architecture_decision_payloads)
     context.setdefault("selected_libraries", selected_libraries)
+    if delivery_plan_document:
+        context.setdefault("delivery_plan_document", delivery_plan_document)
+    if delivery_depth_contract:
+        context.setdefault("delivery_depth_contract", delivery_depth_contract)
     recommendations = (
         "Validate PM acceptance criteria before Director execution.",
         "Keep implementation scope within the recorded target files.",
+        "Verify delivery_depth_contract behavior rules and edge cases before marking the task complete.",
     )
     risks = tuple(contract_fields["risks"])
     payload: dict[str, Any] = {
@@ -331,6 +415,9 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "dependencies": dependencies,
         "architecture_decisions": architecture_decision_payloads,
         "selected_libraries": selected_libraries,
+        "delivery_plan_document": delivery_plan_document,
+        "delivery_depth_contract": delivery_depth_contract,
+        "behavior_contract": _mapping(delivery_depth_contract.get("behavior_contract")),
         "constraints": constraints,
         "context": context,
         "pm_task": contract_fields["task"],

@@ -116,6 +116,10 @@ def _pm_typescript_factory_contract_missing(contracts: list[dict[str, Any]], dir
     return missing
 
 
+def _pm_contract_mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 class PMContractNormalizationMixin(_PMAdapterMixinBase):
     """PM 合同归一化 mixin：标题/路径/scope/projection 字段归一与结构化校验。"""
 
@@ -279,6 +283,21 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             projection[target_key] = value
         if projection:
             metadata["projection"] = projection
+        delivery_plan_document = _pm_contract_mapping(raw.get("delivery_plan_document")) or _pm_contract_mapping(
+            metadata.get("delivery_plan_document")
+        )
+        delivery_depth_contract = _pm_contract_mapping(raw.get("delivery_depth_contract")) or _pm_contract_mapping(
+            metadata.get("delivery_depth_contract")
+        )
+        behavior_contract = _pm_contract_mapping(raw.get("behavior_contract")) or _pm_contract_mapping(
+            metadata.get("behavior_contract")
+        )
+        if delivery_plan_document:
+            metadata["delivery_plan_document"] = delivery_plan_document
+        if delivery_depth_contract:
+            metadata["delivery_depth_contract"] = delivery_depth_contract
+        if behavior_contract:
+            metadata["behavior_contract"] = behavior_contract
         normalized = {
             "id": task_id,
             "title": title,
@@ -297,6 +316,12 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             "backlog_ref": str(raw.get("backlog_ref") or task_id).strip() or task_id,
             "metadata": metadata,
         }
+        if delivery_plan_document:
+            normalized["delivery_plan_document"] = delivery_plan_document
+        if delivery_depth_contract:
+            normalized["delivery_depth_contract"] = delivery_depth_contract
+        if behavior_contract:
+            normalized["behavior_contract"] = behavior_contract
         return normalized
 
     @staticmethod

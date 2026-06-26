@@ -225,6 +225,22 @@ def test_public_convergence_success_uses_typed_receipts_and_revalidation_evidenc
     assert evidence["errors_before"] == 1
     assert evidence["errors_after"] == 0
     assert evidence["raw_output_ref"] == "runtime/verifier/public-convergence-round-1.log"
+    assert receipt.verifier_command == ("rtk", "tsc", "--noEmit")
+    assert receipt.verifier_exit_code == 0
+    assert receipt.errors_before == 1
+    assert receipt.errors_after == 0
+    assert receipt.net_error_reduction == 1
+    assert receipt.diagnostics_before
+    assert receipt.diagnostics_after == ()
+    assert receipt.resolved_diagnostic_ids
+    assert receipt.residual_diagnostic_ids == ()
+    payload = receipt.to_dict()
+    assert payload["verifier_command"] == evidence["command"]
+    assert payload["verifier_exit_code"] == evidence["exit_code"]
+    assert payload["diagnostics_before"] == evidence["diagnostics_before"]
+    assert payload["diagnostics_after"] == evidence["diagnostics_after"]
+    assert payload["resolved_diagnostic_ids"] == evidence["resolved_diagnostic_ids"]
+    assert payload["residual_diagnostic_ids"] == evidence["residual_diagnostic_ids"]
     assert receipt.metadata["requires_revalidation"] is False
 
     assert result.rounds[0].status == "converged"

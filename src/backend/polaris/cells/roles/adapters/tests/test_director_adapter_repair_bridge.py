@@ -2475,6 +2475,76 @@ def test_post_execution_migration_debt_ledger_distinguishes_runtime_and_legacy(
     assert summary["legacy_callback_debt"]["legacy_only_step_count"] == 0
 
 
+def test_go_post_execution_uses_runtime_source_tool_sequence_without_legacy_aggregate(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    (tmp_path / "go.mod").write_text("module example.com/demo\n", encoding="utf-8")
+    source = tmp_path / "cmd" / "app" / "main.go"
+    source.parent.mkdir(parents=True)
+    source.write_text('package main\n"fmt"\nfunc main() {}\n', encoding="utf-8")
+
+    class FakeAdapter:
+        workspace = str(tmp_path)
+
+    def sentinel_verifier(request: Any) -> Any:
+        return {"request": request}
+
+    fake_adapter = FakeAdapter()
+    called_source_tools: list[str] = []
+    base_file_snapshots: list[dict[str, str]] = []
+
+    def fail_if_legacy_go_aggregate_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("post-execution Go repair must not call legacy aggregate helper")
+
+    def fake_runtime_bridge(
+        adapter_arg: Any,
+        *,
+        workspace_path: Path,
+        task_id: str,
+        source_tool: str,
+        base_files: dict[str, str],
+        allowed_paths: tuple[str, ...],
+        use_editor: bool,
+        convergence_verifier: Any = None,
+        **_kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        assert adapter_arg is fake_adapter
+        assert workspace_path == tmp_path.resolve()
+        assert task_id == "task-go-post"
+        assert "go.mod" in base_files
+        assert "cmd/app/main.go" in base_files
+        assert "go.mod" in allowed_paths
+        assert use_editor is True
+        assert convergence_verifier is sentinel_verifier
+        called_source_tools.append(source_tool)
+        base_file_snapshots.append(dict(base_files))
+        if source_tool == "deterministic_go_bare_import_string_repair":
+            source.write_text('package main\nimport "fmt"\nfunc main() {}\n', encoding="utf-8")
+        return []
+
+    monkeypatch.setattr(
+        generic_repairs,
+        "_apply_deterministic_go_module_import_repair",
+        fail_if_legacy_go_aggregate_called,
+    )
+    monkeypatch.setattr(
+        post_execution_repair_bridge,
+        "run_runtime_repair_with_director_tools",
+        fake_runtime_bridge,
+    )
+
+    results = post_execution_repair_bridge._run_go_post_repairs(
+        fake_adapter,
+        task_id="task-go-post",
+        convergence_verifier=sentinel_verifier,
+    )
+
+    assert results == []
+    assert called_source_tools == list(post_execution_repair_bridge._GO_POST_EXECUTION_RUNTIME_SOURCE_TOOLS)
+    assert 'import "fmt"' in base_file_snapshots[1]["cmd/app/main.go"]
+
+
 def test_post_execution_allowed_rust_shadow_replay_stays_non_cutover_ready(
     tmp_path: Path,
     monkeypatch: Any,

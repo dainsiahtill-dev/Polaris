@@ -27,6 +27,7 @@ from scripts.factory_bench.run_factory_bench import (
     _sanitize_run_id,
     _write_immutable_json,
     apply_factory_bench_gates,
+    build_director_repair_coverage_gap_summary,
     build_requirements_doc,
     discover_artifacts,
     map_factory_run_to_chain_results,
@@ -2457,6 +2458,78 @@ def test_map_director_partial_includes_blocking_phase_for_convergence() -> None:
     assert convergence["blocking_phase"] == "director_dispatch"
     assert convergence["missing_delivery_targets"] == ["quality_gate"]
     assert len(convergence["per_binding_task_status"]) == 5
+
+
+def test_director_repair_coverage_gap_summary_projects_bench_handoff_fields() -> None:
+    record = {
+        "project_id": "L1-gap",
+        "run_id": "run-gap-1",
+        "all_checks_passed": True,
+        "static_checks_passed": True,
+        "chain_results": {"qa_ran": True, "qa_passed": True},
+        "has_plan_doc": True,
+        "has_blueprint_doc": True,
+        "has_qa_verdict": True,
+        "wrong_product_suspect": False,
+        "backend_freshness": {"ok": True, "detail": "fresh"},
+        "real_run_gate": {"ok": True, "summary": "real run passed"},
+        "run_ledger_projection": {
+            "evidence_policy": {
+                "missing_required_modalities": [],
+                "failed_required_modalities": [],
+            }
+        },
+        "llm_route_audit": {"ok": True, "summary": "routes ok"},
+    }
+    audit_bundle = {
+        "director_convergence": {
+            "repair_kernel": {
+                "coverage_report": {
+                    "coverage_gap_count": 1,
+                    "coverage_gaps": [
+                        {
+                            "diagnostic": {
+                                "diagnostic_id": "diag-ruby-1",
+                                "code": "ruby_uninitialized_constant",
+                                "path": "app/models/widget.rb",
+                                "message": "uninitialized constant Widget",
+                            },
+                            "diagnostic_language": "ruby",
+                            "diagnostic_archetype": "wrong_import_path",
+                            "diagnostic_phase": "compiler",
+                            "reserved_slot_available": True,
+                            "slot_status": "reserved_slot_available",
+                            "recommended_route": "runtime_rule",
+                            "handoff_recommendation": "runtime_rule_backlog",
+                            "recommended_next_owner": "runtime_rule",
+                        }
+                    ],
+                }
+            }
+        }
+    }
+
+    summary = build_director_repair_coverage_gap_summary(record, audit_bundle)
+    record["director_repair_coverage_gap_summary"] = summary
+    apply_factory_bench_gates(record, chain={"exit_code": 0})
+
+    assert summary["schema_version"] == "factory_bench.director_repair_coverage_gap_summary.v1"
+    assert summary["gate_affects_pass"] is False
+    assert summary["rule_discovery_required"] is True
+    assert summary["coverage_gap_count"] == 1
+    assert summary["coverage_gap_languages"] == ["ruby"]
+    assert summary["coverage_gap_diagnostic_codes"] == ["ruby_uninitialized_constant"]
+    assert summary["coverage_gap_recommended_routes"] == ["runtime_rule"]
+    gap = summary["coverage_gaps"][0]
+    assert gap["project_id"] == "L1-gap"
+    assert gap["run_id"] == "run-gap-1"
+    assert gap["diagnostic_language"] == "ruby"
+    assert gap["path"] == "app/models/widget.rb"
+    assert gap["recommended_next_owner"] == "runtime_rule"
+    assert gap["authoritative_rule_registration_allowed"] is False
+    factory_gates = record.get("factory_gates")
+    assert isinstance(factory_gates, list)
+    assert all(gate["gate"] != "director_repair_coverage_gap_summary" for gate in factory_gates)
 
 
 # --- R18-B: audit snapshot terminal/non-terminal ---
