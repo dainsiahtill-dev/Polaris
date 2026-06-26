@@ -948,31 +948,62 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _extract_js_export_summary(content: str) -> str:
-        """Extract JS/TS export signatures: module.exports, class, function declarations."""
+        """Extract JS/TS export signatures so dependent files reference real symbols.
+
+        Captures classes, functions, const/let/var, TS enums (with members),
+        interfaces, types, ``export { ... }`` lists, and CommonJS exports. Mirrors
+        the Python extractor's enum-member coverage: a dependent TS file's Director
+        must see enum members (e.g. ``SkyCondition.CALM``), not just the enum name,
+        or it invents non-existent members — the cross-file coherence wall L4-L8
+        React/Express projects hit.
+        """
         import re as _re
 
         lines: list[str] = []
+
+        # TS enums (incl. ``const enum``) with their members — the JS analog of the
+        # Python enum-member gap. ``[^{}]`` spans newlines, so multi-line bodies match.
+        for match in _re.finditer(r"(?:export\s+)?(?:const\s+)?enum\s+([A-Za-z_$][\w$]*)\s*\{([^{}]*)\}", content):
+            name = match.group(1)
+            members: list[str] = []
+            seen_member: set[str] = set()
+            for member in _re.findall(r"([A-Za-z_$][\w$]*)\s*(?==|,|\Z)", match.group(2)):
+                if member not in seen_member:
+                    seen_member.add(member)
+                    members.append(member)
+            lines.append(f"enum {name} {{ {', '.join(members[:40])} }}" if members else f"enum {name}")
+
         for raw_line in content.split("\n"):
             stripped = raw_line.strip()
-            if not stripped or stripped.startswith("//") or stripped.startswith("/*"):
+            if not stripped or stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("*"):
                 continue
-            # module.exports = ...
             if (
                 _re.match(r"module\.exports\s*=", stripped)
-                or _re.match(r"exports\.\w+", stripped)
-                or _re.match(r"(?:export\s+)?class\s+\w+", stripped)
-                or _re.match(r"(?:export\s+)?(?:async\s+)?function\s+\w+", stripped)
-                or _re.match(r"(?:export\s+)?(?:const|let)\s+\w+\s*=\s*(?:async\s+)?\(", stripped)
+                or _re.match(r"exports\.[A-Za-z_$]", stripped)
+                or _re.match(r"(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+[A-Za-z_$]", stripped)
+                or _re.match(r"(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*[A-Za-z_$]", stripped)
+                or _re.match(r"(?:export\s+)?(?:const|let|var)\s+(?!enum\b)[A-Za-z_$]", stripped)
+                or _re.match(r"(?:export\s+)?interface\s+[A-Za-z_$]", stripped)
+                or _re.match(r"(?:export\s+)?type\s+[A-Za-z_$][\w$]*\s*=", stripped)
+                or _re.match(r"export\s+\{", stripped)
+                or _re.match(r"export\s+default\s+", stripped)
             ):
                 lines.append(stripped[:200])
-        if not lines:
-            # Fallback: first 30 non-empty lines
+
+        # Dedupe preserving order (an enum's declaration line can also appear above).
+        deduped: list[str] = []
+        seen_line: set[str] = set()
+        for line in lines:
+            if line not in seen_line:
+                seen_line.add(line)
+                deduped.append(line)
+        if not deduped:
             for raw_line in content.split("\n"):
                 if raw_line.strip():
-                    lines.append(raw_line.strip()[:200])
-                if len(lines) >= 30:
+                    deduped.append(raw_line.strip()[:200])
+                if len(deduped) >= 30:
                     break
-        return "\n".join(lines[:50])
+        return "\n".join(deduped[:60])
 
     @staticmethod
     def _extract_py_export_summary(content: str) -> str:

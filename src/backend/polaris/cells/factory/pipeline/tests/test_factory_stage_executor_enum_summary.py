@@ -79,3 +79,52 @@ class TestPyExportSummaryEnumMembers:
         )
         assert "MAX_WIND = ..." in summary
         assert "def gust()" in summary
+
+
+class TestJsExportSummaryMembers:
+    """JS/TS analog of the enum-member gap (L4-L8 cross-file coherence)."""
+
+    def test_ts_enum_members_are_included(self, tmp_path: Path) -> None:
+        summary = _executor(tmp_path)._extract_js_export_summary(
+            "export enum SkyCondition {\n  CALM = 'calm',\n  FAIR = 'fair',\n  CLOUDY = 'cloudy',\n  STORMY = 'stormy',\n}\n"
+        )
+        assert "enum SkyCondition" in summary
+        for member in ("CALM", "FAIR", "CLOUDY", "STORMY"):
+            assert member in summary
+        assert "CLEAR" not in summary
+
+    def test_const_enum_members_are_included(self, tmp_path: Path) -> None:
+        summary = _executor(tmp_path)._extract_js_export_summary("export const enum Level { LOW, HIGH }\n")
+        assert "enum Level { LOW, HIGH }" in summary
+
+    def test_interface_and_type_are_captured(self, tmp_path: Path) -> None:
+        summary = _executor(tmp_path)._extract_js_export_summary(
+            "export interface WeatherReport {\n  sky: string;\n}\n\nexport type Mood = 'bright' | 'stormy';\n"
+        )
+        assert "interface WeatherReport" in summary
+        assert "type Mood" in summary
+
+    def test_non_arrow_const_export_is_captured(self, tmp_path: Path) -> None:
+        # The old extractor only matched ``const x = (`` (arrow fns); plain value
+        # exports like a const array were missed.
+        summary = _executor(tmp_path)._extract_js_export_summary(
+            "export const CONTRACT_KEYWORDS = ['planet', 'weather'];\n"
+        )
+        assert "CONTRACT_KEYWORDS" in summary
+
+    def test_named_export_list_is_captured(self, tmp_path: Path) -> None:
+        summary = _executor(tmp_path)._extract_js_export_summary("export { broadcast, broadcastMany };\n")
+        assert "export {" in summary and "broadcast" in summary
+
+    def test_class_and_function_still_captured(self, tmp_path: Path) -> None:
+        summary = _executor(tmp_path)._extract_js_export_summary(
+            "export class RadioBroadcaster {}\n\nexport async function broadcast(report) {\n  return report;\n}\n"
+        )
+        assert "class RadioBroadcaster" in summary
+        assert "function broadcast" in summary
+
+    def test_commonjs_exports_still_captured(self, tmp_path: Path) -> None:
+        summary = _executor(tmp_path)._extract_js_export_summary(
+            "function derive() {}\nmodule.exports = { derive };\nexports.derive = derive;\n"
+        )
+        assert "module.exports" in summary
