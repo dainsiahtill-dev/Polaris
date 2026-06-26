@@ -11,10 +11,14 @@ import shlex
 from pathlib import Path
 from typing import Any
 
+from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.events.file_event_broadcaster import (
+    broadcast_file_written,
     replace_in_file_with_broadcast,
     write_file_with_broadcast,
 )
+from polaris.kernelone.exceptions import PathSecurityError
+from polaris.kernelone.fs.runtime import KernelFileSystem
 from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_guards import (
     _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO,
     _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES,
@@ -246,6 +250,16 @@ class DirectorToolExecutor:
     提供文件读写、命令执行、代码搜索等工具的具体实现。
     """
 
+    available_tools = (
+        "write_file",
+        "read_file",
+        "edit_file",
+        "delete_file",
+        "run_command",
+        "execute_command",
+        "search_code",
+    )
+
     def __init__(
         self,
         workspace: str,
@@ -259,6 +273,9 @@ class DirectorToolExecutor:
 
     def set_message_bus(self, message_bus: Any | None) -> None:
         self._message_bus = message_bus
+
+    def supports_tool(self, tool_name: str) -> bool:
+        return str(tool_name or "") in self.available_tools
 
     def _validate_director_policy_for_write(
         self,
@@ -311,6 +328,8 @@ class DirectorToolExecutor:
             return self._tool_read_file(args, workspace_path)
         elif tool_name == "edit_file":
             return self._tool_edit_file(args, workspace_path, task_id=task_id)
+        elif tool_name == "delete_file":
+            return self._tool_delete_file(args, workspace_path, task_id=task_id)
         elif tool_name in {"run_command", "execute_command"}:
             return self._tool_run_command(args, workspace_path)
         elif tool_name == "search_code":
@@ -565,6 +584,77 @@ class DirectorToolExecutor:
                 result["json_config_repaired"] = True
             return result
         except (OSError, RuntimeError, TypeError, UnicodeError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _tool_delete_file(
+        self,
+        args: dict[str, Any],
+        workspace: Path,
+        *,
+        task_id: str = "",
+    ) -> dict[str, Any]:
+        """Delete a single workspace file through Director policy gates."""
+        raw_file_path = args.get("file") or args.get("path") or args.get("filepath")
+        file_path = str(raw_file_path or "").strip()
+
+        if not file_path:
+            return {"ok": False, "error": "Missing file path"}
+        if "\n" in file_path or "\r" in file_path:
+            return {"ok": False, "error": f"Invalid file path contains newline: {file_path!r}"}
+        if _MIN_FILES_PATTERN.match(file_path) or _MIN_LINES_PATTERN.match(file_path):
+            return {"ok": False, "error": f"Invalid file path resembles requirement sentence: {file_path}"}
+        if re.match(r"^(table|index)\s+if\s+not\s+exists\b", file_path, re.IGNORECASE):
+            return {"ok": False, "error": f"Invalid file path resembles SQL statement: {file_path}"}
+
+        try:
+            fs = KernelFileSystem(str(workspace.resolve()), LocalFileSystemAdapter())
+            rel_path = fs.to_workspace_relative_path(file_path)
+
+            if rel_path == ".":
+                return {"ok": False, "error": f"Path is not a file: {file_path}", "file": rel_path}
+            if not fs.workspace_exists(rel_path):
+                return {"ok": False, "error": f"File not found: {file_path}", "file": rel_path}
+            if fs.workspace_is_dir(rel_path):
+                return {"ok": False, "error": f"Path is a directory: {file_path}", "file": rel_path}
+            if not fs.workspace_is_file(rel_path):
+                return {"ok": False, "error": f"Path is not a file: {file_path}", "file": rel_path}
+
+            policy_result = self._validate_director_policy_for_write(
+                workspace=workspace,
+                rel_path=rel_path,
+                old_content="",
+                new_content="",
+                operation="delete_file",
+                tool_kwargs=args,
+            )
+            if not policy_result.get("ok"):
+                return policy_result
+
+            deleted = fs.workspace_remove(rel_path, missing_ok=False)
+            if not deleted:
+                return {"ok": False, "error": f"Failed to delete file: {file_path}", "file": rel_path}
+
+            broadcast_ok = broadcast_file_written(
+                file_path=rel_path,
+                operation="delete",
+                content_size=0,
+                task_id=task_id,
+                patch="",
+                message_bus=self._message_bus,
+                worker_id=self._worker_id,
+                event_log_workspace=str(workspace),
+            )
+            return {
+                "ok": True,
+                "file": rel_path,
+                "path": rel_path,
+                "deleted": True,
+                "bytes_written": 0,
+                "operation": "delete_file",
+                "broadcast_ok": bool(broadcast_ok),
+                "director_policy": policy_result.get("director_policy"),
+            }
+        except (OSError, PathSecurityError, RuntimeError, TypeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
 
     # -------------------------------------------------------------------------

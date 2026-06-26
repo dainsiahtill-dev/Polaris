@@ -14,6 +14,7 @@ from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy impor
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import (
     CompositionResult,
     RepairAdvisorNote,
+    RepairDiagnostic,
     RepairPlan,
     RepairReceipt,
     RepairRevalidationEvidence,
@@ -24,6 +25,7 @@ from polaris.cells.director.runtime.internal.repair_kernel.legacy_bridge import 
     build_legacy_repair_kernel_summary as _build_legacy_repair_kernel_summary,
     summarize_repair_revalidation_coverage,
 )
+from polaris.cells.director.runtime.internal.repair_kernel.receipts import attach_revalidation_evidence
 from polaris.cells.director.runtime.internal.repair_kernel.registry import (
     build_repair_coverage_report,
     default_repair_rule_registry,
@@ -33,6 +35,7 @@ from polaris.cells.director.runtime.internal.repair_kernel.runtime_dispatch impo
     RuntimeRepairPlanning,
     plan_runtime_repair,
     run_runtime_repair,
+    run_runtime_repair_convergence,
     runtime_repair_bindings,
     runtime_repair_source_tools,
 )
@@ -45,6 +48,7 @@ from polaris.cells.director.runtime.internal.repair_kernel.schedule_catalog impo
     run_materialization_quality_repair_schedule_callbacks,
     run_post_execution_repair_schedule_callbacks,
 )
+from polaris.cells.director.runtime.internal.repair_kernel.scheduler import RepairVerifierSnapshot
 from polaris.cells.director.runtime.internal.repair_kernel.shadow import compare_legacy_and_kernel_repairs
 from polaris.cells.director.runtime.internal.repair_kernel.strategy_catalog import (
     deterministic_repair_strategy_catalog as _deterministic_repair_strategy_catalog,
@@ -56,22 +60,30 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairAdvisoryValidationResultV1,
     DirectorRepairCompositionIssueV1,
     DirectorRepairCompositionSummaryV1,
+    DirectorRepairConvergenceResultV1,
+    DirectorRepairConvergenceRoundResultV1,
+    DirectorRepairConvergenceVerifierRequestV1,
     DirectorRepairCoverageReportV1,
     DirectorRepairDiagnosticCoverageV1,
     DirectorRepairKernelSummaryProjectionResultV1,
     DirectorRepairLanguageSlotsResultV1,
     DirectorRepairLanguageSlotV1,
     DirectorRepairMaterializationQualityScheduleResultV1,
+    DirectorRepairMaterializationQualityScheduleRunResultV1,
     DirectorRepairMaterializationQualityStepV1,
     DirectorRepairPatchSummaryV1,
     DirectorRepairPlanningResultV1,
     DirectorRepairPlanSummaryV1,
     DirectorRepairPostExecutionScheduleResultV1,
+    DirectorRepairPostExecutionScheduleRunResultV1,
     DirectorRepairPostExecutionStepV1,
     DirectorRepairResultV1,
+    DirectorRepairRevalidationInputV1,
     DirectorRepairRevalidationProjectionResultV1,
+    DirectorRepairRevalidationRequestV1,
     DirectorRepairShadowComparisonResultV1,
     DirectorRepairStrategyCatalogResultV1,
+    DirectorRepairVerifierSnapshotInputV1,
     PlanDirectorRepairCommandV1,
     ProjectDirectorRepairKernelSummaryV1,
     QueryDirectorRepairAdvisoryPolicyV1,
@@ -82,14 +94,49 @@ from polaris.cells.director.runtime.public.contracts import (
     QueryDirectorRepairPostExecutionScheduleV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
+    RepairDiagnosticV1,
     RepairReceiptV1,
     RunDirectorRepairCommandV1,
+    RunDirectorRepairConvergenceCommandV1,
 )
 
 WriteFileFn = Callable[[str, str], Mapping[str, Any]]
 EditFileFn = Callable[[Any], Mapping[str, Any]]
+DeleteFileFn = Callable[[str], Mapping[str, Any]]
 PostExecutionStepRunnerV1 = Callable[[DirectorRepairPostExecutionStepV1], Sequence[Mapping[str, Any]]]
 MaterializationQualityStepRunnerV1 = Callable[[DirectorRepairMaterializationQualityStepV1], Sequence[Mapping[str, Any]]]
+DirectorRepairRevalidatorFn = Callable[
+    [DirectorRepairRevalidationRequestV1],
+    DirectorRepairRevalidationInputV1 | None,
+]
+DirectorRepairConvergenceVerifierFn = Callable[
+    [DirectorRepairConvergenceVerifierRequestV1],
+    DirectorRepairVerifierSnapshotInputV1,
+]
+
+_ALLOWED_CONVERGENCE_VERIFIER_EVIDENCE_SOURCES = frozenset(
+    {
+        "adapter_convergence_verifier_factory",
+    }
+)
+_DELETE_FILE_REQUIRES_POLICY_GATED_DELETER = "delete_file_requires_policy_gated_deleter"
+
+
+class _PublicConvergenceVerifierError(RuntimeError):
+    """Fail-closed wrapper for adapter-supplied convergence verifier callbacks."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        metadata: Mapping[str, Any],
+        status: str = "verifier_callback_failed",
+        error_code: str = "verifier_callback_failed",
+    ) -> None:
+        super().__init__(message)
+        self.metadata = dict(metadata)
+        self.status = status
+        self.error_code = error_code
 
 
 def _stable_json(payload: Mapping[str, Any]) -> str:
@@ -102,6 +149,13 @@ def _count_by_key(items: Sequence[Mapping[str, Any]], key: str) -> dict[str, int
         value = str(item.get(key) or "unknown").strip() or "unknown"
         counts[value] = counts.get(value, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _repair_execution_error_code(error: Any) -> str | None:
+    normalized = str(error or "").strip()
+    if "requires policy-gated deleter" in normalized:
+        return _DELETE_FILE_REQUIRES_POLICY_GATED_DELETER
+    return None
 
 
 def _receipt_authority_payload(receipt: Mapping[str, Any]) -> dict[str, Any]:
@@ -119,6 +173,7 @@ def _receipt_authority_payload(receipt: Mapping[str, Any]) -> dict[str, Any]:
         "before_hashes": dict(receipt.get("before_hashes") or {}),
         "after_hashes": dict(receipt.get("after_hashes") or {}),
         "round_number": receipt.get("round_number"),
+        "evidence_status": receipt.get("evidence_status"),
         "errors_before": receipt.get("errors_before"),
         "errors_after": receipt.get("errors_after"),
         "net_error_reduction": receipt.get("net_error_reduction"),
@@ -150,6 +205,7 @@ def _receipt_context_with_revalidation(
         item["net_error_reduction"] = receipt.get("net_error_reduction")
         item["post_check_evidence"] = {
             "available": receipt.get("revalidation_evidence") is not None,
+            "evidence_status": receipt.get("evidence_status", "missing_evidence"),
             "exit_code": dict(receipt.get("revalidation_evidence") or {}).get("exit_code"),
             "residual_diagnostic_ids": dict(receipt.get("revalidation_evidence") or {}).get(
                 "residual_diagnostic_ids",
@@ -284,18 +340,37 @@ def project_director_repair_revalidation_evidence(
         "diagnostics_after_signatures": sorted(after_signature_index),
         **dict(command.metadata),
     }
+    coverage_report_total_diagnostics = _optional_int(
+        dict(repair_kernel.get("coverage_report") or {}).get("total_diagnostics")
+    )
     for receipt in receipts:
         diagnostics_before = [dict(diagnostic or {}) for diagnostic in receipt.get("diagnostics") or []]
         before_signature_index = _repair_diagnostic_signature_index(diagnostics_before)
         errors_before = len(diagnostics_before)
+        errors_before_source = "receipt_diagnostics"
         if errors_before == 0:
-            errors_before = int(dict(repair_kernel.get("coverage_report") or {}).get("total_diagnostics") or 0)
+            explicit_errors_before = _optional_int(receipt.get("errors_before"))
+            existing_evidence = receipt.get("revalidation_evidence")
+            existing_evidence_dict = existing_evidence if isinstance(existing_evidence, dict) else {}
+            if explicit_errors_before is None:
+                explicit_errors_before = _optional_int(existing_evidence_dict.get("errors_before"))
+                errors_before_source = "existing_revalidation_evidence"
+            else:
+                errors_before_source = "receipt_errors_before"
+            if explicit_errors_before is None:
+                errors_before = 0
+                errors_before_source = "missing_receipt_diagnostics"
+            else:
+                errors_before = explicit_errors_before
         residual_signatures = sorted(set(before_signature_index) & set(after_signature_index))
         resolved_signatures = sorted(set(before_signature_index) - set(after_signature_index))
         residual_ids = _diagnostic_ids_for_signatures(before_signature_index, residual_signatures)
         resolved_ids = _diagnostic_ids_for_signatures(before_signature_index, resolved_signatures)
         evidence_metadata = {
             **evidence_metadata_base,
+            "errors_before_source": errors_before_source,
+            "coverage_report_total_diagnostics": coverage_report_total_diagnostics,
+            "coverage_report_total_diagnostics_used_for_errors_before": False,
             "diagnostics_before_signatures": sorted(before_signature_index),
             "resolved_diagnostic_signatures": resolved_signatures,
             "residual_diagnostic_signatures": residual_signatures,
@@ -314,12 +389,14 @@ def project_director_repair_revalidation_evidence(
             "raw_output_ref": None,
             "metadata": evidence_metadata,
         }
+        evidence["evidence_status"] = _repair_revalidation_evidence_status(evidence)
         receipt["revalidation_evidence"] = evidence
+        receipt["evidence_status"] = evidence["evidence_status"]
         receipt["errors_before"] = errors_before
         receipt["errors_after"] = errors_after
         receipt["net_error_reduction"] = errors_before - errors_after
         receipt["round_number"] = evidence["round_number"]
-        revalidation_failed = resolved_exit_code not in (0, None)
+        revalidation_failed = _repair_revalidation_payload_failed(evidence)
         if receipt.get("status") == "pending_revalidation":
             receipt["status"] = "failed_revalidation" if revalidation_failed else "applied"
         elif revalidation_failed and receipt.get("status") == "applied":
@@ -400,6 +477,92 @@ def _diagnostic_ids_for_signatures(
         if diagnostic_id:
             diagnostic_ids.append(diagnostic_id)
     return sorted(diagnostic_ids)
+
+
+def _repair_revalidation_payload_failed(evidence: Mapping[str, Any] | None) -> bool:
+    payload = dict(evidence or {})
+    if not payload:
+        return False
+    exit_code = _optional_int(payload.get("exit_code"))
+    if exit_code is None or exit_code != 0:
+        return True
+    errors_after = _optional_int(payload.get("errors_after"))
+    if errors_after is not None and errors_after > 0:
+        return True
+    if payload.get("residual_diagnostic_ids"):
+        return True
+    metadata = payload.get("metadata")
+    metadata_dict = metadata if isinstance(metadata, dict) else {}
+    return bool(metadata_dict.get("residual_diagnostic_signatures"))
+
+
+def _repair_revalidation_evidence_status(evidence: Mapping[str, Any] | None) -> str:
+    payload = dict(evidence or {})
+    if not payload:
+        return "missing_evidence"
+    metadata = payload.get("metadata")
+    metadata_dict = metadata if isinstance(metadata, dict) else {}
+    failure_reason = str(metadata_dict.get("revalidation_failure_reason") or "").strip()
+    if failure_reason in {
+        "invalid_revalidation_evidence_type",
+        "missing_revalidation_evidence",
+        "missing_revalidation_exit_code",
+        "revalidator_exception",
+    }:
+        return "missing_evidence"
+    command = payload.get("command")
+    has_command = isinstance(command, list | tuple) and any(str(item or "").strip() for item in command)
+    exit_code = _optional_int(payload.get("exit_code"))
+    if not has_command or exit_code is None:
+        return "missing_evidence"
+    if _repair_revalidation_payload_failed(payload):
+        return "failed_evidence"
+    return "resolved_evidence"
+
+
+def _validate_public_convergence_verifier_evidence(
+    verifier_input: DirectorRepairVerifierSnapshotInputV1,
+    *,
+    round_number: int,
+) -> None:
+    metadata = dict(verifier_input.metadata)
+    evidence_source = str(metadata.get("evidence_source") or "").strip()
+    raw_output_ref_verified = metadata.get("raw_output_ref_verified")
+    blockers: list[str] = []
+
+    if not verifier_input.command:
+        blockers.append("missing_command")
+    if verifier_input.exit_code is None:
+        blockers.append("missing_exit_code")
+    if not verifier_input.raw_output_ref:
+        blockers.append("missing_raw_output_ref")
+    if raw_output_ref_verified is not True:
+        blockers.append("raw_output_ref_not_verified")
+    if not evidence_source:
+        blockers.append("missing_evidence_source")
+    elif evidence_source not in _ALLOWED_CONVERGENCE_VERIFIER_EVIDENCE_SOURCES:
+        blockers.append("unsupported_evidence_source")
+
+    if not blockers:
+        return
+
+    raise _PublicConvergenceVerifierError(
+        "Repair convergence verifier evidence failed public trust gate.",
+        status="verifier_evidence_invalid",
+        error_code="verifier_evidence_invalid",
+        metadata={
+            "verifier_failure_reason": "verifier_evidence_invalid",
+            "evidence_blocker": blockers[0],
+            "evidence_blockers": blockers,
+            "round_number": round_number,
+            "command_present": bool(verifier_input.command),
+            "exit_code_present": verifier_input.exit_code is not None,
+            "raw_output_ref_present": bool(verifier_input.raw_output_ref),
+            "raw_output_ref_verified": raw_output_ref_verified,
+            "evidence_source": evidence_source or None,
+            "allowed_evidence_sources": sorted(_ALLOWED_CONVERGENCE_VERIFIER_EVIDENCE_SOURCES),
+        },
+    )
 
 
 def query_director_repair_advisory_policy(
@@ -606,6 +769,11 @@ def query_director_repair_coverage(query: QueryDirectorRepairCoverageV1) -> Dire
 
     diagnostics = normalize_artifact_quality_errors(list(query.artifact_quality_errors))
     report = build_repair_coverage_report(diagnostics)
+    coverage_gaps_by_id = {
+        str(gap.get("diagnostic_id") or ""): dict(gap)
+        for gap in report.coverage_gaps
+        if str(gap.get("diagnostic_id") or "").strip()
+    }
     return DirectorRepairCoverageReportV1(
         schema_version="director.repair_coverage_report.v1",
         source="director.runtime.repair_kernel.registry",
@@ -616,24 +784,49 @@ def query_director_repair_coverage(query: QueryDirectorRepairCoverageV1) -> Dire
         executable_runtime_plan_diagnostic_count=report.executable_runtime_plan_diagnostic_count,
         metadata_only_diagnostic_count=report.metadata_only_diagnostic_count,
         items=tuple(
-            DirectorRepairDiagnosticCoverageV1(
-                diagnostic=(coverage_payload := item.to_dict())["diagnostic"],
-                known_rule_matched=item.known_rule_matched,
-                executable_runtime_plan_matched=item.executable_runtime_plan_matched,
-                metadata_only_match=item.metadata_only_match,
-                matched_rule_ids=tuple(rule.rule_id for rule in item.matched_rules),
-                matched_source_tools=tuple(rule.source_tool for rule in item.matched_rules),
-                runtime_plan_rule_ids=tuple(rule.rule_id for rule in item.matched_rules if rule.runtime_plan_available),
-                archetypes=tuple(sorted({rule.archetype.value for rule in item.matched_rules})),
-                phases=tuple(sorted({rule.phase for rule in item.matched_rules})),
-                languages=tuple(sorted({rule.language for rule in item.matched_rules})),
-                diagnostic_archetype=str(coverage_payload["diagnostic_archetype"]),
-                diagnostic_phase=str(coverage_payload["diagnostic_phase"]),
-                diagnostic_language=str(coverage_payload["diagnostic_language"]),
-                suggested_rule_family=str(coverage_payload["suggested_rule_family"]),
-            )
+            _project_director_repair_diagnostic_coverage(item, coverage_gaps_by_id)
             for item in report.items
         ),
+    )
+
+
+def _project_director_repair_diagnostic_coverage(
+    item: Any,
+    coverage_gaps_by_id: Mapping[str, Mapping[str, Any]],
+) -> DirectorRepairDiagnosticCoverageV1:
+    coverage_payload = item.to_dict()
+    diagnostic = dict(coverage_payload["diagnostic"])
+    gap_payload = (
+        dict(coverage_gaps_by_id.get(str(diagnostic.get("diagnostic_id") or ""), {}))
+        if not item.known_rule_matched
+        else {}
+    )
+    return DirectorRepairDiagnosticCoverageV1(
+        diagnostic=diagnostic,
+        known_rule_matched=item.known_rule_matched,
+        executable_runtime_plan_matched=item.executable_runtime_plan_matched,
+        metadata_only_match=item.metadata_only_match,
+        matched_rule_ids=tuple(rule.rule_id for rule in item.matched_rules),
+        matched_source_tools=tuple(rule.source_tool for rule in item.matched_rules),
+        runtime_plan_rule_ids=tuple(rule.rule_id for rule in item.matched_rules if rule.runtime_plan_available),
+        archetypes=tuple(sorted({rule.archetype.value for rule in item.matched_rules})),
+        phases=tuple(sorted({rule.phase for rule in item.matched_rules})),
+        languages=tuple(sorted({rule.language for rule in item.matched_rules})),
+        diagnostic_archetype=str(coverage_payload["diagnostic_archetype"]),
+        diagnostic_phase=str(coverage_payload["diagnostic_phase"]),
+        diagnostic_language=str(coverage_payload["diagnostic_language"]),
+        diagnostic_code=str(gap_payload.get("diagnostic_code") or diagnostic.get("code") or "unknown"),
+        suggested_rule_family=str(coverage_payload["suggested_rule_family"]),
+        reserved_language_slot_matched=bool(gap_payload.get("reserved_language_slot_matched")),
+        reserved_language_slot=dict(gap_payload.get("reserved_language_slot") or {}),
+        reserved_repairer_module=str(gap_payload.get("reserved_repairer_module") or ""),
+        reserved_slot_registration_policy=str(gap_payload.get("reserved_slot_registration_policy") or ""),
+        recommended_next_owner=str(gap_payload.get("recommended_next_owner") or ""),
+        handoff_recommendation=str(gap_payload.get("handoff_recommendation") or ""),
+        llm_advisory_recommended=bool(gap_payload.get("llm_advisory_recommended")),
+        agi_advisory_recommended=bool(gap_payload.get("agi_advisory_recommended")),
+        authoritative_rule_registration_allowed=bool(gap_payload.get("authoritative_rule_registration_allowed")),
+        recommended_registration_path=str(gap_payload.get("recommended_registration_path") or ""),
     )
 
 
@@ -769,13 +962,39 @@ def run_director_post_execution_repair_schedule(
 ) -> tuple[list[dict[str, Any]], tuple[DirectorRepairPostExecutionStepV1, ...]]:
     """Run migration callbacks through the runtime-owned post-execution schedule."""
 
+    result = run_director_post_execution_repair_schedule_result(
+        runner_step_ids=runner_step_ids,
+        runner=runner,
+        max_rounds=max_rounds,
+    )
+    return [dict(item) for item in result.tool_results], result.ordered_steps
+
+
+def run_director_post_execution_repair_schedule_result(
+    *,
+    runner_step_ids: Sequence[str],
+    runner: PostExecutionStepRunnerV1,
+    max_rounds: int = DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS,
+) -> DirectorRepairPostExecutionScheduleRunResultV1:
+    """Run migration callbacks and expose runtime-owned summary projections."""
+
     run = run_post_execution_repair_schedule_callbacks(
         runner_step_ids=runner_step_ids,
         runner=lambda step: runner(_public_post_execution_step(step)),
         max_rounds=max_rounds,
     )
-    return [dict(item) for item in run.tool_results], tuple(
-        _public_post_execution_step(step) for step in run.ordered_steps
+    run_payload = run.to_dict()
+    return DirectorRepairPostExecutionScheduleRunResultV1(
+        schema_version="director.repair_post_execution_schedule_run_result.v1",
+        source="director.runtime.repair_kernel.scheduler",
+        ordered_steps=tuple(_public_post_execution_step(step) for step in run.ordered_steps),
+        tool_results=tuple(dict(item) for item in run_payload["tool_results"]),
+        receipt_projections=tuple(dict(item) for item in run_payload["receipt_projections"]),
+        summary=dict(run_payload["summary"]),
+        max_rounds=int(run_payload["max_rounds"]),
+        rounds_run=int(run_payload["rounds_run"]),
+        convergence_status=str(run_payload["convergence_status"]),
+        stopped_reason=str(run_payload["stopped_reason"]),
     )
 
 
@@ -821,13 +1040,39 @@ def run_director_materialization_quality_repair_schedule(
 ) -> tuple[list[dict[str, Any]], tuple[DirectorRepairMaterializationQualityStepV1, ...]]:
     """Run materialization-quality callbacks through the runtime-owned schedule."""
 
+    result = run_director_materialization_quality_repair_schedule_result(
+        runner_step_ids=runner_step_ids,
+        runner=runner,
+        max_rounds=max_rounds,
+    )
+    return [dict(item) for item in result.tool_results], result.ordered_steps
+
+
+def run_director_materialization_quality_repair_schedule_result(
+    *,
+    runner_step_ids: Sequence[str],
+    runner: MaterializationQualityStepRunnerV1,
+    max_rounds: int = DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS,
+) -> DirectorRepairMaterializationQualityScheduleRunResultV1:
+    """Run materialization callbacks and expose runtime-owned summary projections."""
+
     run = run_materialization_quality_repair_schedule_callbacks(
         runner_step_ids=runner_step_ids,
         runner=lambda step: runner(_public_materialization_quality_step(step)),
         max_rounds=max_rounds,
     )
-    return [dict(item) for item in run.tool_results], tuple(
-        _public_materialization_quality_step(step) for step in run.ordered_steps
+    run_payload = run.to_dict()
+    return DirectorRepairMaterializationQualityScheduleRunResultV1(
+        schema_version="director.repair_materialization_quality_schedule_run_result.v1",
+        source="director.runtime.repair_kernel.scheduler",
+        ordered_steps=tuple(_public_materialization_quality_step(step) for step in run.ordered_steps),
+        tool_results=tuple(dict(item) for item in run_payload["tool_results"]),
+        receipt_projections=tuple(dict(item) for item in run_payload["receipt_projections"]),
+        summary=dict(run_payload["summary"]),
+        max_rounds=int(run_payload["max_rounds"]),
+        rounds_run=int(run_payload["rounds_run"]),
+        convergence_status=str(run_payload["convergence_status"]),
+        stopped_reason=str(run_payload["stopped_reason"]),
     )
 
 
@@ -913,6 +1158,8 @@ def run_director_repair(
     *,
     writer: WriteFileFn,
     editor: EditFileFn | None = None,
+    deleter: DeleteFileFn | None = None,
+    revalidator: DirectorRepairRevalidatorFn | None = None,
 ) -> DirectorRepairResultV1:
     """Run a deterministic repair through the generic public runtime surface."""
 
@@ -924,6 +1171,7 @@ def run_director_repair(
         artifact_quality_errors=_artifact_quality_errors_from_command(command),
         writer=writer,
         editor=editor,
+        deleter=deleter,
         allowed_paths=command.allowed_paths,
         advisor_notes=_to_internal_advisor_notes(public_advisor_notes),
         mode=command.mode,
@@ -944,6 +1192,9 @@ def run_director_repair(
         metadata["composition_policy"] = internal_run.composition_decision.to_dict()
     if internal_run.execution_result is not None:
         metadata["execution_error"] = internal_run.execution_result.error
+        execution_error_code = _repair_execution_error_code(internal_run.execution_result.error)
+        if execution_error_code is not None:
+            metadata["execution_error_code"] = execution_error_code
         metadata["rolled_back"] = internal_run.execution_result.rolled_back
 
     if internal_run.execution_result is None:
@@ -954,14 +1205,381 @@ def run_director_repair(
             metadata=metadata,
         )
 
-    receipt = _to_public_repair_receipt(internal_run.execution_result.receipt)
+    internal_receipt = internal_run.execution_result.receipt
+    residual_diagnostics: tuple[RepairDiagnostic, ...] = ()
+    revalidation_error_message: str | None = None
+    if revalidator is not None:
+        internal_receipt, residual_diagnostics, revalidation_error_message = _attach_native_revalidation_evidence(
+            command,
+            internal_receipt,
+            revalidator,
+        )
+
+    receipt = _to_public_repair_receipt(internal_receipt)
+    revalidation_failed = revalidator is not None and receipt.status == "failed_revalidation"
+    error_code = internal_run.error_code
+    error_message = internal_run.error_message
+    if revalidation_failed:
+        error_code = "repair_revalidation_failed"
+        error_message = revalidation_error_message or "Repair revalidation failed."
     return DirectorRepairResultV1(
-        ok=internal_run.execution_result.ok,
+        ok=bool(internal_run.execution_result.ok) and not revalidation_failed,
         receipts=(receipt,),
-        error_code=internal_run.error_code,
-        error_message=internal_run.error_message,
+        residual_diagnostics=tuple(_to_public_repair_diagnostic(item) for item in residual_diagnostics),
+        error_code=error_code,
+        error_message=error_message,
         metadata=metadata,
     )
+
+
+def run_director_repair_convergence(
+    command: RunDirectorRepairConvergenceCommandV1,
+    *,
+    writer: WriteFileFn,
+    verifier: DirectorRepairConvergenceVerifierFn,
+    editor: EditFileFn | None = None,
+    deleter: DeleteFileFn | None = None,
+) -> DirectorRepairConvergenceResultV1:
+    """Run typed Director Runtime repair convergence through the public surface.
+
+    The verifier is an adapter-supplied effect boundary. This function only
+    converts the callback result into the internal verifier snapshot; it never
+    runs verifier commands itself.
+    """
+
+    public_advisor_notes = tuple(command.advisor_notes or ())
+    initial_diagnostics = tuple(normalize_artifact_quality_errors(list(command.artifact_quality_errors)))
+
+    def _verifier(round_number: int, receipts: tuple[RepairReceipt, ...]) -> RepairVerifierSnapshot:
+        public_receipts = tuple(_to_public_repair_receipt(receipt) for receipt in receipts)
+        request = DirectorRepairConvergenceVerifierRequestV1(
+            task_id=command.task_id,
+            workspace=command.workspace,
+            round_number=round_number,
+            source_tools=command.source_tools,
+            receipts=public_receipts,
+            max_rounds=command.max_rounds,
+            metadata={
+                "public_entrypoint": "run_director_repair_convergence",
+                "effect_boundary": "adapter_supplied_verifier_callback_no_command_execution",
+                "command_metadata": dict(command.metadata),
+            },
+        )
+        try:
+            verifier_input = verifier(request)
+        except Exception as exc:
+            raise _PublicConvergenceVerifierError(
+                f"Repair convergence verifier failed: {type(exc).__name__}: {exc}",
+                metadata={
+                    "verifier_failure_reason": "verifier_exception",
+                    "verifier_error_type": type(exc).__name__,
+                    "verifier_error": str(exc),
+                    "round_number": round_number,
+                },
+            ) from exc
+
+        if not isinstance(verifier_input, DirectorRepairVerifierSnapshotInputV1):
+            raise _PublicConvergenceVerifierError(
+                "Repair convergence verifier returned invalid evidence type.",
+                metadata={
+                    "verifier_failure_reason": "invalid_verifier_snapshot_type",
+                    "verifier_result_type": type(verifier_input).__name__,
+                    "round_number": round_number,
+                },
+            )
+
+        _validate_public_convergence_verifier_evidence(verifier_input, round_number=round_number)
+        diagnostics = tuple(
+            normalize_artifact_quality_errors(list(verifier_input.residual_artifact_quality_errors))
+        )
+        return RepairVerifierSnapshot(
+            diagnostics=diagnostics,
+            command=verifier_input.command,
+            exit_code=verifier_input.exit_code,
+            raw_output_ref=verifier_input.raw_output_ref,
+            metadata={
+                **dict(verifier_input.metadata),
+                "public_entrypoint": "run_director_repair_convergence",
+                "effect_boundary": "adapter_supplied_verifier_callback_no_command_execution",
+                "round_number": round_number,
+            },
+        )
+
+    try:
+        internal_result = run_runtime_repair_convergence(
+            source_tools=command.source_tools,
+            workspace=command.workspace,
+            base_files=command.base_files,
+            artifact_quality_errors=command.artifact_quality_errors,
+            verifier=_verifier,
+            writer=writer,
+            editor=editor,
+            deleter=deleter,
+            allowed_paths=command.allowed_paths,
+            advisor_notes=_to_internal_advisor_notes(public_advisor_notes),
+            mode=command.mode,
+            max_rounds=command.max_rounds,
+        )
+    except _PublicConvergenceVerifierError as exc:
+        return _failed_public_convergence_result(
+            command,
+            status=exc.status,
+            final_diagnostics=initial_diagnostics,
+            error_code=exc.error_code,
+            error_message=str(exc),
+            metadata=exc.metadata,
+            editor=editor,
+            deleter=deleter,
+        )
+    except Exception as exc:  # noqa: BLE001 - public convergence boundary must not pretend success on runtime errors.
+        return _failed_public_convergence_result(
+            command,
+            status="convergence_runtime_error",
+            final_diagnostics=initial_diagnostics,
+            error_code="convergence_runtime_error",
+            error_message=f"Director repair convergence failed: {type(exc).__name__}: {exc}",
+            metadata={
+                "runtime_failure_reason": "internal_convergence_exception",
+                "runtime_error_type": type(exc).__name__,
+                "runtime_error": str(exc),
+                "runtime_error_code": _repair_execution_error_code(str(exc)),
+            },
+            editor=editor,
+            deleter=deleter,
+        )
+
+    return _to_public_convergence_result(command, internal_result, editor=editor, deleter=deleter)
+
+
+def _to_public_convergence_result(
+    command: RunDirectorRepairConvergenceCommandV1,
+    internal_result: Any,
+    *,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+) -> DirectorRepairConvergenceResultV1:
+    status = str(internal_result.status or "unknown").strip() or "unknown"
+    ok = status in {"already_clean", "converged"}
+    metadata = _public_convergence_metadata(
+        command,
+        internal_metadata=dict(internal_result.metadata),
+        editor=editor,
+        deleter=deleter,
+    )
+    return DirectorRepairConvergenceResultV1(
+        ok=ok,
+        converged=bool(internal_result.converged),
+        status=status,
+        final_diagnostics=tuple(_to_public_repair_diagnostic(item) for item in internal_result.final_diagnostics),
+        receipts=tuple(_to_public_repair_receipt(item) for item in internal_result.receipts),
+        rounds=tuple(_to_public_convergence_round(item) for item in internal_result.rounds),
+        max_rounds=internal_result.max_rounds,
+        metadata=metadata,
+        error_code=None if ok else status,
+        error_message=None if ok else f"Director repair convergence ended with status: {status}.",
+    )
+
+
+def _to_public_convergence_round(round_result: Any) -> DirectorRepairConvergenceRoundResultV1:
+    evidence = round_result.revalidation_evidence.to_dict() if round_result.revalidation_evidence is not None else {}
+    return DirectorRepairConvergenceRoundResultV1(
+        round_number=round_result.round_number,
+        status=round_result.status,
+        schedule=round_result.schedule.to_dict(),
+        diagnostics_before=tuple(_to_public_repair_diagnostic(item) for item in round_result.diagnostics_before),
+        diagnostics_after=tuple(_to_public_repair_diagnostic(item) for item in round_result.diagnostics_after),
+        receipts=tuple(_to_public_repair_receipt(item) for item in round_result.receipts),
+        revalidation_evidence=evidence,
+        metadata=round_result.metadata,
+    )
+
+
+def _failed_public_convergence_result(
+    command: RunDirectorRepairConvergenceCommandV1,
+    *,
+    status: str,
+    final_diagnostics: tuple[RepairDiagnostic, ...],
+    error_code: str,
+    error_message: str,
+    metadata: Mapping[str, Any],
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+) -> DirectorRepairConvergenceResultV1:
+    coverage_report = build_repair_coverage_report(final_diagnostics).to_dict()
+    merged_metadata = _public_convergence_metadata(
+        command,
+        internal_metadata={
+            "status": status,
+            "converged": False,
+            "unconverged": True,
+            "coverage_report": coverage_report,
+            "coverage_gap_count": coverage_report.get("coverage_gap_count", 0),
+            "coverage_gaps": list(coverage_report.get("coverage_gaps") or []),
+        },
+        editor=editor,
+        deleter=deleter,
+        extra=metadata,
+    )
+    return DirectorRepairConvergenceResultV1(
+        ok=False,
+        converged=False,
+        status=status,
+        final_diagnostics=tuple(_to_public_repair_diagnostic(item) for item in final_diagnostics),
+        max_rounds=command.max_rounds,
+        metadata=merged_metadata,
+        error_code=error_code,
+        error_message=error_message,
+    )
+
+
+def _public_convergence_metadata(
+    command: RunDirectorRepairConvergenceCommandV1,
+    *,
+    internal_metadata: Mapping[str, Any],
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    internal_payload = dict(internal_metadata or {})
+    effect_boundary_labels = {
+        "verifier": "adapter_supplied_verifier_callback_no_command_execution",
+        "writer": "adapter_supplied_director_authorized_writer",
+        "editor": "adapter_supplied_director_authorized_editor" if editor is not None else "editor_not_supplied",
+        "deleter": "adapter_supplied_director_authorized_deleter" if deleter is not None else "deleter_not_supplied",
+    }
+    return {
+        **internal_payload,
+        "internal_convergence_metadata": internal_payload,
+        "owner_cell": "director.runtime",
+        "public_entrypoint": "run_director_repair_convergence",
+        "preferred_internal_entrypoint": "run_runtime_repair_convergence",
+        "effect_boundary": "adapter_supplied_verifier_callback_no_command_execution",
+        "effect_boundary_labels": effect_boundary_labels,
+        "callback_effect_boundary": effect_boundary_labels["verifier"],
+        "writer_effect_boundary": effect_boundary_labels["writer"],
+        "editor_effect_boundary": effect_boundary_labels["editor"],
+        "deleter_effect_boundary": effect_boundary_labels["deleter"],
+        "verifier_command_execution": "not_performed_by_public_runtime",
+        "source_tools": list(command.source_tools),
+        "command_metadata": dict(command.metadata),
+        **dict(extra or {}),
+    }
+
+
+def _attach_native_revalidation_evidence(
+    command: RunDirectorRepairCommandV1,
+    receipt: RepairReceipt,
+    revalidator: DirectorRepairRevalidatorFn,
+) -> tuple[RepairReceipt, tuple[RepairDiagnostic, ...], str | None]:
+    diagnostics_before = tuple(receipt.diagnostics or ())
+    request = DirectorRepairRevalidationRequestV1(
+        task_id=command.task_id,
+        workspace=command.workspace,
+        source_tool=command.source_tool,
+        receipt_id=receipt.receipt_id,
+        plan_id=receipt.plan_id,
+        files_changed=receipt.files_changed,
+        before_hashes=receipt.before_hashes,
+        after_hashes=receipt.after_hashes,
+        diagnostics_before=tuple(diagnostic.to_dict() for diagnostic in diagnostics_before),
+        metadata={
+            "mode": receipt.mode,
+            "status": receipt.status,
+            "round_number": receipt.round_number,
+        },
+    )
+    try:
+        revalidation_input = revalidator(request)
+    except Exception as exc:  # noqa: BLE001 - injected revalidator effect boundary must fail closed.
+        return _attach_failed_native_revalidation(
+            receipt,
+            diagnostics_before,
+            message=f"Repair revalidator failed: {type(exc).__name__}: {exc}",
+            metadata={
+                "revalidation_failure_reason": "revalidator_exception",
+                "revalidator_error_type": type(exc).__name__,
+                "revalidator_error": str(exc),
+            },
+        )
+
+    if revalidation_input is None:
+        return _attach_failed_native_revalidation(
+            receipt,
+            diagnostics_before,
+            message="Repair revalidator returned no evidence.",
+            metadata={"revalidation_failure_reason": "missing_revalidation_evidence"},
+        )
+
+    if not isinstance(revalidation_input, DirectorRepairRevalidationInputV1):
+        return _attach_failed_native_revalidation(
+            receipt,
+            diagnostics_before,
+            message="Repair revalidator returned invalid evidence type.",
+            metadata={
+                "revalidation_failure_reason": "invalid_revalidation_evidence_type",
+                "revalidator_result_type": type(revalidation_input).__name__,
+            },
+        )
+
+    diagnostics_after = normalize_artifact_quality_errors(list(revalidation_input.residual_artifact_quality_errors))
+    if revalidation_input.exit_code is None:
+        evidence = RepairRevalidationEvidence(
+            command=revalidation_input.command,
+            exit_code=1,
+            diagnostics_before=diagnostics_before,
+            diagnostics_after=diagnostics_after,
+            errors_before_count=len(diagnostics_before),
+            errors_after_count=len(diagnostics_after),
+            round_number=receipt.round_number,
+            raw_output_ref=revalidation_input.raw_output_ref,
+            metadata={
+                **dict(revalidation_input.metadata),
+                "revalidation_failure_reason": "missing_revalidation_exit_code",
+                "reported_exit_code": None,
+            },
+        )
+        return (
+            attach_revalidation_evidence(receipt, evidence),
+            diagnostics_after,
+            "Repair revalidation failed: missing verifier exit code.",
+        )
+
+    evidence = RepairRevalidationEvidence(
+        command=revalidation_input.command,
+        exit_code=revalidation_input.exit_code,
+        diagnostics_before=diagnostics_before,
+        diagnostics_after=diagnostics_after,
+        errors_before_count=len(diagnostics_before),
+        errors_after_count=len(diagnostics_after),
+        round_number=receipt.round_number,
+        raw_output_ref=revalidation_input.raw_output_ref,
+        metadata=revalidation_input.metadata,
+    )
+    attached_receipt = attach_revalidation_evidence(receipt, evidence)
+    if attached_receipt.status == "failed_revalidation":
+        return attached_receipt, diagnostics_after, "Repair revalidation failed."
+    return attached_receipt, diagnostics_after, None
+
+
+def _attach_failed_native_revalidation(
+    receipt: RepairReceipt,
+    diagnostics_before: tuple[RepairDiagnostic, ...],
+    *,
+    message: str,
+    metadata: Mapping[str, Any],
+) -> tuple[RepairReceipt, tuple[RepairDiagnostic, ...], str]:
+    diagnostics_after = diagnostics_before
+    evidence = RepairRevalidationEvidence(
+        command=(),
+        exit_code=1,
+        diagnostics_before=diagnostics_before,
+        diagnostics_after=diagnostics_after,
+        errors_before_count=len(diagnostics_before),
+        errors_after_count=len(diagnostics_after),
+        round_number=receipt.round_number,
+        metadata=metadata,
+    )
+    return attach_revalidation_evidence(receipt, evidence), diagnostics_after, message
 
 
 def _to_public_repair_planning_result(
@@ -1040,6 +1658,17 @@ def _to_public_repair_composition_summary(
     )
 
 
+def _to_public_repair_diagnostic(diagnostic: RepairDiagnostic) -> RepairDiagnosticV1:
+    return RepairDiagnosticV1(
+        source=diagnostic.source,
+        code=diagnostic.code,
+        message=diagnostic.message,
+        path=diagnostic.path,
+        severity=diagnostic.severity,
+        metadata=diagnostic.metadata,
+    )
+
+
 def _artifact_quality_errors_from_command(
     command: PlanDirectorRepairCommandV1 | RunDirectorRepairCommandV1,
 ) -> tuple[str, ...]:
@@ -1067,7 +1696,7 @@ def _public_receipt_to_internal(receipt: RepairReceiptV1) -> RepairReceipt:
     return RepairReceipt(
         receipt_id=receipt.receipt_id,
         plan_id=receipt.plan_id,
-        rule_id=receipt.source_tool,
+        rule_id=receipt.rule_id,
         source_tool=receipt.source_tool,
         status=receipt.status,
         mode=str(receipt.metadata.get("mode") or "commit"),
@@ -1147,10 +1776,12 @@ def _to_public_repair_receipt(receipt: RepairReceipt) -> RepairReceiptV1:
         source_tool=receipt.source_tool,
         status=receipt.status,
         authoritative=receipt.authoritative,
+        rule_id=receipt.rule_id,
         files_changed=receipt.files_changed,
         before_hashes=receipt.before_hashes,
         after_hashes=receipt.after_hashes,
         round_number=receipt.round_number,
+        evidence_status=receipt.evidence_status,
         errors_before=receipt.errors_before,
         errors_after=receipt.errors_after,
         net_error_reduction=receipt.net_error_reduction,
@@ -1166,13 +1797,22 @@ def _to_public_repair_receipt(receipt: RepairReceipt) -> RepairReceiptV1:
 
 __all__ = [
     "AttachDirectorRepairRevalidationEvidenceV1",
+    "DirectorRepairConvergenceResultV1",
+    "DirectorRepairConvergenceRoundResultV1",
+    "DirectorRepairConvergenceVerifierFn",
+    "DirectorRepairConvergenceVerifierRequestV1",
     "DirectorRepairKernelSummaryProjectionResultV1",
     "DirectorRepairMaterializationQualityScheduleResultV1",
     "DirectorRepairMaterializationQualityStepV1",
     "DirectorRepairPostExecutionScheduleResultV1",
     "DirectorRepairPostExecutionStepV1",
+    "DirectorRepairRevalidationInputV1",
     "DirectorRepairRevalidationProjectionResultV1",
+    "DirectorRepairRevalidationRequestV1",
+    "DirectorRepairRevalidatorFn",
+    "DirectorRepairVerifierSnapshotInputV1",
     "ProjectDirectorRepairKernelSummaryV1",
+    "RunDirectorRepairConvergenceCommandV1",
     "attach_director_repair_revalidation_evidence",
     "build_director_repair_kernel_summary",
     "compare_director_repair_shadow_run",
@@ -1188,5 +1828,6 @@ __all__ = [
     "run_director_materialization_quality_repair_schedule",
     "run_director_post_execution_repair_schedule",
     "run_director_repair",
+    "run_director_repair_convergence",
     "validate_director_repair_advisory",
 ]

@@ -90,14 +90,14 @@ def create_role_adapter(role_id: str, workspace: str) -> BaseRoleAdapter:
     return adapter_class(workspace_token)
 
 
-def apply_deterministic_materialization_quality_repairs(
+def run_director_materialization_quality_repair_schedule(
     adapter: Any,
     *,
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Run legacy materialization-quality repairs through an explicit public wrapper."""
+    """Run Director materialization-quality repair schedule through the public boundary."""
 
     from ..internal.director.materialization_quality_repair_bridge import (
         run_materialization_quality_repairs,
@@ -112,7 +112,7 @@ def apply_deterministic_materialization_quality_repairs(
     public_summary = dict(summary or {})
     public_summary["public_boundary"] = {
         "schema_version": "roles.adapters.materialization_quality_repair_boundary.v1",
-        "mode": "legacy_strategy_host_wrapper",
+        "mode": "runtime_owned_schedule_public_boundary",
         "internal_function_exported": False,
         "repair_kernel_owner": "director.runtime",
         "director_runtime_public_summary_required": True,
@@ -120,12 +120,65 @@ def apply_deterministic_materialization_quality_repairs(
     return results, public_summary
 
 
-def apply_deterministic_cpp_post_repairs(workspace: str | Path) -> list[dict[str, Any]]:
+def apply_deterministic_materialization_quality_repairs(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Deprecated migration-only shim for old public imports.
+
+    Production code must call ``run_director_materialization_quality_repair_schedule``.
+    This wrapper remains only to preserve the public API during migration.
+    """
+
+    results, summary = run_director_materialization_quality_repair_schedule(
+        adapter,
+        task=task,
+        task_id=task_id,
+        artifact_quality_errors=artifact_quality_errors,
+    )
+    public_summary = dict(summary or {})
+    public_boundary = dict(public_summary.get("public_boundary") or {})
+    public_boundary["migration_only_compatibility_shim"] = (
+        "apply_deterministic_materialization_quality_repairs"
+    )
+    public_boundary["preferred_entrypoint"] = "run_director_materialization_quality_repair_schedule"
+    public_summary["public_boundary"] = public_boundary
+    return results, public_summary
+
+
+def run_director_cpp_post_execution_repairs(workspace: str | Path) -> list[dict[str, Any]]:
     """Run Director C++ post-execution repairs through the roles.adapters public boundary."""
 
     from ..internal.director.post_execution_repair_bridge import run_cpp_post_repairs_as_tool_results
 
     return run_cpp_post_repairs_as_tool_results(Path(workspace))
+
+
+def apply_deterministic_cpp_post_repairs(workspace: str | Path) -> list[dict[str, Any]]:
+    """Deprecated migration-only shim for old public imports.
+
+    Production code must call ``run_director_cpp_post_execution_repairs``.
+    This wrapper remains only to preserve the public API during migration.
+    """
+
+    return run_director_cpp_post_execution_repairs(workspace)
+
+
+apply_deterministic_materialization_quality_repairs.__deprecated__ = (
+    "migration-only compatibility shim; use run_director_materialization_quality_repair_schedule"
+)
+apply_deterministic_materialization_quality_repairs.__migration_only__ = True
+apply_deterministic_materialization_quality_repairs.__preferred_entrypoint__ = (
+    "run_director_materialization_quality_repair_schedule"
+)
+apply_deterministic_cpp_post_repairs.__deprecated__ = (
+    "migration-only compatibility shim; use run_director_cpp_post_execution_repairs"
+)
+apply_deterministic_cpp_post_repairs.__migration_only__ = True
+apply_deterministic_cpp_post_repairs.__preferred_entrypoint__ = "run_director_cpp_post_execution_repairs"
 
 
 def register_all_adapters(service: object) -> None:
@@ -217,5 +270,7 @@ __all__ = [
     "get_schema_for_role",
     "get_supported_roles",
     "register_all_adapters",
+    "run_director_cpp_post_execution_repairs",
     "run_director_materialization_quality_repair",
+    "run_director_materialization_quality_repair_schedule",
 ]

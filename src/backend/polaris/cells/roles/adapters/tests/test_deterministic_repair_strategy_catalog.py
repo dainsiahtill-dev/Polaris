@@ -12,7 +12,10 @@ from polaris.cells.director.runtime.public import (
     QueryDirectorRepairStrategyCatalogV1,
     query_director_repair_strategy_catalog,
 )
-from polaris.cells.roles.adapters.internal.director import materialization_quality_repair_bridge
+from polaris.cells.roles.adapters.internal.director import (
+    materialization_quality_repair_bridge,
+    post_execution_repair_bridge,
+)
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs import (
     generic_repairs,
     rust_repairs,
@@ -21,7 +24,7 @@ from polaris.cells.roles.adapters.internal.director.repair_profile_projection im
     summarize_deterministic_repair_source_tools,
 )
 from polaris.cells.roles.adapters.public import service as role_adapter_service
-from polaris.cells.roles.adapters.public.service import apply_deterministic_cpp_post_repairs
+from polaris.cells.roles.adapters.public.service import run_director_cpp_post_execution_repairs
 
 _SOURCE_TOOL_RE = re.compile(r"[\"'](?P<tool>deterministic_[A-Za-z0-9_]+)[\"']")
 _NON_STRATEGY_TOKENS = {"deterministic_repair_profiles"}
@@ -164,6 +167,38 @@ def test_catalog_describes_language_phase_and_concern() -> None:
     assert profile["risk_level"] == "low"
 
 
+def test_rust_catalog_drift_tokens_are_registered_without_executable_drift() -> None:
+    profiles = {
+        str(item.get("source_tool") or ""): item
+        for item in summarize_deterministic_repair_source_tools(
+            [
+                "deterministic_rust_missing_fields_repair",
+                "deterministic_rust_struct_literal_missing_field_repair",
+            ]
+        )
+    }
+
+    missing_fields = profiles["deterministic_rust_missing_fields_repair"]
+    assert missing_fields["registered"] is True
+    assert missing_fields["language"] == "rust"
+    assert missing_fields["phase"] == "code_repair"
+    assert missing_fields["concern"] == "missing_symbol_or_file"
+    assert missing_fields["risk_level"] == "low"
+    assert missing_fields["implementation_status"] == "legacy_strategy_host"
+    assert missing_fields["execution_owner"] == "roles.adapters.legacy_strategy_host"
+    assert missing_fields["bench_driven_migration_required"] is True
+
+    struct_literal = profiles["deterministic_rust_struct_literal_missing_field_repair"]
+    assert struct_literal["registered"] is True
+    assert struct_literal["language"] == "rust"
+    assert struct_literal["phase"] == "code_repair"
+    assert struct_literal["concern"] == "missing_symbol_or_file"
+    assert struct_literal["risk_level"] == "low"
+    assert struct_literal["implementation_status"] == "executable_runtime"
+    assert struct_literal["execution_owner"] == "director.runtime"
+    assert struct_literal["bench_driven_migration_required"] is False
+
+
 def test_unknown_source_tool_is_fail_closed_high_risk() -> None:
     profile = summarize_deterministic_repair_source_tools(["deterministic_future_repair"])[0]
 
@@ -233,23 +268,21 @@ def test_director_runtime_public_catalog_mirrors_authoritative_catalog() -> None
     assert payload["summary"]["by_concern"]
 
 
-def test_rust_post_repairs_emit_rule_metadata_and_revalidation(
+def test_rust_post_repairs_no_longer_emit_dependency_records(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
     stderr_before = "error[E0433]: failed to resolve: use of unresolved module or unlinked crate `serde`\n"
-    stderr_after = ""
-    cargo_outputs = iter((stderr_before, stderr_after))
 
     def fake_cargo_check(workspace: Path) -> str:
         assert workspace == tmp_path
-        return next(cargo_outputs)
+        return stderr_before
 
     def fake_dependencies(workspace: Path, artifact_quality_errors: list[str]) -> list[dict[str, Any]]:
         assert workspace == tmp_path
         assert artifact_quality_errors == [stderr_before]
-        return [{"file": "Cargo.toml", "packages": ["serde"]}]
+        raise AssertionError("dependency repair belongs to rust.dependency_resolution runtime bridge")
 
     monkeypatch.setattr(rust_repairs, "_run_cargo_check_stderr", fake_cargo_check)
     monkeypatch.setattr(rust_repairs, "repair_rust_dependencies", fake_dependencies)
@@ -275,18 +308,61 @@ def test_rust_post_repairs_emit_rule_metadata_and_revalidation(
 
     records = rust_repairs.run_all_rust_post_repairs(tmp_path)
 
-    assert len(records) == 1
-    assert records[0]["source_tool"] == "deterministic_rust_dependency_repair"
-    assert records[0]["phase"] == "dependency_resolution"
-    assert records[0]["priority"] == 0
-    assert "round_number" not in records[0]
-    assert records[0]["revalidation"] == {
-        "command": ["cargo", "check", "--quiet"],
-        "exit_code": 0,
-        "errors_before": 1,
-        "errors_after": 0,
-        "net_error_reduction": 1,
+    assert records == []
+
+
+def test_rust_dependency_resolution_bridge_routes_runtime_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.rs").write_text("use serde::Serialize;\n", encoding="utf-8")
+    artifact_errors = ("error[E0433]: failed to resolve: use of unresolved module or unlinked crate `serde`",)
+    calls: list[dict[str, Any]] = []
+
+    class Adapter:
+        workspace = tmp_path
+        artifact_quality_errors = artifact_errors
+
+    def fake_runtime_repair(adapter: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        calls.append({"adapter": adapter, **kwargs})
+        return [
+            {
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "source_tool": kwargs["source_tool"],
+                    "file": "Cargo.toml",
+                },
+            }
+        ]
+
+    monkeypatch.setattr(
+        post_execution_repair_bridge,
+        "run_runtime_repair_with_director_tools",
+        fake_runtime_repair,
+    )
+
+    result = post_execution_repair_bridge._POST_EXECUTION_REPAIR_RUNNERS["rust.dependency_resolution"](
+        Adapter(),
+        tmp_path,
+        "task-rust-deps",
+    )
+
+    assert result[0]["result"]["source_tool"] == "deterministic_rust_dependency_repair"
+    assert len(calls) == 1
+    assert calls[0]["workspace_path"] == tmp_path
+    assert calls[0]["task_id"] == "task-rust-deps"
+    assert calls[0]["source_tool"] == "deterministic_rust_dependency_repair"
+    assert calls[0]["executor_factory"] is post_execution_repair_bridge.DirectorToolExecutor
+    assert calls[0]["base_files"] == {
+        "Cargo.toml": '[package]\nname = "demo"\nversion = "0.1.0"\n',
+        "src/lib.rs": "use serde::Serialize;\n",
     }
+    assert calls[0]["artifact_quality_errors"] == artifact_errors
+    assert calls[0]["allowed_paths"] == ("Cargo.toml", "src/lib.rs")
+    assert calls[0]["use_editor"] is False
 
 
 def test_cpp_post_repairs_public_wrapper_uses_catalog_source_tool(
@@ -299,7 +375,7 @@ def test_cpp_post_repairs_public_wrapper_uses_catalog_source_tool(
     header.write_text("#pragma once\n", encoding="utf-8")
     target.write_text('#include "src/models/postcard.hpp"\n', encoding="utf-8")
 
-    results = apply_deterministic_cpp_post_repairs(tmp_path)
+    results = run_director_cpp_post_execution_repairs(tmp_path)
 
     assert len(results) == 1
     assert results[0]["tool"] == "write_file"
@@ -325,12 +401,14 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         task: dict[str, Any],
         task_id: str,
         artifact_quality_errors: list[str],
+        convergence_verifier: Any = None,
     ) -> list[dict[str, Any]]:
         observed_step_ids.append(step_id)
         assert adapter == {"workspace": "/tmp/demo"}
         assert task_id == "task-1"
         assert task == {"target_files": ["src/app.ts"]}
         assert artifact_quality_errors == ["error TS1005"]
+        assert convergence_verifier is None
         return []
 
     monkeypatch.setattr(
@@ -339,7 +417,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         fake_materialization_repair_step,
     )
 
-    results, summary = role_adapter_service.apply_deterministic_materialization_quality_repairs(
+    results, summary = role_adapter_service.run_director_materialization_quality_repair_schedule(
         {"workspace": "/tmp/demo"},
         task={"target_files": ["src/app.ts"]},
         task_id="task-1",
@@ -358,7 +436,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         "materialization.go_import",
     ]
     assert observed_step_ids == expected_step_ids
-    assert role_adapter_service.apply_deterministic_materialization_quality_repairs.__module__.endswith(
+    assert role_adapter_service.run_director_materialization_quality_repair_schedule.__module__.endswith(
         ".public.service"
     )
     assert summary["repair_kernel"]["stage"] == "materialization_quality_repairs"
@@ -371,7 +449,35 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
     assert summary["dark_launch_comparison"]["cutover_ready"] is False
     assert summary["dark_launch_comparison"]["independent_shadow_required"] is True
     assert summary["dark_launch_comparison"]["independent_shadow_satisfied"] is False
-    assert summary["materialization_quality_bridge"] == {
+    expected_reconciliation = {
+        "schema_version": "director.materialization_quality_schedule_reconciliation.v1",
+        "runtime_schedule_owner": "director.runtime",
+        "runner_binding_owner": "roles.adapters",
+        "runtime_step_ids": expected_step_ids,
+        "runner_step_ids": expected_step_ids,
+        "schedule_result_step_ids": expected_step_ids,
+        "runtime_step_count": len(expected_step_ids),
+        "runner_step_count": len(expected_step_ids),
+        "schedule_result_step_count": len(expected_step_ids),
+        "runtime_has_unique_steps": True,
+        "runner_has_unique_steps": True,
+        "runner_key_set_matches_runtime": True,
+        "runner_order_matches_runtime": True,
+        "schedule_result_matches_runtime": True,
+        "missing_runner_step_ids": [],
+        "extra_runner_step_ids": [],
+        "missing_schedule_result_step_ids": [],
+        "extra_schedule_result_step_ids": [],
+        "exact_match": True,
+    }
+    bridge = summary["materialization_quality_bridge"]
+    reconciliation = bridge["runner_binding_reconciliation"]
+    assert reconciliation["exact_match"] is True
+    assert reconciliation["runtime_step_ids"] == expected_step_ids
+    assert reconciliation["runner_step_ids"] == reconciliation["runtime_step_ids"]
+    assert reconciliation["schedule_result_step_ids"] == reconciliation["runtime_step_ids"]
+    assert reconciliation == expected_reconciliation
+    assert bridge == {
         "schema_version": "director.materialization_quality_repair_bridge.v1",
         "mode": "runtime_schedule_step_runner_adapter",
         "bridge_file": "roles.adapters.internal.director.materialization_quality_repair_bridge",
@@ -380,9 +486,11 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         "runner_binding_owner": "roles.adapters",
         "ordered_step_ids": expected_step_ids,
         "runner_step_ids": expected_step_ids,
+        "runner_binding_reconciliation": expected_reconciliation,
         "internal_function_exported": False,
         "repair_kernel_owner": "director.runtime",
         "director_runtime_public_summary_required": True,
+        "convergence_verifier_present": False,
         "receipt_count": 0,
         "coverage_preaudit_uncovered_diagnostic_count": 1,
         "coverage_preaudit_rule_discovery_required": True,
@@ -395,13 +503,134 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         ],
         "coverage_uncovered_diagnostic_count": 1,
     }
+    debt = summary["repair_kernel_migration_debt"]
+    assert debt["schema_version"] == "director.materialization_quality_repair_migration_debt.v1"
+    assert debt["legacy_callback_bridge"] is True
+    assert debt["convergence_verifier_present"] is False
+    assert debt["cutover_ready"] is False
+    assert debt["step_count"] == len(expected_step_ids)
+    assert debt["blocked_step_count"] == len(expected_step_ids)
+    assert debt["authoritative_receipts_allowed"] is False
+    assert debt["native_receipt_present_step_count"] == 0
+    assert debt["callback_projection_present_step_count"] == 0
+    assert debt["callback_only_step_count"] == 0
+    assert debt["native_receipt_step_ids"] == []
+    assert debt["callback_projection_step_ids"] == []
+    assert debt["remaining_callback_only_step_ids"] == []
+    assert summary["legacy_callback_debt"] == debt["legacy_callback_debt"]
+    assert [item["step_id"] for item in debt["legacy_callback_debt"]] == expected_step_ids
+    for item in debt["legacy_callback_debt"]:
+        assert {
+            "step_id",
+            "language",
+            "phase",
+            "priority",
+            "declared_source_tool",
+            "actual_source_tools",
+            "runtime_executable_source_tools",
+            "legacy_only_source_tools",
+            "native_receipt_present",
+            "native_repair_kernel_receipt_count",
+            "callback_projection_present",
+            "callback_receipt_projection_count",
+            "callback_only",
+            "projection_only",
+            "authoritative_receipts_allowed",
+            "write_tool_evidence",
+            "convergence_path_available",
+            "convergence_verifier_present",
+            "verifier_evidence_required",
+            "verifier_evidence_present",
+            "native_verifier_evidence_present",
+            "callback_verifier_evidence_present",
+            "cutover_ready",
+            "cutover_blockers",
+            "blockers",
+        } <= set(item)
+        assert item["actual_source_tools"] == []
+        assert item["runtime_executable_source_tools"] == []
+        assert item["legacy_only_source_tools"] == []
+        assert item["native_receipt_present"] is False
+        assert item["native_repair_kernel_receipt_count"] == 0
+        assert item["callback_projection_present"] is False
+        assert item["callback_receipt_projection_count"] == 0
+        assert item["callback_only"] is False
+        assert item["projection_only"] is False
+        assert item["authoritative_receipts_allowed"] is False
+        assert item["convergence_verifier_present"] is False
+        assert item["verifier_evidence_required"] is True
+        assert item["verifier_evidence_present"] is False
+        assert item["native_verifier_evidence_present"] is False
+        assert item["callback_verifier_evidence_present"] is False
+        assert item["cutover_ready"] is False
+        assert item["cutover_blockers"] == item["blockers"]
+        assert "legacy_callback_runner" in item["blockers"]
+        assert "missing_revalidation_evidence" in item["blockers"]
+        assert "independent_shadow_required" in item["blockers"]
     assert summary["public_boundary"] == {
         "schema_version": "roles.adapters.materialization_quality_repair_boundary.v1",
-        "mode": "legacy_strategy_host_wrapper",
+        "mode": "runtime_owned_schedule_public_boundary",
         "internal_function_exported": False,
         "repair_kernel_owner": "director.runtime",
         "director_runtime_public_summary_required": True,
     }
+
+
+def test_legacy_public_repair_wrappers_are_migration_only_compatibility_shims(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_materialization_schedule(
+        adapter: Any,
+        *,
+        task: dict[str, Any],
+        task_id: str,
+        artifact_quality_errors: list[str],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        assert adapter == {"workspace": "/tmp/demo"}
+        assert task == {"target_files": ["src/app.ts"]}
+        assert task_id == "task-1"
+        assert artifact_quality_errors == ["error TS1005"]
+        return [], {
+            "public_boundary": {
+                "schema_version": "roles.adapters.materialization_quality_repair_boundary.v1",
+            }
+        }
+
+    def fake_cpp_post_execution(workspace: str | Path) -> list[dict[str, Any]]:
+        assert Path(workspace).as_posix() == "/tmp/demo"
+        return [{"tool": "write_file", "success": True}]
+
+    monkeypatch.setattr(
+        role_adapter_service,
+        "run_director_materialization_quality_repair_schedule",
+        fake_materialization_schedule,
+    )
+    monkeypatch.setattr(
+        role_adapter_service,
+        "run_director_cpp_post_execution_repairs",
+        fake_cpp_post_execution,
+    )
+
+    results, summary = role_adapter_service.apply_deterministic_materialization_quality_repairs(
+        {"workspace": "/tmp/demo"},
+        task={"target_files": ["src/app.ts"]},
+        task_id="task-1",
+        artifact_quality_errors=["error TS1005"],
+    )
+    cpp_results = role_adapter_service.apply_deterministic_cpp_post_repairs("/tmp/demo")
+
+    assert results == []
+    assert cpp_results == [{"tool": "write_file", "success": True}]
+    assert summary["public_boundary"]["migration_only_compatibility_shim"] == (
+        "apply_deterministic_materialization_quality_repairs"
+    )
+    assert summary["public_boundary"]["preferred_entrypoint"] == (
+        "run_director_materialization_quality_repair_schedule"
+    )
+    assert "migration-only" in role_adapter_service.apply_deterministic_materialization_quality_repairs.__doc__
+    assert "migration-only" in role_adapter_service.apply_deterministic_cpp_post_repairs.__doc__
+    assert "migration-only" in role_adapter_service.apply_deterministic_materialization_quality_repairs.__deprecated__
+    assert "migration-only" in role_adapter_service.apply_deterministic_cpp_post_repairs.__deprecated__
 
 
 def test_legacy_materialization_quality_function_facades_runtime_bridge(
@@ -443,3 +672,217 @@ def test_legacy_materialization_quality_function_facades_runtime_bridge(
         "task_id": "task-1",
         "artifact_quality_errors": ["error TS1005"],
     }
+
+
+def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def sentinel_verifier(request: Any) -> Any:
+        return request
+
+    def fake_materialization_repair_step(
+        step_id: str,
+        adapter: Any,
+        *,
+        task: dict[str, Any],
+        task_id: str,
+        artifact_quality_errors: list[str],
+        convergence_verifier: Any = None,
+    ) -> list[dict[str, Any]]:
+        assert adapter == {"workspace": "/tmp/demo"}
+        assert task == {"target_files": ["package.json"]}
+        assert task_id == "task-1"
+        assert artifact_quality_errors == ["missing npm test script"]
+        assert convergence_verifier is sentinel_verifier
+        if step_id != "materialization.node_manifest":
+            return []
+        return [
+            {
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_runtime_dependency_repair",
+                    "file": "package.json",
+                },
+            }
+        ]
+
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge,
+        "_run_legacy_materialization_quality_repair_step",
+        fake_materialization_repair_step,
+    )
+
+    results, summary = materialization_quality_repair_bridge.run_materialization_quality_repairs(
+        {"workspace": "/tmp/demo"},
+        task={"target_files": ["package.json"]},
+        task_id="task-1",
+        artifact_quality_errors=["missing npm test script"],
+        convergence_verifier=sentinel_verifier,
+    )
+
+    assert len(results) == 1
+    assert summary["convergence_verifier_present"] is True
+    assert summary["materialization_quality_bridge"]["convergence_verifier_present"] is True
+    assert summary["repair_kernel_migration_debt"]["convergence_verifier_present"] is True
+    debt_by_step = {item["step_id"]: item for item in summary["repair_kernel_migration_debt"]["legacy_callback_debt"]}
+    assert len(debt_by_step) == 8
+    node_manifest_debt = debt_by_step["materialization.node_manifest"]
+    assert node_manifest_debt["declared_source_tool"] == "deterministic_node_manifest_materialization_repair"
+    assert node_manifest_debt["actual_source_tools"] == ["deterministic_runtime_dependency_repair"]
+    assert node_manifest_debt["runtime_executable_source_tools"] == []
+    assert node_manifest_debt["legacy_only_source_tools"] == ["deterministic_runtime_dependency_repair"]
+    assert node_manifest_debt["write_tool_evidence"] is True
+    assert node_manifest_debt["convergence_path_available"] is False
+    assert node_manifest_debt["convergence_verifier_present"] is True
+    assert node_manifest_debt["verifier_evidence_required"] is True
+    assert node_manifest_debt["verifier_evidence_present"] is False
+    assert node_manifest_debt["cutover_ready"] is False
+    assert "legacy_callback_runner" in node_manifest_debt["blockers"]
+    assert "legacy_only_source_tools" in node_manifest_debt["blockers"]
+    assert "missing_revalidation_evidence" in node_manifest_debt["blockers"]
+    assert "independent_shadow_required" in node_manifest_debt["blockers"]
+    scheduler_bridge = summary["scheduler_bridge"]
+    node_manifest_lifecycle = scheduler_bridge["receipt_lifecycle_by_step"]["materialization.node_manifest"]
+    assert scheduler_bridge["authoritative_receipts_allowed"] is False
+    assert scheduler_bridge["callback_receipts_authoritative"] is False
+    assert node_manifest_lifecycle["authoritative_receipts_allowed"] is False
+    assert node_manifest_lifecycle["typed_receipt_path_available"] is False
+    assert node_manifest_lifecycle["receipt_lifecycle_evidence_status"] == "missing_evidence"
+    assert "resolved_evidence" not in node_manifest_lifecycle["receipt_lifecycle_evidence_status_counts"]
+
+
+def test_materialization_quality_migration_debt_lists_remaining_callback_only_steps() -> None:
+    step = materialization_quality_repair_bridge.DirectorRepairMaterializationQualityStepV1(
+        step_id="materialization.go_import",
+        language="go",
+        phase="materialization_quality",
+        priority=8,
+        source_tool="deterministic_go_bare_import_string_repair",
+    )
+    tool_results = [
+        {
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_go_bare_import_string_repair",
+                "bridge_step_id": "materialization.go_import",
+                "file": "main.go",
+            },
+        }
+    ]
+    callback_projection = {
+        "projection_id": "callback-only-projection",
+        "receipt_authority": "authoritative",
+        "step_id": "materialization.go_import",
+        "source_tool": "deterministic_go_bare_import_string_repair",
+        "projection_only": False,
+        "authoritative": True,
+        "revalidation_evidence": {
+            "command": ["rtk", "go", "test", "./..."],
+            "exit_code": 0,
+            "raw_output_ref": "runtime/verifier/materialization-go.log",
+        },
+    }
+    normalized_projection = (
+        materialization_quality_repair_bridge._materialization_callback_receipt_projections_from_schedule_result(
+            [callback_projection]
+        )
+    )[0]
+
+    debt = materialization_quality_repair_bridge._project_materialization_quality_migration_debt(
+        ordered_steps=(step,),
+        tool_results=tool_results,
+        callback_receipt_projections=[normalized_projection],
+        native_receipts_by_step={"materialization.go_import": []},
+        convergence_verifier_present=True,
+    )
+
+    assert debt["cutover_ready"] is False
+    assert debt["authoritative_receipts_allowed"] is False
+    assert debt["native_receipt_step_ids"] == []
+    assert debt["callback_projection_step_ids"] == ["materialization.go_import"]
+    assert debt["remaining_callback_only_step_ids"] == ["materialization.go_import"]
+    assert debt["callback_only_step_count"] == 1
+    step_debt = debt["legacy_callback_debt"][0]
+    assert step_debt["native_receipt_present"] is False
+    assert step_debt["callback_projection_present"] is True
+    assert step_debt["callback_only"] is True
+    assert step_debt["projection_only"] is True
+    assert step_debt["authoritative_receipts_allowed"] is False
+    assert step_debt["verifier_evidence_present"] is True
+    assert step_debt["native_verifier_evidence_present"] is False
+    assert step_debt["callback_verifier_evidence_present"] is True
+    assert step_debt["cutover_ready"] is False
+    assert "callback_projection_only" in step_debt["cutover_blockers"]
+    assert "missing_native_repair_receipt" in step_debt["cutover_blockers"]
+
+
+def test_materialization_hygiene_native_cutover_evidence_requires_all_selected_step_evidence() -> None:
+    step = materialization_quality_repair_bridge.DirectorRepairMaterializationQualityStepV1(
+        step_id="materialization.hygiene_scaffold",
+        language="multi",
+        phase="hygiene",
+        priority=0,
+        source_tool="deterministic_materialization_hygiene_repair",
+    )
+    native_receipt = {
+        "receipt_id": "native-hygiene-ready",
+        "source_tool": "deterministic_materialization_hygiene_repair",
+        "revalidation_evidence": {
+            "command": ["rtk", "pytest", "tests/test_hygiene.py"],
+            "exit_code": 0,
+            "errors_after": 0,
+        },
+    }
+    callback_projection = {
+        "projection_id": "callback-hygiene-projection",
+        "step_id": "materialization.hygiene_scaffold",
+        "source_tool": "deterministic_materialization_hygiene_repair",
+        "evidence_status": "resolved_evidence",
+    }
+
+    missing_native_lifecycle = materialization_quality_repair_bridge._materialization_receipt_lifecycle_by_step(
+        ordered_steps=(step,),
+        tool_results=[],
+        callback_receipt_projections=[],
+        native_receipts_by_step={"materialization.hygiene_scaffold": []},
+        migration_debt={"legacy_callback_debt": [{"step_id": "materialization.hygiene_scaffold"}]},
+    )["materialization.hygiene_scaffold"]
+    missing_native_evidence = missing_native_lifecycle["native_cutover_evidence"]
+    assert missing_native_evidence["native_path_available"] is False
+    assert missing_native_evidence["cutover_ready"] is False
+    assert "native_repair_kernel.receipts" in missing_native_evidence["missing_required_evidence"]
+    assert "missing_native_repair_receipt" in missing_native_evidence["cutover_blockers"]
+
+    callback_blocked_lifecycle = materialization_quality_repair_bridge._materialization_receipt_lifecycle_by_step(
+        ordered_steps=(step,),
+        tool_results=[],
+        callback_receipt_projections=[callback_projection],
+        native_receipts_by_step={"materialization.hygiene_scaffold": [native_receipt]},
+        migration_debt={"legacy_callback_debt": [{"step_id": "materialization.hygiene_scaffold"}]},
+    )["materialization.hygiene_scaffold"]
+    callback_blocked_evidence = callback_blocked_lifecycle["native_cutover_evidence"]
+    assert callback_blocked_evidence["native_path_available"] is True
+    assert callback_blocked_evidence["native_verifier_evidence_present"] is True
+    assert callback_blocked_evidence["native_evidence_resolved"] is True
+    assert callback_blocked_evidence["cutover_ready"] is False
+    assert "callback_projection_absent" in callback_blocked_evidence["missing_required_evidence"]
+    assert "callback_projection_still_present" in callback_blocked_evidence["cutover_blockers"]
+
+    ready_lifecycle = materialization_quality_repair_bridge._materialization_receipt_lifecycle_by_step(
+        ordered_steps=(step,),
+        tool_results=[],
+        callback_receipt_projections=[],
+        native_receipts_by_step={"materialization.hygiene_scaffold": [native_receipt]},
+        migration_debt={"legacy_callback_debt": [{"step_id": "materialization.hygiene_scaffold"}]},
+    )["materialization.hygiene_scaffold"]
+    ready_evidence = ready_lifecycle["native_cutover_evidence"]
+    assert ready_evidence["native_path_available"] is True
+    assert ready_evidence["native_verifier_evidence_present"] is True
+    assert ready_evidence["native_evidence_resolved"] is True
+    assert ready_evidence["missing_required_evidence"] == []
+    assert ready_evidence["cutover_blockers"] == []
+    assert ready_evidence["cutover_ready"] is True

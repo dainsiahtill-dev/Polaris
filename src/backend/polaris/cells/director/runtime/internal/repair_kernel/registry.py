@@ -17,8 +17,30 @@ from .cpp_syntax import (
     CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL,
 )
 from .generic_hygiene_syntax import PATCH_RESIDUE_CLEANUP_SOURCE_TOOL
+from .java_syntax import JAVA_TEST_DEPENDENCY_SOURCE_TOOL
+from .rust_syntax import (
+    RUST_CRATE_IMPORT_REWRITE_SOURCE_TOOL,
+    RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL,
+    RUST_FIELD_RENAME_SUGGESTION_SOURCE_TOOL,
+    RUST_INCOMPATIBLE_COPY_DERIVE_SOURCE_TOOL,
+    RUST_LINE_SUGGESTION_SOURCE_TOOL,
+    RUST_METHOD_SELF_SIGNATURE_SOURCE_TOOL,
+    RUST_MISSING_BINARY_ENTRYPOINT_SOURCE_TOOL,
+    RUST_MISSING_MODULE_FILE_SOURCE_TOOL,
+    RUST_MISSING_TRAIT_DERIVE_SOURCE_TOOL,
+    RUST_SERDE_DERIVE_SOURCE_TOOL,
+    RUST_TRAIT_IMPORT_SOURCE_TOOL,
+    RUST_UNRESOLVED_PUB_USE_SOURCE_TOOL,
+    RUST_UNUSED_IMPORT_SOURCE_TOOL,
+    RUST_WRONG_CRATE_PATH_SOURCE_TOOL,
+)
 from .strategy_catalog import deterministic_repair_source_tool_known
 from .typescript_syntax import TYPESCRIPT_RETURN_OBJECT_COMMA_SOURCE_TOOL
+
+RUST_MISSING_FIELDS_SOURCE_TOOL = "deterministic_rust_missing_fields_repair"
+RUST_MISSING_LIB_TARGET_SOURCE_TOOL = "deterministic_rust_missing_lib_target_repair"
+RUST_LIB_ROOT_FACADE_SOURCE_TOOL = "deterministic_rust_lib_root_facade_repair"
+RUST_STRUCT_LITERAL_MISSING_FIELD_SOURCE_TOOL = "deterministic_rust_struct_literal_missing_field_repair"
 
 
 class RepairArchetype(str, Enum):
@@ -47,6 +69,27 @@ def _slot_tuple_str(value: Sequence[str] | None) -> tuple[str, ...]:
 _AMBIGUOUS_REPAIR_LANGUAGE_EXTENSIONS = frozenset((".m",))
 _REPAIR_LANGUAGE_SLOT_MODULE_PREFIX = "polaris.cells.director.runtime.internal.repair_kernel"
 _REPAIR_LANGUAGE_SLOT_REGISTRATION_POLICY = "bench_verified_rule_required"
+_RUNTIME_MIGRATION_SOURCE_TOOLS = frozenset(
+    {
+        JAVA_TEST_DEPENDENCY_SOURCE_TOOL,
+        RUST_CRATE_IMPORT_REWRITE_SOURCE_TOOL,
+        RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL,
+        RUST_FIELD_RENAME_SUGGESTION_SOURCE_TOOL,
+        RUST_INCOMPATIBLE_COPY_DERIVE_SOURCE_TOOL,
+        RUST_LINE_SUGGESTION_SOURCE_TOOL,
+        RUST_METHOD_SELF_SIGNATURE_SOURCE_TOOL,
+        RUST_MISSING_BINARY_ENTRYPOINT_SOURCE_TOOL,
+        RUST_MISSING_FIELDS_SOURCE_TOOL,
+        RUST_MISSING_MODULE_FILE_SOURCE_TOOL,
+        RUST_MISSING_TRAIT_DERIVE_SOURCE_TOOL,
+        RUST_SERDE_DERIVE_SOURCE_TOOL,
+        RUST_STRUCT_LITERAL_MISSING_FIELD_SOURCE_TOOL,
+        RUST_TRAIT_IMPORT_SOURCE_TOOL,
+        RUST_UNUSED_IMPORT_SOURCE_TOOL,
+        RUST_UNRESOLVED_PUB_USE_SOURCE_TOOL,
+        RUST_WRONG_CRATE_PATH_SOURCE_TOOL,
+    }
+)
 
 
 def _default_repairer_module(language: str) -> str:
@@ -542,6 +585,8 @@ class RepairRuleDefinition:
     diagnostic_codes: tuple[str, ...] = ()
     message_terms: tuple[str, ...] = ()
     raw_terms: tuple[str, ...] = ()
+    excluded_message_terms: tuple[str, ...] = ()
+    excluded_raw_terms: tuple[str, ...] = ()
     risk_level: str = "low"
     description: str = ""
     runtime_plan_available: bool = False
@@ -557,11 +602,21 @@ class RepairRuleDefinition:
         object.__setattr__(self, "diagnostic_codes", tuple(code.lower() for code in _tuple_str(self.diagnostic_codes)))
         object.__setattr__(self, "message_terms", tuple(term.lower() for term in _tuple_str(self.message_terms)))
         object.__setattr__(self, "raw_terms", tuple(term.lower() for term in _tuple_str(self.raw_terms)))
+        object.__setattr__(
+            self,
+            "excluded_message_terms",
+            tuple(term.lower() for term in _tuple_str(self.excluded_message_terms)),
+        )
+        object.__setattr__(
+            self,
+            "excluded_raw_terms",
+            tuple(term.lower() for term in _tuple_str(self.excluded_raw_terms)),
+        )
         object.__setattr__(self, "risk_level", _non_empty(self.risk_level))
         object.__setattr__(self, "description", str(self.description or "").strip())
         object.__setattr__(self, "runtime_plan_available", bool(self.runtime_plan_available))
         object.__setattr__(self, "metadata", dict(self.metadata or {}))
-        if not deterministic_repair_source_tool_known(self.source_tool):
+        if not _repair_source_tool_known(self.source_tool):
             raise ValueError(f"unregistered repair source_tool: {self.source_tool}")
 
     def matches(self, diagnostic: RepairDiagnostic) -> bool:
@@ -581,6 +636,14 @@ class RepairRuleDefinition:
             raw_haystack = (diagnostic.raw or "").lower()
             if not all(term in raw_haystack for term in self.raw_terms):
                 return False
+        if self.excluded_message_terms:
+            message_haystack = (diagnostic.message or diagnostic.raw).lower()
+            if any(term in message_haystack for term in self.excluded_message_terms):
+                return False
+        if self.excluded_raw_terms:
+            raw_haystack = (diagnostic.raw or "").lower()
+            if any(term in raw_haystack for term in self.excluded_raw_terms):
+                return False
         return bool(self.diagnostic_codes or self.message_terms or self.raw_terms)
 
     def to_dict(self) -> dict[str, Any]:
@@ -595,6 +658,8 @@ class RepairRuleDefinition:
             "diagnostic_codes": list(self.diagnostic_codes),
             "message_terms": list(self.message_terms),
             "raw_terms": list(self.raw_terms),
+            "excluded_message_terms": list(self.excluded_message_terms),
+            "excluded_raw_terms": list(self.excluded_raw_terms),
             "risk_level": self.risk_level,
             "description": self.description,
             "runtime_plan_available": self.runtime_plan_available,
@@ -623,6 +688,7 @@ class RepairDiagnosticCoverage:
 
     def to_dict(self) -> dict[str, Any]:
         diagnostic_archetype = _suggest_rule_family(self.diagnostic)
+        runtime_blockers = _runtime_blockers_for_matched_rules(self.matched_rules)
         return {
             "diagnostic": self.diagnostic.to_dict(),
             "known_rule_matched": self.known_rule_matched,
@@ -638,7 +704,33 @@ class RepairDiagnosticCoverage:
             "diagnostic_phase": _infer_diagnostic_phase(self.diagnostic, diagnostic_archetype),
             "diagnostic_language": _infer_diagnostic_language(self.diagnostic),
             "suggested_rule_family": diagnostic_archetype,
+            "runtime_blocker_reasons": [blocker["reason"] for blocker in runtime_blockers],
+            "runtime_blockers": runtime_blockers,
         }
+
+
+def _runtime_blockers_for_matched_rules(rules: Sequence[RepairRuleDefinition]) -> list[dict[str, Any]]:
+    blockers: list[dict[str, Any]] = []
+    for rule in rules:
+        if (
+            rule.source_tool == RUST_MISSING_FIELDS_SOURCE_TOOL
+            and rule.rule_id == "rust.missing_struct_field_declaration"
+            and not rule.runtime_plan_available
+        ):
+            blockers.append(
+                {
+                    "reason": "type_inference_required",
+                    "source_tool": rule.source_tool,
+                    "rule_id": rule.rule_id,
+                    "message": "Rust E0609 does not provide a reliable type for the missing struct field.",
+                    "metadata": {
+                        "field_type_source": "not_inferred",
+                        "type_guessing_allowed": False,
+                        "runtime_executable": False,
+                    },
+                }
+            )
+    return blockers
 
 
 @dataclass(frozen=True)
@@ -682,6 +774,15 @@ class RepairCoverageReport:
             "coverage_gap_languages": sorted(
                 {str(gap.get("diagnostic_language") or "unknown") for gap in coverage_gaps}
             ),
+            "coverage_gap_archetypes": sorted(
+                {str(gap.get("diagnostic_archetype") or "unknown") for gap in coverage_gaps}
+            ),
+            "coverage_gap_diagnostic_codes": sorted(
+                {str(gap.get("diagnostic_code") or "unknown") for gap in coverage_gaps}
+            ),
+            "coverage_gap_handoff_recommendations": sorted(
+                {str(gap.get("handoff_recommendation") or "coverage_triage_required") for gap in coverage_gaps}
+            ),
             "executable_runtime_plan_diagnostic_count": self.executable_runtime_plan_diagnostic_count,
             "metadata_only_diagnostic_count": self.metadata_only_diagnostic_count,
             "items": [item.to_dict() for item in self.items],
@@ -692,18 +793,73 @@ class RepairCoverageReport:
 
 def _coverage_gap_payload(item: RepairDiagnosticCoverage) -> dict[str, Any]:
     payload = item.to_dict()
+    diagnostic = dict(payload["diagnostic"])
+    diagnostic_language = str(payload["diagnostic_language"])
+    diagnostic_archetype = str(payload["diagnostic_archetype"])
+    diagnostic_code = str(diagnostic.get("code") or "unknown")
+    slot = _repair_language_slot_for_language(diagnostic_language)
+    handoff_recommendation = _coverage_gap_handoff_recommendation(
+        slot=slot,
+        diagnostic_archetype=diagnostic_archetype,
+    )
     return {
-        "diagnostic": dict(payload["diagnostic"]),
-        "diagnostic_id": str(payload["diagnostic"].get("diagnostic_id") or ""),
+        "diagnostic": diagnostic,
+        "diagnostic_id": str(diagnostic.get("diagnostic_id") or ""),
+        "diagnostic_code": diagnostic_code,
         "known_rule_matched": False,
         "executable_runtime_plan_matched": False,
-        "diagnostic_language": str(payload["diagnostic_language"]),
+        "diagnostic_language": diagnostic_language,
         "diagnostic_phase": str(payload["diagnostic_phase"]),
-        "diagnostic_archetype": str(payload["diagnostic_archetype"]),
+        "diagnostic_archetype": diagnostic_archetype,
         "suggested_rule_family": str(payload["suggested_rule_family"]),
+        "reserved_language_slot_matched": slot is not None,
+        "reserved_language_slot": slot.to_dict() if slot is not None else {},
+        "reserved_repairer_module": slot.repairer_module if slot is not None else "",
+        "reserved_slot_registration_policy": slot.registration_policy if slot is not None else "",
+        "recommended_next_owner": _recommended_next_owner(slot=slot, diagnostic_archetype=diagnostic_archetype),
+        "handoff_recommendation": handoff_recommendation,
+        "llm_advisory_recommended": handoff_recommendation.startswith("llm_"),
+        "agi_advisory_recommended": handoff_recommendation == "agi_advisory_non_authoritative",
+        "authoritative_rule_registration_allowed": False,
+        "recommended_registration_path": (
+            slot.registration_policy if slot is not None else "coverage_report_then_bench_verified_rule"
+        ),
         "missing_capability": "deterministic_repair_rule",
         "audit_reason": "known_rule_matched=false",
     }
+
+
+def _repair_language_slot_for_language(language: str) -> RepairLanguageSlot | None:
+    normalized = str(language or "").strip().lower()
+    if not normalized or normalized == "unknown":
+        return None
+    for slot in repair_language_slots():
+        if slot.language == normalized or normalized in slot.aliases:
+            return slot
+    return None
+
+
+def _recommended_next_owner(*, slot: RepairLanguageSlot | None, diagnostic_archetype: str) -> str:
+    if slot is not None:
+        return "runtime_rule"
+    if str(diagnostic_archetype or "") == "unknown":
+        return "llm"
+    return "agi_advisory"
+
+
+def _coverage_gap_handoff_recommendation(
+    *,
+    slot: RepairLanguageSlot | None,
+    diagnostic_archetype: str,
+) -> str:
+    archetype = str(diagnostic_archetype or "unknown").strip() or "unknown"
+    if slot is not None and archetype != "unknown":
+        return "runtime_rule_backlog"
+    if slot is not None:
+        return "llm_triage_then_runtime_rule"
+    if archetype == "unknown":
+        return "llm_triage"
+    return "agi_advisory_non_authoritative"
 
 
 class RepairRuleRegistry:
@@ -897,6 +1053,45 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
+                rule_id="java.junit_test_dependency",
+                source_tool=JAVA_TEST_DEPENDENCY_SOURCE_TOOL,
+                language="java",
+                phase="dependency_resolution",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                diagnostic_codes=("java_compile_error",),
+                message_terms=("org.junit", "does not exist"),
+                risk_level="medium",
+                description="Rewrites JUnit-dependent Java test sources to plain Java executable tests.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="java.junit_jupiter_test_dependency",
+                source_tool=JAVA_TEST_DEPENDENCY_SOURCE_TOOL,
+                language="java",
+                phase="dependency_resolution",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                diagnostic_codes=("java_compile_error",),
+                message_terms=("org.junit.jupiter",),
+                risk_level="medium",
+                description="Covers JUnit Jupiter import diagnostics in generated Java tests.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="java.junit_test_symbol_dependency",
+                source_tool=JAVA_TEST_DEPENDENCY_SOURCE_TOOL,
+                language="java",
+                phase="dependency_resolution",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                diagnostic_codes=("java_compile_error",),
+                message_terms=("cannot find symbol", "test"),
+                risk_level="medium",
+                description="Covers missing JUnit Test symbol diagnostics in generated Java tests.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
                 rule_id="java.package_does_not_exist",
                 source_tool="deterministic_java_post_repair",
                 language="java",
@@ -979,26 +1174,168 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 description="Covers Python runtime smoke verifier failures after generation.",
             ),
             RepairRuleDefinition(
-                rule_id="rust.incompatible_derive",
-                source_tool="deterministic_rust_derive_repair",
+                rule_id="rust.missing_trait_derive",
+                source_tool=RUST_MISSING_TRAIT_DERIVE_SOURCE_TOOL,
                 language="rust",
                 phase="code_repair",
                 archetype=RepairArchetype.INCOMPATIBLE_DERIVE,
                 priority=1,
                 diagnostic_codes=("rust_e0277",),
-                risk_level="medium",
-                description="Repairs Rust derive mismatches such as serde derives or invalid Copy/Eq derives.",
+                message_terms=("the trait bound", "is not satisfied"),
+                risk_level="low",
+                description="Adds ordinary missing Rust trait derives as span-based text_replace edits.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.serde_derive",
+                source_tool=RUST_SERDE_DERIVE_SOURCE_TOOL,
+                language="rust",
+                phase="code_repair",
+                archetype=RepairArchetype.INCOMPATIBLE_DERIVE,
+                priority=1,
+                diagnostic_codes=("rust_e0277",),
+                raw_terms=("consider adding", "#[derive(serde::"),
+                risk_level="low",
+                description="Adds missing serde Serialize/Deserialize derives as span-based text_replace edits.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.incompatible_copy_derive",
+                source_tool=RUST_INCOMPATIBLE_COPY_DERIVE_SOURCE_TOOL,
+                language="rust",
+                phase="code_repair",
+                archetype=RepairArchetype.INCOMPATIBLE_DERIVE,
+                priority=1,
+                raw_terms=("the trait `Copy` cannot be implemented", "-->", ".rs"),
+                risk_level="low",
+                description="Removes invalid Rust Copy derive tokens as span-based text_replace edits.",
+                runtime_plan_available=True,
             ),
             RepairRuleDefinition(
                 rule_id="rust.method_self_signature",
-                source_tool="deterministic_rust_post_repair",
+                source_tool=RUST_METHOD_SELF_SIGNATURE_SOURCE_TOOL,
                 language="rust",
                 phase="code_repair",
                 archetype=RepairArchetype.MISSING_METHOD_SELF,
                 priority=1,
-                raw_terms=("&self", "found `&`"),
+                raw_terms=("expected parameter name", "-->", ".rs"),
                 risk_level="low",
                 description="Repairs generated Rust method receiver signatures such as `(&)` to `(&self)`.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.missing_binary_entrypoint",
+                source_tool=RUST_MISSING_BINARY_ENTRYPOINT_SOURCE_TOOL,
+                language="rust",
+                phase="structural_repair",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                raw_terms=("couldn't read", "No such file or directory"),
+                risk_level="low",
+                description="Creates missing Rust binary entrypoint files declared by Cargo [[bin]] targets.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.missing_module_file",
+                source_tool=RUST_MISSING_MODULE_FILE_SOURCE_TOOL,
+                language="rust",
+                phase="structural_repair",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                diagnostic_codes=("rust_e0583",),
+                message_terms=("file not found for module",),
+                raw_terms=("to create the module", "create file"),
+                risk_level="low",
+                description="Creates comment-only Rust module topology stubs from rustc E0583 help paths.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.missing_lib_target_src_lib",
+                source_tool=RUST_MISSING_LIB_TARGET_SOURCE_TOOL,
+                language="rust",
+                phase="structural_repair",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                raw_terms=("can't find library", "at path", "src/lib.rs"),
+                excluded_raw_terms=("file not found for module", "to create the module"),
+                risk_level="low",
+                description="Creates a comment-only default src/lib.rs when Cargo's library target file is absent.",
+                runtime_plan_available=True,
+                metadata={
+                    "rule_status": "executable_runtime",
+                    "metadata_only": False,
+                    "executable_runtime_binding": True,
+                    "planner_helper_available": True,
+                    "runtime_plan_scope": "src_lib_rs_missing_file_only",
+                    "custom_lib_path_supported": False,
+                    "unsafe_cases_fail_closed": True,
+                },
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.missing_lib_target_src_lib_manifest",
+                source_tool=RUST_MISSING_LIB_TARGET_SOURCE_TOOL,
+                language="rust",
+                phase="structural_repair",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                raw_terms=("[lib].path", "src/lib.rs", "missing", "library target"),
+                excluded_raw_terms=("file not found for module", "to create the module"),
+                risk_level="low",
+                description="Covers manifest validation signals for a missing default src/lib.rs target.",
+                runtime_plan_available=True,
+                metadata={
+                    "rule_status": "executable_runtime",
+                    "metadata_only": False,
+                    "executable_runtime_binding": True,
+                    "planner_helper_available": True,
+                    "runtime_plan_scope": "src_lib_rs_missing_file_only",
+                    "custom_lib_path_supported": False,
+                    "unsafe_cases_fail_closed": True,
+                },
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.missing_lib_target",
+                source_tool=RUST_MISSING_LIB_TARGET_SOURCE_TOOL,
+                language="rust",
+                phase="structural_repair",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                raw_terms=("lib", "path", ".rs"),
+                excluded_raw_terms=("file not found for module", "to create the module"),
+                risk_level="medium",
+                description=(
+                    "Covers missing Cargo library target files from rustc library target path "
+                    "diagnostics or missing [lib].path-style manifest validation."
+                ),
+                runtime_plan_available=False,
+                metadata={
+                    "rule_status": "metadata_rule_registered",
+                    "metadata_only": True,
+                    "executable_runtime_binding": False,
+                    "planner_helper_available": False,
+                    "legacy_materialization_runner": False,
+                },
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.duplicate_module_file",
+                source_tool=RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL,
+                language="rust",
+                phase="structural_repair",
+                archetype=RepairArchetype.GENERATED_RESIDUE,
+                priority=2,
+                diagnostic_codes=("rust_e0761",),
+                risk_level="medium",
+                description=(
+                    "Repairs Rust E0761 duplicate module files through a policy-gated delete_file "
+                    "operation when one side is generated/comment-only and the sibling contains real Rust code."
+                ),
+                runtime_plan_available=True,
+                metadata={
+                    "rule_status": "executable_runtime",
+                    "planner_helper_available": True,
+                    "executable_runtime_binding": True,
+                    "delete_file_global_validation_required": True,
+                },
             ),
             RepairRuleDefinition(
                 rule_id="rust.unlinked_crate_dependency",
@@ -1026,17 +1363,214 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 description="Repairs Rust crate/module import path mismatches.",
             ),
             RepairRuleDefinition(
+                rule_id="rust.crate_import_rewrite",
+                source_tool=RUST_CRATE_IMPORT_REWRITE_SOURCE_TOOL,
+                language="rust",
+                phase="dependency_resolution",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=0,
+                depends_on=("rust.unlinked_crate_dependency",),
+                diagnostic_codes=("rust_e0433",),
+                raw_terms=("cannot find crate",),
+                risk_level="low",
+                description="Rewrites wrong local Rust crate prefixes to the canonical Cargo crate name.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.wrong_crate_path",
+                source_tool=RUST_WRONG_CRATE_PATH_SOURCE_TOOL,
+                language="rust",
+                phase="dependency_resolution",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=0,
+                depends_on=("rust.unlinked_crate_dependency",),
+                diagnostic_codes=("rust_e0432",),
+                raw_terms=("help:", "a similar path exists", "use ", "-->", ".rs"),
+                risk_level="low",
+                description="Applies cargo wrong crate path suggestions as span-based text_replace edits.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
                 rule_id="rust.unresolved_pub_use",
-                source_tool="deterministic_rust_unresolved_pub_use_repair",
+                source_tool=RUST_UNRESOLVED_PUB_USE_SOURCE_TOOL,
                 language="rust",
                 phase="export_resolution",
                 archetype=RepairArchetype.WRONG_IMPORT_PATH,
                 priority=2,
                 depends_on=("rust.unresolved_import_path",),
                 diagnostic_codes=("rust_e0432",),
-                raw_terms=("no", "in the root"),
+                raw_terms=("no `", " in "),
+                excluded_raw_terms=(" in the root",),
                 risk_level="medium",
                 description="Repairs stale Rust public re-exports after module generation.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.lib_root_facade_root_import",
+                source_tool=RUST_LIB_ROOT_FACADE_SOURCE_TOOL,
+                language="rust",
+                phase="export_resolution",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=2,
+                diagnostic_codes=("rust_e0432",),
+                message_terms=("unresolved import",),
+                raw_terms=(" in the root",),
+                risk_level="medium",
+                description=(
+                    "Covers Rust crate-root unresolved import diagnostics that require a lib.rs "
+                    "facade export rather than stale pub-use deletion."
+                ),
+                runtime_plan_available=True,
+                metadata={
+                    "rule_status": "executable_runtime",
+                    "metadata_only": False,
+                    "executable_runtime_binding": True,
+                    "planner_helper_available": True,
+                    "runtime_plan_scope": "single_pub_use_export_insert_after_declared_module",
+                    "legacy_materialization_runner": False,
+                },
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.lib_root_facade_export",
+                source_tool=RUST_LIB_ROOT_FACADE_SOURCE_TOOL,
+                language="generic",
+                phase="export_resolution",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=2,
+                raw_terms=("lib.rs", "expose"),
+                risk_level="medium",
+                description="Covers verifier signals that require src/lib.rs to expose a generated public API.",
+                runtime_plan_available=True,
+                metadata={
+                    "rule_status": "executable_runtime",
+                    "metadata_only": False,
+                    "executable_runtime_binding": True,
+                    "planner_helper_available": True,
+                    "runtime_plan_scope": "single_pub_use_export_insert_after_declared_module",
+                    "legacy_materialization_runner": True,
+                },
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.lib_root_facade_path_rewrite",
+                source_tool=RUST_LIB_ROOT_FACADE_SOURCE_TOOL,
+                language="rust",
+                phase="export_resolution",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=2,
+                raw_terms=("lib-root path rewrite",),
+                risk_level="low",
+                description="Rewrites crate::lib or canonical_crate::lib paths through one span-based text_replace.",
+                runtime_plan_available=True,
+                metadata={
+                    "rule_status": "executable_runtime",
+                    "metadata_only": False,
+                    "executable_runtime_binding": True,
+                    "planner_helper_available": True,
+                    "runtime_plan_scope": "crate_lib_prefix_path_rewrite_only",
+                    "legacy_materialization_runner": False,
+                },
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.unused_import",
+                source_tool=RUST_UNUSED_IMPORT_SOURCE_TOOL,
+                language="rust",
+                phase="code_repair",
+                archetype=RepairArchetype.GENERATED_RESIDUE,
+                priority=2,
+                raw_terms=("warning:", "unused import", "-->", ".rs"),
+                risk_level="low",
+                description=(
+                    "Removes or comments Rust unused import residue from generated code as "
+                    "span-based text_replace edits."
+                ),
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.trait_import",
+                source_tool=RUST_TRAIT_IMPORT_SOURCE_TOOL,
+                language="rust",
+                phase="export_resolution",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=3,
+                depends_on=("rust.unresolved_pub_use",),
+                diagnostic_codes=("rust_e0599",),
+                raw_terms=("help:", "trait", "implemented but not in scope", "use "),
+                risk_level="low",
+                description="Applies Rust compiler trait import suggestions as span-based text_replace edits.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.line_suggestion",
+                source_tool=RUST_LINE_SUGGESTION_SOURCE_TOOL,
+                language="rust",
+                phase="code_repair",
+                archetype=RepairArchetype.MISSING_METHOD_SELF,
+                priority=3,
+                raw_terms=("help:", "-->", ".rs", " | "),
+                risk_level="low",
+                description="Applies Rust compiler single-line help suggestions as span-based text_replace edits.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.field_rename_suggestion",
+                source_tool=RUST_FIELD_RENAME_SUGGESTION_SOURCE_TOOL,
+                language="rust",
+                phase="code_repair",
+                archetype=RepairArchetype.MISSING_METHOD_SELF,
+                priority=2,
+                diagnostic_codes=("rust_e0609",),
+                raw_terms=("no field", "help:", "similar name exists", "-->", ".rs"),
+                risk_level="low",
+                description="Applies Rust E0609 field rename suggestions as span-based text_replace edits.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.missing_struct_field_declaration",
+                source_tool=RUST_MISSING_FIELDS_SOURCE_TOOL,
+                language="rust",
+                phase="code_repair",
+                archetype=RepairArchetype.MISSING_METHOD_SELF,
+                priority=3,
+                diagnostic_codes=("rust_e0609",),
+                message_terms=("no field", "on type"),
+                raw_terms=("-->", ".rs"),
+                excluded_raw_terms=("similar name exists",),
+                risk_level="medium",
+                description=(
+                    "Covers Rust E0609 field access diagnostics where rustc reports no matching "
+                    "struct field and offers no similar-name rename suggestion."
+                ),
+                runtime_plan_available=False,
+                metadata={
+                    "rule_status": "metadata_rule_registered",
+                    "metadata_only": True,
+                    "executable_runtime_binding": False,
+                    "planner_helper_available": False,
+                },
+            ),
+            RepairRuleDefinition(
+                rule_id="rust.struct_literal_missing_field_initializer",
+                source_tool=RUST_STRUCT_LITERAL_MISSING_FIELD_SOURCE_TOOL,
+                language="rust",
+                phase="code_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=3,
+                diagnostic_codes=("rust_e0063",),
+                message_terms=("missing field", "initializer"),
+                raw_terms=("-->", ".rs"),
+                risk_level="medium",
+                description=(
+                    "Covers Rust E0063 struct literal diagnostics where generated initializers omit required fields."
+                ),
+                runtime_plan_available=True,
+                metadata={
+                    "rule_status": "executable_runtime",
+                    "metadata_only": False,
+                    "executable_runtime_binding": True,
+                    "planner_helper_available": True,
+                    "planner_scope": "generated_marker_single_literal_safe_initializer_only",
+                    "unsafe_cases_fail_closed": True,
+                },
             ),
             RepairRuleDefinition(
                 rule_id="typescript.object_literal_missing_comma",
@@ -1187,6 +1721,11 @@ def _non_empty(value: str) -> str:
     if not normalized:
         raise ValueError("repair rule field must be non-empty")
     return normalized
+
+
+def _repair_source_tool_known(source_tool: str) -> bool:
+    normalized = str(source_tool or "").strip()
+    return deterministic_repair_source_tool_known(normalized) or normalized in _RUNTIME_MIGRATION_SOURCE_TOOLS
 
 
 def _tuple_str(value: Sequence[str] | None) -> tuple[str, ...]:

@@ -14,6 +14,7 @@ import os as os
 import re as re
 import subprocess as subprocess
 import sys as sys
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ from polaris.kernelone.fs.materialization import materialized_file_paths
 from polaris.kernelone.quality import (
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
 )
+from polaris.kernelone.quality.step_verify import normalize_step_verify
 
 from .execution_tools import (
     DirectorToolExecutor as DirectorToolExecutor,
@@ -44,6 +46,10 @@ from .helpers import (
 )
 from .materialization_quality_repair_bridge import run_materialization_quality_repairs
 from .post_execution_repair_bridge import run_post_execution_language_repairs
+from .repair_convergence_verifier import (
+    build_artifact_quality_convergence_verifier,
+    build_step_verify_convergence_verifier,
+)
 from .repair_profile_projection import summarize_deterministic_repair_source_tools
 
 logger = logging.getLogger(__name__)
@@ -119,6 +125,157 @@ def _deterministic_repair_profile_summary_from_tool_results(tool_results: list[d
         "registered": all(bool(profile.get("registered")) for profile in profiles),
         "count": len(source_tools),
     }
+
+
+_POST_EXECUTION_STEP_VERIFY_ERROR_PREFIXES = (
+    "step verify failed",
+    "step verify could not run",
+    "step verify command rejected by safety policy",
+    "step verify target mismatch",
+)
+
+
+def _build_post_execution_repair_convergence_verifier(
+    adapter: Any,
+    *,
+    task_id: str,
+    all_affected_files: list[str],
+    context: dict[str, Any] | None = None,
+    artifact_quality_errors: list[str] | None = None,
+) -> Callable[[Any], Any] | None:
+    workspace_raw = str(getattr(adapter, "workspace", "") or "").strip()
+    if not workspace_raw:
+        return None
+    try:
+        workspace_path = Path(workspace_raw).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not workspace_path.is_dir():
+        return None
+
+    step_verify_command = _post_execution_convergence_step_verify_command(context)
+    if _post_execution_convergence_prefers_step_verify(
+        step_verify_command,
+        artifact_quality_errors=artifact_quality_errors,
+    ):
+        try:
+            return build_step_verify_convergence_verifier(
+                workspace_path,
+                task_id=task_id,
+                verify_command=step_verify_command,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning(
+                "post-execution step-verify convergence verifier factory failed; continuing without verifier evidence",
+                extra={
+                    "task_id": task_id,
+                    "workspace": str(workspace_path),
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+            )
+            return None
+
+    relative_paths = _post_execution_convergence_relative_paths(
+        workspace_path,
+        all_affected_files,
+    )
+    if not relative_paths:
+        return None
+    try:
+        return build_artifact_quality_convergence_verifier(
+            workspace_path,
+            task_id=task_id,
+            relative_paths=relative_paths,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.warning(
+            "post-execution artifact-quality convergence verifier factory failed; continuing without verifier evidence",
+            extra={
+                "task_id": task_id,
+                "workspace": str(workspace_path),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        return None
+
+
+def _build_post_execution_artifact_quality_convergence_verifier(
+    adapter: Any,
+    *,
+    task_id: str,
+    all_affected_files: list[str],
+) -> Callable[[Any], Any] | None:
+    return _build_post_execution_repair_convergence_verifier(
+        adapter,
+        task_id=task_id,
+        all_affected_files=all_affected_files,
+    )
+
+
+def _post_execution_convergence_step_verify_command(context: dict[str, Any] | None) -> str:
+    if not isinstance(context, dict):
+        return ""
+    construction_step = context.get("construction_step")
+    if not isinstance(construction_step, dict):
+        return ""
+    try:
+        return normalize_step_verify(construction_step.get("verify"))
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return ""
+
+
+def _post_execution_convergence_prefers_step_verify(
+    step_verify_command: str,
+    *,
+    artifact_quality_errors: list[str] | None,
+) -> bool:
+    if not step_verify_command:
+        return False
+    if artifact_quality_errors is None:
+        return False
+    normalized_errors = [str(error or "").strip().lower() for error in artifact_quality_errors if str(error or "").strip()]
+    if not normalized_errors:
+        return True
+    return all(_post_execution_convergence_error_is_step_verify(error) for error in normalized_errors)
+
+
+def _post_execution_convergence_error_is_step_verify(error: str) -> bool:
+    return any(error.startswith(prefix) for prefix in _POST_EXECUTION_STEP_VERIFY_ERROR_PREFIXES)
+
+
+def _post_execution_convergence_relative_paths(
+    workspace_path: Path,
+    all_affected_files: list[str],
+) -> tuple[str, ...]:
+    relative_paths: list[str] = []
+    seen: set[str] = set()
+    for raw_path in all_affected_files:
+        text = str(raw_path or "").strip()
+        if not text:
+            continue
+        try:
+            candidate = Path(text)
+            if candidate.is_absolute():
+                normalized = candidate.expanduser().resolve().relative_to(workspace_path).as_posix()
+            else:
+                normalized = Path(text.replace("\\", "/")).as_posix()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if not normalized or normalized == ".":
+            continue
+        if normalized.startswith("../") or "/../" in normalized or normalized == "..":
+            continue
+        try:
+            (workspace_path / normalized).resolve().relative_to(workspace_path)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        relative_paths.append(normalized)
+    return tuple(relative_paths)
 
 
 def _artifact_quality_error_signature(errors: list[str]) -> tuple[str, ...]:
@@ -1761,21 +1918,21 @@ def _phase_deterministic_cleanup(
     current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
     deterministic_tool_results: list[dict[str, Any]] = []
     deterministic_tool_results.extend(
-        _apply_deterministic_scaffold_marker_cleanup(
+        run_scaffold_marker_cleanup(
             adapter,
             task=task,
             task_id=target_task_id,
         )
     )
     deterministic_tool_results.extend(
-        _apply_deterministic_node_test_script_contract_repair(
+        run_node_test_script_contract_repair(
             adapter,
             task=task,
             task_id=target_task_id,
         )
     )
     deterministic_tool_results.extend(
-        _apply_deterministic_patch_residue_cleanup(
+        run_patch_residue_cleanup(
             adapter,
             task=task,
             task_id=target_task_id,
@@ -2170,7 +2327,7 @@ def _phase_typescript_reexport_repair(
 ) -> MaterializationState:
     current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
     if not all_affected_files:
-        deterministic_tool_results = _apply_deterministic_typescript_reexport_repair(
+        deterministic_tool_results = run_typescript_reexport_repair(
             adapter,
             task=task,
             task_id=target_task_id,
@@ -2203,7 +2360,7 @@ def _phase_python_unittest_repair(
 ) -> MaterializationState:
     current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
     if not all_affected_files:
-        deterministic_tool_results = _apply_deterministic_python_unittest_missing_target_repair(
+        deterministic_tool_results = run_python_unittest_missing_target_repair(
             adapter,
             task=task,
             task_id=target_task_id,
@@ -2247,7 +2404,7 @@ def _phase_pre_materialization_target_repair(
         and _stage_summary_has_recoverable_no_write_mutation_contract_exception(primary_llm_summary)
     ):
         deterministic_prematerialization_tool_results, deterministic_prematerialization_summary = (
-            _apply_deterministic_pre_materialization_declared_target_repairs(
+            run_pre_materialization_declared_target_repairs(
                 adapter,
                 task=task,
                 task_id=target_task_id,
@@ -2325,6 +2482,13 @@ def _phase_pre_materialization_quality(
             task=task,
             task_id=target_task_id,
             artifact_quality_errors=pre_materialization_quality_errors,
+            convergence_verifier=_build_post_execution_repair_convergence_verifier(
+                adapter,
+                task_id=target_task_id,
+                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                context=context,
+                artifact_quality_errors=pre_materialization_quality_errors,
+            ),
         )
         if deterministic_quality_tool_results:
             tool_results.extend(deterministic_quality_tool_results)
@@ -2365,10 +2529,18 @@ def _phase_pre_materialization_quality(
             task=task,
             context=context,
         )
+        convergence_verifier = _build_post_execution_repair_convergence_verifier(
+            adapter,
+            task_id=target_task_id,
+            all_affected_files=all_affected_files,
+            context=context,
+            artifact_quality_errors=[],
+        )
         post_execution_tool_results, post_execution_repair_summary = run_post_execution_language_repairs(
             adapter,
             task_id=target_task_id,
             resident_agi_repair_advisory_overlay=resident_agi_repair_advisory_overlay,
+            convergence_verifier=convergence_verifier,
         )
         if post_execution_tool_results and post_execution_repair_summary is not None:
             tool_results.extend(post_execution_tool_results)
@@ -2425,12 +2597,10 @@ async def _phase_quality_repair_loop(
     current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
     _adapter_workspace = adapter_workspace
 
-    deterministic_contract_tool_results, deterministic_contract_summary = (
-        _apply_deterministic_declared_target_contract_repairs(
-            adapter,
-            task=task,
-            task_id=target_task_id,
-        )
+    deterministic_contract_tool_results, deterministic_contract_summary = run_declared_target_contract_repairs(
+        adapter,
+        task=task,
+        task_id=target_task_id,
     )
     if deterministic_contract_tool_results:
         tool_results.extend(deterministic_contract_tool_results)
@@ -2460,11 +2630,11 @@ async def _phase_quality_repair_loop(
     # py_compile + scan_workspace_artifact_quality pass for a calculator.py
     # whose __main__ block raises at call time. The deterministic ladder
     # must actually run the code to surface this kind of failure.
-    artifact_quality_errors += _apply_deterministic_python_static_smoke(
+    artifact_quality_errors += run_python_static_smoke(
         adapter,
         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
     )
-    artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+    artifact_quality_errors += run_python_runtime_smoke(
         adapter,
         task_id=target_task_id,
         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
@@ -2504,6 +2674,13 @@ async def _phase_quality_repair_loop(
             task=task,
             task_id=target_task_id,
             artifact_quality_errors=artifact_quality_errors,
+            convergence_verifier=_build_post_execution_repair_convergence_verifier(
+                adapter,
+                task_id=target_task_id,
+                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                context=context,
+                artifact_quality_errors=artifact_quality_errors,
+            ),
         )
         if deterministic_quality_tool_results:
             deterministic_quality_made_progress = True
@@ -2528,11 +2705,11 @@ async def _phase_quality_repair_loop(
                 context=context,
             )
             artifact_quality_errors += _collect_step_verify_errors(adapter, context)
-            artifact_quality_errors += _apply_deterministic_python_static_smoke(
+            artifact_quality_errors += run_python_static_smoke(
                 adapter,
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
             )
-            artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+            artifact_quality_errors += run_python_runtime_smoke(
                 adapter,
                 task_id=target_task_id,
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
@@ -2581,11 +2758,11 @@ async def _phase_quality_repair_loop(
                 context=context,
             )
             artifact_quality_errors += _collect_step_verify_errors(adapter, context)
-            artifact_quality_errors += _apply_deterministic_python_static_smoke(
+            artifact_quality_errors += run_python_static_smoke(
                 adapter,
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
             )
-            artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+            artifact_quality_errors += run_python_runtime_smoke(
                 adapter,
                 task_id=target_task_id,
                 all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
@@ -2601,6 +2778,13 @@ async def _phase_quality_repair_loop(
                     task=task,
                     task_id=target_task_id,
                     artifact_quality_errors=artifact_quality_errors,
+                    convergence_verifier=_build_post_execution_repair_convergence_verifier(
+                        adapter,
+                        task_id=target_task_id,
+                        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                        context=context,
+                        artifact_quality_errors=artifact_quality_errors,
+                    ),
                 )
                 if deterministic_quality_tool_results:
                     tool_results.extend(deterministic_quality_tool_results)
@@ -2624,11 +2808,11 @@ async def _phase_quality_repair_loop(
                         context=context,
                     )
                     artifact_quality_errors += _collect_step_verify_errors(adapter, context)
-                    artifact_quality_errors += _apply_deterministic_python_static_smoke(
+                    artifact_quality_errors += run_python_static_smoke(
                         adapter,
                         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
                     )
-                    artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+                    artifact_quality_errors += run_python_runtime_smoke(
                         adapter,
                         task_id=target_task_id,
                         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
@@ -2729,11 +2913,11 @@ async def _phase_semantic_quality_repair_loop(
             context=context,
         )
         artifact_quality_errors += _collect_step_verify_errors(adapter, context)
-        artifact_quality_errors += _apply_deterministic_python_static_smoke(
+        artifact_quality_errors += run_python_static_smoke(
             adapter,
             all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
         )
-        artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+        artifact_quality_errors += run_python_runtime_smoke(
             adapter,
             task_id=target_task_id,
             all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
@@ -3357,16 +3541,15 @@ async def _attach_director_file_event_bus(adapter: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Lossless re-export surface (decomposition shim)
+# Lossless helper re-export surface (decomposition shim)
 #
 # ``execute_method`` stays the canonical import path. The bodies below were
-# moved verbatim into sibling modules; they are re-imported here so the full
-# public + test-import surface (and every monkeypatch target) resolves on this
-# module exactly as before. ``scan_workspace_artifact_quality`` (imported at
-# the top of this module) is the canonical monkeypatch target; moved callers
-# resolve it through this module namespace at call time.
+# moved verbatim into sibling modules; non-repair helpers are re-imported here
+# so the public + test-import surface resolves on this module exactly as
+# before. Concrete legacy repair functions stay behind
+# ``execute_method_repair_bridge`` during migration.
 # ---------------------------------------------------------------------------
-from .deterministic_repairs import (  # noqa: E402  (deferred for circular-import safety)
+from .execute_method_repair_bridge import (  # noqa: E402  (deferred for circular-import safety)
     _DECLARED_TARGET_FILE_MISSING_ERROR_RE as _DECLARED_TARGET_FILE_MISSING_ERROR_RE,
     _KNOWN_DEV_DEPENDENCY_VERSIONS as _KNOWN_DEV_DEPENDENCY_VERSIONS,
     _KNOWN_RUNTIME_DEPENDENCY_VERSIONS as _KNOWN_RUNTIME_DEPENDENCY_VERSIONS,
@@ -3393,38 +3576,6 @@ from .deterministic_repairs import (  # noqa: E402  (deferred for circular-impor
     _UNDECLARED_RUNTIME_IMPORT_ERROR_RE as _UNDECLARED_RUNTIME_IMPORT_ERROR_RE,
     _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE as _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE,
     _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE as _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE,
-    _apply_deterministic_declared_target_contract_repairs as _apply_deterministic_declared_target_contract_repairs,
-    _apply_deterministic_javascript_test_missing_target_repair as _apply_deterministic_javascript_test_missing_target_repair,
-    _apply_deterministic_missing_declared_target_repair as _apply_deterministic_missing_declared_target_repair,
-    _apply_deterministic_node_test_script_contract_repair as _apply_deterministic_node_test_script_contract_repair,
-    _apply_deterministic_npm_test_script_repair as _apply_deterministic_npm_test_script_repair,
-    _apply_deterministic_patch_residue_cleanup as _apply_deterministic_patch_residue_cleanup,
-    _apply_deterministic_pre_materialization_declared_target_repairs as _apply_deterministic_pre_materialization_declared_target_repairs,
-    _apply_deterministic_python_package_shadow_bridge_repair as _apply_deterministic_python_package_shadow_bridge_repair,
-    _apply_deterministic_python_runtime_smoke as _apply_deterministic_python_runtime_smoke,
-    _apply_deterministic_python_static_smoke as _apply_deterministic_python_static_smoke,
-    _apply_deterministic_python_unittest_missing_target_repair as _apply_deterministic_python_unittest_missing_target_repair,
-    _apply_deterministic_python_unittest_runtime_failure_repair as _apply_deterministic_python_unittest_runtime_failure_repair,
-    _apply_deterministic_runtime_dependency_repair as _apply_deterministic_runtime_dependency_repair,
-    _apply_deterministic_rust_crate_import_repair as _apply_deterministic_rust_crate_import_repair,
-    _apply_deterministic_rust_dependency_repair as _apply_deterministic_rust_dependency_repair,
-    _apply_deterministic_rust_derive_repair as _apply_deterministic_rust_derive_repair,
-    _apply_deterministic_rust_lib_root_facade_repair as _apply_deterministic_rust_lib_root_facade_repair,
-    _apply_deterministic_rust_line_suggestion_repair as _apply_deterministic_rust_line_suggestion_repair,
-    _apply_deterministic_rust_missing_lib_target_repair as _apply_deterministic_rust_missing_lib_target_repair,
-    _apply_deterministic_rust_trait_import_repair as _apply_deterministic_rust_trait_import_repair,
-    _apply_deterministic_rust_unresolved_pub_use_repair as _apply_deterministic_rust_unresolved_pub_use_repair,
-    _apply_deterministic_scaffold_marker_cleanup as _apply_deterministic_scaffold_marker_cleanup,
-    _apply_deterministic_typeorm_model_normalization_repair as _apply_deterministic_typeorm_model_normalization_repair,
-    _apply_deterministic_typescript_canvas_scale_return_type_repair as _apply_deterministic_typescript_canvas_scale_return_type_repair,
-    _apply_deterministic_typescript_enum_member_separator_repair as _apply_deterministic_typescript_enum_member_separator_repair,
-    _apply_deterministic_typescript_escaped_newline_repair as _apply_deterministic_typescript_escaped_newline_repair,
-    _apply_deterministic_typescript_missing_closing_brace_repair as _apply_deterministic_typescript_missing_closing_brace_repair,
-    _apply_deterministic_typescript_missing_export_repair as _apply_deterministic_typescript_missing_export_repair,
-    _apply_deterministic_typescript_reexport_repair as _apply_deterministic_typescript_reexport_repair,
-    _apply_deterministic_typescript_unresolved_identifier_repair as _apply_deterministic_typescript_unresolved_identifier_repair,
-    _apply_deterministic_typescript_zod_type_class_collision_repair as _apply_deterministic_typescript_zod_type_class_collision_repair,
-    _apply_deterministic_unresolved_import_symbol_repair as _apply_deterministic_unresolved_import_symbol_repair,
     _build_javascript_frontend_smoke_test_content as _build_javascript_frontend_smoke_test_content,
     _build_python_symbol_stub as _build_python_symbol_stub,
     _build_substantive_node_test_script as _build_substantive_node_test_script,
@@ -3460,24 +3611,38 @@ from .deterministic_repairs import (  # noqa: E402  (deferred for circular-impor
     _relative_import_repair_target_candidates as _relative_import_repair_target_candidates,
     _relative_import_suffix_order as _relative_import_suffix_order,
     _remove_patch_residue_lines as _remove_patch_residue_lines,
-    _repair_typescript_enum_member_separator_lines as _repair_typescript_enum_member_separator_lines,
-    _repair_typescript_escaped_newline_in_line_comments as _repair_typescript_escaped_newline_in_line_comments,
-    _repair_typescript_unresolved_identifier_lines as _repair_typescript_unresolved_identifier_lines,
-    _repair_typescript_zod_type_class_collision as _repair_typescript_zod_type_class_collision,
     _replace_deterministic_scaffold_markers as _replace_deterministic_scaffold_markers,
     _resolve_relative_ts_module as _resolve_relative_ts_module,
     _task_allows_scaffold_marker_cleanup as _task_allows_scaffold_marker_cleanup,
     _typescript_file_declares_runtime_export as _typescript_file_declares_runtime_export,
     _typescript_module_runtime_exports_symbol as _typescript_module_runtime_exports_symbol,
     _typescript_relative_import_without_suffix as _typescript_relative_import_without_suffix,
-    repair_rust_crate_imports as repair_rust_crate_imports,
-    repair_rust_dependencies as repair_rust_dependencies,
-    repair_rust_lib_root_facade as repair_rust_lib_root_facade,
-    repair_rust_line_suggestions as repair_rust_line_suggestions,
-    repair_rust_missing_lib_targets as repair_rust_missing_lib_targets,
-    repair_rust_trait_imports as repair_rust_trait_imports,
-    repair_rust_unresolved_pub_uses as repair_rust_unresolved_pub_uses,
+    get_legacy_execute_method_repair_helper as get_legacy_execute_method_repair_helper,
+    run_declared_target_contract_repairs as run_declared_target_contract_repairs,
+    run_node_test_script_contract_repair as run_node_test_script_contract_repair,
+    run_patch_residue_cleanup as run_patch_residue_cleanup,
+    run_pre_materialization_declared_target_repairs as run_pre_materialization_declared_target_repairs,
+    run_python_runtime_smoke as run_python_runtime_smoke,
+    run_python_static_smoke as run_python_static_smoke,
+    run_python_unittest_missing_target_repair as run_python_unittest_missing_target_repair,
+    run_scaffold_marker_cleanup as run_scaffold_marker_cleanup,
+    run_typescript_reexport_repair as run_typescript_reexport_repair,
 )
+
+_LEGACY_DETERMINISTIC_REPAIR_COMPAT_PREFIXES = ("_apply_deterministic_", "repair_")
+
+
+def __getattr__(name: str) -> Any:
+    """Compatibility shim for old tests importing legacy repair helpers here."""
+
+    if name.startswith(_LEGACY_DETERMINISTIC_REPAIR_COMPAT_PREFIXES):
+        try:
+            return get_legacy_execute_method_repair_helper(name)
+        except AttributeError:
+            pass
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 from .quality_gate import (  # noqa: E402  (deferred for circular-import safety)
     _ACCEPTANCE_VERIFY_EXISTS_RE as _ACCEPTANCE_VERIFY_EXISTS_RE,
     _QUALITY_REPAIR_ATTEMPT_HARD_CAP as _QUALITY_REPAIR_ATTEMPT_HARD_CAP,

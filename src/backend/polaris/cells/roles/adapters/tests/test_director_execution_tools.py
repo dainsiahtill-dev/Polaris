@@ -126,3 +126,67 @@ def test_write_file_allows_normal_single_line_typescript(tmp_path) -> None:
     assert (tmp_path / "src" / "index.ts").read_text(encoding="utf-8") == (
         "export const n = 1; export const next = n + 1;"
     )
+
+
+def test_delete_file_is_advertised_and_deletes_single_workspace_file(tmp_path) -> None:
+    target = tmp_path / "src" / "stale.ts"
+    target.parent.mkdir(parents=True)
+    target.write_text("export const stale = true;\n", encoding="utf-8")
+    executor = DirectorToolExecutor(str(tmp_path))
+
+    result = executor.execute_tool(
+        "delete_file",
+        {
+            "path": "src/stale.ts",
+            "target_files": ["src/stale.ts"],
+        },
+    )
+
+    assert executor.supports_tool("delete_file") is True
+    assert "delete_file" in executor.available_tools
+    assert result["ok"] is True
+    assert result["file"] == "src/stale.ts"
+    assert result["path"] == "src/stale.ts"
+    assert result["deleted"] is True
+    assert result["bytes_written"] == 0
+    assert result["operation"] == "delete_file"
+    assert result["director_policy"]["allowed"] is True
+    assert not target.exists()
+
+
+def test_delete_file_rejects_missing_file(tmp_path) -> None:
+    executor = DirectorToolExecutor(str(tmp_path))
+
+    result = executor.execute_tool("delete_file", {"path": "src/missing.ts"})
+
+    assert result["ok"] is False
+    assert result["file"] == "src/missing.ts"
+    assert "File not found" in result["error"]
+
+
+def test_delete_file_rejects_directory(tmp_path) -> None:
+    target = tmp_path / "src" / "dir.ts"
+    target.mkdir(parents=True)
+    executor = DirectorToolExecutor(str(tmp_path))
+
+    result = executor.execute_tool("delete_file", {"path": "src/dir.ts"})
+
+    assert result["ok"] is False
+    assert result["file"] == "src/dir.ts"
+    assert "directory" in result["error"]
+    assert target.is_dir()
+
+
+def test_delete_file_rejects_path_outside_workspace(tmp_path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.ts"
+    outside.write_text("export const outside = true;\n", encoding="utf-8")
+    executor = DirectorToolExecutor(str(tmp_path))
+
+    try:
+        result = executor.execute_tool("delete_file", {"path": str(outside)})
+        assert outside.exists()
+    finally:
+        outside.unlink(missing_ok=True)
+
+    assert result["ok"] is False
+    assert "UNSUPPORTED_PATH_PREFIX" in result["error"]

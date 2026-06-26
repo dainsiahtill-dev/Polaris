@@ -12,6 +12,9 @@ import json
 from pathlib import Path
 
 from polaris.kernelone.quality.step_verify import (
+    StepVerifyCommandSafetyAssessment,
+    assess_legacy_step_verify_command_safety,
+    assess_step_verify_command_safety,
     clause_residual,
     collect_failing_clauses,
     first_failing_verify_clause,
@@ -21,6 +24,151 @@ from polaris.kernelone.quality.step_verify import (
     verify_has_structural_clause,
     verify_is_all_hollow,
 )
+
+
+class TestStepVerifyCommandSafety:
+    def test_allows_python_py_compile(self) -> None:
+        assessment = assess_step_verify_command_safety("python -m py_compile app.py")
+
+        assert isinstance(assessment, StepVerifyCommandSafetyAssessment)
+        assert assessment.allowed is True
+        assert assessment.reason == "all_clauses_allowed"
+        assert assessment.blocked_tokens == ()
+        assert assessment.clauses == ("python -m py_compile app.py",)
+
+    def test_allows_pytest(self) -> None:
+        assert assess_step_verify_command_safety("pytest -q").allowed is True
+
+    def test_allows_go_test(self) -> None:
+        assert assess_step_verify_command_safety("go test ./...").allowed is True
+
+    def test_allows_test_and_grep_chain(self) -> None:
+        command = "test -f src/app.py && grep -q 'class App' src/app.py"
+        assessment = assess_step_verify_command_safety(command)
+
+        assert assessment.allowed is True
+        assert assessment.clauses == ("test -f src/app.py", "grep -q 'class App' src/app.py")
+
+    def test_denies_rm(self) -> None:
+        assessment = assess_step_verify_command_safety("rm -rf .")
+
+        assert assessment.allowed is False
+        assert assessment.reason == "blocked_command:rm"
+        assert assessment.blocked_tokens == ("rm",)
+        assert assessment.blocked_clauses == ("rm -rf .",)
+
+    def test_denies_python_c(self) -> None:
+        assessment = assess_step_verify_command_safety("python -c 'print(1)'")
+
+        assert assessment.allowed is False
+        assert assessment.reason == "blocked_dynamic_execution:python -c"
+        assert assessment.blocked_tokens == ("python -c",)
+
+    def test_denies_curl(self) -> None:
+        assessment = assess_step_verify_command_safety("curl http://example.test")
+
+        assert assessment.allowed is False
+        assert assessment.reason == "blocked_command:curl"
+        assert assessment.blocked_tokens == ("curl",)
+
+    def test_denies_semicolon_chain(self) -> None:
+        assessment = assess_step_verify_command_safety("pytest -q; rm -rf .")
+
+        assert assessment.allowed is False
+        assert assessment.reason == "blocked_shell_token:;"
+        assert ";" in assessment.blocked_tokens
+
+    def test_denies_pipe_to_shell(self) -> None:
+        assessment = assess_step_verify_command_safety("cat file | sh")
+
+        assert assessment.allowed is False
+        assert assessment.reason == "blocked_shell_token:|"
+        assert "|" in assessment.blocked_tokens
+
+    def test_denies_output_redirect(self) -> None:
+        assessment = assess_step_verify_command_safety("npm test > out.txt")
+
+        assert assessment.allowed is False
+        assert assessment.reason == "blocked_shell_token:>"
+        assert ">" in assessment.blocked_tokens
+
+    def test_denies_empty_command(self) -> None:
+        assessment = assess_step_verify_command_safety("")
+
+        assert assessment.allowed is False
+        assert assessment.reason == "empty_command"
+        assert assessment.clauses == ()
+
+
+class TestLegacyStepVerifyCommandSafety:
+    def test_allows_legacy_wc_line_count_substitution_that_strict_rejects(self) -> None:
+        command = 'test -f ./style.css && grep -q "#game" ./style.css && [ "$(wc -l < ./style.css)" -le 120 ]'
+
+        strict = assess_step_verify_command_safety(command)
+        legacy = assess_legacy_step_verify_command_safety(command)
+
+        assert strict.allowed is False
+        assert legacy.allowed is True
+        assert legacy.reason == "legacy_shell_verify_allowed"
+
+    def test_allows_legacy_cd_and_or_chains_that_strict_rejects(self) -> None:
+        for command in (
+            "cd src && test -f app.js && grep -q foo app.js",
+            "test -f ./a.txt && grep -q x ./a.txt || test -f ./b.txt",
+        ):
+            strict = assess_step_verify_command_safety(command)
+            legacy = assess_legacy_step_verify_command_safety(command)
+
+            assert strict.allowed is False
+            assert legacy.allowed is True
+
+    def test_denies_legacy_destructive_commands(self) -> None:
+        for command, reason in (
+            ("rm -rf .", "blocked_command:rm"),
+            ("mv a b", "blocked_command:mv"),
+            ("cp a b", "blocked_command:cp"),
+            ("chmod 777 app.py", "blocked_command:chmod"),
+            ("chown user app.py", "blocked_command:chown"),
+            ("sudo test -f app.py", "blocked_command:sudo"),
+            ("curl http://example.test", "blocked_command:curl"),
+            ("wget http://example.test", "blocked_command:wget"),
+            ("nc localhost 80", "blocked_command:nc"),
+            ("netcat localhost 80", "blocked_command:netcat"),
+            ("ssh host", "blocked_command:ssh"),
+            ("scp a host:b", "blocked_command:scp"),
+            ("kill 123", "blocked_command:kill"),
+            ("pkill node", "blocked_command:pkill"),
+            ("killall node", "blocked_command:killall"),
+        ):
+            assessment = assess_legacy_step_verify_command_safety(command)
+
+            assert assessment.allowed is False, command
+            assert assessment.reason == reason
+
+    def test_denies_legacy_dynamic_execution(self) -> None:
+        for command, reason in (
+            ("bash -c 'echo ok'", "blocked_dynamic_execution:bash -c"),
+            ("sh -c 'echo ok'", "blocked_dynamic_execution:sh -c"),
+            ("python -c 'print(1)'", "blocked_dynamic_execution:python -c"),
+            ("node -e 'console.log(1)'", "blocked_dynamic_execution:node -e"),
+        ):
+            assessment = assess_legacy_step_verify_command_safety(command)
+
+            assert assessment.allowed is False, command
+            assert assessment.reason == reason
+
+    def test_denies_legacy_shell_control_tokens(self) -> None:
+        for command, token in (
+            ("test -f app.py; test -f other.py", ";"),
+            ("cat app.py | grep ok", "|"),
+            ("sleep 1 & test -f app.py", "&"),
+            ("test -f `pwd`", "`"),
+            ("test -f $(pwd)", "$()"),
+        ):
+            assessment = assess_legacy_step_verify_command_safety(command)
+
+            assert assessment.allowed is False, command
+            assert assessment.reason == f"blocked_shell_token:{token}"
 
 
 class TestHollowVerifyClassifier:

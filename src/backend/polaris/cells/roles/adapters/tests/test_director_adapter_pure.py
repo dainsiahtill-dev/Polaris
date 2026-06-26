@@ -22,12 +22,16 @@ from unittest.mock import MagicMock
 import pytest
 from polaris.cells.roles.adapters.internal.director import execute_method as execute_method_module
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _normalize_director_role_response
-from polaris.cells.roles.adapters.internal.director.execute_method import (
+from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
     _apply_deterministic_javascript_test_missing_target_repair,
-    _apply_deterministic_patch_residue_cleanup,
+)
+from polaris.cells.roles.adapters.internal.director.deterministic_repairs.python_repairs import (
     _apply_deterministic_python_package_shadow_bridge_repair,
-    _apply_deterministic_python_unittest_missing_target_repair,
     _apply_deterministic_python_unittest_runtime_failure_repair,
+    _apply_deterministic_unresolved_import_symbol_repair,
+)
+from polaris.cells.roles.adapters.internal.director.execute_method import (
+    _apply_deterministic_python_unittest_missing_target_repair,
     _apply_deterministic_scaffold_marker_cleanup,
     _apply_deterministic_typescript_reexport_repair,
     _build_empty_write_content_retry_message,
@@ -50,6 +54,12 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _task_requires_fresh_materialization,
     _task_runtime_finalization_failed_result,
     execute_director_task,
+)
+from polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge import (
+    get_legacy_execute_method_repair_helper,
+    run_patch_residue_cleanup,
+    run_python_runtime_smoke,
+    run_python_static_smoke,
 )
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
@@ -78,6 +88,56 @@ def _write_substantive_node_test_script(tmp_path: Any) -> None:
         "console.log('node smoke test passed');\n",
         encoding="utf-8",
     )
+
+
+def test_execute_method_repair_bridge_blocks_migrated_runtime_helper() -> None:
+    with pytest.raises(AttributeError, match=r"director\.runtime"):
+        get_legacy_execute_method_repair_helper("_apply_deterministic_patch_residue_cleanup")
+
+    with pytest.raises(AttributeError, match="_apply_deterministic_patch_residue_cleanup"):
+        execute_method_module.__getattr__("_apply_deterministic_patch_residue_cleanup")
+
+
+def test_execute_method_repair_bridge_unknown_helper_fails_closed() -> None:
+    with pytest.raises(AttributeError, match="not an allowlisted"):
+        get_legacy_execute_method_repair_helper("_apply_deterministic_not_a_registered_helper")
+
+    with pytest.raises(AttributeError, match="_apply_deterministic_not_a_registered_helper"):
+        execute_method_module.__getattr__("_apply_deterministic_not_a_registered_helper")
+
+
+@pytest.mark.parametrize(
+    "helper_name",
+    [
+        "_apply_deterministic_javascript_test_missing_target_repair",
+        "_apply_deterministic_python_package_shadow_bridge_repair",
+        "_apply_deterministic_python_runtime_smoke",
+        "_apply_deterministic_python_static_smoke",
+        "_apply_deterministic_python_unittest_runtime_failure_repair",
+        "_apply_deterministic_unresolved_import_symbol_repair",
+    ],
+)
+def test_execute_method_repair_bridge_blocks_migrated_materialization_helpers(helper_name: str) -> None:
+    with pytest.raises(AttributeError, match="not an allowlisted"):
+        get_legacy_execute_method_repair_helper(helper_name)
+
+    with pytest.raises(AttributeError, match=helper_name):
+        getattr(execute_method_module, helper_name)
+
+
+def test_execute_method_repair_bridge_rust_helper_fails_closed() -> None:
+    with pytest.raises(AttributeError, match="not an allowlisted"):
+        get_legacy_execute_method_repair_helper("_apply_deterministic_rust_crate_import_repair")
+
+    with pytest.raises(AttributeError, match="not an allowlisted"):
+        get_legacy_execute_method_repair_helper("repair_rust_crate_imports")
+
+
+def test_execute_method_repair_bridge_keeps_allowlisted_helper() -> None:
+    helper = get_legacy_execute_method_repair_helper("_apply_deterministic_scaffold_marker_cleanup")
+
+    assert helper is _apply_deterministic_scaffold_marker_cleanup
+    assert execute_method_module._apply_deterministic_scaffold_marker_cleanup is helper
 
 
 @pytest.mark.asyncio
@@ -2488,15 +2548,23 @@ async def test_phase_quality_repair_loop_continues_after_deterministic_progress_
         execute_method_module, "_collect_materialization_quality_errors", fake_collect_materialization_quality_errors
     )
     monkeypatch.setattr(execute_method_module, "_collect_step_verify_errors", lambda *args, **kwargs: [])
-    monkeypatch.setattr(execute_method_module, "_apply_deterministic_python_static_smoke", lambda *args, **kwargs: [])
-    monkeypatch.setattr(execute_method_module, "_apply_deterministic_python_runtime_smoke", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        execute_method_module,
+        "run_python_static_smoke",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        execute_method_module,
+        "run_python_runtime_smoke",
+        lambda *args, **kwargs: [],
+    )
     monkeypatch.setattr(
         execute_method_module, "_filter_satisfied_declared_target_missing_errors", lambda errors, workspace: errors
     )
     monkeypatch.setattr(execute_method_module, "_missing_declared_target_files", lambda task, workspace: [])
     monkeypatch.setattr(
         execute_method_module,
-        "_apply_deterministic_declared_target_contract_repairs",
+        "run_declared_target_contract_repairs",
         lambda *args, **kwargs: ([], {"stage": "deterministic_contract_repair", "success": False}),
     )
     monkeypatch.setattr(execute_method_module, "run_materialization_quality_repairs", fake_deterministic_quality_repair)
@@ -3074,6 +3142,46 @@ def test_java_post_accessor_alias_repair_uses_director_runtime_kernel(
     assert adapter.progress[-1] == ("task-java", "executing", relative_path)
 
 
+def test_rust_post_aggregate_excludes_runtime_migrated_span_repairs(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
+
+    migrated_helpers = [
+        "repair_rust_crate_imports",
+        "repair_rust_wrong_crate_paths",
+        "repair_rust_method_self_signatures",
+        "repair_rust_incompatible_copy_derives",
+        "repair_rust_unused_imports",
+        "repair_rust_unresolved_pub_uses",
+        "repair_rust_trait_imports",
+        "repair_rust_line_suggestions",
+        "repair_rust_missing_derives",
+        "repair_rust_missing_module_files",
+        "repair_rust_duplicate_module_files",
+    ]
+
+    def fail_if_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("runtime-migrated Rust repair helper was called by legacy aggregate")
+
+    for helper_name in migrated_helpers:
+        monkeypatch.setattr(rust_repairs, helper_name, fail_if_called)
+
+    monkeypatch.setattr(rust_repairs, "repair_rust_dependencies", fail_if_called)
+    for helper_name in (
+        "repair_rust_missing_binary_entrypoint",
+        "repair_rust_missing_fields",
+        "repair_rust_field_rename_suggestions",
+        "repair_rust_lib_root_facade",
+    ):
+        monkeypatch.setattr(rust_repairs, helper_name, lambda *_args, **_kwargs: [])
+
+    batches = rust_repairs._run_rust_post_repair_round(tmp_path, "error[E0433]: unresolved module")
+
+    assert batches == []
+
+
 def test_rust_post_repairs_run_legacy_on_shadow_and_write_back_with_director_tool(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -3102,9 +3210,9 @@ def test_rust_post_repairs_run_legacy_on_shadow_and_write_back_with_director_too
         )
         return [
             {
-                "source_tool": "deterministic_rust_dependency_repair",
+                "source_tool": "deterministic_rust_lib_root_facade_repair",
                 "file": "Cargo.toml",
-                "action": "add serde dependency",
+                "action": "legacy lib root facade shadow write",
                 "phase": "structural",
                 "priority": 0,
                 "round_number": 1,
@@ -3145,6 +3253,11 @@ def test_rust_post_repairs_run_legacy_on_shadow_and_write_back_with_director_too
 
     monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fake_run_all_rust_post_repairs)
     monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+    monkeypatch.setattr(
+        post_execution_repair_bridge,
+        "_runtime_executable_source_tools",
+        lambda: frozenset({"deterministic_rust_dependency_repair"}),
+    )
 
     adapter = FakeAdapter()
     results = post_execution_repair_bridge._run_rust_post_repairs(adapter, tmp_path, task_id="task-rust")
@@ -3156,11 +3269,25 @@ def test_rust_post_repairs_run_legacy_on_shadow_and_write_back_with_director_too
     assert adapter.progress[-1] == ("task-rust", "executing", "Cargo.toml")
     assert len(results) == 1
     result = results[0]["result"]
-    assert result["source_tool"] == "deterministic_rust_dependency_repair"
+    assert result["source_tool"] == "deterministic_rust_lib_root_facade_repair"
     assert result["file"] == "Cargo.toml"
     assert result["legacy_shadow_workspace"] is True
     assert result["legacy_shadow_applied_via_director_tools"] is True
-    assert result["legacy_shadow_source_tools"] == ["deterministic_rust_dependency_repair"]
+    assert result["legacy_shadow_source_tools"] == ["deterministic_rust_lib_root_facade_repair"]
+    assert result["legacy_aggregate_remaining_source_tools"] == [
+        "deterministic_rust_lib_root_facade_repair",
+        "deterministic_rust_missing_fields_repair",
+    ]
+    assert result["remaining_legacy_subcases"] == [
+        "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
+        "deterministic_rust_lib_root_facade_repair:path_rewrite",
+        "deterministic_rust_missing_fields_repair:field_declaration",
+    ]
+    assert result["runtime_migrated_subcases"] == []
+    assert result["legacy_aggregate_remaining_source_tool_count"] == 2
+    assert result["legacy_aggregate_remaining_legacy_subcase_count"] == 3
+    assert result["legacy_aggregate_runtime_migrated_subcase_count"] == 0
+    assert result["legacy_aggregate_cutover_ready"] is False
     assert result["before_hash"] != result["after_hash"]
     assert result["revalidation_scope"] == "legacy_shadow_workspace"
     assert result["director_policy"] == {"allowed": True}
@@ -3186,7 +3313,7 @@ def test_rust_post_repairs_prefer_director_edit_file_for_existing_source_changes
         shadow_src.write_text("pub fn demo() -> i32 {\n    2\n}\n", encoding="utf-8")
         return [
             {
-                "source_tool": "deterministic_rust_post_repair",
+                "source_tool": "deterministic_rust_missing_fields_repair",
                 "file": "src/lib.rs",
                 "action": "repair_return_value",
             }
@@ -3226,6 +3353,11 @@ def test_rust_post_repairs_prefer_director_edit_file_for_existing_source_changes
 
     monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fake_run_all_rust_post_repairs)
     monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
+    monkeypatch.setattr(
+        post_execution_repair_bridge,
+        "_runtime_executable_source_tools",
+        lambda: frozenset({"deterministic_rust_dependency_repair"}),
+    )
 
     results = post_execution_repair_bridge._run_rust_post_repairs(FakeAdapter(), tmp_path, task_id="task-rust-edit")
 
@@ -3237,12 +3369,28 @@ def test_rust_post_repairs_prefer_director_edit_file_for_existing_source_changes
     assert result["operation"] == "edit_file"
     assert result["replacements"] == 1
     assert result["legacy_shadow_applied_via_director_tools"] is True
+    assert result["legacy_shadow_source_tools"] == ["deterministic_rust_missing_fields_repair"]
+    assert result["legacy_aggregate_remaining_source_tools"] == [
+        "deterministic_rust_lib_root_facade_repair",
+        "deterministic_rust_missing_fields_repair",
+    ]
+    assert result["remaining_legacy_subcases"] == [
+        "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
+        "deterministic_rust_lib_root_facade_repair:path_rewrite",
+        "deterministic_rust_missing_fields_repair:field_declaration",
+    ]
+    assert result["runtime_migrated_subcases"] == []
+    assert result["legacy_aggregate_remaining_source_tool_count"] == 2
+    assert result["legacy_aggregate_remaining_legacy_subcase_count"] == 3
+    assert result["legacy_aggregate_runtime_migrated_subcase_count"] == 0
+    assert result["legacy_aggregate_cutover_ready"] is False
 
 
 def test_post_execution_advisory_overlay_flows_into_runtime_receipt(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from polaris.cells.director.runtime.public.contracts import DirectorRepairPostExecutionScheduleRunResultV1
     from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
 
     target = tmp_path / "src" / "main" / "java" / "demo" / "RhythmMonster.java"
@@ -3284,12 +3432,12 @@ def test_post_execution_advisory_overlay_flows_into_runtime_receipt(
         def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
             return None
 
-    def fake_schedule(
+    def fake_schedule_result(
         *,
         runner_step_ids: tuple[str, ...],
         runner: Any,
         max_rounds: int = 1,
-    ) -> tuple[list[dict[str, Any]], tuple[Any, ...]]:
+    ) -> DirectorRepairPostExecutionScheduleRunResultV1:
         assert "java.post_execution" in runner_step_ids
         assert max_rounds == 3
         step = post_execution_repair_bridge.DirectorRepairPostExecutionStepV1(
@@ -3299,13 +3447,29 @@ def test_post_execution_advisory_overlay_flows_into_runtime_receipt(
             priority=1,
             source_tool="deterministic_java_post_repair",
         )
-        return list(runner(step)), (step,)
+        return DirectorRepairPostExecutionScheduleRunResultV1(
+            schema_version="director.repair_post_execution_schedule_run_result.v1",
+            source="director.runtime.repair_kernel.scheduler",
+            ordered_steps=(step,),
+            tool_results=tuple(runner(step)),
+            receipt_projections=(),
+            summary={
+                "schedule_kind": "post_execution",
+                "max_rounds": max_rounds,
+                "rounds_run": 1,
+                "receipt_projection_count": 0,
+            },
+            max_rounds=max_rounds,
+            rounds_run=1,
+            convergence_status="converged",
+            stopped_reason="test_java_advisory",
+        )
 
     monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FakeDirectorToolExecutor)
     monkeypatch.setattr(
         post_execution_repair_bridge,
-        "run_director_post_execution_repair_schedule",
-        fake_schedule,
+        "run_director_post_execution_repair_schedule_result",
+        fake_schedule_result,
     )
 
     tool_results, summary = post_execution_repair_bridge.run_post_execution_language_repairs(
@@ -3498,17 +3662,366 @@ def test_materialization_quality_summary_projects_dark_launch_cutover_blocker() 
     assert "independent_shadow_required" in summary["materialization_quality_bridge"]["dark_launch_cutover_blockers"]
 
 
+def test_materialization_quality_scheduler_bridge_projects_callback_receipts_without_inflating_kernel() -> None:
+    from polaris.cells.director.runtime.public import DirectorRepairMaterializationQualityStepV1
+    from polaris.cells.roles.adapters.internal.director import materialization_quality_repair_bridge
+
+    tool_results = [
+        {
+            "tool": "edit_file",
+            "tool_name": "edit_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_typescript_materialization_repair",
+                "file": "src/main.ts",
+                "operation": "edit_file",
+                "bridge_step_id": "materialization.typescript_compiler",
+                "phase": "compiler",
+                "priority": 20,
+                "round_number": 1,
+                "max_rounds": 3,
+                "repair_kernel": {
+                    "receipts": [
+                        {
+                            "receipt_id": "native-typescript-receipt",
+                            "plan_id": "native-typescript-plan",
+                            "source_tool": "deterministic_typescript_materialization_repair",
+                            "status": "applied",
+                            "authoritative": True,
+                            "files_changed": ["src/main.ts"],
+                            "before_hashes": {"src/main.ts": "before-ts"},
+                            "after_hashes": {"src/main.ts": "after-ts"},
+                            "round_number": 1,
+                            "revalidation_evidence": {
+                                "command": ["rtk", "npm", "test"],
+                                "exit_code": 0,
+                                "errors_after": 0,
+                            },
+                        }
+                    ],
+                },
+                "callback_receipt_projection": {
+                    "receipt_id": "callback-explicit-receipt",
+                    "receipt_authority": "non_authoritative_callback_receipt_projection",
+                    "authoritative": True,
+                    "typed_receipt_path_available": True,
+                    "revalidation_evidence": {
+                        "command": ["rtk", "npm", "test"],
+                        "exit_code": 0,
+                    },
+                },
+            },
+        },
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_node_manifest_materialization_repair",
+                "file": "package.json",
+                "operation": "write_file",
+                "bridge_step_id": "materialization.node_manifest",
+                "phase": "manifest",
+                "priority": 30,
+                "round_number": 1,
+                "scheduler_max_rounds": 3,
+                "receipt_projections": [
+                    {
+                        "receipt_id": "callback-runtime-receipt",
+                        "receipt_authority": "non_authoritative_callback_projection",
+                        "authoritative": False,
+                        "projection_only": True,
+                        "typed_receipt_path_available": True,
+                        "round_number": 1,
+                        "max_rounds": 3,
+                        "revalidation_evidence_present": True,
+                    }
+                ],
+                "revalidation": {
+                    "command": ["rtk", "npm", "test"],
+                    "exit_code": 0,
+                    "errors_after": 0,
+                },
+            },
+        },
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_target_runtime_materialization_repair",
+                "file": "scripts/smoke.mjs",
+                "operation": "write_file",
+                "bridge_step_id": "materialization.target_runtime",
+                "phase": "runtime_smoke",
+                "priority": 50,
+                "round_number": 2,
+                "max_rounds": 3,
+                "legacy_callback_bridge": True,
+                "produces_tool_results_only": True,
+                "typed_receipt_path_available": False,
+                "revalidation": {
+                    "command": ["rtk", "node", "scripts/smoke.mjs"],
+                    "exit_code": 0,
+                    "errors_after": 0,
+                },
+            },
+        },
+    ]
+    ordered_steps = (
+        DirectorRepairMaterializationQualityStepV1(
+            step_id="materialization.typescript_compiler",
+            language="typescript",
+            phase="compiler",
+            priority=20,
+            source_tool="deterministic_typescript_materialization_repair",
+        ),
+        DirectorRepairMaterializationQualityStepV1(
+            step_id="materialization.node_manifest",
+            language="javascript",
+            phase="manifest",
+            priority=30,
+            source_tool="deterministic_node_manifest_materialization_repair",
+        ),
+        DirectorRepairMaterializationQualityStepV1(
+            step_id="materialization.target_runtime",
+            language="multi",
+            phase="runtime_smoke",
+            priority=50,
+            source_tool="deterministic_target_runtime_materialization_repair",
+        ),
+    )
+
+    summary = materialization_quality_repair_bridge._annotate_materialization_quality_summary(
+        step_summaries={},
+        tool_results=tool_results,
+        artifact_quality_errors=["src/main.ts(1,1): error TS2304: Cannot find name 'Demo'."],
+        ordered_steps=ordered_steps,
+        coverage_preaudit={
+            "total_diagnostics": 1,
+            "uncovered_diagnostic_count": 0,
+            "rule_discovery_required": False,
+        },
+    )
+
+    scheduler_bridge = summary["scheduler_bridge"]
+    assert scheduler_bridge["schema_version"] == "director.materialization_quality_scheduler_bridge.v1"
+    assert scheduler_bridge["mode"] == "legacy_callback_bridge"
+    assert scheduler_bridge["target_scheduler"] == "director.runtime.repair_kernel.scheduler"
+    assert (
+        scheduler_bridge["schedule_source"]
+        == "director.runtime.public.query_director_repair_materialization_quality_schedule"
+    )
+    assert scheduler_bridge["runner_binding_owner"] == "roles.adapters"
+    assert [step["step_id"] for step in scheduler_bridge["step_order"]] == [
+        "materialization.typescript_compiler",
+        "materialization.node_manifest",
+        "materialization.target_runtime",
+    ]
+    assert scheduler_bridge["active_step_ids"] == [
+        "materialization.node_manifest",
+        "materialization.target_runtime",
+        "materialization.typescript_compiler",
+    ]
+    assert scheduler_bridge["observed_max_round"] == 2
+    assert scheduler_bridge["configured_max_rounds"] == 3
+    assert scheduler_bridge["tool_result_count"] == 3
+    assert scheduler_bridge["source_tools"] == [
+        "deterministic_node_manifest_materialization_repair",
+        "deterministic_target_runtime_materialization_repair",
+        "deterministic_typescript_materialization_repair",
+    ]
+    assert scheduler_bridge["phases"] == {"compiler": 1, "manifest": 1, "runtime_smoke": 1}
+    assert scheduler_bridge["priorities"] == {"20": 1, "30": 1, "50": 1}
+    assert scheduler_bridge["rounds"] == {"1": 2, "2": 1}
+    assert scheduler_bridge["receipt_count"] == summary["repair_kernel"]["receipt_count"] == 3
+    assert scheduler_bridge["receipts_with_revalidation"] == 3
+    assert scheduler_bridge["callback_receipt_projection_count"] == 3
+    assert scheduler_bridge["callback_receipts_authoritative"] is False
+    assert scheduler_bridge["callback_receipt_authority_values"] == [
+        "non_authoritative_callback_projection",
+        "non_authoritative_callback_receipt_projection",
+        "non_authoritative_callback_tool_result_projection",
+    ]
+    assert scheduler_bridge["callback_receipts_with_revalidation"] == 3
+    assert scheduler_bridge["callback_projection_claimed_typed_receipt_path_count"] == 2
+    assert scheduler_bridge["typed_receipt_path_available"] is False
+    assert (
+        scheduler_bridge["migration_blocker"]
+        == "callback runners still return tool_results instead of RepairReceipt"
+    )
+    assert scheduler_bridge["repair_kernel_migration_debt"] == summary["repair_kernel_migration_debt"]
+    assert scheduler_bridge["legacy_callback_debt"] == summary["legacy_callback_debt"]
+
+    debt_by_step = {item["step_id"]: item for item in summary["legacy_callback_debt"]}
+    assert debt_by_step["materialization.typescript_compiler"]["verifier_evidence_present"] is True
+    repair_kernel_receipts = [
+        receipt for receipt in summary["repair_kernel"].get("receipts", []) if isinstance(receipt, dict)
+    ]
+    assert {receipt.get("receipt_id") for receipt in repair_kernel_receipts}.isdisjoint(
+        {"callback-explicit-receipt", "callback-runtime-receipt"}
+    )
+    assert all("callback_receipt_projection" not in receipt for receipt in repair_kernel_receipts)
+    assert all("receipt_projections" not in receipt for receipt in repair_kernel_receipts)
+
+
+def test_materialization_quality_scheduler_bridge_prefers_public_result_callback_receipt_projections(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.director.runtime.public.contracts import (
+        DirectorRepairMaterializationQualityScheduleRunResultV1,
+        QueryDirectorRepairMaterializationQualityScheduleV1,
+    )
+    from polaris.cells.director.runtime.public.service import (
+        query_director_repair_materialization_quality_schedule,
+    )
+    from polaris.cells.roles.adapters.internal.director import materialization_quality_repair_bridge
+
+    runtime_schedule = query_director_repair_materialization_quality_schedule(
+        QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
+    )
+    ordered_steps = tuple(runtime_schedule.items)
+    runtime_step_ids = tuple(step.step_id for step in ordered_steps)
+    node_manifest_step = next(
+        step for step in ordered_steps if step.step_id == "materialization.node_manifest"
+    )
+    tool_result = {
+        "tool": "write_file",
+        "tool_name": "write_file",
+        "success": True,
+        "result": {
+            "ok": True,
+            "source_tool": node_manifest_step.source_tool,
+            "file": "package.json",
+            "operation": "write_file",
+            "bridge_step_id": node_manifest_step.step_id,
+            "round_number": 1,
+            "receipt_projections": [
+                {
+                    "receipt_id": "payload-materialization-projection",
+                    "receipt_authority": "payload_should_not_win",
+                    "authoritative": True,
+                    "typed_receipt_path_available": False,
+                },
+                {
+                    "receipt_id": "payload-conflicting-materialization-projection",
+                    "receipt_authority": "conflicting_payload_should_not_win",
+                    "authoritative": True,
+                    "typed_receipt_path_available": True,
+                },
+            ],
+        },
+    }
+    public_projection = {
+        "projection_id": "materialization-public-projection",
+        "receipt_id": "materialization-public-receipt",
+        "receipt_authority": "non_authoritative_callback_projection",
+        "schedule_kind": "materialization_quality",
+        "step_id": node_manifest_step.step_id,
+        "source_tool": node_manifest_step.source_tool,
+        "round_number": 2,
+        "max_rounds": 3,
+        "projection_only": True,
+        "authoritative": True,
+        "typed_receipt_path_available": True,
+        "revalidation_evidence_present": True,
+    }
+
+    def fake_schedule_result(
+        *,
+        runner_step_ids: tuple[str, ...],
+        runner: Any,
+        max_rounds: int = 1,
+    ) -> DirectorRepairMaterializationQualityScheduleRunResultV1:
+        del runner
+        assert runner_step_ids == runtime_step_ids
+        return DirectorRepairMaterializationQualityScheduleRunResultV1(
+            schema_version="director.repair_materialization_quality_schedule_run_result.v1",
+            source="director.runtime.repair_kernel.scheduler",
+            ordered_steps=ordered_steps,
+            tool_results=(tool_result,),
+            receipt_projections=(public_projection,),
+            summary={
+                "schedule_kind": "materialization_quality",
+                "max_rounds": max_rounds,
+                "rounds_run": 2,
+                "receipt_projection_count": 1,
+            },
+            max_rounds=max_rounds,
+            rounds_run=2,
+            convergence_status="cycle_broken",
+            stopped_reason="test_public_projection_precedence",
+        )
+
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge,
+        "run_director_materialization_quality_repair_schedule_result",
+        fake_schedule_result,
+    )
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge,
+        "_project_coverage_preaudit",
+        lambda _errors: {
+            "total_diagnostics": 1,
+            "uncovered_diagnostic_count": 0,
+            "rule_discovery_required": False,
+        },
+    )
+
+    _, summary = materialization_quality_repair_bridge.run_materialization_quality_repairs(
+        SimpleNamespace(workspace=str(tmp_path)),
+        task={"target_files": ["package.json"]},
+        task_id="task-public-materialization-projection",
+        artifact_quality_errors=["package.json manifest repair required"],
+    )
+
+    scheduler_bridge = summary["scheduler_bridge"]
+    assert scheduler_bridge["callback_receipt_projection_count"] == 1
+    assert scheduler_bridge["callback_receipts_authoritative"] is False
+    assert scheduler_bridge["callback_receipt_authority_values"] == ["non_authoritative_callback_projection"]
+    assert scheduler_bridge["callback_receipts_with_revalidation"] == 1
+    assert scheduler_bridge["typed_receipt_path_available"] is False
+    assert scheduler_bridge["callback_projection_claimed_typed_receipt_path_count"] == 1
+    assert scheduler_bridge["observed_max_round"] == 2
+    assert scheduler_bridge["configured_max_rounds"] == 3
+    repair_kernel_receipts = [
+        receipt for receipt in summary["repair_kernel"].get("receipts", []) if isinstance(receipt, dict)
+    ]
+    assert {receipt.get("receipt_id") for receipt in repair_kernel_receipts}.isdisjoint(
+        {
+            "materialization-public-receipt",
+            "payload-materialization-projection",
+            "payload-conflicting-materialization-projection",
+        }
+    )
+
+
 def test_phase_pre_materialization_quality_records_post_execution_kernel_summary(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from polaris.cells.roles.adapters.internal.director import post_execution_repair_bridge
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import generic_repairs, rust_repairs
 
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
     monkeypatch.setattr(generic_repairs, "_apply_deterministic_go_module_import_repair", lambda *args, **kwargs: [])
 
-    def fake_run_all_rust_post_repairs(workspace: Path) -> list[dict[str, Any]]:
-        cargo = workspace / "Cargo.toml"
+    def fake_runtime_repair_with_director_tools(
+        adapter: Any,
+        *,
+        workspace_path: Path,
+        task_id: str,
+        source_tool: str,
+        **_kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        if source_tool != "deterministic_rust_dependency_repair":
+            return []
+        cargo = Path(str(adapter.workspace)) / "Cargo.toml"
+        assert workspace_path == Path(str(adapter.workspace)).resolve()
         cargo_text = cargo.read_text(encoding="utf-8")
         if 'serde = "1"' in cargo_text:
             return []
@@ -3518,25 +4031,45 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
         )
         return [
             {
-                "source_tool": "deterministic_rust_dependency_repair",
-                "file": "Cargo.toml",
-                "action": "add_dependency",
-                "phase": "dependency_resolution",
-                "priority": 0,
-                "revalidation": {
-                    "command": ["cargo", "check", "--quiet"],
-                    "exit_code": 0,
-                    "errors_before": 2,
-                    "errors_after": 0,
-                    "net_error_reduction": 2,
+                "ok": True,
+                "success": True,
+                "tool_name": "deterministic_rust_dependency_repair",
+                "result": {
+                    "source_tool": "deterministic_rust_dependency_repair",
+                    "file": "Cargo.toml",
+                    "path": "Cargo.toml",
+                    "action": "add_dependency",
+                    "phase": "dependency_resolution",
+                    "priority": 0,
+                    "round_number": 1,
+                    "revalidation": {
+                        "command": ["cargo", "check", "--quiet"],
+                        "exit_code": 0,
+                        "errors_before": 2,
+                        "errors_after": 0,
+                        "net_error_reduction": 2,
+                    },
                 },
             }
         ]
 
+    def fail_legacy_rust_dependency_repair(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("legacy repair_rust_dependencies must not run from post-execution bridge")
+
+    monkeypatch.setattr(
+        post_execution_repair_bridge,
+        "run_runtime_repair_with_director_tools",
+        fake_runtime_repair_with_director_tools,
+    )
+    monkeypatch.setattr(
+        rust_repairs,
+        "repair_rust_dependencies",
+        fail_legacy_rust_dependency_repair,
+    )
     monkeypatch.setattr(
         rust_repairs,
         "run_all_rust_post_repairs",
-        fake_run_all_rust_post_repairs,
+        lambda *_args, **_kwargs: [],
     )
     monkeypatch.setattr(
         execute_method_module,
@@ -3630,11 +4163,12 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
     assert scheduler_bridge["runner_binding_owner"] == "roles.adapters"
     assert [step["step_id"] for step in scheduler_bridge["step_order"]] == [
         "go.module_import",
+        "rust.dependency_resolution",
         "rust.post_execution_convergence",
         "cpp.post_execution",
         "java.post_execution",
     ]
-    assert scheduler_bridge["active_step_ids"] == ["rust.post_execution_convergence"]
+    assert scheduler_bridge["active_step_ids"] == ["rust.dependency_resolution"]
     assert scheduler_bridge["observed_max_round"] == 1
     assert scheduler_bridge["configured_max_rounds"] == 3
     assert scheduler_bridge["source_tools"] == ["deterministic_rust_dependency_repair"]
@@ -3647,6 +4181,250 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
     assert scheduler_bridge["resident_agi_suggested_rule_count"] == 1
     assert quality_repair_attempts[0]["resident_agi_repair_advisory_overlay"]["active"] is True
     assert state.modified_files == ["Cargo.toml"]
+
+
+def test_phase_pre_materialization_quality_passes_artifact_quality_convergence_verifier(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def sentinel_verifier(request: Any) -> Any:
+        return request
+
+    def fake_factory(
+        workspace: str | Path,
+        *,
+        task_id: str,
+        relative_paths: Any = None,
+        log_root: str | Path | None = None,
+    ) -> Any:
+        captured["factory"] = {
+            "workspace": Path(workspace),
+            "task_id": task_id,
+            "relative_paths": tuple(relative_paths or ()),
+            "log_root": log_root,
+        }
+        return sentinel_verifier
+
+    def fake_post_execution_repairs(
+        adapter: Any,
+        *,
+        task_id: str,
+        resident_agi_repair_advisory_overlay: dict[str, Any] | None = None,
+        convergence_verifier: Any = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        del adapter, resident_agi_repair_advisory_overlay
+        captured["bridge"] = {
+            "task_id": task_id,
+            "convergence_verifier": convergence_verifier,
+        }
+        return [], None
+
+    monkeypatch.setattr(execute_method_module, "build_artifact_quality_convergence_verifier", fake_factory)
+    monkeypatch.setattr(execute_method_module, "run_post_execution_language_repairs", fake_post_execution_repairs)
+
+    absolute_inside = tmp_path / "lib" / "model.ts"
+    state, _evidence, _can_accept, _write_evidence, _summary = execute_method_module._phase_pre_materialization_quality(
+        SimpleNamespace(workspace=str(tmp_path)),
+        baseline_files={},
+        can_accept_existing_scope=True,
+        context={},
+        existing_contract_evidence={"ok": True},
+        primary_llm_summary=None,
+        quality_repair_attempts=[],
+        quality_repair_summary=None,
+        requires_fresh_materialization=False,
+        target_task_id="task-42",
+        task={"id": "task-42"},
+        workspace_name=tmp_path.name,
+        write_tool_evidence=True,
+        state=execute_method_module.MaterializationState(
+            current_files={},
+            new_files=[],
+            modified_files=["src/app.ts"],
+            all_affected_files=[
+                "src/app.ts",
+                str(absolute_inside),
+                "../outside.ts",
+                "/etc/passwd",
+                "src/app.ts",
+            ],
+            tool_results=[],
+        ),
+    )
+
+    assert state.all_affected_files == [
+        "src/app.ts",
+        str(absolute_inside),
+        "../outside.ts",
+        "/etc/passwd",
+        "src/app.ts",
+    ]
+    assert captured["factory"]["workspace"] == tmp_path.resolve()
+    assert captured["factory"]["task_id"] == "task-42"
+    assert captured["factory"]["relative_paths"] == ("src/app.ts", "lib/model.ts")
+    assert captured["factory"]["log_root"] is None
+    assert captured["bridge"]["task_id"] == "task-42"
+    assert captured["bridge"]["convergence_verifier"] is sentinel_verifier
+
+
+def test_phase_pre_materialization_quality_passes_verifier_to_materialization_bridge(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {"factory_calls": []}
+
+    def sentinel_verifier(request: Any) -> Any:
+        return request
+
+    def fake_factory(
+        workspace: str | Path,
+        *,
+        task_id: str,
+        relative_paths: Any = None,
+        log_root: str | Path | None = None,
+    ) -> Any:
+        captured["factory_calls"].append(
+            {
+                "workspace": Path(workspace),
+                "task_id": task_id,
+                "relative_paths": tuple(relative_paths or ()),
+                "log_root": log_root,
+            }
+        )
+        return sentinel_verifier
+
+    def fake_collect_materialization_quality_errors(*args: Any, **kwargs: Any) -> list[str]:
+        del args
+        captured["scan_paths"] = tuple(kwargs.get("all_affected_files") or ())
+        return ['Go syntax check failed: cmd/app/main.go:3:1: expected declaration, found "fmt"']
+
+    def fake_materialization_repairs(
+        adapter: Any,
+        *,
+        task: dict[str, Any],
+        task_id: str,
+        artifact_quality_errors: list[str],
+        convergence_verifier: Any = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        del adapter
+        captured["materialization_bridge"] = {
+            "task": task,
+            "task_id": task_id,
+            "artifact_quality_errors": tuple(artifact_quality_errors),
+            "convergence_verifier": convergence_verifier,
+        }
+        return [], {"stage": "deterministic_quality_repair", "success": False}
+
+    def fake_post_execution_repairs(
+        adapter: Any,
+        *,
+        task_id: str,
+        resident_agi_repair_advisory_overlay: dict[str, Any] | None = None,
+        convergence_verifier: Any = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        del adapter, task_id, resident_agi_repair_advisory_overlay, convergence_verifier
+        return [], None
+
+    monkeypatch.setattr(execute_method_module, "build_artifact_quality_convergence_verifier", fake_factory)
+    monkeypatch.setattr(
+        execute_method_module,
+        "_collect_materialization_quality_errors",
+        fake_collect_materialization_quality_errors,
+    )
+    monkeypatch.setattr(execute_method_module, "run_materialization_quality_repairs", fake_materialization_repairs)
+    monkeypatch.setattr(execute_method_module, "run_post_execution_language_repairs", fake_post_execution_repairs)
+
+    execute_method_module._phase_pre_materialization_quality(
+        SimpleNamespace(workspace=str(tmp_path)),
+        baseline_files={},
+        can_accept_existing_scope=False,
+        context={},
+        existing_contract_evidence={"ok": False},
+        primary_llm_summary=None,
+        quality_repair_attempts=[],
+        quality_repair_summary=None,
+        requires_fresh_materialization=True,
+        target_task_id="task-go-1",
+        task={"id": "task-go-1", "target_files": ["cmd/app/main.go"]},
+        workspace_name=tmp_path.name,
+        write_tool_evidence=True,
+        state=execute_method_module.MaterializationState(
+            current_files={},
+            new_files=[],
+            modified_files=[],
+            all_affected_files=[],
+            tool_results=[
+                {
+                    "tool_name": "write_file",
+                    "success": True,
+                    "result": {"ok": True, "file": "cmd/app/main.go"},
+                }
+            ],
+        ),
+    )
+
+    assert captured["scan_paths"] == ("cmd/app/main.go",)
+    assert captured["factory_calls"][0]["workspace"] == tmp_path.resolve()
+    assert captured["factory_calls"][0]["task_id"] == "task-go-1"
+    assert captured["factory_calls"][0]["relative_paths"] == ("cmd/app/main.go",)
+    assert captured["factory_calls"][0]["log_root"] is None
+    assert captured["materialization_bridge"]["task_id"] == "task-go-1"
+    assert captured["materialization_bridge"]["artifact_quality_errors"] == (
+        'Go syntax check failed: cmd/app/main.go:3:1: expected declaration, found "fmt"',
+    )
+    assert captured["materialization_bridge"]["convergence_verifier"] is sentinel_verifier
+
+
+def test_phase_pre_materialization_quality_omits_verifier_when_factory_fails(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def failing_factory(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise RuntimeError("factory unavailable")
+
+    def fake_post_execution_repairs(
+        adapter: Any,
+        *,
+        task_id: str,
+        resident_agi_repair_advisory_overlay: dict[str, Any] | None = None,
+        convergence_verifier: Any = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        del adapter, task_id, resident_agi_repair_advisory_overlay
+        captured["convergence_verifier"] = convergence_verifier
+        return [], None
+
+    monkeypatch.setattr(execute_method_module, "build_artifact_quality_convergence_verifier", failing_factory)
+    monkeypatch.setattr(execute_method_module, "run_post_execution_language_repairs", fake_post_execution_repairs)
+
+    execute_method_module._phase_pre_materialization_quality(
+        SimpleNamespace(workspace=str(tmp_path)),
+        baseline_files={},
+        can_accept_existing_scope=True,
+        context={},
+        existing_contract_evidence={"ok": True},
+        primary_llm_summary=None,
+        quality_repair_attempts=[],
+        quality_repair_summary=None,
+        requires_fresh_materialization=False,
+        target_task_id="task-43",
+        task={"id": "task-43"},
+        workspace_name=tmp_path.name,
+        write_tool_evidence=True,
+        state=execute_method_module.MaterializationState(
+            current_files={},
+            new_files=[],
+            modified_files=["src/app.ts"],
+            all_affected_files=["src/app.ts"],
+            tool_results=[],
+        ),
+    )
+
+    assert captured["convergence_verifier"] is None
 
 
 def test_post_execution_agi_advisory_overlay_validates_nested_suggested_rules() -> None:
@@ -6477,7 +7255,7 @@ export function summary() {
         )
         adapter = _make_adapter(tmp_path)
 
-        results = _apply_deterministic_patch_residue_cleanup(
+        results = run_patch_residue_cleanup(
             adapter,
             task={
                 "metadata": {
@@ -6506,7 +7284,7 @@ export function summary() {
         target.write_text(original, encoding="utf-8")
         adapter = _make_adapter(tmp_path)
 
-        results = _apply_deterministic_patch_residue_cleanup(
+        results = run_patch_residue_cleanup(
             adapter,
             task={"metadata": {"target_files": ["src/server/app.ts"]}},
             task_id="PM-CARD3D-SERVER-01",
@@ -7112,10 +7890,6 @@ class TestDeterministicPythonRuntimeSmokeLongRunningBoundary:
     """
 
     def test_long_running_main_block_is_not_a_failure(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_runtime_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         # A server-style main block: bind a TCP socket, accept
         # forever. Behaves like ``serve_forever()`` in stdlib
@@ -7132,7 +7906,7 @@ class TestDeterministicPythonRuntimeSmokeLongRunningBoundary:
             encoding="utf-8",
         )
 
-        errors = _apply_deterministic_python_runtime_smoke(
+        errors = run_python_runtime_smoke(
             adapter,
             task_id="task-server-bb-1",
             all_affected_files=["server.py"],
@@ -7144,17 +7918,13 @@ class TestDeterministicPythonRuntimeSmokeLongRunningBoundary:
 
     def test_clean_main_block_still_passes(self, tmp_path: Any) -> None:
         """A clean main that exits within timeout is still a pass."""
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_runtime_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         (tmp_path / "ok.py").write_text(
             "if __name__ == '__main__':\n    print('done')\n",
             encoding="utf-8",
         )
 
-        errors = _apply_deterministic_python_runtime_smoke(
+        errors = run_python_runtime_smoke(
             adapter,
             task_id="task-ok-bb-1",
             all_affected_files=["ok.py"],
@@ -7168,10 +7938,6 @@ class TestDeterministicPythonRuntimeSmokeLongRunningBoundary:
         subprocess handle must be cleaned up so no zombie lingers.
         This guards against the regression where the smoke leaves
         a leaked subprocess after returning no errors."""
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_runtime_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         (tmp_path / "server.py").write_text(
             "import time\nif __name__ == '__main__':\n    while True:\n        time.sleep(0.5)\n",
@@ -7195,7 +7961,7 @@ class TestDeterministicPythonRuntimeSmokeLongRunningBoundary:
             .stdout.strip()
             .split()
         )
-        errors = _apply_deterministic_python_runtime_smoke(
+        errors = run_python_runtime_smoke(
             adapter,
             task_id="task-zombie-bb-1",
             all_affected_files=["server.py"],
@@ -7232,10 +7998,6 @@ class TestDeterministicPythonStaticSmoke:
     """
 
     def test_python_static_smoke_catches_syntax_error_in_undeclared_file(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_static_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         # Duplicate keyword argument — a real, deterministic Python
         # syntax error. ``def f(x, x):`` raises SyntaxError at compile
@@ -7246,7 +8008,7 @@ class TestDeterministicPythonStaticSmoke:
             encoding="utf-8",
         )
 
-        errors = _apply_deterministic_python_static_smoke(
+        errors = run_python_static_smoke(
             adapter,
             all_affected_files=["stats_view.py"],
         )
@@ -7257,10 +8019,6 @@ class TestDeterministicPythonStaticSmoke:
         assert "syntax" in errors[0].lower() or "invalid" in errors[0].lower()
 
     def test_python_static_smoke_passes_clean_files(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_static_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         (tmp_path / "clean_a.py").write_text("x = 1\n", encoding="utf-8")
         (tmp_path / "clean_b.py").write_text(
@@ -7268,7 +8026,7 @@ class TestDeterministicPythonStaticSmoke:
             encoding="utf-8",
         )
 
-        errors = _apply_deterministic_python_static_smoke(
+        errors = run_python_static_smoke(
             adapter,
             all_affected_files=["clean_a.py", "clean_b.py"],
         )
@@ -7276,15 +8034,11 @@ class TestDeterministicPythonStaticSmoke:
         assert errors == [], errors
 
     def test_python_static_smoke_skips_non_python_files(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_static_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         (tmp_path / "readme.md").write_text("# title\n", encoding="utf-8")
         (tmp_path / "config.toml").write_text("x = 1\n", encoding="utf-8")
 
-        errors = _apply_deterministic_python_static_smoke(
+        errors = run_python_static_smoke(
             adapter,
             all_affected_files=["readme.md", "config.toml"],
         )
@@ -7292,17 +8046,13 @@ class TestDeterministicPythonStaticSmoke:
         assert errors == [], errors
 
     def test_python_static_smoke_catches_multiple_broken_files(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_static_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         # Two distinct, real Python syntax errors + one clean file.
         (tmp_path / "broken_a.py").write_text("def f(x, x):\n    return x\n", encoding="utf-8")
         (tmp_path / "broken_b.py").write_text("class 123Bad:\n    pass\n", encoding="utf-8")
         (tmp_path / "clean.py").write_text("z = 3\n", encoding="utf-8")
 
-        errors = _apply_deterministic_python_static_smoke(
+        errors = run_python_static_smoke(
             adapter,
             all_affected_files=["broken_a.py", "broken_b.py", "clean.py"],
         )
@@ -7335,10 +8085,6 @@ class TestDeterministicPythonRuntimeSmoke:
     """
 
     def test_python_runtime_smoke_catches_call_time_error(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_runtime_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         # A script with __main__ that crashes. py_compile will pass;
         # only running it surfaces the bug.
@@ -7351,7 +8097,7 @@ class TestDeterministicPythonRuntimeSmoke:
             encoding="utf-8",
         )
 
-        errors = _apply_deterministic_python_runtime_smoke(
+        errors = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-1",
             all_affected_files=["calculator.py"],
@@ -7363,17 +8109,13 @@ class TestDeterministicPythonRuntimeSmoke:
         assert "ValueError" in errors[0] or "Traceback" in errors[0]
 
     def test_python_runtime_smoke_passes_clean_main(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_runtime_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         (tmp_path / "hello.py").write_text(
             "if __name__ == '__main__':\n    print('hello')\n",
             encoding="utf-8",
         )
 
-        errors = _apply_deterministic_python_runtime_smoke(
+        errors = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-2",
             all_affected_files=["hello.py"],
@@ -7383,10 +8125,6 @@ class TestDeterministicPythonRuntimeSmoke:
         assert errors == [], errors
 
     def test_python_runtime_smoke_sets_workspace_pythonpath_for_test_scripts(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_runtime_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         (tmp_path / "guess_number.py").write_text(
             "def generate_target() -> int:\n    return 42\n",
@@ -7403,7 +8141,7 @@ class TestDeterministicPythonRuntimeSmoke:
             encoding="utf-8",
         )
 
-        errors = _apply_deterministic_python_runtime_smoke(
+        errors = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-test-import",
             all_affected_files=["tests/test_guess_number.py"],
@@ -7413,10 +8151,6 @@ class TestDeterministicPythonRuntimeSmoke:
         assert errors == [], errors
 
     def test_python_runtime_smoke_runs_unittest_discover_for_touched_tests(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_runtime_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         src_dir = tmp_path / "src"
         src_dir.mkdir()
@@ -7433,7 +8167,7 @@ class TestDeterministicPythonRuntimeSmoke:
             encoding="utf-8",
         )
 
-        errors = _apply_deterministic_python_runtime_smoke(
+        errors = run_python_runtime_smoke(
             adapter,
             task_id="task-py-unittest-discover",
             all_affected_files=["tests/test_weather.py"],
@@ -7848,10 +8582,6 @@ class TestDeterministicPythonRuntimeSmoke:
         assert "references missing DOM id taskInput" in failed.stderr
 
     def test_python_runtime_smoke_skips_module_without_main(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_runtime_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         # Library file with no __main__ block — must not be executed
         # (calling it would hang on missing CLI args or do nothing
@@ -7861,7 +8591,7 @@ class TestDeterministicPythonRuntimeSmoke:
             encoding="utf-8",
         )
 
-        errors = _apply_deterministic_python_runtime_smoke(
+        errors = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-3",
             all_affected_files=["library.py"],
@@ -7871,15 +8601,11 @@ class TestDeterministicPythonRuntimeSmoke:
         assert errors == [], errors
 
     def test_python_runtime_smoke_skips_non_python_files(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_runtime_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         (tmp_path / "readme.md").write_text("# title\n", encoding="utf-8")
         (tmp_path / "config.toml").write_text("x = 1\n", encoding="utf-8")
 
-        errors = _apply_deterministic_python_runtime_smoke(
+        errors = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-4",
             all_affected_files=["readme.md", "config.toml"],
@@ -7900,10 +8626,6 @@ class TestDeterministicPythonRuntimeSmoke:
         of the timeout (i.e. it did not block on a leftover
         process).
         """
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_python_runtime_smoke,
-        )
-
         adapter = _make_adapter(tmp_path)
         (tmp_path / "hung.py").write_text(
             "import time\nif __name__ == '__main__':\n    while True:\n        time.sleep(0.1)\n",
@@ -7916,7 +8638,7 @@ class TestDeterministicPythonRuntimeSmoke:
         # are not blocked by a leaked process.
         import time
 
-        first = _apply_deterministic_python_runtime_smoke(
+        first = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-5",
             all_affected_files=["hung.py"],
@@ -7924,7 +8646,7 @@ class TestDeterministicPythonRuntimeSmoke:
         )
         assert first == [], first
         started = time.monotonic()
-        second = _apply_deterministic_python_runtime_smoke(
+        second = run_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-5b",
             all_affected_files=["hung.py"],
@@ -7947,10 +8669,6 @@ class TestDeterministicPythonUnresolvedSymbolRepair:
     """
 
     def test_repairs_missing_symbol_with_similar_named_alias(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_unresolved_import_symbol_repair,
-        )
-
         adapter = _make_adapter(tmp_path)
         (tmp_path / "shared").mkdir(parents=True)
         (tmp_path / "shared" / "__init__.py").write_text(
@@ -7996,10 +8714,6 @@ class TestDeterministicPythonUnresolvedSymbolRepair:
                     del sys.modules[cached]
 
     def test_repairs_missing_symbol_with_class_stub_when_no_similar(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_unresolved_import_symbol_repair,
-        )
-
         adapter = _make_adapter(tmp_path)
         (tmp_path / "shared").mkdir(parents=True)
         (tmp_path / "shared" / "__init__.py").write_text(
@@ -8029,10 +8743,6 @@ class TestDeterministicPythonUnresolvedSymbolRepair:
         assert "class SomeConfig" in config_text
 
     def test_idempotent_when_symbol_already_defined(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_unresolved_import_symbol_repair,
-        )
-
         adapter = _make_adapter(tmp_path)
         (tmp_path / "shared").mkdir(parents=True)
         (tmp_path / "shared" / "__init__.py").write_text(
@@ -8063,10 +8773,6 @@ class TestDeterministicPythonUnresolvedSymbolRepair:
         assert registry_text.count("class Registry") == 1
 
     def test_skips_when_exporter_file_missing(self, tmp_path: Any) -> None:
-        from polaris.cells.roles.adapters.internal.director.execute_method import (
-            _apply_deterministic_unresolved_import_symbol_repair,
-        )
-
         adapter = _make_adapter(tmp_path)
         (tmp_path / "shared").mkdir(parents=True)
         (tmp_path / "shared" / "__init__.py").write_text(
@@ -13748,6 +14454,70 @@ class TestCollectStepVerifyErrors:
         assert len(errors) == 1
         assert "step verify failed" in errors[0]
         assert "game-canvas" in errors[0]
+
+    def test_unsafe_verify_rejected_before_shell_or_clause_diagnosis(
+        self, tmp_path: Any, monkeypatch: Any
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director import quality_gate
+
+        calls: list[str] = []
+
+        def _run(*_args: Any, **_kwargs: Any) -> Any:
+            calls.append("subprocess")
+            raise AssertionError("unsafe step verify must not reach subprocess.run")
+
+        def _clause(_verify: str, *, cwd: str) -> str:
+            calls.append(f"clause:{cwd}")
+            raise AssertionError("unsafe step verify must not reach clause diagnosis")
+
+        monkeypatch.setattr(quality_gate.subprocess, "run", _run)
+        monkeypatch.setattr(quality_gate, "_first_failing_verify_clause", _clause)
+
+        errors = self._collect({"construction_step": {"verify": "rm -rf ."}}, str(tmp_path))
+
+        assert len(errors) == 1
+        assert "step verify command rejected by safety policy" in errors[0]
+        assert "blocked_command:rm" in errors[0]
+        assert "'rm -rf .'" in errors[0]
+        assert calls == []
+
+    def test_unsafe_verify_rejected_before_target_mismatch(self, tmp_path: Any) -> None:
+        context = {
+            "construction_step": {
+                "target_file": "src/rules/dancerule.ts",
+                "verify": "rm -rf . && test -f ./src/rules/dance-rule.ts",
+            }
+        }
+
+        errors = self._collect(context, str(tmp_path))
+
+        assert len(errors) == 1
+        assert "step verify command rejected by safety policy" in errors[0]
+        assert "step verify target mismatch" not in errors[0]
+
+    def test_legacy_safe_wc_verify_reaches_failure_diagnosis(
+        self, tmp_path: Any, monkeypatch: Any
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director import quality_gate
+
+        (tmp_path / "style.css").write_text("#game {}\n" * 200, encoding="utf-8")
+        verify = 'test -f ./style.css && [ "$(wc -l < ./style.css)" -le 120 ]'
+        seen: dict[str, str] = {}
+
+        def _clause(command: str, *, cwd: str) -> str:
+            seen["command"] = command
+            seen["cwd"] = cwd
+            return 'failing clause [2/2]: [ "$(wc -l < ./style.css)" -le 120 ]'
+
+        monkeypatch.setattr(quality_gate, "_first_failing_verify_clause", _clause)
+
+        errors = self._collect({"construction_step": {"verify": verify}}, str(tmp_path))
+
+        assert len(errors) == 1
+        assert "step verify failed" in errors[0]
+        assert "step verify command rejected by safety policy" not in errors[0]
+        assert "failing clause [2/2]" in errors[0]
+        assert seen == {"command": verify, "cwd": str(tmp_path)}
 
     def test_list_verify_joined(self, tmp_path: Any) -> None:
         (tmp_path / "a.md").write_text("x", encoding="utf-8")

@@ -106,6 +106,11 @@ def summarize_repair_revalidation_coverage(receipts: Sequence[ReceiptLike]) -> d
     failed_revalidation_receipt_ids: list[str] = []
     failed_revalidation_source_tools: set[str] = set()
     evidence_required_count = 0
+    evidence_status_counts = {
+        "missing_evidence": 0,
+        "failed_evidence": 0,
+        "resolved_evidence": 0,
+    }
 
     for receipt in receipts:
         status = _receipt_status(receipt)
@@ -114,6 +119,8 @@ def summarize_repair_revalidation_coverage(receipts: Sequence[ReceiptLike]) -> d
         receipt_id = _receipt_id(receipt)
         evidence = _receipt_revalidation_evidence(receipt)
         has_evidence = bool(evidence)
+        evidence_status = _receipt_evidence_status(receipt, evidence=evidence, has_evidence=has_evidence)
+        evidence_status_counts[evidence_status] = evidence_status_counts.get(evidence_status, 0) + 1
         if has_evidence:
             receipts_with_revalidation += 1
             if source_tool:
@@ -122,8 +129,7 @@ def summarize_repair_revalidation_coverage(receipts: Sequence[ReceiptLike]) -> d
             metadata_dict = metadata if isinstance(metadata, dict) else {}
             if evidence.get("residual_diagnostic_ids") or metadata_dict.get("residual_diagnostic_signatures"):
                 residual_diagnostic_receipt_count += 1
-            exit_code = _coerce_optional_int(evidence.get("exit_code"))
-            if exit_code not in (None, 0):
+            if _revalidation_payload_failed(evidence):
                 failed_revalidation_receipt_count += 1
                 if receipt_id:
                     failed_revalidation_receipt_ids.append(receipt_id)
@@ -162,6 +168,7 @@ def summarize_repair_revalidation_coverage(receipts: Sequence[ReceiptLike]) -> d
         "source_tools_with_revalidation": sorted(source_tools_with_revalidation),
         "source_tools_missing_revalidation": missing_source_tool_list,
         "status_counts": dict(sorted(status_counts.items())),
+        "evidence_status_counts": dict(sorted(evidence_status_counts.items())),
         "residual_diagnostic_receipt_count": residual_diagnostic_receipt_count,
         "failed_revalidation_receipt_count": failed_revalidation_receipt_count,
         "failed_revalidation_receipt_ids": failed_revalidation_receipt_ids,
@@ -194,6 +201,29 @@ def _receipt_revalidation_evidence(receipt: ReceiptLike) -> dict[str, Any]:
     if isinstance(value, dict):
         return dict(value)
     return {}
+
+
+def _receipt_evidence_status(
+    receipt: ReceiptLike,
+    *,
+    evidence: Mapping[str, Any],
+    has_evidence: bool,
+) -> str:
+    explicit = str(_receipt_value(receipt, "evidence_status") or "").strip()
+    if explicit:
+        return explicit
+    if not has_evidence:
+        return "missing_evidence"
+    evidence_explicit = str(dict(evidence).get("evidence_status") or "").strip()
+    if evidence_explicit:
+        return evidence_explicit
+    command = dict(evidence).get("command")
+    has_command = isinstance(command, list | tuple) and any(str(item or "").strip() for item in command)
+    if not has_command or _coerce_optional_int(dict(evidence).get("exit_code")) is None:
+        return "missing_evidence"
+    if _revalidation_payload_failed(evidence):
+        return "failed_evidence"
+    return "resolved_evidence"
 
 
 def _receipt_requires_revalidation(receipt: ReceiptLike, *, status: str, has_evidence: bool) -> bool:
@@ -442,7 +472,30 @@ def _coerce_optional_int(value: object) -> int | None:
 def _revalidation_failed(evidence: RepairRevalidationEvidence | None) -> bool:
     if evidence is None:
         return False
-    return evidence.exit_code not in (None, 0)
+    if evidence.evidence_status != "resolved_evidence":
+        return True
+    if evidence.exit_code not in (None, 0):
+        return True
+    if evidence.errors_after > 0:
+        return True
+    return bool(evidence.residual_diagnostic_ids)
+
+
+def _revalidation_payload_failed(evidence: Mapping[str, Any] | None) -> bool:
+    payload = dict(evidence or {})
+    if not payload:
+        return False
+    exit_code = _coerce_optional_int(payload.get("exit_code"))
+    if exit_code is None or exit_code != 0:
+        return True
+    errors_after = _coerce_optional_int(payload.get("errors_after"))
+    if errors_after is not None and errors_after > 0:
+        return True
+    if payload.get("residual_diagnostic_ids"):
+        return True
+    metadata = payload.get("metadata")
+    metadata_dict = metadata if isinstance(metadata, dict) else {}
+    return bool(metadata_dict.get("residual_diagnostic_signatures"))
 
 
 def _revalidation_evidence_from_payload(value: object) -> RepairRevalidationEvidence | None:
@@ -474,6 +527,7 @@ def _revalidation_evidence_from_payload(value: object) -> RepairRevalidationEvid
                 "diagnostics_after",
                 "errors_before",
                 "errors_after",
+                "evidence_status",
                 "resolved_diagnostic_ids",
                 "residual_diagnostic_ids",
                 "round_number",

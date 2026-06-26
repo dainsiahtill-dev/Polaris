@@ -2080,7 +2080,7 @@ class TestOrchestrationStageExecutor:
             captured["task"] = task
             return [], {"attempted": False}
 
-        monkeypatch.setattr(role_service, "apply_deterministic_materialization_quality_repairs", _capture_repair)
+        monkeypatch.setattr(role_service, "run_director_materialization_quality_repair_schedule", _capture_repair)
 
         executor._apply_workspace_quality_repairs(
             run_id="run-target-files",

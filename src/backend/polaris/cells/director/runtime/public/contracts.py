@@ -36,6 +36,49 @@ def _default_repairer_module_name(language: str) -> str:
     return f"polaris.cells.director.runtime.internal.repair_kernel.{normalized_language or 'unknown'}_runtime"
 
 
+_CALLBACK_RECEIPT_PROJECTION_SCHEMA_VERSION = "director.repair_callback_receipt_projection.v1"
+_DEFAULT_CALLBACK_RECEIPT_AUTHORITY = "non_authoritative_callback_receipt_projection"
+_ALLOWED_CALLBACK_RECEIPT_AUTHORITIES = {
+    _DEFAULT_CALLBACK_RECEIPT_AUTHORITY,
+    "non_authoritative_callback_projection",
+}
+_DEFAULT_CALLBACK_RECEIPT_MIGRATION_BLOCKER = "callback_projection_not_authoritative_receipt"
+
+
+def _optional_non_empty_str(value: Any) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _optional_non_negative_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_tuple_str_from_any(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes, bytearray)):
+        items = (value,)
+    else:
+        try:
+            items = tuple(value)
+        except TypeError:
+            items = (value,)
+    return tuple(str(item) for item in items if str(item or "").strip())
+
+
+def _strict_bool_claim(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value or "").strip().lower()
+    return normalized in {"true", "1", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class RepairDiagnosticV1:
     """Structured repair diagnostic for Director Runtime."""
@@ -104,6 +147,7 @@ class RepairReceiptV1:
     before_hashes: Mapping[str, str] = field(default_factory=dict)
     after_hashes: Mapping[str, str] = field(default_factory=dict)
     round_number: int | None = None
+    evidence_status: str = "missing_evidence"
     errors_before: int | None = None
     errors_after: int | None = None
     net_error_reduction: int | None = None
@@ -112,16 +156,24 @@ class RepairReceiptV1:
     revalidation_evidence: Mapping[str, Any] = field(default_factory=dict)
     advisor_notes: tuple[RepairAdvisoryV1, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    rule_id: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "receipt_id", _require_non_empty("receipt_id", self.receipt_id))
         object.__setattr__(self, "plan_id", _require_non_empty("plan_id", self.plan_id))
-        object.__setattr__(self, "source_tool", _require_non_empty("source_tool", self.source_tool))
+        source_tool = _require_non_empty("source_tool", self.source_tool)
+        object.__setattr__(self, "source_tool", source_tool)
+        object.__setattr__(self, "rule_id", str(self.rule_id or "").strip() or source_tool)
         object.__setattr__(self, "status", _require_non_empty("status", self.status))
         object.__setattr__(self, "files_changed", tuple(str(item) for item in self.files_changed))
         object.__setattr__(self, "before_hashes", dict(self.before_hashes or {}))
         object.__setattr__(self, "after_hashes", dict(self.after_hashes or {}))
         object.__setattr__(self, "round_number", None if self.round_number is None else max(0, int(self.round_number)))
+        object.__setattr__(
+            self,
+            "evidence_status",
+            str(self.evidence_status or "missing_evidence").strip() or "missing_evidence",
+        )
         object.__setattr__(
             self, "errors_before", None if self.errors_before is None else max(0, int(self.errors_before))
         )
@@ -141,6 +193,7 @@ class RepairReceiptV1:
         return {
             "receipt_id": self.receipt_id,
             "plan_id": self.plan_id,
+            "rule_id": self.rule_id,
             "source_tool": self.source_tool,
             "status": self.status,
             "authoritative": self.authoritative,
@@ -148,6 +201,7 @@ class RepairReceiptV1:
             "before_hashes": dict(self.before_hashes),
             "after_hashes": dict(self.after_hashes),
             "round_number": self.round_number,
+            "evidence_status": self.evidence_status,
             "errors_before": self.errors_before,
             "errors_after": self.errors_after,
             "net_error_reduction": self.net_error_reduction,
@@ -207,6 +261,274 @@ class RunDirectorRepairCommandV1:
         object.__setattr__(self, "allowed_paths", tuple(str(item) for item in self.allowed_paths))
         object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class RunDirectorRepairConvergenceCommandV1:
+    """Command shape for public typed Director Runtime repair convergence."""
+
+    task_id: str
+    workspace: str
+    source_tools: tuple[str, ...]
+    artifact_quality_errors: tuple[str, ...]
+    base_files: Mapping[str, str]
+    allowed_paths: tuple[str, ...] = ()
+    advisor_notes: tuple[RepairAdvisoryV1, ...] = ()
+    mode: str = "commit"
+    max_rounds: int = 3
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        source_tools = _to_tuple_str(list(self.source_tools))
+        if not source_tools:
+            raise ValueError("source_tools must include at least one repair source tool")
+        object.__setattr__(self, "source_tools", source_tools)
+        object.__setattr__(self, "artifact_quality_errors", _to_tuple_str(list(self.artifact_quality_errors)))
+        object.__setattr__(self, "base_files", dict(self.base_files or {}))
+        object.__setattr__(self, "allowed_paths", tuple(str(item) for item in self.allowed_paths))
+        object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
+        object.__setattr__(self, "mode", str(self.mode or "commit").strip() or "commit")
+        object.__setattr__(self, "max_rounds", max(1, int(self.max_rounds)))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class DirectorRepairVerifierSnapshotInputV1:
+    """Adapter-supplied verifier snapshot for a convergence round."""
+
+    residual_artifact_quality_errors: tuple[str, ...] = ()
+    command: tuple[str, ...] = ()
+    exit_code: int | None = None
+    raw_output_ref: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "residual_artifact_quality_errors",
+            _to_tuple_str(list(self.residual_artifact_quality_errors)),
+        )
+        object.__setattr__(self, "command", _to_tuple_str(list(self.command)))
+        object.__setattr__(self, "exit_code", None if self.exit_code is None else int(self.exit_code))
+        object.__setattr__(self, "raw_output_ref", str(self.raw_output_ref or "").strip() or None)
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "residual_artifact_quality_errors": list(self.residual_artifact_quality_errors),
+            "command": list(self.command),
+            "exit_code": self.exit_code,
+            "raw_output_ref": self.raw_output_ref,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class DirectorRepairConvergenceVerifierRequestV1:
+    """Context passed to an adapter-supplied convergence verifier callback."""
+
+    task_id: str
+    workspace: str
+    round_number: int
+    source_tools: tuple[str, ...]
+    receipts: tuple[RepairReceiptV1, ...] = ()
+    max_rounds: int = 3
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "round_number", max(0, int(self.round_number)))
+        object.__setattr__(self, "source_tools", _to_tuple_str(list(self.source_tools)))
+        object.__setattr__(self, "receipts", tuple(self.receipts or ()))
+        object.__setattr__(self, "max_rounds", max(1, int(self.max_rounds)))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "workspace": self.workspace,
+            "round_number": self.round_number,
+            "source_tools": list(self.source_tools),
+            "receipt_count": len(self.receipts),
+            "receipts": [receipt.to_dict() for receipt in self.receipts],
+            "max_rounds": self.max_rounds,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class DirectorRepairConvergenceRoundResultV1:
+    """Public projection for one Director Runtime convergence round."""
+
+    round_number: int
+    status: str
+    schedule: Mapping[str, Any] = field(default_factory=dict)
+    diagnostics_before: tuple[RepairDiagnosticV1, ...] = ()
+    diagnostics_after: tuple[RepairDiagnosticV1, ...] = ()
+    receipts: tuple[RepairReceiptV1, ...] = ()
+    revalidation_evidence: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "round_number", max(0, int(self.round_number)))
+        object.__setattr__(self, "status", _require_non_empty("status", self.status))
+        object.__setattr__(self, "schedule", _to_dict_copy(self.schedule))
+        object.__setattr__(self, "diagnostics_before", tuple(self.diagnostics_before or ()))
+        object.__setattr__(self, "diagnostics_after", tuple(self.diagnostics_after or ()))
+        object.__setattr__(self, "receipts", tuple(self.receipts or ()))
+        object.__setattr__(self, "revalidation_evidence", _to_dict_copy(self.revalidation_evidence))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "round_number": self.round_number,
+            "status": self.status,
+            "schedule": dict(self.schedule),
+            "errors_before": len(self.diagnostics_before),
+            "errors_after": len(self.diagnostics_after),
+            "net_error_reduction": len(self.diagnostics_before) - len(self.diagnostics_after),
+            "diagnostics_before": [diagnostic.__dict__ for diagnostic in self.diagnostics_before],
+            "diagnostics_after": [diagnostic.__dict__ for diagnostic in self.diagnostics_after],
+            "receipts": [receipt.to_dict() for receipt in self.receipts],
+            "revalidation_evidence": dict(self.revalidation_evidence),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class DirectorRepairConvergenceResultV1:
+    """Result shape for public typed Director Runtime repair convergence."""
+
+    ok: bool
+    converged: bool
+    status: str
+    final_diagnostics: tuple[RepairDiagnosticV1, ...] = ()
+    receipts: tuple[RepairReceiptV1, ...] = ()
+    rounds: tuple[DirectorRepairConvergenceRoundResultV1, ...] = ()
+    max_rounds: int = 3
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    error_code: str | None = None
+    error_message: str | None = None
+    schema_version: str = "director.repair_convergence_result.v1"
+    owner_cell: str = "director.runtime"
+    execution_boundary: str = "adapter_supplied_verifier_callback_no_command_execution"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "ok", bool(self.ok))
+        object.__setattr__(self, "converged", bool(self.converged))
+        object.__setattr__(self, "status", _require_non_empty("status", self.status))
+        object.__setattr__(self, "final_diagnostics", tuple(self.final_diagnostics or ()))
+        object.__setattr__(self, "receipts", tuple(self.receipts or ()))
+        object.__setattr__(self, "rounds", tuple(self.rounds or ()))
+        object.__setattr__(self, "max_rounds", max(1, int(self.max_rounds)))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+        object.__setattr__(self, "error_code", str(self.error_code or "").strip() or None)
+        object.__setattr__(self, "error_message", str(self.error_message or "").strip() or None)
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+        if not self.ok and not (self.error_code or self.error_message):
+            raise ValueError("failed DirectorRepairConvergenceResultV1 must include error_code or error_message")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "ok": self.ok,
+            "converged": self.converged,
+            "status": self.status,
+            "owner_cell": self.owner_cell,
+            "execution_boundary": self.execution_boundary,
+            "max_rounds": self.max_rounds,
+            "round_count": len(self.rounds),
+            "receipt_count": len(self.receipts),
+            "final_error_count": len(self.final_diagnostics),
+            "final_diagnostics": [diagnostic.__dict__ for diagnostic in self.final_diagnostics],
+            "receipts": [receipt.to_dict() for receipt in self.receipts],
+            "rounds": [round_result.to_dict() for round_result in self.rounds],
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class DirectorRepairRevalidationInputV1:
+    """Adapter-supplied post-check evidence for a Director repair run."""
+
+    residual_artifact_quality_errors: tuple[str, ...] = ()
+    command: tuple[str, ...] = ()
+    exit_code: int | None = None
+    raw_output_ref: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "residual_artifact_quality_errors",
+            _to_tuple_str(list(self.residual_artifact_quality_errors)),
+        )
+        object.__setattr__(self, "command", _to_tuple_str(list(self.command)))
+        object.__setattr__(self, "exit_code", None if self.exit_code is None else int(self.exit_code))
+        object.__setattr__(self, "raw_output_ref", str(self.raw_output_ref or "").strip() or None)
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "residual_artifact_quality_errors": list(self.residual_artifact_quality_errors),
+            "command": list(self.command),
+            "exit_code": self.exit_code,
+            "raw_output_ref": self.raw_output_ref,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class DirectorRepairRevalidationRequestV1:
+    """Context passed to a local revalidator after runtime repair execution."""
+
+    task_id: str
+    workspace: str
+    source_tool: str
+    receipt_id: str
+    plan_id: str
+    files_changed: tuple[str, ...] = ()
+    before_hashes: Mapping[str, str] = field(default_factory=dict)
+    after_hashes: Mapping[str, str] = field(default_factory=dict)
+    diagnostics_before: tuple[Mapping[str, Any], ...] = ()
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "source_tool", _require_non_empty("source_tool", self.source_tool))
+        object.__setattr__(self, "receipt_id", _require_non_empty("receipt_id", self.receipt_id))
+        object.__setattr__(self, "plan_id", _require_non_empty("plan_id", self.plan_id))
+        object.__setattr__(self, "files_changed", tuple(str(item) for item in self.files_changed))
+        object.__setattr__(self, "before_hashes", dict(self.before_hashes or {}))
+        object.__setattr__(self, "after_hashes", dict(self.after_hashes or {}))
+        object.__setattr__(self, "diagnostics_before", tuple(_to_dict_copy(item) for item in self.diagnostics_before))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "workspace": self.workspace,
+            "source_tool": self.source_tool,
+            "receipt_id": self.receipt_id,
+            "plan_id": self.plan_id,
+            "files_changed": list(self.files_changed),
+            "before_hashes": dict(self.before_hashes),
+            "after_hashes": dict(self.after_hashes),
+            "diagnostics_before": [dict(item) for item in self.diagnostics_before],
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)
@@ -301,7 +623,18 @@ class DirectorRepairDiagnosticCoverageV1:
     diagnostic_archetype: str = "unknown"
     diagnostic_phase: str = "unknown"
     diagnostic_language: str = "unknown"
+    diagnostic_code: str = "unknown"
     suggested_rule_family: str = "unknown"
+    reserved_language_slot_matched: bool = False
+    reserved_language_slot: Mapping[str, Any] = field(default_factory=dict)
+    reserved_repairer_module: str = ""
+    reserved_slot_registration_policy: str = ""
+    recommended_next_owner: str = ""
+    handoff_recommendation: str = ""
+    llm_advisory_recommended: bool = False
+    agi_advisory_recommended: bool = False
+    authoritative_rule_registration_allowed: bool = False
+    recommended_registration_path: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "diagnostic", _to_dict_copy(self.diagnostic))
@@ -317,7 +650,30 @@ class DirectorRepairDiagnosticCoverageV1:
         object.__setattr__(self, "diagnostic_archetype", str(self.diagnostic_archetype or "unknown").strip())
         object.__setattr__(self, "diagnostic_phase", str(self.diagnostic_phase or "unknown").strip())
         object.__setattr__(self, "diagnostic_language", str(self.diagnostic_language or "unknown").strip())
+        object.__setattr__(
+            self,
+            "diagnostic_code",
+            str(self.diagnostic_code or self.diagnostic.get("code") or "unknown").strip(),
+        )
         object.__setattr__(self, "suggested_rule_family", str(self.suggested_rule_family or "unknown").strip())
+        object.__setattr__(self, "reserved_language_slot_matched", bool(self.reserved_language_slot_matched))
+        object.__setattr__(self, "reserved_language_slot", _to_dict_copy(self.reserved_language_slot))
+        object.__setattr__(self, "reserved_repairer_module", str(self.reserved_repairer_module or "").strip())
+        object.__setattr__(
+            self,
+            "reserved_slot_registration_policy",
+            str(self.reserved_slot_registration_policy or "").strip(),
+        )
+        object.__setattr__(self, "recommended_next_owner", str(self.recommended_next_owner or "").strip())
+        object.__setattr__(self, "handoff_recommendation", str(self.handoff_recommendation or "").strip())
+        object.__setattr__(self, "llm_advisory_recommended", bool(self.llm_advisory_recommended))
+        object.__setattr__(self, "agi_advisory_recommended", bool(self.agi_advisory_recommended))
+        object.__setattr__(self, "authoritative_rule_registration_allowed", False)
+        object.__setattr__(
+            self,
+            "recommended_registration_path",
+            str(self.recommended_registration_path or "").strip(),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -334,7 +690,18 @@ class DirectorRepairDiagnosticCoverageV1:
             "diagnostic_archetype": self.diagnostic_archetype,
             "diagnostic_phase": self.diagnostic_phase,
             "diagnostic_language": self.diagnostic_language,
+            "diagnostic_code": self.diagnostic_code,
             "suggested_rule_family": self.suggested_rule_family,
+            "reserved_language_slot_matched": self.reserved_language_slot_matched,
+            "reserved_language_slot": dict(self.reserved_language_slot),
+            "reserved_repairer_module": self.reserved_repairer_module,
+            "reserved_slot_registration_policy": self.reserved_slot_registration_policy,
+            "recommended_next_owner": self.recommended_next_owner,
+            "handoff_recommendation": self.handoff_recommendation,
+            "llm_advisory_recommended": self.llm_advisory_recommended,
+            "agi_advisory_recommended": self.agi_advisory_recommended,
+            "authoritative_rule_registration_allowed": False,
+            "recommended_registration_path": self.recommended_registration_path,
         }
 
 
@@ -401,6 +768,15 @@ class DirectorRepairCoverageReportV1:
             "coverage_gap_languages": sorted(
                 {str(gap.get("diagnostic_language") or "unknown") for gap in coverage_gaps}
             ),
+            "coverage_gap_archetypes": sorted(
+                {str(gap.get("diagnostic_archetype") or "unknown") for gap in coverage_gaps}
+            ),
+            "coverage_gap_diagnostic_codes": sorted(
+                {str(gap.get("diagnostic_code") or "unknown") for gap in coverage_gaps}
+            ),
+            "coverage_gap_handoff_recommendations": sorted(
+                {str(gap.get("handoff_recommendation") or "coverage_triage_required") for gap in coverage_gaps}
+            ),
             "executable_runtime_plan_diagnostic_count": self.executable_runtime_plan_diagnostic_count,
             "metadata_only_diagnostic_count": self.metadata_only_diagnostic_count,
             "items": [item.to_dict() for item in self.items],
@@ -416,9 +792,20 @@ def _public_coverage_gap_payload(item: DirectorRepairDiagnosticCoverageV1) -> di
         "known_rule_matched": False,
         "executable_runtime_plan_matched": False,
         "diagnostic_language": item.diagnostic_language,
+        "diagnostic_code": item.diagnostic_code,
         "diagnostic_phase": item.diagnostic_phase,
         "diagnostic_archetype": item.diagnostic_archetype,
         "suggested_rule_family": item.suggested_rule_family,
+        "reserved_language_slot_matched": item.reserved_language_slot_matched,
+        "reserved_language_slot": dict(item.reserved_language_slot),
+        "reserved_repairer_module": item.reserved_repairer_module,
+        "reserved_slot_registration_policy": item.reserved_slot_registration_policy,
+        "recommended_next_owner": item.recommended_next_owner,
+        "handoff_recommendation": item.handoff_recommendation,
+        "llm_advisory_recommended": item.llm_advisory_recommended,
+        "agi_advisory_recommended": item.agi_advisory_recommended,
+        "authoritative_rule_registration_allowed": False,
+        "recommended_registration_path": item.recommended_registration_path,
         "missing_capability": "deterministic_repair_rule",
         "audit_reason": "known_rule_matched=false",
     }
@@ -778,6 +1165,211 @@ class DirectorRepairPostExecutionScheduleResultV1:
 
 
 @dataclass(frozen=True)
+class DirectorRepairCallbackReceiptProjectionV1:
+    """Non-authoritative callback receipt projection for migration schedules."""
+
+    schema_version: str = _CALLBACK_RECEIPT_PROJECTION_SCHEMA_VERSION
+    projection_id: str | None = None
+    receipt_authority: str = _DEFAULT_CALLBACK_RECEIPT_AUTHORITY
+    schedule_kind: str | None = None
+    step_id: str | None = None
+    source_tool: str | None = None
+    scheduled_source_tool: str | None = None
+    callback_source_tool: str | None = None
+    round_number: int | None = None
+    tool_name: str | None = None
+    touched_path: str | None = None
+    touched_paths: tuple[str, ...] = ()
+    convergence_status: str | None = None
+    convergence_stopped_reason: str | None = None
+    scheduler_rounds_run: int | None = None
+    max_rounds: int | None = None
+    projection_only: bool = True
+    typed_receipt_path_available: bool = False
+    authoritative: bool = False
+    migration_blocker: str = _DEFAULT_CALLBACK_RECEIPT_MIGRATION_BLOCKER
+    revalidation_evidence_present: bool = False
+    revalidation_command: tuple[str, ...] = ()
+    revalidation_exit_code: int | None = None
+    revalidation_residual_count: int | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "schema_version",
+            _require_non_empty("schema_version", self.schema_version or _CALLBACK_RECEIPT_PROJECTION_SCHEMA_VERSION),
+        )
+        object.__setattr__(self, "projection_id", _optional_non_empty_str(self.projection_id))
+        receipt_authority = _optional_non_empty_str(self.receipt_authority)
+        if receipt_authority not in _ALLOWED_CALLBACK_RECEIPT_AUTHORITIES:
+            receipt_authority = _DEFAULT_CALLBACK_RECEIPT_AUTHORITY
+        object.__setattr__(self, "receipt_authority", receipt_authority)
+        object.__setattr__(self, "schedule_kind", _optional_non_empty_str(self.schedule_kind))
+        object.__setattr__(self, "step_id", _optional_non_empty_str(self.step_id))
+        object.__setattr__(self, "source_tool", _optional_non_empty_str(self.source_tool))
+        object.__setattr__(self, "scheduled_source_tool", _optional_non_empty_str(self.scheduled_source_tool))
+        object.__setattr__(self, "callback_source_tool", _optional_non_empty_str(self.callback_source_tool))
+        object.__setattr__(self, "round_number", _optional_non_negative_int(self.round_number))
+        object.__setattr__(self, "tool_name", _optional_non_empty_str(self.tool_name))
+        object.__setattr__(self, "touched_path", _optional_non_empty_str(self.touched_path))
+        touched_paths = _to_tuple_str_from_any(self.touched_paths)
+        if self.touched_path and self.touched_path not in touched_paths:
+            touched_paths = (self.touched_path, *touched_paths)
+        object.__setattr__(self, "touched_paths", touched_paths)
+        object.__setattr__(self, "convergence_status", _optional_non_empty_str(self.convergence_status))
+        object.__setattr__(
+            self,
+            "convergence_stopped_reason",
+            _optional_non_empty_str(self.convergence_stopped_reason),
+        )
+        object.__setattr__(self, "scheduler_rounds_run", _optional_non_negative_int(self.scheduler_rounds_run))
+        object.__setattr__(self, "max_rounds", _optional_non_negative_int(self.max_rounds))
+        claimed_typed_receipt_path_available = _strict_bool_claim(self.typed_receipt_path_available)
+        object.__setattr__(self, "projection_only", True)
+        object.__setattr__(self, "typed_receipt_path_available", False)
+        object.__setattr__(self, "authoritative", False)
+        object.__setattr__(
+            self,
+            "migration_blocker",
+            _optional_non_empty_str(self.migration_blocker) or _DEFAULT_CALLBACK_RECEIPT_MIGRATION_BLOCKER,
+        )
+        object.__setattr__(self, "revalidation_evidence_present", bool(self.revalidation_evidence_present))
+        object.__setattr__(self, "revalidation_command", _to_tuple_str_from_any(self.revalidation_command))
+        object.__setattr__(self, "revalidation_exit_code", _optional_non_negative_int(self.revalidation_exit_code))
+        object.__setattr__(
+            self,
+            "revalidation_residual_count",
+            _optional_non_negative_int(self.revalidation_residual_count),
+        )
+        metadata = _to_dict_copy(self.metadata)
+        if claimed_typed_receipt_path_available:
+            metadata.setdefault("claimed_typed_receipt_path_available", True)
+        object.__setattr__(self, "metadata", metadata)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "projection_id": self.projection_id,
+            "receipt_authority": self.receipt_authority,
+            "schedule_kind": self.schedule_kind,
+            "step_id": self.step_id,
+            "source_tool": self.source_tool,
+            "scheduled_source_tool": self.scheduled_source_tool,
+            "callback_source_tool": self.callback_source_tool,
+            "round_number": self.round_number,
+            "tool_name": self.tool_name,
+            "touched_path": self.touched_path,
+            "touched_paths": list(self.touched_paths),
+            "convergence_status": self.convergence_status,
+            "convergence_stopped_reason": self.convergence_stopped_reason,
+            "scheduler_rounds_run": self.scheduler_rounds_run,
+            "max_rounds": self.max_rounds,
+            "projection_only": True,
+            "typed_receipt_path_available": False,
+            "authoritative": False,
+            "migration_blocker": self.migration_blocker,
+            "revalidation_evidence_present": self.revalidation_evidence_present,
+            "revalidation_command": list(self.revalidation_command),
+            "revalidation_exit_code": self.revalidation_exit_code,
+            "revalidation_residual_count": self.revalidation_residual_count,
+            "metadata": dict(self.metadata),
+        }
+
+
+def _callback_receipt_projection_v1(
+    value: DirectorRepairCallbackReceiptProjectionV1 | Mapping[str, Any],
+) -> DirectorRepairCallbackReceiptProjectionV1:
+    if isinstance(value, DirectorRepairCallbackReceiptProjectionV1):
+        return value
+    payload = dict(value or {})
+    known_fields = DirectorRepairCallbackReceiptProjectionV1.__dataclass_fields__
+    constructor_payload = {key: payload[key] for key in known_fields if key in payload}
+    extra_fields = {key: payload[key] for key in payload if key not in known_fields}
+    metadata = dict(constructor_payload.get("metadata") or {})
+    if extra_fields:
+        metadata.setdefault("extra_projection_fields", extra_fields)
+    constructor_payload["metadata"] = metadata
+    return DirectorRepairCallbackReceiptProjectionV1(**constructor_payload)
+
+
+@dataclass(frozen=True)
+class DirectorRepairPostExecutionScheduleRunResultV1:
+    """Projection-only result from running post-execution callback schedule."""
+
+    schema_version: str
+    source: str
+    ordered_steps: tuple[DirectorRepairPostExecutionStepV1, ...] = ()
+    tool_results: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    receipt_projections: tuple[DirectorRepairCallbackReceiptProjectionV1, ...] = field(default_factory=tuple)
+    summary: Mapping[str, Any] = field(default_factory=dict)
+    max_rounds: int = 1
+    rounds_run: int = 0
+    convergence_status: str = "not_run"
+    stopped_reason: str = "not_run"
+    owner_cell: str = "director.runtime"
+    runner_binding_owner: str = "roles.adapters"
+    legacy_callback_bridge: bool = True
+    typed_receipt_path_available: bool = False
+    authoritative_receipts_allowed: bool = False
+    projection_only: bool = True
+    receipt_authority: str = "non_authoritative_callback_projection"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        object.__setattr__(self, "ordered_steps", tuple(self.ordered_steps or ()))
+        object.__setattr__(self, "tool_results", tuple(dict(item) for item in (self.tool_results or ())))
+        object.__setattr__(
+            self,
+            "receipt_projections",
+            tuple(_callback_receipt_projection_v1(item) for item in (self.receipt_projections or ())),
+        )
+        object.__setattr__(self, "summary", _to_dict_copy(self.summary))
+        object.__setattr__(self, "max_rounds", max(0, int(self.max_rounds)))
+        object.__setattr__(self, "rounds_run", max(0, int(self.rounds_run)))
+        object.__setattr__(
+            self,
+            "convergence_status",
+            _require_non_empty("convergence_status", self.convergence_status),
+        )
+        object.__setattr__(self, "stopped_reason", _require_non_empty("stopped_reason", self.stopped_reason))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self, "runner_binding_owner", _require_non_empty("runner_binding_owner", self.runner_binding_owner)
+        )
+        object.__setattr__(self, "legacy_callback_bridge", True)
+        object.__setattr__(self, "typed_receipt_path_available", False)
+        object.__setattr__(self, "authoritative_receipts_allowed", False)
+        object.__setattr__(self, "projection_only", True)
+        receipt_authority = _optional_non_empty_str(self.receipt_authority)
+        if receipt_authority not in _ALLOWED_CALLBACK_RECEIPT_AUTHORITIES:
+            receipt_authority = _DEFAULT_CALLBACK_RECEIPT_AUTHORITY
+        object.__setattr__(self, "receipt_authority", receipt_authority)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "owner_cell": self.owner_cell,
+            "runner_binding_owner": self.runner_binding_owner,
+            "legacy_callback_bridge": True,
+            "ordered_steps": [item.to_dict() for item in self.ordered_steps],
+            "tool_results": [dict(item) for item in self.tool_results],
+            "receipt_projections": [item.to_dict() for item in self.receipt_projections],
+            "summary": dict(self.summary),
+            "max_rounds": self.max_rounds,
+            "rounds_run": self.rounds_run,
+            "convergence_status": self.convergence_status,
+            "stopped_reason": self.stopped_reason,
+            "typed_receipt_path_available": False,
+            "authoritative_receipts_allowed": False,
+            "projection_only": True,
+            "receipt_authority": self.receipt_authority,
+        }
+
+
+@dataclass(frozen=True)
 class QueryDirectorRepairMaterializationQualityScheduleV1:
     """Query shape for the runtime-owned materialization-quality repair schedule catalog."""
 
@@ -865,6 +1457,82 @@ class DirectorRepairMaterializationQualityScheduleResultV1:
             "agi_execution_authority": False,
             "items": [item.to_dict() for item in self.items],
             "summary": dict(self.summary),
+        }
+
+
+@dataclass(frozen=True)
+class DirectorRepairMaterializationQualityScheduleRunResultV1:
+    """Projection-only result from running materialization-quality callback schedule."""
+
+    schema_version: str
+    source: str
+    ordered_steps: tuple[DirectorRepairMaterializationQualityStepV1, ...] = ()
+    tool_results: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    receipt_projections: tuple[DirectorRepairCallbackReceiptProjectionV1, ...] = field(default_factory=tuple)
+    summary: Mapping[str, Any] = field(default_factory=dict)
+    max_rounds: int = 1
+    rounds_run: int = 0
+    convergence_status: str = "not_run"
+    stopped_reason: str = "not_run"
+    owner_cell: str = "director.runtime"
+    runner_binding_owner: str = "roles.adapters"
+    legacy_callback_bridge: bool = True
+    typed_receipt_path_available: bool = False
+    authoritative_receipts_allowed: bool = False
+    projection_only: bool = True
+    receipt_authority: str = "non_authoritative_callback_projection"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        object.__setattr__(self, "ordered_steps", tuple(self.ordered_steps or ()))
+        object.__setattr__(self, "tool_results", tuple(dict(item) for item in (self.tool_results or ())))
+        object.__setattr__(
+            self,
+            "receipt_projections",
+            tuple(_callback_receipt_projection_v1(item) for item in (self.receipt_projections or ())),
+        )
+        object.__setattr__(self, "summary", _to_dict_copy(self.summary))
+        object.__setattr__(self, "max_rounds", max(0, int(self.max_rounds)))
+        object.__setattr__(self, "rounds_run", max(0, int(self.rounds_run)))
+        object.__setattr__(
+            self,
+            "convergence_status",
+            _require_non_empty("convergence_status", self.convergence_status),
+        )
+        object.__setattr__(self, "stopped_reason", _require_non_empty("stopped_reason", self.stopped_reason))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self, "runner_binding_owner", _require_non_empty("runner_binding_owner", self.runner_binding_owner)
+        )
+        object.__setattr__(self, "legacy_callback_bridge", True)
+        object.__setattr__(self, "typed_receipt_path_available", False)
+        object.__setattr__(self, "authoritative_receipts_allowed", False)
+        object.__setattr__(self, "projection_only", True)
+        receipt_authority = _optional_non_empty_str(self.receipt_authority)
+        if receipt_authority not in _ALLOWED_CALLBACK_RECEIPT_AUTHORITIES:
+            receipt_authority = _DEFAULT_CALLBACK_RECEIPT_AUTHORITY
+        object.__setattr__(self, "receipt_authority", receipt_authority)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "owner_cell": self.owner_cell,
+            "runner_binding_owner": self.runner_binding_owner,
+            "legacy_callback_bridge": True,
+            "ordered_steps": [item.to_dict() for item in self.ordered_steps],
+            "tool_results": [dict(item) for item in self.tool_results],
+            "receipt_projections": [item.to_dict() for item in self.receipt_projections],
+            "summary": dict(self.summary),
+            "max_rounds": self.max_rounds,
+            "rounds_run": self.rounds_run,
+            "convergence_status": self.convergence_status,
+            "stopped_reason": self.stopped_reason,
+            "typed_receipt_path_available": False,
+            "authoritative_receipts_allowed": False,
+            "projection_only": True,
+            "receipt_authority": self.receipt_authority,
         }
 
 
@@ -1352,24 +2020,33 @@ __all__ = [
     "CompareDirectorRepairShadowRunV1",
     "DirectorRepairAdvisoryPolicyResultV1",
     "DirectorRepairAdvisoryValidationResultV1",
+    "DirectorRepairCallbackReceiptProjectionV1",
     "DirectorRepairCompositionIssueV1",
     "DirectorRepairCompositionSummaryV1",
+    "DirectorRepairConvergenceResultV1",
+    "DirectorRepairConvergenceRoundResultV1",
+    "DirectorRepairConvergenceVerifierRequestV1",
     "DirectorRepairCoverageReportV1",
     "DirectorRepairDiagnosticCoverageV1",
     "DirectorRepairKernelSummaryProjectionResultV1",
     "DirectorRepairLanguageSlotV1",
     "DirectorRepairLanguageSlotsResultV1",
     "DirectorRepairMaterializationQualityScheduleResultV1",
+    "DirectorRepairMaterializationQualityScheduleRunResultV1",
     "DirectorRepairMaterializationQualityStepV1",
     "DirectorRepairPatchSummaryV1",
     "DirectorRepairPlanSummaryV1",
     "DirectorRepairPlanningResultV1",
     "DirectorRepairPostExecutionScheduleResultV1",
+    "DirectorRepairPostExecutionScheduleRunResultV1",
     "DirectorRepairPostExecutionStepV1",
     "DirectorRepairResultV1",
+    "DirectorRepairRevalidationInputV1",
     "DirectorRepairRevalidationProjectionResultV1",
+    "DirectorRepairRevalidationRequestV1",
     "DirectorRepairShadowComparisonResultV1",
     "DirectorRepairStrategyCatalogResultV1",
+    "DirectorRepairVerifierSnapshotInputV1",
     "DirectorRuntimeError",
     "PlanDirectorRepairCommandV1",
     "ProjectDirectorRepairKernelSummaryV1",
@@ -1384,4 +2061,5 @@ __all__ = [
     "RepairDiagnosticV1",
     "RepairReceiptV1",
     "RunDirectorRepairCommandV1",
+    "RunDirectorRepairConvergenceCommandV1",
 ]

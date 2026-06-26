@@ -793,11 +793,17 @@ class QAConsumer:
         step = payload.get("construction_step")
         if not isinstance(step, dict):
             return ""
-        from polaris.kernelone.quality.step_verify import normalize_step_verify
+        from polaris.kernelone.quality.step_verify import (
+            assess_legacy_step_verify_command_safety,
+            normalize_step_verify,
+        )
 
         verify = normalize_step_verify(step.get("verify"))
         if not verify:
             return ""
+        safety = assess_legacy_step_verify_command_safety(verify)
+        if not safety.allowed:
+            return f"step verify command rejected by safety policy: {safety.reason} :: {verify!r}"
         try:
             proc = subprocess.run(
                 verify,

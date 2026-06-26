@@ -10,10 +10,12 @@ the ``deterministic_repairs`` <-> ``quality_gate`` reference cycle are resolved
 through ``execute_method`` (aliased ``_em``) at call time. The canonical import
 path remains ``execute_method`` (which re-exports every symbol here).
 
-This module is the package facade: it re-exports every symbol from the
-language/concern submodules with the ``X as X`` idiom so the public surface
-(and every ``dir()`` / monkeypatch target) resolves on this module path
-exactly as it did before the split.
+This module is the package facade for a migration-time legacy host. Concrete
+repair functions remain importable for bridge/test compatibility, but
+production callers should reach deterministic repairs through
+``polaris.cells.director.runtime.public`` or the Director adapter bridge
+modules. ``__all__`` intentionally omits concrete repair helpers so star
+imports do not grow the legacy public surface.
 """
 
 from __future__ import annotations
@@ -314,4 +316,16 @@ __all__ = [
     "repair_rust_trait_imports",
     "repair_rust_unresolved_pub_uses",
     "summarize_deterministic_repair_source_tools",
+]
+
+_CONCRETE_LEGACY_REPAIR_EXPORT_PREFIXES = (
+    "_apply_deterministic_",
+    "_repair_",
+    "repair_",
+)
+
+__all__ = [
+    name
+    for name in __all__
+    if not name.startswith(_CONCRETE_LEGACY_REPAIR_EXPORT_PREFIXES)
 ]

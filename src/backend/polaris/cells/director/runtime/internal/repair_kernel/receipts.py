@@ -100,6 +100,8 @@ def attach_revalidation_evidence(
 def _revalidation_failed(evidence: RepairRevalidationEvidence | None) -> bool:
     if evidence is None:
         return False
+    if evidence.evidence_status != "resolved_evidence":
+        return True
     if evidence.exit_code not in (None, 0):
         return True
     if evidence.errors_after > 0:

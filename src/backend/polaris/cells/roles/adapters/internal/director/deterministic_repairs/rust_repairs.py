@@ -77,6 +77,15 @@ _KNOWN_RUST_DEPENDENCIES: dict[str, str] = {
     "serde": 'serde = { version = "1.0", features = ["derive"] }',
     "serde_json": 'serde_json = "1.0"',
 }
+_RUST_LEGACY_POST_AGGREGATE_REMAINING_SOURCE_TOOLS = frozenset(
+    {
+        "deterministic_rust_missing_fields_repair",
+        "deterministic_rust_lib_root_facade_repair",
+    }
+)
+_RUST_LEGACY_POST_AGGREGATE_SOURCE_TOOL_BLOCKER = (
+    "legacy_aggregate_shadow_replay_source_tool_not_remaining"
+)
 
 
 def _apply_deterministic_rust_crate_import_repair(
@@ -1802,98 +1811,14 @@ def _run_rust_post_repair_round(
     batches: list[tuple[list[dict[str, Any]], str, str, int]] = []
     for records, source_tool, phase, priority in (
         (
-            repair_rust_dependencies(workspace, errors),
-            "deterministic_rust_dependency_repair",
-            "dependency_resolution",
-            0,
-        ),
-        (
-            repair_rust_crate_imports(workspace, errors),
-            "deterministic_rust_crate_import_repair",
-            "dependency_resolution",
-            0,
-        ),
-        (
-            repair_rust_wrong_crate_paths(workspace, stderr),
-            "deterministic_rust_post_repair",
-            "dependency_resolution",
-            0,
-        ),
-        (
-            repair_rust_method_self_signatures(workspace, stderr),
-            "deterministic_rust_post_repair",
-            "code_repair",
-            1,
-        ),
-        (
-            repair_rust_incompatible_copy_derives(workspace, stderr),
-            "deterministic_rust_derive_repair",
-            "code_repair",
-            1,
-        ),
-        (
-            repair_rust_duplicate_module_files(workspace),
-            "deterministic_rust_post_repair",
-            "structural_repair",
-            1,
-        ),
-        (
-            repair_rust_missing_module_files(workspace),
-            "deterministic_rust_post_repair",
-            "structural_repair",
-            1,
-        ),
-        (
-            repair_rust_missing_binary_entrypoint(workspace),
-            "deterministic_rust_post_repair",
-            "structural_repair",
-            1,
-        ),
-        (
-            repair_rust_missing_derives(workspace, stderr),
-            "deterministic_rust_derive_repair",
-            "code_repair",
-            2,
-        ),
-        (
-            repair_rust_unused_imports(workspace, stderr),
-            "deterministic_rust_post_repair",
-            "code_repair",
-            2,
-        ),
-        (
             repair_rust_missing_fields(workspace, stderr),
-            "deterministic_rust_post_repair",
-            "code_repair",
-            2,
-        ),
-        (
-            repair_rust_field_rename_suggestions(workspace, stderr),
-            "deterministic_rust_post_repair",
+            "deterministic_rust_missing_fields_repair",
             "code_repair",
             2,
         ),
         (
             repair_rust_lib_root_facade(workspace, errors),
             "deterministic_rust_lib_root_facade_repair",
-            "export_resolution",
-            3,
-        ),
-        (
-            repair_rust_unresolved_pub_uses(workspace, errors),
-            "deterministic_rust_unresolved_pub_use_repair",
-            "export_resolution",
-            3,
-        ),
-        (
-            repair_rust_trait_imports(workspace, errors),
-            "deterministic_rust_trait_import_repair",
-            "export_resolution",
-            3,
-        ),
-        (
-            repair_rust_line_suggestions(workspace, errors),
-            "deterministic_rust_line_suggestion_repair",
             "export_resolution",
             3,
         ),
@@ -1916,6 +1841,14 @@ def _annotate_rust_post_repair_records(
     for record in records:
         payload = dict(record)
         payload.setdefault("source_tool", source_tool)
+        record_source_tool = str(payload.get("source_tool") or "").strip()
+        if record_source_tool not in _RUST_LEGACY_POST_AGGREGATE_REMAINING_SOURCE_TOOLS:
+            payload["legacy_aggregate_blocked"] = True
+            payload["legacy_aggregate_blocker"] = _RUST_LEGACY_POST_AGGREGATE_SOURCE_TOOL_BLOCKER
+            payload["legacy_aggregate_remaining_source_tools"] = sorted(
+                _RUST_LEGACY_POST_AGGREGATE_REMAINING_SOURCE_TOOLS
+            )
+            payload["legacy_aggregate_blocked_source_tool"] = record_source_tool
         payload["phase"] = phase
         payload["priority"] = priority
         payload["revalidation"] = {

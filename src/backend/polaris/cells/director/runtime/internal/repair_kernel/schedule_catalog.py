@@ -6,8 +6,13 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from .scheduler import convergence_envelope_metadata
+
 DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS = 1
 _MAX_REPAIR_SCHEDULE_MAX_ROUNDS = 10
+_CALLBACK_RECEIPT_PROJECTION_SCHEMA_VERSION = "director.repair_callback_receipt_projection.v1"
+_CALLBACK_RECEIPT_PROJECTION_AUTHORITY = "non_authoritative_callback_projection"
+_CALLBACK_RECEIPT_PROJECTION_MIGRATION_BLOCKER = "callback runners still return tool_results instead of RepairReceipt"
 
 
 def _non_empty(value: str) -> str:
@@ -100,6 +105,35 @@ class PostExecutionRepairScheduleRun:
         object.__setattr__(self, "convergence_status", _non_empty(self.convergence_status))
         object.__setattr__(self, "stopped_reason", _non_empty(self.stopped_reason))
 
+    def to_dict(self) -> dict[str, Any]:
+        receipt_projections = _project_callback_schedule_receipts(
+            tool_results=self.tool_results,
+            schedule_kind="post_execution",
+            ordered_steps=self.ordered_steps,
+            max_rounds=self.max_rounds,
+            rounds_run=self.rounds_run,
+            convergence_status=self.convergence_status,
+            stopped_reason=self.stopped_reason,
+        )
+        return {
+            "ordered_steps": [step.to_dict() for step in self.ordered_steps],
+            "tool_results": [dict(item) for item in self.tool_results],
+            "receipt_projections": receipt_projections,
+            "max_rounds": self.max_rounds,
+            "rounds_run": self.rounds_run,
+            "convergence_status": self.convergence_status,
+            "stopped_reason": self.stopped_reason,
+            "summary": _callback_schedule_summary(
+                schedule_kind="post_execution",
+                ordered_steps=self.ordered_steps,
+                max_rounds=self.max_rounds,
+                rounds_run=self.rounds_run,
+                convergence_status=self.convergence_status,
+                stopped_reason=self.stopped_reason,
+                receipt_projection_count=len(receipt_projections),
+            ),
+        }
+
 
 @dataclass(frozen=True)
 class MaterializationQualityRepairScheduleRun:
@@ -120,6 +154,35 @@ class MaterializationQualityRepairScheduleRun:
         object.__setattr__(self, "convergence_status", _non_empty(self.convergence_status))
         object.__setattr__(self, "stopped_reason", _non_empty(self.stopped_reason))
 
+    def to_dict(self) -> dict[str, Any]:
+        receipt_projections = _project_callback_schedule_receipts(
+            tool_results=self.tool_results,
+            schedule_kind="materialization_quality",
+            ordered_steps=self.ordered_steps,
+            max_rounds=self.max_rounds,
+            rounds_run=self.rounds_run,
+            convergence_status=self.convergence_status,
+            stopped_reason=self.stopped_reason,
+        )
+        return {
+            "ordered_steps": [step.to_dict() for step in self.ordered_steps],
+            "tool_results": [dict(item) for item in self.tool_results],
+            "receipt_projections": receipt_projections,
+            "max_rounds": self.max_rounds,
+            "rounds_run": self.rounds_run,
+            "convergence_status": self.convergence_status,
+            "stopped_reason": self.stopped_reason,
+            "summary": _callback_schedule_summary(
+                schedule_kind="materialization_quality",
+                ordered_steps=self.ordered_steps,
+                max_rounds=self.max_rounds,
+                rounds_run=self.rounds_run,
+                convergence_status=self.convergence_status,
+                stopped_reason=self.stopped_reason,
+                receipt_projection_count=len(receipt_projections),
+            ),
+        }
+
 
 _POST_EXECUTION_REPAIR_SCHEDULE: tuple[PostExecutionRepairScheduleStep, ...] = (
     PostExecutionRepairScheduleStep(
@@ -128,6 +191,13 @@ _POST_EXECUTION_REPAIR_SCHEDULE: tuple[PostExecutionRepairScheduleStep, ...] = (
         phase="dependency_resolution",
         priority=0,
         source_tool="deterministic_go_module_import_repair",
+    ),
+    PostExecutionRepairScheduleStep(
+        step_id="rust.dependency_resolution",
+        language="rust",
+        phase="dependency_resolution",
+        priority=0,
+        source_tool="deterministic_rust_dependency_repair",
     ),
     PostExecutionRepairScheduleStep(
         step_id="rust.post_execution_convergence",
@@ -230,6 +300,211 @@ def materialization_quality_repair_schedule() -> tuple[MaterializationQualityRep
     """Return the runtime-owned materialization-quality repair schedule."""
 
     return _ordered_materialization_quality_schedule_steps(_MATERIALIZATION_QUALITY_REPAIR_SCHEDULE)
+
+
+def _callback_schedule_summary(
+    *,
+    schedule_kind: str,
+    ordered_steps: Sequence[PostExecutionRepairScheduleStep] | Sequence[MaterializationQualityRepairScheduleStep],
+    max_rounds: int,
+    rounds_run: int,
+    convergence_status: str,
+    stopped_reason: str,
+    receipt_projection_count: int = 0,
+) -> dict[str, Any]:
+    return {
+        **convergence_envelope_metadata(
+            preferred_entrypoint="run_runtime_repair_convergence",
+            typed_receipt_path_available=False,
+            callback_migration_envelope=True,
+        ),
+        "schedule_kind": schedule_kind,
+        "step_count": len(tuple(ordered_steps or ())),
+        "ordered_step_ids": [step.step_id for step in ordered_steps],
+        "source_tools": [step.source_tool for step in ordered_steps],
+        "max_rounds": _coerce_max_rounds(max_rounds),
+        "rounds_run": max(0, int(rounds_run)),
+        "convergence_status": convergence_status,
+        "stopped_reason": stopped_reason,
+        "receipt_projection_count": max(0, int(receipt_projection_count)),
+        "callback_receipt_projection_available": receipt_projection_count > 0,
+        "legacy_callback_bridge": True,
+        "migration_callback_envelope": True,
+        "runner_binding_owner": "roles.adapters",
+        "produces_tool_results_only": True,
+        "final_typed_receipt_path": "run_runtime_repair_convergence",
+        "typed_receipt_path": "unavailable_in_callback_bridge",
+        "migration_blocker": _CALLBACK_RECEIPT_PROJECTION_MIGRATION_BLOCKER,
+    }
+
+
+def _project_callback_schedule_receipts(
+    *,
+    tool_results: Sequence[Mapping[str, Any]],
+    schedule_kind: str,
+    ordered_steps: Sequence[PostExecutionRepairScheduleStep] | Sequence[MaterializationQualityRepairScheduleStep],
+    max_rounds: int,
+    rounds_run: int,
+    convergence_status: str,
+    stopped_reason: str,
+) -> list[dict[str, Any]]:
+    steps_by_id = {step.step_id: step for step in ordered_steps}
+    projections: list[dict[str, Any]] = []
+    for index, tool_result in enumerate(tool_results):
+        result = tool_result.get("result")
+        payload: Mapping[str, Any] = result if isinstance(result, Mapping) else {}
+        step_id = _first_non_empty(
+            payload.get("bridge_step_id"),
+            payload.get("step_id"),
+            payload.get("scheduler_step_id"),
+            tool_result.get("bridge_step_id"),
+            tool_result.get("step_id"),
+        )
+        step = steps_by_id.get(step_id or "")
+        scheduled_source_tool = step.source_tool if step is not None else None
+        callback_source_tool = _first_non_empty(payload.get("source_tool"), tool_result.get("source_tool"))
+        source_tool = callback_source_tool or scheduled_source_tool
+        round_number = _first_int(payload.get("round_number"), payload.get("scheduler_round_number"))
+        touched_paths = _extract_callback_touched_paths(payload=payload, tool_result=tool_result)
+        revalidation_projection = _project_callback_revalidation(payload)
+
+        projections.append(
+            {
+                "schema_version": _CALLBACK_RECEIPT_PROJECTION_SCHEMA_VERSION,
+                "projection_id": _callback_receipt_projection_id(
+                    schedule_kind=schedule_kind,
+                    step_id=step_id,
+                    round_number=round_number,
+                    index=index,
+                ),
+                "receipt_authority": _CALLBACK_RECEIPT_PROJECTION_AUTHORITY,
+                "schedule_kind": schedule_kind,
+                "step_id": step_id,
+                "source_tool": source_tool,
+                "scheduled_source_tool": scheduled_source_tool,
+                "callback_source_tool": callback_source_tool,
+                "round_number": round_number,
+                "tool_name": _first_non_empty(
+                    tool_result.get("tool_name"),
+                    tool_result.get("tool"),
+                    payload.get("tool_name"),
+                    payload.get("tool"),
+                ),
+                "touched_path": touched_paths[0] if touched_paths else None,
+                "touched_paths": touched_paths,
+                "convergence_status": convergence_status,
+                "convergence_stopped_reason": stopped_reason,
+                "scheduler_rounds_run": max(0, int(rounds_run)),
+                "max_rounds": _coerce_max_rounds(max_rounds),
+                "projection_only": True,
+                "typed_receipt_path_available": False,
+                "authoritative": False,
+                "migration_blocker": _CALLBACK_RECEIPT_PROJECTION_MIGRATION_BLOCKER,
+                **revalidation_projection,
+            }
+        )
+    return projections
+
+
+def _callback_receipt_projection_id(
+    *,
+    schedule_kind: str,
+    step_id: str | None,
+    round_number: int | None,
+    index: int,
+) -> str:
+    normalized_step_id = step_id or "unknown_step"
+    normalized_round = str(round_number) if round_number is not None else "unknown_round"
+    return f"{schedule_kind}:{normalized_step_id}:round-{normalized_round}:tool-result-{index}"
+
+
+def _first_non_empty(*values: Any) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _first_int(*values: Any) -> int | None:
+    for value in values:
+        normalized = _optional_int(value)
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_callback_touched_paths(
+    *,
+    payload: Mapping[str, Any],
+    tool_result: Mapping[str, Any],
+) -> list[str]:
+    touched_paths: list[str] = []
+    for source in (payload, tool_result):
+        for key in ("file", "path", "target_path", "touched_path", "changed_path"):
+            _extend_touched_paths(touched_paths, source.get(key))
+        for key in ("files", "paths", "touched_paths", "files_changed", "changed_paths"):
+            _extend_touched_paths(touched_paths, source.get(key))
+    return touched_paths
+
+
+def _extend_touched_paths(touched_paths: list[str], value: Any) -> None:
+    if value is None:
+        return
+    if isinstance(value, Mapping):
+        for path in value:
+            _extend_touched_paths(touched_paths, path)
+        return
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        for path in value:
+            _extend_touched_paths(touched_paths, path)
+        return
+    normalized = str(value).strip()
+    if normalized and normalized not in touched_paths:
+        touched_paths.append(normalized)
+
+
+def _project_callback_revalidation(payload: Mapping[str, Any]) -> dict[str, Any]:
+    revalidation = payload.get("revalidation")
+    if not isinstance(revalidation, Mapping):
+        revalidation = payload.get("revalidation_evidence")
+    if not isinstance(revalidation, Mapping):
+        return {
+            "revalidation_evidence_present": False,
+            "revalidation_exit_code": None,
+            "revalidation_residual_count": None,
+        }
+
+    residual_count = _first_int(
+        revalidation.get("revalidation_residual_count"),
+        revalidation.get("residual_count"),
+        revalidation.get("residual_diagnostic_count"),
+    )
+    residual_diagnostic_ids = revalidation.get("residual_diagnostic_ids")
+    if residual_count is None and isinstance(residual_diagnostic_ids, Sequence) and not isinstance(
+        residual_diagnostic_ids,
+        (str, bytes, bytearray),
+    ):
+        residual_count = len(residual_diagnostic_ids)
+    if residual_count is None:
+        residual_count = _first_int(revalidation.get("errors_after"), revalidation.get("errors_after_count"))
+
+    return {
+        "revalidation_evidence_present": True,
+        "revalidation_exit_code": _first_int(revalidation.get("exit_code"), revalidation.get("revalidation_exit_code")),
+        "revalidation_residual_count": residual_count,
+    }
 
 
 def run_post_execution_repair_schedule_callbacks(
@@ -450,10 +725,22 @@ def _annotate_tool_result(
     payload.setdefault("max_rounds", max_rounds)
     payload.setdefault("scheduler_round_number", round_number)
     payload.setdefault("scheduler_max_rounds", max_rounds)
+    payload.setdefault("convergence_scheduler_required", True)
+    payload.setdefault("typed_receipt_path_available", False)
+    payload.setdefault("callback_migration_envelope", True)
+    payload.setdefault("migration_callback_envelope", True)
+    payload.setdefault("legacy_callback_bridge", True)
+    payload.setdefault("produces_tool_results_only", True)
+    payload.setdefault("preferred_typed_receipt_entrypoint", "run_runtime_repair_convergence")
+    payload.setdefault("final_typed_receipt_path", "run_runtime_repair_convergence")
+    payload.setdefault("typed_receipt_path", "unavailable_in_callback_bridge")
     revalidation = payload.get("revalidation")
     if isinstance(revalidation, dict):
         revalidation.setdefault("round_number", payload.get("round_number"))
         revalidation.setdefault("max_rounds", max_rounds)
+        revalidation.setdefault("convergence_scheduler_required", True)
+        revalidation.setdefault("typed_receipt_path_available", False)
+        revalidation.setdefault("callback_migration_envelope", True)
 
 
 def _annotate_convergence_result(
@@ -472,12 +759,27 @@ def _annotate_convergence_result(
         payload.setdefault("scheduler_rounds_run", rounds_run)
         payload.setdefault("convergence_status", convergence_status)
         payload.setdefault("convergence_stopped_reason", stopped_reason)
+        payload.setdefault("convergence_scheduler_required", True)
+        payload.setdefault("typed_receipt_path_available", False)
+        payload.setdefault("callback_migration_envelope", True)
+        payload.setdefault("migration_callback_envelope", True)
+        payload.setdefault("legacy_callback_bridge", True)
+        payload.setdefault("produces_tool_results_only", True)
+        payload.setdefault("callback_receipt_projection_available", True)
+        payload.setdefault("callback_receipt_projection_schema_version", _CALLBACK_RECEIPT_PROJECTION_SCHEMA_VERSION)
+        payload.setdefault("preferred_typed_receipt_entrypoint", "run_runtime_repair_convergence")
+        payload.setdefault("final_typed_receipt_path", "run_runtime_repair_convergence")
+        payload.setdefault("typed_receipt_path", "unavailable_in_callback_bridge")
         revalidation = payload.get("revalidation")
         if isinstance(revalidation, dict):
             revalidation.setdefault("scheduler_rounds_run", rounds_run)
             revalidation.setdefault("convergence_status", convergence_status)
             revalidation.setdefault("convergence_stopped_reason", stopped_reason)
             revalidation.setdefault("max_rounds", max_rounds)
+            revalidation.setdefault("convergence_scheduler_required", True)
+            revalidation.setdefault("typed_receipt_path_available", False)
+            revalidation.setdefault("callback_migration_envelope", True)
+            revalidation.setdefault("callback_receipt_projection_available", True)
 
 
 __all__ = [

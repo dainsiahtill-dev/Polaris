@@ -14,6 +14,7 @@ from .advisory_policy import (
 
 RepairMode = str
 RepairStatus = str
+FILE_ABSENT_HASH = "file_absent"
 
 
 def sha256_text(value: str) -> str:
@@ -201,11 +202,28 @@ class RepairRevalidationEvidence:
     def net_error_reduction(self) -> int:
         return self.errors_before - self.errors_after
 
+    @property
+    def evidence_status(self) -> str:
+        failure_reason = str(self.metadata.get("revalidation_failure_reason") or "").strip()
+        if failure_reason in {
+            "invalid_revalidation_evidence_type",
+            "missing_revalidation_evidence",
+            "missing_revalidation_exit_code",
+            "revalidator_exception",
+        }:
+            return "missing_evidence"
+        if not self.command or self.exit_code is None:
+            return "missing_evidence"
+        if self.exit_code != 0 or self.errors_after > 0 or self.residual_diagnostic_ids:
+            return "failed_evidence"
+        return "resolved_evidence"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "command": list(self.command),
             "exit_code": self.exit_code,
             "round_number": self.round_number,
+            "evidence_status": self.evidence_status,
             "errors_before": self.errors_before,
             "errors_after": self.errors_after,
             "net_error_reduction": self.net_error_reduction,
@@ -330,6 +348,11 @@ class CompositionIssue:
     message: str
     path: str | None = None
     operation_ids: tuple[str, ...] = ()
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "operation_ids", _tuple_str(list(self.operation_ids or ())))
+        object.__setattr__(self, "metadata", _dict_copy(self.metadata))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -337,6 +360,7 @@ class CompositionIssue:
             "message": self.message,
             "path": self.path,
             "operation_ids": list(self.operation_ids),
+            "metadata": _dict_copy(self.metadata),
         }
 
 
@@ -350,11 +374,23 @@ class ComposedPatch:
     operation_ids: tuple[str, ...]
     before_hash: str = ""
     after_hash: str = ""
+    exists_before: bool = True
+    exists_after: bool = True
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        exists_before = bool(self.exists_before)
+        exists_after = bool(self.exists_after)
+        metadata = _dict_copy(self.metadata)
+        metadata.setdefault("exists_before", exists_before)
+        metadata.setdefault("exists_after", exists_after)
+        after_hash = self.after_hash or (sha256_text(self.content_after) if exists_after else FILE_ABSENT_HASH)
         object.__setattr__(self, "before_hash", self.before_hash or sha256_text(self.content_before))
-        object.__setattr__(self, "after_hash", self.after_hash or sha256_text(self.content_after))
+        object.__setattr__(self, "after_hash", after_hash)
+        object.__setattr__(self, "exists_before", exists_before)
+        object.__setattr__(self, "exists_after", exists_after)
         object.__setattr__(self, "operation_ids", tuple(self.operation_ids or ()))
+        object.__setattr__(self, "metadata", metadata)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -363,6 +399,9 @@ class ComposedPatch:
             "before_hash": self.before_hash,
             "after_hash": self.after_hash,
             "changed": self.before_hash != self.after_hash,
+            "exists_before": self.exists_before,
+            "exists_after": self.exists_after,
+            "metadata": _dict_copy(self.metadata),
         }
 
 
@@ -441,6 +480,7 @@ class RepairReceipt:
             "before_hashes": dict(self.before_hashes),
             "after_hashes": dict(self.after_hashes),
             "round_number": self.round_number,
+            "evidence_status": self.evidence_status,
             "errors_before": self.errors_before,
             "errors_after": self.errors_after,
             "net_error_reduction": self.net_error_reduction,
@@ -479,6 +519,7 @@ class RepairReceipt:
             "before_hashes": dict(self.before_hashes),
             "after_hashes": dict(self.after_hashes),
             "round_number": self.round_number,
+            "evidence_status": self.evidence_status,
             "errors_before": self.errors_before,
             "errors_after": self.errors_after,
             "net_error_reduction": self.net_error_reduction,
@@ -511,6 +552,12 @@ class RepairReceipt:
         if self.revalidation_evidence is None:
             return None
         return self.revalidation_evidence.net_error_reduction
+
+    @property
+    def evidence_status(self) -> str:
+        if self.revalidation_evidence is None:
+            return "missing_evidence"
+        return self.revalidation_evidence.evidence_status
 
 
 @dataclass(frozen=True)

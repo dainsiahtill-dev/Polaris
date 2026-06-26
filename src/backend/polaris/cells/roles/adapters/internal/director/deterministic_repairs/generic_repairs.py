@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -312,6 +312,7 @@ def _apply_deterministic_go_module_import_repair(
     *,
     task_id: str,
     advisor_notes: Sequence[RepairAdvisoryV1] = (),
+    convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Repair Go import paths and cross-file coherence issues.
 
@@ -355,6 +356,7 @@ def _apply_deterministic_go_module_import_repair(
             base_files=base_files,
             advisor_notes=advisor_notes,
             use_editor=False,
+            convergence_verifier=convergence_verifier,
         )
         if any(not bool(item.get("success", False)) for item in bare_import_results):
             return bare_import_results

@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
+from .composer import PatchComposer
 from .contracts import (
     CompositionResult,
     RepairAdvisorNote,
     RepairDiagnostic,
     RepairExecutionResult,
     RepairPlan,
+    RepairReceipt,
 )
 from .cpp_runtime import (
     CppIncludePathPlanning,
@@ -43,7 +46,7 @@ from .cpp_syntax import (
     CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL,
 )
 from .diagnostics import normalize_artifact_quality_errors
-from .executor import EditFileFn, WriteFileFn
+from .executor import DeleteFileFn, EditFileFn, TransactionalRepairExecutor, WriteFileFn
 from .generic_hygiene_runtime import (
     PatchResidueCleanupPlanning,
     PatchResidueCleanupRun,
@@ -64,15 +67,114 @@ from .java_runtime import (
     plan_java_accessor_alias_repair,
     run_java_accessor_alias_repair,
 )
-from .java_syntax import JAVA_ACCESSOR_ALIAS_SOURCE_TOOL
-from .policy_gate import PolicyDecision
+from .java_syntax import (
+    JAVA_ACCESSOR_ALIAS_SOURCE_TOOL,
+    JAVA_TEST_DEPENDENCY_SOURCE_TOOL,
+    build_java_test_dependency_plan,
+)
+from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
+from .registry import RepairCoverageReport, build_repair_coverage_report
+from .rust_ast import RUST_STRUCT_LITERAL_MISSING_FIELD_SOURCE_TOOL
+from .rust_export_facade import RUST_LIB_ROOT_FACADE_SOURCE_TOOL, RUST_MISSING_LIB_TARGET_SOURCE_TOOL
 from .rust_runtime import (
+    RustCrateImportRewritePlanning,
+    RustCrateImportRewriteRun,
     RustDependencyPlanning,
     RustDependencyRun,
+    RustDuplicateModuleFilePlanning,
+    RustDuplicateModuleFileRun,
+    RustFieldRenameSuggestionPlanning,
+    RustFieldRenameSuggestionRun,
+    RustIncompatibleCopyDerivePlanning,
+    RustIncompatibleCopyDeriveRun,
+    RustLibRootFacadePlanning,
+    RustLibRootFacadeRun,
+    RustLineSuggestionPlanning,
+    RustLineSuggestionRun,
+    RustMethodSelfSignaturePlanning,
+    RustMethodSelfSignatureRun,
+    RustMissingBinaryEntrypointPlanning,
+    RustMissingBinaryEntrypointRun,
+    RustMissingLibTargetPlanning,
+    RustMissingLibTargetRun,
+    RustMissingModuleFilePlanning,
+    RustMissingModuleFileRun,
+    RustMissingTraitDerivePlanning,
+    RustMissingTraitDeriveRun,
+    RustSerdeDerivePlanning,
+    RustSerdeDeriveRun,
+    RustStructLiteralMissingFieldPlanning,
+    RustStructLiteralMissingFieldRun,
+    RustTraitImportPlanning,
+    RustTraitImportRun,
+    RustUnresolvedPubUsePlanning,
+    RustUnresolvedPubUseRun,
+    RustUnusedImportPlanning,
+    RustUnusedImportRun,
+    RustWrongCratePathPlanning,
+    RustWrongCratePathRun,
+    plan_rust_crate_import_rewrite_repair,
     plan_rust_dependency_repair,
+    plan_rust_duplicate_module_file_repair,
+    plan_rust_field_rename_suggestion_repair,
+    plan_rust_incompatible_copy_derive_repair,
+    plan_rust_lib_root_facade_repair,
+    plan_rust_line_suggestion_repair,
+    plan_rust_method_self_signature_repair,
+    plan_rust_missing_binary_entrypoint_repair,
+    plan_rust_missing_lib_target_repair,
+    plan_rust_missing_module_file_repair,
+    plan_rust_missing_trait_derive_repair,
+    plan_rust_serde_derive_repair,
+    plan_rust_struct_literal_missing_field_repair,
+    plan_rust_trait_import_repair,
+    plan_rust_unresolved_pub_use_repair,
+    plan_rust_unused_import_repair,
+    plan_rust_wrong_crate_path_repair,
+    run_rust_crate_import_rewrite_repair,
     run_rust_dependency_repair,
+    run_rust_duplicate_module_file_repair,
+    run_rust_field_rename_suggestion_repair,
+    run_rust_incompatible_copy_derive_repair,
+    run_rust_lib_root_facade_repair,
+    run_rust_line_suggestion_repair,
+    run_rust_method_self_signature_repair,
+    run_rust_missing_binary_entrypoint_repair,
+    run_rust_missing_lib_target_repair,
+    run_rust_missing_module_file_repair,
+    run_rust_missing_trait_derive_repair,
+    run_rust_serde_derive_repair,
+    run_rust_struct_literal_missing_field_repair,
+    run_rust_trait_import_repair,
+    run_rust_unresolved_pub_use_repair,
+    run_rust_unused_import_repair,
+    run_rust_wrong_crate_path_repair,
 )
-from .rust_syntax import RUST_DEPENDENCY_SOURCE_TOOL
+from .rust_syntax import (
+    RUST_CRATE_IMPORT_REWRITE_SOURCE_TOOL,
+    RUST_DEPENDENCY_SOURCE_TOOL,
+    RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL,
+    RUST_FIELD_RENAME_SUGGESTION_SOURCE_TOOL,
+    RUST_INCOMPATIBLE_COPY_DERIVE_SOURCE_TOOL,
+    RUST_LINE_SUGGESTION_SOURCE_TOOL,
+    RUST_METHOD_SELF_SIGNATURE_SOURCE_TOOL,
+    RUST_MISSING_BINARY_ENTRYPOINT_SOURCE_TOOL,
+    RUST_MISSING_MODULE_FILE_SOURCE_TOOL,
+    RUST_MISSING_TRAIT_DERIVE_SOURCE_TOOL,
+    RUST_SERDE_DERIVE_SOURCE_TOOL,
+    RUST_TRAIT_IMPORT_SOURCE_TOOL,
+    RUST_UNRESOLVED_PUB_USE_SOURCE_TOOL,
+    RUST_UNUSED_IMPORT_SOURCE_TOOL,
+    RUST_WRONG_CRATE_PATH_SOURCE_TOOL,
+)
+from .scheduler import (
+    BaseFilesProviderFn,
+    PlannerFn,
+    RepairConvergenceResult,
+    RepairConvergenceScheduler,
+    VerifierFn,
+    convergence_envelope_metadata,
+)
 from .typescript_runtime import (
     TypeScriptDuplicateObjectPropertyPlanning,
     TypeScriptDuplicateObjectPropertyRun,
@@ -109,6 +211,7 @@ RuntimeRunnerFn = Callable[
         Sequence[str],
         WriteFileFn,
         EditFileFn | None,
+        DeleteFileFn | None,
         Sequence[str] | None,
         Sequence[RepairAdvisorNote] | None,
         str,
@@ -161,6 +264,31 @@ class RuntimeRepairBinding:
         }
 
 
+@dataclass(frozen=True)
+class _DeleterBoundRepairExecutor(TransactionalRepairExecutor):
+    deleter: DeleteFileFn
+
+    def execute(
+        self,
+        *,
+        workspace: Path,
+        plan: RepairPlan,
+        composition: CompositionResult,
+        writer: WriteFileFn | None = None,
+        editor: EditFileFn | None = None,
+        deleter: DeleteFileFn | None = None,
+    ) -> RepairExecutionResult:
+        del deleter
+        return TransactionalRepairExecutor().execute(
+            workspace=workspace,
+            plan=plan,
+            composition=composition,
+            writer=writer,
+            editor=editor,
+            deleter=self.deleter,
+        )
+
+
 def plan_runtime_repair(
     *,
     source_tool: str,
@@ -196,6 +324,7 @@ def run_runtime_repair(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None = None,
+    deleter: DeleteFileFn | None = None,
     allowed_paths: Sequence[str] | None = None,
     advisor_notes: Sequence[RepairAdvisorNote] | None = None,
     mode: str = "commit",
@@ -207,7 +336,7 @@ def run_runtime_repair(
     binding = _RUNTIME_REPAIR_BINDINGS.get(normalized_source_tool)
     if binding is not None:
         return binding.runner(
-            workspace, base_files, artifact_quality_errors, writer, editor, allowed_paths, notes, mode
+            workspace, base_files, artifact_quality_errors, writer, editor, deleter, allowed_paths, notes, mode
         )
 
     planning = RuntimeRepairPlanning(
@@ -227,8 +356,395 @@ def run_runtime_repair(
     )
 
 
+def build_runtime_repair_convergence_planner(
+    *,
+    source_tools: Sequence[str],
+    base_files: Mapping[str, str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> PlannerFn:
+    """Wrap executable runtime bindings as a convergence scheduler planner."""
+
+    normalized_source_tools = _normalize_source_tools(source_tools)
+    notes = tuple(advisor_notes or ())
+
+    def planner(diagnostics: tuple[RepairDiagnostic, ...], round_number: int) -> tuple[RepairPlan, ...]:
+        coverage_report = build_repair_coverage_report(diagnostics)
+        plans: list[RepairPlan] = []
+        for source_tool in normalized_source_tools:
+            binding = _RUNTIME_REPAIR_BINDINGS.get(source_tool)
+            if binding is None:
+                continue
+            tool_diagnostics = _executable_diagnostics_for_source_tool(coverage_report, source_tool)
+            if not tool_diagnostics:
+                continue
+            artifact_quality_errors = _artifact_quality_errors_from_diagnostics(tool_diagnostics)
+            planning = binding.planner(base_files, artifact_quality_errors, notes, mode)
+            if planning.plan is None:
+                continue
+            plans.append(
+                _with_runtime_convergence_plan_metadata(
+                    planning.plan,
+                    source_tool=source_tool,
+                    round_number=round_number,
+                    planning=planning,
+                )
+            )
+        return tuple(plans)
+
+    return planner
+
+
+def run_runtime_repair_convergence(
+    *,
+    source_tools: Sequence[str],
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    verifier: VerifierFn,
+    writer: WriteFileFn | None = None,
+    editor: EditFileFn | None = None,
+    deleter: DeleteFileFn | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+    max_rounds: int = 3,
+    planner: PlannerFn | None = None,
+    base_files_provider: BaseFilesProviderFn | None = None,
+    previous_receipts: Sequence[RepairReceipt] = (),
+) -> RepairConvergenceResult:
+    """Run runtime repairs through the typed convergence scheduler envelope."""
+
+    normalized_source_tools = _normalize_source_tools(source_tools)
+    initial_diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
+    initial_coverage_report = build_repair_coverage_report(initial_diagnostics)
+    native_coverage_gate_status = _native_coverage_gate_status(initial_coverage_report, normalized_source_tools)
+    if planner is None and native_coverage_gate_status is not None:
+        return RepairConvergenceResult(
+            status=native_coverage_gate_status,
+            final_diagnostics=initial_diagnostics,
+            max_rounds=max_rounds,
+            metadata=_runtime_convergence_metadata(
+                status=native_coverage_gate_status,
+                source_tools=normalized_source_tools,
+                planner_override=False,
+                extra={
+                    **_coverage_metadata(
+                        initial_coverage_report,
+                        source_tools=normalized_source_tools,
+                    ),
+                    "error_code": native_coverage_gate_status,
+                    "stopped_reason": native_coverage_gate_status,
+                },
+            ),
+        )
+    unsupported_source_tools = tuple(
+        source_tool for source_tool in normalized_source_tools if source_tool not in _RUNTIME_REPAIR_BINDINGS
+    )
+    if unsupported_source_tools and planner is None:
+        return RepairConvergenceResult(
+            status="unsupported_repair_source_tool",
+            final_diagnostics=initial_diagnostics,
+            max_rounds=max_rounds,
+            metadata=_runtime_convergence_metadata(
+                status="unsupported_repair_source_tool",
+                source_tools=normalized_source_tools,
+                planner_override=False,
+                extra={
+                    **_coverage_metadata(
+                        initial_coverage_report,
+                        source_tools=normalized_source_tools,
+                    ),
+                    "error_code": "unsupported_repair_source_tool",
+                    "unsupported_source_tools": list(unsupported_source_tools),
+                },
+            ),
+        )
+    if not normalized_source_tools and planner is None:
+        return RepairConvergenceResult(
+            status="stuck_no_plans",
+            final_diagnostics=initial_diagnostics,
+            max_rounds=max_rounds,
+            metadata=_runtime_convergence_metadata(
+                status="stuck_no_plans",
+                source_tools=normalized_source_tools,
+                planner_override=False,
+                extra={
+                    **_coverage_metadata(
+                        initial_coverage_report,
+                        source_tools=normalized_source_tools,
+                    ),
+                    "stopped_reason": "no_source_tools_supplied",
+                },
+            ),
+        )
+
+    selected_planner = planner or build_runtime_repair_convergence_planner(
+        source_tools=normalized_source_tools,
+        base_files=base_files,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    selected_base_files_provider = base_files_provider or (lambda _plan: base_files)
+    scheduler_executor = _DeleterBoundRepairExecutor(deleter) if deleter is not None else None
+    result = RepairConvergenceScheduler(max_rounds=max_rounds, executor=scheduler_executor).run(
+        workspace=Path(workspace),
+        verifier=verifier,
+        planner=selected_planner,
+        base_files_provider=selected_base_files_provider,
+        writer=writer,
+        editor=editor,
+        allowed_paths=tuple(allowed_paths or ()),
+        previous_receipts=tuple(previous_receipts or ()),
+    )
+    final_coverage_report = build_repair_coverage_report(result.final_diagnostics)
+    final_coverage_gate_status = (
+        _native_coverage_gate_status(final_coverage_report, normalized_source_tools)
+        if planner is None and result.status == "stuck_no_plans"
+        else None
+    )
+    if final_coverage_gate_status is not None:
+        result = RepairConvergenceResult(
+            status=final_coverage_gate_status,
+            final_diagnostics=result.final_diagnostics,
+            rounds=result.rounds,
+            receipts=result.receipts,
+            max_rounds=result.max_rounds,
+            metadata={
+                **dict(result.metadata),
+                "scheduler_status": result.status,
+                "stopped_reason": final_coverage_gate_status,
+            },
+        )
+    return _with_runtime_convergence_metadata(
+        result,
+        source_tools=normalized_source_tools,
+        planner_override=planner is not None,
+        base_files_provider_kind="custom" if base_files_provider is not None else "static_mapping",
+        initial_coverage_report=initial_coverage_report,
+        final_coverage_report=final_coverage_report,
+    )
+
+
 def _normalize_source_tool(source_tool: str) -> str:
     return str(source_tool or "").strip()
+
+
+def _normalize_source_tools(source_tools: Sequence[str]) -> tuple[str, ...]:
+    raw_source_tools = (source_tools,) if isinstance(source_tools, str) else tuple(source_tools or ())
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for source_tool in raw_source_tools:
+        value = _normalize_source_tool(source_tool)
+        if not value or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return tuple(normalized)
+
+
+def _artifact_quality_errors_from_diagnostics(diagnostics: Sequence[RepairDiagnostic]) -> tuple[str, ...]:
+    return tuple(
+        diagnostic.raw or diagnostic.message or diagnostic.code
+        for diagnostic in diagnostics or ()
+        if diagnostic.raw or diagnostic.message or diagnostic.code
+    )
+
+
+def _executable_diagnostics_for_source_tool(
+    report: RepairCoverageReport,
+    source_tool: str,
+) -> tuple[RepairDiagnostic, ...]:
+    return tuple(
+        item.diagnostic
+        for item in report.items
+        if any(rule.source_tool == source_tool and rule.runtime_plan_available for rule in item.matched_rules)
+    )
+
+
+def _selected_executable_runtime_plan_diagnostic_count(
+    report: RepairCoverageReport,
+    source_tools: Sequence[str],
+) -> int:
+    selected = {str(source_tool) for source_tool in source_tools}
+    return sum(
+        1
+        for item in report.items
+        if any(rule.source_tool in selected and rule.runtime_plan_available for rule in item.matched_rules)
+    )
+
+
+def _native_coverage_gate_status(
+    report: RepairCoverageReport,
+    source_tools: Sequence[str],
+) -> str | None:
+    if report.total_diagnostics == 0:
+        return None
+    if report.uncovered_diagnostic_count == report.total_diagnostics:
+        return "coverage_gap_uncovered_diagnostics"
+    if _selected_executable_runtime_plan_diagnostic_count(report, source_tools) == 0:
+        return "stuck_no_executable_runtime_plan"
+    return None
+
+
+def _coverage_gate_status_label(
+    report: RepairCoverageReport,
+    source_tools: Sequence[str],
+) -> str:
+    gate_status = _native_coverage_gate_status(report, source_tools)
+    if gate_status is not None:
+        return gate_status
+    if report.total_diagnostics == 0:
+        return "no_diagnostics"
+    if report.uncovered_diagnostic_count > 0:
+        return "partial_coverage_gaps_with_executable_runtime_plan"
+    return "covered_with_executable_runtime_plan"
+
+
+def _coverage_metadata(
+    report: RepairCoverageReport,
+    *,
+    source_tools: Sequence[str],
+) -> dict[str, Any]:
+    payload = report.to_dict()
+    selected_executable_count = _selected_executable_runtime_plan_diagnostic_count(report, source_tools)
+    return {
+        "coverage_gate_native": True,
+        "coverage_report": payload,
+        "coverage_gap_count": int(payload["coverage_gap_count"]),
+        "coverage_gaps": list(payload["coverage_gaps"]),
+        "uncovered_diagnostics": list(payload["uncovered_diagnostics"]),
+        "total_diagnostics": report.total_diagnostics,
+        "covered_diagnostic_count": report.covered_diagnostic_count,
+        "uncovered_diagnostic_count": report.uncovered_diagnostic_count,
+        "executable_runtime_plan_diagnostic_count": report.executable_runtime_plan_diagnostic_count,
+        "metadata_only_diagnostic_count": report.metadata_only_diagnostic_count,
+        "selected_executable_runtime_plan_diagnostic_count": selected_executable_count,
+        "coverage_fully_covered": report.total_diagnostics == 0 or report.uncovered_diagnostic_count == 0,
+        "coverage_has_executable_runtime_plan": selected_executable_count > 0,
+        "coverage_gate_status": _coverage_gate_status_label(report, source_tools),
+    }
+
+
+def _final_coverage_metadata(
+    report: RepairCoverageReport,
+    *,
+    source_tools: Sequence[str],
+) -> dict[str, Any]:
+    payload = report.to_dict()
+    return {
+        "final_coverage_report": payload,
+        "residual_coverage_gap_count": int(payload["coverage_gap_count"]),
+        "residual_coverage_gaps": list(payload["coverage_gaps"]),
+        "residual_uncovered_diagnostics": list(payload["uncovered_diagnostics"]),
+        "residual_uncovered_diagnostic_count": report.uncovered_diagnostic_count,
+        "residual_executable_runtime_plan_diagnostic_count": report.executable_runtime_plan_diagnostic_count,
+        "residual_metadata_only_diagnostic_count": report.metadata_only_diagnostic_count,
+        "residual_selected_executable_runtime_plan_diagnostic_count": (
+            _selected_executable_runtime_plan_diagnostic_count(report, source_tools)
+        ),
+        "residual_coverage_fully_covered": report.total_diagnostics == 0 or report.uncovered_diagnostic_count == 0,
+        "residual_coverage_gate_status": _coverage_gate_status_label(report, source_tools),
+    }
+
+
+def _with_runtime_convergence_plan_metadata(
+    plan: RepairPlan,
+    *,
+    source_tool: str,
+    round_number: int,
+    planning: RuntimeRepairPlanning,
+) -> RepairPlan:
+    return RepairPlan(
+        rule_id=plan.rule_id,
+        source_tool=plan.source_tool,
+        operations=plan.operations,
+        diagnostics=plan.diagnostics,
+        plan_id=plan.plan_id,
+        mode=plan.mode,
+        risk_level=plan.risk_level,
+        priority=plan.priority,
+        depends_on=plan.depends_on,
+        advisor_notes=plan.advisor_notes,
+        metadata={
+            **dict(plan.metadata),
+            "runtime_convergence_planner": True,
+            "runtime_convergence_source_tool": source_tool,
+            "runtime_convergence_round_number": round_number,
+            "runtime_planning_error_code": planning.error_code,
+            "runtime_planning_error_message": planning.error_message,
+        },
+    )
+
+
+def _runtime_convergence_metadata(
+    *,
+    status: str,
+    source_tools: Sequence[str],
+    planner_override: bool,
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    binding_payloads = [
+        _RUNTIME_REPAIR_BINDINGS[source_tool].to_dict()
+        for source_tool in source_tools
+        if source_tool in _RUNTIME_REPAIR_BINDINGS
+    ]
+    return {
+        **convergence_envelope_metadata(preferred_entrypoint="run_runtime_repair_convergence"),
+        "legacy_single_repair_entrypoint": "run_runtime_repair",
+        "source_tools": list(source_tools),
+        "runtime_bindings": binding_payloads,
+        "runtime_binding_count": len(binding_payloads),
+        "planner_override": bool(planner_override),
+        "status": str(status or "unknown"),
+        "converged": status in {"already_clean", "converged"},
+        "unconverged": status not in {"already_clean", "converged"},
+        "produces_tool_results_only": False,
+        **dict(extra or {}),
+    }
+
+
+def _with_runtime_convergence_metadata(
+    result: RepairConvergenceResult,
+    *,
+    source_tools: Sequence[str],
+    planner_override: bool,
+    base_files_provider_kind: str,
+    initial_coverage_report: RepairCoverageReport,
+    final_coverage_report: RepairCoverageReport,
+) -> RepairConvergenceResult:
+    failed_revalidation_count = sum(1 for receipt in result.receipts if receipt.status == "failed_revalidation")
+    metadata = {
+        **dict(result.metadata),
+        **_runtime_convergence_metadata(
+            status=result.status,
+            source_tools=source_tools,
+            planner_override=planner_override,
+            extra={
+                "base_files_provider": base_files_provider_kind,
+                "receipt_count": len(result.receipts),
+                "round_count": len(result.rounds),
+                "final_error_count": len(result.final_diagnostics),
+                "failed_revalidation_receipt_count": failed_revalidation_count,
+                **_coverage_metadata(
+                    initial_coverage_report,
+                    source_tools=source_tools,
+                ),
+                **_final_coverage_metadata(
+                    final_coverage_report,
+                    source_tools=source_tools,
+                ),
+            },
+        ),
+    }
+    return RepairConvergenceResult(
+        status=result.status,
+        final_diagnostics=result.final_diagnostics,
+        rounds=result.rounds,
+        receipts=result.receipts,
+        max_rounds=result.max_rounds,
+        metadata=metadata,
+    )
 
 
 def runtime_repair_bindings() -> tuple[dict[str, str], ...]:
@@ -325,6 +841,261 @@ def _plan_rust_dependency(
     mode: str,
 ) -> RuntimeRepairPlanning:
     planning = plan_rust_dependency_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_crate_import_rewrite(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_crate_import_rewrite_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_duplicate_module_file(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_duplicate_module_file_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_incompatible_copy_derive(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_incompatible_copy_derive_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_method_self_signature(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_method_self_signature_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_missing_binary_entrypoint(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_missing_binary_entrypoint_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_missing_lib_target(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_missing_lib_target_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_lib_root_facade(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_lib_root_facade_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_missing_module_file(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_missing_module_file_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_struct_literal_missing_field(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_struct_literal_missing_field_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_line_suggestion(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_line_suggestion_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_field_rename_suggestion(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_field_rename_suggestion_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_wrong_crate_path(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_wrong_crate_path_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_serde_derive(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_serde_derive_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_missing_trait_derive(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_missing_trait_derive_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_trait_import(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_trait_import_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_unused_import(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_unused_import_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_rust(planning)
+
+
+def _plan_rust_unresolved_pub_use(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_rust_unresolved_pub_use_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         advisor_notes=advisor_notes,
@@ -438,12 +1209,47 @@ def _plan_java_accessor_alias(
     return _runtime_planning_from_java(planning)
 
 
+def _plan_java_test_dependency(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    normalized_base = _normalize_runtime_base_files(base_files)
+    diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
+    notes = tuple(advisor_notes or ())
+    plan = build_java_test_dependency_plan(
+        base_files=normalized_base,
+        diagnostics=diagnostics,
+        mode=mode,
+    )
+    if plan is None:
+        return RuntimeRepairPlanning(
+            source_tool=JAVA_TEST_DEPENDENCY_SOURCE_TOOL,
+            diagnostics=diagnostics,
+            plan=None,
+            composition=None,
+            advisor_notes=notes,
+        )
+    if notes:
+        plan = replace(plan, advisor_notes=notes)
+    composition = PatchComposer().compose(normalized_base, plan.operations)
+    return RuntimeRepairPlanning(
+        source_tool=plan.source_tool,
+        diagnostics=tuple(plan.diagnostics),
+        plan=plan,
+        composition=composition,
+        advisor_notes=notes,
+    )
+
+
 def _run_typescript_object_literal_comma(
     workspace: str | Path,
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
@@ -467,6 +1273,7 @@ def _run_typescript_nullable_canvas_context(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
@@ -490,6 +1297,7 @@ def _run_typescript_duplicate_object_property(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
@@ -513,6 +1321,7 @@ def _run_typescript_enum_member_separator(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
@@ -536,6 +1345,7 @@ def _run_go_bare_import_string(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
@@ -559,11 +1369,422 @@ def _run_rust_dependency(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
 ) -> RuntimeRepairRun:
     run = run_rust_dependency_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_crate_import_rewrite(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_crate_import_rewrite_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_duplicate_module_file(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_duplicate_module_file_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        deleter=deleter,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_incompatible_copy_derive(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_incompatible_copy_derive_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_method_self_signature(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_method_self_signature_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_missing_binary_entrypoint(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_missing_binary_entrypoint_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_missing_lib_target(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_missing_lib_target_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_lib_root_facade(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    del deleter
+    run = run_rust_lib_root_facade_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_missing_module_file(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_missing_module_file_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_struct_literal_missing_field(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_struct_literal_missing_field_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_line_suggestion(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_line_suggestion_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_field_rename_suggestion(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_field_rename_suggestion_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_wrong_crate_path(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_wrong_crate_path_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_serde_derive(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_serde_derive_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_missing_trait_derive(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_missing_trait_derive_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_trait_import(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_trait_import_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_unused_import(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_unused_import_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_rust(run)
+
+
+def _run_rust_unresolved_pub_use(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_rust_unresolved_pub_use_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
@@ -582,6 +1803,7 @@ def _run_patch_residue_cleanup(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
@@ -605,6 +1827,7 @@ def _run_cpp_include_path(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
@@ -628,6 +1851,7 @@ def _run_cpp_standard_include(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
@@ -651,6 +1875,7 @@ def _run_cpp_placeholder_declaration(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
@@ -674,6 +1899,7 @@ def _run_cpp_missing_private_members(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
@@ -697,6 +1923,7 @@ def _run_cpp_struct_getter_field_access(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
@@ -720,6 +1947,7 @@ def _run_java_accessor_alias(
     artifact_quality_errors: Sequence[str],
     writer: WriteFileFn,
     editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
     allowed_paths: Sequence[str] | None,
     advisor_notes: Sequence[RepairAdvisorNote] | None,
     mode: str,
@@ -735,6 +1963,76 @@ def _run_java_accessor_alias(
         mode=mode,
     )
     return _runtime_run_from_java(run)
+
+
+def _run_java_test_dependency(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    normalized_base = _normalize_runtime_base_files(base_files)
+    planning = _plan_java_test_dependency(
+        normalized_base,
+        artifact_quality_errors,
+        advisor_notes,
+        mode,
+    )
+    if planning.plan is None:
+        return RuntimeRepairRun(
+            planning=planning,
+            ok=False,
+            error_code="repair_not_planned",
+            error_message="No matching Java test dependency repair plan.",
+        )
+    if planning.composition is None:
+        return RuntimeRepairRun(
+            planning=planning,
+            ok=False,
+            error_code="repair_composition_missing",
+            error_message="Java test dependency repair composition was not produced.",
+        )
+
+    policy = RepairPolicyGate()
+    policy_context = RepairPolicyContext(
+        allowed_paths=tuple(
+            _normalize_runtime_repair_path(str(path or "")) for path in (allowed_paths or normalized_base.keys())
+        )
+    )
+    plan_decision = policy.evaluate_plan(planning.plan, policy_context)
+    composition_decision = policy.evaluate_composition(planning.plan, planning.composition)
+    if not plan_decision.allowed or not composition_decision.allowed:
+        return RuntimeRepairRun(
+            planning=planning,
+            ok=False,
+            plan_decision=plan_decision,
+            composition_decision=composition_decision,
+            error_code="repair_policy_denied",
+            error_message="Director Runtime repair policy denied the plan or composition.",
+        )
+
+    execution_result = TransactionalRepairExecutor().execute(
+        workspace=Path(str(workspace)).resolve(),
+        plan=planning.plan,
+        composition=planning.composition,
+        writer=writer,
+        editor=editor,
+        deleter=deleter,
+    )
+    return RuntimeRepairRun(
+        planning=planning,
+        ok=execution_result.ok,
+        execution_result=execution_result,
+        plan_decision=plan_decision,
+        composition_decision=composition_decision,
+        error_code=None if execution_result.ok else "repair_execution_failed",
+        error_message=None if execution_result.ok else execution_result.error,
+    )
 
 
 def _runtime_planning_from_cpp(
@@ -793,7 +2091,26 @@ def _runtime_run_from_go(run: GoBareImportStringRun) -> RuntimeRepairRun:
     )
 
 
-def _runtime_planning_from_rust(planning: RustDependencyPlanning) -> RuntimeRepairPlanning:
+def _runtime_planning_from_rust(
+    planning: RustCrateImportRewritePlanning
+    | RustDependencyPlanning
+    | RustDuplicateModuleFilePlanning
+    | RustFieldRenameSuggestionPlanning
+    | RustIncompatibleCopyDerivePlanning
+    | RustLibRootFacadePlanning
+    | RustLineSuggestionPlanning
+    | RustMethodSelfSignaturePlanning
+    | RustMissingBinaryEntrypointPlanning
+    | RustMissingLibTargetPlanning
+    | RustMissingModuleFilePlanning
+    | RustMissingTraitDerivePlanning
+    | RustSerdeDerivePlanning
+    | RustStructLiteralMissingFieldPlanning
+    | RustTraitImportPlanning
+    | RustUnusedImportPlanning
+    | RustUnresolvedPubUsePlanning
+    | RustWrongCratePathPlanning,
+) -> RuntimeRepairPlanning:
     return RuntimeRepairPlanning(
         source_tool=planning.source_tool,
         diagnostics=planning.diagnostics,
@@ -803,7 +2120,26 @@ def _runtime_planning_from_rust(planning: RustDependencyPlanning) -> RuntimeRepa
     )
 
 
-def _runtime_run_from_rust(run: RustDependencyRun) -> RuntimeRepairRun:
+def _runtime_run_from_rust(
+    run: RustCrateImportRewriteRun
+    | RustDependencyRun
+    | RustDuplicateModuleFileRun
+    | RustFieldRenameSuggestionRun
+    | RustIncompatibleCopyDeriveRun
+    | RustLibRootFacadeRun
+    | RustLineSuggestionRun
+    | RustMethodSelfSignatureRun
+    | RustMissingBinaryEntrypointRun
+    | RustMissingLibTargetRun
+    | RustMissingModuleFileRun
+    | RustMissingTraitDeriveRun
+    | RustSerdeDeriveRun
+    | RustStructLiteralMissingFieldRun
+    | RustTraitImportRun
+    | RustUnusedImportRun
+    | RustUnresolvedPubUseRun
+    | RustWrongCratePathRun,
+) -> RuntimeRepairRun:
     return RuntimeRepairRun(
         planning=_runtime_planning_from_rust(run.planning),
         ok=run.ok,
@@ -891,6 +2227,21 @@ def _runtime_run_from_typescript(
     )
 
 
+def _normalize_runtime_base_files(base_files: Mapping[str, str]) -> dict[str, str]:
+    return {
+        _normalize_runtime_repair_path(str(path or "")): str(content or "")
+        for path, content in dict(base_files or {}).items()
+        if _normalize_runtime_repair_path(str(path or ""))
+    }
+
+
+def _normalize_runtime_repair_path(path: str) -> str:
+    normalized = str(path or "").strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
 _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
     CPP_INCLUDE_PATH_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=CPP_INCLUDE_PATH_SOURCE_TOOL,
@@ -941,6 +2292,125 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         planner=_plan_rust_dependency,
         runner=_run_rust_dependency,
     ),
+    RUST_CRATE_IMPORT_REWRITE_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_CRATE_IMPORT_REWRITE_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.crate_import_rewrite",
+        planner=_plan_rust_crate_import_rewrite,
+        runner=_run_rust_crate_import_rewrite,
+    ),
+    RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.duplicate_module_file",
+        planner=_plan_rust_duplicate_module_file,
+        runner=_run_rust_duplicate_module_file,
+    ),
+    RUST_INCOMPATIBLE_COPY_DERIVE_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_INCOMPATIBLE_COPY_DERIVE_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.incompatible_copy_derive",
+        planner=_plan_rust_incompatible_copy_derive,
+        runner=_run_rust_incompatible_copy_derive,
+    ),
+    RUST_LINE_SUGGESTION_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_LINE_SUGGESTION_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.line_suggestion",
+        planner=_plan_rust_line_suggestion,
+        runner=_run_rust_line_suggestion,
+    ),
+    RUST_LIB_ROOT_FACADE_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_LIB_ROOT_FACADE_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.lib_root_facade_path_rewrite",
+        planner=_plan_rust_lib_root_facade,
+        runner=_run_rust_lib_root_facade,
+    ),
+    RUST_FIELD_RENAME_SUGGESTION_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_FIELD_RENAME_SUGGESTION_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.field_rename_suggestion",
+        planner=_plan_rust_field_rename_suggestion,
+        runner=_run_rust_field_rename_suggestion,
+    ),
+    RUST_WRONG_CRATE_PATH_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_WRONG_CRATE_PATH_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.wrong_crate_path",
+        planner=_plan_rust_wrong_crate_path,
+        runner=_run_rust_wrong_crate_path,
+    ),
+    RUST_METHOD_SELF_SIGNATURE_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_METHOD_SELF_SIGNATURE_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.method_self_signature",
+        planner=_plan_rust_method_self_signature,
+        runner=_run_rust_method_self_signature,
+    ),
+    RUST_MISSING_BINARY_ENTRYPOINT_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_MISSING_BINARY_ENTRYPOINT_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.missing_binary_entrypoint",
+        planner=_plan_rust_missing_binary_entrypoint,
+        runner=_run_rust_missing_binary_entrypoint,
+    ),
+    RUST_MISSING_LIB_TARGET_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_MISSING_LIB_TARGET_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.missing_lib_target_src_lib",
+        planner=_plan_rust_missing_lib_target,
+        runner=_run_rust_missing_lib_target,
+    ),
+    RUST_MISSING_MODULE_FILE_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_MISSING_MODULE_FILE_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.missing_module_file",
+        planner=_plan_rust_missing_module_file,
+        runner=_run_rust_missing_module_file,
+    ),
+    RUST_STRUCT_LITERAL_MISSING_FIELD_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_STRUCT_LITERAL_MISSING_FIELD_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.struct_literal_missing_field_initializer",
+        planner=_plan_rust_struct_literal_missing_field,
+        runner=_run_rust_struct_literal_missing_field,
+    ),
+    RUST_SERDE_DERIVE_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_SERDE_DERIVE_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.serde_derive",
+        planner=_plan_rust_serde_derive,
+        runner=_run_rust_serde_derive,
+    ),
+    RUST_MISSING_TRAIT_DERIVE_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_MISSING_TRAIT_DERIVE_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.missing_trait_derive",
+        planner=_plan_rust_missing_trait_derive,
+        runner=_run_rust_missing_trait_derive,
+    ),
+    RUST_TRAIT_IMPORT_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_TRAIT_IMPORT_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.trait_import",
+        planner=_plan_rust_trait_import,
+        runner=_run_rust_trait_import,
+    ),
+    RUST_UNUSED_IMPORT_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_UNUSED_IMPORT_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.unused_import",
+        planner=_plan_rust_unused_import,
+        runner=_run_rust_unused_import,
+    ),
+    RUST_UNRESOLVED_PUB_USE_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=RUST_UNRESOLVED_PUB_USE_SOURCE_TOOL,
+        language="rust",
+        rule_id="rust.unresolved_pub_use",
+        planner=_plan_rust_unresolved_pub_use,
+        runner=_run_rust_unresolved_pub_use,
+    ),
     PATCH_RESIDUE_CLEANUP_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=PATCH_RESIDUE_CLEANUP_SOURCE_TOOL,
         language="generic",
@@ -954,6 +2424,13 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="java.common_accessor_aliases",
         planner=_plan_java_accessor_alias,
         runner=_run_java_accessor_alias,
+    ),
+    JAVA_TEST_DEPENDENCY_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=JAVA_TEST_DEPENDENCY_SOURCE_TOOL,
+        language="java",
+        rule_id="java.junit_test_dependency",
+        planner=_plan_java_test_dependency,
+        runner=_run_java_test_dependency,
     ),
     TYPESCRIPT_RETURN_OBJECT_COMMA_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=TYPESCRIPT_RETURN_OBJECT_COMMA_SOURCE_TOOL,
@@ -990,8 +2467,10 @@ __all__ = [
     "RuntimeRepairBinding",
     "RuntimeRepairPlanning",
     "RuntimeRepairRun",
+    "build_runtime_repair_convergence_planner",
     "plan_runtime_repair",
     "run_runtime_repair",
+    "run_runtime_repair_convergence",
     "runtime_repair_bindings",
     "runtime_repair_source_tools",
 ]

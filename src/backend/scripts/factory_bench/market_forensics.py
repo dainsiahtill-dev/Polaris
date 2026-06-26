@@ -129,7 +129,7 @@ def replay_runnable(items: list[dict[str, Any]], workspace_full: str) -> dict[st
     that generically: the product is coherent iff every step still passes, and a
     file targeted by multiple steps where not all pass is an interface conflict.
     """
-    from polaris.kernelone.quality.step_verify import run_step_verify
+    from polaris.kernelone.quality.step_verify import assess_legacy_step_verify_command_safety, run_step_verify
 
     rows: list[dict[str, Any]] = []
     by_file: dict[str, list[bool]] = {}
@@ -139,8 +139,21 @@ def replay_runnable(items: list[dict[str, Any]], workspace_full: str) -> dict[st
         verify = _step_verify(item.get("payload"))
         if not verify:
             continue
-        outcome = run_step_verify(verify, cwd=workspace_full)
-        passes = outcome is not None and outcome[0] == 0
+        safety = assess_legacy_step_verify_command_safety(verify)
+        safety_evidence: dict[str, Any] = {
+            "allowed": safety.allowed,
+            "reason": safety.reason,
+            "blocked_tokens": list(safety.blocked_tokens),
+            "blocked_clauses": list(safety.blocked_clauses),
+        }
+        failure_evidence = ""
+        if not safety.allowed:
+            outcome = None
+            passes = False
+            failure_evidence = f"step verify command rejected by safety policy: {safety.reason} :: {verify!r}"
+        else:
+            outcome = run_step_verify(verify, cwd=workspace_full)
+            passes = outcome is not None and outcome[0] == 0
         target = str(
             (json.loads(item["payload"]) if isinstance(item.get("payload"), str) else {}).get("scope_paths") or ""
         )
@@ -157,6 +170,8 @@ def replay_runnable(items: list[dict[str, Any]], workspace_full: str) -> dict[st
                 "target_file": tf,
                 "status": item.get("status"),
                 "verify_passes_vs_final": passes,
+                "verify_safety": safety_evidence,
+                "verify_failure_evidence": failure_evidence,
             }
         )
         if tf:

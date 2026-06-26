@@ -28,6 +28,7 @@ KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
         "deterministic_html_typescript_module_script_repair",
         "deterministic_java_accessor_alias_repair",
         "deterministic_java_post_repair",
+        "deterministic_java_test_dependency_repair",
         "deterministic_javascript_esm_commonjs_entrypoint_repair",
         "deterministic_javascript_missing_export_repair",
         "deterministic_javascript_missing_method_runtime_repair",
@@ -45,14 +46,26 @@ KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
         "deterministic_quality_repair",
         "deterministic_runtime_dependency_repair",
         "deterministic_rust_crate_import_repair",
+        "deterministic_rust_crate_import_rewrite_repair",
         "deterministic_rust_dependency_repair",
         "deterministic_rust_derive_repair",
+        "deterministic_rust_duplicate_module_file_repair",
+        "deterministic_rust_field_rename_suggestion_repair",
+        "deterministic_rust_incompatible_copy_derive_repair",
         "deterministic_rust_lib_root_facade_repair",
         "deterministic_rust_line_suggestion_repair",
+        "deterministic_rust_method_self_signature_repair",
+        "deterministic_rust_missing_binary_entrypoint_repair",
+        "deterministic_rust_missing_fields_repair",
         "deterministic_rust_missing_lib_target_repair",
+        "deterministic_rust_missing_module_file_repair",
         "deterministic_rust_post_repair",
+        "deterministic_rust_serde_derive_repair",
+        "deterministic_rust_struct_literal_missing_field_repair",
         "deterministic_rust_trait_import_repair",
         "deterministic_rust_unresolved_pub_use_repair",
+        "deterministic_rust_unused_import_repair",
+        "deterministic_rust_wrong_crate_path_repair",
         "deterministic_scaffold_marker_cleanup",
         "deterministic_scaffold_marker_quality_cleanup",
         "deterministic_scaffold_residue_cleanup",
@@ -203,6 +216,33 @@ def _infer_phase(source_tool: str) -> str:
         return "target_contract"
     if "dependency" in source_tool:
         return "dependency_resolution"
+    if "_rust_" in source_tool:
+        if any(
+            term in source_tool
+            for term in (
+                "duplicate_module_file",
+                "lib_root_facade",
+                "missing_binary_entrypoint",
+                "missing_lib_target",
+                "missing_module_file",
+            )
+        ):
+            return "structural_repair"
+        if "crate_import" in source_tool or "wrong_crate_path" in source_tool:
+            return "dependency_resolution"
+        if any(
+            term in source_tool
+            for term in (
+                "derive",
+                "field_rename_suggestion",
+                "line_suggestion",
+                "method_self_signature",
+                "missing_fields",
+                "struct_literal_missing_field",
+                "unused_import",
+            )
+        ):
+            return "code_repair"
     if "test" in source_tool or "unittest" in source_tool or "vitest" in source_tool:
         return "test_contract"
     return "quality_repair"

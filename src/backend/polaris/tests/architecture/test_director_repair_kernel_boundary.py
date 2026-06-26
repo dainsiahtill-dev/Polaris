@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from polaris.cells.director.runtime.internal.repair_kernel.runtime_dispatch import runtime_repair_bindings
 from polaris.cells.director.runtime.public import (
     QueryDirectorRepairMaterializationQualityScheduleV1,
     QueryDirectorRepairPostExecutionScheduleV1,
@@ -23,9 +24,22 @@ from polaris.cells.director.runtime.public import (
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 CATALOG_PATH = BACKEND_ROOT / "docs" / "graph" / "catalog" / "cells.yaml"
 ROLES_DIRECTOR_ROOT = BACKEND_ROOT / "polaris" / "cells" / "roles" / "adapters" / "internal" / "director"
+ROLES_ADAPTERS_PUBLIC_ROOT = BACKEND_ROOT / "polaris" / "cells" / "roles" / "adapters" / "public"
+ROLES_ADAPTERS_PUBLIC_SERVICE_PATH = ROLES_ADAPTERS_PUBLIC_ROOT / "service.py"
+ROLES_ADAPTERS_PUBLIC_INIT_PATH = ROLES_ADAPTERS_PUBLIC_ROOT / "__init__.py"
+ROLES_ADAPTERS_TESTS_ROOT = BACKEND_ROOT / "polaris" / "cells" / "roles" / "adapters" / "tests"
+ROLES_ADAPTERS_STRATEGY_CATALOG_TEST_PATH = (
+    ROLES_ADAPTERS_TESTS_ROOT / "test_deterministic_repair_strategy_catalog.py"
+)
+QA_ROOT = BACKEND_ROOT / "polaris" / "cells" / "qa"
 EXECUTE_METHOD_PATH = ROLES_DIRECTOR_ROOT / "execute_method.py"
+EXECUTE_METHOD_REPAIR_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "execute_method_repair_bridge.py"
+EXECUTE_METHOD_REPAIR_BRIDGE_MODULE = (
+    "polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge"
+)
 POST_EXECUTION_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "post_execution_repair_bridge.py"
 MATERIALIZATION_QUALITY_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_repair_bridge.py"
+DETERMINISTIC_REPAIRS_INIT_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "__init__.py"
 GENERIC_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "generic_repairs.py"
 RUNTIME_REPAIR_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "_runtime_bridge.py"
 RUST_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "rust_repairs.py"
@@ -39,6 +53,11 @@ DIRECTOR_RUNTIME_PUBLIC_INIT_PATH = (
 FACTORY_STAGE_EXECUTOR_PATH = (
     BACKEND_ROOT / "polaris" / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor.py"
 )
+REPAIR_BOUNDARY_FAILURE_HINT = (
+    "Director repair boundary violation: use polaris.cells.director.runtime.public "
+    "or the controlled roles.adapters bridge; do not restore legacy deterministic "
+    "repair helper imports/calls."
+)
 
 FORBIDDEN_IMPORT_PREFIXES = (
     "polaris.cells.director.runtime.internal.repair_kernel",
@@ -48,22 +67,63 @@ FORBIDDEN_IMPORT_PREFIXES = (
 ALLOWED_EXECUTE_METHOD_DIRECTOR_RUNTIME_IMPORTS = {
     "polaris.cells.director.runtime.public.service",
 }
+CONCRETE_LEGACY_REPAIR_NAME_PREFIXES = (
+    "_apply_deterministic_",
+    "repair_",
+)
+CONCRETE_LEGACY_REPAIR_EXPORT_PREFIXES = (
+    "_apply_deterministic_",
+    "_repair_",
+    "repair_",
+)
+LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST = {
+    EXECUTE_METHOD_REPAIR_BRIDGE_PATH,
+    MATERIALIZATION_QUALITY_BRIDGE_PATH,
+    POST_EXECUTION_BRIDGE_PATH,
+}
+PUBLIC_MIGRATION_ONLY_REPAIR_SHIMS = {
+    "apply_deterministic_cpp_post_repairs": "run_director_cpp_post_execution_repairs",
+    "apply_deterministic_materialization_quality_repairs": (
+        "run_director_materialization_quality_repair_schedule"
+    ),
+}
+PUBLIC_MIGRATION_SHIM_TEST_REFERENCE_ALLOWLIST = {
+    (
+        ROLES_ADAPTERS_STRATEGY_CATALOG_TEST_PATH,
+        "test_legacy_public_repair_wrappers_are_migration_only_compatibility_shims",
+    ),
+    (
+        Path(__file__).resolve(),
+        "test_roles_public_old_named_repair_wrappers_are_migration_only",
+    ),
+    (
+        Path(__file__).resolve(),
+        "test_public_migration_repair_shims_are_not_new_cross_cell_fact_sources",
+    ),
+    (
+        Path(__file__).resolve(),
+        "test_roles_adapters_public_legacy_repair_wrappers_are_migration_only_shims",
+    ),
+}
 MIGRATED_RUNTIME_REPAIR_EXPORTS_FORBIDDEN_IN_EXECUTE_METHOD = {
     "_apply_deterministic_typescript_return_object_semicolon_repair",
     "_parse_typescript_return_object_semicolon_paths",
     "_repair_typescript_return_object_semicolon_lines",
 }
-ALLOWED_EXECUTE_METHOD_LEGACY_DETERMINISTIC_REPAIR_CALLS = {
-    "_apply_deterministic_declared_target_contract_repairs",
-    "_apply_deterministic_node_test_script_contract_repair",
-    "_apply_deterministic_patch_residue_cleanup",
-    "_apply_deterministic_pre_materialization_declared_target_repairs",
-    "_apply_deterministic_python_runtime_smoke",
-    "_apply_deterministic_python_static_smoke",
+EXPECTED_EXECUTE_METHOD_REPAIR_BRIDGE_COMPAT_ALLOWLIST = {
     "_apply_deterministic_python_unittest_missing_target_repair",
     "_apply_deterministic_scaffold_marker_cleanup",
     "_apply_deterministic_typescript_reexport_repair",
 }
+MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
+    "_apply_deterministic_javascript_test_missing_target_repair",
+    "_apply_deterministic_python_package_shadow_bridge_repair",
+    "_apply_deterministic_python_runtime_smoke",
+    "_apply_deterministic_python_static_smoke",
+    "_apply_deterministic_python_unittest_runtime_failure_repair",
+    "_apply_deterministic_unresolved_import_symbol_repair",
+}
+ALLOWED_EXECUTE_METHOD_LEGACY_DETERMINISTIC_REPAIR_CALLS: set[str] = set()
 
 
 def _read_text(path: Path) -> str:
@@ -83,6 +143,22 @@ def _python_source_files(root: Path) -> list[Path]:
         path
         for path in sorted(root.rglob("*.py"))
         if "__pycache__" not in path.parts and not path.name.startswith("test_")
+    ]
+
+
+def _production_python_source_files(root: Path) -> list[Path]:
+    return [
+        path
+        for path in _python_source_files(root)
+        if "tests" not in path.parts and "generated" not in path.parts
+    ]
+
+
+def _test_python_source_files() -> list[Path]:
+    return [
+        path
+        for path in _python_source_files(BACKEND_ROOT)
+        if "generated" not in path.parts and ("tests" in path.parts or path.name.startswith("test_"))
     ]
 
 
@@ -113,21 +189,168 @@ def _imported_modules(path: Path) -> list[str]:
     return modules
 
 
+def _import_references(path: Path) -> list[str]:
+    tree = ast.parse(_read_text(path))
+    references: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            references.extend(alias.name for alias in node.names)
+            continue
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        module = _resolve_import_from_module(path, node)
+        if module:
+            references.append(module)
+        for alias in node.names:
+            if alias.name == "*":
+                references.append(f"{module}.*" if module else "*")
+            elif module:
+                references.append(f"{module}.{alias.name}")
+            else:
+                references.append(alias.name)
+    return references
+
+
 def _called_function_names(path: Path) -> set[str]:
+    tree = ast.parse(_read_text(path))
+    return _called_function_names_in_node(tree)
+
+
+def _called_function_names_in_node(root: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(root):
+        if not isinstance(node, ast.Call):
+            continue
+        call_name = _call_name(node)
+        if call_name:
+            names.add(call_name)
+    return names
+
+
+def _call_name(node: ast.Call) -> str:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return ""
+
+
+def _function_definitions(path: Path) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    tree = ast.parse(_read_text(path))
+    return [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)]
+
+
+def _test_function_public_migration_shim_references(path: Path) -> list[tuple[str, int, list[str]]]:
+    tree = ast.parse(_read_text(path))
+    shim_names = set(PUBLIC_MIGRATION_ONLY_REPAIR_SHIMS)
+    references: list[tuple[str, int, list[str]]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) or not node.name.startswith("test_"):
+            continue
+        observed: set[str] = set()
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and child.id in shim_names:
+                observed.add(child.id)
+            elif isinstance(child, ast.Attribute) and child.attr in shim_names:
+                observed.add(child.attr)
+            elif isinstance(child, ast.Constant) and isinstance(child.value, str) and child.value in shim_names:
+                observed.add(child.value)
+        if observed:
+            references.append((node.name, node.lineno, sorted(observed)))
+    return references
+
+
+def _called_function_names_in_function(path: Path, function_name: str) -> set[str]:
+    for node in _function_definitions(path):
+        if node.name == function_name:
+            return _called_function_names_in_node(node)
+    raise AssertionError(f"function not found: {function_name}")
+
+
+def _is_concrete_legacy_repair_name(name: str) -> bool:
+    return name.startswith(CONCRETE_LEGACY_REPAIR_NAME_PREFIXES) or (
+        name.startswith("deterministic_") and name.endswith("_repair")
+    )
+
+
+def _is_public_old_named_repair_wrapper(name: str) -> bool:
+    return name.startswith("apply_deterministic_")
+
+
+def _called_deterministic_repair_names(path: Path) -> set[str]:
     tree = ast.parse(_read_text(path))
     names: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        if isinstance(node.func, ast.Name):
+        if isinstance(node.func, ast.Name) and _is_concrete_legacy_repair_name(node.func.id):
             names.add(node.func.id)
-        elif isinstance(node.func, ast.Attribute):
+        elif isinstance(node.func, ast.Attribute) and _is_concrete_legacy_repair_name(node.func.attr):
             names.add(node.func.attr)
     return names
 
 
-def _called_deterministic_repair_names(path: Path) -> set[str]:
-    return {name for name in _called_function_names(path) if name.startswith("_apply_deterministic_")}
+def _concrete_legacy_repair_imports(path: Path) -> list[str]:
+    tree = ast.parse(_read_text(path))
+    imports: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        module = _resolve_import_from_module(path, node)
+        if ".deterministic_repairs" not in module:
+            continue
+        for alias in node.names:
+            if _is_concrete_legacy_repair_name(alias.name):
+                imports.append(f"{module}.{alias.name}")
+    return imports
+
+
+def _repair_boundary_source_files() -> list[Path]:
+    roots = [
+        BACKEND_ROOT / "polaris" / "cells" / "roles" / "adapters" / "internal",
+        ROLES_ADAPTERS_PUBLIC_ROOT,
+        BACKEND_ROOT / "polaris" / "cells" / "factory",
+        QA_ROOT,
+        BACKEND_ROOT / "scripts" / "factory_bench",
+    ]
+    files: list[Path] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in _python_source_files(root):
+            if "deterministic_repairs" in path.parts:
+                continue
+            files.append(path)
+    return sorted(set(files))
+
+
+def _factory_qa_bench_source_files() -> list[Path]:
+    roots = [
+        BACKEND_ROOT / "polaris" / "cells" / "factory",
+        QA_ROOT,
+        BACKEND_ROOT / "scripts" / "factory_bench",
+    ]
+    files: list[Path] = []
+    for root in roots:
+        if root.exists():
+            files.extend(_production_python_source_files(root))
+    return sorted(set(files))
+
+
+def _repair_boundary_import_source_files() -> list[Path]:
+    roots = [
+        BACKEND_ROOT / "polaris",
+        BACKEND_ROOT / "scripts",
+    ]
+    files: list[Path] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in _production_python_source_files(root):
+            if "deterministic_repairs" in path.parts:
+                continue
+            files.append(path)
+    return sorted(set(files))
 
 
 def _function_source(path: Path, function_name: str) -> str:
@@ -170,6 +393,44 @@ def _literal_dict_string_keys(node: ast.Dict, *, variable_name: str) -> list[str
     return keys
 
 
+def _module_literal_string_list(path: Path, variable_name: str) -> list[str]:
+    tree = ast.parse(_read_text(path))
+    for node in tree.body:
+        value = _assignment_value_for_name(node, variable_name)
+        if value is None:
+            continue
+        if not isinstance(value, ast.List):
+            raise AssertionError(f"{variable_name} is not a literal list")
+        values: list[str] = []
+        for item in value.elts:
+            if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
+                raise AssertionError(f"{variable_name} contains non-string literal item")
+            values.append(item.value)
+        return values
+    raise AssertionError(f"module-level list not found: {variable_name}")
+
+
+def _module_literal_string_frozenset(path: Path, variable_name: str) -> list[str]:
+    tree = ast.parse(_read_text(path))
+    for node in tree.body:
+        value = _assignment_value_for_name(node, variable_name)
+        if value is None:
+            continue
+        if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "frozenset":
+            if len(value.args) != 1:
+                raise AssertionError(f"{variable_name} frozenset must have one literal set arg")
+            value = value.args[0]
+        if not isinstance(value, ast.Set):
+            raise AssertionError(f"{variable_name} is not a literal frozenset")
+        values: list[str] = []
+        for item in value.elts:
+            if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
+                raise AssertionError(f"{variable_name} contains non-string literal item")
+            values.append(item.value)
+        return values
+    raise AssertionError(f"module-level frozenset not found: {variable_name}")
+
+
 def _forbidden_import(module: str) -> bool:
     return any(module == prefix or module.startswith(prefix + ".") for prefix in FORBIDDEN_IMPORT_PREFIXES)
 
@@ -178,6 +439,44 @@ def _catalog_strings(cell: dict[str, Any], key: str) -> set[str]:
     values = cell.get(key, [])
     assert isinstance(values, list)
     return {str(value) for value in values}
+
+
+def _repair_named_helper_write_primitives(path: Path) -> list[str]:
+    write_call_names = {
+        "edit_file",
+        "rmdir",
+        "rmtree",
+        "touch",
+        "unlink",
+        "write_bytes",
+        "write_file",
+        "write_text",
+    }
+    violations: list[str] = []
+    for function in _function_definitions(path):
+        if "_repair_" not in function.name:
+            continue
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Call):
+                continue
+            call_name = _call_name(node)
+            if call_name in write_call_names or _is_write_mode_open_call(node):
+                rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+                violations.append(f"{rel_path}:{function.name}:{call_name or 'open(write-mode)'}")
+    return violations
+
+
+def _is_write_mode_open_call(node: ast.Call) -> bool:
+    call_name = _call_name(node)
+    if call_name != "open":
+        return False
+    mode: str | None = None
+    if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
+        mode = node.args[1].value
+    for keyword in node.keywords:
+        if keyword.arg == "mode" and isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
+            mode = keyword.value.value
+    return mode is not None and any(flag in mode for flag in ("w", "a", "x", "+"))
 
 
 def test_roles_adapters_does_not_own_director_repair_kernel_package() -> None:
@@ -198,7 +497,7 @@ def test_roles_adapters_never_imports_director_runtime_internal_repair_kernel() 
             if _forbidden_import(module):
                 violations.append(f"{path.relative_to(BACKEND_ROOT).as_posix()}: {module}")
 
-    assert violations == []
+    assert violations == [], f"{REPAIR_BOUNDARY_FAILURE_HINT} Violations: {violations}"
 
 
 def test_execute_method_uses_director_runtime_repair_kernel_only_via_public_service() -> None:
@@ -217,13 +516,201 @@ def test_execute_method_uses_director_runtime_repair_kernel_only_via_public_serv
 def test_execute_method_does_not_import_specific_deterministic_repair_modules() -> None:
     deterministic_repair_imports = sorted(
         {
-            module
-            for module in _imported_modules(EXECUTE_METHOD_PATH)
-            if module.startswith("polaris.cells.roles.adapters.internal.director.deterministic_repairs.")
+            reference
+            for reference in _import_references(EXECUTE_METHOD_PATH)
+            if reference == "polaris.cells.roles.adapters.internal.director.deterministic_repairs"
+            or reference.startswith("polaris.cells.roles.adapters.internal.director.deterministic_repairs.")
         }
     )
 
-    assert deterministic_repair_imports == []
+    assert deterministic_repair_imports == [], (
+        f"{REPAIR_BOUNDARY_FAILURE_HINT} execute_method.py must import controlled bridge/public service, "
+        f"not deterministic_repairs directly. Violations: {deterministic_repair_imports}"
+    )
+
+
+def test_only_director_repair_bridges_import_concrete_legacy_repair_functions() -> None:
+    violations: list[str] = []
+    for path in _repair_boundary_import_source_files():
+        concrete_imports = _concrete_legacy_repair_imports(path)
+        if not concrete_imports or path in LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST:
+            continue
+        rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+        violations.extend(f"{rel_path}: {item}" for item in concrete_imports)
+
+    assert violations == [], f"{REPAIR_BOUNDARY_FAILURE_HINT} Violations: {violations}"
+
+
+def test_execute_method_repair_bridge_is_migration_only_and_not_a_public_fact_source() -> None:
+    violations: list[str] = []
+    allowed_production_importers = {EXECUTE_METHOD_PATH}
+    for path in _repair_boundary_import_source_files():
+        if path == EXECUTE_METHOD_REPAIR_BRIDGE_PATH or path in allowed_production_importers:
+            continue
+        bridge_references = sorted(
+            {
+                reference
+                for reference in _import_references(path)
+                if reference == EXECUTE_METHOD_REPAIR_BRIDGE_MODULE
+                or reference.startswith(f"{EXECUTE_METHOD_REPAIR_BRIDGE_MODULE}.")
+            }
+        )
+        if not bridge_references:
+            continue
+        rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+        violations.append(f"{rel_path}: {', '.join(bridge_references)}")
+
+    assert violations == [], (
+        f"{REPAIR_BOUNDARY_FAILURE_HINT} execute_method_repair_bridge.py is a migration-only wrapper; "
+        "Factory, QA, bench, public wrappers, and other production code must use director.runtime.public "
+        f"or their controlled bridge instead. Violations: {violations}"
+    )
+
+
+def test_execute_method_repair_bridge_compat_allowlist_is_narrow_and_blocks_runtime_tools() -> None:
+    compat_allowlist = set(
+        _module_literal_string_frozenset(
+            EXECUTE_METHOD_REPAIR_BRIDGE_PATH,
+            "_LEGACY_EXECUTE_METHOD_REPAIR_HELPER_ALLOWLIST",
+        )
+    )
+    runtime_source_tools = {
+        str(binding.get("source_tool") or "").strip()
+        for binding in runtime_repair_bindings()
+        if str(binding.get("source_tool") or "").strip()
+    }
+    runtime_execute_method_compat_names = {
+        name for source_tool in runtime_source_tools for name in (source_tool, f"_apply_{source_tool}")
+    }
+
+    assert compat_allowlist == EXPECTED_EXECUTE_METHOD_REPAIR_BRIDGE_COMPAT_ALLOWLIST
+    assert compat_allowlist.isdisjoint(MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN)
+    assert compat_allowlist.isdisjoint(runtime_execute_method_compat_names), (
+        f"{REPAIR_BOUNDARY_FAILURE_HINT} migrated runtime source_tools must not be exposed through "
+        f"execute_method.__getattr__ compat. Violations: "
+        f"{sorted(compat_allowlist & runtime_execute_method_compat_names)}"
+    )
+
+
+def test_roles_public_old_named_repair_wrappers_are_migration_only() -> None:
+    service_function_names = {node.name for node in _function_definitions(ROLES_ADAPTERS_PUBLIC_SERVICE_PATH)}
+    old_named_wrappers = {
+        name for name in service_function_names if _is_public_old_named_repair_wrapper(name)
+    }
+    service_exports = set(_module_literal_string_list(ROLES_ADAPTERS_PUBLIC_SERVICE_PATH, "__all__"))
+    package_exports = set(_module_literal_string_list(ROLES_ADAPTERS_PUBLIC_INIT_PATH, "__all__"))
+    service_source = _read_text(ROLES_ADAPTERS_PUBLIC_SERVICE_PATH)
+
+    assert old_named_wrappers == set(PUBLIC_MIGRATION_ONLY_REPAIR_SHIMS)
+    assert old_named_wrappers <= service_exports
+    assert old_named_wrappers.isdisjoint(package_exports)
+    for shim_name, preferred_entrypoint in PUBLIC_MIGRATION_ONLY_REPAIR_SHIMS.items():
+        shim_source = _function_source(ROLES_ADAPTERS_PUBLIC_SERVICE_PATH, shim_name)
+        shim_calls = _called_function_names_in_function(ROLES_ADAPTERS_PUBLIC_SERVICE_PATH, shim_name)
+        assert "Deprecated migration-only shim" in shim_source
+        assert preferred_entrypoint in shim_calls
+        assert f"{shim_name}.__deprecated__" in service_source
+        assert f"{shim_name}.__migration_only__ = True" in service_source
+        assert f"{shim_name}.__preferred_entrypoint__" in service_source
+        assert "run_materialization_quality_repairs" not in shim_source
+        assert "run_cpp_post_repairs_as_tool_results" not in shim_source
+
+
+def test_public_migration_repair_shims_are_not_new_cross_cell_fact_sources() -> None:
+    violations: list[str] = []
+    shim_names = set(PUBLIC_MIGRATION_ONLY_REPAIR_SHIMS)
+    for path in _repair_boundary_import_source_files():
+        if path == ROLES_ADAPTERS_PUBLIC_SERVICE_PATH:
+            continue
+        references = {
+            reference.rsplit(".", 1)[-1]
+            for reference in _import_references(path)
+            if reference.rsplit(".", 1)[-1] in shim_names
+        }
+        calls = _called_function_names(path) & shim_names
+        observed = references | calls
+        if not observed:
+            continue
+        rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+        violations.append(f"{rel_path}: {', '.join(sorted(observed))}")
+
+    assert violations == [], (
+        f"{REPAIR_BOUNDARY_FAILURE_HINT} old-named roles public repair wrappers are migration-only; "
+        f"new callers must use preferred runtime-named entrypoints. Violations: {violations}"
+    )
+
+
+def test_public_migration_repair_shim_test_references_are_dedicated_shim_tests() -> None:
+    violations: list[str] = []
+    for path in _test_python_source_files():
+        for function_name, lineno, observed in _test_function_public_migration_shim_references(path):
+            if (path, function_name) in PUBLIC_MIGRATION_SHIM_TEST_REFERENCE_ALLOWLIST:
+                continue
+            rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+            violations.append(f"{rel_path}:{lineno} {function_name}: {', '.join(observed)}")
+
+    assert violations == [], (
+        f"{REPAIR_BOUNDARY_FAILURE_HINT} old-named roles public repair wrappers may only be "
+        f"referenced by dedicated compatibility-shim tests. Violations: {violations}"
+    )
+
+
+def test_factory_qa_and_bench_do_not_import_or_call_direct_legacy_repair_helpers() -> None:
+    violations: list[str] = []
+    for path in _factory_qa_bench_source_files():
+        concrete_imports = _concrete_legacy_repair_imports(path)
+        concrete_calls = sorted(_called_deterministic_repair_names(path))
+        if not concrete_imports and not concrete_calls:
+            continue
+        rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+        if concrete_imports:
+            violations.append(f"{rel_path}: imports {', '.join(concrete_imports)}")
+        if concrete_calls:
+            violations.append(f"{rel_path}: calls {', '.join(concrete_calls)}")
+
+    assert violations == [], (
+        f"{REPAIR_BOUNDARY_FAILURE_HINT} Factory, QA, and bench must not call/import concrete "
+        f"legacy repair helpers directly. Violations: {violations}"
+    )
+
+
+def test_public_factory_qa_and_bench_do_not_call_concrete_legacy_repair_functions() -> None:
+    violations: list[str] = []
+    allowed_direct_call_paths = set(LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST)
+    for path in _repair_boundary_source_files():
+        if path in allowed_direct_call_paths:
+            continue
+        concrete_calls = sorted(_called_deterministic_repair_names(path))
+        if not concrete_calls:
+            continue
+        rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+        violations.append(f"{rel_path}: {', '.join(concrete_calls)}")
+
+    assert violations == [], f"{REPAIR_BOUNDARY_FAILURE_HINT} Violations: {violations}"
+
+
+def test_repair_named_helpers_outside_runtime_kernel_remain_read_only() -> None:
+    violations: list[str] = []
+    for path in _repair_boundary_source_files():
+        violations.extend(_repair_named_helper_write_primitives(path))
+
+    assert violations == [], (
+        f"{REPAIR_BOUNDARY_FAILURE_HINT} helpers named *_repair_* outside the runtime kernel must "
+        f"remain read-only measurement/selection helpers or move behind the controlled bridge. "
+        f"Violations: {violations}"
+    )
+
+
+def test_deterministic_repairs_package_all_does_not_export_concrete_repair_functions() -> None:
+    from polaris.cells.roles.adapters.internal.director import deterministic_repairs
+
+    concrete_exports = [
+        name
+        for name in getattr(deterministic_repairs, "__all__", ())
+        if str(name).startswith(CONCRETE_LEGACY_REPAIR_EXPORT_PREFIXES)
+    ]
+
+    assert concrete_exports == []
 
 
 def test_execute_method_does_not_reexport_migrated_runtime_repairs() -> None:
@@ -236,8 +723,66 @@ def test_execute_method_does_not_reexport_migrated_runtime_repairs() -> None:
 
 def test_execute_method_legacy_deterministic_repair_calls_are_explicitly_bounded() -> None:
     deterministic_repair_calls = _called_deterministic_repair_names(EXECUTE_METHOD_PATH)
+    execute_method_source = _read_text(EXECUTE_METHOD_PATH)
 
-    assert deterministic_repair_calls == ALLOWED_EXECUTE_METHOD_LEGACY_DETERMINISTIC_REPAIR_CALLS
+    assert deterministic_repair_calls == ALLOWED_EXECUTE_METHOD_LEGACY_DETERMINISTIC_REPAIR_CALLS, (
+        f"{REPAIR_BOUNDARY_FAILURE_HINT} execute_method.py must delegate legacy helper calls through "
+        f"execute_method_repair_bridge.py. Direct calls: {sorted(deterministic_repair_calls)}"
+    )
+    assert "_legacy_deterministic_repairs" not in execute_method_source
+    assert "deterministic_repairs" not in execute_method_source
+
+
+def test_execute_method_legacy_repairs_delegate_to_controlled_bridge() -> None:
+    execute_calls = _called_function_names(EXECUTE_METHOD_PATH)
+    bridge_calls = _called_deterministic_repair_names(EXECUTE_METHOD_REPAIR_BRIDGE_PATH)
+    expected_bridge_calls = {
+        "_apply_deterministic_declared_target_contract_repairs",
+        "_apply_deterministic_node_test_script_contract_repair",
+        "_apply_deterministic_patch_residue_cleanup",
+        "_apply_deterministic_pre_materialization_declared_target_repairs",
+        "_apply_deterministic_python_runtime_smoke",
+        "_apply_deterministic_python_static_smoke",
+        "_apply_deterministic_python_unittest_missing_target_repair",
+        "_apply_deterministic_scaffold_marker_cleanup",
+        "_apply_deterministic_typescript_reexport_repair",
+    }
+
+    assert "run_declared_target_contract_repairs" in execute_calls
+    assert "run_node_test_script_contract_repair" in execute_calls
+    assert "run_patch_residue_cleanup" in execute_calls
+    assert "run_pre_materialization_declared_target_repairs" in execute_calls
+    assert "run_python_runtime_smoke" in execute_calls
+    assert "run_python_static_smoke" in execute_calls
+    assert "run_python_unittest_missing_target_repair" in execute_calls
+    assert "run_scaffold_marker_cleanup" in execute_calls
+    assert "run_typescript_reexport_repair" in execute_calls
+    assert expected_bridge_calls <= bridge_calls
+
+
+def test_roles_adapter_public_boundary_blocks_internal_kernel_and_direct_legacy_helpers() -> None:
+    internal_kernel_imports: list[str] = []
+    for path in _python_source_files(ROLES_DIRECTOR_ROOT):
+        for module in _imported_modules(path):
+            if module == "polaris.cells.director.runtime.internal.repair_kernel" or module.startswith(
+                "polaris.cells.director.runtime.internal.repair_kernel."
+            ):
+                rel_path = path.relative_to(BACKEND_ROOT).as_posix()
+                internal_kernel_imports.append(f"{rel_path}: {module}")
+
+    execute_imports = sorted(
+        reference
+        for reference in _import_references(EXECUTE_METHOD_PATH)
+        if "polaris.cells.roles.adapters.internal.director.deterministic_repairs" in reference
+    )
+    execute_direct_helper_calls = sorted(_called_deterministic_repair_names(EXECUTE_METHOD_PATH))
+    execute_calls = _called_function_names(EXECUTE_METHOD_PATH)
+
+    assert internal_kernel_imports == []
+    assert execute_imports == []
+    assert execute_direct_helper_calls == []
+    assert "run_post_execution_language_repairs" in execute_calls
+    assert "run_materialization_quality_repairs" in execute_calls
 
 
 def test_execute_method_projects_revalidation_evidence_through_runtime_public_contract() -> None:
@@ -256,6 +801,7 @@ def test_execute_method_delegates_post_execution_language_repairs_to_bridge() ->
     runner_step_ids = _module_level_dict_keys(POST_EXECUTION_BRIDGE_PATH, "_POST_EXECUTION_REPAIR_RUNNERS")
     language_repair_tokens = {
         "_apply_deterministic_go_module_import_repair",
+        "deterministic_rust_dependency_repair",
         "run_all_rust_post_repairs",
     }
     public_schedule = query_director_repair_post_execution_schedule(
@@ -263,6 +809,7 @@ def test_execute_method_delegates_post_execution_language_repairs_to_bridge() ->
     )
     expected_runtime_step_ids = [
         "go.module_import",
+        "rust.dependency_resolution",
         "rust.post_execution_convergence",
         "cpp.post_execution",
         "java.post_execution",
@@ -272,6 +819,7 @@ def test_execute_method_delegates_post_execution_language_repairs_to_bridge() ->
     assert "run_post_execution_language_repairs" in execute_method_source
     assert not any(token in execute_method_source for token in language_repair_tokens)
     assert all(token in bridge_source for token in language_repair_tokens)
+    assert "_apply_deterministic_rust_dependency_repair" not in bridge_source
     assert public_runtime_step_ids == expected_runtime_step_ids
     assert runner_step_ids == expected_runtime_step_ids
     assert runner_step_ids == public_runtime_step_ids
@@ -297,6 +845,16 @@ def test_execute_method_delegates_post_execution_language_repairs_to_bridge() ->
     assert "_annotate_bridge_step" not in bridge_source
 
 
+def test_post_execution_bridge_does_not_call_legacy_java_test_dependency_tail() -> None:
+    bridge_source = _read_text(POST_EXECUTION_BRIDGE_PATH)
+    java_runner_source = _function_source(POST_EXECUTION_BRIDGE_PATH, "_run_java_post_repairs")
+
+    assert "repair_java_test_dependencies" not in bridge_source
+    assert "deterministic_java_post_repair" not in java_runner_source
+    assert "deterministic_java_test_dependency_repair" in bridge_source
+    assert "_run_java_test_dependency_runtime_repair" in java_runner_source
+
+
 def test_rust_post_execution_callback_does_not_own_convergence_loop() -> None:
     rust_runner_source = _function_source(RUST_REPAIRS_PATH, "run_all_rust_post_repairs")
     rust_annotation_source = _function_source(RUST_REPAIRS_PATH, "_annotate_rust_post_repair_records")
@@ -307,6 +865,14 @@ def test_rust_post_execution_callback_does_not_own_convergence_loop() -> None:
     assert '"round_number"' not in rust_annotation_source
     assert '"max_rounds"' not in rust_annotation_source
     assert '"revalidation"' in rust_annotation_source
+
+
+def test_rust_aggregate_post_repair_is_not_executable_runtime_binding() -> None:
+    source_tools = {binding["source_tool"] for binding in runtime_repair_bindings()}
+
+    assert "deterministic_rust_post_repair" not in source_tools
+    assert "deterministic_rust_method_self_signature_repair" in source_tools
+    assert "deterministic_rust_missing_module_file_repair" in source_tools
 
 
 def test_materialization_quality_bridge_consumes_runtime_owned_schedule() -> None:
@@ -330,8 +896,12 @@ def test_materialization_quality_bridge_consumes_runtime_owned_schedule() -> Non
     public_runtime_step_ids = [step.step_id for step in public_schedule.items]
 
     assert "run_director_materialization_quality_repair_schedule" in bridge_source
+    assert "query_director_repair_materialization_quality_schedule" in bridge_source
     assert "DirectorRepairMaterializationQualityStepV1" in bridge_source
     assert "_MATERIALIZATION_QUALITY_REPAIR_RUNNERS" in bridge_source
+    assert "_require_materialization_schedule_reconciliation" in bridge_source
+    assert "runner_binding_reconciliation" in bridge_source
+    assert "evidence_status" in bridge_source
     assert public_runtime_step_ids == expected_runtime_step_ids
     assert runner_step_ids == expected_runtime_step_ids
     assert runner_step_ids == public_runtime_step_ids
@@ -445,7 +1015,36 @@ def test_materialization_quality_repairs_stay_behind_bridge_and_public_boundary(
     assert "_apply_deterministic_materialization_quality_repairs" not in execute_source
     assert "_apply_deterministic_materialization_quality_repairs" not in factory_calls
     assert "_apply_deterministic_materialization_quality_repairs" not in factory_source
-    assert "apply_deterministic_materialization_quality_repairs" in factory_calls
+    for shim_name in PUBLIC_MIGRATION_ONLY_REPAIR_SHIMS:
+        assert shim_name not in factory_calls
+        assert shim_name not in factory_source
+    assert "run_director_materialization_quality_repair_schedule" in factory_calls
+    assert "run_director_cpp_post_execution_repairs" in factory_calls
+
+
+def test_roles_adapters_public_legacy_repair_wrappers_are_migration_only_shims() -> None:
+    public_source = _read_text(ROLES_ADAPTERS_PUBLIC_SERVICE_PATH)
+    materialization_wrapper = _function_source(
+        ROLES_ADAPTERS_PUBLIC_SERVICE_PATH,
+        "apply_deterministic_materialization_quality_repairs",
+    )
+    cpp_wrapper = _function_source(
+        ROLES_ADAPTERS_PUBLIC_SERVICE_PATH,
+        "apply_deterministic_cpp_post_repairs",
+    )
+
+    assert "def run_director_materialization_quality_repair_schedule(" in public_source
+    assert "def run_director_cpp_post_execution_repairs(" in public_source
+    assert "Deprecated migration-only shim" in materialization_wrapper
+    assert "Deprecated migration-only shim" in cpp_wrapper
+    assert "run_director_materialization_quality_repair_schedule(" in materialization_wrapper
+    assert "run_director_cpp_post_execution_repairs(" in cpp_wrapper
+    assert "run_materialization_quality_repairs(" not in materialization_wrapper
+    assert "run_cpp_post_repairs_as_tool_results(" not in cpp_wrapper
+    assert "migration_only_compatibility_shim" in materialization_wrapper
+    assert "__migration_only__ = True" in public_source
+    assert "__preferred_entrypoint__" in public_source
+    assert ".__deprecated__" in public_source
 
 
 def test_quality_gate_semantic_repairs_stay_behind_bridge() -> None:

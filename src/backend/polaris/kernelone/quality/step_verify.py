@@ -26,6 +26,7 @@ import json
 import re
 import shlex
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +61,650 @@ _NATURAL_LANGUAGE_TAIL_MARKERS = (
     "；验证",
     "。验证",
 )
+
+
+@dataclass(frozen=True)
+class StepVerifyCommandSafetyAssessment:
+    """Opt-in safety verdict for future step verify convergence checks."""
+
+    allowed: bool
+    reason: str
+    blocked_tokens: tuple[str, ...]
+    blocked_clauses: tuple[str, ...]
+    normalized_command: str
+    clauses: tuple[str, ...]
+
+
+_BLOCKED_STEP_VERIFY_COMMANDS = frozenset(
+    {
+        "chmod",
+        "chown",
+        "cp",
+        "curl",
+        "kill",
+        "killall",
+        "mv",
+        "nc",
+        "netcat",
+        "pkill",
+        "rm",
+        "scp",
+        "ssh",
+        "sudo",
+        "wget",
+    }
+)
+_SHELL_EVAL_COMMANDS = frozenset({"bash", "dash", "fish", "sh", "zsh"})
+_SAFE_GREP_FLAG_CHARS = frozenset("EFiq")
+
+
+def assess_step_verify_command_safety(command: str) -> StepVerifyCommandSafetyAssessment:
+    """Fail-closed, opt-in safety assessment for step verify shell commands.
+
+    This function intentionally does not participate in ``run_step_verify`` or
+    the existing clause diagnosis path. It is a pure policy helper for callers
+    that need a conservative preflight before running convergence verifiers.
+    """
+    normalized_command = _strip_unquoted_natural_language_tail(str(command or "").strip())
+    if not normalized_command:
+        return StepVerifyCommandSafetyAssessment(
+            allowed=False,
+            reason="empty_command",
+            blocked_tokens=(),
+            blocked_clauses=(),
+            normalized_command=normalized_command,
+            clauses=(),
+        )
+
+    clauses, blocked_shell_tokens, blocked_shell_clauses = _parse_step_verify_safety_clauses(normalized_command)
+    if blocked_shell_tokens:
+        return StepVerifyCommandSafetyAssessment(
+            allowed=False,
+            reason=f"blocked_shell_token:{blocked_shell_tokens[0]}",
+            blocked_tokens=blocked_shell_tokens,
+            blocked_clauses=blocked_shell_clauses or (normalized_command,),
+            normalized_command=normalized_command,
+            clauses=clauses,
+        )
+    if not clauses:
+        return StepVerifyCommandSafetyAssessment(
+            allowed=False,
+            reason="empty_command",
+            blocked_tokens=(),
+            blocked_clauses=(),
+            normalized_command=normalized_command,
+            clauses=(),
+        )
+
+    blocked_tokens: list[str] = []
+    blocked_clauses: list[str] = []
+    first_reason = ""
+    for clause in clauses:
+        allowed, reason, tokens = _assess_step_verify_clause_safety(clause)
+        if allowed:
+            continue
+        if not first_reason:
+            first_reason = reason
+        blocked_tokens.extend(tokens)
+        blocked_clauses.append(clause)
+
+    if blocked_clauses:
+        return StepVerifyCommandSafetyAssessment(
+            allowed=False,
+            reason=first_reason or "unsupported_clause",
+            blocked_tokens=tuple(blocked_tokens),
+            blocked_clauses=tuple(blocked_clauses),
+            normalized_command=normalized_command,
+            clauses=clauses,
+        )
+
+    return StepVerifyCommandSafetyAssessment(
+        allowed=True,
+        reason="all_clauses_allowed",
+        blocked_tokens=(),
+        blocked_clauses=(),
+        normalized_command=normalized_command,
+        clauses=clauses,
+    )
+
+
+def assess_legacy_step_verify_command_safety(command: str) -> StepVerifyCommandSafetyAssessment:
+    """Compatibility safety guard for historical shell step-verification paths.
+
+    Unlike ``assess_step_verify_command_safety``, this is not a strict
+    allowlist. QA and bench forensics must continue to run legacy CE contracts
+    such as ``cd src && ...``, ``... || ...`` and bounded ``wc -l`` command
+    substitutions while still failing closed on obvious destructive commands
+    and dynamic execution.
+    """
+    normalized_command = _strip_unquoted_natural_language_tail(str(command or "").strip())
+    if not normalized_command:
+        return StepVerifyCommandSafetyAssessment(
+            allowed=False,
+            reason="empty_command",
+            blocked_tokens=(),
+            blocked_clauses=(),
+            normalized_command=normalized_command,
+            clauses=(),
+        )
+
+    clauses, blocked_shell_tokens, blocked_shell_clauses = _parse_legacy_step_verify_safety_clauses(
+        normalized_command
+    )
+    if blocked_shell_tokens:
+        return StepVerifyCommandSafetyAssessment(
+            allowed=False,
+            reason=f"blocked_shell_token:{blocked_shell_tokens[0]}",
+            blocked_tokens=blocked_shell_tokens,
+            blocked_clauses=blocked_shell_clauses or (normalized_command,),
+            normalized_command=normalized_command,
+            clauses=clauses,
+        )
+    if not clauses:
+        return StepVerifyCommandSafetyAssessment(
+            allowed=False,
+            reason="empty_command",
+            blocked_tokens=(),
+            blocked_clauses=(),
+            normalized_command=normalized_command,
+            clauses=(),
+        )
+
+    blocked_tokens: list[str] = []
+    blocked_clauses: list[str] = []
+    first_reason = ""
+    for clause in clauses:
+        allowed, reason, tokens = _assess_legacy_step_verify_clause_safety(clause)
+        if allowed:
+            continue
+        if not first_reason:
+            first_reason = reason
+        blocked_tokens.extend(tokens)
+        blocked_clauses.append(clause)
+
+    if blocked_clauses:
+        return StepVerifyCommandSafetyAssessment(
+            allowed=False,
+            reason=first_reason or "unsupported_legacy_clause",
+            blocked_tokens=tuple(blocked_tokens),
+            blocked_clauses=tuple(blocked_clauses),
+            normalized_command=normalized_command,
+            clauses=clauses,
+        )
+
+    return StepVerifyCommandSafetyAssessment(
+        allowed=True,
+        reason="legacy_shell_verify_allowed",
+        blocked_tokens=(),
+        blocked_clauses=(),
+        normalized_command=normalized_command,
+        clauses=clauses,
+    )
+
+
+def _parse_legacy_step_verify_safety_clauses(
+    command: str,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    clauses: list[str] = []
+    blocked_tokens: list[str] = []
+    blocked_clauses: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escaped = False
+    current_blocked = False
+    expecting_clause = True
+    index = 0
+
+    def mark_blocked(token: str) -> None:
+        nonlocal current_blocked
+        blocked_tokens.append(token)
+        current_blocked = True
+
+    def finish_clause(separator: str) -> None:
+        nonlocal current_blocked, expecting_clause
+        clause = "".join(current).strip()
+        if not clause:
+            mark_blocked(separator)
+            return
+        clauses.append(clause)
+        if current_blocked:
+            blocked_clauses.append(clause)
+        current.clear()
+        current_blocked = False
+        expecting_clause = True
+
+    while index < len(command):
+        char = command[index]
+        next_char = command[index + 1] if index + 1 < len(command) else ""
+
+        if escaped:
+            current.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and quote != "'":
+            current.append(char)
+            escaped = True
+            index += 1
+            continue
+
+        if quote:
+            if quote == '"' and char == "$" and next_char == "(":
+                substitution = _extract_shell_command_substitution(command, index)
+                if substitution is None:
+                    mark_blocked("$(")
+                    current.append(char)
+                    index += 1
+                    continue
+                substitution_text, end_index = substitution
+                if not _is_allowed_legacy_wc_line_count_substitution(substitution_text):
+                    mark_blocked("$()")
+                current.append(command[index : end_index + 1])
+                expecting_clause = False
+                index = end_index + 1
+                continue
+            if quote == '"' and char == "`":
+                mark_blocked("`")
+            if char == quote:
+                quote = None
+            current.append(char)
+            index += 1
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            current.append(char)
+            expecting_clause = False
+            index += 1
+            continue
+        if char == "$" and next_char == "(":
+            substitution = _extract_shell_command_substitution(command, index)
+            if substitution is None:
+                mark_blocked("$(")
+                current.append(char)
+                index += 1
+                continue
+            substitution_text, end_index = substitution
+            if not _is_allowed_legacy_wc_line_count_substitution(substitution_text):
+                mark_blocked("$()")
+            current.append(command[index : end_index + 1])
+            expecting_clause = False
+            index = end_index + 1
+            continue
+        if char == "`":
+            mark_blocked("`")
+            current.append(char)
+            expecting_clause = False
+            index += 1
+            continue
+        if char == ";":
+            mark_blocked(";")
+            current.append(char)
+            expecting_clause = False
+            index += 1
+            continue
+        if char == "|":
+            if next_char == "|":
+                finish_clause("||")
+                index += 2
+                continue
+            mark_blocked("|")
+            current.append(char)
+            expecting_clause = False
+            index += 1
+            continue
+        if char == "&":
+            if next_char == "&":
+                finish_clause("&&")
+                index += 2
+                continue
+            mark_blocked("&")
+            current.append(char)
+            expecting_clause = False
+            index += 1
+            continue
+
+        current.append(char)
+        if not char.isspace():
+            expecting_clause = False
+        index += 1
+
+    if quote:
+        mark_blocked("unterminated_quote")
+    final_clause = "".join(current).strip()
+    if final_clause:
+        clauses.append(final_clause)
+        if current_blocked:
+            blocked_clauses.append(final_clause)
+    elif expecting_clause and clauses:
+        blocked_tokens.append("empty_clause")
+    return tuple(clauses), tuple(blocked_tokens), tuple(blocked_clauses)
+
+
+def _extract_shell_command_substitution(value: str, start: int) -> tuple[str, int] | None:
+    quote: str | None = None
+    escaped = False
+    depth = 1
+    index = start + 2
+    while index < len(value):
+        char = value[index]
+        next_char = value[index + 1] if index + 1 < len(value) else ""
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            index += 1
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            continue
+        if char == "$" and next_char == "(":
+            depth += 1
+            index += 2
+            continue
+        if char == "(":
+            depth += 1
+            index += 1
+            continue
+        if char == ")":
+            depth -= 1
+            if depth == 0:
+                return value[start + 2 : index], index
+            index += 1
+            continue
+        index += 1
+    return None
+
+
+def _is_allowed_legacy_wc_line_count_substitution(substitution: str) -> bool:
+    try:
+        tokens = shlex.split(substitution, posix=True)
+    except ValueError:
+        return False
+    return (
+        len(tokens) == 4
+        and tokens[:3] == ["wc", "-l", "<"]
+        and _is_safe_legacy_wc_path_token(tokens[3])
+    )
+
+
+def _is_safe_legacy_wc_path_token(token: str) -> bool:
+    return bool(token) and not token.startswith("-") and not re.search(r"[\s;&|`$()<>]", token)
+
+
+def _assess_legacy_step_verify_clause_safety(clause: str) -> tuple[bool, str, tuple[str, ...]]:
+    try:
+        tokens = shlex.split(clause, posix=True)
+    except ValueError:
+        return False, "parse_error", ("parse_error",)
+    if not tokens:
+        return False, "empty_clause", ()
+
+    executable = Path(tokens[0]).name.lower()
+    if executable in _BLOCKED_STEP_VERIFY_COMMANDS:
+        return False, f"blocked_command:{executable}", (tokens[0],)
+    if executable in _SHELL_EVAL_COMMANDS and "-c" in tokens[1:]:
+        return False, f"blocked_dynamic_execution:{executable} -c", (f"{tokens[0]} -c",)
+    if _is_python_executable(executable) and any(token == "-c" or token.startswith("-c") for token in tokens[1:]):
+        return False, f"blocked_dynamic_execution:{executable} -c", (f"{tokens[0]} -c",)
+    if executable == "node" and any(
+        token == "-e" or token.startswith("-e") or token.startswith("--eval") for token in tokens[1:]
+    ):
+        return False, "blocked_dynamic_execution:node -e", (f"{tokens[0]} -e",)
+    return True, "legacy_shell_verify_allowed", ()
+
+
+def _parse_step_verify_safety_clauses(command: str) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    clauses: list[str] = []
+    blocked_tokens: list[str] = []
+    blocked_clauses: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escaped = False
+    current_blocked = False
+    expecting_clause = True
+    index = 0
+
+    def mark_blocked(token: str) -> None:
+        nonlocal current_blocked
+        blocked_tokens.append(token)
+        current_blocked = True
+
+    def finish_clause() -> None:
+        nonlocal current_blocked, expecting_clause
+        clause = "".join(current).strip()
+        if not clause:
+            mark_blocked("&&")
+            return
+        clauses.append(clause)
+        if current_blocked:
+            blocked_clauses.append(clause)
+        current.clear()
+        current_blocked = False
+        expecting_clause = True
+
+    while index < len(command):
+        char = command[index]
+        next_char = command[index + 1] if index + 1 < len(command) else ""
+        third_char = command[index + 2] if index + 2 < len(command) else ""
+
+        if escaped:
+            current.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and quote != "'":
+            current.append(char)
+            escaped = True
+            index += 1
+            continue
+
+        if quote:
+            if quote == '"' and char == "$" and next_char == "(":
+                mark_blocked("$(")
+            elif quote == '"' and char == "`":
+                mark_blocked("`")
+            if char == quote:
+                quote = None
+            current.append(char)
+            index += 1
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            current.append(char)
+            expecting_clause = False
+            index += 1
+            continue
+        if char == "$" and next_char == "(":
+            mark_blocked("$(")
+            current.append(char)
+            index += 1
+            continue
+        if char == "`":
+            mark_blocked("`")
+            current.append(char)
+            expecting_clause = False
+            index += 1
+            continue
+        if char == ";":
+            mark_blocked(";")
+            current.append(char)
+            expecting_clause = False
+            index += 1
+            continue
+        if char == "|":
+            mark_blocked("||" if next_char == "|" else "|")
+            current.append(char)
+            expecting_clause = False
+            index += 1
+            continue
+        if char == "&":
+            if next_char == "&":
+                finish_clause()
+                index += 2
+                continue
+            mark_blocked("&")
+            current.append(char)
+            expecting_clause = False
+            index += 1
+            continue
+        if char == ">":
+            mark_blocked(">>" if next_char == ">" else ">")
+            current.append(char)
+            expecting_clause = False
+            index += 1
+            continue
+        if char == "<":
+            token = "<<<" if next_char == "<" and third_char == "<" else "<<" if next_char == "<" else "<"
+            mark_blocked(token)
+            current.append(char)
+            expecting_clause = False
+            index += 1
+            continue
+
+        current.append(char)
+        if not char.isspace():
+            expecting_clause = False
+        index += 1
+
+    if quote:
+        mark_blocked("unterminated_quote")
+    final_clause = "".join(current).strip()
+    if final_clause:
+        clauses.append(final_clause)
+        if current_blocked:
+            blocked_clauses.append(final_clause)
+    elif expecting_clause and clauses:
+        blocked_tokens.append("&&")
+    return tuple(clauses), tuple(blocked_tokens), tuple(blocked_clauses)
+
+
+def _assess_step_verify_clause_safety(clause: str) -> tuple[bool, str, tuple[str, ...]]:
+    try:
+        tokens = shlex.split(clause, posix=True)
+    except ValueError:
+        return False, "parse_error", ("parse_error",)
+    if not tokens:
+        return False, "empty_clause", ()
+
+    executable = Path(tokens[0]).name.lower()
+    if executable in _BLOCKED_STEP_VERIFY_COMMANDS:
+        return False, f"blocked_command:{executable}", (tokens[0],)
+    if executable in _SHELL_EVAL_COMMANDS and "-c" in tokens[1:]:
+        return False, f"blocked_dynamic_execution:{executable} -c", (f"{tokens[0]} -c",)
+    if _is_python_executable(executable) and any(token == "-c" or token.startswith("-c") for token in tokens[1:]):
+        return False, f"blocked_dynamic_execution:{executable} -c", (f"{tokens[0]} -c",)
+    if executable == "node" and any(
+        token == "-e" or token.startswith("-e") or token.startswith("--eval") for token in tokens[1:]
+    ):
+        return False, "blocked_dynamic_execution:node -e", (f"{tokens[0]} -e",)
+
+    if _is_allowed_test_clause(tokens):
+        return True, "allowed_test_clause", ()
+    if _is_allowed_grep_clause(tokens):
+        return True, "allowed_grep_clause", ()
+    if _is_allowed_python_py_compile_clause(executable, tokens):
+        return True, "allowed_python_py_compile_clause", ()
+    if _is_allowed_node_check_clause(executable, tokens):
+        return True, "allowed_node_check_clause", ()
+    if _is_allowed_npm_clause(executable, tokens):
+        return True, "allowed_npm_clause", ()
+    if _is_allowed_test_runner_clause(executable, tokens):
+        return True, "allowed_test_runner_clause", ()
+    return False, f"unsupported_clause:{executable}", (tokens[0],)
+
+
+def _is_python_executable(executable: str) -> bool:
+    return bool(re.fullmatch(r"python(?:\d+(?:\.\d+)?)?", executable))
+
+
+def _is_plain_path_token(token: str) -> bool:
+    return bool(token) and not token.startswith("-")
+
+
+def _is_allowed_test_clause(tokens: list[str]) -> bool:
+    return (
+        len(tokens) == 3 and tokens[0] == "test" and tokens[1] in {"-d", "-e", "-f"} and _is_plain_path_token(tokens[2])
+    )
+
+
+def _is_allowed_grep_clause(tokens: list[str]) -> bool:
+    if len(tokens) < 4 or tokens[0] != "grep":
+        return False
+    index = 1
+    saw_quiet = False
+    patterns: list[str] = []
+    while index < len(tokens) - 1:
+        token = tokens[index]
+        if token == "-e":
+            if index + 1 >= len(tokens) - 1:
+                return False
+            patterns.append(tokens[index + 1])
+            index += 2
+            continue
+        if token.startswith("-") and not token.startswith("--"):
+            flags = token[1:]
+            if not flags or any(flag not in _SAFE_GREP_FLAG_CHARS for flag in flags):
+                return False
+            saw_quiet = saw_quiet or "q" in flags
+            index += 1
+            continue
+        patterns.append(token)
+        index += 1
+        break
+    return saw_quiet and bool(patterns) and index == len(tokens) - 1 and _is_plain_path_token(tokens[-1])
+
+
+def _is_allowed_python_py_compile_clause(executable: str, tokens: list[str]) -> bool:
+    return (
+        _is_python_executable(executable)
+        and len(tokens) >= 4
+        and tokens[1:3] == ["-m", "py_compile"]
+        and all(_is_plain_path_token(token) and token.endswith(".py") for token in tokens[3:])
+    )
+
+
+def _is_allowed_node_check_clause(executable: str, tokens: list[str]) -> bool:
+    return (
+        executable == "node"
+        and len(tokens) == 3
+        and tokens[1] == "--check"
+        and _is_plain_path_token(tokens[2])
+        and tokens[2].endswith((".cjs", ".js", ".mjs"))
+    )
+
+
+def _is_allowed_npm_clause(executable: str, tokens: list[str]) -> bool:
+    if executable != "npm" or len(tokens) < 2:
+        return False
+    if tokens[1] == "test":
+        return True
+    return len(tokens) >= 3 and tokens[1] == "run" and tokens[2] in {"build", "test"}
+
+
+def _is_allowed_test_runner_clause(executable: str, tokens: list[str]) -> bool:
+    if executable in {"mypy", "pytest"}:
+        return True
+    if executable == "ruff":
+        return len(tokens) >= 2 and tokens[1] == "check"
+    if executable == "go":
+        return len(tokens) >= 2 and tokens[1] == "test"
+    if executable == "cargo":
+        return len(tokens) >= 2 and tokens[1] in {"check", "test"}
+    if executable == "make":
+        return len(tokens) >= 2 and tokens[1] == "test"
+    if executable == "cmake":
+        return len(tokens) >= 3 and tokens[1] == "--build"
+    return False
 
 
 def _first_unquoted_marker_index(value: str, markers: tuple[str, ...]) -> int | None:
@@ -519,6 +1164,9 @@ def collect_failing_clauses(verify: str, *, cwd: str) -> dict[str, Any] | None:
 
 
 __all__ = [
+    "StepVerifyCommandSafetyAssessment",
+    "assess_legacy_step_verify_command_safety",
+    "assess_step_verify_command_safety",
     "clause_residual",
     "collect_failing_clauses",
     "first_failing_verify_clause",

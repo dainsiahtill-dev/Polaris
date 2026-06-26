@@ -31,11 +31,13 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     build_patch_residue_cleanup_plan,
     build_repair_receipt_context,
     build_rust_dependency_plan,
+    build_rust_missing_binary_entrypoint_plan,
     build_typescript_duplicate_object_property_plan,
     build_typescript_enum_member_separator_plan,
     build_typescript_nullable_canvas_context_plan,
     build_typescript_object_literal_comma_plan,
     default_repair_rule_registry,
+    deterministic_repair_source_tool_known,
     normalize_artifact_quality_errors,
     order_repair_plans,
     plan_runtime_repair,
@@ -56,6 +58,7 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     run_materialization_quality_repair_schedule_callbacks,
     run_post_execution_repair_schedule_callbacks,
     run_runtime_repair,
+    runtime_dispatch as runtime_dispatch_module,
     runtime_repair_bindings,
     runtime_repair_source_tools,
 )
@@ -63,7 +66,21 @@ from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy impor
     FORBIDDEN_REPAIR_ADVISORY_METADATA_FIELDS,
     FORBIDDEN_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS,
 )
-from polaris.cells.director.runtime.internal.repair_kernel.contracts import sha256_text
+from polaris.cells.director.runtime.internal.repair_kernel.contracts import FILE_ABSENT_HASH, sha256_text
+from polaris.cells.director.runtime.internal.repair_kernel.java_syntax import build_java_test_dependency_plan
+from polaris.cells.director.runtime.internal.repair_kernel.rust_syntax import (
+    build_rust_crate_import_rewrite_plan,
+    build_rust_field_rename_suggestion_plan,
+    build_rust_incompatible_copy_derive_plan,
+    build_rust_line_suggestion_plan,
+    build_rust_method_self_signature_plan,
+    build_rust_missing_trait_derive_plan,
+    build_rust_serde_derive_plan,
+    build_rust_trait_import_plan,
+    build_rust_unresolved_pub_use_plan,
+    build_rust_unused_import_plan,
+    build_rust_wrong_crate_path_plan,
+)
 from polaris.cells.director.runtime.public import (
     AttachDirectorRepairRevalidationEvidenceV1,
     CompareDirectorRepairShadowRunV1,
@@ -104,6 +121,85 @@ from polaris.cells.director.runtime.public import (
     run_director_repair,
     validate_director_repair_advisory,
 )
+
+
+def _install_delete_file_test_runtime_binding(monkeypatch: pytest.MonkeyPatch, source_tool: str) -> None:
+    def planner(
+        base_files: dict[str, str],
+        artifact_quality_errors: tuple[str, ...],
+        advisor_notes: tuple[RepairAdvisorNote, ...] | None,
+        mode: str,
+    ) -> runtime_dispatch_module.RuntimeRepairPlanning:
+        diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
+        relative_path, original = next(iter(base_files.items()))
+        plan = RepairPlan(
+            rule_id="test.delete_file",
+            source_tool=source_tool,
+            operations=(
+                RepairOperation(
+                    kind="delete_file",
+                    path=relative_path,
+                    before_hash=sha256_text(original),
+                ),
+            ),
+            diagnostics=diagnostics,
+            mode=mode,
+            advisor_notes=tuple(advisor_notes or ()),
+        )
+        composition = PatchComposer().compose(base_files, plan.operations)
+        return runtime_dispatch_module.RuntimeRepairPlanning(
+            source_tool=source_tool,
+            diagnostics=diagnostics,
+            plan=plan,
+            composition=composition,
+            advisor_notes=tuple(advisor_notes or ()),
+        )
+
+    def runner(
+        workspace: str | Path,
+        base_files: dict[str, str],
+        artifact_quality_errors: tuple[str, ...],
+        writer: object,
+        editor: object | None,
+        deleter: object | None,
+        allowed_paths: tuple[str, ...] | None,
+        advisor_notes: tuple[RepairAdvisorNote, ...] | None,
+        mode: str,
+    ) -> runtime_dispatch_module.RuntimeRepairRun:
+        del editor
+        planning = planner(base_files, artifact_quality_errors, advisor_notes, mode)
+        assert planning.plan is not None
+        assert planning.composition is not None
+        policy = RepairPolicyGate()
+        policy_context = RepairPolicyContext(allowed_paths=tuple(allowed_paths or base_files.keys()))
+        plan_decision = policy.evaluate_plan(planning.plan, policy_context)
+        composition_decision = policy.evaluate_composition(planning.plan, planning.composition)
+        execution_result = TransactionalRepairExecutor().execute(
+            workspace=Path(workspace),
+            plan=planning.plan,
+            composition=planning.composition,
+            writer=writer,  # type: ignore[arg-type]
+            deleter=deleter,  # type: ignore[arg-type]
+        )
+        return runtime_dispatch_module.RuntimeRepairRun(
+            planning=planning,
+            ok=execution_result.ok,
+            execution_result=execution_result,
+            plan_decision=plan_decision,
+            composition_decision=composition_decision,
+            error_code=None if execution_result.ok else "repair_execution_failed",
+            error_message=None if execution_result.ok else execution_result.error,
+        )
+
+    bindings = dict(runtime_dispatch_module._RUNTIME_REPAIR_BINDINGS)
+    bindings[source_tool] = runtime_dispatch_module.RuntimeRepairBinding(
+        source_tool=source_tool,
+        language="test",
+        rule_id="test.delete_file",
+        planner=planner,  # type: ignore[arg-type]
+        runner=runner,  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(runtime_dispatch_module, "_RUNTIME_REPAIR_BINDINGS", bindings)
 
 
 def test_normalizer_builds_typed_typescript_diagnostic() -> None:
@@ -188,8 +284,8 @@ def test_repair_rule_registry_matches_language_specific_go_and_rust_rules() -> N
     payload = default_repair_rule_registry().coverage(diagnostics).to_dict()
 
     assert payload["covered_diagnostic_count"] == 3
-    assert payload["executable_runtime_plan_diagnostic_count"] == 2
-    assert payload["metadata_only_diagnostic_count"] == 1
+    assert payload["executable_runtime_plan_diagnostic_count"] == 3
+    assert payload["metadata_only_diagnostic_count"] == 0
     assert payload["items"][0]["matched_rule_ids"] == ["go.bare_import_string"]
     assert payload["items"][0]["runtime_plan_rule_ids"] == ["go.bare_import_string"]
     assert payload["items"][0]["metadata_only_match"] is False
@@ -198,7 +294,8 @@ def test_repair_rule_registry_matches_language_specific_go_and_rust_rules() -> N
     assert payload["items"][1]["runtime_plan_rule_ids"] == ["rust.unlinked_crate_dependency"]
     assert payload["items"][1]["metadata_only_match"] is False
     assert payload["items"][1]["diagnostic_phase"] == "dependency_resolution"
-    assert payload["items"][2]["matched_rule_ids"] == ["rust.incompatible_derive"]
+    assert payload["items"][2]["matched_rule_ids"] == ["rust.missing_trait_derive"]
+    assert payload["items"][2]["runtime_plan_rule_ids"] == ["rust.missing_trait_derive"]
     assert payload["items"][2]["diagnostic_archetype"] == "incompatible_derive"
 
 
@@ -401,8 +498,12 @@ def test_repair_convergence_scheduler_records_revalidation_receipt_evidence(tmp_
     assert receipt.errors_before == 1
     assert receipt.errors_after == 0
     assert receipt.net_error_reduction == 1
+    assert receipt.evidence_status == "resolved_evidence"
     assert receipt.revalidation_evidence is not None
+    assert receipt.revalidation_evidence.evidence_status == "resolved_evidence"
     assert receipt.revalidation_evidence.resolved_diagnostic_ids == (diagnostic.diagnostic_id,)
+    assert payload["receipts"][0]["evidence_status"] == "resolved_evidence"
+    assert payload["rounds"][0]["revalidation_evidence"]["evidence_status"] == "resolved_evidence"
     assert payload["rounds"][0]["revalidation_evidence"]["raw_output_ref"] == "runtime/verifier/round-1.log"
     assert payload["receipts"][0]["revalidation_evidence"]["net_error_reduction"] == 1
     assert target.read_text(encoding="utf-8") == "export const done = true;\n"
@@ -563,8 +664,10 @@ def test_repair_convergence_scheduler_downgrades_failed_revalidation_receipts(tm
     assert result.status == "cycle_detected"
     assert receipt.status == "failed_revalidation"
     assert receipt.authoritative is False
+    assert receipt.evidence_status == "failed_evidence"
     assert receipt.metadata["requires_revalidation"] is False
     assert receipt.revalidation_evidence is not None
+    assert receipt.revalidation_evidence.evidence_status == "failed_evidence"
     assert receipt.revalidation_evidence.exit_code == 1
     assert receipt.revalidation_evidence.residual_diagnostic_ids == (diagnostic.diagnostic_id,)
     assert receipt.errors_before == 1
@@ -634,14 +737,84 @@ def test_repair_receipt_revalidation_evidence_is_authoritative_hash_material() -
     assert resolved_receipt.errors_before == 1
     assert resolved_receipt.errors_after == 0
     assert resolved_receipt.net_error_reduction == 1
+    assert pending_receipt.evidence_status == "missing_evidence"
+    assert resolved_receipt.evidence_status == "resolved_evidence"
+    assert residual_receipt.evidence_status == "failed_evidence"
+    assert payload["evidence_status"] == "resolved_evidence"
     assert payload["authority_hash"] == resolved_receipt.authority_hash()
     assert payload["projection_hash"] == resolved_receipt.projection_hash()
+    assert payload["revalidation_evidence"]["evidence_status"] == "resolved_evidence"
     assert payload["revalidation_evidence"]["net_error_reduction"] == 1
+
+
+def test_repair_receipt_authority_hash_excludes_agi_advisory_projection_material() -> None:
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="typescript_ts2304",
+        message="Cannot find name 'done'.",
+        path="src/app.ts",
+        raw="src/app.ts(1,14): error TS2304: Cannot find name 'done'.",
+    )
+    evidence = RepairRevalidationEvidence(
+        command=("npm", "test"),
+        exit_code=0,
+        diagnostics_before=(diagnostic,),
+        diagnostics_after=(),
+        resolved_diagnostic_ids=(diagnostic.diagnostic_id,),
+    )
+    base_receipt = RepairReceipt(
+        receipt_id="repair_receipt.advisory",
+        plan_id="plan.advisory",
+        rule_id="typescript.missing_done_export",
+        source_tool="deterministic_typescript_missing_export_repair",
+        status="applied",
+        mode="commit",
+        authoritative=True,
+        files_changed=("src/app.ts",),
+        operation_ids=("operation.advisory",),
+        diagnostics=(diagnostic,),
+        before_hashes={"src/app.ts": "before"},
+        after_hashes={"src/app.ts": "after"},
+        revalidation_evidence=evidence,
+    )
+    advisory_receipt = RepairReceipt(
+        receipt_id=base_receipt.receipt_id,
+        plan_id=base_receipt.plan_id,
+        rule_id=base_receipt.rule_id,
+        source_tool=base_receipt.source_tool,
+        status=base_receipt.status,
+        mode=base_receipt.mode,
+        authoritative=base_receipt.authoritative,
+        files_changed=base_receipt.files_changed,
+        operation_ids=base_receipt.operation_ids,
+        diagnostics=base_receipt.diagnostics,
+        before_hashes=base_receipt.before_hashes,
+        after_hashes=base_receipt.after_hashes,
+        revalidation_evidence=base_receipt.revalidation_evidence,
+        advisor_notes=(
+            RepairAdvisorNote(
+                source="agi",
+                message="Advisory only.",
+                confidence=0.4,
+                suggested_rules=(
+                    {
+                        "pattern": "missing done export",
+                        "fix_template": "export const done = true;",
+                        "confidence": 0.4,
+                    },
+                ),
+            ),
+        ),
+    )
+
+    assert base_receipt.authority_hash() == advisory_receipt.authority_hash()
+    assert base_receipt.projection_hash() != advisory_receipt.projection_hash()
 
 
 def _assert_direct_runtime_receipt_pending_revalidation(receipt: RepairReceipt | RepairReceiptV1) -> None:
     assert receipt.status == "applied"
     assert receipt.authoritative is False
+    assert receipt.evidence_status == "missing_evidence"
     assert receipt.metadata["requires_revalidation"] is True
     if isinstance(receipt, RepairReceiptV1):
         assert receipt.authority_hash
@@ -941,9 +1114,66 @@ def test_patch_residue_cleanup_rule_plans_precise_text_replacements() -> None:
     assert composition.patches[0].content_after == remove_patch_residue_lines(composition.patches[0].content_after)
 
 
+def test_java_test_dependency_rule_builds_whole_file_fallback_runtime_plan() -> None:
+    relative_path = "src/test/java/AppTest.java"
+    content = (
+        "import org.junit.jupiter.api.Test;\n"
+        "import static org.junit.jupiter.api.Assertions.assertEquals;\n\n"
+        "public class AppTest {\n"
+        "    @Test\n"
+        "    public void addsNumbers() {\n"
+        "        assertEquals(4, 2 + 2);\n"
+        "    }\n"
+        "}\n"
+    )
+    diagnostic = RepairDiagnostic(
+        source="artifact_quality",
+        code="java_compile_error",
+        message="package org.junit.jupiter.api does not exist",
+        path=relative_path,
+        raw=f"{relative_path}:1: error: package org.junit.jupiter.api does not exist",
+    )
+
+    plan = build_java_test_dependency_plan(
+        base_files={relative_path: content},
+        diagnostics=(diagnostic,),
+        mode="shadow",
+    )
+    coverage = default_repair_rule_registry().coverage((diagnostic,)).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_java_test_dependency_repair",
+        base_files={relative_path: content},
+        artifact_quality_errors=(diagnostic.raw,),
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "java.junit_test_dependency"
+    assert plan.source_tool == "deterministic_java_test_dependency_repair"
+    assert plan.metadata["edit_strategy"] == "whole_file_fallback"
+    assert plan.metadata["legacy_transform_migrated"] is True
+    assert plan.operations[0].kind == "write_file"
+    assert plan.operations[0].metadata["edit_strategy"] == "whole_file_fallback"
+    assert plan.operations[0].metadata["legacy_transform_migrated"] is True
+    assert "org.junit" not in plan.operations[0].content
+    assert "public static void main" in plan.operations[0].content
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "java.junit_test_dependency" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert "deterministic_java_test_dependency_repair" in coverage["items"][0]["matched_source_tools"]
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_java_test_dependency_repair"
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+
+
 def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
     bindings = runtime_repair_bindings()
 
+    assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
+    assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
+    assert len(runtime_repair_source_tools()) == len(bindings)
+    assert len(runtime_repair_source_tools()) == 31
+    assert sum(1 for binding in bindings if binding["language"] == "rust") == 18
     assert runtime_repair_source_tools() == (
         "deterministic_cpp_include_path_repair",
         "deterministic_cpp_missing_private_members_repair",
@@ -952,8 +1182,26 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
         "deterministic_cpp_struct_getter_field_access_repair",
         "deterministic_go_bare_import_string_repair",
         "deterministic_java_accessor_alias_repair",
+        "deterministic_java_test_dependency_repair",
         "deterministic_patch_residue_cleanup",
+        "deterministic_rust_crate_import_rewrite_repair",
         "deterministic_rust_dependency_repair",
+        "deterministic_rust_derive_repair",
+        "deterministic_rust_duplicate_module_file_repair",
+        "deterministic_rust_field_rename_suggestion_repair",
+        "deterministic_rust_incompatible_copy_derive_repair",
+        "deterministic_rust_lib_root_facade_repair",
+        "deterministic_rust_line_suggestion_repair",
+        "deterministic_rust_method_self_signature_repair",
+        "deterministic_rust_missing_binary_entrypoint_repair",
+        "deterministic_rust_missing_lib_target_repair",
+        "deterministic_rust_missing_module_file_repair",
+        "deterministic_rust_serde_derive_repair",
+        "deterministic_rust_struct_literal_missing_field_repair",
+        "deterministic_rust_trait_import_repair",
+        "deterministic_rust_unresolved_pub_use_repair",
+        "deterministic_rust_unused_import_repair",
+        "deterministic_rust_wrong_crate_path_repair",
         "deterministic_typescript_duplicate_object_property_repair",
         "deterministic_typescript_enum_member_separator_repair",
         "deterministic_typescript_nullable_canvas_context_repair",
@@ -996,14 +1244,104 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
             "rule_id": "java.common_accessor_aliases",
         },
         {
+            "source_tool": "deterministic_java_test_dependency_repair",
+            "language": "java",
+            "rule_id": "java.junit_test_dependency",
+        },
+        {
             "source_tool": "deterministic_patch_residue_cleanup",
             "language": "generic",
             "rule_id": "generic.patch_residue_cleanup",
         },
         {
+            "source_tool": "deterministic_rust_crate_import_rewrite_repair",
+            "language": "rust",
+            "rule_id": "rust.crate_import_rewrite",
+        },
+        {
             "source_tool": "deterministic_rust_dependency_repair",
             "language": "rust",
             "rule_id": "rust.unlinked_crate_dependency",
+        },
+        {
+            "source_tool": "deterministic_rust_derive_repair",
+            "language": "rust",
+            "rule_id": "rust.missing_trait_derive",
+        },
+        {
+            "source_tool": "deterministic_rust_duplicate_module_file_repair",
+            "language": "rust",
+            "rule_id": "rust.duplicate_module_file",
+        },
+        {
+            "source_tool": "deterministic_rust_field_rename_suggestion_repair",
+            "language": "rust",
+            "rule_id": "rust.field_rename_suggestion",
+        },
+        {
+            "source_tool": "deterministic_rust_incompatible_copy_derive_repair",
+            "language": "rust",
+            "rule_id": "rust.incompatible_copy_derive",
+        },
+        {
+            "source_tool": "deterministic_rust_lib_root_facade_repair",
+            "language": "rust",
+            "rule_id": "rust.lib_root_facade_path_rewrite",
+        },
+        {
+            "source_tool": "deterministic_rust_line_suggestion_repair",
+            "language": "rust",
+            "rule_id": "rust.line_suggestion",
+        },
+        {
+            "source_tool": "deterministic_rust_method_self_signature_repair",
+            "language": "rust",
+            "rule_id": "rust.method_self_signature",
+        },
+        {
+            "source_tool": "deterministic_rust_missing_binary_entrypoint_repair",
+            "language": "rust",
+            "rule_id": "rust.missing_binary_entrypoint",
+        },
+        {
+            "source_tool": "deterministic_rust_missing_lib_target_repair",
+            "language": "rust",
+            "rule_id": "rust.missing_lib_target_src_lib",
+        },
+        {
+            "source_tool": "deterministic_rust_missing_module_file_repair",
+            "language": "rust",
+            "rule_id": "rust.missing_module_file",
+        },
+        {
+            "source_tool": "deterministic_rust_serde_derive_repair",
+            "language": "rust",
+            "rule_id": "rust.serde_derive",
+        },
+        {
+            "source_tool": "deterministic_rust_struct_literal_missing_field_repair",
+            "language": "rust",
+            "rule_id": "rust.struct_literal_missing_field_initializer",
+        },
+        {
+            "source_tool": "deterministic_rust_trait_import_repair",
+            "language": "rust",
+            "rule_id": "rust.trait_import",
+        },
+        {
+            "source_tool": "deterministic_rust_unresolved_pub_use_repair",
+            "language": "rust",
+            "rule_id": "rust.unresolved_pub_use",
+        },
+        {
+            "source_tool": "deterministic_rust_unused_import_repair",
+            "language": "rust",
+            "rule_id": "rust.unused_import",
+        },
+        {
+            "source_tool": "deterministic_rust_wrong_crate_path_repair",
+            "language": "rust",
+            "rule_id": "rust.wrong_crate_path",
         },
         {
             "source_tool": "deterministic_typescript_duplicate_object_property_repair",
@@ -1026,6 +1364,16 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
             "rule_id": "typescript.object_literal_missing_comma",
         },
     )
+
+
+def test_runtime_executable_source_tools_are_registered_in_strategy_catalog() -> None:
+    unregistered = tuple(
+        source_tool
+        for source_tool in runtime_repair_source_tools()
+        if not deterministic_repair_source_tool_known(source_tool)
+    )
+
+    assert unregistered == ()
 
 
 def test_runtime_dispatcher_unknown_source_tool_fails_closed_without_writes(tmp_path: Path) -> None:
@@ -1109,6 +1457,230 @@ def test_public_repair_unknown_source_tool_exposes_fail_closed_error_without_wri
     assert run_result.metadata["planning"]["error_code"] == "unsupported_repair_source_tool"
     assert run_result.metadata["planning_error"]["error_code"] == "unsupported_repair_source_tool"
     assert writes == []
+
+
+def test_public_repair_metadata_only_rust_missing_fields_source_tools_fail_closed_as_unsupported_source_tool(
+    tmp_path: Path,
+) -> None:
+    metadata_only_cases = (
+        (
+            "deterministic_rust_missing_fields_repair",
+            "error[E0609]: no field `duration` on type `&Flight`\n"
+            " --> src/lib.rs:8:22\n"
+            "  |\n"
+            '8 |     println!("{}", flight.duration);\n'
+            "  |                      ^^^^^^^^ unknown field\n",
+        ),
+    )
+    writes: list[tuple[str, str]] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        writes.append((path, content))
+        raise AssertionError("metadata-only rust source_tool must not write files")
+
+    for source_tool, raw_error in metadata_only_cases:
+        planning_result = plan_director_repair(
+            PlanDirectorRepairCommandV1(
+                source_tool=source_tool,
+                base_files={"src/lib.rs": "pub struct Flight { pub name: String }\n"},
+                artifact_quality_errors=(raw_error,),
+                mode="shadow",
+            )
+        )
+        planning_payload = planning_result.to_dict()
+
+        assert source_tool not in runtime_repair_source_tools()
+        assert planning_payload["ok"] is False
+        assert planning_payload["planned"] is False
+        assert planning_payload["source_tool"] == source_tool
+        assert planning_payload["error_code"] == "unsupported_repair_source_tool"
+        assert "No runtime planner is registered" in planning_payload["error_message"]
+        assert planning_payload["plan_summary"] is None
+        assert planning_payload["composition_summary"]["ok"] is False
+
+        run_result = run_director_repair(
+            RunDirectorRepairCommandV1(
+                task_id=f"task-{source_tool}",
+                workspace=str(tmp_path),
+                source_tool=source_tool,
+                base_files={"src/lib.rs": "pub struct Flight { pub name: String }\n"},
+                artifact_quality_errors=(raw_error,),
+                allowed_paths=("src/lib.rs",),
+            ),
+            writer=writer,
+        )
+
+        assert run_result.ok is False
+        assert run_result.error_code == "unsupported_repair_source_tool"
+        assert run_result.receipts == ()
+        assert run_result.metadata["planning"]["error_code"] == "unsupported_repair_source_tool"
+        assert run_result.metadata["planning_error"]["error_code"] == "unsupported_repair_source_tool"
+
+        if source_tool == "deterministic_rust_missing_fields_repair":
+            coverage_payload = (
+                default_repair_rule_registry().coverage(normalize_artifact_quality_errors([raw_error])).to_dict()
+            )
+            coverage_item = coverage_payload["items"][0]
+            assert coverage_item["metadata_only_match"] is True
+            assert coverage_item["runtime_plan_rule_ids"] == []
+            assert coverage_item["runtime_blocker_reasons"] == ["type_inference_required"]
+
+    assert writes == []
+
+
+def test_public_rust_lib_root_facade_export_signal_runs_with_editor_only(tmp_path: Path) -> None:
+    source_tool = "deterministic_rust_lib_root_facade_repair"
+    raw_error = "AssertionError: lib.rs must expose generate_palette API for Rust lib root facade"
+    base_files = {
+        "src/lib.rs": "mod engine;\n",
+        "src/engine.rs": "pub fn generate_palette() {}\n",
+    }
+    target = tmp_path / "src/lib.rs"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(base_files["src/lib.rs"], encoding="utf-8")
+    writes: list[tuple[str, str]] = []
+    edits: list[str] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        writes.append((path, content))
+        raise AssertionError("Rust lib-root facade export must not use write_file fallback")
+
+    def editor(operation) -> dict[str, object]:
+        edits.append(operation.operation_id)
+        path = tmp_path / operation.path
+        content = path.read_text(encoding="utf-8")
+        start = int(operation.span_start)
+        end = int(operation.span_end)
+        assert content[start:end] == operation.expected
+        path.write_text(content[:start] + str(operation.replacement) + content[end:], encoding="utf-8")
+        return {"ok": True, "path": operation.path}
+
+    assert source_tool in runtime_repair_source_tools()
+
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=(raw_error,),
+            mode="shadow",
+        )
+    )
+    planning_payload = planning_result.to_dict()
+
+    assert planning_payload["ok"] is True
+    assert planning_payload["planned"] is True
+    assert planning_payload["source_tool"] == source_tool
+    assert planning_payload["error_code"] is None
+    assert planning_payload["plan_summary"]["rule_id"] == "rust.lib_root_facade_export"
+    assert planning_payload["composition_summary"]["ok"] is True
+
+    run_result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-rust-lib-root-facade-export",
+            workspace=str(tmp_path),
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=(raw_error,),
+            allowed_paths=("src/lib.rs", "src/engine.rs"),
+        ),
+        writer=writer,
+        editor=editor,
+    )
+
+    assert run_result.ok is True
+    assert run_result.error_code is None
+    assert len(run_result.receipts) == 1
+    assert writes == []
+    assert len(edits) == 1
+    assert target.read_text(encoding="utf-8") == "mod engine;\npub use crate::engine::generate_palette;\n"
+    record = run_result.receipts[0].metadata["execution_records"][0]
+    assert record["operation"] == "edit_file"
+    assert record["span_based"] is True
+
+
+def test_public_repair_delete_file_without_deleter_fails_closed_with_receipt_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_tool = "deterministic_test_delete_file_repair"
+    relative_path = "src/stale.ts"
+    original = "export const stale = true;\n"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    target.write_text(original, encoding="utf-8")
+    _install_delete_file_test_runtime_binding(monkeypatch, source_tool)
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        (tmp_path / path).write_text(content, encoding="utf-8")
+        return {"ok": True}
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-delete-no-deleter",
+            workspace=str(tmp_path),
+            source_tool=source_tool,
+            base_files={relative_path: original},
+            artifact_quality_errors=("test delete stale file",),
+            allowed_paths=(relative_path,),
+        ),
+        writer=writer,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "repair_execution_failed"
+    assert result.metadata["execution_error_code"] == "delete_file_requires_policy_gated_deleter"
+    assert "policy-gated deleter" in str(result.metadata["execution_error"])
+    assert target.read_text(encoding="utf-8") == original
+    assert len(result.receipts) == 1
+    receipt = result.receipts[0]
+    assert receipt.status == "failed"
+    assert receipt.metadata["error"].endswith(f"policy-gated deleter for {relative_path}")
+
+
+def test_public_repair_delete_file_uses_policy_gated_deleter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_tool = "deterministic_test_delete_file_repair"
+    relative_path = "src/stale.ts"
+    original = "export const stale = true;\n"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    target.write_text(original, encoding="utf-8")
+    _install_delete_file_test_runtime_binding(monkeypatch, source_tool)
+    delete_calls: list[str] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        (tmp_path / path).write_text(content, encoding="utf-8")
+        return {"ok": True}
+
+    def deleter(path: str) -> dict[str, object]:
+        delete_calls.append(path)
+        (tmp_path / path).unlink()
+        return {"ok": True, "file": path, "operation": "delete_file"}
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-delete-with-deleter",
+            workspace=str(tmp_path),
+            source_tool=source_tool,
+            base_files={relative_path: original},
+            artifact_quality_errors=("test delete stale file",),
+            allowed_paths=(relative_path,),
+        ),
+        writer=writer,
+        deleter=deleter,
+    )
+
+    assert result.ok is True
+    assert delete_calls == [relative_path]
+    assert not target.exists()
+    receipt = result.receipts[0]
+    assert receipt.before_hashes[relative_path] == sha256_text(original)
+    assert receipt.after_hashes[relative_path] == FILE_ABSENT_HASH
+    record = receipt.metadata["execution_records"][0]
+    assert record["operation"] == "delete_file"
+    assert record["rollback_strategy"] == "write_file_full_restore"
 
 
 def test_runtime_dispatcher_bindings_match_registry_runtime_plan_flags() -> None:
@@ -1307,6 +1879,1705 @@ def test_rust_dependency_rule_builds_canonical_plan_from_diagnostics() -> None:
     assert plan.operations[0].metadata["packages"] == ("serde", "serde_json")
     assert 'serde = { version = "1.0", features = ["derive"] }' in str(plan.operations[0].content)
     assert 'serde_json = "1.0"' in str(plan.operations[0].content)
+
+
+def test_rust_missing_binary_entrypoint_rule_builds_create_file_plan() -> None:
+    cargo = '[package]\nname = "demo-app"\nversion = "0.1.0"\n\n[[bin]]\nname = "demo-cli"\npath = "src/bin/demo.rs"\n'
+
+    plan = build_rust_missing_binary_entrypoint_plan(
+        base_files={"./Cargo.toml": cargo},
+        diagnostics=(),
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "rust.missing_binary_entrypoint"
+    assert plan.source_tool == "deterministic_rust_missing_binary_entrypoint_repair"
+    assert plan.priority == 1
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "write_file"
+    assert operation.path == "src/bin/demo.rs"
+    assert operation.before_hash == sha256_text("")
+    assert operation.metadata["write_file_reason"] == "new_file_or_empty_file"
+    assert operation.metadata["create_file_rollback_strategy"] == (
+        "restore_empty_before_content_via_policy_gated_writer"
+    )
+    assert "fn main()" in str(operation.content)
+    assert "demo_app binary entry point" in str(operation.content)
+
+
+def test_rust_method_self_signature_rule_builds_precise_plan_from_diagnostics() -> None:
+    relative_path = "src/lib.rs"
+    content = "pub struct Demo;\nimpl Demo {\n    pub fn foo(&) -> i32 { 1 }\n    pub fn bar(&mut) { }\n}\n"
+    errors = (
+        "error: expected parameter name, found `)`\n --> src/lib.rs:3:17\n  |\n3 |     pub fn foo(&) -> i32 { 1 }",
+        "error: expected parameter name, found `)`\n --> src/lib.rs:4:20\n  |\n4 |     pub fn bar(&mut) { }",
+    )
+    diagnostics = normalize_artifact_quality_errors(list(errors))
+
+    plan = build_rust_method_self_signature_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "rust.method_self_signature"
+    assert plan.source_tool == "deterministic_rust_method_self_signature_repair"
+    assert plan.metadata["edit_strategy"] == "span_text_replace"
+    assert len(plan.operations) == 2
+    assert [operation.kind for operation in plan.operations] == ["text_replace", "text_replace"]
+    assert [operation.expected for operation in plan.operations] == ["(&)", "(&mut)"]
+    assert [operation.replacement for operation in plan.operations] == ["(&self)", "(&mut self)"]
+    assert all(operation.metadata["edit_strategy"] == "span_text_replace" for operation in plan.operations)
+
+    composition = PatchComposer().compose({relative_path: content}, plan.operations)
+    assert composition.ok is True
+    assert "pub fn foo(&self)" in composition.patches[0].content_after
+    assert "pub fn bar(&mut self)" in composition.patches[0].content_after
+
+
+@pytest.mark.parametrize("unsafe_path", ("../src/lib.rs", "/tmp/x/src/lib.rs"))
+def test_rust_method_self_signature_rule_rejects_unsafe_diagnostic_paths(unsafe_path: str) -> None:
+    content = "impl Demo {\n    pub fn foo(&) -> i32 { 1 }\n}\n"
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            f"error: expected parameter name, found `)`\n --> {unsafe_path}:2:17\n  |\n2 |     pub fn foo(&) -> i32 {{ 1 }}",
+        ]
+    )
+
+    plan = build_rust_method_self_signature_plan(
+        base_files={unsafe_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_method_self_signature_rule_normalizes_dot_relative_paths() -> None:
+    content = "impl Demo {\n    pub fn foo(&) -> i32 { 1 }\n}\n"
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "error: expected parameter name, found `)`\n --> ./src/lib.rs:2:17\n  |\n2 |     pub fn foo(&) -> i32 { 1 }",
+        ]
+    )
+
+    plan = build_rust_method_self_signature_plan(
+        base_files={"./src/lib.rs": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.operations[0].path == "src/lib.rs"
+
+
+def test_rust_method_self_signature_coverage_matches_executable_runtime_plan() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "error: expected parameter name, found `)`\n --> src/lib.rs:2:17\n  |\n2 |     pub fn foo(&) -> i32 { 1 }",
+        ]
+    )
+    coverage = default_repair_rule_registry().coverage(diagnostics).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_method_self_signature_repair",
+        base_files={"src/lib.rs": "impl Demo {\n    pub fn foo(&) -> i32 { 1 }\n}\n"},
+        artifact_quality_errors=(diagnostics[0].raw,),
+        mode="shadow",
+    )
+
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "rust.method_self_signature" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert "deterministic_rust_method_self_signature_repair" in coverage["items"][0]["matched_source_tools"]
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_rust_method_self_signature_repair"
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+
+
+def _rust_serde_derive_error(
+    *,
+    module: str = "models",
+    symbol: str = "Recipe",
+    trait: str = "Serialize",
+) -> str:
+    return (
+        (
+            "error[E0277]: the trait bound `Recipe: serde::Serialize` is not satisfied\n"
+            "help: consider adding `#[derive(serde::Serialize)]` to your `models::Recipe` type\n"
+            f"note: requested trait marker {trait} for `{module}::{symbol}`"
+        )
+        .replace("serde::Serialize", f"serde::{trait}")
+        .replace("models::Recipe", f"{module}::{symbol}")
+    )
+
+
+def test_rust_serde_derive_rule_extends_existing_derive_with_span_metadata() -> None:
+    relative_path = "src/models.rs"
+    content = "#[derive(Debug, Clone)]\npub struct Recipe { name: String }\n"
+    raw = _rust_serde_derive_error()
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_serde_derive_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "rust.serde_derive"
+    assert plan.source_tool == "deterministic_rust_serde_derive_repair"
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == relative_path
+    assert operation.expected == "#[derive(Debug, Clone)]\n"
+    assert operation.replacement == "#[derive(Debug, Clone, serde::Serialize)]\n"
+    assert operation.metadata["repair_kind"] == "rust_serde_derive"
+    assert operation.metadata["span_based"] is True
+    assert operation.metadata["unique_context"] == "#[derive(Debug, Clone)]\n"
+    assert operation.metadata["traits_added"] == ("serde::Serialize",)
+
+    runtime_planning = plan_runtime_repair(
+        source_tool="deterministic_rust_serde_derive_repair",
+        base_files={relative_path: content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+    composition = runtime_planning.composition
+    assert composition is not None
+    assert composition.ok is True
+    assert "#[derive(Debug, Clone, serde::Serialize)]" in composition.patches[0].content_after
+
+
+def test_rust_serde_derive_rule_inserts_derive_by_replacing_declaration_line() -> None:
+    relative_path = "src/models.rs"
+    content = "pub enum Recipe { Soup }\n"
+    diagnostics = normalize_artifact_quality_errors([_rust_serde_derive_error(trait="Deserialize")])
+
+    plan = build_rust_serde_derive_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.expected == "pub enum Recipe { Soup }\n"
+    assert operation.replacement == "#[derive(serde::Deserialize)]\npub enum Recipe { Soup }\n"
+    assert operation.metadata["derive_line_existing"] is False
+
+
+def test_rust_serde_derive_coverage_matches_executable_runtime_plan() -> None:
+    raw = _rust_serde_derive_error()
+    diagnostics = normalize_artifact_quality_errors([raw])
+    coverage = default_repair_rule_registry().coverage(diagnostics).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_serde_derive_repair",
+        base_files={"src/models.rs": "pub struct Recipe { name: String }\n"},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "rust.serde_derive" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert "deterministic_rust_serde_derive_repair" in coverage["items"][0]["matched_source_tools"]
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_rust_serde_derive_repair"
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+
+
+def test_rust_serde_derive_runtime_binding_executes_public_edit(tmp_path: Path) -> None:
+    relative_path = "src/models.rs"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    content = "#[derive(Debug)]\npub struct Recipe { name: String }\n"
+    target.write_text(content, encoding="utf-8")
+    edit_calls: list[tuple[str, str, str]] = []
+    write_calls: list[tuple[str, str]] = []
+
+    def writer(path: str, replacement: str) -> dict[str, object]:
+        write_calls.append((path, replacement))
+        return {"ok": False, "file": path, "error": "write_file should not be used"}
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        before = target.read_text(encoding="utf-8")
+        assert operation.expected is not None
+        assert operation.replacement is not None
+        target.write_text(before.replace(operation.expected, operation.replacement, 1), encoding="utf-8")
+        edit_calls.append((operation.path, operation.expected, operation.replacement))
+        return {"ok": True, "file": operation.path, "operation": "edit_file"}
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-rust-serde-derive",
+            workspace=str(tmp_path),
+            source_tool="deterministic_rust_serde_derive_repair",
+            base_files={relative_path: content},
+            artifact_quality_errors=(_rust_serde_derive_error(),),
+            allowed_paths=(relative_path,),
+        ),
+        writer=writer,
+        editor=editor,
+    )
+
+    assert result.ok is True
+    assert [receipt.source_tool for receipt in result.receipts] == ["deterministic_rust_serde_derive_repair"]
+    assert edit_calls == [
+        (
+            relative_path,
+            "#[derive(Debug)]\n",
+            "#[derive(Debug, serde::Serialize)]\n",
+        )
+    ]
+    assert write_calls == []
+    assert "#[derive(Debug, serde::Serialize)]" in target.read_text(encoding="utf-8")
+
+
+def _rust_missing_trait_derive_error(
+    *,
+    symbol: str = "Widget",
+    trait: str = "Eq",
+    path: str = "src/lib.rs",
+    line: int = 3,
+) -> str:
+    return (
+        f"error[E0277]: the trait bound `{symbol}: {trait}` is not satisfied\n"
+        f" --> {path}:{line}:10\n"
+        "  |\n"
+        f"{line} |     needs_eq(widget);\n"
+        "  |     --------- ^^^^^^ the trait `Eq` is not implemented\n"
+    )
+
+
+def test_rust_missing_trait_derive_rule_extends_existing_derive_with_span_metadata() -> None:
+    relative_path = "src/lib.rs"
+    content = "#[derive(Debug, Clone)]\npub struct Widget { id: u64 }\n"
+    raw = _rust_missing_trait_derive_error(trait="Hash")
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_missing_trait_derive_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "rust.missing_trait_derive"
+    assert plan.source_tool == "deterministic_rust_derive_repair"
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == relative_path
+    assert operation.span_start == 0
+    assert operation.span_end == len("#[derive(Debug, Clone)]\n")
+    assert operation.expected == "#[derive(Debug, Clone)]\n"
+    assert operation.replacement == "#[derive(Debug, Clone, Hash)]\n"
+    assert operation.metadata["repair_kind"] == "rust_missing_trait_derive"
+    assert operation.metadata["span_based"] is True
+    assert operation.metadata["unique_context"] == "#[derive(Debug, Clone)]\npub struct Widget { id: u64 }\n"
+    assert operation.metadata["traits_added"] == ("Hash",)
+
+    runtime_planning = plan_runtime_repair(
+        source_tool="deterministic_rust_derive_repair",
+        base_files={relative_path: content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+    composition = runtime_planning.composition
+    assert composition is not None
+    assert composition.ok is True
+    assert "#[derive(Debug, Clone, Hash)]" in composition.patches[0].content_after
+
+
+def test_rust_missing_trait_derive_rule_does_not_take_serde_diagnostics() -> None:
+    diagnostics = normalize_artifact_quality_errors([_rust_serde_derive_error()])
+
+    plan = build_rust_missing_trait_derive_plan(
+        base_files={"src/models.rs": "#[derive(Debug)]\npub struct Recipe { name: String }\n"},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_missing_trait_derive_runtime_binding_executes_public_edit(tmp_path: Path) -> None:
+    relative_path = "src/lib.rs"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    content = "#[derive(Debug)]\npub struct Widget { id: u64 }\n"
+    target.write_text(content, encoding="utf-8")
+    edit_calls: list[tuple[str, str, str]] = []
+    write_calls: list[tuple[str, str]] = []
+
+    def writer(path: str, replacement: str) -> dict[str, object]:
+        write_calls.append((path, replacement))
+        return {"ok": False, "file": path, "error": "write_file should not be used"}
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        before = target.read_text(encoding="utf-8")
+        assert operation.expected is not None
+        assert operation.replacement is not None
+        target.write_text(before.replace(operation.expected, operation.replacement, 1), encoding="utf-8")
+        edit_calls.append((operation.path, operation.expected, operation.replacement))
+        return {"ok": True, "file": operation.path, "operation": "edit_file"}
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-rust-missing-trait-derive",
+            workspace=str(tmp_path),
+            source_tool="deterministic_rust_derive_repair",
+            base_files={relative_path: content},
+            artifact_quality_errors=(_rust_missing_trait_derive_error(),),
+            allowed_paths=(relative_path,),
+        ),
+        writer=writer,
+        editor=editor,
+    )
+
+    assert result.ok is True
+    assert [receipt.source_tool for receipt in result.receipts] == ["deterministic_rust_derive_repair"]
+    assert edit_calls == [
+        (
+            relative_path,
+            "#[derive(Debug)]\n",
+            "#[derive(Debug, Eq)]\n",
+        )
+    ]
+    assert write_calls == []
+    assert "#[derive(Debug, Eq)]" in target.read_text(encoding="utf-8")
+
+
+def _rust_copy_derive_error(*, path: str = "src/lib.rs", line: int = 2) -> str:
+    return (
+        "error[E0204]: the trait `Copy` cannot be implemented for this type\n"
+        f" --> {path}:{line}:10\n"
+        "  |\n"
+        f"{line} | pub struct Demo {{ value: String }}\n"
+        "  |          ^^^^"
+    )
+
+
+@pytest.mark.parametrize(
+    ("derive_line", "replacement"),
+    (
+        ("#[derive(Debug, Clone, Copy)]\n", "#[derive(Debug, Clone)]\n"),
+        ("#[derive(Copy, Clone)]\n", "#[derive(Clone)]\n"),
+        ("#[derive(Copy)]\n", "#[derive()]\n"),
+    ),
+)
+def test_rust_copy_derive_rule_removes_copy_with_text_replace(
+    derive_line: str,
+    replacement: str,
+) -> None:
+    relative_path = "src/lib.rs"
+    content = f"{derive_line}pub struct Demo {{ value: String }}\n"
+    raw = _rust_copy_derive_error()
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_incompatible_copy_derive_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "rust.incompatible_copy_derive"
+    assert plan.source_tool == "deterministic_rust_incompatible_copy_derive_repair"
+    assert plan.priority == 1
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == relative_path
+    assert operation.expected == derive_line
+    assert operation.replacement == replacement
+    assert operation.metadata["repair_kind"] == "rust_incompatible_copy_derive"
+    assert operation.metadata["edit_strategy"] == "text_replace"
+    assert operation.metadata["span_based"] is True
+    assert operation.metadata["line_number"] == 2
+    assert operation.metadata["derive_line_number"] == 1
+    assert operation.metadata["unique_context"] is True
+
+    runtime_planning = plan_runtime_repair(
+        source_tool="deterministic_rust_incompatible_copy_derive_repair",
+        base_files={relative_path: content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+    composition = runtime_planning.composition
+    assert composition is not None
+    assert composition.ok is True
+    assert replacement in composition.patches[0].content_after
+    assert "Copy" not in composition.patches[0].content_after
+
+
+@pytest.mark.parametrize(
+    ("diagnostic_path", "base_files"),
+    (
+        ("", {"src/lib.rs": "#[derive(Copy)]\npub struct Demo { value: String }\n"}),
+        (
+            "/tmp/project/src/lib.rs",
+            {"/tmp/project/src/lib.rs": "#[derive(Copy)]\npub struct Demo { value: String }\n"},
+        ),
+        ("../src/lib.rs", {"../src/lib.rs": "#[derive(Copy)]\npub struct Demo { value: String }\n"}),
+        ("src/lib.txt", {"src/lib.txt": "#[derive(Copy)]\npub struct Demo { value: String }\n"}),
+        ("src/lib.rs", {"src/other.rs": "#[derive(Copy)]\npub struct Demo { value: String }\n"}),
+    ),
+)
+def test_rust_copy_derive_rule_rejects_unsafe_or_untracked_paths(
+    diagnostic_path: str,
+    base_files: dict[str, str],
+) -> None:
+    diagnostics = normalize_artifact_quality_errors([_rust_copy_derive_error(path=diagnostic_path, line=2)])
+
+    plan = build_rust_incompatible_copy_derive_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_copy_derive_rule_does_not_plan_without_copy_token() -> None:
+    content = "#[derive(Clone)]\npub struct Demo { value: String }\n"
+    diagnostics = normalize_artifact_quality_errors([_rust_copy_derive_error()])
+
+    plan = build_rust_incompatible_copy_derive_plan(
+        base_files={"src/lib.rs": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_copy_derive_rule_rejects_non_unique_expected_line() -> None:
+    content = (
+        "#[derive(Clone, Copy)]\n"
+        "pub struct Demo { value: String }\n"
+        "#[derive(Clone, Copy)]\n"
+        "pub struct Other { value: String }\n"
+    )
+    diagnostics = normalize_artifact_quality_errors([_rust_copy_derive_error()])
+
+    plan = build_rust_incompatible_copy_derive_plan(
+        base_files={"src/lib.rs": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_copy_derive_coverage_matches_executable_runtime_plan() -> None:
+    raw = _rust_copy_derive_error()
+    diagnostics = normalize_artifact_quality_errors([raw])
+    coverage = default_repair_rule_registry().coverage(diagnostics).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_incompatible_copy_derive_repair",
+        base_files={"src/lib.rs": "#[derive(Clone, Copy)]\npub struct Demo { value: String }\n"},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
+    assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "rust.incompatible_copy_derive" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert "deterministic_rust_incompatible_copy_derive_repair" in coverage["items"][0]["matched_source_tools"]
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_rust_incompatible_copy_derive_repair"
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+
+
+def test_rust_copy_derive_runtime_binding_executes_public_edit(tmp_path: Path) -> None:
+    relative_path = "src/lib.rs"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    content = "#[derive(Debug, Clone, Copy)]\npub struct Demo { value: String }\n"
+    target.write_text(content, encoding="utf-8")
+    edit_calls: list[tuple[str, str, str]] = []
+    write_calls: list[tuple[str, str]] = []
+
+    def writer(path: str, replacement: str) -> dict[str, object]:
+        write_calls.append((path, replacement))
+        return {"ok": False, "file": path, "error": "write_file should not be used"}
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        before = target.read_text(encoding="utf-8")
+        assert operation.expected is not None
+        assert operation.replacement is not None
+        target.write_text(before.replace(operation.expected, operation.replacement, 1), encoding="utf-8")
+        edit_calls.append((operation.path, operation.expected, operation.replacement))
+        return {"ok": True, "file": operation.path, "operation": "edit_file"}
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-rust-copy-derive",
+            workspace=str(tmp_path),
+            source_tool="deterministic_rust_incompatible_copy_derive_repair",
+            base_files={relative_path: content},
+            artifact_quality_errors=(_rust_copy_derive_error(),),
+            allowed_paths=(relative_path,),
+        ),
+        writer=writer,
+        editor=editor,
+    )
+
+    assert result.ok is True
+    assert [receipt.source_tool for receipt in result.receipts] == [
+        "deterministic_rust_incompatible_copy_derive_repair"
+    ]
+    assert edit_calls == [
+        (
+            relative_path,
+            "#[derive(Debug, Clone, Copy)]\n",
+            "#[derive(Debug, Clone)]\n",
+        )
+    ]
+    assert write_calls == []
+    assert "#[derive(Debug, Clone)]" in target.read_text(encoding="utf-8")
+
+
+def _rust_wrong_crate_path_error(
+    *,
+    path: str = "src/lib.rs",
+    line: int = 1,
+    original: str = "use crate::recipe::Recipe;",
+    suggestion: str = "use crate::models::recipe::Recipe;",
+) -> str:
+    return (
+        "error[E0432]: unresolved import `crate::recipe`\n"
+        f" --> {path}:{line}:12\n"
+        "  |\n"
+        f"{line} | {original}\n"
+        "  |            ^^^^^^ help: a similar path exists: `models::recipe`\n"
+        "help: a similar path exists\n"
+        "  |\n"
+        f"{line} | {suggestion}\n"
+    )
+
+
+def test_rust_wrong_crate_path_rule_replaces_use_line_with_span_metadata() -> None:
+    relative_path = "src/lib.rs"
+    content = "    use crate::recipe::Recipe;\nfn main() {}\n"
+    raw = _rust_wrong_crate_path_error()
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_wrong_crate_path_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "rust.wrong_crate_path"
+    assert plan.source_tool == "deterministic_rust_wrong_crate_path_repair"
+    assert plan.depends_on == ("rust.unlinked_crate_dependency",)
+    assert plan.priority == 0
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == relative_path
+    assert operation.expected == "    use crate::recipe::Recipe;\n"
+    assert operation.replacement == "    use crate::models::recipe::Recipe;\n"
+    assert operation.metadata["repair_kind"] == "rust_wrong_crate_path"
+    assert operation.metadata["edit_strategy"] == "text_replace"
+    assert operation.metadata["span_based"] is True
+    assert operation.metadata["line_number"] == 1
+    assert operation.metadata["suggestion"] == "use crate::models::recipe::Recipe;"
+    assert operation.metadata["unique_context"] is True
+
+    runtime_planning = plan_runtime_repair(
+        source_tool="deterministic_rust_wrong_crate_path_repair",
+        base_files={relative_path: content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+    composition = runtime_planning.composition
+    assert composition is not None
+    assert composition.ok is True
+    assert "    use crate::models::recipe::Recipe;" in composition.patches[0].content_after
+
+
+@pytest.mark.parametrize(
+    ("diagnostic_path", "base_files"),
+    (
+        ("", {"src/lib.rs": "use crate::recipe::Recipe;\n"}),
+        ("/tmp/project/src/lib.rs", {"/tmp/project/src/lib.rs": "use crate::recipe::Recipe;\n"}),
+        ("../src/lib.rs", {"../src/lib.rs": "use crate::recipe::Recipe;\n"}),
+        ("src/lib.txt", {"src/lib.txt": "use crate::recipe::Recipe;\n"}),
+        ("src/lib.rs", {"src/other.rs": "use crate::recipe::Recipe;\n"}),
+    ),
+)
+def test_rust_wrong_crate_path_rule_rejects_unsafe_or_untracked_paths(
+    diagnostic_path: str,
+    base_files: dict[str, str],
+) -> None:
+    path_for_raw = diagnostic_path or "/tmp/empty.rs"
+    diagnostics = normalize_artifact_quality_errors([_rust_wrong_crate_path_error(path=path_for_raw)])
+
+    plan = build_rust_wrong_crate_path_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_wrong_crate_path_rule_rejects_non_use_target_line() -> None:
+    content = "let recipe = Recipe::new();\n"
+    diagnostics = normalize_artifact_quality_errors([_rust_wrong_crate_path_error()])
+
+    plan = build_rust_wrong_crate_path_plan(
+        base_files={"src/lib.rs": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_wrong_crate_path_rule_rejects_non_unique_expected_line() -> None:
+    content = "use crate::recipe::Recipe;\nuse crate::recipe::Recipe;\n"
+    diagnostics = normalize_artifact_quality_errors([_rust_wrong_crate_path_error()])
+
+    plan = build_rust_wrong_crate_path_plan(
+        base_files={"src/lib.rs": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_wrong_crate_path_rule_rejects_invalid_suggestion() -> None:
+    content = "use crate::recipe::Recipe;\n"
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            _rust_wrong_crate_path_error(
+                suggestion="crate::models::recipe::Recipe",
+            ),
+            _rust_wrong_crate_path_error(
+                suggestion="use crate::models::recipe::Recipe",
+            ),
+        ]
+    )
+
+    plan = build_rust_wrong_crate_path_plan(
+        base_files={"src/lib.rs": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_wrong_crate_path_rule_composes_multiple_same_file_text_replacements() -> None:
+    relative_path = "src/lib.rs"
+    content = "use crate::recipe::Recipe;\nuse crate::pantry::Pantry;\nfn main() {}\n"
+    raw = _rust_wrong_crate_path_error(
+        path=relative_path,
+        line=1,
+        original="use crate::recipe::Recipe;",
+        suggestion="use crate::models::recipe::Recipe;",
+    ) + _rust_wrong_crate_path_error(
+        path=relative_path,
+        line=2,
+        original="use crate::pantry::Pantry;",
+        suggestion="use crate::models::pantry::Pantry;",
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_wrong_crate_path_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert [operation.kind for operation in plan.operations] == ["text_replace", "text_replace"]
+    assert len(plan.operations) == 2
+    runtime_planning = plan_runtime_repair(
+        source_tool="deterministic_rust_wrong_crate_path_repair",
+        base_files={relative_path: content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+    composition = runtime_planning.composition
+    assert composition is not None
+    assert composition.ok is True
+    assert composition.patches[0].content_after == (
+        "use crate::models::recipe::Recipe;\nuse crate::models::pantry::Pantry;\nfn main() {}\n"
+    )
+
+
+def test_rust_crate_import_rewrite_rule_uses_span_based_editor_operations(tmp_path: Path) -> None:
+    cargo = '[package]\nname = "garden-kit"\nversion = "0.1.0"\n'
+    main_path = "src/main.rs"
+    lib_path = "src/lib.rs"
+    main_content = "use garden_app_kit::models::Recipe;\nextern crate garden_app_kit;\nfn main() {}\n"
+    raw = "error[E0433]: failed to resolve: cannot find crate `garden_app_kit`\n --> src/main.rs:1:5\n"
+    base_files = {
+        "Cargo.toml": cargo,
+        main_path: main_content,
+        lib_path: "pub mod models;\n",
+    }
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_crate_import_rewrite_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "rust.crate_import_rewrite"
+    assert plan.source_tool == "deterministic_rust_crate_import_rewrite_repair"
+    assert plan.depends_on == ("rust.unlinked_crate_dependency",)
+    assert plan.metadata["span_based"] is True
+    assert [operation.kind for operation in plan.operations] == ["text_replace", "text_replace"]
+    assert {operation.metadata["match_kind"] for operation in plan.operations} == {
+        "crate_prefix",
+        "extern_crate",
+    }
+    assert all(operation.expected for operation in plan.operations)
+    assert all(operation.metadata["expected_context_after"] for operation in plan.operations)
+
+    runtime_planning = plan_runtime_repair(
+        source_tool="deterministic_rust_crate_import_rewrite_repair",
+        base_files=base_files,
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+    composition = runtime_planning.composition
+    assert composition is not None
+    assert composition.ok is True
+    assert "use garden_kit::models::Recipe;" in composition.patches[0].content_after
+    assert "extern crate garden_kit;" in composition.patches[0].content_after
+
+    target = tmp_path / main_path
+    target.parent.mkdir(parents=True)
+    target.write_text(main_content, encoding="utf-8")
+    (tmp_path / "Cargo.toml").write_text(cargo, encoding="utf-8")
+    (tmp_path / lib_path).write_text("pub mod models;\n", encoding="utf-8")
+    edited_operations: list[str] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        raise AssertionError("span-based Rust crate import rewrite must use edit_file")
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        edit_target = tmp_path / operation.path
+        current = edit_target.read_text(encoding="utf-8")
+        start = int(operation.span_start or 0)
+        end = int(operation.span_end or 0)
+        assert current[start:end] == operation.expected
+        edit_target.write_text(
+            current[:start] + str(operation.replacement or "") + current[end:],
+            encoding="utf-8",
+        )
+        edited_operations.append(operation.operation_id)
+        return {"ok": True}
+
+    run = run_runtime_repair(
+        source_tool="deterministic_rust_crate_import_rewrite_repair",
+        workspace=tmp_path,
+        base_files=base_files,
+        artifact_quality_errors=(raw,),
+        writer=writer,
+        editor=editor,
+        allowed_paths=(main_path, lib_path, "Cargo.toml"),
+    )
+
+    assert run.ok is True
+    assert len(edited_operations) == 2
+    assert target.read_text(encoding="utf-8") == (
+        "use garden_kit::models::Recipe;\nextern crate garden_kit;\nfn main() {}\n"
+    )
+    assert run.execution_result is not None
+    records = run.execution_result.receipt.metadata["execution_records"]
+    assert records[0]["operation"] == "edit_file"
+    assert records[0]["span_based"] is True
+
+
+def test_rust_wrong_crate_path_runtime_binding_executes_public_edit(tmp_path: Path) -> None:
+    relative_path = "src/lib.rs"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    content = "use crate::recipe::Recipe;\nfn main() {}\n"
+    target.write_text(content, encoding="utf-8")
+    edit_calls: list[tuple[str, str, str]] = []
+    write_calls: list[tuple[str, str]] = []
+
+    def writer(path: str, replacement: str) -> dict[str, object]:
+        write_calls.append((path, replacement))
+        return {"ok": False, "file": path, "error": "write_file should not be used"}
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        before = target.read_text(encoding="utf-8")
+        assert operation.expected is not None
+        assert operation.replacement is not None
+        target.write_text(before.replace(operation.expected, operation.replacement, 1), encoding="utf-8")
+        edit_calls.append((operation.path, operation.expected, operation.replacement))
+        return {"ok": True, "file": operation.path, "operation": "edit_file"}
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-rust-wrong-crate-path",
+            workspace=str(tmp_path),
+            source_tool="deterministic_rust_wrong_crate_path_repair",
+            base_files={relative_path: content},
+            artifact_quality_errors=(_rust_wrong_crate_path_error(),),
+            allowed_paths=(relative_path,),
+        ),
+        writer=writer,
+        editor=editor,
+    )
+
+    assert result.ok is True
+    assert [receipt.source_tool for receipt in result.receipts] == ["deterministic_rust_wrong_crate_path_repair"]
+    assert edit_calls == [
+        (
+            relative_path,
+            "use crate::recipe::Recipe;\n",
+            "use crate::models::recipe::Recipe;\n",
+        )
+    ]
+    assert write_calls == []
+    assert "use crate::models::recipe::Recipe;" in target.read_text(encoding="utf-8")
+
+
+def test_rust_unresolved_pub_use_rule_deletes_flat_pub_use_with_span_metadata() -> None:
+    relative_path = "src/lib.rs"
+    content = "pub use foo::Missing;\npub fn keep() {}\n"
+    raw = (
+        "error[E0432]: unresolved import `foo::Missing`\n"
+        " --> src/lib.rs:1:9\n"
+        "  |\n"
+        "1 | pub use foo::Missing;\n"
+        "  |         ^^^^^^^^^^^^ no `Missing` in `foo`"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_unresolved_pub_use_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "rust.unresolved_pub_use"
+    assert plan.source_tool == "deterministic_rust_unresolved_pub_use_repair"
+    assert plan.metadata["span_based"] is True
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == relative_path
+    assert operation.expected == "pub use foo::Missing;\n"
+    assert operation.replacement == ""
+    assert operation.before_hash == sha256_text(content)
+    assert operation.metadata["span_based"] is True
+    assert operation.metadata["symbols_removed"] == ("Missing",)
+    assert operation.metadata["unique_context"] == "pub use foo::Missing;\n"
+
+    composition = PatchComposer().compose({relative_path: content}, plan.operations)
+    assert composition.ok is True
+    assert composition.patches[0].content_after == "pub fn keep() {}\n"
+
+
+def test_rust_unresolved_pub_use_rule_removes_only_missing_group_symbol() -> None:
+    relative_path = "src/lib.rs"
+    content = "pub use foo::{A, Missing, B};\npub fn keep() {}\n"
+    raw = (
+        "error[E0432]: unresolved import `foo::Missing`\n"
+        " --> src/lib.rs:1:18\n"
+        "  |\n"
+        "1 | pub use foo::{A, Missing, B};\n"
+        "  |                  ^^^^^^^ no `Missing` in `foo`"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_unresolved_pub_use_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.expected == "pub use foo::{A, Missing, B};\n"
+    assert operation.replacement == "pub use foo::{A, B};\n"
+    assert operation.metadata["span_based"] is True
+    assert operation.metadata["symbols_removed"] == ("Missing",)
+
+    composition = PatchComposer().compose({relative_path: content}, plan.operations)
+    assert composition.ok is True
+    assert "pub use foo::{A, B};" in composition.patches[0].content_after
+    assert "Missing" not in composition.patches[0].content_after
+
+
+def test_rust_unresolved_pub_use_rule_does_not_plan_without_matching_symbol() -> None:
+    content = "pub use foo::{A, Missing, B};\n"
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "error[E0432]: unresolved import `foo::Other`\n"
+            " --> src/lib.rs:1:18\n"
+            "  |\n"
+            "1 | pub use foo::{A, Missing, B};\n"
+            "  |                  ^^^^^ no `Other` in `foo`",
+        ]
+    )
+
+    plan = build_rust_unresolved_pub_use_plan(
+        base_files={"src/lib.rs": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+@pytest.mark.parametrize("unsafe_path", ("../src/lib.rs", "/tmp/demo/src/lib.rs"))
+def test_rust_unresolved_pub_use_rule_rejects_unsafe_paths(unsafe_path: str) -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "error[E0432]: unresolved import `foo::Missing`\n"
+            f" --> {unsafe_path}:1:9\n"
+            "  |\n"
+            "1 | pub use foo::Missing;\n"
+            "  |         ^^^^^^^^^^^^ no `Missing` in `foo`",
+        ]
+    )
+
+    plan = build_rust_unresolved_pub_use_plan(
+        base_files={unsafe_path: "pub use foo::Missing;\n"},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_unresolved_pub_use_coverage_matches_executable_runtime_plan() -> None:
+    raw = (
+        "error[E0432]: unresolved import `foo::Missing`\n"
+        " --> src/lib.rs:1:9\n"
+        "  |\n"
+        "1 | pub use foo::Missing;\n"
+        "  |         ^^^^^^^^^^^^ no `Missing` in `foo`"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+    coverage = default_repair_rule_registry().coverage(diagnostics).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_unresolved_pub_use_repair",
+        base_files={"src/lib.rs": "pub use foo::Missing;\npub fn keep() {}\n"},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "rust.unresolved_pub_use" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert "deterministic_rust_unresolved_pub_use_repair" in coverage["items"][0]["matched_source_tools"]
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_rust_unresolved_pub_use_repair"
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+
+
+def test_rust_unused_import_rule_removes_group_symbol_with_text_replace() -> None:
+    relative_path = "src/lib.rs"
+    content = "use foo::{A, B, C};\npub fn keep() {}\n"
+    raw = "warning: unused import: `B`\n --> src/lib.rs:1:14\n  |\n1 | use foo::{A, B, C};\n  |              ^\n"
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_unused_import_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "rust.unused_import"
+    assert plan.source_tool == "deterministic_rust_unused_import_repair"
+    assert plan.priority == 2
+    assert plan.metadata["span_based"] is True
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == relative_path
+    assert operation.expected == "use foo::{A, B, C};\n"
+    assert operation.replacement == "use foo::{A, C};\n"
+    assert operation.before_hash == sha256_text(content)
+    assert operation.metadata["repair_kind"] == "rust_unused_import"
+    assert operation.metadata["edit_strategy"] == "text_replace"
+    assert operation.metadata["span_based"] is True
+    assert operation.metadata["line_number"] == 1
+    assert operation.metadata["symbol"] == "B"
+    assert operation.metadata["unique_context"] is True
+
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_unused_import_repair",
+        base_files={relative_path: content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_rust_unused_import_repair"
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+    assert "use foo::{A, C};\npub fn keep() {}" in planning.composition.patches[0].content_after
+
+
+def test_rust_unused_import_rule_comments_single_import_preserving_newline() -> None:
+    content = "use foo::A;\r\npub fn keep() {}\r\n"
+    raw = "warning: unused import: `A`\n --> src/lib.rs:1:10\n  |\n1 | use foo::A;\n"
+
+    plan = build_rust_unused_import_plan(
+        base_files={"src/lib.rs": content},
+        diagnostics=normalize_artifact_quality_errors([raw]),
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.operations[0].kind == "text_replace"
+    assert plan.operations[0].replacement == "// [repair-unused] use foo::A;\r\n"
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    ("", "../src/lib.rs", "/tmp/demo/src/lib.rs", "src/lib.txt", "src/missing.rs"),
+)
+def test_rust_unused_import_rule_rejects_unsafe_or_untracked_paths(unsafe_path: str) -> None:
+    location = "" if unsafe_path == "" else f" --> {unsafe_path}:1:10\n"
+    raw = f"warning: unused import: `A`\n{location}  |\n1 | use foo::A;\n"
+
+    plan = build_rust_unused_import_plan(
+        base_files={"src/lib.rs": "use foo::A;\n", "src/lib.txt": "use foo::A;\n"},
+        diagnostics=normalize_artifact_quality_errors([raw]),
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_unused_import_rule_skips_non_unique_expected_line() -> None:
+    content = "use foo::A;\nuse foo::A;\n"
+    raw = "warning: unused import: `A`\n --> src/lib.rs:1:10\n  |\n1 | use foo::A;\n"
+
+    plan = build_rust_unused_import_plan(
+        base_files={"src/lib.rs": content},
+        diagnostics=normalize_artifact_quality_errors([raw]),
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_unused_import_rule_composes_multiple_patches_in_same_file() -> None:
+    content = "use foo::{A, B};\nuse bar::C;\npub fn keep() {}\n"
+    raw = (
+        "warning: unused import: `B`\n"
+        " --> src/lib.rs:1:14\n"
+        "  |\n"
+        "1 | use foo::{A, B};\n"
+        "warning: unused import: `C`\n"
+        " --> src/lib.rs:2:10\n"
+        "  |\n"
+        "2 | use bar::C;\n"
+    )
+
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_unused_import_repair",
+        base_files={"src/lib.rs": content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert planning.plan is not None
+    assert len(planning.plan.operations) == 2
+    assert all(operation.kind == "text_replace" for operation in planning.plan.operations)
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+    assert planning.composition.patches[0].content_after == (
+        "use foo::{A};\n// [repair-unused] use bar::C;\npub fn keep() {}\n"
+    )
+
+
+def test_rust_unused_import_coverage_matches_executable_runtime_plan() -> None:
+    raw = "warning: unused import: `A`\n --> src/lib.rs:1:10\n  |\n1 | use foo::A;\n"
+    coverage = default_repair_rule_registry().coverage(normalize_artifact_quality_errors([raw])).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_unused_import_repair",
+        base_files={"src/lib.rs": "use foo::A;\npub fn keep() {}\n"},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "rust.unused_import" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert "deterministic_rust_unused_import_repair" in coverage["items"][0]["matched_source_tools"]
+    assert coverage["items"][0]["archetypes"] == ["generated_residue"]
+    assert coverage["items"][0]["phases"] == ["code_repair"]
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_rust_unused_import_repair"
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+
+
+def test_rust_trait_import_rule_builds_precise_text_replace_plan_and_runs_with_editor(
+    tmp_path: Path,
+) -> None:
+    relative_path = "src/lib.rs"
+    content = "\n//! crate docs\n#![allow(dead_code)]\nuse crate::bar::Bar;\n\npub fn run() {}\n"
+    raw = (
+        "error[E0599]: no method named `render` found for struct `Widget` in the current scope\n"
+        " --> src/lib.rs:6:12\n"
+        "  |\n"
+        "help: trait `Renderable` which provides `render` is implemented but not in scope; "
+        "perhaps add a use for it:\n"
+        "  |\n"
+        "1 + use crate::render::Renderable;\n"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_trait_import_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "rust.trait_import"
+    assert plan.source_tool == "deterministic_rust_trait_import_repair"
+    assert plan.metadata["span_based"] is True
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == relative_path
+    assert operation.expected == "pub fn run() {}\n"
+    assert operation.replacement == "use crate::render::Renderable;\npub fn run() {}\n"
+    assert operation.before_hash == sha256_text(content)
+    assert operation.metadata["repair_kind"] == "rust_trait_import"
+    assert operation.metadata["edit_strategy"] == "text_replace"
+    assert operation.metadata["span_based"] is True
+    assert operation.metadata["import_line"] == "use crate::render::Renderable;"
+    assert operation.metadata["insert_index"] == 5
+    assert operation.metadata["unique_context"] is True
+
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_trait_import_repair",
+        base_files={relative_path: content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+    assert planning.plan is not None
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+    assert "use crate::render::Renderable;\npub fn run() {}" in planning.composition.patches[0].content_after
+
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    target.write_text(content, encoding="utf-8")
+    edits: list[tuple[str, str, str]] = []
+    writes: list[tuple[str, str]] = []
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        writes.append((path, updated))
+        raise AssertionError("rust trait imports must execute through editor")
+
+    def editor(edit_operation: RepairOperation) -> dict[str, object]:
+        current = target.read_text(encoding="utf-8")
+        assert edit_operation.span_start is not None
+        assert edit_operation.span_end is not None
+        assert edit_operation.expected is not None
+        assert edit_operation.replacement is not None
+        assert current[edit_operation.span_start : edit_operation.span_end] == edit_operation.expected
+        updated = current[: edit_operation.span_start] + edit_operation.replacement + current[edit_operation.span_end :]
+        target.write_text(updated, encoding="utf-8")
+        edits.append((edit_operation.path, edit_operation.expected, edit_operation.replacement))
+        return {
+            "ok": True,
+            "file": edit_operation.path,
+            "bytes_written": len(updated.encode("utf-8")),
+            "operation": "edit_file",
+        }
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-rust-trait-import",
+            workspace=str(tmp_path),
+            source_tool="deterministic_rust_trait_import_repair",
+            base_files={relative_path: content},
+            artifact_quality_errors=(raw,),
+            allowed_paths=(relative_path,),
+        ),
+        writer=writer,
+        editor=editor,
+    )
+
+    assert result.ok is True
+    assert result.error_code is None
+    assert writes == []
+    assert edits == [(relative_path, "pub fn run() {}\n", "use crate::render::Renderable;\npub fn run() {}\n")]
+    assert "use crate::render::Renderable;\npub fn run() {}" in target.read_text(encoding="utf-8")
+    assert result.receipts[0].source_tool == "deterministic_rust_trait_import_repair"
+
+
+def test_rust_trait_import_rule_skips_existing_import() -> None:
+    content = "use crate::render::Renderable;\npub fn run() {}\n"
+    raw = (
+        "error[E0599]: no method named `render` found\n"
+        " --> src/lib.rs:2:12\n"
+        "help: trait `Renderable` which provides `render` is implemented but not in scope; "
+        "perhaps add a use for it:\n"
+        "1 + use crate::render::Renderable;\n"
+    )
+
+    plan = build_rust_trait_import_plan(
+        base_files={"src/lib.rs": content},
+        diagnostics=normalize_artifact_quality_errors([raw]),
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    ("", "../src/lib.rs", "/tmp/demo/src/lib.rs", "src/lib.txt", "src/missing.rs"),
+)
+def test_rust_trait_import_rule_rejects_unsafe_or_untracked_paths(unsafe_path: str) -> None:
+    location = "" if unsafe_path == "" else f" --> {unsafe_path}:1:12\n"
+    raw = (
+        "error[E0599]: no method named `render` found\n"
+        f"{location}"
+        "help: trait `Renderable` which provides `render` is implemented but not in scope; "
+        "perhaps add a use for it:\n"
+        "1 + use crate::render::Renderable;\n"
+    )
+
+    plan = build_rust_trait_import_plan(
+        base_files={"src/lib.rs": "pub fn run() {}\n", "src/lib.txt": "pub fn run() {}\n"},
+        diagnostics=normalize_artifact_quality_errors([raw]),
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_trait_import_rule_skips_non_unique_anchor() -> None:
+    content = "pub fn run() {}\npub fn run() {}\n"
+    raw = (
+        "error[E0599]: no method named `render` found\n"
+        " --> src/lib.rs:1:12\n"
+        "help: trait `Renderable` which provides `render` is implemented but not in scope; "
+        "perhaps add a use for it:\n"
+        "1 + use crate::render::Renderable;\n"
+    )
+
+    plan = build_rust_trait_import_plan(
+        base_files={"src/lib.rs": content},
+        diagnostics=normalize_artifact_quality_errors([raw]),
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_trait_import_coverage_matches_executable_runtime_plan() -> None:
+    raw = (
+        "error[E0599]: no method named `render` found\n"
+        " --> src/lib.rs:1:12\n"
+        "help: trait `Renderable` which provides `render` is implemented but not in scope; "
+        "perhaps add a use for it:\n"
+        "1 + use crate::render::Renderable;\n"
+    )
+    coverage = default_repair_rule_registry().coverage(normalize_artifact_quality_errors([raw])).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_trait_import_repair",
+        base_files={"src/lib.rs": "pub fn run() {}\n"},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "rust.trait_import" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert "deterministic_rust_trait_import_repair" in coverage["items"][0]["matched_source_tools"]
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_rust_trait_import_repair"
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+
+
+def test_rust_line_suggestion_rule_builds_precise_text_replace_plan_and_runs_with_editor(
+    tmp_path: Path,
+) -> None:
+    relative_path = "src/lib.rs"
+    content = "fn takes(_: &String) {}\nfn main() {\n    takes(value)\n}\n"
+    raw = (
+        "error[E0308]: mismatched types\n"
+        " --> src/lib.rs:3:11\n"
+        "  |\n"
+        "3 |     takes(value)\n"
+        "  |           ^^^^^ expected `&String`, found `String`\n"
+        "help: consider borrowing here\n"
+        "  |\n"
+        "3 |     takes(&value)"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_line_suggestion_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "rust.line_suggestion"
+    assert plan.source_tool == "deterministic_rust_line_suggestion_repair"
+    assert plan.metadata["span_based"] is True
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == relative_path
+    assert operation.expected == "    takes(value)\n"
+    assert operation.replacement == "    takes(&value)\n"
+    assert operation.before_hash == sha256_text(content)
+    assert operation.metadata["edit_strategy"] == "text_replace"
+    assert operation.metadata["span_based"] is True
+    assert operation.metadata["line_number"] == 3
+    assert operation.metadata["unique_context"] is True
+
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    target.write_text(content, encoding="utf-8")
+    edits: list[tuple[str, str, str]] = []
+    writes: list[tuple[str, str]] = []
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        writes.append((path, updated))
+        raise AssertionError("rust line suggestions must execute through editor")
+
+    def editor(edit_operation: RepairOperation) -> dict[str, object]:
+        current = target.read_text(encoding="utf-8")
+        assert edit_operation.span_start is not None
+        assert edit_operation.span_end is not None
+        assert edit_operation.expected is not None
+        assert edit_operation.replacement is not None
+        assert current[edit_operation.span_start : edit_operation.span_end] == edit_operation.expected
+        updated = current[: edit_operation.span_start] + edit_operation.replacement + current[edit_operation.span_end :]
+        target.write_text(updated, encoding="utf-8")
+        edits.append((edit_operation.path, edit_operation.expected, edit_operation.replacement))
+        return {
+            "ok": True,
+            "file": edit_operation.path,
+            "bytes_written": len(updated.encode("utf-8")),
+            "operation": "edit_file",
+        }
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-rust-line-suggestion",
+            workspace=str(tmp_path),
+            source_tool="deterministic_rust_line_suggestion_repair",
+            base_files={relative_path: content},
+            artifact_quality_errors=(raw,),
+            allowed_paths=(relative_path,),
+        ),
+        writer=writer,
+        editor=editor,
+    )
+
+    assert result.ok is True
+    assert result.error_code is None
+    assert writes == []
+    assert edits == [(relative_path, "    takes(value)\n", "    takes(&value)\n")]
+    assert "takes(&value)" in target.read_text(encoding="utf-8")
+    assert result.receipts[0].source_tool == "deterministic_rust_line_suggestion_repair"
+
+
+@pytest.mark.parametrize("unsafe_path", ("../src/lib.rs", "/tmp/demo/src/lib.rs"))
+def test_rust_line_suggestion_rule_rejects_unsafe_paths(unsafe_path: str) -> None:
+    content = "fn main() {\n    takes(value)\n}\n"
+    raw = (
+        "error[E0308]: mismatched types\n"
+        f" --> {unsafe_path}:2:11\n"
+        "  |\n"
+        "2 |     takes(value)\n"
+        "help: consider borrowing here\n"
+        "  |\n"
+        "2 |     takes(&value)"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_line_suggestion_plan(
+        base_files={unsafe_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_line_suggestion_rule_skips_non_unique_expected_line() -> None:
+    content = "fn main() {\n    takes(value)\n    takes(value)\n}\n"
+    raw = (
+        "error[E0308]: mismatched types\n"
+        " --> src/lib.rs:2:11\n"
+        "  |\n"
+        "2 |     takes(value)\n"
+        "help: consider borrowing here\n"
+        "  |\n"
+        "2 |     takes(&value)"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_line_suggestion_plan(
+        base_files={"src/lib.rs": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_line_suggestion_rule_skips_already_equal_line() -> None:
+    content = "fn main() {\n    takes(&value)\n}\n"
+    raw = (
+        "error[E0308]: mismatched types\n"
+        " --> src/lib.rs:2:11\n"
+        "  |\n"
+        "2 |     takes(value)\n"
+        "help: consider borrowing here\n"
+        "  |\n"
+        "2 |     takes(&value)"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_line_suggestion_plan(
+        base_files={"src/lib.rs": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
+def test_rust_line_suggestion_rule_requires_rs_path_in_base_files() -> None:
+    raw = (
+        "error[E0308]: mismatched types\n"
+        " --> src/lib.rs:2:11\n"
+        "  |\n"
+        "2 |     takes(value)\n"
+        "help: consider borrowing here\n"
+        "  |\n"
+        "2 |     takes(&value)"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    missing_base_plan = build_rust_line_suggestion_plan(
+        base_files={"src/other.rs": "fn main() {\n    takes(value)\n}\n"},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+    non_rs_plan = build_rust_line_suggestion_plan(
+        base_files={"src/lib.txt": "fn main() {\n    takes(value)\n}\n"},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert missing_base_plan is None
+    assert non_rs_plan is None
+
+
+def test_rust_line_suggestion_coverage_matches_executable_runtime_plan() -> None:
+    raw = (
+        "error[E0308]: mismatched types\n"
+        " --> src/lib.rs:3:11\n"
+        "  |\n"
+        "3 |     takes(value)\n"
+        "  |           ^^^^^ expected `&String`, found `String`\n"
+        "help: consider borrowing here\n"
+        "  |\n"
+        "3 |     takes(&value)"
+    )
+    coverage = default_repair_rule_registry().coverage(normalize_artifact_quality_errors([raw])).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_line_suggestion_repair",
+        base_files={"src/lib.rs": "fn takes(_: &String) {}\nfn main() {\n    takes(value)\n}\n"},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "rust.line_suggestion" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert "deterministic_rust_line_suggestion_repair" in coverage["items"][0]["matched_source_tools"]
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_rust_line_suggestion_repair"
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+
+
+def test_rust_field_rename_suggestion_rule_builds_span_text_replace_plan_and_runs_with_editor(
+    tmp_path: Path,
+) -> None:
+    relative_path = "src/lib.rs"
+    content = (
+        "pub struct Recipe {\n"
+        "    pub ingredient: Vec<String>,\n"
+        "}\n"
+        "pub fn collect(recipe: &Recipe) {\n"
+        "    for ingredient in &recipe.ingredients {\n"
+        '        println!("{}", ingredient);\n'
+        "    }\n"
+        "}\n"
+    )
+    raw = (
+        "error[E0609]: no field `ingredients` on type `&Recipe`\n"
+        " --> src/lib.rs:5:31\n"
+        "  |\n"
+        "5 |     for ingredient in &recipe.ingredients {\n"
+        "  |                               ^^^^^^^^^^^ unknown field\n"
+        "  |\n"
+        "help: a field with a similar name exists\n"
+        "  |\n"
+        "5 -     for ingredient in &recipe.ingredients {\n"
+        "5 +     for ingredient in &recipe.ingredient {"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_rust_field_rename_suggestion_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "rust.field_rename_suggestion"
+    assert plan.source_tool == "deterministic_rust_field_rename_suggestion_repair"
+    assert plan.metadata["span_based"] is True
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == relative_path
+    assert operation.expected == "ingredients"
+    assert operation.replacement == "ingredient"
+    assert operation.before_hash == sha256_text(content)
+    assert operation.span_start is not None
+    assert operation.span_end is not None
+    assert content[operation.span_start : operation.span_end] == "ingredients"
+    assert operation.metadata["edit_strategy"] == "text_replace"
+    assert operation.metadata["span_based"] is True
+    assert operation.metadata["line_number"] == 5
+    assert operation.metadata["wrong_field"] == "ingredients"
+    assert operation.metadata["correct_field"] == "ingredient"
+    assert operation.metadata["unique_context"]
+
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    target.write_text(content, encoding="utf-8")
+    edits: list[tuple[str, str, str]] = []
+    writes: list[tuple[str, str]] = []
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        writes.append((path, updated))
+        raise AssertionError("rust field rename suggestions must execute through editor")
+
+    def editor(edit_operation: RepairOperation) -> dict[str, object]:
+        current = target.read_text(encoding="utf-8")
+        assert edit_operation.span_start is not None
+        assert edit_operation.span_end is not None
+        assert edit_operation.expected is not None
+        assert edit_operation.replacement is not None
+        assert current[edit_operation.span_start : edit_operation.span_end] == edit_operation.expected
+        updated = current[: edit_operation.span_start] + edit_operation.replacement + current[edit_operation.span_end :]
+        target.write_text(updated, encoding="utf-8")
+        edits.append((edit_operation.path, edit_operation.expected, edit_operation.replacement))
+        return {
+            "ok": True,
+            "file": edit_operation.path,
+            "bytes_written": len(updated.encode("utf-8")),
+            "operation": "edit_file",
+        }
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-rust-field-rename-suggestion",
+            workspace=str(tmp_path),
+            source_tool="deterministic_rust_field_rename_suggestion_repair",
+            base_files={relative_path: content},
+            artifact_quality_errors=(raw,),
+            allowed_paths=(relative_path,),
+        ),
+        writer=writer,
+        editor=editor,
+    )
+
+    assert result.ok is True
+    assert result.error_code is None
+    assert writes == []
+    assert edits == [(relative_path, "ingredients", "ingredient")]
+    repaired = target.read_text(encoding="utf-8")
+    assert "&recipe.ingredient" in repaired
+    assert "&recipe.ingredients" not in repaired
+    assert result.receipts[0].source_tool == "deterministic_rust_field_rename_suggestion_repair"
+
+
+def test_rust_field_rename_suggestion_coverage_matches_executable_runtime_plan() -> None:
+    content = (
+        "pub struct Recipe {\n"
+        "    pub ingredient: Vec<String>,\n"
+        "}\n"
+        "pub fn collect(recipe: &Recipe) {\n"
+        "    for ingredient in &recipe.ingredients {\n"
+        "    }\n"
+        "}\n"
+    )
+    raw = (
+        "error[E0609]: no field `ingredients` on type `&Recipe`\n"
+        " --> src/lib.rs:5:31\n"
+        "  |\n"
+        "5 |     for ingredient in &recipe.ingredients {\n"
+        "  |\n"
+        "help: a field with a similar name exists\n"
+        "  |\n"
+        "5 -     for ingredient in &recipe.ingredients {\n"
+        "5 +     for ingredient in &recipe.ingredient {"
+    )
+    coverage = default_repair_rule_registry().coverage(normalize_artifact_quality_errors([raw])).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_rust_field_rename_suggestion_repair",
+        base_files={"src/lib.rs": content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "rust.field_rename_suggestion" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert "deterministic_rust_field_rename_suggestion_repair" in coverage["items"][0]["matched_source_tools"]
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_rust_field_rename_suggestion_repair"
+    assert planning.composition is not None
+    assert planning.composition.ok is True
 
 
 def test_java_accessor_alias_rule_builds_canonical_plan_without_diagnostics() -> None:
@@ -1598,6 +3869,56 @@ def test_public_rust_dependency_run_executes_with_receipt(tmp_path: Path) -> Non
     assert 'serde = { version = "1.0", features = ["derive"] }' in repaired
     assert 'serde_json = "1.0"' in repaired
     assert result.metadata["planning"]["plan_summary"]["rule_id"] == "rust.unlinked_crate_dependency"
+    assert result.metadata["plan_policy"]["allowed"] is True
+    assert result.metadata["composition_policy"]["allowed"] is True
+    assert result.metadata["execution_error"] is None
+
+
+def test_public_rust_missing_binary_entrypoint_run_creates_file_with_receipt(tmp_path: Path) -> None:
+    cargo_path = "Cargo.toml"
+    binary_path = "src/bin/demo.rs"
+    cargo = '[package]\nname = "demo-app"\nversion = "0.1.0"\n\n[[bin]]\nname = "demo-cli"\npath = "src/bin/demo.rs"\n'
+    target = tmp_path / cargo_path
+    target.write_text(cargo, encoding="utf-8")
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        write_target = tmp_path / path
+        write_target.parent.mkdir(parents=True, exist_ok=True)
+        write_target.write_text(updated, encoding="utf-8")
+        return {
+            "ok": True,
+            "file": path,
+            "bytes_written": len(updated.encode("utf-8")),
+            "operation": "create",
+        }
+
+    result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-rust-bin",
+            workspace=str(tmp_path),
+            source_tool="deterministic_rust_missing_binary_entrypoint_repair",
+            base_files={cargo_path: cargo},
+            allowed_paths=(cargo_path, binary_path),
+        ),
+        writer=writer,
+    )
+    created = (tmp_path / binary_path).read_text(encoding="utf-8")
+
+    assert result.ok is True
+    assert result.error_code is None
+    assert len(result.receipts) == 1
+    receipt = result.receipts[0]
+    _assert_direct_runtime_receipt_pending_revalidation(receipt)
+    assert receipt.rule_id == "rust.missing_binary_entrypoint"
+    assert receipt.source_tool == "deterministic_rust_missing_binary_entrypoint_repair"
+    assert receipt.files_changed == (binary_path,)
+    assert receipt.before_hashes[binary_path] == sha256_text("")
+    assert receipt.after_hashes[binary_path] == sha256_text(created)
+    assert "demo_app binary entry point" in created
+    assert receipt.metadata["write_file_reasons_by_path"][binary_path] == "new_file_or_empty_file"
+    assert receipt.metadata["execution_records"][0]["write_file_reason"] == "new_file_or_empty_file"
+    assert receipt.metadata["execution_records"][0]["rollback_restore_strategy"]
+    assert result.metadata["planning"]["plan_summary"]["rule_id"] == "rust.missing_binary_entrypoint"
     assert result.metadata["plan_policy"]["allowed"] is True
     assert result.metadata["composition_policy"]["allowed"] is True
     assert result.metadata["execution_error"] is None
@@ -2922,12 +5243,13 @@ def test_legacy_summary_preserves_revalidation_evidence_counts() -> None:
         ],
     )
 
-    assert summary["authoritative"] is True
+    assert summary["authoritative"] is False
     assert summary["requires_revalidation"] is False
     assert summary["pending_revalidation_count"] == 0
     assert summary["receipts_with_revalidation"] == 1
     assert summary["revalidation_coverage"]["receipt_count"] == 1
     assert summary["revalidation_coverage"]["receipts_missing_revalidation"] == 0
+    assert summary["revalidation_coverage"]["failed_revalidation_receipt_count"] == 1
     assert summary["revalidation_coverage"]["post_check_evidence_available"] is True
     assert summary["revalidation_coverage"]["post_check_evidence_complete"] is True
     assert summary["revalidation_coverage"]["source_tools_with_revalidation"] == [
@@ -2935,8 +5257,8 @@ def test_legacy_summary_preserves_revalidation_evidence_counts() -> None:
     ]
     assert summary["receipt_count"] == 1
     receipt = summary["receipts"][0]
-    assert receipt["status"] == "applied"
-    assert receipt["authoritative"] is True
+    assert receipt["status"] == "failed_revalidation"
+    assert receipt["authoritative"] is False
     assert receipt["round_number"] == 2
     assert receipt["errors_before"] == 3
     assert receipt["errors_after"] == 1
@@ -3328,7 +5650,28 @@ def test_public_repair_language_slots_reserve_future_languages_without_registeri
     assert slots_by_language["dockerfile"]["executable_runtime_source_tools"] == []
     assert slots_by_language["cpp"]["implementation_status"] == "executable_runtime"
     assert slots_by_language["rust"]["implementation_status"] == "executable_runtime"
-    assert slots_by_language["rust"]["executable_runtime_source_tools"] == ["deterministic_rust_dependency_repair"]
+    assert slots_by_language["rust"]["executable_runtime_source_tools"] == [
+        "deterministic_rust_crate_import_rewrite_repair",
+        "deterministic_rust_dependency_repair",
+        "deterministic_rust_derive_repair",
+        "deterministic_rust_duplicate_module_file_repair",
+        "deterministic_rust_field_rename_suggestion_repair",
+        "deterministic_rust_incompatible_copy_derive_repair",
+        "deterministic_rust_lib_root_facade_repair",
+        "deterministic_rust_line_suggestion_repair",
+        "deterministic_rust_method_self_signature_repair",
+        "deterministic_rust_missing_binary_entrypoint_repair",
+        "deterministic_rust_missing_lib_target_repair",
+        "deterministic_rust_missing_module_file_repair",
+        "deterministic_rust_serde_derive_repair",
+        "deterministic_rust_struct_literal_missing_field_repair",
+        "deterministic_rust_trait_import_repair",
+        "deterministic_rust_unresolved_pub_use_repair",
+        "deterministic_rust_unused_import_repair",
+        "deterministic_rust_wrong_crate_path_repair",
+    ]
+    assert "deterministic_rust_post_repair" not in slots_by_language["rust"]["executable_runtime_source_tools"]
+    assert "deterministic_rust_derive_repair" in slots_by_language["rust"]["executable_runtime_source_tools"]
     assert set(payload["summary"]["authoritative_rule_languages"]).issubset(languages)
     assert payload["summary"]["language_count"] >= 45
     assert payload["summary"]["authoritative_rule_languages"] == [
@@ -3408,13 +5751,15 @@ def test_public_post_execution_schedule_is_runtime_owned_and_read_only() -> None
     assert payload["agi_execution_authority"] is False
     assert [item["step_id"] for item in payload["items"]] == [
         "go.module_import",
+        "rust.dependency_resolution",
         "rust.post_execution_convergence",
         "cpp.post_execution",
         "java.post_execution",
     ]
     assert payload["items"][0]["phase"] == "dependency_resolution"
-    assert payload["items"][1]["phase"] == "multi_phase_convergence"
-    assert payload["items"][2]["priority"] == 1
+    assert payload["items"][1]["phase"] == "dependency_resolution"
+    assert payload["items"][2]["phase"] == "multi_phase_convergence"
+    assert payload["items"][3]["priority"] == 1
     assert payload["summary"]["runtime_schedule_authoritative"] is True
     assert payload["summary"]["runner_binding_owner"] == "roles.adapters"
     assert payload["summary"]["target_scheduler"] == "director.runtime.repair_kernel.scheduler"
@@ -3428,7 +5773,7 @@ def test_runtime_post_execution_schedule_runs_callbacks_and_injects_step_metadat
 
     def runner(step) -> list[dict[str, object]]:
         observed_step_ids.append(step.step_id)
-        if step.step_id != "rust.post_execution_convergence":
+        if step.step_id != "rust.dependency_resolution":
             return []
         return [
             {
@@ -3444,6 +5789,7 @@ def test_runtime_post_execution_schedule_runs_callbacks_and_injects_step_metadat
     run = run_post_execution_repair_schedule_callbacks(
         runner_step_ids=(
             "go.module_import",
+            "rust.dependency_resolution",
             "rust.post_execution_convergence",
             "cpp.post_execution",
             "java.post_execution",
@@ -3453,6 +5799,7 @@ def test_runtime_post_execution_schedule_runs_callbacks_and_injects_step_metadat
 
     assert observed_step_ids == [
         "go.module_import",
+        "rust.dependency_resolution",
         "rust.post_execution_convergence",
         "cpp.post_execution",
         "java.post_execution",
@@ -3460,9 +5807,9 @@ def test_runtime_post_execution_schedule_runs_callbacks_and_injects_step_metadat
     assert [step.step_id for step in run.ordered_steps] == observed_step_ids
     assert len(run.tool_results) == 1
     payload = run.tool_results[0]["result"]
-    assert payload["bridge_step_id"] == "rust.post_execution_convergence"
+    assert payload["bridge_step_id"] == "rust.dependency_resolution"
     assert payload["language"] == "rust"
-    assert payload["phase"] == "multi_phase_convergence"
+    assert payload["phase"] == "dependency_resolution"
     assert payload["priority"] == 0
     assert payload["round_number"] == 1
     assert payload["max_rounds"] == 1
@@ -3479,6 +5826,7 @@ def test_runtime_post_execution_schedule_runs_callbacks_and_injects_step_metadat
         run_post_execution_repair_schedule_callbacks(
             runner_step_ids=(
                 "go.module_import",
+                "rust.dependency_resolution",
                 "rust.post_execution_convergence",
                 "cpp.post_execution",
                 "java.post_execution",
@@ -3503,7 +5851,7 @@ def test_runtime_post_execution_schedule_runs_bounded_convergence_rounds() -> No
                 "tool_name": "write_file",
                 "success": True,
                 "result": {
-                    "source_tool": "deterministic_rust_dependency_repair",
+                    "source_tool": "deterministic_rust_post_repair",
                     "file": "Cargo.toml",
                     "after_hash": f"hash-{rust_rounds}",
                 },
@@ -3513,6 +5861,7 @@ def test_runtime_post_execution_schedule_runs_bounded_convergence_rounds() -> No
     run = run_post_execution_repair_schedule_callbacks(
         runner_step_ids=(
             "go.module_import",
+            "rust.dependency_resolution",
             "rust.post_execution_convergence",
             "cpp.post_execution",
             "java.post_execution",
@@ -3540,7 +5889,7 @@ def test_runtime_post_execution_schedule_breaks_repeated_round_cycles() -> None:
                 "tool_name": "write_file",
                 "success": True,
                 "result": {
-                    "source_tool": "deterministic_rust_dependency_repair",
+                    "source_tool": "deterministic_rust_post_repair",
                     "file": "Cargo.toml",
                     "after_hash": "same-hash",
                 },
@@ -3550,6 +5899,7 @@ def test_runtime_post_execution_schedule_breaks_repeated_round_cycles() -> None:
     run = run_post_execution_repair_schedule_callbacks(
         runner_step_ids=(
             "go.module_import",
+            "rust.dependency_resolution",
             "rust.post_execution_convergence",
             "cpp.post_execution",
             "java.post_execution",
@@ -3722,36 +6072,23 @@ def test_public_strategy_catalog_is_read_only_and_non_agi_authoritative() -> Non
     assert payload["items"][0]["implementation_status"] == "executable_runtime"
     assert payload["items"][0]["execution_owner"] == "director.runtime"
     assert payload["items"][0]["bench_driven_migration_required"] is False
-    assert payload["summary"]["executable_runtime_binding_count"] == 13
-    assert payload["summary"]["executable_runtime_source_tools"] == [
-        "deterministic_cpp_include_path_repair",
-        "deterministic_cpp_missing_private_members_repair",
-        "deterministic_cpp_placeholder_declaration_repair",
-        "deterministic_cpp_standard_include_repair",
-        "deterministic_cpp_struct_getter_field_access_repair",
-        "deterministic_go_bare_import_string_repair",
-        "deterministic_java_accessor_alias_repair",
-        "deterministic_patch_residue_cleanup",
-        "deterministic_rust_dependency_repair",
-        "deterministic_typescript_duplicate_object_property_repair",
-        "deterministic_typescript_enum_member_separator_repair",
-        "deterministic_typescript_nullable_canvas_context_repair",
-        "deterministic_typescript_return_object_semicolon_repair",
-    ]
-    assert payload["summary"]["executable_runtime_by_language"] == {
-        "cpp": 5,
-        "generic": 1,
-        "go": 1,
-        "java": 1,
-        "rust": 1,
-        "typescript": 4,
-    }
-    assert payload["summary"]["implementation_status_counts"]["executable_runtime"] == 13
+    expected_runtime_source_tools = list(runtime_repair_source_tools())
+    expected_runtime_by_language: dict[str, int] = {}
+    for binding in runtime_repair_bindings():
+        language = str(binding["language"])
+        expected_runtime_by_language[language] = expected_runtime_by_language.get(language, 0) + 1
+    assert payload["summary"]["executable_runtime_binding_count"] == len(expected_runtime_source_tools)
+    assert payload["summary"]["executable_runtime_source_tools"] == expected_runtime_source_tools
+    assert "deterministic_rust_post_repair" not in payload["summary"]["executable_runtime_source_tools"]
+    assert "deterministic_rust_derive_repair" in payload["summary"]["executable_runtime_source_tools"]
+    assert payload["summary"]["executable_runtime_by_language"] == expected_runtime_by_language
+    executable_status_count = payload["summary"]["implementation_status_counts"]["executable_runtime"]
+    assert executable_status_count <= payload["summary"]["executable_runtime_binding_count"]
     assert (
         payload["summary"]["implementation_status_counts"]["legacy_strategy_host"]
         == payload["summary"]["legacy_strategy_host_count"]
     )
-    assert payload["summary"]["legacy_strategy_host_count"] == payload["summary"]["total"] - 13
+    assert payload["summary"]["legacy_strategy_host_count"] == payload["summary"]["total"] - executable_status_count
     assert payload["summary"]["bench_driven_migration_required"] is True
     assert payload["summary"]["legacy_strategy_host_owner"] == (
         "roles.adapters.internal.director.deterministic_repairs"

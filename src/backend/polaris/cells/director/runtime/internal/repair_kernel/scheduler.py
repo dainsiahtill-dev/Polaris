@@ -23,6 +23,36 @@ from .receipts import attach_revalidation_evidence, build_receipt
 VerifierFn = Callable[[int, tuple[RepairReceipt, ...]], "RepairVerifierSnapshot"]
 PlannerFn = Callable[[tuple[RepairDiagnostic, ...], int], Sequence[RepairPlan]]
 BaseFilesProviderFn = Callable[[RepairPlan], Mapping[str, str]]
+CONVERGENCE_PIPELINE_STAGES = (
+    "Diagnostics",
+    "Coverage",
+    "Plan",
+    "Compose",
+    "Policy",
+    "Execute",
+    "Revalidate",
+    "Receipt",
+    "Next Round",
+)
+
+
+def convergence_envelope_metadata(
+    *,
+    preferred_entrypoint: str = "run_runtime_repair_convergence",
+    typed_receipt_path_available: bool = True,
+    callback_migration_envelope: bool = False,
+) -> dict[str, Any]:
+    """Return the runtime-owned convergence envelope contract metadata."""
+
+    return {
+        "envelope_owner": "director.runtime.repair_kernel.scheduler",
+        "preferred_entrypoint": preferred_entrypoint,
+        "convergence_scheduler_required": True,
+        "typed_receipt_path_available": bool(typed_receipt_path_available),
+        "callback_migration_envelope": bool(callback_migration_envelope),
+        "pipeline": list(CONVERGENCE_PIPELINE_STAGES),
+        "pipeline_order": "Diagnostics -> Coverage -> Plan -> Compose -> Policy -> Execute -> Revalidate -> Receipt -> Next Round",
+    }
 
 
 @dataclass(frozen=True)
@@ -194,6 +224,25 @@ def order_repair_plans(
     return RepairPlanSchedule(ordered_plans=tuple(ordered))
 
 
+def _scheduler_result_metadata(
+    status: str,
+    *,
+    final_diagnostics: Sequence[RepairDiagnostic] = (),
+    receipts: Sequence[RepairReceipt] = (),
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    failed_revalidation_count = sum(1 for receipt in receipts if receipt.status == "failed_revalidation")
+    return {
+        **convergence_envelope_metadata(),
+        "status": str(status or "unknown"),
+        "converged": status in {"already_clean", "converged"},
+        "final_error_count": len(tuple(final_diagnostics or ())),
+        "failed_revalidation_receipt_count": failed_revalidation_count,
+        "unconverged": status not in {"already_clean", "converged"},
+        **dict(extra or {}),
+    }
+
+
 class RepairConvergenceScheduler:
     """Run deterministic repairs through Plan→Compose→Policy→Execute→Revalidate rounds."""
 
@@ -230,6 +279,7 @@ class RepairConvergenceScheduler:
                 final_diagnostics=(),
                 receipts=prior_receipts,
                 max_rounds=self.max_rounds,
+                metadata=_scheduler_result_metadata("already_clean", receipts=prior_receipts),
             )
 
         seen_signatures = {before.diagnostic_signature()}
@@ -247,7 +297,15 @@ class RepairConvergenceScheduler:
                     rounds=tuple(rounds),
                     receipts=tuple(all_receipts),
                     max_rounds=self.max_rounds,
-                    metadata={"schedule": schedule.to_dict()},
+                    metadata=_scheduler_result_metadata(
+                        "dependency_cycle_detected",
+                        final_diagnostics=current.diagnostics,
+                        receipts=all_receipts,
+                        extra={
+                            "stopped_reason": "dependency_cycle_detected",
+                            "schedule": schedule.to_dict(),
+                        },
+                    ),
                 )
             if not schedule.ordered_plans:
                 return RepairConvergenceResult(
@@ -256,6 +314,12 @@ class RepairConvergenceScheduler:
                     rounds=tuple(rounds),
                     receipts=tuple(all_receipts),
                     max_rounds=self.max_rounds,
+                    metadata=_scheduler_result_metadata(
+                        "stuck_no_plans",
+                        final_diagnostics=current.diagnostics,
+                        receipts=all_receipts,
+                        extra={"stopped_reason": "planner_returned_no_plans"},
+                    ),
                 )
 
             round_receipts = self._execute_round(
@@ -286,6 +350,15 @@ class RepairConvergenceScheduler:
                     rounds=tuple(rounds),
                     receipts=tuple(all_receipts),
                     max_rounds=self.max_rounds,
+                    metadata=_scheduler_result_metadata(
+                        "stuck_no_receipts",
+                        final_diagnostics=current.diagnostics,
+                        receipts=all_receipts,
+                        extra={
+                            "stopped_reason": "executed_round_produced_no_authoritative_receipts",
+                            "round_receipt_statuses": [receipt.status for receipt in round_receipts],
+                        },
+                    ),
                 )
 
             after = verifier(round_number, tuple(all_receipts + list(round_receipts)))
@@ -322,6 +395,7 @@ class RepairConvergenceScheduler:
                     rounds=tuple(rounds),
                     receipts=tuple(all_receipts),
                     max_rounds=self.max_rounds,
+                    metadata=_scheduler_result_metadata("converged", receipts=all_receipts),
                 )
 
             signature = after.diagnostic_signature()
@@ -332,6 +406,15 @@ class RepairConvergenceScheduler:
                     rounds=tuple(rounds),
                     receipts=tuple(all_receipts),
                     max_rounds=self.max_rounds,
+                    metadata=_scheduler_result_metadata(
+                        "cycle_detected",
+                        final_diagnostics=after.diagnostics,
+                        receipts=all_receipts,
+                        extra={
+                            "stopped_reason": "repeated_diagnostic_signature",
+                            "diagnostic_signature": signature,
+                        },
+                    ),
                 )
             seen_signatures.add(signature)
             current = after
@@ -342,6 +425,12 @@ class RepairConvergenceScheduler:
             rounds=tuple(rounds),
             receipts=tuple(all_receipts),
             max_rounds=self.max_rounds,
+            metadata=_scheduler_result_metadata(
+                "max_rounds_exhausted",
+                final_diagnostics=current.diagnostics,
+                receipts=all_receipts,
+                extra={"stopped_reason": "max_rounds_exhausted"},
+            ),
         )
 
     def _execute_round(
@@ -438,6 +527,7 @@ def _with_round_number(
 
 
 __all__ = [
+    "CONVERGENCE_PIPELINE_STAGES",
     "BaseFilesProviderFn",
     "PlannerFn",
     "RepairConvergenceResult",
@@ -446,5 +536,6 @@ __all__ = [
     "RepairRoundResult",
     "RepairVerifierSnapshot",
     "VerifierFn",
+    "convergence_envelope_metadata",
     "order_repair_plans",
 ]
