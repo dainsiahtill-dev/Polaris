@@ -599,7 +599,11 @@ class DirectorPatchExecutor:
         file_paths: list[str],
     ) -> str | None:
         """检查 Director 输出是否存在模板化/占位化迹象。"""
-        from .helpers import _GENERIC_SCAFFOLD_MARKERS, _LOW_QUALITY_PATTERNS, _PATCH_RESIDUE_PATTERNS
+        from .helpers import (
+            _GENERIC_SCAFFOLD_MARKERS,
+            _LOW_QUALITY_PATTERNS,
+            _PATCH_RESIDUE_PATTERNS,
+        )
         from .state_utils import extract_domain_tokens
 
         if not file_paths:
@@ -674,8 +678,10 @@ class DirectorPatchExecutor:
             lowered,
             domain_tokens,
         )
+        from .helpers import low_quality_pattern_match
+
         for pattern in low_quality_patterns:
-            if pattern.search(content):
+            if low_quality_pattern_match(pattern, content):
                 return f"{rel_path}:{pattern.pattern}", domain_hit, readable
         for pattern in patch_residue_patterns:
             if pattern.search(content):

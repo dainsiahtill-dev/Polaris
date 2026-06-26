@@ -1475,6 +1475,25 @@ def _has_unfinished_placeholder_match(content: str, pattern: re.Pattern[str]) ->
     if pattern.pattern in _COMMENT_MARKER_PLACEHOLDER_PATTERNS:
         return _has_comment_marker_match(content, pattern)
 
+    # NotImplemented / stub indicate unfinished code EXCEPT when they appear as a
+    # string literal that NAMES the token — the shape of an anti-placeholder test
+    # or lint that checks source/output for forbidden tokens (e.g.
+    # FORBIDDEN_TOKENS = ("notimplemented", "stub", ...)). A genuine marker such
+    # as ``raise NotImplementedError`` or ``# stub`` is not inside a quote, so
+    # suppressing quoted hits keeps real placeholders flagged while no longer
+    # rejecting a correct quality-enforcing test (live factory-bench L1-02 r10).
+    if pattern.pattern in _STRING_LITERAL_GUARDED_PLACEHOLDER_PATTERNS:
+        for match in pattern.finditer(content):
+            line_start = content.rfind("\n", 0, match.start()) + 1
+            line_end = content.find("\n", match.end())
+            if line_end < 0:
+                line_end = len(content)
+            line = content[line_start:line_end]
+            if _match_is_inside_string_literal(line, match.start() - line_start, match.end() - line_start):
+                continue
+            return True
+        return False
+
     if pattern.pattern != r"\bplaceholder\b":
         return bool(pattern.search(content))
 
@@ -1493,6 +1512,40 @@ def _has_unfinished_placeholder_match(content: str, pattern: re.Pattern[str]) ->
         if re.search(r"\bplaceholder\s*=", line, flags=re.IGNORECASE):
             continue
         return True
+    return False
+
+
+_STRING_LITERAL_GUARDED_PLACEHOLDER_PATTERNS = frozenset(
+    {
+        r"\bNotImplemented(?:Error|Exception)?\b",
+        r"\bstub\b",
+    }
+)
+
+
+def _match_is_inside_string_literal(line: str, rel_start: int, rel_end: int) -> bool:
+    """Best-effort: is the [rel_start, rel_end) span on ``line`` inside a quote?
+
+    Counts unescaped single/double quotes before the match on the same line: an
+    odd count means the span opened inside a string literal that also closes after
+    the match. Language-agnostic and conservative — only suppresses tokens that
+    are clearly quoted string content (a forbidden-token list or a "must not
+    contain X" assertion), never bare code identifiers.
+    """
+    prefix = line[:rel_start]
+    for quote in ('"', "'"):
+        count = 0
+        idx = 0
+        while idx < len(prefix):
+            ch = prefix[idx]
+            if ch == "\\":
+                idx += 2
+                continue
+            if ch == quote:
+                count += 1
+            idx += 1
+        if count % 2 == 1 and quote in line[rel_end:]:
+            return True
     return False
 
 

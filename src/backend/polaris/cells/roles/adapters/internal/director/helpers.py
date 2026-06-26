@@ -113,6 +113,78 @@ _LOW_QUALITY_PATTERNS = (
     re.compile(r"\bstub\b", re.IGNORECASE),
 )
 
+# Markers that legitimately appear as *string literals* when product code NAMES
+# the token rather than embodying it — e.g. an anti-placeholder test or lint that
+# checks ``npm test`` output / source for forbidden tokens:
+#   FORBIDDEN_TOKENS = ("todo", "fixme", "notimplemented", "no test specified")
+#   assert "stub" not in source
+# A genuine unfinished-code marker (``raise NotImplementedError``, ``# stub``) is
+# NOT inside a string literal, so suppressing string-literal hits keeps real
+# placeholders flagged while no longer punishing a correct quality-enforcing test.
+# (live factory-bench L1-02 r10: a model-authored tests/test_product.py defined a
+# FORBIDDEN_TOKENS list containing "notimplemented"; the bare \bNotImplemented\b
+# scan matched that literal, failed materialization quality, and trapped the
+# Director in an unfixable rewrite loop — the file was already correct.)
+_STRING_LITERAL_GUARDED_PATTERNS = frozenset(
+    {
+        r"\bNotImplemented(?:Error|Exception)?\b",
+        r"\bstub\b",
+    }
+)
+
+
+def _match_is_inside_string_literal(line: str, rel_start: int, rel_end: int) -> bool:
+    """Best-effort: is the [rel_start, rel_end) span on ``line`` inside a quote?
+
+    Counts unescaped single/double quotes before the match on the same line: an
+    odd count means the span opened inside a string literal. Language-agnostic and
+    deliberately conservative — it only suppresses tokens that are clearly quoted
+    string content (the shape of a forbidden-token list or a "must not contain X"
+    assertion), never bare code identifiers.
+    """
+    prefix = line[:rel_start]
+    for quote in ('"', "'"):
+        count = 0
+        idx = 0
+        while idx < len(prefix):
+            ch = prefix[idx]
+            if ch == "\\":
+                idx += 2
+                continue
+            if ch == quote:
+                count += 1
+            idx += 1
+        if count % 2 == 1:
+            # Opened a string with this quote before the match; confirm it also
+            # closes after the match on the same line (a complete literal).
+            rest = line[rel_end:]
+            if quote in rest:
+                return True
+    return False
+
+
+def low_quality_pattern_match(pattern: re.Pattern[str], content: str) -> bool:
+    """Return whether ``pattern`` flags genuine low-quality content in ``content``.
+
+    For the string-literal-guarded markers (NotImplemented / stub) a hit that
+    sits inside a quoted string literal is treated as the token being *named*
+    (anti-placeholder test/lint), not a real unfinished-code marker, and is
+    skipped. All other patterns keep their original bare-search semantics.
+    """
+    if pattern.pattern not in _STRING_LITERAL_GUARDED_PATTERNS:
+        return bool(pattern.search(content))
+    for match in pattern.finditer(content):
+        line_start = content.rfind("\n", 0, match.start()) + 1
+        line_end = content.find("\n", match.end())
+        if line_end < 0:
+            line_end = len(content)
+        line = content[line_start:line_end]
+        if _match_is_inside_string_literal(line, match.start() - line_start, match.end() - line_start):
+            continue
+        return True
+    return False
+
+
 _PATCH_RESIDUE_PATTERNS = (
     re.compile(r"(?m)^<{4,7}\s*SEARCH\b", re.IGNORECASE),
     re.compile(r"(?m)^=======\s*$"),
