@@ -24,6 +24,7 @@ from polaris.cells.roles.kernel.internal.interaction_contract import (
     build_interaction_contract,
 )
 from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_messages
+from polaris.kernelone.context.projection_engine import is_empty_run_card_message
 from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
 from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
 
@@ -550,6 +551,9 @@ class LLMCaller:
             if not role:
                 continue
             content = str(item.get("content", ""))
+            name = str(item.get("name") or "").strip()
+            if role.lower() == "system" and is_empty_run_card_message(name=name, content=content):
+                continue
             normalized_content = _normalize_user_message_for_dedupe(content) if role == "user" else ""
             normalized_user_turns.append((role, content, normalized_content))
 

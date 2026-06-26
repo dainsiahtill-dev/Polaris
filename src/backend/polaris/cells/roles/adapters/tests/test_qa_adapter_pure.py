@@ -98,6 +98,36 @@ def test_placeholder_in_html_class_attribute_is_not_unfinished_marker() -> None:
     assert _has_unfinished_placeholder_match("<p>placeholder</p>", pattern) is True
 
 
+def test_notimplemented_stub_named_as_string_literal_is_not_unfinished_marker() -> None:
+    """A forbidden-token list / "must not contain X" assertion NAMES the marker.
+
+    Regression (factory-bench L1-02 r10): a correct anti-placeholder test defined
+    FORBIDDEN_TOKENS = ("notimplemented", "stub", ...); the bare NotImplemented/
+    stub scan matched those string literals, failed materialization quality, and
+    trapped the Director in an unfixable rewrite loop. A token quoted as string
+    content must not count as an unfinished-code marker.
+    """
+    ni = re.compile(r"\bNotImplemented(?:Error|Exception)?\b", re.IGNORECASE)
+    stub = re.compile(r"\bstub\b", re.IGNORECASE)
+
+    # String-literal naming -> NOT a marker.
+    assert (
+        _has_unfinished_placeholder_match(
+            'FORBIDDEN_TOKENS = ("todo", "fixme", "notimplemented", "no test specified")\n',
+            ni,
+        )
+        is False
+    )
+    assert _has_unfinished_placeholder_match('assert "stub" not in source\n', stub) is False
+    assert _has_unfinished_placeholder_match("BAD = ['NotImplementedError', 'stub']\n", ni) is False
+
+    # Genuine unfinished-code markers -> STILL flagged.
+    assert _has_unfinished_placeholder_match("def f():\n    raise NotImplementedError\n", ni) is True
+    assert _has_unfinished_placeholder_match("def f():\n    raise NotImplementedError('later')\n", ni) is True
+    assert _has_unfinished_placeholder_match("# stub: fill in later\n", stub) is True
+    assert _has_unfinished_placeholder_match("function bar() { /* stub */ }\n", stub) is True
+
+
 class TestExtractQaReworkEvidence:
     def test_filters_metrics_and_keeps_actionable_paths(self) -> None:
         result = _extract_qa_rework_evidence(

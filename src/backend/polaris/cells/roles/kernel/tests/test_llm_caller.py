@@ -1376,6 +1376,23 @@ class TestPreparedRequestArchitecture:
             {"role": "user", "content": "other"},
         ]
 
+    def test_extract_prebuilt_projection_messages_omits_empty_run_card(self) -> None:
+        context = SimpleNamespace(
+            context_override={
+                "_transaction_kernel_prebuilt_messages": [
+                    {"role": "system", "content": "sys"},
+                    {"role": "system", "name": "run_card", "content": "【Run Card】"},
+                    {"role": "system", "content": "【Run Card】"},
+                    {"role": "user", "content": "continue"},
+                ],
+            },
+        )
+        messages = LLMCaller._extract_prebuilt_projection_messages(cast("ContextRequest", context))
+        assert messages == [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "continue"},
+        ]
+
     def test_extract_prebuilt_projection_messages_collapses_adjacent_user_duplicates(self) -> None:
         context = SimpleNamespace(
             context_override={

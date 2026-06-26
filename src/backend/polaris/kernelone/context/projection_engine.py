@@ -7,7 +7,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 
 from polaris.kernelone.context.context_os.helpers import get_metadata_value
 from polaris.kernelone.context.control_plane_noise import (
@@ -26,6 +26,80 @@ _RECEIPT_REF_SAFE_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
 # 'Current goal' plane. Cap the card's Goal line so it stays a short reminder rather than a
 # multi-thousand-token duplicate of the goal (see render_run_card).
 _RUN_CARD_GOAL_MAX_CHARS = 300
+
+
+def _text_attr(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
+def _sequence_attr(value: Any) -> tuple[Any, ...]:
+    if isinstance(value, tuple):
+        return tuple(item for item in value if item)
+    if isinstance(value, list):
+        return tuple(item for item in value if item)
+    return ()
+
+
+def render_run_card(
+    run_card: Any | None,
+    *,
+    last_turn_outcome_sanitizer: Callable[[str], str] | None = None,
+) -> str:
+    """Render a non-empty Run Card for prompt projection."""
+
+    if run_card is None:
+        return ""
+
+    current_goal = _text_attr(getattr(run_card, "current_goal", ""))
+    open_loops = _sequence_attr(getattr(run_card, "open_loops", ()))
+    latest_user_intent = _text_attr(getattr(run_card, "latest_user_intent", ""))
+    pending_followup_action = _text_attr(getattr(run_card, "pending_followup_action", ""))
+    last_turn_outcome = _text_attr(getattr(run_card, "last_turn_outcome", ""))
+
+    if not any((current_goal, open_loops, latest_user_intent, pending_followup_action, last_turn_outcome)):
+        return ""
+
+    run_card_lines = ["【Run Card】"]
+    if current_goal:
+        # The Run Card is a COMPACT state card (other fields truncated to 100 chars).
+        # The full goal/requirements is already carried by the dedicated 'Current goal'
+        # plane; embedding it in full here duplicated ~2.5k tokens and blew the
+        # PM-planning context budget (L3-16 Tetris, 2026-06-15, total=10218 vs 8000).
+        goal_text = current_goal
+        if len(goal_text) > _RUN_CARD_GOAL_MAX_CHARS:
+            goal_text = goal_text[:_RUN_CARD_GOAL_MAX_CHARS].rstrip() + " …"
+        run_card_lines.append(f"Goal: {goal_text}")
+    if open_loops:
+        run_card_lines.append(f"Open loops: {len(open_loops)}")
+    if latest_user_intent:
+        run_card_lines.append(f"Latest intent: {latest_user_intent[:100]}")
+    if pending_followup_action:
+        run_card_lines.append(f"Pending: {pending_followup_action}")
+    if last_turn_outcome:
+        if last_turn_outcome_sanitizer is not None:
+            last_turn_outcome = last_turn_outcome_sanitizer(last_turn_outcome)
+        run_card_lines.append(f"Last outcome: {last_turn_outcome}")
+    return "\n".join(run_card_lines)
+
+
+def is_empty_run_card_message(*, name: str = "", content: str) -> bool:
+    """Return whether a system message is only an empty Run Card marker."""
+
+    normalized_name = name.strip().lower()
+    stripped = content.strip()
+    if not stripped:
+        return normalized_name == "run_card"
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    if not lines:
+        return normalized_name == "run_card"
+    first_line = lines[0].lower()
+    is_run_card = normalized_name == "run_card" or first_line in {"【run card】", "run card", "run card:"}
+    if not is_run_card:
+        return False
+    meaningful_lines = [line for line in lines if line.lower() not in {"【run card】", "run card", "run card:"}]
+    return not meaningful_lines
 
 
 @dataclass
@@ -559,27 +633,7 @@ class ProjectionEngine:
         return turns
 
     def render_run_card(self, run_card: Any | None) -> str:
-        if run_card is None:
-            return ""
-        run_card_lines = ["【Run Card】"]
-        if getattr(run_card, "current_goal", ""):
-            # The Run Card is a COMPACT state card (other fields truncated to 100 chars).
-            # The full goal/requirements is already carried by the dedicated 'Current goal'
-            # plane; embedding it in full here duplicated ~2.5k tokens and blew the
-            # PM-planning context budget (L3-16 Tetris, 2026-06-15, total=10218 vs 8000).
-            goal_text = str(run_card.current_goal)
-            if len(goal_text) > _RUN_CARD_GOAL_MAX_CHARS:
-                goal_text = goal_text[:_RUN_CARD_GOAL_MAX_CHARS].rstrip() + " …"
-            run_card_lines.append(f"Goal: {goal_text}")
-        if getattr(run_card, "open_loops", ()):
-            run_card_lines.append(f"Open loops: {len(list(run_card.open_loops))}")
-        if getattr(run_card, "latest_user_intent", ""):
-            run_card_lines.append(f"Latest intent: {run_card.latest_user_intent[:100]}")
-        if getattr(run_card, "pending_followup_action", ""):
-            run_card_lines.append(f"Pending: {run_card.pending_followup_action}")
-        if getattr(run_card, "last_turn_outcome", ""):
-            run_card_lines.append(f"Last outcome: {run_card.last_turn_outcome}")
-        return "\n".join(run_card_lines)
+        return render_run_card(run_card)
 
     def build_payload(
         self,

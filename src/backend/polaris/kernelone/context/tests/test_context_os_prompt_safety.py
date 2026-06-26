@@ -336,6 +336,18 @@ class TestProjectionEnginePromptInjectionBaseline:
         assert "<script>" in rendered
         assert "【Run Card】" in rendered
 
+    def test_empty_run_card_is_not_rendered(self) -> None:
+        """Empty Run Cards must not become no-op system messages."""
+        engine = ProjectionEngine()
+        run_card = MagicMock()
+        run_card.current_goal = ""
+        run_card.open_loops = []
+        run_card.latest_user_intent = ""
+        run_card.pending_followup_action = ""
+        run_card.last_turn_outcome = ""
+
+        assert engine.render_run_card(run_card) == ""
+
     def test_run_card_goal_is_capped_to_avoid_budget_duplication(self) -> None:
         """The Run Card Goal line must be capped: the full goal lives in the dedicated
         'Current goal' plane, and embedding it here in full blew the PM-planning budget

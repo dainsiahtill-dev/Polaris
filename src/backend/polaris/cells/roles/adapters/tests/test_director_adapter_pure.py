@@ -22,18 +22,22 @@ from unittest.mock import MagicMock
 import pytest
 from polaris.cells.roles.adapters.internal.director import execute_method as execute_method_module
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _normalize_director_role_response
+from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
+    _apply_deterministic_scaffold_marker_cleanup,
+)
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs.javascript_repairs import (
     _apply_deterministic_javascript_test_missing_target_repair,
 )
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs.python_repairs import (
     _apply_deterministic_python_package_shadow_bridge_repair,
+    _apply_deterministic_python_unittest_missing_target_repair,
     _apply_deterministic_python_unittest_runtime_failure_repair,
     _apply_deterministic_unresolved_import_symbol_repair,
 )
-from polaris.cells.roles.adapters.internal.director.execute_method import (
-    _apply_deterministic_python_unittest_missing_target_repair,
-    _apply_deterministic_scaffold_marker_cleanup,
+from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
     _apply_deterministic_typescript_reexport_repair,
+)
+from polaris.cells.roles.adapters.internal.director.execute_method import (
     _build_empty_write_content_retry_message,
     _build_existing_workspace_task_evidence,
     _build_substantive_node_test_script,
@@ -118,7 +122,7 @@ def test_execute_method_repair_bridge_unknown_helper_fails_closed() -> None:
     ],
 )
 def test_execute_method_repair_bridge_blocks_migrated_materialization_helpers(helper_name: str) -> None:
-    with pytest.raises(AttributeError, match="not an allowlisted"):
+    with pytest.raises(AttributeError, match=r"director\.runtime|not an allowlisted"):
         get_legacy_execute_method_repair_helper(helper_name)
 
     with pytest.raises(AttributeError, match=helper_name):
@@ -126,18 +130,19 @@ def test_execute_method_repair_bridge_blocks_migrated_materialization_helpers(he
 
 
 def test_execute_method_repair_bridge_rust_helper_fails_closed() -> None:
-    with pytest.raises(AttributeError, match="not an allowlisted"):
+    with pytest.raises(AttributeError, match=r"director\.runtime"):
         get_legacy_execute_method_repair_helper("_apply_deterministic_rust_crate_import_repair")
 
     with pytest.raises(AttributeError, match="not an allowlisted"):
         get_legacy_execute_method_repair_helper("repair_rust_crate_imports")
 
 
-def test_execute_method_repair_bridge_keeps_allowlisted_helper() -> None:
-    helper = get_legacy_execute_method_repair_helper("_apply_deterministic_scaffold_marker_cleanup")
+def test_execute_method_repair_bridge_has_no_allowlisted_legacy_helpers() -> None:
+    with pytest.raises(AttributeError, match=r"director\.runtime"):
+        get_legacy_execute_method_repair_helper("_apply_deterministic_scaffold_marker_cleanup")
 
-    assert helper is _apply_deterministic_scaffold_marker_cleanup
-    assert execute_method_module._apply_deterministic_scaffold_marker_cleanup is helper
+    with pytest.raises(AttributeError, match="_apply_deterministic_scaffold_marker_cleanup"):
+        execute_method_module.__getattr__("_apply_deterministic_scaffold_marker_cleanup")
 
 
 @pytest.mark.asyncio
@@ -4966,9 +4971,14 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
             workspace=str(tmp_path),
         )
 
-        assert profile == existing_profile
-        assert metadata["director_execution_profile"] == existing_profile
-        assert context["director_execution_profile"] == existing_profile
+        assert profile["schema_version"] == existing_profile["schema_version"]
+        assert profile["source"] == existing_profile["source"]
+        assert profile["task_type"] == existing_profile["task_type"]
+        assert profile["language"] == existing_profile["language"]
+        assert profile["output_contract_id"] == "director.patch_file.v1"
+        assert profile["temperature_source"] == "task.execution_profile.v1"
+        assert metadata["director_execution_profile"] == profile
+        assert context["director_execution_profile"] == profile
 
     @pytest.mark.asyncio
     async def test_role_runtime_session_promotes_metadata_tool_receipts(

@@ -1901,6 +1901,55 @@ def test_public_repair_unknown_source_tool_exposes_fail_closed_error_without_wri
     assert writes == []
 
 
+def test_public_repair_migrated_typescript_source_tool_uses_runtime_binding_without_legacy_write(
+    tmp_path: Path,
+) -> None:
+    source_tool = "deterministic_typescript_missing_export_repair"
+    assert source_tool in runtime_repair_source_tools()
+
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={"src/model.ts": "export const value = 1;\n"},
+            artifact_quality_errors=("TypeScript project typecheck failed without a matching export diagnostic",),
+            mode="shadow",
+        )
+    )
+    planning_payload = planning_result.to_dict()
+
+    assert planning_payload["ok"] is False
+    assert planning_payload["planned"] is False
+    assert planning_payload["source_tool"] == source_tool
+    assert planning_payload["error_code"] is None
+    assert planning_payload["error_message"] is None
+    assert planning_payload["composition_summary"]["ok"] is False
+
+    writes: list[tuple[str, str]] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        writes.append((path, content))
+        raise AssertionError("migrated TypeScript source_tool must fail closed without legacy writes")
+
+    run_result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-migrated-ts-runtime-binding",
+            workspace=str(tmp_path),
+            source_tool=source_tool,
+            base_files={"src/model.ts": "export const value = 1;\n"},
+            artifact_quality_errors=("TypeScript project typecheck failed without a matching export diagnostic",),
+            allowed_paths=("src/model.ts",),
+        ),
+        writer=writer,
+    )
+
+    assert run_result.ok is False
+    assert run_result.error_code == "repair_not_planned"
+    assert run_result.receipts == ()
+    assert run_result.metadata["planning"]["source_tool"] == source_tool
+    assert run_result.metadata["planning"]["planned"] is False
+    assert writes == []
+
+
 def test_public_repair_rust_aggregate_bindings_fail_closed_without_safe_plan(
     tmp_path: Path,
 ) -> None:

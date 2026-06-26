@@ -63,6 +63,7 @@ _CONTROL_PLANE_CONTEXT_KEYS = {
     "provider_policy",
     "role_runtime_required",
     "run_id",
+    "run_card",
     "runtime_session_id",
     "session_context_config",
     "session_turn_events",

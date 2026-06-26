@@ -184,9 +184,9 @@ def test_rust_catalog_drift_tokens_are_registered_without_executable_drift() -> 
     assert missing_fields["phase"] == "code_repair"
     assert missing_fields["concern"] == "missing_symbol_or_file"
     assert missing_fields["risk_level"] == "low"
-    assert missing_fields["implementation_status"] == "legacy_strategy_host"
-    assert missing_fields["execution_owner"] == "roles.adapters.legacy_strategy_host"
-    assert missing_fields["bench_driven_migration_required"] is True
+    assert missing_fields["implementation_status"] == "executable_runtime"
+    assert missing_fields["execution_owner"] == "director.runtime"
+    assert missing_fields["bench_driven_migration_required"] is False
 
     struct_literal = profiles["deterministic_rust_struct_literal_missing_field_repair"]
     assert struct_literal["registered"] is True
@@ -731,16 +731,16 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
     node_manifest_debt = debt_by_step["materialization.node_manifest"]
     assert node_manifest_debt["declared_source_tool"] == "deterministic_node_manifest_materialization_repair"
     assert node_manifest_debt["actual_source_tools"] == ["deterministic_runtime_dependency_repair"]
-    assert node_manifest_debt["runtime_executable_source_tools"] == []
-    assert node_manifest_debt["legacy_only_source_tools"] == ["deterministic_runtime_dependency_repair"]
+    assert node_manifest_debt["runtime_executable_source_tools"] == ["deterministic_runtime_dependency_repair"]
+    assert node_manifest_debt["legacy_only_source_tools"] == []
     assert node_manifest_debt["write_tool_evidence"] is True
-    assert node_manifest_debt["convergence_path_available"] is False
+    assert node_manifest_debt["convergence_path_available"] is True
     assert node_manifest_debt["convergence_verifier_present"] is True
     assert node_manifest_debt["verifier_evidence_required"] is True
     assert node_manifest_debt["verifier_evidence_present"] is False
     assert node_manifest_debt["cutover_ready"] is False
     assert "legacy_callback_runner" in node_manifest_debt["blockers"]
-    assert "legacy_only_source_tools" in node_manifest_debt["blockers"]
+    assert "legacy_only_source_tools" not in node_manifest_debt["blockers"]
     assert "missing_revalidation_evidence" in node_manifest_debt["blockers"]
     assert "independent_shadow_required" in node_manifest_debt["blockers"]
     scheduler_bridge = summary["scheduler_bridge"]

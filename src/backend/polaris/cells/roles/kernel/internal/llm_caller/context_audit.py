@@ -6,6 +6,8 @@ import hashlib
 import json
 from typing import Any
 
+from polaris.kernelone.context.projection_engine import is_empty_run_card_message
+
 from .response_types import PreparedLLMRequest
 
 _UNDERUTILIZED_WINDOW_THRESHOLD = 8192
@@ -62,7 +64,11 @@ def _request_messages(ai_request: Any, fallback: list[dict[str, Any]]) -> list[d
                 continue
             role = str(item.get("role") or "user")
             content = str(item.get("content") or "")
-            messages.append({"role": role, "content": content})
+            message = {"role": role, "content": content}
+            name = str(item.get("name") or "").strip()
+            if name:
+                message["name"] = name
+            messages.append(message)
         if messages:
             return messages
 
@@ -322,9 +328,11 @@ def _context_quality_findings(
     sampling: dict[str, Any],
     execution_profile: dict[str, Any],
     execution_strategy: dict[str, Any],
+    message_projection_findings: list[dict[str, Any]],
 ) -> dict[str, Any]:
     missing = [key for key, ok in coverage.items() if not ok]
     findings: list[dict[str, Any]] = []
+    findings.extend(message_projection_findings)
     if missing:
         findings.append(
             {
@@ -355,6 +363,25 @@ def _context_quality_findings(
         "context_needs_review": bool(findings),
         "findings": findings,
     }
+
+
+def _message_projection_findings(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for index, message in enumerate(messages):
+        role = str(message.get("role") or "").strip().lower()
+        if role != "system":
+            continue
+        name = str(message.get("name") or "").strip().lower()
+        content = str(message.get("content") or "")
+        if is_empty_run_card_message(name=name, content=content):
+            findings.append(
+                {
+                    "code": "empty_run_card_message",
+                    "severity": "warning",
+                    "message_index": index,
+                }
+            )
+    return findings
 
 
 def _coerce_float(value: Any) -> float | None:
@@ -799,6 +826,7 @@ def build_final_request_context_audit_for_request(
         sampling=sampling,
         execution_profile=execution_profile,
         execution_strategy=execution_strategy,
+        message_projection_findings=_message_projection_findings(messages),
     )
 
     return {

@@ -439,6 +439,25 @@ def test_messages_from_projection_run_card() -> None:
     assert "Finish tests" in run_card_msg[0]["content"]
 
 
+def test_messages_from_projection_omits_empty_run_card() -> None:
+    """An empty run card must not add a no-op system message."""
+    projection = MagicMock()
+    projection.head_anchor = ""
+    projection.tail_anchor = ""
+    projection.active_window = ()
+    run_card = MagicMock()
+    run_card.current_goal = ""
+    run_card.open_loops = ()
+    run_card.latest_user_intent = ""
+    run_card.pending_followup_action = ""
+    run_card.last_turn_outcome = ""
+    projection.run_card = run_card
+
+    messages = ProjectionFormatter.messages_from_projection(projection)
+
+    assert not [m for m in messages if m.get("name") == "run_card"]
+
+
 def test_messages_from_projection_dedupes() -> None:
     """messages_from_projection must deduplicate messages by content hash."""
     projection = MagicMock()

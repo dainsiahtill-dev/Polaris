@@ -65,6 +65,43 @@ def test_final_request_context_audit_includes_sampling_profile() -> None:
     }
 
 
+def test_final_request_context_audit_flags_empty_run_card_message() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="chief_engineer",
+        input="",
+        options={"temperature": 0.2, "max_tokens": 8000},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "You are Chief Engineer."},
+                {"role": "system", "name": "run_card", "content": "【Run Card】"},
+                {"role": "user", "content": "Produce the construction blueprint."},
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Chief Engineer."},
+            {"role": "system", "name": "run_card", "content": "【Run Card】"},
+            {"role": "user", "content": "Produce the construction blueprint."},
+        ],
+        input_text="You are Chief Engineer.\n【Run Card】\nProduce the construction blueprint.",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="chief_engineer", max_context_tokens=128_000),
+    )
+
+    finding_codes = {item["code"] for item in audit["context_quality"]["findings"]}
+    assert "empty_run_card_message" in finding_codes
+
+
 def test_final_provider_snapshot_includes_execution_profile_summary_and_hash() -> None:
     execution_profile = {
         "schema_version": "task.execution_profile.v1",

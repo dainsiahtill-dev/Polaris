@@ -664,6 +664,45 @@ class TestMessagesFromProjection:
         assert active_msg["content"] == "Test content"
         assert "metadata" in active_msg
 
+    @pytest.mark.parametrize(
+        ("role_id", "display_name"),
+        (
+            ("pm", "PM"),
+            ("chief_engineer", "Chief Engineer"),
+            ("director", "Director"),
+        ),
+    )
+    def test_empty_run_card_is_omitted_for_core_delivery_roles(self, role_id: str, display_name: str):
+        """PM/CE/Director must not receive empty Run Card system-message noise."""
+        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+        from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
+
+        mock_profile = MagicMock()
+        mock_profile.context_policy = MagicMock()
+        mock_profile.context_domain = None
+        mock_profile.provider_id = None
+        mock_profile.model = None
+        mock_profile.role_id = role_id
+        mock_profile.display_name = display_name
+
+        gateway = RoleContextGateway(mock_profile, workspace=".")
+
+        mock_projection = MagicMock(spec=ContextOSProjection)
+        mock_projection.head_anchor = ""
+        mock_projection.tail_anchor = ""
+        mock_projection.active_window = ()
+        mock_projection.run_card = MagicMock()
+        mock_projection.run_card.current_goal = ""
+        mock_projection.run_card.open_loops = ()
+        mock_projection.run_card.latest_user_intent = ""
+        mock_projection.run_card.pending_followup_action = ""
+        mock_projection.run_card.last_turn_outcome = ""
+        mock_projection.snapshot = None
+
+        messages = gateway._messages_from_projection(mock_projection)
+
+        assert not [message for message in messages if message.get("name") == "run_card"]
+
     def test_creates_run_card_message(self):
         """Verify run_card creates a system message."""
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway

@@ -11,6 +11,7 @@ from typing import Any
 
 from polaris.kernelone.context.context_os.helpers import get_metadata_value
 from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
+from polaris.kernelone.context.projection_engine import render_run_card
 
 from .constants import HIGH_PRIORITY_DIALOG_ACTS, ROUTE_PRIORITY
 from .prompt_safety import format_tool_failure_summary, parse_tool_failure_summary, prompt_safe_message_content
@@ -393,27 +394,18 @@ class ProjectionFormatter:
 
         # Add run card as a system message for attention observability
         if projection.run_card is not None:
-            run_card = projection.run_card
-            run_card_lines = ["【Run Card】"]
-            if run_card.current_goal:
-                run_card_lines.append(f"Goal: {run_card.current_goal}")
-            if run_card.open_loops:
-                run_card_lines.append(f"Open loops: {len(list(run_card.open_loops))}")
-            if run_card.latest_user_intent:
-                run_card_lines.append(f"Latest intent: {run_card.latest_user_intent[:100]}")
-            if run_card.pending_followup_action:
-                run_card_lines.append(f"Pending: {run_card.pending_followup_action}")
-            if run_card.last_turn_outcome:
-                run_card_lines.append(
-                    f"Last outcome: {prompt_safe_message_content('assistant', run_card.last_turn_outcome)}"
-                )
-            messages.append(
-                {
-                    "role": "system",
-                    "content": "\n".join(run_card_lines),
-                    "name": "run_card",
-                }
+            rendered_run_card = render_run_card(
+                projection.run_card,
+                last_turn_outcome_sanitizer=lambda value: prompt_safe_message_content("assistant", value),
             )
+            if rendered_run_card:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": rendered_run_card,
+                        "name": "run_card",
+                    }
+                )
 
         # BUG FIX: Deduplicate messages by content hash to remove duplicate
         # events that accumulate through _merge_transcript and session_turn_events.

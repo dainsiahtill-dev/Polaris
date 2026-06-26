@@ -224,8 +224,7 @@ def _assert_non_authoritative_callback_projection_boundary(
     assert scheduler_bridge["callback_receipts_authoritative"] is False
     assert scheduler_bridge["typed_receipt_path_available"] is False
     assert (
-        scheduler_bridge["migration_blocker"]
-        == "callback runners still return tool_results instead of RepairReceipt"
+        scheduler_bridge["migration_blocker"] == "callback runners still return tool_results instead of RepairReceipt"
     )
     repair_kernel_receipts = [
         receipt for receipt in summary["repair_kernel"].get("receipts", []) if isinstance(receipt, dict)
@@ -850,13 +849,7 @@ def test_rust_post_execution_bridge_runs_dedicated_method_self_runtime_binding(
     source = tmp_path / "src" / "lib.rs"
     source.parent.mkdir(parents=True)
     cargo.write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
-    broken = (
-        "pub struct Demo;\n"
-        "impl Demo {\n"
-        "    pub fn foo(&) -> i32 { 1 }\n"
-        "    pub fn bar(&mut) { }\n"
-        "}\n"
-    )
+    broken = "pub struct Demo;\nimpl Demo {\n    pub fn foo(&) -> i32 { 1 }\n    pub fn bar(&mut) { }\n}\n"
     source.write_text(broken, encoding="utf-8")
     adapter = _FakeAdapter(tmp_path)
     adapter.artifact_quality_errors = [
@@ -948,8 +941,7 @@ def test_rust_post_execution_bridge_runs_dedicated_copy_derive_runtime_binding_w
     source.parent.mkdir(parents=True)
     cargo.write_text('[package]\nname = "demo"\nversion = "0.1.0"\n', encoding="utf-8")
     source.write_text(
-        "#[derive(Debug, Clone, Copy)]\n"
-        "pub struct Demo { value: String }\n",
+        "#[derive(Debug, Clone, Copy)]\npub struct Demo { value: String }\n",
         encoding="utf-8",
     )
     adapter = _FakeAdapter(tmp_path)
@@ -1001,11 +993,7 @@ def test_rust_post_execution_bridge_runs_dedicated_unused_import_runtime_binding
     source.write_text("use foo::{A, B};\npub fn keep() {}\n", encoding="utf-8")
     adapter = _FakeAdapter(tmp_path)
     adapter.artifact_quality_errors = [
-        "warning: unused import: `B`\n"
-        " --> src/lib.rs:1:14\n"
-        "  |\n"
-        "1 | use foo::{A, B};\n"
-        "  |              ^\n",
+        "warning: unused import: `B`\n --> src/lib.rs:1:14\n  |\n1 | use foo::{A, B};\n  |              ^\n",
     ]
 
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
@@ -1194,7 +1182,7 @@ def test_rust_post_execution_bridge_runs_missing_module_runtime_binding_with_wri
         "1 | pub mod models;\n"
         "  | ^^^^^^^^^^^^^^^\n"
         "  |\n"
-        "  = help: to create the module `models`, create file \"src/models.rs\" or \"src/models/mod.rs\"\n",
+        '  = help: to create the module `models`, create file "src/models.rs" or "src/models/mod.rs"\n',
     ]
 
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
@@ -1316,9 +1304,7 @@ def test_rust_post_execution_bridge_runs_duplicate_module_runtime_before_legacy_
         task_id="task-rust-duplicate-module",
     )
 
-    assert calls.index(("runtime", RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL)) < calls.index(
-        ("aggregate", "cargo_check")
-    )
+    assert calls.index(("runtime", RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL)) < calls.index(("aggregate", "cargo_check"))
     payloads = [item["result"] for item in results]
     assert [payload["source_tool"] for payload in payloads] == [RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL]
     assert payloads[0]["repair_kernel"]["owner_cell"] == "director.runtime"
@@ -1396,10 +1382,10 @@ def test_rust_post_execution_shadow_replay_projects_non_authoritative_receipt_me
         "deterministic_rust_missing_fields_repair",
     ]
     assert payload["remaining_legacy_subcases"] == [
-        "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
         "deterministic_rust_missing_fields_repair:field_declaration",
     ]
     assert payload["runtime_migrated_subcases"] == [
+        "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
         "deterministic_rust_lib_root_facade_repair:path_rewrite",
     ]
     assert payload["legacy_shadow_workspace"] is True
@@ -1426,10 +1412,10 @@ def test_rust_post_execution_shadow_replay_projects_non_authoritative_receipt_me
         "deterministic_rust_missing_fields_repair",
     ]
     assert repair_kernel["remaining_legacy_subcases"] == [
-        "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
         "deterministic_rust_missing_fields_repair:field_declaration",
     ]
     assert repair_kernel["runtime_migrated_subcases"] == [
+        "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
         "deterministic_rust_lib_root_facade_repair:path_rewrite",
     ]
     assert repair_kernel["applied_tool_name"] == "edit_file"
@@ -1539,7 +1525,7 @@ def test_rust_post_execution_shadow_replay_blocks_runtime_migrated_source_tools(
     assert repair_kernel["migration_blocker"] == "legacy_aggregate_shadow_replay_source_tool_not_remaining"
 
 
-def test_rust_post_execution_shadow_replay_keeps_missing_fields_as_remaining_subcase(
+def test_rust_post_execution_shadow_replay_blocks_missing_fields_subcase_after_runtime(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -1584,27 +1570,26 @@ def test_rust_post_execution_shadow_replay_keeps_missing_fields_as_remaining_sub
     )
 
     assert len(results) == 1
-    assert results[0]["success"] is True
-    assert results[0]["tool_name"] == "edit_file"
-    assert source.read_text(encoding="utf-8") == updated
+    assert results[0]["success"] is False
+    assert results[0]["tool_name"] == "write_file"
+    assert source.read_text(encoding="utf-8") == original
 
     payload = results[0]["result"]
+    assert payload["blocked"] is True
     assert payload["source_tool"] == missing_fields_source_tool
     assert payload["legacy_shadow_source_tools"] == [missing_fields_source_tool]
-    assert payload["legacy_shadow_applied_via_director_tools"] is True
+    assert payload["legacy_shadow_applied_via_director_tools"] is False
+    assert payload["applied_tool_name"] == "blocked_legacy_shadow_replay"
     assert payload["legacy_aggregate_shadow_replay_non_authoritative"] is True
     assert payload["legacy_aggregate_shadow_replay_authoritative"] is False
     assert payload["legacy_aggregate_remaining_source_tools"] == [lib_root_source_tool]
     assert payload["legacy_aggregate_shadow_replay_allowed_source_tools"] == [lib_root_source_tool]
-    assert missing_fields_subcase in payload["remaining_legacy_subcases"]
-    assert missing_fields_subcase in payload["legacy_aggregate_remaining_legacy_subcases"]
-    assert f"remaining_legacy_subcase:{missing_fields_subcase}" in payload[
-        "legacy_aggregate_remaining_legacy_subcase_blockers"
-    ]
-    assert f"remaining_legacy_subcase:{missing_fields_subcase}" in payload[
-        "legacy_aggregate_cutover_blockers"
-    ]
-    assert payload["legacy_aggregate_blocked_migrated_subcases"] == []
+    assert missing_fields_subcase not in payload["remaining_legacy_subcases"]
+    assert missing_fields_subcase in payload["runtime_migrated_subcases"]
+    assert missing_fields_subcase not in payload["legacy_aggregate_remaining_legacy_subcases"]
+    assert missing_fields_subcase in payload["legacy_aggregate_runtime_migrated_subcases"]
+    assert payload["legacy_aggregate_blocked_migrated_subcases"] == [missing_fields_subcase]
+    assert f"blocked_migrated_subcase:{missing_fields_subcase}" in payload["legacy_aggregate_cutover_blockers"]
     assert payload["legacy_aggregate_cutover_ready"] is False
     assert payload["receipt_authority"] == "non_authoritative_shadow_replay_projection"
     assert payload["runtime_authoritative_plan"] is False
@@ -1612,21 +1597,23 @@ def test_rust_post_execution_shadow_replay_keeps_missing_fields_as_remaining_sub
 
     evidence = payload["legacy_aggregate_cutover_readiness_evidence"]
     assert evidence["shadow_replay_non_authoritative"] is True
-    assert evidence["shadow_replay_authority_boundary"] == (
-        "legacy_shadow_replay_projection_only_not_runtime_receipt"
-    )
+    assert evidence["shadow_replay_authority_boundary"] == ("legacy_shadow_replay_projection_only_not_runtime_receipt")
     assert evidence["remaining_source_tools"] == [lib_root_source_tool]
-    assert missing_fields_subcase in evidence["remaining_legacy_subcases"]
-    assert evidence["blocked_migrated_subcases"] == []
+    assert missing_fields_subcase not in evidence["remaining_legacy_subcases"]
+    assert missing_fields_subcase in evidence["runtime_migrated_subcases"]
+    assert evidence["blocked_migrated_subcases"] == [missing_fields_subcase]
 
     repair_kernel = payload["repair_kernel"]
+    assert repair_kernel["blocked"] is True
     assert repair_kernel["authoritative"] is False
     assert repair_kernel["legacy_aggregate_shadow_replay_non_authoritative"] is True
-    assert missing_fields_subcase in repair_kernel["legacy_aggregate_remaining_legacy_subcases"]
+    assert missing_fields_subcase not in repair_kernel["legacy_aggregate_remaining_legacy_subcases"]
+    assert missing_fields_subcase in repair_kernel["legacy_aggregate_runtime_migrated_subcases"]
+    assert repair_kernel["legacy_aggregate_blocked_migrated_subcases"] == [missing_fields_subcase]
     assert repair_kernel["legacy_aggregate_cutover_ready"] is False
 
 
-def test_rust_post_execution_shadow_replay_allows_lib_root_export_subcase_after_path_rewrite_runtime(
+def test_rust_post_execution_shadow_replay_blocks_lib_root_export_subcase_after_runtime(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -1658,7 +1645,11 @@ def test_rust_post_execution_shadow_replay_allows_lib_root_export_subcase_after_
             }
         ]
 
-    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
+    class FailingDirectorToolExecutor:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("runtime-migrated lib root export must not reach DirectorToolExecutor")
+
+    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", FailingDirectorToolExecutor)
     monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fake_run_all_rust_post_repairs)
     monkeypatch.setattr(
         post_execution_repair_bridge,
@@ -1673,33 +1664,40 @@ def test_rust_post_execution_shadow_replay_allows_lib_root_export_subcase_after_
     )
 
     assert len(results) == 1
-    assert results[0]["success"] is True
-    assert source.read_text(encoding="utf-8") == updated
+    assert results[0]["success"] is False
+    assert source.read_text(encoding="utf-8") == original
 
     payload = results[0]["result"]
+    assert payload["blocked"] is True
     assert payload["source_tool"] == lib_root_source_tool
-    assert payload["legacy_shadow_applied_via_director_tools"] is True
+    assert payload["legacy_shadow_applied_via_director_tools"] is False
+    assert payload["applied_tool_name"] == "blocked_legacy_shadow_replay"
+    assert payload["legacy_aggregate_blocked_source_tools"] == [lib_root_source_tool]
+    assert payload["legacy_aggregate_blocked_migrated_source_tools"] == [lib_root_source_tool]
     assert payload["legacy_aggregate_remaining_source_tools"] == [
         "deterministic_rust_missing_fields_repair",
     ]
     assert payload["legacy_aggregate_shadow_replay_allowed_source_tools"] == [
         "deterministic_rust_missing_fields_repair",
     ]
-    assert export_subcase in payload["remaining_legacy_subcases"]
+    assert export_subcase not in payload["remaining_legacy_subcases"]
     assert path_rewrite_subcase not in payload["remaining_legacy_subcases"]
-    assert payload["runtime_migrated_subcases"] == [path_rewrite_subcase]
+    assert payload["runtime_migrated_subcases"] == [export_subcase, path_rewrite_subcase]
     assert payload["legacy_aggregate_remaining_legacy_subcases"] == payload["remaining_legacy_subcases"]
-    assert payload["legacy_aggregate_runtime_migrated_subcases"] == [path_rewrite_subcase]
-    assert payload["legacy_aggregate_blocked_migrated_subcases"] == []
+    assert payload["legacy_aggregate_runtime_migrated_subcases"] == [export_subcase, path_rewrite_subcase]
+    assert payload["legacy_aggregate_blocked_migrated_subcases"] == [export_subcase]
+    assert f"blocked_migrated_subcase:{export_subcase}" in payload["legacy_aggregate_cutover_blockers"]
     assert payload["receipt_authority"] == "non_authoritative_shadow_replay_projection"
     assert payload["runtime_authoritative_plan"] is False
     assert payload["repair_success_verdict"] is False
 
     repair_kernel = payload["repair_kernel"]
+    assert repair_kernel["blocked"] is True
     assert repair_kernel["remaining_legacy_subcases"] == payload["remaining_legacy_subcases"]
-    assert repair_kernel["runtime_migrated_subcases"] == [path_rewrite_subcase]
+    assert repair_kernel["runtime_migrated_subcases"] == [export_subcase, path_rewrite_subcase]
     assert repair_kernel["legacy_aggregate_remaining_legacy_subcases"] == payload["remaining_legacy_subcases"]
-    assert repair_kernel["legacy_aggregate_runtime_migrated_subcases"] == [path_rewrite_subcase]
+    assert repair_kernel["legacy_aggregate_runtime_migrated_subcases"] == [export_subcase, path_rewrite_subcase]
+    assert repair_kernel["legacy_aggregate_blocked_migrated_subcases"] == [export_subcase]
     assert repair_kernel["authoritative"] is False
 
 
@@ -1762,19 +1760,17 @@ def test_rust_post_execution_shadow_replay_blocks_lib_root_path_rewrite_subcase_
     assert payload["legacy_aggregate_blocked_source_tools"] == [lib_root_source_tool]
     assert payload["legacy_aggregate_blocked_migrated_source_tools"] == [lib_root_source_tool]
     assert payload["legacy_aggregate_blocked_migrated_subcases"] == [path_rewrite_subcase]
-    assert export_subcase in payload["remaining_legacy_subcases"]
+    assert export_subcase not in payload["remaining_legacy_subcases"]
     assert path_rewrite_subcase not in payload["remaining_legacy_subcases"]
-    assert payload["runtime_migrated_subcases"] == [path_rewrite_subcase]
-    assert f"blocked_migrated_subcase:{path_rewrite_subcase}" in payload[
-        "legacy_aggregate_cutover_blockers"
-    ]
+    assert payload["runtime_migrated_subcases"] == [export_subcase, path_rewrite_subcase]
+    assert f"blocked_migrated_subcase:{path_rewrite_subcase}" in payload["legacy_aggregate_cutover_blockers"]
     assert payload["applied_tool_name"] == "blocked_legacy_shadow_replay"
     assert payload["legacy_shadow_applied_via_director_tools"] is False
 
     repair_kernel = payload["repair_kernel"]
     assert repair_kernel["blocked"] is True
     assert repair_kernel["legacy_aggregate_blocked_migrated_subcases"] == [path_rewrite_subcase]
-    assert repair_kernel["runtime_migrated_subcases"] == [path_rewrite_subcase]
+    assert repair_kernel["runtime_migrated_subcases"] == [export_subcase, path_rewrite_subcase]
     assert repair_kernel["authoritative"] is False
 
 
@@ -1967,9 +1963,7 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
     migration_debt = summary["repair_kernel_migration_debt"]
     assert migration_debt["convergence_verifier_present"] is True
     assert migration_debt["cutover_ready"] is False
-    go_debt = {
-        item["step_id"]: item for item in migration_debt["legacy_callback_debt"]
-    }["materialization.go_import"]
+    go_debt = {item["step_id"]: item for item in migration_debt["legacy_callback_debt"]}["materialization.go_import"]
     assert go_debt["runtime_executable_source_tools"] == ["deterministic_go_bare_import_string_repair"]
     assert go_debt["legacy_only_source_tools"] == []
     assert go_debt["convergence_path_available"] is True
@@ -2115,9 +2109,9 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     assert all(set(item["allowed_paths"]) == {"Cargo.toml", "src/lib.rs"} for item in runtime_calls)
     assert retained_legacy_calls == ["missing_lib_target", "lib_root_facade"]
     assert [item["result"]["source_tool"] for item in results] == expected_source_tools
-    rust_debt = {
-        item["step_id"]: item for item in summary["repair_kernel_migration_debt"]["legacy_callback_debt"]
-    }["materialization.rust_compiler"]
+    rust_debt = {item["step_id"]: item for item in summary["repair_kernel_migration_debt"]["legacy_callback_debt"]}[
+        "materialization.rust_compiler"
+    ]
     assert rust_debt["runtime_executable_source_tools"] == expected_source_tools
     assert rust_debt["legacy_only_source_tools"] == []
 
@@ -2438,33 +2432,26 @@ def test_post_execution_migration_debt_ledger_distinguishes_runtime_and_legacy(
     assert summary is not None
     assert len(tool_results) == 2
     migration_debt = summary["repair_kernel"]["repair_kernel_migration_debt"]
-    assert migration_debt["legacy_aggregate_remaining_source_tools"] == [
-        "deterministic_rust_missing_fields_repair",
-    ]
-    assert summary["legacy_callback_debt"]["legacy_aggregate_remaining_source_tools"] == [
-        "deterministic_rust_missing_fields_repair",
-    ]
-    assert migration_debt["remaining_legacy_subcases"] == [
-        "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
-        "deterministic_rust_missing_fields_repair:field_declaration",
-    ]
+    assert migration_debt["legacy_aggregate_remaining_source_tools"] == []
+    assert summary["legacy_callback_debt"]["legacy_aggregate_remaining_source_tools"] == []
+    assert migration_debt["remaining_legacy_subcases"] == []
     assert migration_debt["runtime_migrated_subcases"] == [
+        "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
         "deterministic_rust_lib_root_facade_repair:path_rewrite",
+        "deterministic_rust_missing_fields_repair:field_declaration",
     ]
     assert migration_debt["legacy_aggregate_blocked_source_tools"] == []
     assert migration_debt["legacy_aggregate_blocked_migrated_source_tools"] == []
-    assert migration_debt["legacy_aggregate_remaining_source_tool_count"] == 1
-    assert migration_debt["legacy_aggregate_remaining_legacy_subcase_count"] == 2
-    assert migration_debt["legacy_aggregate_runtime_migrated_subcase_count"] == 1
+    assert migration_debt["legacy_aggregate_remaining_source_tool_count"] == 0
+    assert migration_debt["legacy_aggregate_remaining_legacy_subcase_count"] == 0
+    assert migration_debt["legacy_aggregate_runtime_migrated_subcase_count"] == 3
     assert migration_debt["legacy_aggregate_blocked_migrated_source_tool_count"] == 0
     assert migration_debt["legacy_aggregate_shadow_replay_authoritative"] is False
     assert migration_debt["legacy_aggregate_cutover_ready"] is False
-    assert "remaining_legacy_subcase:deterministic_rust_lib_root_facade_repair:export_or_module_declaration" in migration_debt[
-        "legacy_aggregate_cutover_blockers"
-    ]
-    assert "remaining_source_tool:deterministic_rust_missing_fields_repair" in migration_debt[
-        "legacy_aggregate_cutover_blockers"
-    ]
+    assert not any(
+        str(blocker).startswith(("remaining_legacy_subcase:", "remaining_source_tool:"))
+        for blocker in migration_debt["legacy_aggregate_cutover_blockers"]
+    )
     steps = {step["step_id"]: step for step in migration_debt["steps"]}
     cpp_step = steps["cpp.post_execution"]
     assert cpp_step["runtime_executable_source_tools"] == ["deterministic_cpp_include_path_repair"]
@@ -2476,8 +2463,8 @@ def test_post_execution_migration_debt_ledger_distinguishes_runtime_and_legacy(
     assert "convergence_verifier_not_provided" in cpp_step["blockers"]
 
     java_step = steps["java.post_execution"]
-    assert java_step["runtime_executable_source_tools"] == []
-    assert java_step["legacy_only_source_tools"] == ["deterministic_java_post_repair"]
+    assert java_step["runtime_executable_source_tools"] == ["deterministic_java_post_repair"]
+    assert java_step["legacy_only_source_tools"] == []
     assert "legacy_callback_record_projection" in java_step["blockers"]
     legacy_payload = next(
         item["result"] for item in tool_results if item["result"]["source_tool"] == "deterministic_java_post_repair"
@@ -2485,7 +2472,7 @@ def test_post_execution_migration_debt_ledger_distinguishes_runtime_and_legacy(
     assert legacy_payload["repair_kernel"]["owner_cell"] == "roles.adapters.legacy_strategy_host"
     assert legacy_payload["repair_kernel"]["authoritative"] is False
     assert legacy_payload["repair_kernel"]["requires_revalidation"] is True
-    assert summary["legacy_callback_debt"]["legacy_only_step_count"] >= 1
+    assert summary["legacy_callback_debt"]["legacy_only_step_count"] == 0
 
 
 def test_post_execution_allowed_rust_shadow_replay_stays_non_cutover_ready(
@@ -2496,10 +2483,10 @@ def test_post_execution_allowed_rust_shadow_replay_stays_non_cutover_ready(
         "deterministic_rust_missing_fields_repair",
     ]
     remaining_legacy_subcases = [
-        "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
         "deterministic_rust_missing_fields_repair:field_declaration",
     ]
     runtime_migrated_subcases = [
+        "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
         "deterministic_rust_lib_root_facade_repair:path_rewrite",
     ]
 
@@ -2576,38 +2563,37 @@ def test_post_execution_allowed_rust_shadow_replay_stays_non_cutover_ready(
     }
     assert evidence["remaining_legacy_subcases"] == remaining_legacy_subcases
     assert evidence["runtime_migrated_subcases"] == runtime_migrated_subcases
-    assert evidence["remaining_legacy_subcase_count"] == 2
-    assert evidence["runtime_migrated_subcase_count"] == 1
+    assert evidence["remaining_legacy_subcase_count"] == 1
+    assert evidence["runtime_migrated_subcase_count"] == 2
     assert evidence["blocked_migrated_source_tool_count"] == 0
     assert evidence["blocked_migrated_source_tool_counts"] == {}
     assert "remaining_source_tool:deterministic_rust_missing_fields_repair" in evidence["cutover_blockers"]
-    assert "remaining_legacy_subcase:deterministic_rust_lib_root_facade_repair:export_or_module_declaration" in evidence[
-        "cutover_blockers"
-    ]
+    assert (
+        "remaining_legacy_subcase:deterministic_rust_missing_fields_repair:field_declaration"
+        in evidence["cutover_blockers"]
+    )
 
     repair_kernel = summary["repair_kernel"]
     assert repair_kernel["legacy_aggregate_shadow_replay_authoritative"] is False
     assert repair_kernel["legacy_aggregate_cutover_ready"] is False
     assert repair_kernel["legacy_aggregate_remaining_source_tool_count"] == 1
-    assert repair_kernel["legacy_aggregate_remaining_legacy_subcase_count"] == 2
-    assert repair_kernel["legacy_aggregate_runtime_migrated_subcase_count"] == 1
+    assert repair_kernel["legacy_aggregate_remaining_legacy_subcase_count"] == 1
+    assert repair_kernel["legacy_aggregate_runtime_migrated_subcase_count"] == 2
     assert repair_kernel["legacy_aggregate_blocked_migrated_source_tool_count"] == 0
     assert repair_kernel["legacy_aggregate_cutover_blockers"] == evidence["cutover_blockers"]
 
     migration_debt = summary["repair_kernel_migration_debt"]
     assert migration_debt["legacy_aggregate_cutover_ready"] is False
     assert migration_debt["legacy_aggregate_remaining_source_tool_count"] == 1
-    assert migration_debt["legacy_aggregate_remaining_legacy_subcase_count"] == 2
-    assert migration_debt["legacy_aggregate_runtime_migrated_subcase_count"] == 1
+    assert migration_debt["legacy_aggregate_remaining_legacy_subcase_count"] == 1
+    assert migration_debt["legacy_aggregate_runtime_migrated_subcase_count"] == 2
     assert migration_debt["legacy_aggregate_blocked_migrated_source_tool_count"] == 0
     assert migration_debt["legacy_callback_debt"]["legacy_aggregate_cutover_ready"] is False
-    rust_step = {
-        item["step_id"]: item for item in migration_debt["steps"]
-    }["rust.post_execution_convergence"]
+    rust_step = {item["step_id"]: item for item in migration_debt["steps"]}["rust.post_execution_convergence"]
     assert rust_step["legacy_aggregate_cutover_ready"] is False
     assert rust_step["legacy_aggregate_remaining_source_tool_count"] == 1
-    assert rust_step["legacy_aggregate_remaining_legacy_subcase_count"] == 2
-    assert rust_step["legacy_aggregate_runtime_migrated_subcase_count"] == 1
+    assert rust_step["legacy_aggregate_remaining_legacy_subcase_count"] == 1
+    assert rust_step["legacy_aggregate_runtime_migrated_subcase_count"] == 2
     assert rust_step["legacy_aggregate_blocked_migrated_source_tool_count"] == 0
 
     scheduler_bridge = summary["scheduler_bridge"]
@@ -2713,11 +2699,11 @@ def test_post_execution_migration_debt_marks_runtime_verifier_evidence_without_l
     assert "convergence_verifier_not_provided" not in cpp_step["blockers"]
 
     java_step = steps["java.post_execution"]
-    assert java_step["runtime_executable_source_tools"] == []
-    assert java_step["legacy_only_source_tools"] == ["deterministic_java_post_repair"]
+    assert java_step["runtime_executable_source_tools"] == ["deterministic_java_post_repair"]
+    assert java_step["legacy_only_source_tools"] == []
     assert java_step["verifier_evidence_present"] is False
     assert java_step["cutover_ready"] is False
-    assert "legacy_only_source_tools_present" in java_step["blockers"]
+    assert "legacy_only_source_tools_present" not in java_step["blockers"]
     assert "legacy_callback_record_projection" in java_step["blockers"]
 
 
@@ -2948,8 +2934,7 @@ def test_post_execution_scheduler_bridge_counts_callback_receipt_projections_wit
     assert scheduler_bridge["typed_receipt_path_available"] is False
     assert scheduler_bridge["callback_projection_claimed_typed_receipt_path_count"] == 0
     assert (
-        scheduler_bridge["migration_blocker"]
-        == "callback runners still return tool_results instead of RepairReceipt"
+        scheduler_bridge["migration_blocker"] == "callback runners still return tool_results instead of RepairReceipt"
     )
     repair_kernel_receipts = [
         receipt for receipt in summary["repair_kernel"].get("receipts", []) if isinstance(receipt, dict)
@@ -3187,9 +3172,7 @@ def test_materialization_scheduler_bridge_keeps_callback_projection_non_authorit
     assert scheduler_bridge["native_repair_kernel_receipt_count"] == 0
     assert scheduler_bridge["callback_projection_only_count"] == 1
     assert scheduler_bridge["callback_authoritative_receipt_count"] == 0
-    assert scheduler_bridge["callback_receipt_authority_values"] == [
-        "non_authoritative_callback_projection"
-    ]
+    assert scheduler_bridge["callback_receipt_authority_values"] == ["non_authoritative_callback_projection"]
     assert scheduler_bridge["callback_projection_claimed_typed_receipt_path_count"] == 1
     assert scheduler_bridge.get("projection_only", True) is True
     assert scheduler_bridge["remaining_callback_only_step_ids"] == ["materialization.go_import"]
@@ -3214,9 +3197,7 @@ def test_materialization_scheduler_bridge_keeps_callback_projection_non_authorit
     migration_debt = summary["repair_kernel_migration_debt"]
     assert migration_debt["remaining_callback_only_step_ids"] == ["materialization.go_import"]
     assert migration_debt["callback_only_step_count"] == 1
-    go_debt = {
-        item["step_id"]: item for item in migration_debt["legacy_callback_debt"]
-    }["materialization.go_import"]
+    go_debt = {item["step_id"]: item for item in migration_debt["legacy_callback_debt"]}["materialization.go_import"]
     assert go_debt["native_receipt_present"] is False
     assert go_debt["callback_projection_present"] is True
     assert go_debt["callback_only"] is True
@@ -3348,9 +3329,7 @@ def test_materialization_scheduler_bridge_separates_native_receipts_from_callbac
     ]
     assert summary["repair_kernel"]["receipt_count"] == 1
     assert {receipt.get("receipt_id") for receipt in repair_kernel_receipts} == {native_receipt_id}
-    assert {receipt.get("receipt_id") for receipt in repair_kernel_receipts}.isdisjoint(
-        {callback_receipt_id}
-    )
+    assert {receipt.get("receipt_id") for receipt in repair_kernel_receipts}.isdisjoint({callback_receipt_id})
 
     scheduler_bridge = summary["scheduler_bridge"]
     assert scheduler_bridge["repair_kernel_receipt_count"] == 1
@@ -3398,9 +3377,7 @@ def test_materialization_scheduler_bridge_separates_native_receipts_from_callbac
     assert migration_debt["callback_projection_step_ids"] == ["materialization.go_import"]
     assert migration_debt["remaining_callback_only_step_ids"] == []
     assert migration_debt["callback_only_step_count"] == 0
-    go_debt = {
-        item["step_id"]: item for item in migration_debt["legacy_callback_debt"]
-    }["materialization.go_import"]
+    go_debt = {item["step_id"]: item for item in migration_debt["legacy_callback_debt"]}["materialization.go_import"]
     assert go_debt["native_receipt_present"] is True
     assert go_debt["callback_projection_present"] is True
     assert go_debt["callback_only"] is False

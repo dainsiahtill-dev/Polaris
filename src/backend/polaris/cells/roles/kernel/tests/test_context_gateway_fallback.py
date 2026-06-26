@@ -434,6 +434,7 @@ class TestProcessContextOverride:
             },
             "llm_provider_policy": {"allowed_provider_types": ["ollama"]},
             "role_runtime_required": True,
+            "run_card": {"current_goal": "must stay in ContextOS projection"},
             "cognitive_runtime_required": True,
             "cognitive_guidance": {
                 "intent_type": "test",
@@ -452,6 +453,8 @@ class TestProcessContextOverride:
         assert "llm_provider_policy" not in content
         assert "allowed_provider_types" not in content
         assert "role_runtime_required" not in content
+        assert "run_card" not in content
+        assert "must stay in ContextOS projection" not in content
         assert "cognitive_runtime_required" not in content
         assert "cognitive_guidance" not in content
         assert "execution_path" not in content

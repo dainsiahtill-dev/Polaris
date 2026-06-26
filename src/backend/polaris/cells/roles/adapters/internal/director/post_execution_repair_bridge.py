@@ -54,17 +54,15 @@ _RUST_LIB_ROOT_FACADE_PATH_REWRITE_SUBCASE = f"{_RUST_LIB_ROOT_FACADE_SOURCE_TOO
 _RUST_LIB_ROOT_FACADE_EXPORT_OR_MODULE_DECLARATION_SUBCASE = (
     f"{_RUST_LIB_ROOT_FACADE_SOURCE_TOOL}:export_or_module_declaration"
 )
-_RUST_LEGACY_AGGREGATE_BASE_REMAINING_SUBCASES = frozenset(
-    {
-        _RUST_LIB_ROOT_FACADE_EXPORT_OR_MODULE_DECLARATION_SUBCASE,
-        _RUST_MISSING_FIELDS_FIELD_DECLARATION_SUBCASE,
-    }
-)
-_RUST_LEGACY_AGGREGATE_RUNTIME_MIGRATABLE_SUBCASES = frozenset(
-    {
-        _RUST_LIB_ROOT_FACADE_PATH_REWRITE_SUBCASE,
-    }
-)
+_RUST_LEGACY_AGGREGATE_SUBCASES_BY_SOURCE_TOOL: Mapping[str, frozenset[str]] = {
+    _RUST_MISSING_FIELDS_SOURCE_TOOL: frozenset({_RUST_MISSING_FIELDS_FIELD_DECLARATION_SUBCASE}),
+    _RUST_LIB_ROOT_FACADE_SOURCE_TOOL: frozenset(
+        {
+            _RUST_LIB_ROOT_FACADE_EXPORT_OR_MODULE_DECLARATION_SUBCASE,
+            _RUST_LIB_ROOT_FACADE_PATH_REWRITE_SUBCASE,
+        }
+    ),
+}
 _RUST_LEGACY_AGGREGATE_SOURCE_TOOL_BLOCKER = "legacy_aggregate_shadow_replay_source_tool_not_remaining"
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _RUST_E0583_HELP_LINE_RE = re.compile(
@@ -1714,17 +1712,20 @@ def _rust_legacy_aggregate_remaining_source_tools(
 def _rust_legacy_aggregate_runtime_migrated_subcases(
     runtime_executable_source_tools: frozenset[str],
 ) -> list[str]:
-    if _RUST_LIB_ROOT_FACADE_SOURCE_TOOL not in runtime_executable_source_tools:
-        return []
-    return sorted(_RUST_LEGACY_AGGREGATE_RUNTIME_MIGRATABLE_SUBCASES)
+    subcases: set[str] = set()
+    for source_tool, source_tool_subcases in _RUST_LEGACY_AGGREGATE_SUBCASES_BY_SOURCE_TOOL.items():
+        if source_tool in runtime_executable_source_tools:
+            subcases.update(source_tool_subcases)
+    return sorted(subcases)
 
 
 def _rust_legacy_aggregate_remaining_subcases(
     runtime_executable_source_tools: frozenset[str],
 ) -> list[str]:
-    subcases = set(_RUST_LEGACY_AGGREGATE_BASE_REMAINING_SUBCASES)
-    if _RUST_LIB_ROOT_FACADE_SOURCE_TOOL not in runtime_executable_source_tools:
-        subcases.add(_RUST_LIB_ROOT_FACADE_PATH_REWRITE_SUBCASE)
+    subcases: set[str] = set()
+    for source_tool, source_tool_subcases in _RUST_LEGACY_AGGREGATE_SUBCASES_BY_SOURCE_TOOL.items():
+        if source_tool not in runtime_executable_source_tools:
+            subcases.update(source_tool_subcases)
     return sorted(subcases)
 
 
