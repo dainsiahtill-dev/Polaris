@@ -169,14 +169,29 @@ class TestElideOversizedFrame:
         assert elided["channel"] == "llm"
         assert elided["snapshot"] is True
 
-    def test_oversized_list_is_truncated_with_marker(self) -> None:
-        frame = {"type": "EVENT", "items": ["payload-" + "q" * 5000 for _ in range(500)]}
-        budget = 80_000
+    def test_oversized_list_items_are_truncated_and_bounded(self) -> None:
+        frame = {"type": "EVENT", "items": ["payload-" + "q" * 6000 for _ in range(40)]}
+        budget = 120_000
         elided = elide_oversized_frame(frame, budget)
         assert _byte_size(elided) <= budget
         assert elided["type"] == "EVENT"
         assert isinstance(elided["items"], list)
+        assert elided["items"]  # list preserved (not hard-floored)
         assert any("ws-elided" in str(item) for item in elided["items"])
+
+    def test_pathological_many_fields_falls_back_to_hard_floor(self) -> None:
+        # Thousands of mid-size sibling fields cannot fit even after per-field
+        # elision → the hard-floor net keeps only top-level control scalars.
+        frame: dict[str, object] = {"type": "EVENT", "channel": "event.factory", "cursor": 5}
+        for i in range(4000):
+            frame[f"field_{i}"] = "v" * 300
+        budget = 80_000
+        elided = elide_oversized_frame(frame, budget)
+        assert _byte_size(elided) <= budget
+        assert elided["__ws_frame_elided__"] is True
+        assert elided["type"] == "EVENT"
+        assert elided["channel"] == "event.factory"
+        assert elided["cursor"] == 5
 
     def test_idempotent_on_already_elided_payload(self) -> None:
         payload = {"type": "EVENT", "blob": "x" * 2_000_000}

@@ -33,11 +33,11 @@ _ELIDE_SMALL_FIELD_BYTES = 1024
 # =============================================================================
 
 
-def parse_json_line(raw: str) -> dict[str, Any] | None:
+def parse_json_line(raw: str | None) -> dict[str, Any] | None:
     """Parse a JSON line safely.
 
     Args:
-        raw: Raw line string.
+        raw: Raw line string (``None`` is tolerated and parsed as empty).
 
     Returns:
         Parsed dictionary, or None if invalid.
