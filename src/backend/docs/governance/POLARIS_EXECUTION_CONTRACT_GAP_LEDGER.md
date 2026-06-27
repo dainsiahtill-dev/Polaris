@@ -53,7 +53,7 @@ The target chain is:
 | C-10 | `70d0c284` | Execution-envelope capability evidence is proven to block write scope expansion and unlisted commands through RoleToolGateway and toolkit handlers. |
 | C-11 | `e2c30deb` | Final provider request evidence coverage fails closed before sync, structured, and stream provider invocation when strict policy is active. |
 | C-12 | `64326302` | PM deterministic route probe is regression-tested as text-only from adapter context through TransactionKernel tool schema and final provider snapshot. |
-| C-13 | pending | Final request evidence coverage treats `delivery_plan_document` and `delivery_depth_contract` as first-class required/included refs. |
+| C-13 | `2b51b7e1` | Final request evidence coverage treats `delivery_plan_document` and `delivery_depth_contract` as first-class required/included refs. |
 
 ## Update Rules
 
