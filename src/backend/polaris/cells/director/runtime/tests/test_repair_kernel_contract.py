@@ -2296,6 +2296,65 @@ def test_public_repair_migrated_typescript_source_tool_uses_runtime_binding_with
     assert writes == []
 
 
+def test_public_runtime_dependency_repair_plans_node_types_dev_dependency() -> None:
+    source_tool = "deterministic_runtime_dependency_repair"
+
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={
+                "package.json": ('{"name":"node-ts-app","private":true,"devDependencies":{"typescript":"5.4.5"}}\n')
+            },
+            artifact_quality_errors=(
+                "src/main.ts(43,5): error TS2580: Cannot find name 'process'. "
+                "Do you need to install type definitions for node? Try npm i --save-dev @types/node.",
+            ),
+            mode="shadow",
+        )
+    )
+    payload = planning_result.to_dict()
+
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    assert payload["source_tool"] == source_tool
+    assert payload["plan_summary"]["rule_id"] == "generic.runtime_dependency"
+    assert payload["plan_summary"]["operation_count"] == 1
+    assert payload["composition_summary"]["ok"] is True
+    assert payload["composition_summary"]["changed_paths"] == ["package.json"]
+    assert '"@types/node"' in payload["composition_summary"]["patches"][0]["content_after"]
+
+
+def test_public_typescript_tsconfig_repair_plans_import_meta_module_option() -> None:
+    source_tool = "deterministic_typescript_tsconfig_lib_repair"
+
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={
+                "tsconfig.json": (
+                    '{"compilerOptions":{"target":"ES2020","module":"commonjs",'
+                    '"moduleResolution":"node","lib":["ES2020"]}}\n'
+                )
+            },
+            artifact_quality_errors=(
+                "src/main.ts(152,16): error TS1343: The 'import.meta' meta-property is only "
+                "allowed when '--module' is es2020/es2022/esnext/system/node16/nodenext.",
+            ),
+            mode="shadow",
+        )
+    )
+    payload = planning_result.to_dict()
+
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    assert payload["source_tool"] == source_tool
+    assert payload["plan_summary"]["rule_id"] == "typescript.tsconfig_lib"
+    assert payload["plan_summary"]["operation_count"] == 1
+    assert payload["composition_summary"]["ok"] is True
+    assert payload["composition_summary"]["changed_paths"] == ["tsconfig.json"]
+    assert '"module": "ES2020"' in payload["composition_summary"]["patches"][0]["content_after"]
+
+
 def test_public_repair_rust_aggregate_bindings_fail_closed_without_safe_plan(
     tmp_path: Path,
 ) -> None:

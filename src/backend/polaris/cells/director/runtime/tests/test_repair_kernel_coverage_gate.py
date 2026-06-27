@@ -46,7 +46,7 @@ def test_convergence_gate_records_report_and_fails_all_uncovered_diagnostics(tmp
     assert result.receipts == ()
     assert result.metadata["coverage_report"]["total_diagnostics"] == 1
     assert result.metadata["coverage_gap_count"] == 1
-    assert result.metadata["coverage_report"]["coverage_gap_recommended_routes"] == ["llm_repair"]
+    assert result.metadata["coverage_report"]["coverage_gap_recommended_routes"] == ["runtime_rule"]
     assert result.metadata["coverage_report"]["coverage_gap_slot_statuses"] == ["reserved_slot_available"]
     assert result.metadata["uncovered_diagnostics"][0]["code"] == "declared_target_missing"
     gap = result.metadata["coverage_gaps"][0]
@@ -58,7 +58,7 @@ def test_convergence_gate_records_report_and_fails_all_uncovered_diagnostics(tmp
     assert gap["reserved_slot_available"] is True
     assert gap["slot_status"] == "reserved_slot_available"
     assert gap["reserved_language_slot"]["language"] == "ruby"
-    assert gap["recommended_route"] == "llm_repair"
+    assert gap["recommended_route"] == "runtime_rule"
     assert gap["recommended_next_owner"] == "runtime_rule"
     assert gap["coverage_status"] == "coverage_gap"
     assert gap["audit_reason"] == "known_rule_matched=false"
@@ -76,7 +76,7 @@ def test_public_coverage_projects_top_level_gap_report_for_audit_consumers() -> 
     assert payload["coverage_gap_languages"] == ["ruby"]
     assert payload["coverage_gap_archetypes"] == ["missing_declared_target"]
     assert payload["coverage_gap_diagnostic_codes"] == ["declared_target_missing"]
-    assert payload["coverage_gap_recommended_routes"] == ["llm_repair"]
+    assert payload["coverage_gap_recommended_routes"] == ["runtime_rule"]
     assert payload["coverage_gap_slot_statuses"] == ["reserved_slot_available"]
     assert payload["uncovered_diagnostics"][0]["code"] == "declared_target_missing"
     gap = payload["coverage_gaps"][0]
@@ -85,6 +85,33 @@ def test_public_coverage_projects_top_level_gap_report_for_audit_consumers() -> 
     assert gap["reserved_language_slot_matched"] is True
     assert gap["reserved_language_slot"]["language"] == "ruby"
     assert gap["recommended_next_owner"] == "runtime_rule"
+
+
+def test_public_coverage_routes_node_typescript_configuration_diagnostics_to_runtime_rules() -> None:
+    payload = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(
+            artifact_quality_errors=(
+                "Artifact quality scan failed: TypeScript node builtin import 'node:url' "
+                "requires '@types/node' in src/main.ts",
+                "src/main.ts(43,5): error TS2580: Cannot find name 'process'. "
+                "Do you need to install type definitions for node? Try npm i --save-dev @types/node.",
+                "src/main.ts(152,16): error TS1343: The 'import.meta' meta-property is only "
+                "allowed when '--module' is es2020/es2022/esnext/system/node16/nodenext.",
+            )
+        )
+    ).to_dict()
+
+    assert payload["coverage_gap_count"] == 0
+    assert payload["covered_diagnostic_count"] == 3
+    assert payload["executable_runtime_plan_diagnostic_count"] == 3
+
+    matched_tools = [tuple(item["matched_source_tools"]) for item in payload["items"]]
+    assert ("deterministic_runtime_dependency_repair",) in matched_tools
+    assert ("deterministic_typescript_tsconfig_lib_repair",) in matched_tools
+    for item in payload["items"]:
+        assert item["known_rule_matched"] is True
+        assert item["executable_runtime_plan_matched"] is True
+        assert item["coverage_status"] == "executable_runtime"
 
 
 def test_convergence_gate_distinguishes_unselected_executable_runtime_match_from_metadata_only(
@@ -367,7 +394,7 @@ def test_public_coverage_gap_projects_reserved_slot_and_recommended_owner_fields
     assert payload["coverage_gap_archetypes"] == ["missing_declared_target"]
     assert payload["coverage_gap_diagnostic_codes"] == ["declared_target_missing"]
     assert payload["coverage_gap_handoff_recommendations"] == ["runtime_rule_backlog"]
-    assert payload["coverage_gap_recommended_routes"] == ["llm_repair"]
+    assert payload["coverage_gap_recommended_routes"] == ["runtime_rule"]
     assert payload["coverage_gap_slot_statuses"] == ["reserved_slot_available"]
     assert gap["language"] == "ruby"
     assert gap["diagnostic_language"] == "ruby"
@@ -381,7 +408,7 @@ def test_public_coverage_gap_projects_reserved_slot_and_recommended_owner_fields
     assert gap["reserved_repairer_module"].endswith(".ruby_runtime")
     assert gap["reserved_slot_registration_policy"] == "bench_verified_rule_required"
     assert gap["recommended_next_owner"] == "runtime_rule"
-    assert gap["recommended_route"] == "llm_repair"
+    assert gap["recommended_route"] == "runtime_rule"
     assert gap["handoff_recommendation"] == "runtime_rule_backlog"
     assert gap["llm_advisory_recommended"] is False
     assert gap["agi_advisory_recommended"] is False
@@ -392,7 +419,7 @@ def test_public_coverage_gap_projects_reserved_slot_and_recommended_owner_fields
     assert item["slot_status"] == "reserved_slot_available"
     assert item["reserved_language_slot"]["language"] == "ruby"
     assert item["recommended_next_owner"] == "runtime_rule"
-    assert item["recommended_route"] == "llm_repair"
+    assert item["recommended_route"] == "runtime_rule"
     assert item["handoff_recommendation"] == "runtime_rule_backlog"
     assert item["coverage_status"] == "coverage_gap"
     assert item["authoritative_rule_registration_allowed"] is False

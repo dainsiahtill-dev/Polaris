@@ -41,6 +41,41 @@ def _executor(workspace: Path) -> OrchestrationStageExecutor:
     return OrchestrationStageExecutor(workspace)
 
 
+def test_pm_plan_validation_contract_hygiene_defers_test_acceptance_to_validation_task() -> None:
+    payload = {
+        "tasks": [
+            {
+                "id": "TASK-1",
+                "goal": "Create implementation modules",
+                "scope": "src",
+                "target_files": ["package.json", "tsconfig.json", "src/index.ts"],
+                "steps": ["Create implementation files"],
+                "acceptance": ["`npm run build` and `npm run test` pass for the implementation."],
+            },
+            {
+                "id": "TASK-2",
+                "goal": "Create verification assets",
+                "scope": "tests",
+                "target_files": ["src/verify.ts", "tests/verify.test.ts", "README.md"],
+                "steps": ["Create test coverage"],
+                "acceptance": ["`npm run test` executes real verification and returns PASS."],
+                "depends_on": ["TASK-1"],
+            },
+        ]
+    }
+
+    tasks = OrchestrationStageExecutor._pm_plan_tasks_from_payload(payload)
+
+    first_acceptance = " ".join(tasks[0]["acceptance"]).lower()
+    assert "npm run test" not in first_acceptance
+    assert "build/start checks" in first_acceptance
+    assert tasks[0]["metadata"]["validation_contract_hygiene"]["downstream_validation_targets"] == [
+        "src/verify.ts",
+        "tests/verify.test.ts",
+    ]
+    assert "npm run test" in " ".join(tasks[1]["acceptance"]).lower()
+
+
 def _write_review_for_blueprint(
     executor: OrchestrationStageExecutor,
     *,

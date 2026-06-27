@@ -47,6 +47,11 @@ _TS_NODE_BUILTIN_TYPES_ERROR_RE = re.compile(
     r"TypeScript node builtin import ['\"][^'\"]+['\"] requires ['\"]@types/node['\"] in (?P<path>\S+)",
     re.IGNORECASE,
 )
+_TS_NODE_GLOBAL_TYPES_ERROR_RE = re.compile(
+    r"(?:TS2580:.*(?:type definitions for node|@types/node)|"
+    r"Cannot find name ['\"](?:process|Buffer|__dirname|__filename|require|module)['\"])",
+    re.IGNORECASE,
+)
 _TS_TYPESCRIPT_DEV_DEPENDENCY_ERROR_RE = re.compile(
     r"TypeScript project requires ['\"]typescript['\"] devDependency",
     re.IGNORECASE,
@@ -591,7 +596,7 @@ def _parse_required_dev_dependency_packages(diagnostics: Sequence[RepairDiagnost
     packages: list[str] = []
     for diagnostic in diagnostics:
         text = "\n".join(item for item in (str(diagnostic.raw or ""), str(diagnostic.message or "")) if item)
-        if _TS_NODE_BUILTIN_TYPES_ERROR_RE.search(text):
+        if _TS_NODE_BUILTIN_TYPES_ERROR_RE.search(text) or _TS_NODE_GLOBAL_TYPES_ERROR_RE.search(text):
             packages.append("@types/node")
         if _TS_TYPESCRIPT_DEV_DEPENDENCY_ERROR_RE.search(text):
             packages.append("typescript")

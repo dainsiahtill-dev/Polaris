@@ -13,6 +13,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -581,7 +582,104 @@ class OrchestrationStageExecutor:
         tasks = payload.get("tasks")
         if not isinstance(tasks, list):
             return []
-        return [item for item in tasks if isinstance(item, dict)]
+        task_rows = [dict(item) for item in tasks if isinstance(item, dict)]
+        return OrchestrationStageExecutor._normalize_pm_plan_validation_contracts(task_rows)
+
+    _PM_TEST_COMMAND_RE = re.compile(
+        r"`?(?:npm\s+(?:run\s+)?test|pnpm\s+(?:run\s+)?test|yarn\s+test|"
+        r"pytest|go\s+test|cargo\s+test|vitest|jest)`?",
+        re.IGNORECASE,
+    )
+    _PM_NON_TEST_COMMAND_RE = re.compile(
+        r"\b(?:build|lint|start|smoke|compile|typecheck|tsc|ruff|mypy)\b",
+        re.IGNORECASE,
+    )
+
+    @staticmethod
+    def _normalize_pm_plan_validation_contracts(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep per-task test acceptance aligned with the task that owns test targets."""
+
+        if not tasks:
+            return []
+
+        task_ids = [
+            OrchestrationStageExecutor._task_string(task, "id", "task_id", "uid") or f"task-{index}"
+            for index, task in enumerate(tasks, start=1)
+        ]
+        downstream_validation_by_dependency: dict[str, list[str]] = {}
+        for index, task in enumerate(tasks):
+            task_id = task_ids[index]
+            if not task_id:
+                continue
+            validation_targets = [
+                path
+                for path in OrchestrationStageExecutor._task_string_list(task, "target_files", "scope_paths")
+                if OrchestrationStageExecutor._is_pm_validation_target_path(path)
+            ]
+            if not validation_targets:
+                continue
+            for dependency_id in OrchestrationStageExecutor._task_string_list(task, "depends_on", "dependencies"):
+                normalized_dependency = str(dependency_id or "").strip()
+                if not normalized_dependency:
+                    continue
+                downstream_validation_by_dependency.setdefault(normalized_dependency, []).extend(validation_targets)
+
+        normalized_tasks: list[dict[str, Any]] = []
+        for index, task in enumerate(tasks):
+            task_id = task_ids[index]
+            copied = dict(task)
+            acceptance_key = "acceptance" if "acceptance" in copied else "acceptance_criteria"
+            acceptance = OrchestrationStageExecutor._task_string_list(copied, "acceptance", "acceptance_criteria")
+            has_local_validation_target = any(
+                OrchestrationStageExecutor._is_pm_validation_target_path(path)
+                for path in OrchestrationStageExecutor._task_string_list(copied, "target_files", "scope_paths")
+            )
+            downstream_validation_targets = downstream_validation_by_dependency.get(task_id, [])
+            if acceptance and not has_local_validation_target and downstream_validation_targets:
+                rewritten, removed = OrchestrationStageExecutor._acceptance_without_test_commands(acceptance)
+                if removed:
+                    copied[acceptance_key] = rewritten or [
+                        "Build/start checks for this task's declared implementation targets pass."
+                    ]
+                    metadata_raw = copied.get("metadata")
+                    metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+                    metadata["validation_contract_hygiene"] = {
+                        "reason": "test_acceptance_deferred_to_downstream_validation_task",
+                        "removed_acceptance_items": removed,
+                        "downstream_validation_targets": list(dict.fromkeys(downstream_validation_targets)),
+                    }
+                    copied["metadata"] = metadata
+            normalized_tasks.append(copied)
+        return normalized_tasks
+
+    @staticmethod
+    def _is_pm_validation_target_path(path: str) -> bool:
+        normalized = str(path or "").strip().replace("\\", "/").lower()
+        if not normalized:
+            return False
+        name = Path(normalized).name
+        return (
+            normalized.startswith(("tests/", "test/", "__tests__/"))
+            or "/tests/" in normalized
+            or "/__tests__/" in normalized
+            or any(token in name for token in ("test", "spec", "verify"))
+        )
+
+    @staticmethod
+    def _acceptance_without_test_commands(acceptance: list[str]) -> tuple[list[str], list[str]]:
+        kept: list[str] = []
+        removed: list[str] = []
+        for item in acceptance:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            if not OrchestrationStageExecutor._PM_TEST_COMMAND_RE.search(text):
+                kept.append(text)
+                continue
+            removed.append(text)
+            if OrchestrationStageExecutor._PM_NON_TEST_COMMAND_RE.search(text):
+                kept.append("Build/start checks for this task's declared implementation targets pass.")
+        return list(dict.fromkeys(kept)), removed
 
     def _iter_pm_plan_contract_candidates(self) -> list[Path]:
         candidates: list[Path] = []
