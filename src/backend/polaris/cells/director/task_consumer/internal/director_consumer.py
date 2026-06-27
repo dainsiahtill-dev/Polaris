@@ -123,6 +123,14 @@ class UnrecoverableExecutionError(RuntimeError):
     """Execution failure that should be dead-lettered and compensated."""
 
 
+class InterfaceContractAmendmentRequiredError(RuntimeError):
+    """Execution evidence proved CE must revise the interface contract."""
+
+    def __init__(self, message: str, *, amendment_request: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.amendment_request = dict(amendment_request)
+
+
 DirectorTaskExecutor = Callable[[str, dict[str, Any], str], dict[str, Any]]
 
 
@@ -533,6 +541,60 @@ def _adapter_failure_message(adapter_result: dict[str, Any]) -> str:
             if detail:
                 return f"{base}: {detail[:400]}"
     return base
+
+
+def _interface_contract_amendment_from_adapter_failure(
+    *,
+    workspace_path: Path,
+    task_id: str,
+    payload: dict[str, Any],
+    adapter_result: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return CE amendment evidence when artifact quality proves design drift."""
+
+    if adapter_result.get("success") is True:
+        return None
+    scope = _contract_amendment_scan_scope(payload=payload, adapter_result=adapter_result)
+    try:
+        from polaris.kernelone.quality import scan_workspace_artifact_quality_evidence
+
+        evidence = scan_workspace_artifact_quality_evidence(
+            workspace_path.as_posix(),
+            relative_paths=scope or None,
+            task_id=task_id,
+        )
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if evidence.contract_amendment_request is None:
+        return None
+    return {
+        "amendment_request": evidence.contract_amendment_request.to_dict(),
+        "cross_artifact_issues": [issue.to_dict() for issue in evidence.cross_artifact_issues],
+        "cross_artifact_repair_plans": [plan.to_dict() for plan in evidence.cross_artifact_repair_plans],
+    }
+
+
+def _contract_amendment_scan_scope(*, payload: dict[str, Any], adapter_result: dict[str, Any]) -> list[str]:
+    scope: list[str] = []
+    for key in ("target_files", "scope_paths", "changed_files"):
+        scope.extend(_normalize_string_list(payload.get(key)))
+    step_target = _step_target_file(payload)
+    if step_target:
+        scope.append(step_target)
+    scope.extend(_normalize_string_list(adapter_result.get("changed_files")))
+    return _dedupe_normalized_paths(scope)
+
+
+def _dedupe_normalized_paths(paths: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for path in paths:
+        normalized = str(path or "").strip().replace("\\", "/").lstrip("./")
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique
 
 
 def _pre_state_punch_list(step: dict[str, Any], *, cwd: str) -> dict[str, Any] | None:
@@ -1008,6 +1070,28 @@ class DirectorExecutionConsumer:
             )
             return {"task_id": task_id, "ok": False, "reason": "exec_timeout"}
 
+        except InterfaceContractAmendmentRequiredError as exc:
+            logger.warning("Interface contract amendment required for task %s: %s", task_id, exc)
+            self._svc.fail_task_stage(
+                FailTaskStageCommandV1(
+                    workspace=self._workspace,
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    error_code="INTERFACE_CONTRACT_AMENDMENT_REQUIRED",
+                    error_message=str(exc),
+                    requeue_stage="pending_design",
+                    metadata={
+                        "reason": "interface_contract_amendment_required",
+                        "amendment_request": exc.amendment_request,
+                    },
+                )
+            )
+            return {
+                "task_id": task_id,
+                "ok": False,
+                "reason": "interface_contract_amendment_required",
+            }
+
         except Exception as exc:
             logger.exception("Execution failed for task %s: %s", task_id, exc)
             self._svc.fail_task_stage(
@@ -1210,6 +1294,17 @@ class DirectorExecutionConsumer:
         duration = time.monotonic() - started_at
 
         if adapter_result.get("success") is not True:
+            amendment_evidence = _interface_contract_amendment_from_adapter_failure(
+                workspace_path=workspace_path,
+                task_id=task_id,
+                payload=payload,
+                adapter_result=adapter_result,
+            )
+            if amendment_evidence is not None:
+                raise InterfaceContractAmendmentRequiredError(
+                    _adapter_failure_message(adapter_result),
+                    amendment_request=amendment_evidence,
+                )
             raise RuntimeError(_adapter_failure_message(adapter_result))
 
         reported_changed_files = _extract_director_changed_files(adapter_result)
@@ -1229,5 +1324,5 @@ class DirectorExecutionConsumer:
         }
 
 
-__all__ = ["DirectorExecutionConsumer", "UnrecoverableExecutionError"]
+__all__ = ["DirectorExecutionConsumer", "InterfaceContractAmendmentRequiredError", "UnrecoverableExecutionError"]
 __deprecated__ = {"DirectorExecutionConsumer": "Use DirectorPool instead. Will be removed after 2026-06-30."}

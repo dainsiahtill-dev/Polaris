@@ -13,6 +13,7 @@ import polaris.cells.director.task_consumer.internal.director_consumer as direct
 import pytest
 from polaris.cells.director.task_consumer.internal.director_consumer import (
     DirectorExecutionConsumer,
+    InterfaceContractAmendmentRequiredError,
     ScopeConflictDetector,
     UnrecoverableExecutionError,
     _run_coroutine_sync,
@@ -100,6 +101,25 @@ class TestRunCoroutineSync:
         elapsed = time.monotonic() - start
 
         assert elapsed < 1.0
+
+
+class TestInterfaceContractAmendmentDetection:
+    def test_adapter_artifact_failure_builds_contract_amendment(self, tmp_path: Path) -> None:
+        weather = tmp_path / "src" / "weather.ts"
+        weather.parent.mkdir(parents=True, exist_ok=True)
+        weather.write_text("export interface WeatherSnapshot { condition: string }\n", encoding="utf-8")
+        (tmp_path / "src" / "forecast.ts").write_text("import { WeatherReport } from './weather';\n", encoding="utf-8")
+
+        amendment = director_consumer_module._interface_contract_amendment_from_adapter_failure(
+            workspace_path=tmp_path,
+            task_id="TASK-1",
+            payload={"target_files": ["src/forecast.ts"]},
+            adapter_result={"success": False, "changed_files": ["src/forecast.ts"]},
+        )
+
+        assert amendment is not None
+        assert amendment["amendment_request"]["task_id"] == "TASK-1"
+        assert amendment["cross_artifact_repair_plans"][0]["authority"] == "ce_amendment_required"
 
 
 class TestDirectorExecutionConsumerHandoffGate:
@@ -916,6 +936,56 @@ class TestDirectorExecutionConsumerPollOnce:
         fail_call = mock_svc.fail_task_stage.call_args[0][0]
         assert fail_call.requeue_stage == "pending_exec"
         assert fail_call.error_code == "EXEC_FAILED"
+        mock_svc.compensate_task.assert_not_called()
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_interface_contract_amendment_requeues_pending_design(self, mock_get_svc: MagicMock) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-contract"
+        claim_result.lease_token = "lease-contract"
+        claim_result.payload = {"blueprint_id": "bp-contract"}
+
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=False)
+
+        amendment = {
+            "amendment_request": {
+                "schema_version": "cross_artifact.contract_amendment_request.v1",
+                "task_id": "task-contract",
+                "reason": "cross-artifact interface contract is missing",
+                "evidence": ["unresolved import symbol 'WeatherReport'"],
+                "requested_by": "director",
+            }
+        }
+        consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1")
+
+        with patch.object(
+            consumer,
+            "_execute_task",
+            side_effect=InterfaceContractAmendmentRequiredError(
+                "unresolved interface contract",
+                amendment_request=amendment,
+            ),
+        ):
+            results = consumer.poll_once()
+
+        assert results == [
+            {
+                "task_id": "task-contract",
+                "ok": False,
+                "reason": "interface_contract_amendment_required",
+            }
+        ]
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.error_code == "INTERFACE_CONTRACT_AMENDMENT_REQUIRED"
+        assert fail_call.requeue_stage == "pending_design"
+        assert fail_call.metadata["amendment_request"] == amendment
         mock_svc.compensate_task.assert_not_called()
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
