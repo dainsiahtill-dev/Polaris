@@ -95,6 +95,7 @@ from .service import (
     update_risk_status,
     update_tech_debt_status,
     update_tech_radar_ring,
+    validate_director_handoff_from_payload,
 )
 
 __all__ = [
@@ -182,4 +183,5 @@ __all__ = [
     "update_risk_status",
     "update_tech_debt_status",
     "update_tech_radar_ring",
+    "validate_director_handoff_from_payload",
 ]

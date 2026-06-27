@@ -43,6 +43,7 @@ from polaris.cells.chief_engineer.blueprint.public.service import (
     summarize_tech_debt,
     update_risk_status,
     update_tech_debt_status,
+    validate_director_handoff_from_payload,
 )
 from polaris.kernelone.storage import resolve_logical_path
 
@@ -397,6 +398,60 @@ class TestServiceGovernance(unittest.TestCase):
         self.assertTrue(decision.allowed)
         # Missing blueprint -> fail-closed None.
         self.assertIsNone(evaluate_handoff_decision_for_blueprint(self.workspace, "ce_missing"))
+
+    def test_validate_director_handoff_from_payload_is_shared_gate(self) -> None:
+        result = generate_task_blueprint(
+            GenerateTaskBlueprintCommandV1(
+                task_id="task-shared-handoff",
+                workspace=self.workspace,
+                objective="ship",
+                context={
+                    "task_title": "Shared Handoff",
+                    "acceptance_criteria": ["a"],
+                    "execution_checklist": ["x"],
+                    "target_files": ["a.py"],
+                },
+            )
+        )
+        validation = validate_director_handoff_from_payload(
+            self.workspace,
+            {
+                "task_id": "task-shared-handoff",
+                "metadata": {"chief_engineer_blueprint_id": result.blueprint_id},
+            },
+        )
+        self.assertEqual(validation["schema_version"], "chief_engineer.director_handoff_validation.v1")
+        self.assertTrue(validation["allowed"])
+        self.assertTrue(validation["legacy_allowed"])
+        self.assertEqual(validation["blueprint_id"], result.blueprint_id)
+        self.assertEqual(validation["task_id"], "task-shared-handoff")
+        self.assertIsInstance(validation["decision_payload"], dict)
+        self.assertIsInstance(validation["strict_decision_payload"], dict)
+
+    def test_validate_director_handoff_from_payload_blocks_task_mismatch(self) -> None:
+        result = generate_task_blueprint(
+            GenerateTaskBlueprintCommandV1(
+                task_id="task-owned",
+                workspace=self.workspace,
+                objective="ship",
+                context={
+                    "task_title": "Task Owned",
+                    "acceptance_criteria": ["a"],
+                    "execution_checklist": ["x"],
+                    "target_files": ["a.py"],
+                },
+            )
+        )
+        validation = validate_director_handoff_from_payload(
+            self.workspace,
+            {
+                "task_id": "task-other",
+                "metadata": {"chief_engineer_blueprint_id": result.blueprint_id},
+            },
+        )
+        self.assertFalse(validation["allowed"])
+        self.assertEqual(validation["blueprint_task_id"], "task-owned")
+        self.assertIn("belongs to task-owned", validation["reason"])
 
     def test_attach_governance_writes_back(self) -> None:
         result = generate_task_blueprint(

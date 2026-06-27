@@ -1,0 +1,57 @@
+# Polaris Execution Contract Gap Ledger
+
+Status: Active
+Owner: Polaris backend governance
+Created: 2026-06-27
+Scope: PM Contract -> Chief Engineer Blueprint/Handoff -> Execution Envelope -> Director Dispatch/Tools -> QA/Provenance
+
+## Purpose
+
+This ledger tracks the remaining gaps required to make Polaris task execution a long-term auditable contract system instead of a prompt-only multi-agent workflow.
+
+The target chain is:
+
+`Validated PM Contract -> Immutable CE Blueprint Snapshot -> Explicit Handoff Decision -> Execution Envelope -> Capability-Enforced Tools -> Final Provider Request Receipt -> QA Verdict -> Provenance Bundle`
+
+## Severity
+
+- P0: Can cause unauthorized Director dispatch, stale context replay, wrong task execution, or invisible audit drift.
+- P1: Can degrade task quality, cross-role context fidelity, repair convergence, or post-run diagnosis.
+- P2: Product/AGI experience hardening that should consume the same contracts but does not block the execution contract foundation.
+
+## Ledger
+
+| ID | Severity | Gap | Current State | Target State | Status | Verification |
+| --- | --- | --- | --- | --- | --- | --- |
+| P0-01 | P0 | Handoff validation is duplicated across Director dispatch entrypoints. | Shared helper exists and PM dispatch/task-market consumer now use it; CLI loop and factory paths still need migration/audit. | All Director-dispatching entrypoints call one shared public handoff validation service/helper. | Partial | `test_service_governance.py`, PM dispatch tests, task-market/role-runtime tests pass. |
+| P0-02 | P0 | Execution envelope is not guaranteed at every Director dispatch boundary. | Tasking strategy builds envelopes; public execution now audits envelope presence; not every dispatch path creates or passes one. | Every Director dispatch creates or carries `polaris.execution_envelope.v1` with PM/CE/profile/handoff/capability bindings. | Partial | Final provider request and Director task metadata contain matching envelope hash. |
+| P0-03 | P0 | Director execution is still audit-only for missing envelope/handoff in some compatibility paths. | `director.execution_contract_audit.v1` exposes missing refs but does not block. | Strict mode blocks execution when envelope, CE decision, PM contract hash, blueprint hash, or execution profile hash is missing. | Not started | Negative tests: missing envelope returns blocked/failed before tool execution. |
+| P0-04 | P0 | Capability token enforcement is not universally bound to all write/command tools and dispatch paths. | Command capability checks are enforced in toolkit command execution; write-scope enforcement is still spread across tool guards/job tokens. | Tool/write/command guards validate run-scoped capability token bound to envelope hash, task id, run id, path, command, and expiry. | Partial | Negative tests for command/path outside capability. |
+| P0-05 | P0 | Final provider request audit does not yet hard-fail on missing required references everywhere. | Context audit records token/window evidence and receipt refs, but missing PM/CE/envelope refs are not universally blocking. | Required-ref coverage is computed and enforced for PM, CE, Director, QA calls according to role/stage policy. | Partial | Provider request audit reports `missing_required_refs=[]` for valid runs and fails probes otherwise. |
+| P0-06 | P0 | PM route/probe can still surface tool-guard misconfiguration symptoms. | Observed `director_tool_execution_guard_misconfigured: missing task_id` in PM probe context. | PM planning/probe route has no tool schema in final provider request and cannot trigger Director tool guard. | Not started | Probe test asserts final provider request `tools=[]/None`, `tool_choice=none`, and no tool ledger events. |
+| P1-07 | P1 | PM contract can become too mechanical if natural design intent is not preserved through CE/Director. | Delivery plan/depth contracts exist in some contexts, but propagation and coverage are not fully asserted. | PM snapshot carries natural-language product intent, user journey, behavior matrix, deterministic checks, and target files; CE and Director must receive it. | Partial | Context snapshot tests assert delivery plan/depth contract coverage in CE and Director final request. |
+| P1-08 | P1 | CE blueprint does not yet define a canonical cross-file public interface contract for every multi-file task. | CE provides construction plan and handoff; Director may still invent inconsistent symbols across files. | Blueprint includes exported symbols/import contracts or available symbol evidence for target files when task spans modules. | Not started | Bench regression reproducing L1-03 import mismatch passes without placeholder stub repairs. |
+| P1-09 | P1 | ContextOS coverage can still overemphasize token utilization instead of evidence completeness. | Token/window utilization exists; final request evidence coverage is improving. | Coverage is ref-based: required refs, included refs, missing refs, pass/fail, plus redaction safety. | Partial | Context audit unit tests cover missing PM/CE/envelope/receipt refs independently of token count. |
+| P1-10 | P1 | QA failure response is not yet a typed classification contract. | Some failures route to Director repair; not all distinguish implementation defect, scope mismatch, contract ambiguity, infra failure, invalid acceptance, policy violation. | `qa_failure_classification.v1` decides Director repair vs CE replan vs PM revision vs infra retry vs hard stop. | Not started | Tests cover each failure class and ensure failed QA cannot be marked success. |
+| P1-11 | P1 | Run provenance bundle is incomplete as a single post-run artifact. | Evidence exists across Run Ledger, ContextOS, receipts, audit snapshots, and QA outputs. | `run_provenance_bundle.v1` links run id, task id, commit, PM hash, CE hash, handoff hash, envelope hash, provider requests, tool receipts, diff hash, command receipts, QA result. | Not started | A completed run emits one provenance bundle with stable hashes. |
+| P2-12 | P2 | AGI decision handoff consumes evidence but does not yet share the same envelope/capability ledger end-to-end. | AGI authority/evidence UI and contracts are partially present; AGI remains advisory/controlled. | AGI reads the same execution profile/envelope/audit/provenance contracts and can request governed actions without becoming a second authority source. | Not started | AGI decision tests show advisory-only outputs cannot add authority fields. |
+| P2-13 | P2 | AGI cockpit UI is too dense for users and not yet a task-control console. | Current UI exposes raw matrices/registries with high visual noise. | Chinese-first AGI cockpit: robot-like command console, concise status push, chat pull-and-act, evidence cards, governed action receipts. | Not started | Playwright visual checks and UX snapshot tests for dashboard readability and action flow. |
+
+## Closed Items
+
+| ID | Closed In | Result |
+| --- | --- | --- |
+| C-01 | `923e7895` | Final provider request audit tracks ReceiptStore refs. |
+| C-02 | `37a40c3e` | Execution envelope consumes strict CE handoff bindings. |
+| C-03 | `c28d5c91` | Command execution enforces allowed commands from capability tokens. |
+| C-04 | `e50c2152` | Tool capability derivation reads execution envelopes. |
+| C-05 | `f36a8e7b` | Director strategy propagates execution envelopes into context and metadata. |
+| C-06 | `777732c6` | Public Director execution result exposes `director.execution_contract_audit.v1`. |
+
+## Update Rules
+
+1. Every gap fix must update this ledger in the same commit or an immediately adjacent commit.
+2. A gap may move to `Partial` only with a committed test or audit artifact.
+3. A gap may move to `Closed` only when its target state is enforced or negative-tested.
+4. Compatibility audit-only states must not be called closed.
+5. New bypasses discovered by bench, UI observation, or final request audit must be added here before starting the fix.

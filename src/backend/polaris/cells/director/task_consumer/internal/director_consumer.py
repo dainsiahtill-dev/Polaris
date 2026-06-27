@@ -11,10 +11,7 @@ import warnings
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
-from polaris.cells.chief_engineer.blueprint.public import (
-    BlueprintPersistence,
-    evaluate_handoff_decision_for_blueprint,
-)
+from polaris.cells.chief_engineer.blueprint.public import validate_director_handoff_from_payload
 from polaris.cells.runtime.task_market.public.contracts import (
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
@@ -73,47 +70,15 @@ def _normalize_task_market_route(payload: dict[str, Any]) -> str:
     return _ROUTE_CHIEF_BLUEPRINT_REQUIRED
 
 
-def _merged_payload_metadata(payload: dict[str, Any]) -> dict[str, Any]:
-    metadata_raw = payload.get("metadata")
-    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
-    merged = dict(payload)
-    merged.update(metadata)
-    return merged
-
-
-def _blueprint_id_from_payload(payload: dict[str, Any]) -> str:
-    merged = _merged_payload_metadata(payload)
-    for key in ("blueprint_id", "chief_engineer_blueprint_id", "chief_engineer_handoff_id"):
-        token = str(merged.get(key) or "").strip()
-        if token:
-            return Path(token).stem if token.endswith(".json") else token
-    for key in ("blueprint_path", "runtime_blueprint_path"):
-        token = str(merged.get(key) or "").strip()
-        if token:
-            return Path(token).stem
-    return ""
-
-
 def _validated_blueprint_handoff(workspace: str, task_id: str, payload: dict[str, Any]) -> tuple[bool, str, str]:
-    blueprint_id = _blueprint_id_from_payload(payload)
-    if not blueprint_id:
-        return False, "", "Director cannot execute without blueprint_id"
-    blueprint = BlueprintPersistence(workspace, ensure_directory=False).load(blueprint_id)
-    if not isinstance(blueprint, dict):
-        return False, blueprint_id, f"Chief Engineer blueprint {blueprint_id} missing or unreadable"
-    blueprint_task_id = str(blueprint.get("task_id") or blueprint.get("pm_task_id") or "").strip()
-    if blueprint_task_id and blueprint_task_id != str(task_id or "").strip():
-        return (
-            False,
-            blueprint_id,
-            f"Chief Engineer blueprint {blueprint_id} belongs to {blueprint_task_id}, not {task_id}",
-        )
-    decision = evaluate_handoff_decision_for_blueprint(workspace, blueprint_id)
-    if decision is None:
-        return False, blueprint_id, f"Chief Engineer blueprint {blueprint_id} handoff decision unreadable"
-    if not decision.allowed:
-        return False, blueprint_id, decision.reason
-    return True, blueprint_id, decision.reason
+    payload_with_task_id = dict(payload)
+    payload_with_task_id.setdefault("task_id", task_id)
+    validation = validate_director_handoff_from_payload(workspace, payload_with_task_id)
+    return (
+        bool(validation.get("allowed")),
+        str(validation.get("blueprint_id") or ""),
+        str(validation.get("reason") or ""),
+    )
 
 
 def _job_token_from_payload(payload: dict[str, Any]) -> dict[str, Any]:

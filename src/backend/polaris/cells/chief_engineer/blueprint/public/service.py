@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import stable_hash
@@ -1271,7 +1272,9 @@ def build_ce_handoff_decision(
         blueprint_id=blueprint_id,
         task_id=task_id,
     )
-    resolved_blueprint_id = str(blueprint_id or legacy_decision.blueprint_id or blueprint.get("blueprint_id") or "").strip()
+    resolved_blueprint_id = str(
+        blueprint_id or legacy_decision.blueprint_id or blueprint.get("blueprint_id") or ""
+    ).strip()
     resolved_task_id = str(task_id or legacy_decision.task_id or blueprint.get("task_id") or "").strip()
     bindings = CeHandoffDecisionBindingsV1(
         pm_contract_ref=str(blueprint.get("pm_contract_ref") or blueprint.get("pm_contract_path") or "").strip(),
@@ -1357,6 +1360,165 @@ def evaluate_ce_handoff_decision_for_blueprint(
     if not isinstance(payload, dict):
         return None
     return build_ce_handoff_decision(workspace, blueprint=payload, blueprint_id=blueprint_id)
+
+
+def _merged_payload_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    metadata_raw = payload.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    merged = dict(payload)
+    merged.update(metadata)
+    return merged
+
+
+def _blueprint_id_from_payload(payload: dict[str, Any]) -> str:
+    merged = _merged_payload_metadata(payload)
+    for key in ("blueprint_id", "chief_engineer_blueprint_id", "chief_engineer_handoff_id"):
+        token = str(merged.get(key) or "").strip()
+        if token:
+            return Path(token).stem if token.endswith(".json") else token
+    for key in ("blueprint_path", "runtime_blueprint_path"):
+        token = str(merged.get(key) or "").strip()
+        if token:
+            return Path(token).stem
+    return ""
+
+
+def _task_id_from_payload(payload: dict[str, Any]) -> str:
+    merged = _merged_payload_metadata(payload)
+    for key in ("task_id", "pm_task_id", "source_task_id", "external_task_id", "id"):
+        token = str(merged.get(key) or "").strip()
+        if token:
+            return token
+    return ""
+
+
+def _handoff_validation_result(
+    *,
+    allowed: bool,
+    reason: str,
+    task_id: str = "",
+    blueprint_id: str = "",
+    blueprint_task_id: str = "",
+    legacy_decision: HandoffDecisionV1 | None = None,
+    strict_decision: CeHandoffDecisionV1 | None = None,
+    require_strict: bool = False,
+) -> dict[str, Any]:
+    legacy_payload = legacy_decision.to_dict() if legacy_decision is not None else {}
+    strict_payload = strict_decision.to_dict() if strict_decision is not None else {}
+    return {
+        "schema_version": "chief_engineer.director_handoff_validation.v1",
+        "allowed": allowed,
+        "reason": str(reason or "").strip(),
+        "task_id": task_id,
+        "blueprint_id": blueprint_id,
+        "blueprint_task_id": blueprint_task_id,
+        "legacy_allowed": bool(legacy_decision.allowed) if legacy_decision is not None else False,
+        "strict_allowed": bool(strict_decision.allowed) if strict_decision is not None else False,
+        "require_strict": require_strict,
+        "decision_payload": legacy_payload,
+        "strict_decision_payload": strict_payload,
+    }
+
+
+def validate_director_handoff_from_payload(
+    workspace: str,
+    payload: dict[str, Any],
+    *,
+    require_strict: bool = False,
+) -> dict[str, Any]:
+    """Validate whether a payload may enter Director dispatch.
+
+    This is the shared pre-Director policy seam for PM dispatch, task-market
+    consumers, CLI loops, and future execution-envelope creation. The default
+    remains compatibility-safe: legacy handoff authorization is authoritative,
+    while the strict `ce_handoff_decision.v1` is still computed and exposed for
+    audit. Callers can opt into `require_strict=True` once their dispatch path
+    always carries immutable PM/CE/profile hash bindings.
+    """
+
+    workspace_token = str(workspace or "").strip()
+    if not workspace_token:
+        return _handoff_validation_result(
+            allowed=False,
+            reason="workspace is required for Chief Engineer handoff validation",
+            require_strict=require_strict,
+        )
+    task_id = _task_id_from_payload(payload)
+    blueprint_id = _blueprint_id_from_payload(payload)
+    if not blueprint_id:
+        return _handoff_validation_result(
+            allowed=False,
+            reason="missing Chief Engineer blueprint id",
+            task_id=task_id,
+            require_strict=require_strict,
+        )
+
+    blueprint = BlueprintPersistence(workspace_token, ensure_directory=False).load(blueprint_id)
+    if not isinstance(blueprint, dict):
+        return _handoff_validation_result(
+            allowed=False,
+            reason=f"Chief Engineer blueprint {blueprint_id} missing or unreadable",
+            task_id=task_id,
+            blueprint_id=blueprint_id,
+            require_strict=require_strict,
+        )
+
+    blueprint_task_id = str(blueprint.get("task_id") or blueprint.get("pm_task_id") or "").strip()
+    if task_id and blueprint_task_id and task_id != blueprint_task_id:
+        return _handoff_validation_result(
+            allowed=False,
+            reason=f"Chief Engineer blueprint {blueprint_id} belongs to {blueprint_task_id}, not {task_id}",
+            task_id=task_id,
+            blueprint_id=blueprint_id,
+            blueprint_task_id=blueprint_task_id,
+            require_strict=require_strict,
+        )
+
+    legacy_decision = evaluate_handoff_decision(
+        workspace_token,
+        blueprint=blueprint,
+        blueprint_id=blueprint_id,
+        task_id=task_id,
+    )
+    strict_decision = build_ce_handoff_decision(
+        workspace_token,
+        blueprint=blueprint,
+        blueprint_id=blueprint_id,
+        task_id=task_id,
+        base_decision=legacy_decision,
+    )
+    if not legacy_decision.allowed:
+        return _handoff_validation_result(
+            allowed=False,
+            reason=legacy_decision.reason,
+            task_id=task_id,
+            blueprint_id=blueprint_id,
+            blueprint_task_id=blueprint_task_id,
+            legacy_decision=legacy_decision,
+            strict_decision=strict_decision,
+            require_strict=require_strict,
+        )
+    if require_strict and not strict_decision.allowed:
+        return _handoff_validation_result(
+            allowed=False,
+            reason=strict_decision.reason or "strict Chief Engineer handoff decision blocked Director dispatch",
+            task_id=task_id,
+            blueprint_id=blueprint_id,
+            blueprint_task_id=blueprint_task_id,
+            legacy_decision=legacy_decision,
+            strict_decision=strict_decision,
+            require_strict=require_strict,
+        )
+    return _handoff_validation_result(
+        allowed=True,
+        reason=legacy_decision.reason,
+        task_id=task_id,
+        blueprint_id=blueprint_id,
+        blueprint_task_id=blueprint_task_id,
+        legacy_decision=legacy_decision,
+        strict_decision=strict_decision,
+        require_strict=require_strict,
+    )
 
 
 def assert_handoff_ready(
@@ -1487,4 +1649,5 @@ __all__ = [
     "update_risk_status",
     "update_tech_debt_status",
     "update_tech_radar_ring",
+    "validate_director_handoff_from_payload",
 ]

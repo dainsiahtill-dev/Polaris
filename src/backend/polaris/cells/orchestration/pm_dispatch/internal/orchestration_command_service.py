@@ -23,10 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.chief_engineer.blueprint.public import (
-    BlueprintPersistence,
-    evaluate_handoff_decision_for_blueprint,
-)
+from polaris.cells.chief_engineer.blueprint.public import validate_director_handoff_from_payload
 from polaris.cells.orchestration.workflow_runtime.public.service import (
     OrchestrationMode,
     OrchestrationRunRequest,
@@ -109,27 +106,6 @@ def _canonical_factory_stage_sequence(requested_stages: Any) -> list[str]:
     return stages
 
 
-def _chief_engineer_handoff_blueprint_id(payload: dict[str, Any]) -> str:
-    metadata_raw = payload.get("metadata")
-    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
-    merged: dict[str, Any] = {}
-    merged.update(payload)
-    merged.update(metadata)
-    for key in (
-        "blueprint_id",
-        "chief_engineer_blueprint_id",
-        "chief_engineer_handoff_id",
-    ):
-        token = str(merged.get(key) or "").strip()
-        if token:
-            return Path(token).stem if token.endswith(".json") else token
-    for key in ("blueprint_path", "runtime_blueprint_path"):
-        token = str(merged.get(key) or "").strip()
-        if token:
-            return Path(token).stem
-    return ""
-
-
 def _task_id_from_payload(payload: dict[str, Any]) -> str:
     return str(payload.get("id") or payload.get("task_id") or payload.get("pm_task_id") or "").strip()
 
@@ -138,27 +114,10 @@ def _validated_chief_engineer_handoff(
     workspace: str,
     payload: dict[str, Any],
 ) -> tuple[bool, str, dict[str, Any]]:
-    task_id = _task_id_from_payload(payload)
-    blueprint_id = _chief_engineer_handoff_blueprint_id(payload)
-    if not blueprint_id:
-        return False, "missing Chief Engineer blueprint id", {}
-    blueprint = BlueprintPersistence(workspace, ensure_directory=False).load(blueprint_id)
-    if not isinstance(blueprint, dict):
-        return False, f"Chief Engineer blueprint {blueprint_id} missing or unreadable", {}
-    blueprint_task_id = str(blueprint.get("task_id") or blueprint.get("pm_task_id") or "").strip()
-    if task_id and blueprint_task_id and blueprint_task_id != task_id:
-        return (
-            False,
-            f"Chief Engineer blueprint {blueprint_id} belongs to {blueprint_task_id}, not {task_id}",
-            {"blueprint_id": blueprint_id, "blueprint_task_id": blueprint_task_id},
-        )
-    decision = evaluate_handoff_decision_for_blueprint(workspace, blueprint_id)
-    decision_payload = decision.to_dict() if decision is not None else {}
-    if decision is None:
-        return False, f"Chief Engineer blueprint {blueprint_id} handoff decision unreadable", {}
-    if not decision.allowed:
-        return False, decision.reason, decision_payload
-    return True, decision.reason, decision_payload
+    validation = validate_director_handoff_from_payload(workspace, payload)
+    decision_payload_raw = validation.get("decision_payload")
+    decision_payload: dict[str, Any] = decision_payload_raw if isinstance(decision_payload_raw, dict) else {}
+    return bool(validation.get("allowed")), str(validation.get("reason") or ""), decision_payload
 
 
 def _has_chief_engineer_handoff(payload: dict[str, Any], *, workspace: str = "") -> bool:
