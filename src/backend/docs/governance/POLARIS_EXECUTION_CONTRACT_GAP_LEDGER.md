@@ -50,7 +50,7 @@ The target chain is:
 | C-07 | `67e047ac` | Director dispatch/runtime paths use shared handoff validation instead of local handoff evaluator copies. |
 | C-08 | `a0179432` | Public Director execution creates an execution envelope when callers do not supply one. |
 | C-09 | `3fbe373a` | Public Director execution strict mode blocks before service execution when required contract refs are missing. |
-| C-10 | `8f3ba536` | Execution-envelope capability evidence is proven to block write scope expansion and unlisted commands through RoleToolGateway and toolkit handlers. |
+| C-10 | `70d0c284` | Execution-envelope capability evidence is proven to block write scope expansion and unlisted commands through RoleToolGateway and toolkit handlers. |
 
 ## Update Rules
 
