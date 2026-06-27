@@ -55,7 +55,7 @@ The target chain is:
 | C-12 | `64326302` | PM deterministic route probe is regression-tested as text-only from adapter context through TransactionKernel tool schema and final provider snapshot. |
 | C-13 | `2b51b7e1` | Final request evidence coverage treats `delivery_plan_document` and `delivery_depth_contract` as first-class required/included refs. |
 | C-14 | `40941762` | CE blueprints emit module interface contracts and Director prompts render target module ownership/export guidance. |
-| C-15 | pending | ContextOS final request coverage is ref-based under low token utilization and records metadata-only redaction safety. |
+| C-15 | `bbd273e3` | ContextOS final request coverage is ref-based under low token utilization and records metadata-only redaction safety. |
 
 ## Update Rules
 
