@@ -331,6 +331,45 @@ class PromptBuilder:
                 break
         return rows
 
+    def _module_interface_items(
+        self,
+        value: Any,
+        *,
+        limit: int = 8,
+        max_chars: int = 360,
+    ) -> list[str]:
+        contract = self._metadata_mapping(value)
+        if not contract:
+            return []
+        rows: list[str] = []
+        modules = contract.get("modules")
+        if isinstance(modules, list | tuple):
+            for item in modules:
+                if not isinstance(item, dict):
+                    continue
+                path = str(item.get("path") or "").strip()
+                role = str(item.get("role") or "").strip()
+                symbols = self._metadata_items(item.get("planned_public_symbols"), limit=5, max_chars=80)
+                owner_terms = self._metadata_items(item.get("owner_terms"), limit=4, max_chars=80)
+                parts: list[str] = []
+                if path:
+                    parts.append(path)
+                if role:
+                    parts.append("role=" + role)
+                if owner_terms:
+                    parts.append("owns=" + ", ".join(owner_terms))
+                if symbols:
+                    parts.append("exports=" + ", ".join(symbols))
+                text = self._compact_prompt_fragment("; ".join(parts), max_chars=max_chars)
+                if text:
+                    rows.append(text)
+                if len(rows) >= limit:
+                    break
+        rules = self._contract_text_items(contract.get("rules"), limit=4, max_chars=220)
+        if rules:
+            rows.append("rules=" + " | ".join(rules))
+        return rows[:limit]
+
     def _contract_context_section(self, task: Task) -> str:
         metadata = task.metadata if isinstance(task.metadata, dict) else {}
         lines: list[str] = []
@@ -372,6 +411,12 @@ class PromptBuilder:
         architecture_decisions = self._architecture_decision_items(metadata.get("architecture_decisions"))
         if architecture_decisions:
             lines.append("- Architecture guidance/decisions: " + " || ".join(architecture_decisions))
+
+        module_interface_items = self._module_interface_items(
+            self._contract_mapping(metadata, "module_interface_contract") or metadata.get("module_interface_contract")
+        )
+        if module_interface_items:
+            lines.append("- Module interface contract: " + " || ".join(module_interface_items))
 
         task_context = metadata.get("task_context")
         if isinstance(task_context, dict):

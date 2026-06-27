@@ -330,6 +330,123 @@ def _semantic_terms_from_delivery_contracts(
     return ordered
 
 
+def _pascal_case(token: str) -> str:
+    parts = [part for part in re.split(r"[^A-Za-z0-9]+", str(token or "")) if part]
+    return "".join(part[:1].upper() + part[1:] for part in parts)
+
+
+def _snake_case(token: str) -> str:
+    parts = [part.lower() for part in re.split(r"[^A-Za-z0-9]+", str(token or "")) if part]
+    return "_".join(parts)
+
+
+def _module_role_from_path(path: str) -> str:
+    normalized = path.replace("\\", "/").lower()
+    if "/models/" in normalized or normalized.startswith("models/") or normalized.endswith("_model.py"):
+        return "domain_model"
+    if "/engine/" in normalized or normalized.startswith("engine/") or "/core/" in normalized:
+        return "core_engine"
+    if normalized.endswith("main.py") or normalized.endswith("main.go") or "/cmd/" in normalized:
+        return "entrypoint"
+    if "test" in normalized:
+        return "test"
+    return "module"
+
+
+def _module_stem(path: str) -> str:
+    normalized = path.replace("\\", "/").rstrip("/")
+    filename = normalized.rsplit("/", 1)[-1]
+    stem = filename.rsplit(".", 1)[0]
+    return stem.strip()
+
+
+def _module_owner_terms(path: str, semantic_terms: list[str]) -> list[str]:
+    normalized = path.replace("\\", "/").lower()
+    matches = [term for term in semantic_terms if term and term.lower() in normalized]
+    if matches:
+        return matches[:4]
+    stem = _module_stem(path)
+    token = _snake_case(stem).replace("_", " ").strip()
+    return [token] if token else []
+
+
+def _planned_public_symbols(*, path: str, language: str, role: str, owner_terms: list[str]) -> list[str]:
+    language_token = language.strip().lower()
+    symbols: list[str] = []
+    for term in owner_terms:
+        if role == "domain_model":
+            candidate = _pascal_case(term)
+        elif language_token in {"python", "go", "typescript", "javascript"}:
+            candidate = _snake_case(term)
+        else:
+            candidate = _module_stem(path)
+        if candidate and candidate not in symbols:
+            symbols.append(candidate)
+    stem = _module_stem(path)
+    if role == "domain_model":
+        fallback = _pascal_case(stem)
+    elif role == "entrypoint":
+        fallback = "main"
+    else:
+        fallback = _snake_case(stem)
+    if fallback and fallback not in symbols:
+        symbols.append(fallback)
+    return symbols[:6]
+
+
+def _module_interface_contract(
+    *,
+    target_files: list[str],
+    delivery_depth_contract: dict[str, Any] | None,
+    delivery_plan_document: dict[str, Any] | None,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    semantic_terms = _semantic_terms_from_delivery_contracts(
+        delivery_depth_contract=delivery_depth_contract,
+        delivery_plan_document=delivery_plan_document,
+    )
+    language = str(
+        context.get("language")
+        or _mapping(delivery_plan_document).get("language")
+        or _mapping(delivery_depth_contract).get("language")
+        or ""
+    ).strip()
+    modules: list[dict[str, Any]] = []
+    for path in target_files:
+        normalized = str(path or "").replace("\\", "/").strip("/")
+        if not normalized:
+            continue
+        role = _module_role_from_path(normalized)
+        owner_terms = _module_owner_terms(normalized, semantic_terms)
+        modules.append(
+            {
+                "path": normalized,
+                "role": role,
+                "owner_terms": owner_terms,
+                "planned_public_symbols": _planned_public_symbols(
+                    path=normalized,
+                    language=language,
+                    role=role,
+                    owner_terms=owner_terms,
+                ),
+            }
+        )
+    if not modules:
+        return {}
+    return {
+        "schema_version": "chief_engineer.module_interface_contract.v1",
+        "source": "chief_engineer.generate_task_blueprint",
+        "authority": "handoff_guidance_not_scope_authority",
+        "language": language,
+        "modules": modules,
+        "rules": [
+            "Every symbol imported from a sibling target module must be defined by that module in the same task.",
+            "Shared domain types should have one owner module; dependent files must import from that owner instead of redefining.",
+            "When implementation needs different symbol names, update the owner module and all import sites together.",
+        ],
+    }
+
+
 def _semantic_alignment_audit(
     *,
     objective: str,
@@ -672,6 +789,12 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     )
     architecture_decision_payloads = [decision.to_dict() for decision in architecture_decisions]
     selected_libraries = list(selected_libraries_from_decisions(architecture_decisions))
+    module_interface_contract = _module_interface_contract(
+        target_files=target_files,
+        delivery_depth_contract=delivery_depth_contract,
+        delivery_plan_document=delivery_plan_document,
+        context=context,
+    )
     contract_completeness = _contract_completeness(
         objective=command.objective,
         title=title,
@@ -689,6 +812,8 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     context.setdefault("dependencies", dependencies)
     context.setdefault("architecture_decisions", architecture_decision_payloads)
     context.setdefault("selected_libraries", selected_libraries)
+    if module_interface_contract:
+        context.setdefault("module_interface_contract", module_interface_contract)
     if delivery_plan_document:
         context.setdefault("delivery_plan_document", delivery_plan_document)
     if delivery_depth_contract:
@@ -719,6 +844,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "dependencies": dependencies,
         "architecture_decisions": architecture_decision_payloads,
         "selected_libraries": selected_libraries,
+        "module_interface_contract": module_interface_contract,
         "delivery_plan_document": delivery_plan_document,
         "delivery_depth_contract": delivery_depth_contract,
         "behavior_contract": _mapping(delivery_depth_contract.get("behavior_contract")),

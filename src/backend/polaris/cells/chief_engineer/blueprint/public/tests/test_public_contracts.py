@@ -726,6 +726,77 @@ class TestChiefEngineerBlueprintPublicService:
         assert semantic_alignment["ready"] is True
         assert set(semantic_alignment["target_file_matches"]) >= {"budget", "port", "reef", "treasure"}
 
+    def test_generate_task_blueprint_adds_module_interface_contract(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-PY-WEATHER",
+            workspace=str(tmp_path),
+            objective="Implement mini planet weather balloon Python engine and CLI",
+            context={
+                "task_title": "Mini planet weather balloon",
+                "language": "python",
+                "target_files": [
+                    "src/models/weather.py",
+                    "src/engine/forecast.py",
+                    "src/radio.py",
+                    "src/main.py",
+                ],
+                "acceptance_criteria": [
+                    "weather, cloud, and wind behavior tests pass",
+                    "python src/main.py returns success",
+                ],
+                "execution_checklist": [
+                    "Implement weather model",
+                    "Implement forecast rules",
+                    "Wire radio output and CLI",
+                ],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "language": "python",
+                    "product_summary": {
+                        "intent": "Deliver a mini planet weather balloon with observable forecast behavior.",
+                        "core_terms": ["planet", "weather", "cloud", "wind"],
+                    },
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "language": "python",
+                    "product_intent": {
+                        "subject": "mini planet weather balloon",
+                        "primary_entities": ["planet", "weather", "cloud", "wind"],
+                    },
+                    "behavior_contract": {
+                        "rule_matrix": [
+                            "weather mood affects cloud cover",
+                            "wind strength changes radio warning",
+                            "unknown mood uses explicit fallback",
+                        ],
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        interface_contract = persisted["module_interface_contract"]
+        assert interface_contract["schema_version"] == "chief_engineer.module_interface_contract.v1"
+        assert interface_contract["language"] == "python"
+        assert interface_contract["rules"]
+        weather_module = next(
+            module for module in interface_contract["modules"] if module["path"] == "src/models/weather.py"
+        )
+        assert weather_module["role"] == "domain_model"
+        assert "weather" in weather_module["owner_terms"]
+        assert "Weather" in weather_module["planned_public_symbols"]
+        forecast_module = next(
+            module for module in interface_contract["modules"] if module["path"] == "src/engine/forecast.py"
+        )
+        assert forecast_module["role"] == "core_engine"
+        assert "forecast" in forecast_module["planned_public_symbols"]
+        assert persisted["context"]["module_interface_contract"] == interface_contract
+
     def test_query_missing_task_blueprint(self, tmp_path) -> None:
         status = get_blueprint_status(
             GetBlueprintStatusQueryV1(

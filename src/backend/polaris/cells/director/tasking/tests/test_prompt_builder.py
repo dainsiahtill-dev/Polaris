@@ -385,6 +385,27 @@ def test_prompt_includes_pm_ce_contract_context() -> None:
                     "anti_hollow_delivery": ["no static keyword-only output"],
                 },
             },
+            "module_interface_contract": {
+                "schema_version": "chief_engineer.module_interface_contract.v1",
+                "modules": [
+                    {
+                        "path": "src/models/flower.ts",
+                        "role": "domain_model",
+                        "owner_terms": ["flower"],
+                        "planned_public_symbols": ["Flower"],
+                    },
+                    {
+                        "path": "src/engine/lightRules.ts",
+                        "role": "core_engine",
+                        "owner_terms": ["firefly"],
+                        "planned_public_symbols": ["light_rules"],
+                    },
+                ],
+                "rules": [
+                    "Every symbol imported from a sibling target module must be defined by that module.",
+                    "Shared domain types should have one owner module.",
+                ],
+            },
         }
     )
 
@@ -403,6 +424,10 @@ def test_prompt_includes_pm_ce_contract_context() -> None:
     assert "Rule matrix:" in prompt
     assert "unknown mood uses explicit fallback" in prompt
     assert "no static keyword-only output" in prompt
+    assert "Module interface contract:" in prompt
+    assert "src/models/flower.ts; role=domain_model; owns=flower; exports=Flower" in prompt
+    assert "src/engine/lightRules.ts; role=core_engine; owns=firefly; exports=light_rules" in prompt
+    assert "Every symbol imported from a sibling target module must be defined" in prompt
 
 
 def test_prompt_includes_ce_architecture_decisions() -> None:
