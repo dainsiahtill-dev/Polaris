@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from polaris.cells.chief_engineer.blueprint.internal.ce_consumer import CEConsumer
+from polaris.kernelone.quality.interface_ledger import read_declared_interfaces
 
 
 class TestCEConsumerTaskMarketHandoffIntegration:
@@ -275,6 +276,11 @@ class TestCEConsumerStepFission:
         ack_meta = mock_svc.acknowledge_task_stage.call_args[0][0].metadata
         assert ack_meta["is_leaf"] is False
         assert ack_meta["fission_step_count"] == 2
+        declared = read_declared_interfaces(str(tmp_path), "", ["index.html", "game.js"])
+        assert declared == {
+            "index.html": {"identifiers": ["#game"], "signatures": ["<canvas id=game>"]},
+            "game.js": {"identifiers": ["#game"], "signatures": ["function gameLoop()"]},
+        }
 
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.run_pre_dispatch_chief_engineer_ctx")
