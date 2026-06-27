@@ -26,6 +26,7 @@ TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL = "deterministic_typescript_commonj
 TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL = "deterministic_typescript_entrypoint_repair"
 TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL = "deterministic_typescript_escaped_newline_repair"
 TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL = "deterministic_typescript_hyphenated_identifier_repair"
+TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL = "deterministic_typescript_import_specifier_keyword_repair"
 TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL = "deterministic_typescript_member_alias_repair"
 TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL = "deterministic_typescript_missing_export_repair"
 TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL = "deterministic_typescript_missing_member_repair"
@@ -209,6 +210,10 @@ _TS_ZOD_INFERRED_TYPE_ALIAS_LINE_RE = re.compile(
 _TS_NAMED_IMPORT_RE = re.compile(
     r"import\s*\{(?P<symbols>[^}]+)\}\s*from\s*['\"](?P<module>\.{1,2}/[^'\"]+)['\"]",
     re.DOTALL,
+)
+_TS_IMPORT_SPECIFIER_KEYWORD_RE = re.compile(
+    r"(?P<prefix>(?:^|,)\s*)(?P<keyword>export|import)\s+type\s+(?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)",
+    re.MULTILINE,
 )
 _TS_NAMED_REEXPORT_RE = re.compile(
     r"export\s*\{\s*(?P<symbols>[^}]+)\s*\}\s*from\s*['\"](?P<module>[^'\"]+)['\"]\s*;?",
@@ -923,6 +928,7 @@ def build_typescript_runtime_plan_for_source_tool(
         TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL: _build_typescript_entrypoint_plan,
         TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL: _build_typescript_escaped_newline_plan,
         TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL: build_typescript_hyphenated_identifier_plan,
+        TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL: _build_typescript_import_specifier_keyword_plan,
         TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL: _build_typescript_member_alias_plan,
         TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL: _build_typescript_missing_export_plan,
         TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL: _build_typescript_missing_member_plan,
@@ -1239,6 +1245,44 @@ def _build_typescript_member_alias_plan(
         diagnostics=diagnostics,
         mode=mode,
         metadata={"aliases": aliases},
+    )
+
+
+def _build_typescript_import_specifier_keyword_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+) -> RepairPlan | None:
+    operations: list[RepairOperation] = []
+    repaired_files: list[dict[str, object]] = []
+    for path in _typescript_syntax_error_paths(diagnostics):
+        original = str(base_files.get(path) or "")
+        repaired, replacements = _repair_typescript_import_specifier_keywords(original)
+        if not original or repaired == original or not replacements:
+            continue
+        operations.extend(
+            _text_replace_operations_from_repair(
+                path=path,
+                original=original,
+                repaired=repaired,
+                metadata={
+                    "repair_kind": "typescript_import_specifier_keyword",
+                    "replacements": tuple(replacements),
+                },
+            )
+        )
+        repaired_files.append({"file": path, "replacements": tuple(replacements)})
+    matched_diagnostics = tuple(
+        diagnostic for diagnostic in diagnostics if _normalize_repair_path(str(diagnostic.path or "")) in base_files
+    )
+    return _repair_plan_or_none(
+        rule_id="typescript.import_specifier_keyword",
+        source_tool=TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        metadata={"files": repaired_files},
     )
 
 
@@ -1790,6 +1834,46 @@ def _build_typescript_zod_type_class_collision_plan(
 
 def _repair_missing_object_property_comma_line(line_body: str) -> str:
     return _TS_INLINE_OBJECT_MISSING_COMMA_RE.sub(r"\g<value>, \g<key>", line_body)
+
+
+def _typescript_syntax_error_paths(diagnostics: Sequence[RepairDiagnostic]) -> tuple[str, ...]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for diagnostic in diagnostics:
+        if diagnostic.code.lower() not in {"typescript_ts1003", "typescript_ts1005"}:
+            continue
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        if path and path.endswith((".ts", ".tsx")) and path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return tuple(paths)
+
+
+def _repair_typescript_import_specifier_keywords(original: str) -> tuple[str, tuple[dict[str, str], ...]]:
+    text = str(original or "")
+    replacements: list[dict[str, str]] = []
+    pieces: list[str] = []
+    cursor = 0
+    for match in _TS_NAMED_IMPORT_RE.finditer(text):
+        symbols = str(match.group("symbols") or "")
+        repaired_symbols = _TS_IMPORT_SPECIFIER_KEYWORD_RE.sub(r"\g<prefix>type \g<symbol>", symbols)
+        if repaired_symbols == symbols:
+            continue
+        pieces.append(text[cursor : match.start("symbols")])
+        pieces.append(repaired_symbols)
+        cursor = match.end("symbols")
+        for keyword_match in _TS_IMPORT_SPECIFIER_KEYWORD_RE.finditer(symbols):
+            replacements.append(
+                {
+                    "keyword": str(keyword_match.group("keyword") or ""),
+                    "symbol": str(keyword_match.group("symbol") or ""),
+                    "module": str(match.group("module") or ""),
+                }
+            )
+    if not pieces:
+        return text, ()
+    pieces.append(text[cursor:])
+    return "".join(pieces), tuple(replacements)
 
 
 def _normalized_base_files(base_files: Mapping[str, str]) -> dict[str, str]:

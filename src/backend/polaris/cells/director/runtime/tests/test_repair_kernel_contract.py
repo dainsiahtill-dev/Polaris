@@ -1164,6 +1164,85 @@ def test_typescript_hyphenated_identifier_rule_repairs_declaration_and_uses() ->
     assert "hasSample-check" not in str(operation.replacement)
 
 
+def test_typescript_import_specifier_keyword_rule_repairs_named_import_clause() -> None:
+    content = (
+        "export type LocalOnly = { id: string };\n"
+        "import {\n"
+        "  Reputation,\n"
+        "  type ReputationSnapshot,\n"
+        "  export type ReputationTier,\n"
+        "  import type ReputationRecord,\n"
+        "  tierForScore,\n"
+        '} from "./Reputation";\n'
+    )
+    diagnostic = "src/models/Market.ts(5,3): error TS1003: Identifier expected."
+    source_tool = ts_syntax.TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,)))
+    plan = ts_syntax.build_typescript_runtime_plan_for_source_tool(
+        source_tool=source_tool,
+        base_files={"src/models/Market.ts": content},
+        diagnostics=normalize_artifact_quality_errors([diagnostic]),
+        mode="shadow",
+    )
+
+    coverage_payload = coverage.to_dict()
+    assert coverage_payload["covered_diagnostic_count"] == 1
+    assert coverage_payload["uncovered_diagnostic_count"] == 0
+    assert coverage_payload["items"][0]["matched_source_tools"] == [source_tool]
+    assert plan is not None
+    assert plan.rule_id == "typescript.import_specifier_keyword"
+    assert plan.source_tool == source_tool
+    assert {operation.kind for operation in plan.operations} == {"text_replace"}
+    composition = PatchComposer().compose({"src/models/Market.ts": content}, plan.operations)
+    assert composition.ok
+    repaired = composition.patches[0].content_after
+    assert "export type LocalOnly" in repaired
+    assert "  type ReputationTier,\n" in repaired
+    assert "  type ReputationRecord,\n" in repaired
+    assert "export type ReputationTier" not in repaired
+    assert "import type ReputationRecord" not in repaired
+
+
+def test_public_typescript_import_specifier_keyword_repair_plans_precise_text_replace() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL
+    content = 'import {\n  Reputation,\n  export type ReputationTier,\n} from "./Reputation";\n'
+
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={"src/models/Market.ts": content},
+            artifact_quality_errors=("src/models/Market.ts(3,3): error TS1003: Identifier expected.",),
+            mode="shadow",
+        )
+    )
+    payload = planning_result.to_dict()
+
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    assert payload["source_tool"] == source_tool
+    assert payload["plan_summary"]["rule_id"] == "typescript.import_specifier_keyword"
+    assert payload["plan_summary"]["operation_count"] == 1
+    assert payload["composition_summary"]["ok"] is True
+    assert payload["composition_summary"]["changed_paths"] == ["src/models/Market.ts"]
+    assert "  type ReputationTier," in payload["composition_summary"]["patches"][0]["content_after"]
+
+
+def test_typescript_import_specifier_keyword_rule_fails_closed_without_named_import_clause() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL
+    content = "export type ReputationTier = 'rising' | 'trusted';\n"
+    diagnostic = "src/models/Reputation.ts(1,8): error TS1003: Identifier expected."
+
+    plan = ts_syntax.build_typescript_runtime_plan_for_source_tool(
+        source_tool=source_tool,
+        base_files={"src/models/Reputation.ts": content},
+        diagnostics=normalize_artifact_quality_errors([diagnostic]),
+        mode="shadow",
+    )
+
+    assert plan is None
+
+
 def test_typescript_nullable_canvas_context_rule_plans_precise_text_replacements() -> None:
     content = (
         "const canvas = document.querySelector('canvas') as HTMLCanvasElement;\n"
@@ -2148,7 +2227,7 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
     assert "deterministic_rust_post_repair" in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert len(runtime_repair_source_tools()) == len(bindings)
-    assert len(runtime_repair_source_tools()) == 90
+    assert len(runtime_repair_source_tools()) == 91
     assert sum(1 for binding in bindings if binding["language"] == "rust") == 21
     assert runtime_repair_source_tools() == tuple(binding["source_tool"] for binding in bindings)
     assert all(set(binding) == {"source_tool", "language", "rule_id"} for binding in bindings)
@@ -2189,6 +2268,11 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
         "source_tool": "deterministic_go_error_string_helper_repair",
         "language": "go",
         "rule_id": "go.error_string_helper",
+    }
+    assert bindings_by_tool[ts_syntax.TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL] == {
+        "source_tool": ts_syntax.TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
+        "language": "typescript",
+        "rule_id": "typescript.import_specifier_keyword",
     }
 
 
@@ -7926,7 +8010,7 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         or source_tool == "deterministic_javascript_typescript_annotation_repair"
     ]
     catalog_failure_message = (
-        "expected public strategy catalog ledger total=90 executable_runtime=90 legacy_strategy_host=0; "
+        "expected public strategy catalog ledger total=91 executable_runtime=91 legacy_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
         "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
     )
@@ -7935,14 +8019,14 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
-    assert catalog_summary["total"] == 90
+    assert catalog_summary["total"] == 91
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert legacy_source_tools == [], catalog_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 90, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 91, catalog_failure_message
     assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, catalog_failure_message
-    assert catalog_summary["executable_runtime_binding_count"] == 90, catalog_failure_message
+    assert catalog_summary["executable_runtime_binding_count"] == 91, catalog_failure_message
     assert catalog_summary["legacy_strategy_host_count"] == 0, catalog_failure_message
-    assert len(catalog_summary["executable_runtime_source_tools"]) == 90, catalog_failure_message
+    assert len(catalog_summary["executable_runtime_source_tools"]) == 91, catalog_failure_message
     assert set(catalog_summary["implementation_status_counts"]).issubset({"executable_runtime", "legacy_strategy_host"})
     assert "reserved_only" not in catalog_summary["implementation_status_counts"]
     assert "metadata_rule_registered" not in catalog_summary["implementation_status_counts"]

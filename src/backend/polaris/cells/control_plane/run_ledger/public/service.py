@@ -11,15 +11,18 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public.contracts import (
     AppendRunLedgerEventCommandV1,
+    ReadRunLedgerProjectionBarrierQueryV1,
     ReadRunLedgerProjectionQueryV1,
     ReadRunProvenanceBundleQueryV1,
     RunLedgerAppendResultV1,
+    RunLedgerProjectionBarrierResultV1,
     RunLedgerProjectionResultV1,
     RunProvenanceBundleResultV1,
 )
@@ -120,6 +123,16 @@ def _read_events(path: Path) -> list[dict[str, Any]]:
                 parsed.setdefault("_ledger_path", str(path))
                 events.append(parsed)
     return events
+
+
+def _event_matches_barrier(event: dict[str, Any], *, append_id: str, event_hash: str) -> bool:
+    if append_id and str(event.get("append_id") or "").strip() == append_id:
+        return True
+    if event_hash and str(event.get("content_id") or "").strip() == event_hash:
+        return True
+    if event_hash and str(event.get("event_id") or "").strip() == event_hash:
+        return True
+    return False
 
 
 def _event_project_id(event: dict[str, Any]) -> str:
@@ -272,6 +285,75 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
     )
 
 
+def read_run_ledger_projection_barrier(
+    query: ReadRunLedgerProjectionBarrierQueryV1,
+) -> RunLedgerProjectionBarrierResultV1:
+    """Read a projection after the requested ledger barrier is visible.
+
+    The barrier is a consistency guard for QA. It prevents a verdict from being
+    based on a projection that has not yet consumed the Director effect or
+    verifier event referenced by the current task.
+    """
+
+    workspace = Path(query.workspace).expanduser().resolve()
+    append_id = str(query.min_append_id or "").strip()
+    event_hash = str(query.min_event_hash or "").strip()
+    deadline = time.monotonic() + (query.timeout_ms / 1000.0)
+    events: list[dict[str, Any]] = []
+    paths: list[Path] = []
+    barrier_satisfied = not append_id and not event_hash
+    while True:
+        paths = _ledger_paths(
+            workspace,
+            run_id=query.run_id,
+            max_runs=1,
+            include_compat_ledgers=query.include_compat_ledgers,
+        )
+        events = []
+        for path in paths:
+            events.extend(_read_events(path))
+        if not barrier_satisfied:
+            barrier_satisfied = any(
+                _event_matches_barrier(event, append_id=append_id, event_hash=event_hash) for event in events
+            )
+        if barrier_satisfied or query.timeout_ms <= 0 or time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(
+            workspace=str(workspace),
+            run_id=query.run_id,
+            max_runs=1,
+            include_compat_ledgers=query.include_compat_ledgers,
+        )
+    ).projection
+    consumed_append_ids = [
+        str(event.get("append_id") or "").strip() for event in events if str(event.get("append_id") or "").strip()
+    ]
+    consumed_event_hashes = [
+        str(event.get("content_id") or event.get("event_id") or "").strip()
+        for event in events
+        if str(event.get("content_id") or event.get("event_id") or "").strip()
+    ]
+    return RunLedgerProjectionBarrierResultV1(
+        projection=projection,
+        barrier={
+            "schema_version": "run_ledger.projection_barrier.v1",
+            "workspace": str(workspace),
+            "run_id": query.run_id,
+            "barrier_satisfied": bool(barrier_satisfied),
+            "min_append_id": append_id,
+            "min_event_hash": event_hash,
+            "consumed_until_append_id": consumed_append_ids[-1] if consumed_append_ids else "",
+            "consumed_append_ids": consumed_append_ids,
+            "consumed_event_hashes": consumed_event_hashes,
+            "ledger_paths": [str(path) for path in paths],
+            "event_count": len(events),
+        },
+    )
+
+
 def _publish_run_ledger_projection_update(
     *,
     workspace: Path,
@@ -372,4 +454,9 @@ def read_run_provenance_bundle(query: ReadRunProvenanceBundleQueryV1) -> RunProv
     )
 
 
-__all__ = ["append_run_ledger_event", "read_run_ledger_projection", "read_run_provenance_bundle"]
+__all__ = [
+    "append_run_ledger_event",
+    "read_run_ledger_projection",
+    "read_run_ledger_projection_barrier",
+    "read_run_provenance_bundle",
+]

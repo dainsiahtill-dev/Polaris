@@ -81,6 +81,7 @@ from .typescript_syntax import (
     TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
     TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL,
     TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL,
+    TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
     TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
     TYPESCRIPT_MISSING_CLOSING_BRACE_SOURCE_TOOL,
     TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
@@ -164,6 +165,7 @@ _RUNTIME_MIGRATION_SOURCE_TOOLS = frozenset(
         TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
         TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL,
         TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL,
+        TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
         TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
         TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
         TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
@@ -2321,6 +2323,23 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 description="Rewrites generated TypeScript member access to a safe existing alias when one is traceable.",
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="member_alias_line_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.import_specifier_keyword",
+                source_tool=TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.GENERATED_RESIDUE,
+                priority=1,
+                diagnostic_codes=("typescript_ts1003",),
+                message_terms=("identifier expected",),
+                risk_level="low",
+                description=(
+                    "Normalizes generated TypeScript named import specifiers that incorrectly include "
+                    "export/import type keywords inside the import clause."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="named_import_specifier_keyword_text_replace"),
             ),
             RepairRuleDefinition(
                 rule_id="typescript.missing_member",

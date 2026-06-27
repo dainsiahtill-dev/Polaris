@@ -80,6 +80,7 @@ KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
         "deterministic_typescript_enum_member_separator_repair",
         "deterministic_typescript_escaped_newline_repair",
         "deterministic_typescript_hyphenated_identifier_repair",
+        "deterministic_typescript_import_specifier_keyword_repair",
         "deterministic_typescript_member_alias_repair",
         "deterministic_typescript_missing_closing_brace_repair",
         "deterministic_typescript_missing_export_repair",
