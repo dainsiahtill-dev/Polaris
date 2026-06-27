@@ -5,8 +5,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+    FinalRequestEvidenceCoverageError,
     build_final_provider_request_snapshot,
     build_final_request_context_audit_for_request,
+    enforce_final_request_evidence_coverage,
+    final_request_evidence_coverage_violation,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
 from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
@@ -382,6 +385,184 @@ def test_final_request_context_audit_tracks_receipt_store_refs() -> None:
         "chief_engineer_blueprint",
     ]
     assert "receipt_store_refs" in evidence_coverage["included_refs"]
+
+
+def test_final_request_evidence_enforcement_is_opt_in_without_envelope() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Implement the task."},
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Implement the task."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert evidence_coverage["pass"] is False
+    assert final_request_evidence_coverage_violation(ai_request=ai_request, audit=audit) is None
+    enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
+
+
+def test_final_request_evidence_enforcement_blocks_strict_missing_refs() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "final_request_evidence_required": True,
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Implement the task."},
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Implement the task."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    violation = final_request_evidence_coverage_violation(ai_request=ai_request, audit=audit)
+    assert violation is not None
+    assert violation["source"] == "request.final_request_evidence_required"
+    assert violation["missing_required_refs"] == ["pm_contract", "ce_blueprint", "target_files"]
+    try:
+        enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
+    except FinalRequestEvidenceCoverageError as exc:
+        assert exc.violation == violation
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("strict final request evidence coverage should fail closed")
+
+
+def test_final_request_evidence_enforcement_blocks_envelope_required_refs() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "audit_policy": {
+                    "final_provider_request_required": True,
+                    "required_evidence": ["pm_task_contract"],
+                },
+            },
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Implement the task."},
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Implement the task."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    violation = final_request_evidence_coverage_violation(ai_request=ai_request, audit=audit)
+    assert violation is not None
+    assert violation["source"] == "execution_envelope.audit_policy.final_provider_request_required"
+    assert violation["missing_required_refs"] == ["pm_contract"]
+
+
+def test_final_request_evidence_coverage_counts_current_provider_request() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "final_request_evidence_required": True,
+            "required_evidence": ["final_provider_request"],
+            "chat_messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Director. PM Task Contract / 任务合同: TASK-1 target_files src/main.py. "
+                        "Chief Engineer Blueprint / CE 蓝图交接: blueprint_id ce_TASK-1."
+                    ),
+                },
+                {"role": "user", "content": "Implement src/main.py."},
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are Director. PM Task Contract / 任务合同: TASK-1 target_files src/main.py. "
+                    "Chief Engineer Blueprint / CE 蓝图交接: blueprint_id ce_TASK-1."
+                ),
+            },
+            {"role": "user", "content": "Implement src/main.py."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert "final_provider_request" in evidence_coverage["included_refs"]
+    assert evidence_coverage["missing_required_refs"] == []
+    assert evidence_coverage["pass"] is True
+    enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
 
 
 def test_final_request_context_audit_flags_required_tool_pruning() -> None:
