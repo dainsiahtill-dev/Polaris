@@ -1364,6 +1364,7 @@ async def _run_materialization_quality_repair_retry(
         return deterministic_quality_tool_results, summary
     deterministic_semantic_tool_results = run_typescript_semantic_quality_repairs(
         adapter,
+        task=task,
         task_id=target_task_id,
         artifact_quality_errors=repair_quality_errors,
     )

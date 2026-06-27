@@ -191,6 +191,10 @@ function toStringList(value: unknown): string[] {
     .filter(Boolean);
 }
 
+function toAcceptanceCriteriaList(value: unknown): PmTask['acceptance'] {
+  return toStringList(value).map((description) => ({ description }));
+}
+
 function readTaskStringList(task: PmTask, keys: string[]): string[] {
   const values: string[] = [];
   for (const key of keys) {
@@ -427,13 +431,13 @@ function normalizeTaskSearchResult(
   };
 }
 
-function nonEmptyTaskStrings(values: string[] | undefined): string[] {
-  return Array.isArray(values) ? values.filter((item) => item.trim().length > 0) : [];
+function nonEmptyTaskStrings(values: unknown): string[] {
+  return toStringList(values);
 }
 
 function mergePmTaskDetailProjection(base: PmTask, detail: PmTask): PmTask {
-  const detailAcceptance = Array.isArray(detail.acceptance) ? detail.acceptance : [];
-  const baseAcceptance = Array.isArray(base.acceptance) ? base.acceptance : [];
+  const detailAcceptance = toAcceptanceCriteriaList(detail.acceptance);
+  const baseAcceptance = toAcceptanceCriteriaList(base.acceptance);
   const detailAcceptanceCriteria = nonEmptyTaskStrings(detail.acceptance_criteria);
   const baseAcceptanceCriteria = nonEmptyTaskStrings(base.acceptance_criteria);
   const detailSteps = nonEmptyTaskStrings(detail.execution_checklist ?? detail.steps);

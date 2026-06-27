@@ -491,8 +491,10 @@ def _selection_reasons(
     artifact: str,
 ) -> list[str]:
     reasons: list[str] = []
-    if _first_string(context.get("language"), context.get("prompt_language"), context.get("programming_language")):
+    if _explicit_language_from_context(context):
         reasons.append(f"language:explicit:{language}")
+    elif _language_from_contract_text(message):
+        reasons.append(f"language:contract:{language}")
     elif _path_candidates(context, message):
         reasons.append(f"language:path:{language}")
     else:
@@ -608,22 +610,13 @@ def _infer_stage(*, role_id: str, context: dict[str, Any], message: str) -> str:
 
 
 def _infer_language(*, context: dict[str, Any], message: str) -> str:
-    explicit = _first_string(
-        context.get("language"),
-        context.get("prompt_language"),
-        context.get("programming_language"),
-    )
+    explicit = _explicit_language_from_context(context)
     if explicit:
-        return _normalize_language(explicit)
-    metadata = context.get("metadata")
-    if isinstance(metadata, dict):
-        explicit = _first_string(
-            metadata.get("language"),
-            metadata.get("prompt_language"),
-            metadata.get("programming_language"),
-        )
-        if explicit:
-            return _normalize_language(explicit)
+        return explicit
+
+    contract_language = _language_from_contract_text(message)
+    if contract_language:
+        return contract_language
 
     candidates = _path_candidates(context, message)
     source_candidates = [
@@ -655,6 +648,7 @@ def _infer_language(*, context: dict[str, Any], message: str) -> str:
         "javascript": "javascript",
         "node": "node",
         "golang": "go",
+        "go_compile": "go",
         "c++": "cpp",
         "cpp": "cpp",
         "c++17": "cpp",
@@ -756,8 +750,6 @@ def _infer_artifact(*, context: dict[str, Any], message: str) -> str:
             "non-empty canvas",
             "画布",
             "首帧",
-            "可视化",
-            "视觉",
         )
     )
     has_html5_canvas_text = has_canvas and any(
@@ -958,6 +950,66 @@ def _normalize_artifact(value: Any) -> str:
         "doc": "docs",
     }
     return aliases.get(token, token)
+
+
+def _explicit_language_from_context(context: dict[str, Any]) -> str:
+    explicit = _first_string(
+        context.get("language"),
+        context.get("prompt_language"),
+        context.get("programming_language"),
+        context.get("primary_language"),
+        context.get("main_language"),
+        context.get("detected_language"),
+    )
+    if explicit:
+        return _normalize_language(explicit)
+    metadata = context.get("metadata")
+    if isinstance(metadata, dict):
+        tech_stack = metadata.get("tech_stack")
+        if isinstance(tech_stack, dict):
+            explicit = _first_string(tech_stack.get("language"))
+            if explicit:
+                return _normalize_language(explicit)
+        explicit = _first_string(
+            metadata.get("language"),
+            metadata.get("prompt_language"),
+            metadata.get("programming_language"),
+            metadata.get("primary_language"),
+            metadata.get("main_language"),
+            metadata.get("detected_language"),
+        )
+        if explicit:
+            return _normalize_language(explicit)
+    return ""
+
+
+def _language_from_contract_text(message: str) -> str:
+    lowered = str(message or "").lower()
+    explicit_patterns = (
+        r"(?:主语言|主要语言|primary\s+language|main\s+language|programming\s+language|language)\s*[:：=-]\s*([a-z0-9+#._-]+)",
+        r"(?:detected_language|primary_language|main_language|programming_language)\s*[:：=-]\s*([a-z0-9+#._-]+)",
+    )
+    for pattern in explicit_patterns:
+        match = re.search(pattern, lowered, re.IGNORECASE)
+        if not match:
+            continue
+        language = _normalize_language(match.group(1))
+        if language in _LANGUAGE_FOCUS:
+            return language
+
+    deterministic_checks: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("go", (r"\bgo_compile\b", r"source_target_coverage:[^\n]*\.go\b", r"\*\*/\*\.go\b")),
+        ("cpp", (r"\bcpp_compile\b", r"source_target_coverage:[^\n]*\.(?:cpp|hpp|cc|hh|cxx|hxx)\b")),
+        ("rust", (r"\bcargo\b", r"\brust_compile\b", r"source_target_coverage:[^\n]*\.rs\b")),
+        ("python", (r"\bpytest\b", r"source_target_coverage:[^\n]*\.py\b")),
+        ("typescript", (r"\btsc\b", r"\btypescript\b", r"source_target_coverage:[^\n]*\.tsx?\b")),
+        ("javascript", (r"\bjs_syntax\b", r"source_target_coverage:[^\n]*\.jsx?\b")),
+        ("java", (r"\bjava_compile\b", r"source_target_coverage:[^\n]*\.java\b")),
+    )
+    for language, patterns in deterministic_checks:
+        if any(re.search(pattern, lowered, re.IGNORECASE) for pattern in patterns):
+            return language
+    return ""
 
 
 def _normalize_token(value: Any, *, fallback: str) -> str:

@@ -31,7 +31,15 @@ def _stable_token(*parts: Any, length: int = 16) -> str:
 
 def _context_metadata(context: Mapping[str, Any]) -> dict[str, Any]:
     metadata = _to_dict(context.get("metadata"))
-    for key in ("run_id", "factory_run_id", "task_id", "session_id"):
+    for key in (
+        "run_id",
+        "factory_run_id",
+        "task_id",
+        "pm_task_id",
+        "target_task_id",
+        "session_id",
+        "runtime_session_id",
+    ):
         value = _string(context.get(key))
         if value and key not in metadata:
             metadata[key] = value
@@ -163,7 +171,7 @@ async def invoke_role_runtime_first(
         metadata["prompt_appendix"] = str(prompt_appendix)
 
     run_id = _resolve_context_id(context_payload, metadata, "run_id", "factory_run_id")
-    task_id = _resolve_context_id(context_payload, metadata, "task_id")
+    task_id = _resolve_context_id(context_payload, metadata, "task_id", "pm_task_id", "target_task_id")
     session_id = _resolve_context_id(context_payload, metadata, "session_id", "runtime_session_id")
     if not session_id:
         session_basis = run_id or task_id or _stable_token(workspace_token, role_token, message_text)

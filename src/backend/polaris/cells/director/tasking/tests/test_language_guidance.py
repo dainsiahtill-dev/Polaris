@@ -84,6 +84,23 @@ def test_go_profile_contains_specific_best_practices() -> None:
     assert "table-driven tests" in section
 
 
+def test_explicit_go_contract_beats_generic_typescript_example_paths() -> None:
+    identity, section = build_language_section(
+        ["src/engine/renderer.ts"],
+        metadata={"project_type": "interactive_visual"},
+        subject="实现 情绪涂鸦色轮",
+        description=(
+            "Project Metadata: 主语言: go. Deterministic Checks: go_compile; "
+            "source_target_coverage:**/*.go. 示例路径如 src/engine/renderer.ts 仅用于说明可渲染场景。"
+        ),
+    )
+
+    assert "精通 Go" in identity
+    assert "Primary language: Go (Golang)" in section
+    assert "builtin.language.typescript" not in section
+    assert "gofmt/goimports" in section
+
+
 def test_language_profiles_name_language_specific_standards() -> None:
     cases = [
         ("src/app.py", {"detected_language": "python"}, "PEP 8"),

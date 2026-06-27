@@ -349,11 +349,11 @@ class PMAdapter(
                     try:
                         probe_response = await self._call_role_llm(
                             probe_message,
-                            context={
-                                "mode": "pm_task_contract_route_probe",
-                                "deterministic_pm_contracts": True,
-                                "route_audit_probe": True,
-                            },
+                            context=self._build_deterministic_pm_route_probe_context(
+                                task_id=task_id,
+                                input_data=input_data,
+                                context=context,
+                            ),
                         )
                         probe_output = self._response_text(probe_response)
                         quality_signals.append(
@@ -564,9 +564,9 @@ class PMAdapter(
                     context=context,
                     source="pm_adapter",
                 )
-                artifacts: list[str] = [str(plan_path)]
+                blocked_artifacts: list[str] = [str(plan_path)]
                 if signal_artifact:
-                    artifacts.append(signal_artifact)
+                    blocked_artifacts.append(signal_artifact)
                 self._update_task_progress(task_id, "failed")
                 self._update_board_task(
                     task_id,
@@ -594,7 +594,7 @@ class PMAdapter(
                         "signals": quality_signals,
                         "blocked": True,
                     },
-                    "artifacts": artifacts,
+                    "artifacts": blocked_artifacts,
                     "content_length": len(raw_output),
                 }
 
@@ -624,9 +624,9 @@ class PMAdapter(
                 context=context,
                 source="pm_adapter",
             )
-            artifacts: list[str] = [str(plan_path)]
+            success_artifacts: list[str] = [str(plan_path)]
             if signal_artifact:
-                artifacts.append(signal_artifact)
+                success_artifacts.append(signal_artifact)
 
             self._update_task_progress(task_id, "completed")
             return {
@@ -642,7 +642,7 @@ class PMAdapter(
                     "summary": str(quality.get("summary") or "").strip(),
                     "signals": quality_signals,
                 },
-                "artifacts": artifacts,
+                "artifacts": success_artifacts,
                 "content_length": len(raw_output),
             }
 
@@ -738,6 +738,65 @@ class PMAdapter(
         if not raw_flag and isinstance(context, dict):
             raw_flag = str(context.get("pm_route_audit_probe") or "").strip().lower()
         return raw_flag in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _build_deterministic_pm_route_probe_context(
+        *,
+        task_id: str,
+        input_data: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build an isolated PM route-probe context.
+
+        The route probe exists only to prove that deterministic PM contract
+        mode still enters RoleRuntime/ContextOS. It must never expose tools,
+        inherit Director execution guards, or feed SESSION_PATCH/finalization
+        residue back into the real planning contract.
+        """
+
+        metadata = PMPromptBuildingMixin._metadata_from_input(input_data)
+        run_id = str(
+            context.get("run_id")
+            or context.get("factory_run_id")
+            or metadata.get("run_id")
+            or metadata.get("factory_run_id")
+            or ""
+        ).strip()
+        session_id = str(
+            context.get("session_id")
+            or context.get("runtime_session_id")
+            or metadata.get("session_id")
+            or metadata.get("runtime_session_id")
+            or ""
+        ).strip()
+        normalized_task_id = str(
+            task_id
+            or context.get("task_id")
+            or context.get("pm_task_id")
+            or metadata.get("task_id")
+            or metadata.get("pm_task_id")
+            or ""
+        ).strip()
+
+        probe_context: dict[str, Any] = {
+            "mode": "pm_task_contract_route_probe",
+            "deterministic_pm_contracts": True,
+            "route_audit_probe": True,
+            "task_id": normalized_task_id,
+            "pm_task_id": normalized_task_id,
+            "disable_internal_tool_rounds": True,
+            "_transaction_kernel_forced_tool_definitions": [],
+            "_transaction_kernel_forced_tool_choice": "none",
+            "suppress_tool_policy_prompt": True,
+            "suppress_working_memory_contract": True,
+            "_transaction_kernel_suppress_session_patch": True,
+        }
+        if run_id:
+            probe_context["run_id"] = run_id
+        if session_id:
+            probe_context["session_id"] = session_id
+            probe_context["runtime_session_id"] = session_id
+        return probe_context
 
     def _build_deterministic_pm_route_probe_message(self, directive: str) -> str:
         directive_excerpt = self._compact_text_for_prompt(directive or "No directive provided.", max_chars=1800)

@@ -216,6 +216,40 @@ def test_cpp_contract_language_beats_python_test_file(tmp_path) -> None:
     assert audit["inferred_language"] == "cpp"
 
 
+def test_pm_go_interactive_contract_language_beats_typescript_example_paths(tmp_path) -> None:
+    appendix, audit = build_prompt_profile_appendix(
+        workspace=str(tmp_path),
+        role_id="pm",
+        message=(
+            "PM route audit probe for deterministic contract mode.\n"
+            "Requirement excerpt:\n"
+            "# Product Requirements — 情绪涂鸦色轮\n"
+            "## Project Metadata\n"
+            "- 主语言: go\n"
+            "- 项目类型: interactive_visual\n"
+            "## Acceptance Criteria\n"
+            "- Web/visual/simulation/game 项目提供含 <html> 的 index.html 或等价 HTML 入口。\n"
+            "## Deterministic Checks\n"
+            "- go_compile\n"
+            "- source_target_coverage:**/*.go\n"
+            "simulation/game/interactive 项目必须包含一个可渲染的场景/引擎核心文件 "
+            "(如 src/engine/renderer.ts, src/core/simulation.py 等)。"
+        ),
+        context_override={
+            "mode": "pm_task_contract_route_probe",
+            "deterministic_pm_contracts": True,
+            "route_audit_probe": True,
+        },
+    )
+
+    selected_ids = audit["selected_prompt_profile_ids"]
+    assert "[POLARIS PROMPT PROFILE]" in appendix
+    assert "builtin.language.go" in selected_ids
+    assert "builtin.language.typescript" not in selected_ids
+    assert audit["inferred_language"] == "go"
+    assert "language:contract:go" in audit["inference_reasons"]
+
+
 def test_user_prompt_profile_can_be_selected_explicitly(tmp_path) -> None:
     profile_dir = tmp_path / ".polaris" / "prompt_profiles"
     profile_dir.mkdir(parents=True)

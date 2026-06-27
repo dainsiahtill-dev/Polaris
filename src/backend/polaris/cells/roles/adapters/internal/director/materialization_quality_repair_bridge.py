@@ -55,11 +55,37 @@ _MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS = (
     "deterministic_rust_unresolved_pub_use_repair",
     "deterministic_rust_trait_import_repair",
 )
-_MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_EXCLUDED_SOURCE_TOOLS = frozenset(
-    {
-        "deterministic_typeorm_model_normalization_repair",
-        "deterministic_typescript_scaffold_repair",
-    }
+_MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_typescript_canvas_scale_return_type_repair",
+    "deterministic_typescript_commonjs_package_type_repair",
+    "deterministic_typescript_duplicate_object_property_repair",
+    "deterministic_typescript_entrypoint_repair",
+    "deterministic_typescript_enum_member_separator_repair",
+    "deterministic_typescript_escaped_newline_repair",
+    "deterministic_typescript_member_alias_repair",
+    "deterministic_typescript_missing_closing_brace_repair",
+    "deterministic_typescript_missing_export_repair",
+    "deterministic_typescript_missing_member_repair",
+    "deterministic_typescript_nullable_canvas_context_repair",
+    "deterministic_typescript_number_to_string_argument_repair",
+    "deterministic_typescript_reexport_repair",
+    "deterministic_typescript_reexported_type_binding_repair",
+    "deterministic_typescript_relative_import_case_repair",
+    "deterministic_typescript_return_object_semicolon_repair",
+    "deterministic_typescript_sourcefile_diagnostics_repair",
+    "deterministic_typescript_too_few_arguments_repair",
+    "deterministic_typescript_tsconfig_lib_repair",
+    "deterministic_typescript_uninitialized_property_repair",
+    "deterministic_typescript_unique_export_import_repair",
+    "deterministic_typescript_unresolved_identifier_repair",
+    "deterministic_typescript_unused_import_repair",
+    "deterministic_typescript_vitest_globals_repair",
+    "deterministic_typescript_zod_type_class_collision_repair",
+)
+_SEMANTIC_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_typescript_missing_export_repair",
+    "deterministic_typescript_hyphenated_identifier_repair",
+    "deterministic_typescript_zod_type_class_collision_repair",
 )
 _MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS = (
     "deterministic_go_bare_import_string_repair",
@@ -88,36 +114,7 @@ def has_materialization_quality_runtime_repair_coverage(artifact_quality_errors:
 
 
 def _materialization_runtime_coverage_source_tools() -> frozenset[str]:
-    return frozenset(
-        (
-            *_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS,
-            *_materialization_typescript_compiler_runtime_source_tools(),
-        )
-    )
-
-
-def _runtime_executable_source_tools_for_language(language: str) -> tuple[str, ...]:
-    normalized_language = str(language or "").strip().lower()
-    if not normalized_language:
-        return ()
-    catalog = query_director_repair_strategy_catalog(
-        QueryDirectorRepairStrategyCatalogV1(
-            include_items=True,
-            max_items=1000,
-        )
-    ).to_dict()
-    source_tools: list[str] = []
-    for item in catalog.get("items") or ():
-        if not isinstance(item, Mapping):
-            continue
-        if str(item.get("language") or "").strip().lower() != normalized_language:
-            continue
-        if str(item.get("implementation_status") or "").strip() != "executable_runtime":
-            continue
-        source_tool = str(item.get("source_tool") or "").strip()
-        if source_tool:
-            source_tools.append(source_tool)
-    return tuple(dict.fromkeys(source_tools))
+    return frozenset(_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS)
 
 
 def _coverage_has_materialization_runtime_source_tool(
@@ -211,14 +208,16 @@ def run_typescript_semantic_quality_repairs(
     *,
     task_id: str,
     artifact_quality_errors: list[str],
+    task: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Run TypeScript semantic quality repairs behind the materialization bridge boundary."""
 
     results: list[dict[str, Any]] = []
-    for source_tool in _materialization_typescript_compiler_runtime_source_tools():
+    for source_tool in _semantic_typescript_compiler_runtime_source_tools():
         results.extend(
             _run_materialization_typescript_runtime_repair(
                 adapter,
+                task=task,
                 task_id=task_id,
                 artifact_quality_errors=artifact_quality_errors,
                 source_tool=source_tool,
@@ -366,17 +365,17 @@ def _run_materialization_typescript_compiler(
 
 
 def _materialization_typescript_compiler_runtime_source_tools() -> tuple[str, ...]:
-    return tuple(
-        source_tool
-        for source_tool in _runtime_executable_source_tools_for_language("typescript")
-        if source_tool not in _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_EXCLUDED_SOURCE_TOOLS
-    )
+    return _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS
+
+
+def _semantic_typescript_compiler_runtime_source_tools() -> tuple[str, ...]:
+    return _SEMANTIC_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS
 
 
 def _run_materialization_typescript_runtime_repair(
     adapter: Any,
     *,
-    task: dict[str, Any] | None = None,
+    task: Mapping[str, Any] | None = None,
     task_id: str,
     artifact_quality_errors: list[str],
     source_tool: str,

@@ -285,9 +285,15 @@ def test_repair_rule_registry_reports_known_and_unknown_diagnostic_coverage() ->
     assert payload["items"][0]["known_rule_matched"] is True
     assert payload["items"][0]["executable_runtime_plan_matched"] is True
     assert payload["items"][0]["metadata_only_match"] is False
-    assert payload["items"][0]["matched_rule_ids"] == ["typescript.object_literal_missing_comma"]
-    assert payload["items"][0]["runtime_plan_rule_ids"] == ["typescript.object_literal_missing_comma"]
-    assert payload["items"][0]["archetypes"] == ["object_literal_syntax"]
+    assert payload["items"][0]["matched_rule_ids"] == [
+        "typescript.hyphenated_identifier",
+        "typescript.object_literal_missing_comma",
+    ]
+    assert payload["items"][0]["runtime_plan_rule_ids"] == [
+        "typescript.hyphenated_identifier",
+        "typescript.object_literal_missing_comma",
+    ]
+    assert payload["items"][0]["archetypes"] == ["invalid_identifier", "object_literal_syntax"]
     assert payload["items"][0]["phases"] == ["quality_repair"]
     assert payload["items"][1]["known_rule_matched"] is False
     assert payload["items"][1]["matched_rule_ids"] == []
@@ -413,7 +419,10 @@ def test_repair_rule_registry_falls_back_to_raw_when_message_is_empty() -> None:
 
     matches = default_repair_rule_registry().match_diagnostic(diagnostic)
 
-    assert [match.rule_id for match in matches] == ["typescript.object_literal_missing_comma"]
+    assert [match.rule_id for match in matches] == [
+        "typescript.hyphenated_identifier",
+        "typescript.object_literal_missing_comma",
+    ]
 
 
 def test_repair_plan_scheduler_orders_dependencies_and_fails_closed_on_cycles() -> None:
@@ -7008,7 +7017,10 @@ def test_public_repair_coverage_report_exposes_uncovered_diagnostics() -> None:
     assert payload["items"][0]["metadata_only_match"] is False
     assert payload["items"][0]["recommended_route"] == "runtime_rule"
     assert payload["items"][0]["coverage_status"] == "executable_runtime"
-    assert payload["items"][0]["matched_source_tools"] == ["deterministic_typescript_return_object_semicolon_repair"]
+    assert payload["items"][0]["matched_source_tools"] == [
+        "deterministic_typescript_hyphenated_identifier_repair",
+        "deterministic_typescript_return_object_semicolon_repair",
+    ]
     assert payload["items"][1]["known_rule_matched"] is False
     assert payload["items"][1]["metadata_only_match"] is False
     assert payload["items"][1]["executable_runtime_plan_matched"] is False

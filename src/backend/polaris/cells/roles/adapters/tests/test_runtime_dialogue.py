@@ -69,6 +69,40 @@ class TestRuntimeDialogueHelper:
         assert command.metadata["context_os_expected"] is True
 
     @pytest.mark.asyncio
+    async def test_uses_pm_task_id_as_runtime_task_id(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        class FakeRoleRuntimeService:
+            async def execute_role_session(self, command: Any) -> RoleExecutionResultV1:
+                captured["command"] = command
+                return RoleExecutionResultV1(
+                    ok=True,
+                    status="ok",
+                    role=command.role,
+                    workspace=command.workspace,
+                    task_id=command.task_id,
+                    session_id=command.session_id,
+                    output="runtime output",
+                )
+
+        monkeypatch.setattr(runtime_dialogue, "_create_role_runtime_service", lambda: FakeRoleRuntimeService())
+
+        await invoke_role_runtime_first(
+            workspace=str(tmp_path),
+            role="pm",
+            message="probe runtime route",
+            context={"pm_task_id": "pm-contract-1"},
+        )
+
+        command = captured["command"]
+        assert command.task_id == "pm-contract-1"
+        assert command.metadata["pm_task_id"] == "pm-contract-1"
+
+    @pytest.mark.asyncio
     async def test_runtime_boundary_unavailable_fails_closed(
         self,
         monkeypatch: pytest.MonkeyPatch,

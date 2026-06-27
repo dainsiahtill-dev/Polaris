@@ -165,6 +165,49 @@ describe('PMTaskPanel', () => {
     expect(screen.getByTestId('pm-task-detail-provenance')).toHaveTextContent('BP-BACKEND-DETAIL');
   });
 
+  it('keeps PM details renderable when runtime contract lists contain objects', async () => {
+    getPmTaskMock.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        id: 'PM-1',
+        title: '后端完整任务详情',
+        status: 'pending',
+        priority: 1,
+      },
+    });
+
+    render(
+      <PMTaskPanel
+        tasks={[
+          makeTask({
+            acceptance_criteria: [
+              { description: '对象验收标准必须可渲染' },
+            ] as unknown as string[],
+            execution_checklist: [
+              { description: '对象执行步骤必须可渲染' },
+            ] as unknown as string[],
+            target_files: [
+              { path: 'src/app/object-contract.tsx' },
+            ] as unknown as string[],
+            dependencies: [
+              { id: 'PM-object-dependency' },
+            ] as unknown as string[],
+          }),
+        ]}
+        selectedTaskId="PM-1"
+        onTaskSelect={() => undefined}
+        pmRunning={false}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    await waitFor(() => expect(getPmTaskMock).toHaveBeenCalledWith('PM-1', 'C:/Temp/Product'));
+    expect(await screen.findByText('对象验收标准必须可渲染')).toBeInTheDocument();
+    expect(screen.getByText('对象执行步骤必须可渲染')).toBeInTheDocument();
+    expect(screen.getByText('src/app/object-contract.tsx')).toBeInTheDocument();
+    expect(screen.getByText('PM-object-dependency')).toBeInTheDocument();
+  });
+
   it('normalizes numeric selected task ids before loading backend task evidence', async () => {
     getPmTaskMock.mockResolvedValueOnce({
       ok: true,

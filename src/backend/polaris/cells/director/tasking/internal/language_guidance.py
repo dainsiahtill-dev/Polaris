@@ -172,6 +172,13 @@ _LANGUAGE_TEXT_PATTERNS: dict[str, tuple[str, ...]] = {
     ),
     "go": (
         r"\bgolang\b",
+        r"主语言\s*[:：=-]\s*go\b",
+        r"主要语言\s*[:：=-]\s*go\b",
+        r"\b(?:primary|main|programming)\s+language\s*[:：=-]\s*go\b",
+        r"\bgo_compile\b",
+        r"source_target_coverage:[^\n]*\.go\b",
+        r"\*\*/\*\.go\b",
+        r"用\s+go\s+实现",
         r"\bgo\b(?=\s+(project|service|app|api|module|code|conventions|test|build))",
         r"go\.mod",
         r"\.go\b",
@@ -923,9 +930,14 @@ def _metadata_text(metadata: dict[str, Any]) -> str:
     values: list[str] = []
     for key in (
         "detected_framework",
+        "detected_language",
         "framework",
         "intent",
+        "language",
+        "main_language",
         "phase",
+        "primary_language",
+        "programming_language",
         "project_type",
         "task_kind",
         "task_type",
@@ -951,7 +963,7 @@ def _metadata_language(metadata: dict[str, Any]) -> str:
         language = _normalize_language(tech_stack.get("language"))
         if language:
             return language
-    for key in ("detected_language", "language", "primary_language"):
+    for key in ("detected_language", "language", "main_language", "primary_language", "programming_language"):
         language = _normalize_language(metadata.get(key))
         if language:
             return language
@@ -1013,6 +1025,37 @@ def _language_from_text(text: str) -> str:
     if not language_scores:
         return ""
     return max(language_scores, key=lambda lang: (language_scores[lang], lang))
+
+
+def _contract_language_from_text(text: str) -> str:
+    """Return a language only from explicit contract fields or hard checks."""
+
+    normalized = str(text or "").lower()
+    explicit_patterns = (
+        r"(?:主语言|主要语言|primary\s+language|main\s+language|programming\s+language|language)\s*[:：=-]\s*([a-z0-9+#._-]+)",
+        r"(?:detected_language|primary_language|main_language|programming_language)\s*[:：=-]\s*([a-z0-9+#._-]+)",
+    )
+    for pattern in explicit_patterns:
+        match = re.search(pattern, normalized, re.IGNORECASE)
+        if not match:
+            continue
+        language = _normalize_language(match.group(1))
+        if language in _LANGUAGE_PROFILES:
+            return language
+
+    checks: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("go", (r"\bgo_compile\b", r"source_target_coverage:[^\n]*\.go\b", r"\*\*/\*\.go\b")),
+        ("cpp", (r"\bcpp_compile\b", r"source_target_coverage:[^\n]*\.(?:cpp|hpp|cc|hh|cxx|hxx)\b")),
+        ("rust", (r"\brust_compile\b", r"source_target_coverage:[^\n]*\.rs\b")),
+        ("python", (r"\bpytest\b", r"source_target_coverage:[^\n]*\.py\b")),
+        ("typescript", (r"\btsc\b", r"source_target_coverage:[^\n]*\.tsx?\b")),
+        ("javascript", (r"\bjs_syntax\b", r"source_target_coverage:[^\n]*\.jsx?\b")),
+        ("java", (r"\bjava_compile\b", r"source_target_coverage:[^\n]*\.java\b")),
+    )
+    for language, patterns in checks:
+        if any(re.search(pattern, normalized, re.IGNORECASE) for pattern in patterns):
+            return language
+    return ""
 
 
 def _combined_text(context: LanguagePromptContext) -> str:
@@ -1248,7 +1291,8 @@ def select_guidance(context: LanguagePromptContext) -> GuidanceSelection:
         subject=str(context.subject or ""),
         description=str(context.description or ""),
     )
-    language = detect_primary_language(
+    contract_language = _contract_language_from_text(_combined_text(normalized_context))
+    language = contract_language or detect_primary_language(
         list(normalized_context.target_files),
         "",
         metadata=normalized_context.metadata,

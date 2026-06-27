@@ -2111,9 +2111,13 @@ def _missing_export_operation(
             declaration_kind=declaration_kind,
         )
         return (
-            operation,
-            {"file": exporter, "symbol": symbol, "kind": declaration_kind},
-        ) if operation is not None else (None, {})
+            (
+                operation,
+                {"file": exporter, "symbol": symbol, "kind": declaration_kind},
+            )
+            if operation is not None
+            else (None, {})
+        )
     ops = _text_replace_operations_from_repair(
         path=exporter,
         original=original,
@@ -2274,7 +2278,17 @@ def _resolve_relative_ts_module_path(importer_path: str, module_ref: str, base_f
         return ""
     base_dir = posixpath.dirname(importer_path)
     raw = posixpath.normpath(posixpath.join(base_dir, module_ref))
+    raw_root, raw_ext = posixpath.splitext(raw)
     candidates = [raw, f"{raw}.ts", f"{raw}.tsx", posixpath.join(raw, "index.ts"), posixpath.join(raw, "index.tsx")]
+    if raw_ext.lower() in {".js", ".jsx", ".mjs", ".cjs"}:
+        candidates.extend(
+            (
+                f"{raw_root}.ts",
+                f"{raw_root}.tsx",
+                posixpath.join(raw_root, "index.ts"),
+                posixpath.join(raw_root, "index.tsx"),
+            )
+        )
     for candidate in candidates:
         normalized = _normalize_repair_path(candidate)
         if normalized in base_files:
@@ -3164,17 +3178,39 @@ def _parse_typescript_zod_type_class_collision_paths(diagnostics: Sequence[Repai
 
 def _repair_typescript_zod_type_class_collision(text: str) -> str:
     token = str(text or "")
+    changed = False
 
     def class_exists(name: str) -> bool:
         return bool(re.search(rf"(?:^|\n)\s*(?:export\s+)?class\s+{re.escape(name)}\b", token))
 
     def replace(match: re.Match[str]) -> str:
+        nonlocal changed
         name = str(match.group("name") or "")
         if not class_exists(name):
             return match.group(0)
+        changed = True
         return f"{match.group('indent')}{match.group('export') or ''}type {name}Data = {match.group('infer')};"
 
-    return _TS_ZOD_INFERRED_TYPE_ALIAS_LINE_RE.sub(replace, token)
+    repaired = _TS_ZOD_INFERRED_TYPE_ALIAS_LINE_RE.sub(replace, token)
+    if not changed:
+        return token
+
+    for match in _TS_ZOD_INFERRED_TYPE_ALIAS_LINE_RE.finditer(token):
+        name = str(match.group("name") or "").strip()
+        if not name or not class_exists(name):
+            continue
+        new_name = f"{name}Data"
+        repaired = re.sub(
+            rf"(\bconstructor\s*\([^)]*\bdata\s*:\s*){re.escape(name)}\b",
+            rf"\g<1>{new_name}",
+            repaired,
+        )
+        repaired = re.sub(
+            rf"(\b(?:public|private|protected|readonly\s+)*data\s*:\s*){re.escape(name)}\b",
+            rf"\g<1>{new_name}",
+            repaired,
+        )
+    return repaired
 
 
 def _export_existing_typescript_declaration(text: str, symbol: str) -> str:
@@ -3442,6 +3478,7 @@ def _missing_closing_brace_operation(*, path: str, content: str) -> RepairOperat
     if repaired == content:
         return None
     start = len(content.rstrip())
+    unique_context = content[max(0, start - 160) : start]
     return RepairOperation(
         kind="text_replace",
         path=path,
@@ -3453,6 +3490,7 @@ def _missing_closing_brace_operation(*, path: str, content: str) -> RepairOperat
         metadata={
             "repair_kind": "typescript_missing_closing_brace",
             "missing_count": missing_count,
+            "unique_context": unique_context,
         },
     )
 

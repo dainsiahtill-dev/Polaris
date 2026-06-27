@@ -887,6 +887,14 @@ class TestDeterministicContractsFlag:
         assert len(calls) == 1
         assert calls[0]["context"]["mode"] == "pm_task_contract_route_probe"
         assert calls[0]["context"]["route_audit_probe"] is True
+        assert calls[0]["context"]["task_id"] == "pm-route-probe"
+        assert calls[0]["context"]["pm_task_id"] == "pm-route-probe"
+        assert calls[0]["context"]["disable_internal_tool_rounds"] is True
+        assert calls[0]["context"]["_transaction_kernel_forced_tool_definitions"] == []
+        assert calls[0]["context"]["_transaction_kernel_forced_tool_choice"] == "none"
+        assert calls[0]["context"]["suppress_tool_policy_prompt"] is True
+        assert calls[0]["context"]["suppress_working_memory_contract"] is True
+        assert calls[0]["context"]["_transaction_kernel_suppress_session_patch"] is True
         signals = result["quality_gate"]["signals"]
         assert any(signal["code"] == "pm.contracts.deterministic_route_probe" for signal in signals)
 
