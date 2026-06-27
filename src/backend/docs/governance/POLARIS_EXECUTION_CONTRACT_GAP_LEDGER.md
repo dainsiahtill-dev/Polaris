@@ -54,7 +54,7 @@ The target chain is:
 | C-11 | `e2c30deb` | Final provider request evidence coverage fails closed before sync, structured, and stream provider invocation when strict policy is active. |
 | C-12 | `64326302` | PM deterministic route probe is regression-tested as text-only from adapter context through TransactionKernel tool schema and final provider snapshot. |
 | C-13 | `2b51b7e1` | Final request evidence coverage treats `delivery_plan_document` and `delivery_depth_contract` as first-class required/included refs. |
-| C-14 | pending | CE blueprints emit module interface contracts and Director prompts render target module ownership/export guidance. |
+| C-14 | `40941762` | CE blueprints emit module interface contracts and Director prompts render target module ownership/export guidance. |
 
 ## Update Rules
 
