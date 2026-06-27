@@ -733,6 +733,24 @@ class TestExecuteCommandGuards:
         assert isinstance(receipt, dict)
         assert receipt.get("operation") == "execute_command"
 
+    def test_execute_command_pipe_chain_is_not_translated_as_directory(self, temp_workspace) -> None:
+        """Common LLM shell probes with pipes must stay in command execution."""
+        workspace = Path(temp_workspace)
+        (workspace / "requirements.md").write_text("alpha\nbeta\n", encoding="utf-8")
+        executor = AgentAccelToolExecutor(workspace=temp_workspace)
+
+        command = f"ls -la {workspace} && cat {workspace / 'requirements.md'} 2>/dev/null | head -100"
+        result = executor.execute("execute_command", {"command": command})
+
+        assert result["ok"] is True
+        payload = result["result"]
+        assert "Directory not found: head" not in str(payload)
+        assert "alpha" in payload["stdout"]
+        receipt = payload.get("effect_receipt")
+        assert isinstance(receipt, dict)
+        assert receipt["command"] == command
+        assert receipt["shell"] is True
+
     def test_execute_command_capability_token_blocks_unlisted_command(self, temp_workspace) -> None:
         """allowed_commands in the capability token narrows execute_command."""
         executor = AgentAccelToolExecutor(

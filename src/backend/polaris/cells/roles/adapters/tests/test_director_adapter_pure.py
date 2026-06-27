@@ -49,6 +49,7 @@ from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typesc
 from polaris.cells.roles.adapters.internal.director.execute_method import (
     _build_empty_write_content_retry_message,
     _build_existing_workspace_task_evidence,
+    _build_no_write_materialization_retry_message,
     _can_accept_existing_workspace_scope,
     _deterministic_repair_profile_summary_from_tool_results,
     _deterministic_repair_source_tools_from_tool_results,
@@ -58,6 +59,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _empty_write_content_retry_needed,
     _extract_task_target_path_candidates,
     _finalize_claimed_execution,
+    _no_write_materialization_retry_needed,
     _resolve_claim_external_task_id,
     _run_empty_write_content_materialization_retry,
     _task_requires_fresh_materialization,
@@ -4406,6 +4408,67 @@ def test_empty_write_retry_uses_concrete_scope_path_when_target_files_missing() 
     assert "Allowed target files: main.py." in message
 
 
+def test_no_write_materialization_retry_needed_only_after_successful_no_write(tmp_path: Any) -> None:
+    task = {
+        "subject": "Create app module",
+        "target_files": ["src/app.py"],
+        "scope_paths": ["src/app.py"],
+    }
+
+    assert (
+        _no_write_materialization_retry_needed(
+            primary_llm_summary={"success": True},
+            task=task,
+            tool_results=[{"tool_name": "repo_tree", "success": True}],
+            workspace=str(tmp_path),
+        )
+        is True
+    )
+    assert (
+        _no_write_materialization_retry_needed(
+            primary_llm_summary={"success": False},
+            task=task,
+            tool_results=[{"tool_name": "repo_tree", "success": True}],
+            workspace=str(tmp_path),
+        )
+        is False
+    )
+    assert (
+        _no_write_materialization_retry_needed(
+            primary_llm_summary={"success": True},
+            task=task,
+            tool_results=[
+                {
+                    "tool_name": "write_file",
+                    "status": "success",
+                    "success": True,
+                    "arguments": {"file": "src/app.py", "content": "print('ok')\n"},
+                    "result": {"path": "src/app.py", "ok": True},
+                }
+            ],
+            workspace=str(tmp_path),
+        )
+        is False
+    )
+
+
+def test_no_write_materialization_retry_message_pins_declared_targets() -> None:
+    task = {
+        "subject": "Create TypeScript modules",
+        "target_files": ["package.json", "src/index.ts"],
+        "scope_paths": ["src"],
+    }
+    message = _build_no_write_materialization_retry_message(
+        task,
+        original_message="[mode:materialize]\n目标文件: package.json, src/index.ts",
+        tool_results=[{"tool_name": "repo_tree", "success": True}],
+    )
+
+    assert "previous Director turn completed without any write/edit receipt" in message
+    assert "Allowed target files: package.json, src/index.ts." in message
+    assert "Do not call read, search, tree, or shell tools" in message
+
+
 def test_target_candidates_include_explicit_scope_directories_with_target_files() -> None:
     task = {
         "target_files": ["package.json", "README.md"],
@@ -4503,6 +4566,166 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
     assert seen_contexts[1]["director_empty_write_retry"]["write_only_single_target"] == {
         "tool": "write_file",
         "target_file": "src/app.py",
+    }
+    assert result.get("error_code") != "director_no_materialized_changes"
+
+
+@pytest.mark.asyncio
+async def test_execute_retries_no_write_probe_with_write_only_materialize_prompt(tmp_path: Any) -> None:
+    adapter = _make_adapter(tmp_path)
+    task = adapter.task_board.create(
+        subject="Create app module",
+        description="Create src/app.py with a runnable entry point.",
+        metadata={"target_files": ["src/app.py"], "scope_paths": ["src/app.py"], "phase": "implementation"},
+    )
+    seen_messages: list[str] = []
+    seen_contexts: list[dict[str, Any]] = []
+
+    async def _dialogue(message: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args
+        seen_messages.append(message)
+        raw_context = kwargs.get("context")
+        seen_contexts.append(raw_context if isinstance(raw_context, dict) else {})
+        if len(seen_messages) == 1:
+            return {
+                "content": "I inspected the workspace and will implement next.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "repo_tree",
+                        "tool_name": "repo_tree",
+                        "status": "success",
+                        "success": True,
+                        "result": {"tree": ".\n"},
+                    },
+                    {
+                        "tool": "execute_command",
+                        "tool_name": "execute_command",
+                        "status": "success",
+                        "success": True,
+                        "result": {"stdout": "requirements.md\n", "stderr": "", "returncode": 0},
+                    },
+                ],
+            }
+        return {
+            "content": (
+                "src/app.py\n"
+                "```python\n"
+                "APP_STATUS = 'ok'\n"
+                "\n"
+                "\n"
+                "def main() -> str:\n"
+                "    return APP_STATUS\n"
+                "\n"
+                "\n"
+                "if __name__ == '__main__':\n"
+                "    print(main())\n"
+                "```\n"
+            ),
+            "success": True,
+        }
+
+    async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+    adapter._invoke_role_dialogue_with_timeout = _dialogue  # type: ignore[method-assign]
+    adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+
+    result = await adapter.execute(
+        task_id=str(task.id),
+        input_data={"task_id": str(task.id)},
+        context={"run_id": "run-no-write-probe-retry"},
+    )
+
+    assert (tmp_path / "src" / "app.py").read_text(encoding="utf-8") == (
+        "APP_STATUS = 'ok'\n\n\ndef main() -> str:\n    return APP_STATUS\n\n\n"
+        "if __name__ == '__main__':\n    print(main())\n"
+    )
+    assert len(seen_messages) == 2
+    assert "completed without any write/edit receipt" in seen_messages[1]
+    assert "Do not call read, search, tree, or shell tools" in seen_messages[1]
+    assert seen_contexts[1]["_transaction_kernel_forced_tool_choice"] == {
+        "type": "function",
+        "function": {"name": "write_file"},
+    }
+    forced_defs = seen_contexts[1]["_transaction_kernel_forced_tool_definitions"]
+    assert forced_defs and forced_defs[0]["function"]["name"] == "write_file"
+    file_schema = forced_defs[0]["function"]["parameters"]["properties"]["file"]
+    assert file_schema["enum"] == ["src/app.py"]
+    assert seen_contexts[1]["director_no_write_materialization_retry"]["write_only_declared_targets"] == {
+        "tool": "write_file",
+        "target_files": ["src/app.py"],
+    }
+    assert result.get("error_code") != "director_no_materialized_changes"
+
+
+@pytest.mark.asyncio
+async def test_execute_retries_read_only_materialization_with_forced_write(tmp_path: Any) -> None:
+    adapter = _make_adapter(tmp_path)
+    task = adapter.task_board.create(
+        subject="Create app module",
+        description="Create src/app.py with a runnable entry point.",
+        metadata={"target_files": ["src/app.py"], "scope_paths": ["src/app.py"]},
+    )
+    seen_messages: list[str] = []
+    seen_contexts: list[dict[str, Any]] = []
+
+    async def _dialogue(message: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args
+        seen_messages.append(message)
+        raw_context = kwargs.get("context")
+        seen_contexts.append(raw_context if isinstance(raw_context, dict) else {})
+        if len(seen_messages) == 1:
+            return {
+                "content": "Workspace inspected; no source files are present yet.",
+                "success": True,
+                "tool_results": [{"tool": "repo_tree", "tool_name": "repo_tree", "status": "success", "success": True}],
+            }
+        return {
+            "content": (
+                "src/app.py\n"
+                "```python\n"
+                "APP_STATUS = 'ok'\n"
+                "\n"
+                "\n"
+                "def main() -> str:\n"
+                "    return APP_STATUS\n"
+                "\n"
+                "\n"
+                "if __name__ == '__main__':\n"
+                "    print(main())\n"
+                "```\n"
+            ),
+            "success": True,
+            "tool_results": [],
+        }
+
+    adapter._invoke_role_dialogue_with_timeout = _dialogue  # type: ignore[method-assign]
+
+    result = await adapter.execute(
+        task_id=str(task.id),
+        input_data={"task_id": str(task.id)},
+        context={"run_id": "run-no-write-retry"},
+    )
+
+    assert (tmp_path / "src" / "app.py").read_text(encoding="utf-8") == (
+        "APP_STATUS = 'ok'\n\n\ndef main() -> str:\n    return APP_STATUS\n\n\n"
+        "if __name__ == '__main__':\n    print(main())\n"
+    )
+    assert len(seen_messages) == 2
+    assert "previous Director turn completed without any write/edit receipt" in seen_messages[1]
+    assert seen_contexts[1]["_transaction_kernel_forced_tool_choice"] == {
+        "type": "function",
+        "function": {"name": "write_file"},
+    }
+    forced_defs = seen_contexts[1]["_transaction_kernel_forced_tool_definitions"]
+    assert forced_defs and forced_defs[0]["function"]["name"] == "write_file"
+    assert forced_defs[0]["function"]["parameters"]["properties"]["file"]["enum"] == ["src/app.py"]
+    assert seen_contexts[1]["_transaction_kernel_force_exact_tools"] is True
+    assert seen_contexts[1]["director_no_write_materialization_retry"]["write_only_declared_targets"] == {
+        "tool": "write_file",
+        "target_files": ["src/app.py"],
     }
     assert result.get("error_code") != "director_no_materialized_changes"
 
@@ -4903,6 +5126,57 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
         assert metadata["task_execution_profile"] == profile
         assert context["director_execution_profile"] == profile
         assert context["task_execution_profile"] == profile
+
+    def test_task_contract_fields_are_promoted_before_role_runtime_profile(self, tmp_path: Any) -> None:
+        task = {
+            "subject": "Implement requested TypeScript modules",
+            "description": "Create the contracted source files.",
+            "metadata": {
+                "target_files": ["package.json", "src/modules/primary.ts", "src/modules/secondary.ts"],
+                "scope_paths": ["src/modules"],
+                "phase": "implementation",
+                "project_type": "typescript_service",
+                "task_id": "TASK-1",
+                "pm_task_id": "TASK-1",
+                "blueprint_id": "ce_TASK-1",
+                "blueprint_path": ".polaris/blueprints/ce_TASK-1.json",
+                "pm_contract_hash": "pm-contract-hash",
+                "blueprint_hash": "ce-blueprint-hash",
+                "ce_handoff_decision": {"allowed": True, "decision_hash": "handoff-hash"},
+            },
+        }
+        context: dict[str, Any] = {"run_id": "RUN-1", "metadata": {"task_type": "implement"}}
+
+        DirectorAdapter._promote_task_contract_to_runtime_context(
+            task=task,
+            context=context,
+            workspace=str(tmp_path),
+        )
+        metadata = DirectorAdapter._build_role_runtime_metadata(context, max_retries=1)
+        profile = DirectorAdapter._ensure_director_execution_profile(
+            message="Implement the requested files.",
+            context=context,
+            metadata=metadata,
+            workspace=str(tmp_path),
+        )
+
+        assert profile["target_files"] == ["package.json", "src/modules/primary.ts", "src/modules/secondary.ts"]
+        assert profile["project_type"] != "api"
+        assert profile["signal_evidence"]["project_type_source"] == "metadata"
+        assert profile["task_type"] == "write_code"
+        assert context["metadata"]["target_files"] == profile["target_files"]
+        assert metadata["target_files"] == profile["target_files"]
+        assert metadata["ce_handoff_decision"] == {"allowed": True, "decision_hash": "handoff-hash"}
+        envelope = metadata["director_execution_envelope"]
+        assert envelope["authorization"]["allowed_write_paths"] == [
+            "package.json",
+            "src/modules/primary.ts",
+            "src/modules/secondary.ts",
+            "src/modules",
+        ]
+        assert envelope["pm_contract"]["hash"] == "pm-contract-hash"
+        assert envelope["ce_blueprint"]["hash"] == "ce-blueprint-hash"
+        assert envelope["handoff_decision"]["allowed"] is True
 
     def test_existing_director_execution_profile_is_preserved(self, tmp_path: Any) -> None:
         existing_profile = {

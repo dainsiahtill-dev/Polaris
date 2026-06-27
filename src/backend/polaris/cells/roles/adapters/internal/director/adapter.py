@@ -134,6 +134,130 @@ def _join_limited_values(label: str, values: list[str]) -> str:
     return f"- {label}: {', '.join(values)}" if values else ""
 
 
+_TASK_CONTRACT_LIST_KEYS = (
+    "target_files",
+    "scope_paths",
+    "context_files",
+    "acceptance",
+    "acceptance_criteria",
+    "steps",
+    "execution_checklist",
+    "depends_on",
+)
+_TASK_CONTRACT_MAPPING_KEYS = (
+    "pm_contract",
+    "ce_blueprint",
+    "ce_handoff_decision",
+    "handoff_decision",
+    "job_token",
+    "control_plane_job_token",
+    "capability_token",
+)
+_TASK_CONTRACT_SCALAR_KEYS = (
+    "title",
+    "subject",
+    "description",
+    "goal",
+    "objective",
+    "phase",
+    "project_type",
+    "language",
+    "domain",
+    "backlog_ref",
+    "task_id",
+    "pm_task_id",
+    "source_task_id",
+    "external_task_id",
+    "blueprint_id",
+    "chief_engineer_blueprint_id",
+    "chief_engineer_handoff_id",
+    "blueprint_path",
+    "runtime_blueprint_path",
+    "pm_contract_hash",
+    "contract_hash",
+    "pm_contract_ref",
+    "blueprint_hash",
+    "ce_blueprint_hash",
+    "ce_blueprint_ref",
+    "handoff_decision_hash",
+    "ce_handoff_decision_hash",
+    "handoff_decision_ref",
+    "ce_handoff_decision_ref",
+    "handoff_source",
+)
+
+
+def _task_contract_sources(task: dict[str, Any]) -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = []
+    if isinstance(task, dict):
+        sources.append(task)
+        metadata = task.get("metadata")
+        if isinstance(metadata, dict):
+            sources.append(metadata)
+            nested = metadata.get("metadata")
+            if isinstance(nested, dict):
+                sources.append(nested)
+    return sources
+
+
+def _has_contract_value(payload: dict[str, Any], key: str) -> bool:
+    value = payload.get(key)
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return True
+
+
+def _first_contract_value(sources: list[dict[str, Any]], key: str) -> Any:
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        value = source.get(key)
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized:
+                return normalized
+            continue
+        if isinstance(value, (list, tuple, set)):
+            normalized_list = [str(item).strip() for item in value if str(item or "").strip()]
+            if normalized_list:
+                return normalized_list
+            continue
+        if isinstance(value, dict):
+            if value:
+                return dict(value)
+            continue
+        if value is not None:
+            return value
+    return None
+
+
+def _promoted_task_contract_payload(sources: list[dict[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key in (*_TASK_CONTRACT_LIST_KEYS, *_TASK_CONTRACT_MAPPING_KEYS, *_TASK_CONTRACT_SCALAR_KEYS):
+        value = _first_contract_value(sources, key)
+        if value is not None:
+            payload[key] = value
+
+    subject = str(payload.get("subject") or "").strip()
+    title = str(payload.get("title") or "").strip()
+    if subject and not title:
+        payload["title"] = subject
+    elif title and not subject:
+        payload["subject"] = title
+
+    goal = str(payload.get("goal") or "").strip()
+    objective = str(payload.get("objective") or "").strip()
+    if goal and not objective:
+        payload["objective"] = goal
+    elif objective and not goal:
+        payload["goal"] = objective
+    return payload
+
+
 def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -> list[str]:
     resolved_blueprint_id = str(blueprint_id or "").strip()
     if not resolved_blueprint_id:
@@ -829,6 +953,63 @@ class DirectorAdapter(BaseRoleAdapter):
             },
         )
         return metadata
+
+    @staticmethod
+    def _promote_task_contract_to_runtime_context(
+        *,
+        task: dict[str, Any],
+        context: dict[str, Any],
+        workspace: str,
+    ) -> None:
+        """Promote claimed TaskBoard contract fields into RoleRuntime metadata."""
+
+        if not isinstance(task, dict) or not isinstance(context, dict):
+            return
+        sources = _task_contract_sources(task)
+        contract_payload = _promoted_task_contract_payload(sources)
+        if not contract_payload:
+            return
+
+        metadata_raw = context.get("metadata")
+        metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+
+        for key in _TASK_CONTRACT_LIST_KEYS:
+            value = contract_payload.get(key)
+            if not isinstance(value, list) or not value:
+                continue
+            if not _has_contract_value(context, key):
+                context[key] = list(value)
+            if not _has_contract_value(metadata, key):
+                metadata[key] = list(value)
+
+        for key in _TASK_CONTRACT_MAPPING_KEYS:
+            value = contract_payload.get(key)
+            if not isinstance(value, dict) or not value:
+                continue
+            if not _has_contract_value(context, key):
+                context[key] = dict(value)
+            if not _has_contract_value(metadata, key):
+                metadata[key] = dict(value)
+
+        for key in _TASK_CONTRACT_SCALAR_KEYS:
+            value = contract_payload.get(key)
+            if value is None or isinstance(value, (list, dict)):
+                continue
+            if not _has_contract_value(context, key):
+                context[key] = value
+            if not _has_contract_value(metadata, key):
+                metadata[key] = value
+
+        if workspace and not _has_contract_value(context, "workspace"):
+            context["workspace"] = str(workspace)
+        if workspace and not _has_contract_value(metadata, "workspace"):
+            metadata["workspace"] = str(workspace)
+
+        if not _has_contract_value(metadata, "task"):
+            metadata["task"] = dict(contract_payload)
+        if not _has_contract_value(context, "task_contract"):
+            context["task_contract"] = dict(contract_payload)
+        context["metadata"] = metadata
 
     @staticmethod
     def _ensure_director_verification_commands(*, message: str, context: dict[str, Any]) -> list[str]:

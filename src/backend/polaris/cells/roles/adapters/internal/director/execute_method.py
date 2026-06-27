@@ -443,10 +443,17 @@ def _select_empty_write_content_retry_tool_name(
     return "edit_blocks"
 
 
-def _empty_write_retry_tool_definition(tool_name: str, target_files: list[str]) -> dict[str, Any]:
+def _empty_write_retry_tool_definition(
+    tool_name: str,
+    target_files: list[str],
+    *,
+    pin_file_enum: bool = False,
+) -> dict[str, Any]:
     file_schema: dict[str, Any] = {"type": "string"}
     if len(target_files) == 1:
         file_schema["enum"] = [target_files[0]]
+    elif pin_file_enum and target_files:
+        file_schema["enum"] = list(dict.fromkeys(target_files[:32]))
     if tool_name == "edit_blocks":
         return {
             "type": "function",
@@ -480,6 +487,162 @@ def _empty_write_retry_tool_definition(tool_name: str, target_files: list[str]) 
             },
         },
     }
+
+
+def _declared_write_retry_target_files(task: dict[str, Any]) -> list[str]:
+    """Return declared file targets without inventing project-specific paths."""
+
+    sources: list[Any] = []
+    if isinstance(task, dict):
+        sources.append(task.get("target_files"))
+        metadata = task.get("metadata")
+        if isinstance(metadata, dict):
+            sources.append(metadata.get("target_files"))
+    targets: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        if isinstance(source, str):
+            items = [source]
+        elif isinstance(source, (list, tuple, set)):
+            items = list(source)
+        else:
+            continue
+        for item in items:
+            normalized = _normalize_declared_task_path(item)
+            if not normalized or any(ch in normalized for ch in ("*", "?")):
+                continue
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            targets.append(normalized)
+    if targets:
+        return targets
+    return _extract_task_target_path_candidates(task)
+
+
+def _build_no_write_materialization_retry_message(
+    task: dict[str, Any],
+    *,
+    original_message: str,
+    tool_results: list[dict[str, Any]],
+    forced_tool_name: str = "write_file",
+) -> str:
+    target_files = _declared_write_retry_target_files(task)
+    target_line = ""
+    if target_files:
+        target_line = "Allowed target files: " + ", ".join(target_files[:32]) + ".\n"
+    observed_tools: list[str] = []
+    seen_tools: set[str] = set()
+    for result in tool_results:
+        if not isinstance(result, dict):
+            continue
+        tool_name = str(result.get("tool_name") or result.get("tool") or "").strip()
+        if tool_name and tool_name not in seen_tools:
+            seen_tools.add(tool_name)
+            observed_tools.append(tool_name)
+    observed_line = ", ".join(observed_tools) if observed_tools else "(none)"
+    return (
+        "[mode:materialize]\n"
+        "RETRY: previous Director turn completed without any write/edit receipt and produced no files.\n"
+        f"Observed tools: {observed_line}.\n"
+        f"Emit valid {forced_tool_name} tool calls now. Do not call read, search, tree, or shell tools in this retry.\n"
+        "Each write_file call must use a complete non-empty UTF-8 file body. "
+        "For multi-file tasks, create every declared target file with separate write_file calls when the provider supports multiple tool calls.\n"
+        "Use only task-scoped relative paths. Do not write TODO/FIXME/placeholder content.\n"
+        f"{target_line}"
+        "Original task follows:\n"
+        f"{original_message[:8000]}"
+    )
+
+
+def _no_write_materialization_retry_needed(
+    *,
+    primary_llm_summary: dict[str, Any] | None,
+    task: dict[str, Any],
+    tool_results: list[dict[str, Any]],
+    workspace: str,
+) -> bool:
+    if not primary_llm_summary or primary_llm_summary.get("success") is not True:
+        return False
+    if has_successful_write_tool(tool_results):
+        return False
+    if not _declared_write_retry_target_files(task):
+        return False
+    return _task_targets_missing_in_workspace(task, workspace)
+
+
+async def _run_no_write_materialization_retry(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    target_task_id: str,
+    context: dict[str, Any],
+    original_message: str,
+    tool_results: list[dict[str, Any]],
+    llm_call_timeout: float,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    forced_tool_name = "write_file"
+    target_files = _declared_write_retry_target_files(task)
+    retry_message = _build_no_write_materialization_retry_message(
+        task,
+        original_message=original_message,
+        tool_results=tool_results,
+        forced_tool_name=forced_tool_name,
+    )
+    retry_context = _pin_materialize_context_delivery_mode(dict(context), True)
+    retry_context["_transaction_kernel_forced_tool_choice"] = {
+        "type": "function",
+        "function": {"name": forced_tool_name},
+    }
+    retry_context["_transaction_kernel_forced_tool_definitions"] = [
+        _empty_write_retry_tool_definition(forced_tool_name, target_files, pin_file_enum=True)
+    ]
+    retry_context["_transaction_kernel_force_exact_tools"] = True
+    retry_context["director_no_write_materialization_retry"] = {
+        "write_only_declared_targets": {
+            "tool": forced_tool_name,
+            "target_files": target_files[:32],
+        }
+    }
+    try:
+        retry_result = await adapter._invoke_role_dialogue_with_timeout(
+            retry_message,
+            context=retry_context,
+            timeout_seconds=llm_call_timeout,
+            stage_label="no_write_materialization_retry",
+        )
+    except asyncio.CancelledError:
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        return [], {
+            "attempted": True,
+            "success": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "tool_results": 0,
+            "forced_tool": forced_tool_name,
+            "target_files": target_files[:32],
+        }
+
+    retry_summary = _summarize_llm_stage_result(retry_result, stage="no_write_materialization_retry")
+    retry_tool_results = adapter._execution.extract_kernel_tool_results(retry_result)
+    retry_content = str(retry_result.get("content") or retry_result.get("response") or "")
+    if not retry_tool_results or not has_successful_write_tool(retry_tool_results):
+        fallback_tool_results = await adapter._execute_tools(
+            retry_content,
+            target_task_id,
+            allowed_tool_names={forced_tool_name},
+            allow_patch_fallback=True,
+        )
+        if fallback_tool_results:
+            retry_tool_results.extend(fallback_tool_results)
+
+    retry_summary["attempted"] = True
+    retry_summary["tool_results"] = len(retry_tool_results)
+    retry_summary["forced_tool"] = forced_tool_name
+    retry_summary["target_files"] = target_files[:32]
+    retry_summary["write_args"] = _diag_write_results_summary(retry_tool_results)
+    retry_summary["recovered_write_tool_evidence"] = has_successful_write_tool(retry_tool_results)
+    return retry_tool_results, retry_summary
 
 
 async def _run_empty_write_content_materialization_retry(
@@ -890,6 +1053,14 @@ async def execute_director_task(
         metadata["task_runtime_session_id"] = task_claim_session_id
         metadata["task_runtime_guard"] = True
         context["metadata"] = metadata
+
+    promote_task_contract = getattr(adapter, "_promote_task_contract_to_runtime_context", None)
+    if callable(promote_task_contract):
+        promote_task_contract(
+            task=task,
+            context=context,
+            workspace=str(getattr(adapter, "workspace", "") or ""),
+        )
 
     if selection_source in {"claim_retry_ready_queue_fallback", "claim_retry_resumable_queue_fallback"}:
         selected_from_board = True
@@ -1460,6 +1631,7 @@ async def _execute_standard_llm_flow(
     workspace_name = Path(str(getattr(adapter, "workspace", "") or "")).resolve().name
     direct_fallback_summary: dict[str, Any] | None = None
     empty_write_content_retry_summary: dict[str, Any] | None = None
+    no_write_materialization_retry_summary: dict[str, Any] | None = None
     all_affected_files: list[str] = []
     primary_llm_summary: dict[str, Any] | None = None
     quality_repair_summary: dict[str, Any] | None = None
@@ -1505,6 +1677,19 @@ async def _execute_standard_llm_flow(
         baseline_files=baseline_files,
         llm_call_timeout=llm_call_timeout,
         decision_signals=decision_signals,
+        workspace_name=workspace_name,
+        state=state,
+    )
+
+    state, no_write_materialization_retry_summary = await _phase_no_write_materialization_retry(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        context=context,
+        message=message,
+        baseline_files=baseline_files,
+        llm_call_timeout=llm_call_timeout,
+        primary_llm_summary=primary_llm_summary,
         workspace_name=workspace_name,
         state=state,
     )
@@ -1624,6 +1809,7 @@ async def _execute_standard_llm_flow(
         can_accept_existing_scope=can_accept_existing_scope,
         direct_fallback_summary=direct_fallback_summary,
         empty_write_content_retry_summary=empty_write_content_retry_summary,
+        no_write_materialization_retry_summary=no_write_materialization_retry_summary,
         existing_contract_evidence=existing_contract_evidence,
         primary_llm_summary=primary_llm_summary,
         requires_fresh_materialization=requires_fresh_materialization,
@@ -1646,6 +1832,7 @@ async def _execute_standard_llm_flow(
         decision_signals=decision_signals,
         direct_fallback_summary=direct_fallback_summary,
         empty_write_content_retry_summary=empty_write_content_retry_summary,
+        no_write_materialization_retry_summary=no_write_materialization_retry_summary,
         existing_contract_evidence=existing_contract_evidence,
         primary_llm_summary=primary_llm_summary,
         task_claim_session_id=task_claim_session_id,
@@ -1669,6 +1856,7 @@ async def _execute_standard_llm_flow(
         decision_signals=decision_signals,
         direct_fallback_summary=direct_fallback_summary,
         empty_write_content_retry_summary=empty_write_content_retry_summary,
+        no_write_materialization_retry_summary=no_write_materialization_retry_summary,
         materialization_mode=materialization_mode,
         primary_llm_summary=primary_llm_summary,
         task_claim_session_id=task_claim_session_id,
@@ -1713,6 +1901,7 @@ async def _execute_standard_llm_flow(
         decision_signals=decision_signals,
         direct_fallback_summary=direct_fallback_summary,
         empty_write_content_retry_summary=empty_write_content_retry_summary,
+        no_write_materialization_retry_summary=no_write_materialization_retry_summary,
         materialization_mode=materialization_mode,
         primary_llm_summary=primary_llm_summary,
         quality_repair_attempts=quality_repair_attempts,
@@ -1753,6 +1942,7 @@ async def _execute_standard_llm_flow(
         decision_signals=decision_signals,
         direct_fallback_summary=direct_fallback_summary,
         empty_write_content_retry_summary=empty_write_content_retry_summary,
+        no_write_materialization_retry_summary=no_write_materialization_retry_summary,
         materialization_mode=materialization_mode,
         primary_llm_summary=primary_llm_summary,
         semantic_quality_error=semantic_quality_error,
@@ -1775,6 +1965,7 @@ async def _execute_standard_llm_flow(
         decision_signals=decision_signals,
         direct_fallback_summary=direct_fallback_summary,
         empty_write_content_retry_summary=empty_write_content_retry_summary,
+        no_write_materialization_retry_summary=no_write_materialization_retry_summary,
         materialization_mode=materialization_mode,
         primary_llm_summary=primary_llm_summary,
         quality_repair_attempts=quality_repair_attempts,
@@ -1795,6 +1986,7 @@ def _phase_finalize_materialization(
     decision_signals: list[dict[str, Any]],
     direct_fallback_summary: dict[str, Any] | None,
     empty_write_content_retry_summary: dict[str, Any] | None,
+    no_write_materialization_retry_summary: dict[str, Any] | None,
     materialization_mode: str,
     primary_llm_summary: dict[str, Any] | None,
     quality_repair_attempts: list[dict[str, Any]],
@@ -1847,6 +2039,10 @@ def _phase_finalize_materialization(
                 "materialization_mode": materialization_mode,
             }
         }
+        if no_write_materialization_retry_summary is not None:
+            failure_metadata["adapter_result"]["no_write_materialization_retry"] = (
+                no_write_materialization_retry_summary
+            )
         if board_claim_applied and task_claim_session_id:
             _finalize_claimed_execution(
                 adapter,
@@ -1899,6 +2095,8 @@ def _phase_finalize_materialization(
         completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
     if direct_fallback_summary is not None:
         completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+    if no_write_materialization_retry_summary is not None:
+        completion_metadata["adapter_result"]["no_write_materialization_retry"] = no_write_materialization_retry_summary
     if empty_write_content_retry_summary is not None:
         completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
     if quality_repair_summary is not None:
@@ -1926,6 +2124,7 @@ def _phase_finalize_materialization(
             "write_tool_evidence": write_tool_evidence,
             "primary_llm": primary_llm_summary or {},
             "direct_fallback": direct_fallback_summary or {},
+            "no_write_materialization_retry": no_write_materialization_retry_summary or {},
             "quality_repair": quality_repair_summary or {},
             "quality_repair_attempts": quality_repair_attempts,
             "deterministic_repair_profiles": deterministic_repair_profile_summary,
@@ -2281,6 +2480,60 @@ async def _phase_first_llm_call(
             tool_results,
         ),
         primary_llm_summary,
+    )
+
+
+async def _phase_no_write_materialization_retry(
+    adapter: Any,
+    *,
+    baseline_files: dict[str, str],
+    context: dict[str, Any],
+    llm_call_timeout: float,
+    message: str,
+    primary_llm_summary: dict[str, Any] | None,
+    target_task_id: str,
+    task: dict[str, Any],
+    workspace_name: str,
+    state: MaterializationState,
+) -> tuple[MaterializationState, dict[str, Any] | None]:
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    no_write_retry_summary: dict[str, Any] | None = None
+    if not all_affected_files and _no_write_materialization_retry_needed(
+        primary_llm_summary=primary_llm_summary,
+        task=task,
+        tool_results=tool_results,
+        workspace=str(getattr(adapter, "workspace", "") or ""),
+    ):
+        retry_tool_results, no_write_retry_summary = await _run_no_write_materialization_retry(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            context=context,
+            original_message=message,
+            tool_results=tool_results,
+            llm_call_timeout=llm_call_timeout,
+        )
+        if retry_tool_results:
+            tool_results.extend(retry_tool_results)
+        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+            adapter,
+            baseline_files,
+            task=task,
+            workspace_name=workspace_name,
+        )
+        all_affected_files = _merge_successful_write_paths(
+            all_affected_files,
+            _extract_successful_write_paths(retry_tool_results),
+        )
+    return (
+        MaterializationState.from_locals(
+            current_files,
+            new_files,
+            modified_files,
+            all_affected_files,
+            tool_results,
+        ),
+        no_write_retry_summary,
     )
 
 
@@ -3024,6 +3277,7 @@ def _phase_no_materialized_changes(
     context: dict[str, Any],
     direct_fallback_summary: dict[str, Any] | None,
     empty_write_content_retry_summary: dict[str, Any] | None,
+    no_write_materialization_retry_summary: dict[str, Any] | None,
     existing_contract_evidence: dict[str, Any],
     primary_llm_summary: dict[str, Any] | None,
     requires_fresh_materialization: bool,
@@ -3102,6 +3356,10 @@ def _phase_no_materialized_changes(
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if no_write_materialization_retry_summary is not None:
+            completion_metadata["adapter_result"]["no_write_materialization_retry"] = (
+                no_write_materialization_retry_summary
+            )
         if empty_write_content_retry_summary is not None:
             completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
         cognitive_receipt = _emit_director_adapter_cognitive_receipt(
@@ -3169,6 +3427,7 @@ def _phase_existing_scope_verified(
     decision_signals: list[dict[str, Any]],
     direct_fallback_summary: dict[str, Any] | None,
     empty_write_content_retry_summary: dict[str, Any] | None,
+    no_write_materialization_retry_summary: dict[str, Any] | None,
     existing_contract_evidence: dict[str, Any],
     primary_llm_summary: dict[str, Any] | None,
     run_id: str,
@@ -3201,6 +3460,10 @@ def _phase_existing_scope_verified(
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if no_write_materialization_retry_summary is not None:
+            completion_metadata["adapter_result"]["no_write_materialization_retry"] = (
+                no_write_materialization_retry_summary
+            )
         if empty_write_content_retry_summary is not None:
             completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
         cognitive_receipt = _emit_director_adapter_cognitive_receipt(
@@ -3273,6 +3536,7 @@ def _phase_missing_write_receipt(
     decision_signals: list[dict[str, Any]],
     direct_fallback_summary: dict[str, Any] | None,
     empty_write_content_retry_summary: dict[str, Any] | None,
+    no_write_materialization_retry_summary: dict[str, Any] | None,
     materialization_mode: str,
     primary_llm_summary: dict[str, Any] | None,
     run_id: str,
@@ -3308,6 +3572,10 @@ def _phase_missing_write_receipt(
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if no_write_materialization_retry_summary is not None:
+            completion_metadata["adapter_result"]["no_write_materialization_retry"] = (
+                no_write_materialization_retry_summary
+            )
         if empty_write_content_retry_summary is not None:
             completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
         cognitive_receipt = _emit_director_adapter_cognitive_receipt(
@@ -3376,6 +3644,7 @@ def _phase_quality_failed(
     decision_signals: list[dict[str, Any]],
     direct_fallback_summary: dict[str, Any] | None,
     empty_write_content_retry_summary: dict[str, Any] | None,
+    no_write_materialization_retry_summary: dict[str, Any] | None,
     materialization_mode: str,
     primary_llm_summary: dict[str, Any] | None,
     quality_repair_attempts: list[dict[str, Any]],
@@ -3414,6 +3683,10 @@ def _phase_quality_failed(
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if no_write_materialization_retry_summary is not None:
+            completion_metadata["adapter_result"]["no_write_materialization_retry"] = (
+                no_write_materialization_retry_summary
+            )
         if empty_write_content_retry_summary is not None:
             completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
         if quality_repair_summary is not None:
@@ -3491,6 +3764,7 @@ def _phase_semantic_quality_failed(
     decision_signals: list[dict[str, Any]],
     direct_fallback_summary: dict[str, Any] | None,
     empty_write_content_retry_summary: dict[str, Any] | None,
+    no_write_materialization_retry_summary: dict[str, Any] | None,
     materialization_mode: str,
     primary_llm_summary: dict[str, Any] | None,
     run_id: str,
@@ -3530,6 +3804,10 @@ def _phase_semantic_quality_failed(
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if no_write_materialization_retry_summary is not None:
+            completion_metadata["adapter_result"]["no_write_materialization_retry"] = (
+                no_write_materialization_retry_summary
+            )
         if empty_write_content_retry_summary is not None:
             completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
         if semantic_quality_repair_summary is not None:

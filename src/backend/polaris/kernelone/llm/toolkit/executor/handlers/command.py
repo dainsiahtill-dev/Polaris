@@ -143,12 +143,12 @@ def _handle_execute_command(self: AgentAccelToolExecutor, **kwargs) -> dict[str,
             self,
         )
 
+    if _contains_shell_operators(command_text):
+        return _attach_command_effect_receipt(_execute_command_chain(self, command_text, timeout_seconds), self)
+
     translated = _translate_readonly_command_alias(self, command_text)
     if translated is not None:
         return _attach_command_effect_receipt(translated, self)
-
-    if _contains_shell_operators(command_text):
-        return _attach_command_effect_receipt(_execute_command_chain(self, command_text, timeout_seconds), self)
 
     return _attach_command_effect_receipt(_execute_command_base(self, command_text, timeout_seconds), self)
 
@@ -288,6 +288,9 @@ def _execute_command_chain(
 
     if not commands:
         return {"ok": False, "error": "Empty command"}
+
+    if "|" in operators:
+        return _execute_via_shell(self, command_text, timeout_seconds)
 
     # On Windows, commands like npm, npx, node are .cmd files that need shell=True
     # Check if any command might need shell execution
@@ -776,6 +779,8 @@ def _execute_via_shell(
     try:
         if os.name == "nt":
             run_argv = ["cmd", "/c", command_text]
+        elif _contains_shell_operators(command_text):
+            run_argv = ["bash", "-lc", command_text]
         else:
             parsed_args = shlex.split(command_text, posix=True)
             if not parsed_args:
