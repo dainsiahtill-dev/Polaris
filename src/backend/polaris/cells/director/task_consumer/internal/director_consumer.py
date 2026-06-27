@@ -131,6 +131,14 @@ class InterfaceContractAmendmentRequiredError(RuntimeError):
         self.amendment_request = dict(amendment_request)
 
 
+class InterfaceContractRepairRequiredError(RuntimeError):
+    """Execution evidence proved Director should repair within the interface contract."""
+
+    def __init__(self, message: str, *, repair_evidence: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.repair_evidence = dict(repair_evidence)
+
+
 DirectorTaskExecutor = Callable[[str, dict[str, Any], str], dict[str, Any]]
 
 
@@ -571,6 +579,43 @@ def _interface_contract_amendment_from_adapter_failure(
         "amendment_request": evidence.contract_amendment_request.to_dict(),
         "cross_artifact_issues": [issue.to_dict() for issue in evidence.cross_artifact_issues],
         "cross_artifact_repair_plans": [plan.to_dict() for plan in evidence.cross_artifact_repair_plans],
+    }
+
+
+def _interface_contract_repair_from_adapter_failure(
+    *,
+    workspace_path: Path,
+    task_id: str,
+    payload: dict[str, Any],
+    adapter_result: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return Director repair evidence when the contract is valid but implementation is not."""
+
+    if adapter_result.get("success") is True:
+        return None
+    scope = _contract_amendment_scan_scope(payload=payload, adapter_result=adapter_result)
+    try:
+        from polaris.kernelone.quality import scan_workspace_artifact_quality_evidence
+
+        evidence = scan_workspace_artifact_quality_evidence(
+            workspace_path.as_posix(),
+            relative_paths=scope or None,
+            task_id=task_id,
+        )
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if evidence.contract_amendment_request is not None:
+        return None
+    repair_plans = [
+        plan.to_dict()
+        for plan in evidence.cross_artifact_repair_plans
+        if plan.authority == "director_repair_within_contract"
+    ]
+    if not repair_plans:
+        return None
+    return {
+        "cross_artifact_issues": [issue.to_dict() for issue in evidence.cross_artifact_issues],
+        "cross_artifact_repair_plans": repair_plans,
     }
 
 
@@ -1092,6 +1137,28 @@ class DirectorExecutionConsumer:
                 "reason": "interface_contract_amendment_required",
             }
 
+        except InterfaceContractRepairRequiredError as exc:
+            logger.warning("Interface contract repair required for task %s: %s", task_id, exc)
+            self._svc.fail_task_stage(
+                FailTaskStageCommandV1(
+                    workspace=self._workspace,
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    error_code="INTERFACE_CONTRACT_REPAIR_REQUIRED",
+                    error_message=str(exc),
+                    requeue_stage="pending_exec",
+                    metadata={
+                        "reason": "interface_contract_repair_required",
+                        "repair_evidence": exc.repair_evidence,
+                    },
+                )
+            )
+            return {
+                "task_id": task_id,
+                "ok": False,
+                "reason": "interface_contract_repair_required",
+            }
+
         except Exception as exc:
             logger.exception("Execution failed for task %s: %s", task_id, exc)
             self._svc.fail_task_stage(
@@ -1305,6 +1372,17 @@ class DirectorExecutionConsumer:
                     _adapter_failure_message(adapter_result),
                     amendment_request=amendment_evidence,
                 )
+            repair_evidence = _interface_contract_repair_from_adapter_failure(
+                workspace_path=workspace_path,
+                task_id=task_id,
+                payload=payload,
+                adapter_result=adapter_result,
+            )
+            if repair_evidence is not None:
+                raise InterfaceContractRepairRequiredError(
+                    _adapter_failure_message(adapter_result),
+                    repair_evidence=repair_evidence,
+                )
             raise RuntimeError(_adapter_failure_message(adapter_result))
 
         reported_changed_files = _extract_director_changed_files(adapter_result)
@@ -1324,5 +1402,10 @@ class DirectorExecutionConsumer:
         }
 
 
-__all__ = ["DirectorExecutionConsumer", "InterfaceContractAmendmentRequiredError", "UnrecoverableExecutionError"]
+__all__ = [
+    "DirectorExecutionConsumer",
+    "InterfaceContractAmendmentRequiredError",
+    "InterfaceContractRepairRequiredError",
+    "UnrecoverableExecutionError",
+]
 __deprecated__ = {"DirectorExecutionConsumer": "Use DirectorPool instead. Will be removed after 2026-06-30."}

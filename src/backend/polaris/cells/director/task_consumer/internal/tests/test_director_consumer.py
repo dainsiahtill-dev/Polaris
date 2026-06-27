@@ -14,6 +14,7 @@ import pytest
 from polaris.cells.director.task_consumer.internal.director_consumer import (
     DirectorExecutionConsumer,
     InterfaceContractAmendmentRequiredError,
+    InterfaceContractRepairRequiredError,
     ScopeConflictDetector,
     UnrecoverableExecutionError,
     _run_coroutine_sync,
@@ -120,6 +121,29 @@ class TestInterfaceContractAmendmentDetection:
         assert amendment is not None
         assert amendment["amendment_request"]["task_id"] == "TASK-1"
         assert amendment["cross_artifact_repair_plans"][0]["authority"] == "ce_amendment_required"
+
+    def test_adapter_artifact_failure_builds_within_contract_repair_evidence(self, tmp_path: Path) -> None:
+        from polaris.kernelone.quality.interface_ledger import record_declared_interfaces
+
+        weather = tmp_path / "src" / "weather.ts"
+        weather.parent.mkdir(parents=True, exist_ok=True)
+        weather.write_text("export interface WeatherSnapshot { condition: string }\n", encoding="utf-8")
+        record_declared_interfaces(
+            tmp_path.as_posix(),
+            tmp_path.as_posix(),
+            [{"step_id": "S1", "target_file": "src/weather.ts", "public_symbols": ["WeatherReport"]}],
+        )
+
+        repair = director_consumer_module._interface_contract_repair_from_adapter_failure(
+            workspace_path=tmp_path,
+            task_id="TASK-1",
+            payload={"target_files": ["src/weather.ts"]},
+            adapter_result={"success": False, "changed_files": ["src/weather.ts"]},
+        )
+
+        assert repair is not None
+        assert repair["cross_artifact_repair_plans"][0]["authority"] == "director_repair_within_contract"
+        assert repair["cross_artifact_repair_plans"][0]["strategy"] == "add_real_interface_to_owner"
 
 
 class TestDirectorExecutionConsumerHandoffGate:
@@ -986,6 +1010,56 @@ class TestDirectorExecutionConsumerPollOnce:
         assert fail_call.error_code == "INTERFACE_CONTRACT_AMENDMENT_REQUIRED"
         assert fail_call.requeue_stage == "pending_design"
         assert fail_call.metadata["amendment_request"] == amendment
+        mock_svc.compensate_task.assert_not_called()
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_interface_contract_repair_requeues_pending_exec_with_plan(self, mock_get_svc: MagicMock) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-repair"
+        claim_result.lease_token = "lease-repair"
+        claim_result.payload = {"blueprint_id": "bp-repair"}
+
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=False)
+
+        repair_evidence = {
+            "cross_artifact_repair_plans": [
+                {
+                    "authority": "director_repair_within_contract",
+                    "strategy": "add_real_interface_to_owner",
+                    "symbol": "WeatherReport",
+                }
+            ]
+        }
+        consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1")
+
+        with patch.object(
+            consumer,
+            "_execute_task",
+            side_effect=InterfaceContractRepairRequiredError(
+                "declared interface missing",
+                repair_evidence=repair_evidence,
+            ),
+        ):
+            results = consumer.poll_once()
+
+        assert results == [
+            {
+                "task_id": "task-repair",
+                "ok": False,
+                "reason": "interface_contract_repair_required",
+            }
+        ]
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.error_code == "INTERFACE_CONTRACT_REPAIR_REQUIRED"
+        assert fail_call.requeue_stage == "pending_exec"
+        assert fail_call.metadata["repair_evidence"] == repair_evidence
         mock_svc.compensate_task.assert_not_called()
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
