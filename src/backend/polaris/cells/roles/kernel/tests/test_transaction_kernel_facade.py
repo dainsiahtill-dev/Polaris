@@ -1821,6 +1821,40 @@ def test_build_decision_messages_does_not_infer_verify_from_runtime_word() -> No
     assert not any("Verification is required by the user." in text for text in system_messages)
 
 
+def test_single_target_quality_repair_contract_suppresses_generic_verify_and_templates() -> None:
+    context = [
+        {
+            "role": "user",
+            "content": (
+                "[mode:materialize]\n"
+                "任务要求补齐 requirements.txt, src/__init__.py, src/models/weather.py。\n"
+                "Verification is required by the user. Include an available verification step.\n"
+                "SINGLE MISSING TARGET REPAIR:\n"
+                "[director_quality_repair:write_only_single_target]\n"
+                "- Target path: src/models/weather.py\n"
+                "- Emit exactly one write_file tool call for that target path.\n"
+                "- Do not read files first. Do not list directories. Do not explore. Do not explain.\n"
+            ),
+        }
+    ]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "repo_tree"}},
+        {"type": "function", "function": {"name": "write_file"}},
+        {"type": "function", "function": {"name": "execute_command"}},
+    ]
+
+    hint, _metadata = build_single_batch_task_contract_hint(context, tool_definitions)
+
+    assert "Single-target quality repair is active" in hint
+    assert "src/models/weather.py" in hint
+    assert "exactly one write_file" in hint
+    assert "Verification is required by the user" not in hint
+    assert "Include verification tools" not in hint
+    assert "POSITIVE TOOL SEQUENCE TEMPLATES" not in hint
+    assert "requirements.txt, src/__init__.py" not in hint
+    assert "VALID pattern: emit [search/read tool]" not in hint
+
+
 def test_build_decision_messages_includes_benchmark_required_tools_hint() -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),

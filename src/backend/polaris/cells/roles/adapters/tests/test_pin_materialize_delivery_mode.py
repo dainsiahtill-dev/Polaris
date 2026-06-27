@@ -88,6 +88,38 @@ class TestPinMaterializeDeliveryMode:
         assert resolve_delivery_mode(message).mode == DeliveryMode.MATERIALIZE_CHANGES
         assert extract_continuation_prompt_metadata(message)["delivery_mode"] == "materialize_changes"
 
+    def test_single_missing_target_quality_repair_compacts_conflicting_original_contract(self) -> None:
+        message = _build_materialization_quality_repair_message(
+            original_message=(
+                "[mode:materialize]\n"
+                "PM Task Contract / 任务合同:\n"
+                "任务: 实现 迷你行星天气球 Python 包结构与领域模型\n"
+                "描述: 创建 requirements.txt、src/__init__.py、src/models/ 与需求派生模型文件。\n"
+                "目标: 在工作区根交付 迷你行星天气球 的 Python src/ 包、领域模型和可导入核心源码。\n"
+                "范围: requirements.txt, src/__init__.py, src/models/__init__.py, "
+                "src/models/mood.py, src/models/weather.py\n"
+                "目标文件覆盖硬门禁: 本任务列出的目标文件必须全部由本轮工具写入或编辑。\n"
+                "Verification is required by the user. Include an available verification step.\n"
+                "确定性检查进入任务验收：py_compile; content_any:planet|weather|cloud|wind\n"
+            ),
+            artifact_quality_errors=[
+                "Artifact quality scan failed: declared target file missing 'src/models/weather.py'"
+            ],
+            changed_files=["requirements.txt", "src/__init__.py", "src/models/mood.py"],
+            missing_target_files=["src/models/weather.py"],
+        )
+
+        assert "ORIGINAL TASK CONTEXT (semantic only" in message
+        assert "任务: 实现 迷你行星天气球 Python 包结构与领域模型" in message
+        assert "需求关键词: planet, weather, cloud, wind" in message
+        assert "[director_quality_repair:write_only_single_target]" in message
+        assert "- Target path: src/models/weather.py" in message
+        assert "Emit exactly one write_file tool call" in message
+        assert "Verification is required by the user" not in message
+        assert "Include an available verification step" not in message
+        assert "目标文件覆盖硬门禁" not in message
+        assert "requirements.txt, src/__init__.py" not in message
+
     def test_non_fresh_terse_goal_not_forced(self) -> None:
         # Without the pin, a pure-analysis phrasing stays out of MATERIALIZE.
         contract = resolve_delivery_mode("analyze the architecture and summarize")

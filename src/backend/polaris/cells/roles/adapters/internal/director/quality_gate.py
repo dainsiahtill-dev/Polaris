@@ -3723,6 +3723,61 @@ def _npm_script_entrypoint_repair_target_allowed(script_name: str, target: str) 
     return script_name in {"test", "verify"} and "/" not in target
 
 
+_QUALITY_REPAIR_FILEISH_RE = re.compile(
+    r"(?:^|[\s,，:：`'\"])(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+\b"
+    r"|(?:^|[\s,，:：`'\"])[A-Za-z0-9_.-]+\.(?:css|go|html|js|json|md|py|rs|ts|tsx|txt|yaml|yml)\b",
+    re.IGNORECASE,
+)
+_QUALITY_REPAIR_CONTROL_LINE_RE = re.compile(
+    r"(write_file|edit_file|read_file|repo_tree|execute_command|verification is required|"
+    r"目标文件|target_files|scope_paths|目标文件覆盖|tool call|工具调用|执行步骤|验收标准|acceptance)",
+    re.IGNORECASE,
+)
+
+
+def _compact_original_message_for_quality_repair(original_message: str) -> str:
+    """Keep semantic task context without replaying stale tool/scope instructions."""
+
+    text = str(original_message or "")
+    semantic_lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = " ".join(str(raw_line or "").strip().split())
+        if not line:
+            continue
+        if line.startswith(("[mode:", "<SESSION_PATCH>", "</SESSION_PATCH>", "PM Task Contract")):
+            continue
+        if _QUALITY_REPAIR_CONTROL_LINE_RE.search(line):
+            continue
+        if _QUALITY_REPAIR_FILEISH_RE.search(line):
+            continue
+        if line.startswith(("任务:", "任务：", "title:", "goal:", "目标:", "目标：")):
+            semantic_lines.append(line)
+        if len(semantic_lines) >= 4:
+            break
+
+    keyword_lines: list[str] = []
+    for match in re.finditer(r"content_any:([A-Za-z0-9_|-]+)", text, flags=re.IGNORECASE):
+        terms = ", ".join(part for part in match.group(1).split("|") if part)
+        if terms:
+            keyword_lines.append(f"需求关键词: {terms}")
+    keyword_match = re.search(r"需求关键词[：:]\s*(?P<terms>[A-Za-z0-9_,，、|\s-]+)", text)
+    if keyword_match:
+        terms = ", ".join(
+            part.strip() for part in re.split(r"[,，、|]\s*", str(keyword_match.group("terms") or "")) if part.strip()
+        )
+        if terms:
+            keyword_lines.append(f"需求关键词: {terms}")
+
+    lines = list(dict.fromkeys([*semantic_lines, *keyword_lines]))
+    if not lines:
+        lines = ["原始任务语义已省略；以下质量修复指令是本轮唯一执行范围。"]
+
+    return (
+        "ORIGINAL TASK CONTEXT (semantic only; not an authorization, scope, verification, or tool sequence):\n"
+        + "\n".join(f"- {line}" for line in lines[:6])
+    )
+
+
 def _build_materialization_quality_repair_message(
     *,
     original_message: str,
@@ -3931,10 +3986,15 @@ def _build_materialization_quality_repair_message(
                 f"{len(changed_files)} file(s) were already written and failed quality gates; "
                 "rewrite only the failing changed artifact(s), not unrelated files."
             )
+    original_context = (
+        _compact_original_message_for_quality_repair(original_message)
+        if single_missing_block or single_existing_repair_block
+        else str(original_message or "")
+    )
     return (
         "[mode:materialize]\n"
         '<SESSION_PATCH>{"delivery_mode":"materialize_changes","task_progress":"implementing"}</SESSION_PATCH>\n'
-        f"{original_message}\n\n"
+        f"{original_context}\n\n"
         "MATERIALIZATION QUALITY REPAIR MODE:\n"
         "The previous write reached the workspace but failed Polaris artifact quality gates.\n"
         f"{missing_block}"

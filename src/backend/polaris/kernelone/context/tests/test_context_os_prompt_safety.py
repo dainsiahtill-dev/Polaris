@@ -486,6 +486,39 @@ class TestProjectionEngineBuildTurns:
         assert len(turns) == 1
         assert "[Large output stored in receipt tool_evt_1" in turns[0]["content"]
 
+    def test_tool_failure_summary_stays_visible_when_raw_receipt_is_offloaded(self) -> None:
+        """Policy-denied tool failures need prompt-visible diagnosis, not only receipt refs."""
+        engine = ProjectionEngine()
+        receipt_store = ReceiptStore()
+        raw_failure = (
+            "**write_file**: Error - {'ok': False, 'tool': 'write_file', "
+            "'error_type': 'director_write_policy_denied', "
+            "'error': 'Changed files exceed act.files scope', "
+            "'director_policy': {'allowed': False, "
+            "'allowed_scope': ['src/models/weather.py'], "
+            "'changed_files': ['src/models/weather.py']}}"
+        )
+
+        class MockEvent:
+            def __init__(self) -> None:
+                self.sequence = 1
+                self.route = "patch"
+                self.role = "tool"
+                self.content = raw_failure + ("x" * 1000)
+                self.event_id = "evt_failure"
+                self.metadata = ()
+                self.artifact_id = ""
+
+        turns = engine.build_turns([MockEvent()], receipt_store)
+
+        assert len(turns) == 1
+        assert "[tool_failure_summary]" in turns[0]["content"]
+        assert "director_write_policy_denied" in turns[0]["content"]
+        assert "Changed files exceed act.files scope" in turns[0]["content"]
+        assert "[Large output stored in receipt tool_evt_failure]" in turns[0]["content"]
+        assert turns[0]["receipt_refs"] == ["tool_evt_failure"]
+        assert raw_failure in (receipt_store.get("tool_evt_failure") or "")
+
     def test_sort_events_by_sequence(self) -> None:
         """sort_events must sort by sequence number."""
         engine = ProjectionEngine()

@@ -14,6 +14,9 @@ from polaris.kernelone.context.control_plane_noise import (
     is_signal_role,
     strip_control_plane_markers,
 )
+from polaris.kernelone.context.prompt_safety import (
+    prompt_safe_tool_failure_summary,
+)
 
 if TYPE_CHECKING:
     from polaris.kernelone.context.receipt_store import ReceiptStore
@@ -606,12 +609,24 @@ class ProjectionEngine:
                 content = content if is_recent else f"[Artifact stored: {artifact_id}]"
 
             if role == "tool":
-                content, receipt_refs = receipt_store.offload_content(
-                    f"tool_{event_id}",
-                    content,
-                    threshold=500,
-                    placeholder=f"[Large output stored in receipt tool_{event_id}]",
-                )
+                receipt_id = f"tool_{event_id}"
+                placeholder = f"[Large output stored in receipt {receipt_id}]"
+                failure_summary = prompt_safe_tool_failure_summary(role, content)
+                if failure_summary:
+                    stored_placeholder, receipt_refs = receipt_store.offload_content(
+                        receipt_id,
+                        content,
+                        threshold=0,
+                        placeholder=placeholder,
+                    )
+                    content = f"{failure_summary}\n\n{stored_placeholder}"
+                else:
+                    content, receipt_refs = receipt_store.offload_content(
+                        receipt_id,
+                        content,
+                        threshold=500,
+                        placeholder=placeholder,
+                    )
             else:
                 content, receipt_refs = receipt_store.offload_content(
                     f"evt_{event_id}",

@@ -48,6 +48,10 @@ _EXPLICIT_DELIVERY_MODE_MARKERS: tuple[str, ...] = (
     "[mode:analyze]",
     "[mode:analyze_only]",
 )
+_SINGLE_TARGET_QUALITY_REPAIR_RE = re.compile(
+    r"\[director_quality_repair:write_only_single_target\].*?- Target path:\s*(?P<path>[^\n\r]+)",
+    flags=re.DOTALL,
+)
 
 
 def _mapping(value: object) -> dict[str, Any]:
@@ -57,6 +61,14 @@ def _mapping(value: object) -> dict[str, Any]:
 def _normalize_tool_token(value: object) -> str:
     normalized = str(value or "").strip().strip("`'\". ").lower()
     return TOOL_ALIASES.get(normalized, normalized) if normalized else ""
+
+
+def _extract_single_target_quality_repair_path(text: str) -> str:
+    match = _SINGLE_TARGET_QUALITY_REPAIR_RE.search(str(text or ""))
+    if not match:
+        return ""
+    values = _normalize_contract_path_values(str(match.group("path") or "").strip())
+    return values[0] if values else ""
 
 
 def _normalize_tool_list(value: object) -> list[str]:
@@ -362,6 +374,7 @@ def build_single_batch_task_contract_hint(
     if any(marker in latest_user for marker in _SUPER_READONLY_STAGE_MARKERS):
         return "", {}
     platform_tool_contract = extract_platform_tool_contract(context)
+    single_quality_repair_target = _extract_single_target_quality_repair_path(latest_user)
 
     target_file_tokens = [
         token.strip()
@@ -378,6 +391,8 @@ def build_single_batch_task_contract_hint(
             continue
         seen_targets.add(key)
         dedup_target_files.append(token)
+    if single_quality_repair_target:
+        dedup_target_files = [single_quality_repair_target]
 
     # Classify intent on the real task instruction when the platform contract
     # supplies one; tool-contract metadata must not pollute mutation detection.
@@ -386,6 +401,9 @@ def build_single_batch_task_contract_hint(
     ).strip()
     _requires_write = requires_mutation_intent(_task_instruction)
     _requires_verify = requires_verification_intent(_task_instruction)
+    if single_quality_repair_target:
+        _requires_write = True
+        _requires_verify = False
 
     # --- 构建可用工具映射（必须在 required_tools 解析之前）---
     available_tools: list[str] = []
@@ -528,14 +546,29 @@ def build_single_batch_task_contract_hint(
         with contextlib.suppress(TypeError, ValueError):
             min_calls_required = max(min_calls_required, int(min_calls_match.group(1)))
 
+    if single_quality_repair_target:
+        required_tools_from_contract = [
+            tool for tool in required_tools_from_contract if tool in write_candidates or tool == "write_file"
+        ]
+        required_tools_missing = [
+            tool for tool in required_tools_missing if tool in write_candidates or tool == "write_file"
+        ]
+        required_any_groups_from_contract = []
+        required_any_groups_resolved = []
+        min_calls_required = max(1, min_calls_required)
+
     # 如果契约中显式要求写/验证工具，提升意图标记
     if required_tools_from_contract:
         _requires_write = _requires_write or any(tool in write_candidates for tool in required_tools_from_contract)
-        _requires_verify = _requires_verify or any(tool in verify_candidates for tool in required_tools_from_contract)
+        if not single_quality_repair_target:
+            _requires_verify = _requires_verify or any(
+                tool in verify_candidates for tool in required_tools_from_contract
+            )
     if required_any_groups_from_contract:
         flattened = [token for group in required_any_groups_from_contract for token in group]
         _requires_write = _requires_write or any(tool in write_candidates for tool in flattened)
-        _requires_verify = _requires_verify or any(tool in verify_candidates for tool in flattened)
+        if not single_quality_repair_target:
+            _requires_verify = _requires_verify or any(tool in verify_candidates for tool in flattened)
 
     # C4 修复：只有「既无 mutation 意图又无显式 contract 约束」才早期返回
     if not _requires_write and not _requires_verify and not required_tools_from_contract:
@@ -579,23 +612,24 @@ def build_single_batch_task_contract_hint(
             lines.append("A single read-only tool call is invalid; include all required calls before final text.")
     if _requires_write:
         if selected_write:
-            lines.append(
-                "This request requires mutation. Include at least one write tool in the same batch: "
-                + ", ".join(selected_write)
-                + "."
-            )
-            lines.append(
-                "HARD GATE: if your tool batch contains no write tool call, your plan is invalid and will be rejected."
-            )
-            lines.append(
-                "HARD GATE: plain-text-only completion without any tool call is invalid for this mutation request."
-            )
-            # BUG-01 compound fix: removed the self-contradicting
-            # "MULTI-TURN WORKFLOW: first turn read_file" paragraph.
-            # That line told the model it may defer writes to a later turn,
-            # directly contradicting the HARD GATE "no write = rejected" rule
-            # that immediately precedes it.  In single-batch contract mode
-            # there is no later turn, so the paragraph caused silent failures.
+            if single_quality_repair_target:
+                lines.append(
+                    "Single-target quality repair is active. Emit exactly one write_file call for "
+                    f"`{single_quality_repair_target}`; do not read, list, explore, verify, or touch sibling files."
+                )
+                selected_write = [tool for tool in selected_write if tool == "write_file"] or selected_write
+            else:
+                lines.append(
+                    "This request requires mutation. Include at least one write tool in the same batch: "
+                    + ", ".join(selected_write)
+                    + "."
+                )
+                lines.append(
+                    "HARD GATE: if your tool batch contains no write tool call, your plan is invalid and will be rejected."
+                )
+                lines.append(
+                    "HARD GATE: plain-text-only completion without any tool call is invalid for this mutation request."
+                )
             lines.append(
                 "INVALID completion: plain-text code dump without any tool call (rejected as inline patch escape)."
             )
@@ -607,10 +641,19 @@ def build_single_batch_task_contract_hint(
                 "INVALID completion: text-only responses such as 'I will now...', 'Please confirm...', "
                 "'Here is the plan...' — these are rejected. Only tool calls are accepted."
             )
-            lines.append(
-                "VALID pattern: emit [search/read tool] then [write tool] in the same batch "
-                "(all steps must complete in this single tool-call batch)."
-            )
+            if single_quality_repair_target:
+                lines.append("VALID pattern: emit exactly one write_file tool call for the named target.")
+            else:
+                # BUG-01 compound fix: removed the self-contradicting
+                # "MULTI-TURN WORKFLOW: first turn read_file" paragraph.
+                # That line told the model it may defer writes to a later turn,
+                # directly contradicting the HARD GATE "no write = rejected" rule
+                # that immediately precedes it.  In single-batch contract mode
+                # there is no later turn, so the paragraph caused silent failures.
+                lines.append(
+                    "VALID pattern: emit [search/read tool] then [write tool] in the same batch "
+                    "(all steps must complete in this single tool-call batch)."
+                )
         else:
             lines.append("This request requires mutation. Do not stop after read-only tools.")
         if dedup_target_files:
@@ -621,7 +664,7 @@ def build_single_batch_task_contract_hint(
                 "for multi-file create tasks, emit one write/edit call per target file instead of stopping "
                 "after the first successful write."
             )
-    if _requires_verify:
+    if _requires_verify and not single_quality_repair_target:
         if selected_verify:
             lines.append(
                 "Verification is required by the user. Include verification tools in the same batch: "
@@ -632,13 +675,17 @@ def build_single_batch_task_contract_hint(
             lines.append("Verification is required by the user. Include an available verification step.")
 
     # --- 追加正例序列模板和恢复协议 ---
-    sequence_template = build_sequence_template(
-        required_tools=required_tools_from_contract,
-        required_any_groups=required_any_groups_from_contract,
-        ordered_tool_groups=required_any_groups_from_contract,
-        min_tool_calls=min_calls_required,
-        requires_write=_requires_write,
-        requires_verify=_requires_verify,
+    sequence_template = (
+        ""
+        if single_quality_repair_target
+        else build_sequence_template(
+            required_tools=required_tools_from_contract,
+            required_any_groups=required_any_groups_from_contract,
+            ordered_tool_groups=required_any_groups_from_contract,
+            min_tool_calls=min_calls_required,
+            requires_write=_requires_write,
+            requires_verify=_requires_verify,
+        )
     )
     if sequence_template:
         lines.append(sequence_template)

@@ -276,7 +276,10 @@ class SignalSourceProvider:
                 return None
 
             # 格式化为人类可读的列表
-            rendered_lines = ["以下文件最近被其他 worker 修改（避免冲突）："]
+            rendered_lines = [
+                "以下文件最近被其他 worker 修改（避免冲突）：",
+                "这些记录只用于避免覆盖；除非最新任务/修复指令明确点名，勿重写这些已创建文件。",
+            ]
             for event in events[-20:]:  # 最多显示 20 个
                 op = event.get("operation", "modify")
                 ts = event.get("timestamp", "")[:19]  # 截取到秒
