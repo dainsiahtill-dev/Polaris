@@ -102,10 +102,30 @@ def _string_value(metadata: Mapping[str, Any], *keys: str) -> str:
     return ""
 
 
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        token = value.strip()
+        return [token] if token else []
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return []
+    rows: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        token = str(item or "").strip()
+        if token and token not in seen:
+            seen.add(token)
+            rows.append(token)
+    return rows
+
+
 def _ref_hash(value: Any) -> str:
     if not isinstance(value, Mapping):
         return ""
     return str(value.get("hash") or "").strip()
+
+
+def _is_missing_ref(value: str) -> bool:
+    return not value or value.startswith("missing:")
 
 
 def _optional_bool(value: Any) -> bool | None:
@@ -153,6 +173,7 @@ def _build_execution_contract_audit(metadata: Mapping[str, Any]) -> dict[str, An
         "director_execution_profile_hash",
     ) or _ref_hash(envelope.get("execution_profile"))
     handoff_allowed = _optional_bool(handoff.get("allowed")) if handoff else None
+    has_handoff_decision = bool(handoff) and not _is_missing_ref(handoff_decision_hash)
 
     required_refs = {
         "execution_envelope_hash": execution_envelope_hash,
@@ -161,7 +182,7 @@ def _build_execution_contract_audit(metadata: Mapping[str, Any]) -> dict[str, An
         "ce_blueprint_hash": ce_blueprint_hash,
         "execution_profile_hash": execution_profile_hash,
     }
-    missing_required_refs = [name for name, value in required_refs.items() if not value]
+    missing_required_refs = [name for name, value in required_refs.items() if _is_missing_ref(value)]
 
     return {
         "schema_version": "director.execution_contract_audit.v1",
@@ -169,7 +190,7 @@ def _build_execution_contract_audit(metadata: Mapping[str, Any]) -> dict[str, An
         "public_contract": "ExecuteDirectorTaskCommandV1",
         "has_execution_envelope": bool(envelope),
         "execution_envelope_hash": execution_envelope_hash,
-        "has_ce_handoff_decision": bool(handoff),
+        "has_ce_handoff_decision": has_handoff_decision,
         "ce_handoff_allowed": handoff_allowed,
         "handoff_decision_hash": handoff_decision_hash,
         "pm_contract_hash": pm_contract_hash,
@@ -180,6 +201,47 @@ def _build_execution_contract_audit(metadata: Mapping[str, Any]) -> dict[str, An
     }
 
 
+def _has_execution_envelope(metadata: Mapping[str, Any]) -> bool:
+    return bool(
+        _mapping_value(metadata, "director_execution_envelope", "task_execution_envelope", "execution_envelope")
+    )
+
+
+def _ensure_execution_envelope_metadata(command: ExecuteDirectorTaskCommandV1, metadata: dict[str, Any]) -> None:
+    if _has_execution_envelope(metadata):
+        return
+
+    from polaris.cells.director.tasking.internal.execution_profile import resolve_director_execution_profile
+    from polaris.cells.director.tasking.internal.execution_strategy import (
+        apply_execution_strategy_overrides,
+        resolve_director_execution_strategy,
+    )
+
+    target_files = _string_list(metadata.get("target_files"))
+    scope_paths = _string_list(metadata.get("scope_paths"))
+    profile = resolve_director_execution_profile(
+        subject=str(metadata.get("title") or metadata.get("subject") or command.instruction or ""),
+        description=str(metadata.get("description") or metadata.get("objective") or command.instruction or ""),
+        metadata=metadata,
+        target_files=target_files,
+        scope_paths=scope_paths,
+        workspace=command.workspace,
+    )
+    strategy = resolve_director_execution_strategy(profile, metadata=metadata)
+    context: dict[str, Any] = {
+        "workspace": command.workspace,
+        "task_id": command.task_id,
+        "run_id": command.run_id or metadata.get("run_id") or "unknown-run",
+    }
+    apply_execution_strategy_overrides(
+        context=context,
+        metadata=metadata,
+        profile=profile,
+        strategy=strategy,
+    )
+    metadata.setdefault("task_execution_profile_source", "director.execution.public.service")
+
+
 def _build_director_task(command: ExecuteDirectorTaskCommandV1) -> Task:
     metadata = dict(command.metadata)
     metadata.setdefault("role_capability_id", "execute_director_task")
@@ -187,6 +249,7 @@ def _build_director_task(command: ExecuteDirectorTaskCommandV1) -> Task:
     metadata.setdefault("director_execution_attempt", command.attempt)
     if command.run_id:
         metadata.setdefault("run_id", command.run_id)
+    _ensure_execution_envelope_metadata(command, metadata)
     metadata["execution_contract_audit"] = _build_execution_contract_audit(metadata)
     command_line = str(metadata.get("command") or "").strip() or None
     working_directory = str(metadata.get("working_directory") or command.workspace).strip()

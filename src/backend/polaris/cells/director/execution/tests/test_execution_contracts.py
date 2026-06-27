@@ -134,38 +134,13 @@ class TestExecuteDirectorTaskPublicService:
             director_service=service,
         )
 
-        assert result == DirectorExecutionResultV1(
-            ok=True,
-            task_id="task-123",
-            workspace="/repo",
-            status="completed",
-            run_id="run-1",
-            evidence_paths=("src/app.py",),
-            output_summary="applied patch",
-            metadata={
-                "execution_contract_audit": {
-                    "schema_version": "director.execution_contract_audit.v1",
-                    "source": "director.execution.public.service",
-                    "public_contract": "ExecuteDirectorTaskCommandV1",
-                    "has_execution_envelope": False,
-                    "execution_envelope_hash": "",
-                    "has_ce_handoff_decision": False,
-                    "ce_handoff_allowed": None,
-                    "handoff_decision_hash": "",
-                    "pm_contract_hash": "",
-                    "ce_blueprint_hash": "",
-                    "execution_profile_hash": "",
-                    "missing_required_refs": [
-                        "execution_envelope_hash",
-                        "handoff_decision_hash",
-                        "pm_contract_hash",
-                        "ce_blueprint_hash",
-                        "execution_profile_hash",
-                    ],
-                    "enforcement": "audit_only",
-                }
-            },
-        )
+        assert result.ok is True
+        assert result.task_id == "task-123"
+        assert result.workspace == "/repo"
+        assert result.status == "completed"
+        assert result.run_id == "run-1"
+        assert result.evidence_paths == ("src/app.py",)
+        assert result.output_summary == "applied patch"
         assert len(service.executed_tasks) == 1
         task = service.executed_tasks[0]
         assert task.id == "task-123"
@@ -173,6 +148,17 @@ class TestExecuteDirectorTaskPublicService:
         assert task.command == "python -m pytest"
         assert task.metadata["role_capability_id"] == "execute_director_task"
         assert task.metadata["execution_contract_audit"] == result.metadata["execution_contract_audit"]
+        assert "director_execution_envelope" in task.metadata
+        audit = result.metadata["execution_contract_audit"]
+        assert audit["schema_version"] == "director.execution_contract_audit.v1"
+        assert audit["has_execution_envelope"] is True
+        assert audit["execution_envelope_hash"]
+        assert audit["has_ce_handoff_decision"] is False
+        assert audit["missing_required_refs"] == [
+            "handoff_decision_hash",
+            "pm_contract_hash",
+            "ce_blueprint_hash",
+        ]
 
     def test_execute_director_task_projects_execution_envelope_audit(self) -> None:
         from polaris.cells.director.execution.public.service import execute_director_task
