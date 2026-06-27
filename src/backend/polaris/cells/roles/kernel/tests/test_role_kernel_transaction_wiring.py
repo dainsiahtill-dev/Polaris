@@ -1066,6 +1066,70 @@ class TestExecuteTransactionKernelTurn:
         assert mock_execute.await_args.args[2] == []
 
     @pytest.mark.asyncio
+    async def test_execute_transaction_kernel_turn_hides_tools_for_pm_route_probe(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(
+            role_id="pm",
+            tool_policy=MagicMock(policy_id="tp1", whitelist=["repo_tree", "read_file"]),
+        )
+        request = _MockRequest(
+            message="PM route audit probe for deterministic contract mode.",
+            run_id="run_pm_probe",
+            task_id="pm-route-probe",
+            context_override={
+                "context_os_snapshot": {},
+                "mode": "pm_task_contract_route_probe",
+                "deterministic_pm_contracts": True,
+                "route_audit_probe": True,
+                "task_id": "pm-route-probe",
+                "pm_task_id": "pm-route-probe",
+                "disable_internal_tool_rounds": True,
+                "tool_contract_require_no_tool_calls": True,
+                "require_no_tool_calls": True,
+                "no_tool_calls": True,
+                "tool_contract": {
+                    "require_no_tool_calls": True,
+                    "execution_mode": "text_only_probe",
+                    "source": "pm.route_audit_probe",
+                },
+                "_transaction_kernel_forced_tool_definitions": [],
+                "_transaction_kernel_forced_tool_choice": "none",
+            },
+        )
+        fingerprint = _MockFingerprint()
+        mock_execute = AsyncMock(
+            return_value={
+                "turn_id": "turn_pm_probe",
+                "kind": "final_answer",
+                "visible_content": "I am the PM planning role.",
+                "metrics": {"duration_ms": 100, "llm_calls": 1, "tool_calls": 0},
+            }
+        )
+
+        with (
+            patch.object(kernel, "_create_transaction_kernel", return_value=MagicMock(execute=mock_execute)),
+            patch(
+                "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+                return_value=MagicMock(
+                    build_context=AsyncMock(return_value=MagicMock(messages=[{"role": "user", "content": "PM probe"}]))
+                ),
+            ),
+        ):
+            result = await kernel._execute_transaction_kernel_turn(
+                role="pm",
+                profile=profile,
+                request=request,
+                system_prompt="You are PM.",
+                fingerprint=fingerprint,
+                observer_run_id="run_pm_probe",
+                response_schema=None,
+            )
+
+        assert result.content == "I am the PM planning role."
+        assert mock_execute.await_args is not None
+        assert mock_execute.await_args.args[2] == []
+
+    @pytest.mark.asyncio
     async def test_execute_transaction_kernel_turn_restores_materialize_marker_from_request_message(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(

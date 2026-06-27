@@ -610,6 +610,68 @@ def test_final_request_context_audit_flags_required_tool_pruning() -> None:
     assert "missing_required_final_request_tools" in finding_codes
 
 
+def test_pm_route_probe_final_provider_request_has_no_tools() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="pm",
+        input="",
+        options={"temperature": 0.2, "max_tokens": 2000, "tools": [], "tool_choice": "none"},
+        context={
+            "mode": "pm_task_contract_route_probe",
+            "deterministic_pm_contracts": True,
+            "route_audit_probe": True,
+            "task_id": "pm-route-probe",
+            "pm_task_id": "pm-route-probe",
+            "disable_internal_tool_rounds": True,
+            "tool_contract_require_no_tool_calls": True,
+            "require_no_tool_calls": True,
+            "no_tool_calls": True,
+            "tool_contract": {
+                "require_no_tool_calls": True,
+                "execution_mode": "text_only_probe",
+                "source": "pm.route_audit_probe",
+            },
+            "_transaction_kernel_forced_tool_definitions": [],
+            "_transaction_kernel_forced_tool_choice": "none",
+            "chat_messages": [
+                {"role": "system", "content": "You are PM."},
+                {
+                    "role": "user",
+                    "content": "PM route audit probe for deterministic contract mode.",
+                },
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are PM."},
+            {
+                "role": "user",
+                "content": "PM route audit probe for deterministic contract mode.",
+            },
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    snapshot = build_final_provider_request_snapshot(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="pm", max_context_tokens=128_000),
+    )
+
+    assert snapshot["role"] == "pm"
+    assert snapshot["tool_schema_count"] == 0
+    assert snapshot["tools"] == []
+    assert snapshot["tool_choice"] == "none"
+    coverage = snapshot["final_request_evidence_coverage"]
+    assert coverage["required_tools"] == []
+    assert coverage["missing_required_tools"] == []
+
+
 def test_final_request_context_audit_flags_under_applied_execution_strategy() -> None:
     execution_profile = {
         "schema_version": "task.execution_profile.v1",
