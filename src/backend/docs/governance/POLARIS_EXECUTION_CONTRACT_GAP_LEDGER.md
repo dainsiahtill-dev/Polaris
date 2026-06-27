@@ -47,6 +47,7 @@ The target chain is:
 | C-04 | `e50c2152` | Tool capability derivation reads execution envelopes. |
 | C-05 | `f36a8e7b` | Director strategy propagates execution envelopes into context and metadata. |
 | C-06 | `777732c6` | Public Director execution result exposes `director.execution_contract_audit.v1`. |
+| C-07 | `67e047ac` | Director dispatch/runtime paths use shared handoff validation instead of local handoff evaluator copies. |
 
 ## Update Rules
 
