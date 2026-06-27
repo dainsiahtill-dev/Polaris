@@ -1522,6 +1522,91 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
     assert repair_kernel["revalidation_evidence"]["command"] == ["rtk", "go", "test", "./..."]
 
 
+def test_materialization_python_import_runs_through_runtime_bridge(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    package_init = tmp_path / "shared" / "__init__.py"
+    registry = tmp_path / "shared" / "registry.py"
+    package_init.parent.mkdir(parents=True)
+    package_init.write_text("from shared.registry import Registry\n", encoding="utf-8")
+    registry.write_text("class ServiceRegistry:\n    pass\n", encoding="utf-8")
+    artifact_quality_errors = [
+        (
+            "Artifact quality scan failed: unresolved import symbol "
+            "'Registry' from 'shared.registry' in shared/__init__.py"
+        )
+    ]
+    runtime_calls: list[dict[str, Any]] = []
+
+    def fake_runtime_bridge(
+        adapter: Any,
+        *,
+        workspace_path: Path,
+        task_id: str,
+        source_tool: str,
+        executor_factory: Any,
+        base_files: dict[str, str],
+        artifact_quality_errors: list[str],
+        allowed_paths: tuple[str, ...],
+        use_editor: bool,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        del adapter, executor_factory, kwargs
+        runtime_calls.append(
+            {
+                "workspace_path": workspace_path,
+                "task_id": task_id,
+                "source_tool": source_tool,
+                "base_files": dict(base_files),
+                "artifact_quality_errors": list(artifact_quality_errors),
+                "allowed_paths": tuple(allowed_paths),
+                "use_editor": use_editor,
+            }
+        )
+        if source_tool != "deterministic_unresolved_import_symbol_repair":
+            return []
+        return [
+            {
+                "tool": "edit_file",
+                "tool_name": "edit_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": source_tool,
+                    "file": "shared/registry.py",
+                    "bridge_step_id": "materialization.python_import",
+                    "repair_kernel": {
+                        "owner_cell": "director.runtime",
+                        "authoritative": True,
+                    },
+                },
+            }
+        ]
+
+    monkeypatch.setattr(materialization_quality_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
+
+    results = materialization_quality_repair_bridge._run_materialization_python_import(
+        _FakeAdapter(tmp_path),
+        task={"target_files": ["shared/__init__.py", "shared/registry.py"]},
+        task_id="task-python-materialization",
+        artifact_quality_errors=artifact_quality_errors,
+    )
+
+    assert len(results) == 1
+    assert [call["source_tool"] for call in runtime_calls] == list(
+        materialization_quality_repair_bridge._MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS
+    )
+    assert runtime_calls[-1]["base_files"] == {
+        "shared/__init__.py": "from shared.registry import Registry\n",
+        "shared/registry.py": "class ServiceRegistry:\n    pass\n",
+    }
+    assert runtime_calls[-1]["artifact_quality_errors"] == artifact_quality_errors
+    assert runtime_calls[-1]["allowed_paths"] == ("shared/__init__.py", "shared/registry.py")
+    assert runtime_calls[-1]["use_editor"] is True
+    assert results[0]["result"]["source_tool"] == "deterministic_unresolved_import_symbol_repair"
+
+
 def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     tmp_path: Path,
     monkeypatch: Any,
@@ -1687,6 +1772,12 @@ def test_materialization_runtime_coverage_detects_rust_line_suggestion() -> None
     assert (
         materialization_quality_repair_bridge.has_materialization_quality_runtime_repair_coverage(
             ["Artifact quality scan failed: python runtime smoke crashed for 'tests/test_product.py'"]
+        )
+        is True
+    )
+    assert (
+        materialization_quality_repair_bridge.has_materialization_quality_runtime_repair_coverage(
+            ["Artifact quality scan failed: future verifier error without a runtime repair"]
         )
         is False
     )

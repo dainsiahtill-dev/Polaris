@@ -295,9 +295,10 @@ def _apply_deterministic_unresolved_import_symbol_repair(
     3. Read the exporter; if the symbol is already defined, skip.
     4. If a class whose name ends with the missing symbol (case-insensitive)
        exists in the module, append ``Symbol = FoundClass`` alias.
-    5. Otherwise append ``class Symbol: pass`` (empty class stub).
-    6. Write back via DirectorToolExecutor so the change is audited
-       under the same tool path the LLM uses.
+    5. Otherwise decline the repair. Empty placeholder stubs are forbidden
+       because they satisfy imports while failing delivery-depth gates.
+    6. This legacy helper is retained for direct unit coverage only; real
+       materialization paths must run the runtime binding.
 
     Scope: only ``.py`` exporters. TypeScript unresolved-symbol errors
     are still routed through the LLM repair path because the alias
@@ -640,14 +641,12 @@ def _python_symbol_defined(text: str, symbol: str) -> bool:
 
 
 def _build_python_symbol_stub(text: str, symbol: str) -> str:
-    """Choose the most useful minimal binding for ``symbol``.
+    """Choose a meaningful alias for ``symbol`` or decline the repair.
 
-    If a class whose name ends with ``symbol`` (case-insensitive) is
-    defined in the module, prefer an alias to it. The L6-32 case
-    (missing ``Registry``, defined ``ServiceRegistry``) falls into
-    this branch and gets a meaningful alias instead of an empty stub.
-    Otherwise emit a bare ``class Symbol: pass`` — enough to satisfy
-    the import and the most common class-style usage at the importer.
+    If a class whose name ends with ``symbol`` (case-insensitive) is defined in
+    the module, prefer an alias to it. Empty ``class Symbol: pass`` stubs
+    satisfy imports while violating delivery-depth placeholder gates, so
+    unresolved symbols without a real candidate fail closed.
     """
     class_pattern = re.compile(
         r"^\s*class\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*[:(\b]",
@@ -660,7 +659,7 @@ def _build_python_symbol_stub(text: str, symbol: str) -> str:
             continue
         if name.lower().endswith(symbol_lc) and name != symbol:
             return f"{symbol} = {name}"
-    return f"class {symbol}:\n    pass"
+    return ""
 
 
 def _apply_deterministic_python_static_smoke(

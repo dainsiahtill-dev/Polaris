@@ -251,7 +251,7 @@ def build_python_unresolved_import_symbol_plan(
     diagnostics: Sequence[RepairDiagnostic],
     mode: str = "commit",
 ) -> RepairPlan | None:
-    """Append a narrow Python export alias/stub for unresolved import-symbol diagnostics."""
+    """Append a narrow Python export alias for unresolved import-symbol diagnostics."""
 
     normalized_base = _normalize_base_files(base_files)
     operations: list[RepairOperation] = []
@@ -293,8 +293,9 @@ def build_python_unresolved_import_symbol_plan(
         risk_level="medium",
         priority=1,
         metadata={
-            "runtime_plan_scope": "append_alias_or_empty_class_stub_only",
+            "runtime_plan_scope": "append_alias_to_existing_similar_symbol_only",
             "unsafe_cases_fail_closed": True,
+            "empty_stub_generation_allowed": False,
         },
     )
 
@@ -671,6 +672,13 @@ def _python_symbol_defined(text: str, symbol: str) -> bool:
 
 
 def _build_python_symbol_stub(text: str, symbol: str) -> str:
+    """Return a meaningful alias for ``symbol`` or decline the repair.
+
+    Empty ``class Symbol: pass`` stubs satisfy imports while violating
+    delivery-depth placeholder gates. If no real candidate exists, fail closed
+    and leave the diagnostic for LLM/contract-level repair.
+    """
+
     class_pattern = re.compile(
         r"^\s*class\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*[:(\b]",
         re.MULTILINE,
@@ -680,7 +688,7 @@ def _build_python_symbol_stub(text: str, symbol: str) -> str:
         name = match.group("name")
         if name != symbol and name.lower().endswith(symbol_lc):
             return f"{symbol} = {name}"
-    return f"class {symbol}:\n    pass"
+    return ""
 
 
 def _append_text_operation(

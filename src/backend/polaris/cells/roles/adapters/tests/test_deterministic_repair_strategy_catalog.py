@@ -36,6 +36,17 @@ _FORBIDDEN_REPAIR_IMPORT_PREFIXES = (
 _ALLOWED_EXECUTE_METHOD_DIRECTOR_RUNTIME_IMPORTS = {
     "polaris.cells.director.runtime.public.service",
 }
+_EXECUTE_METHOD_FILE_MUTATING_REPAIR_WRAPPERS = frozenset(
+    {
+        "run_declared_target_contract_repairs",
+        "run_node_test_script_contract_repair",
+        "run_patch_residue_cleanup",
+        "run_pre_materialization_declared_target_repairs",
+        "run_python_unittest_missing_target_repair",
+        "run_scaffold_marker_cleanup",
+        "run_typescript_reexport_repair",
+    }
+)
 
 
 def _implementation_files() -> list[Path]:
@@ -87,6 +98,26 @@ def _imported_modules(path: Path) -> list[str]:
         elif isinstance(node, ast.ImportFrom):
             modules.append(_resolve_import_from_module(path, node))
     return modules
+
+
+def _function_definitions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+
+
+def _attribute_chain(node: ast.AST) -> str:
+    parts: list[str] = []
+    current = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if isinstance(current, ast.Name):
+        parts.append(current.id)
+    return ".".join(reversed(parts))
 
 
 def _matches_forbidden_import(module: str) -> bool:
@@ -145,6 +176,80 @@ def test_execute_method_uses_director_runtime_repair_kernel_only_via_public_serv
 
     assert set(director_runtime_imports) <= _ALLOWED_EXECUTE_METHOD_DIRECTOR_RUNTIME_IMPORTS
     assert "polaris.cells.director.runtime.public.service" in director_runtime_imports
+
+
+def test_execute_method_file_mutating_repair_wrappers_are_runtime_hard_cut() -> None:
+    bridge_path = _director_internal_root() / "execute_method_repair_bridge.py"
+    definitions = _function_definitions(bridge_path)
+    missing = sorted(_EXECUTE_METHOD_FILE_MUTATING_REPAIR_WRAPPERS - set(definitions))
+
+    assert missing == []
+
+    violations: list[str] = []
+    for wrapper_name in sorted(_EXECUTE_METHOD_FILE_MUTATING_REPAIR_WRAPPERS):
+        wrapper = definitions[wrapper_name]
+        calls_runtime_bridge = False
+        for node in ast.walk(wrapper):
+            if isinstance(node, ast.Call):
+                callee = _attribute_chain(node.func)
+                if callee in {"_runtime_repair_tool_results", "run_runtime_repair_with_director_tools"} or callee.endswith(
+                    "run_runtime_repair_with_director_tools"
+                ):
+                    calls_runtime_bridge = True
+                if callee.startswith("_legacy_deterministic_repairs._apply_deterministic_"):
+                    violations.append(f"{wrapper_name}: {callee}")
+        assert calls_runtime_bridge, f"{wrapper_name} must execute through director.runtime repair bridge"
+
+    assert violations == []
+
+
+def test_materialization_python_import_uses_runtime_bridge_not_legacy_python_repairs() -> None:
+    bridge_path = _director_internal_root() / "materialization_quality_repair_bridge.py"
+    definitions = _function_definitions(bridge_path)
+
+    python_step = definitions["_run_materialization_python_import"]
+    calls_runtime_bridge = False
+    violations: list[str] = []
+    for node in ast.walk(python_step):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _attribute_chain(node.func)
+        if callee == "run_runtime_repair_with_director_tools" or callee.endswith(
+            "run_runtime_repair_with_director_tools"
+        ):
+            calls_runtime_bridge = True
+        if callee.startswith("_legacy_deterministic_repairs._apply_deterministic_") or (
+            callee.startswith("_apply_deterministic_") and "python" in callee
+        ):
+            violations.append(callee)
+
+    assert calls_runtime_bridge is True
+    assert violations == []
+
+
+def test_execute_method_legacy_repair_helper_allowlist_stays_empty() -> None:
+    bridge_path = _director_internal_root() / "execute_method_repair_bridge.py"
+    tree = ast.parse(bridge_path.read_text(encoding="utf-8"))
+    allowlist_values: list[ast.AST] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "_LEGACY_EXECUTE_METHOD_REPAIR_HELPER_ALLOWLIST"
+            for target in node.targets
+        ):
+            allowlist_values.append(node.value)
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "_LEGACY_EXECUTE_METHOD_REPAIR_HELPER_ALLOWLIST"
+            and node.value is not None
+        ):
+            allowlist_values.append(node.value)
+
+    assert len(allowlist_values) == 1
+    allowlist_value = allowlist_values[0]
+    assert isinstance(allowlist_value, ast.Call)
+    assert _attribute_chain(allowlist_value.func) == "frozenset"
+    assert allowlist_value.args == []
 
 
 def test_catalog_registers_all_hardcoded_deterministic_tokens() -> None:

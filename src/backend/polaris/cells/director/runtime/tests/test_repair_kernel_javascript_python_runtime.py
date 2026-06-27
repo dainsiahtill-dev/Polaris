@@ -13,6 +13,9 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
 from polaris.cells.director.runtime.internal.repair_kernel.javascript_syntax import (
     build_npm_script_contract_plan,
 )
+from polaris.cells.director.runtime.internal.repair_kernel.python_syntax import (
+    build_python_unresolved_import_symbol_plan,
+)
 from polaris.cells.director.runtime.public import (
     DirectorRepairRevalidationInputV1,
     DirectorRepairRevalidationRequestV1,
@@ -23,6 +26,53 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_strategy_catalog,
     run_director_repair,
 )
+
+
+def test_python_unresolved_import_symbol_declines_empty_placeholder_stub() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            (
+                "Artifact quality scan failed: unresolved import symbol "
+                "'WeatherKind' from 'src.models.weather' in src/engine/forecast.py"
+            )
+        ]
+    )
+
+    plan = build_python_unresolved_import_symbol_plan(
+        base_files={
+            "src/engine/forecast.py": "from src.models.weather import WeatherKind\n",
+            "src/models/weather.py": "class WeatherSnapshot:\n    pass\n",
+        },
+        diagnostics=diagnostics,
+    )
+
+    assert plan is None
+
+
+def test_python_unresolved_import_symbol_allows_real_similar_alias_only() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            (
+                "Artifact quality scan failed: unresolved import symbol "
+                "'Registry' from 'shared.registry' in shared/__init__.py"
+            )
+        ]
+    )
+
+    plan = build_python_unresolved_import_symbol_plan(
+        base_files={
+            "shared/__init__.py": "from shared.registry import Registry\n",
+            "shared/registry.py": "class ServiceRegistry:\n    pass\n",
+        },
+        diagnostics=diagnostics,
+    )
+
+    assert plan is not None
+    assert plan.metadata["runtime_plan_scope"] == "append_alias_to_existing_similar_symbol_only"
+    assert plan.metadata["empty_stub_generation_allowed"] is False
+    assert plan.operations[0].replacement
+    assert "Registry = ServiceRegistry" in str(plan.operations[0].replacement)
+    assert "class Registry" not in str(plan.operations[0].replacement)
 
 
 def test_npm_script_contract_uses_structured_json_plan_and_fail_closed_run(tmp_path: Path) -> None:

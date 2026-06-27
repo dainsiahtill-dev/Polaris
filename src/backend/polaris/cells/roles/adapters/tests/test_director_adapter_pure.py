@@ -8781,7 +8781,7 @@ class TestDeterministicPythonUnresolvedSymbolRepair:
                 if cached.startswith("shared"):
                     del sys.modules[cached]
 
-    def test_repairs_missing_symbol_with_class_stub_when_no_similar(self, tmp_path: Any) -> None:
+    def test_declines_missing_symbol_when_no_real_alias_candidate(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         (tmp_path / "shared").mkdir(parents=True)
         (tmp_path / "shared" / "__init__.py").write_text(
@@ -8806,9 +8806,11 @@ class TestDeterministicPythonUnresolvedSymbolRepair:
             ],
         )
 
-        assert results and results[0]["success"] is True, results
+        assert results == []
         config_text = (tmp_path / "shared" / "config.py").read_text(encoding="utf-8")
-        assert "class SomeConfig" in config_text
+        assert "class SomeConfig" not in config_text
+        assert "pass" not in config_text
+        assert config_text == "SETTING = 1\n"
 
     def test_idempotent_when_symbol_already_defined(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

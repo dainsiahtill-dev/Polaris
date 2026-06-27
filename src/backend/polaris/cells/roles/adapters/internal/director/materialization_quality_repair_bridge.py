@@ -98,6 +98,11 @@ _MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS = (
     "deterministic_go_error_string_helper_repair",
     "deterministic_go_dedup_repair",
 )
+_MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_python_unittest_runtime_failure_repair",
+    "deterministic_python_package_shadow_bridge_repair",
+    "deterministic_unresolved_import_symbol_repair",
+)
 
 
 def has_materialization_quality_runtime_repair_coverage(artifact_quality_errors: list[str]) -> bool:
@@ -115,7 +120,14 @@ def has_materialization_quality_runtime_repair_coverage(artifact_quality_errors:
 
 
 def _materialization_runtime_coverage_source_tools() -> frozenset[str]:
-    return frozenset(_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS)
+    return frozenset(
+        (
+            *_MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS,
+            *_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS,
+            *_MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS,
+            *_MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS,
+        )
+    )
 
 
 def _coverage_has_materialization_runtime_source_tool(
@@ -676,37 +688,49 @@ def _run_materialization_python_import(
     task_id: str,
     artifact_quality_errors: list[str],
 ) -> list[dict[str, Any]]:
-    from .deterministic_repairs.python_repairs import (
-        _apply_deterministic_python_package_shadow_bridge_repair,
-        _apply_deterministic_python_unittest_runtime_failure_repair,
-        _apply_deterministic_unresolved_import_symbol_repair,
-    )
-
+    del task
+    workspace = Path(getattr(adapter, "workspace", "") or "")
+    if not workspace.is_dir() or not artifact_quality_errors:
+        return []
+    workspace_path = workspace.resolve()
+    if not any(workspace_path.rglob("*.py")):
+        return []
     results: list[dict[str, Any]] = []
-    results.extend(
-        _apply_deterministic_python_unittest_runtime_failure_repair(
+
+    for source_tool in _MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS:
+        base_files = _collect_materialization_python_base_files(workspace_path)
+        if not base_files:
+            return results
+        runtime_results = run_runtime_repair_with_director_tools(
             adapter,
-            task=task,
+            workspace_path=workspace_path,
             task_id=task_id,
+            source_tool=source_tool,
+            executor_factory=DirectorToolExecutor,
+            base_files=base_files,
             artifact_quality_errors=artifact_quality_errors,
+            allowed_paths=tuple(base_files.keys()),
+            use_editor=True,
         )
-    )
-    results.extend(
-        _apply_deterministic_python_package_shadow_bridge_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_unresolved_import_symbol_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
+        if any(not bool(item.get("success", False)) for item in runtime_results):
+            return [*results, *runtime_results]
+        results.extend(runtime_results)
     return results
+
+
+def _collect_materialization_python_base_files(workspace_path: Path) -> dict[str, str]:
+    if not workspace_path.is_dir():
+        return {}
+    base_files: dict[str, str] = {}
+    for python_file in sorted(workspace_path.rglob("*.py")):
+        with suppress(ValueError):
+            parts = python_file.relative_to(workspace_path).parts
+            if any(part in {"__pycache__", ".venv", "venv"} for part in parts):
+                continue
+            relative_path = python_file.relative_to(workspace_path).as_posix()
+            with suppress(OSError, UnicodeDecodeError):
+                base_files[relative_path] = python_file.read_text(encoding="utf-8")
+    return base_files
 
 
 def _run_materialization_go_import(
