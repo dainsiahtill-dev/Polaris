@@ -3004,7 +3004,106 @@ async def execute_resident_agi_tactical_action(command: ExecuteResidentAgiTactic
     }
 
 
+_RESIDENT_AGI_PLATFORM_CONTRACT_REF_KEYS = (
+    "execution_profile",
+    "execution_envelope",
+    "final_provider_request_audit",
+    "run_provenance_bundle",
+    "run_ledger_projection",
+    "capability_ledger",
+)
+_RESIDENT_AGI_REQUIRED_PLATFORM_CONTRACT_REFS = (
+    "execution_profile",
+    "execution_envelope",
+    "final_provider_request_audit",
+    "run_provenance_bundle",
+)
+_RESIDENT_AGI_AUTHORITY_FIELD_BLOCKLIST = (
+    "authoritative",
+    "agi_execution_authority",
+    "repair_plan",
+    "policy_override",
+    "success_verdict",
+    "capability_token",
+    "execution_envelope_override",
+)
+
+
+def _resident_agi_platform_contract_refs(record: DecisionRecord, handoff: dict[str, Any]) -> dict[str, str]:
+    refs: dict[str, str] = {}
+    raw_refs = handoff.get("platform_contract_refs")
+    if isinstance(raw_refs, dict):
+        for key in _RESIDENT_AGI_PLATFORM_CONTRACT_REF_KEYS:
+            value = str(raw_refs.get(key) or "").strip()
+            if value:
+                refs[key] = value
+
+    direct_ref_keys = {
+        "execution_profile_ref": "execution_profile",
+        "execution_envelope_ref": "execution_envelope",
+        "final_provider_request_audit_ref": "final_provider_request_audit",
+        "run_provenance_bundle_ref": "run_provenance_bundle",
+        "run_ledger_projection_ref": "run_ledger_projection",
+        "capability_ledger_ref": "capability_ledger",
+    }
+    for raw_key, normalized_key in direct_ref_keys.items():
+        value = str(handoff.get(raw_key) or "").strip()
+        if value:
+            refs.setdefault(normalized_key, value)
+
+    candidate_refs: list[str] = []
+    candidate_refs.extend(str(item or "").strip() for item in record.evidence_refs if str(item or "").strip())
+    candidate_refs.extend(str(item or "").strip() for item in record.context_refs if str(item or "").strip())
+    for raw_key in ("evidence_refs", "context_refs"):
+        raw_items = handoff.get(raw_key)
+        if isinstance(raw_items, list):
+            candidate_refs.extend(str(item or "").strip() for item in raw_items if str(item or "").strip())
+
+    for ref in candidate_refs:
+        lower = ref.lower()
+        if "execution_profile" in lower or "task.execution_profile" in lower:
+            refs.setdefault("execution_profile", ref)
+        if "execution_envelope" in lower or "execution-envelope" in lower:
+            refs.setdefault("execution_envelope", ref)
+        if "final_provider_request" in lower or "provider-request" in lower or "runtime/contexts" in lower:
+            refs.setdefault("final_provider_request_audit", ref)
+        if "provenance" in lower:
+            refs.setdefault("run_provenance_bundle", ref)
+        if "run_ledger" in lower or "run-ledger" in lower or "ledger" in lower:
+            refs.setdefault("run_ledger_projection", ref)
+        if "capability_ledger" in lower or ("capability" in lower and "ledger" in lower):
+            refs.setdefault("capability_ledger", ref)
+
+    return {key: refs[key] for key in _RESIDENT_AGI_PLATFORM_CONTRACT_REF_KEYS if key in refs}
+
+
+def _resident_agi_sanitize_handoff(record: DecisionRecord, handoff: dict[str, Any]) -> dict[str, Any]:
+    sanitized = dict(handoff)
+    blocked_fields: list[str] = []
+    for key in _RESIDENT_AGI_AUTHORITY_FIELD_BLOCKLIST:
+        if key in sanitized:
+            if key not in {"authoritative", "agi_execution_authority"} or bool(sanitized.get(key)):
+                blocked_fields.append(key)
+            sanitized.pop(key, None)
+
+    platform_refs = _resident_agi_platform_contract_refs(record, sanitized)
+    existing_blocked = sanitized.get("blocked_authority_fields")
+    if isinstance(existing_blocked, list):
+        blocked_fields.extend(str(item) for item in existing_blocked if str(item).strip())
+    sanitized["platform_contract_refs"] = platform_refs
+    sanitized["missing_platform_contract_refs"] = [
+        ref_key for ref_key in _RESIDENT_AGI_REQUIRED_PLATFORM_CONTRACT_REFS if ref_key not in platform_refs
+    ]
+    sanitized["blocked_authority_fields"] = sorted(set(blocked_fields))
+    sanitized["advisory_only"] = True
+    sanitized["authoritative"] = False
+    sanitized["agi_execution_authority"] = False
+    sanitized["required_chain"] = "PM → Chief Engineer → Director"
+    return sanitized
+
+
 def _resident_agi_handoff_row(record: DecisionRecord, handoff: dict[str, Any]) -> dict[str, Any]:
+    safe_handoff = _resident_agi_sanitize_handoff(record, handoff)
     return {
         "schema_version": "resident.agi_handoff_inbox_item.v1",
         "workspace": record.workspace,
@@ -3019,7 +3118,7 @@ def _resident_agi_handoff_row(record: DecisionRecord, handoff: dict[str, Any]) -
         "verdict": record.verdict.value,
         "evidence_refs": list(record.evidence_refs),
         "context_refs": list(record.context_refs),
-        "handoff": dict(handoff),
+        "handoff": safe_handoff,
     }
 
 
@@ -3036,7 +3135,7 @@ def query_resident_agi_handoffs(query: QueryResidentAgiHandoffsV1) -> dict[str, 
         handoff_raw = outcome.get("resident_agi_decision_handoff")
         if not isinstance(handoff_raw, dict):
             continue
-        handoff = dict(handoff_raw)
+        handoff = _resident_agi_sanitize_handoff(record, dict(handoff_raw))
         handoff_status = str(handoff.get("handoff_status") or "unknown").strip().lower() or "unknown"
         target_roles = [str(item or "").strip() for item in handoff.get("target_roles", []) if str(item or "").strip()]
         normalized_targets = {item.lower() for item in target_roles}

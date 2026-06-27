@@ -115,8 +115,15 @@ def test_resident_agi_handoffs_query_derives_role_inbox_from_decision_trace(tmp_
         strategy="resident_agi_turn",
         verdict="success",
         task_id="task-handoff",
-        evidence_ref="runtime/gates/quality.json",
+        evidence_ref="runtime/run-ledger/projection.json",
     )
+    payload["evidence_refs"] = [
+        "runtime/run-ledger/projection.json",
+        "runtime/provenance/run-handoff.json",
+        "runtime/contracts/task.execution_profile.json",
+        "runtime/contracts/execution_envelope.json",
+    ]
+    payload["context_refs"] = ["runtime/contexts/aa/final_provider_request.json"]
     payload["actual_outcome"] = {
         "resident_agi_decision_handoff": {
             "schema_version": "resident.agi_decision_handoff.v1",
@@ -128,7 +135,12 @@ def test_resident_agi_handoffs_query_derives_role_inbox_from_decision_trace(tmp_
             "reason": "Quality gate can proceed through governed handoff.",
             "required_chain": "PM → Chief Engineer → Director",
             "advisory_only": True,
-            "agi_execution_authority": False,
+            "authoritative": True,
+            "agi_execution_authority": True,
+            "repair_plan": {"operation": "write_file", "file": "src/main.py"},
+            "policy_override": {"allow": True},
+            "success_verdict": {"passed": True},
+            "capability_token": {"token_id": "agi-direct-token"},
         }
     }
     recorded = record_resident_decision_entry(
@@ -157,6 +169,29 @@ def test_resident_agi_handoffs_query_derives_role_inbox_from_decision_trace(tmp_
     assert item["handoff"]["handoff_status"] == "ready"
     assert item["handoff"]["target_roles"] == ["chief_engineer", "director", "qa"]
     assert "director_tool_execution_by_agi" in item["handoff"]["blocked_actions"]
+    assert item["handoff"]["advisory_only"] is True
+    assert item["handoff"]["authoritative"] is False
+    assert item["handoff"]["agi_execution_authority"] is False
+    assert "repair_plan" not in item["handoff"]
+    assert "policy_override" not in item["handoff"]
+    assert "success_verdict" not in item["handoff"]
+    assert "capability_token" not in item["handoff"]
+    assert item["handoff"]["platform_contract_refs"] == {
+        "execution_profile": "runtime/contracts/task.execution_profile.json",
+        "execution_envelope": "runtime/contracts/execution_envelope.json",
+        "final_provider_request_audit": "runtime/contexts/aa/final_provider_request.json",
+        "run_provenance_bundle": "runtime/provenance/run-handoff.json",
+        "run_ledger_projection": "runtime/run-ledger/projection.json",
+    }
+    assert item["handoff"]["missing_platform_contract_refs"] == []
+    assert set(item["handoff"]["blocked_authority_fields"]) == {
+        "authoritative",
+        "agi_execution_authority",
+        "repair_plan",
+        "policy_override",
+        "success_verdict",
+        "capability_token",
+    }
 
 
 def test_resident_public_commands_cover_lifecycle_goals_decisions_and_labs(tmp_path: Path) -> None:

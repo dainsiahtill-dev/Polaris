@@ -7,6 +7,7 @@ from polaris.cells.resident.autonomy.public.contracts import (
     QueryResidentAgiRepairAdvisoryOverlayV1,
     QueryResidentStatusV1,
     RecordResidentEvidenceCommandV1,
+    ResidentAgiDecisionHandoffV1,
     ResidentAutonomyError,
     ResidentAutonomyResultV1,
     ResidentCycleCompletedEventV1,
@@ -142,6 +143,38 @@ class TestQueryResidentAgiRepairAdvisoryOverlayV1:
     def test_empty_workspace_raises(self) -> None:
         with pytest.raises(ValueError, match="workspace"):
             QueryResidentAgiRepairAdvisoryOverlayV1(workspace="")
+
+
+class TestResidentAgiDecisionHandoffV1:
+    def test_preserves_platform_contract_refs_and_forces_advisory_authority(self) -> None:
+        handoff = ResidentAgiDecisionHandoffV1(
+            decision_type="quality_gate_response",
+            decision_capability_id="quality_gate_response",
+            handoff_status="ready",
+            target_roles=("chief_engineer", "director"),
+            allowed_actions=("request_governed_execution",),
+            blocked_actions=("director_tool_execution_by_agi",),
+            downstream_allowed=True,
+            reason="Quality gate needs governed continuation.",
+            platform_contract_refs={
+                "execution_profile": "runtime/contracts/profile.json",
+                "execution_envelope": "runtime/contracts/envelope.json",
+                "final_provider_request_audit": "runtime/contexts/aa/request.json",
+                "run_provenance_bundle": "runtime/provenance/run.json",
+            },
+            missing_platform_contract_refs=("run_ledger_projection",),
+            blocked_authority_fields=("repair_plan",),
+            agi_execution_authority=True,
+        )
+
+        payload = handoff.to_dict()
+        assert payload["schema_version"] == "resident.agi_decision_handoff.v1"
+        assert payload["platform_contract_refs"]["execution_envelope"] == "runtime/contracts/envelope.json"
+        assert payload["missing_platform_contract_refs"] == ["run_ledger_projection"]
+        assert payload["blocked_authority_fields"] == ["repair_plan"]
+        assert payload["advisory_only"] is True
+        assert payload["authoritative"] is False
+        assert payload["agi_execution_authority"] is False
 
 
 class TestResidentCycleCompletedEventV1HappyPath:

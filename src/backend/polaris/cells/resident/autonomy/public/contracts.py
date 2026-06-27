@@ -529,6 +529,9 @@ class ResidentAgiDecisionHandoffV1:
     reason: str
     evidence_refs: tuple[str, ...] = field(default_factory=tuple)
     context_refs: tuple[str, ...] = field(default_factory=tuple)
+    platform_contract_refs: Mapping[str, Any] = field(default_factory=dict)
+    missing_platform_contract_refs: tuple[str, ...] = field(default_factory=tuple)
+    blocked_authority_fields: tuple[str, ...] = field(default_factory=tuple)
     gate_statuses: Mapping[str, Any] = field(default_factory=dict)
     source_role: str = "resident_agi"
     required_chain: str = "PM → Chief Engineer → Director"
@@ -564,6 +567,25 @@ class ResidentAgiDecisionHandoffV1:
             "context_refs",
             tuple(str(item or "").strip() for item in self.context_refs if str(item or "").strip()),
         )
+        object.__setattr__(
+            self,
+            "platform_contract_refs",
+            {
+                str(key).strip(): str(value).strip()
+                for key, value in self.platform_contract_refs.items()
+                if str(key).strip() and str(value).strip()
+            },
+        )
+        object.__setattr__(
+            self,
+            "missing_platform_contract_refs",
+            tuple(str(item or "").strip() for item in self.missing_platform_contract_refs if str(item or "").strip()),
+        )
+        object.__setattr__(
+            self,
+            "blocked_authority_fields",
+            tuple(str(item or "").strip() for item in self.blocked_authority_fields if str(item or "").strip()),
+        )
         object.__setattr__(self, "gate_statuses", _to_dict_copy(self.gate_statuses))
         object.__setattr__(self, "required_chain", _require_non_empty("required_chain", self.required_chain))
         object.__setattr__(self, "advisory_only", True)
@@ -583,9 +605,13 @@ class ResidentAgiDecisionHandoffV1:
             "reason": self.reason,
             "evidence_refs": list(self.evidence_refs),
             "context_refs": list(self.context_refs),
+            "platform_contract_refs": dict(self.platform_contract_refs),
+            "missing_platform_contract_refs": list(self.missing_platform_contract_refs),
+            "blocked_authority_fields": list(self.blocked_authority_fields),
             "gate_statuses": dict(self.gate_statuses),
             "required_chain": self.required_chain,
             "advisory_only": True,
+            "authoritative": False,
             "agi_execution_authority": False,
         }
 
