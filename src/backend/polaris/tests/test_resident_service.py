@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from polaris.cells.audit.evidence.public import QueryEvidenceEventsV1, query_evidence_events
 from polaris.cells.control_plane.run_ledger.public import (
+    AppendRunLedgerEventCommandV1,
     ReadRunLedgerProjectionQueryV1,
+    append_run_ledger_event,
     read_run_ledger_projection,
 )
 from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import CommandResult
@@ -523,6 +525,7 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert "director.deterministic_repair_strategy_catalog.read" in decision_registry["evidence_interface_ids"]
     assert "director.repair_coverage.read" in decision_registry["evidence_interface_ids"]
     assert "director.repair_advisory_policy.read" in decision_registry["evidence_interface_ids"]
+    assert "run_provenance_bundle.read" in decision_registry["evidence_interface_ids"]
     assert "request_evidence" in decision_registry["candidate_actions"]
     assert "suggest_repair_rule" in decision_registry["candidate_actions"]
     access_registry = capability_surface["capability_access_registry"]
@@ -532,6 +535,7 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert access_registry["execution_policy"]["agi_direct_writes_allowed"] is False
     assert access_registry["execution_policy"]["director_runtime_remains_authoritative"] is True
     assert "run_ledger.read" in access_registry["groups"]["read_only_capabilities"]
+    assert "run_provenance_bundle.read" in access_registry["groups"]["read_only_capabilities"]
     assert "director.repair_advisory_policy.read" in access_registry["groups"]["advisory_only_capabilities"]
     assert "audit.diagnosis.execute" in access_registry["groups"]["governed_execution_capabilities"]
     assert "resident.decision_trace.read_write" in access_registry["groups"]["governed_write_capabilities"]
@@ -551,6 +555,7 @@ def test_resident_service_builds_skills_goals_and_contracts(tmp_path: Path) -> N
     assert {
         "contextos.final_request_audit.read",
         "run_ledger.read",
+        "run_provenance_bundle.read",
         "director.deterministic_repair_strategy_catalog.read",
         "director.repair_coverage.read",
         "director.repair_advisory_policy.read",
@@ -1552,6 +1557,74 @@ def test_resident_agi_evidence_interfaces_reads_final_provider_request_audit_fro
     assert item["available"] is True
     assert item["summary"]["selected_context_snapshot_ref"] == hash_key
     assert item["payload"]["final_request_context_audit"]["final_request_token_estimate"] == 384
+    assert payload["summary"]["missing_required_interface_ids"] == []
+
+
+def test_resident_agi_evidence_interfaces_reads_run_provenance_bundle(tmp_path: Path) -> None:
+    reset_resident_services()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(workspace),
+            run_id="run-provenance-1",
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "qa_verifier",
+                "gate": {"name": "qa_verifier", "ok": True, "summary": "qa passed"},
+                "job_token": {
+                    "token_id": "token-1",
+                    "run_id": "run-provenance-1",
+                    "task_id": "TASK-1",
+                    "project_id": "P1",
+                    "contract_hash": "pm-hash",
+                    "blueprint_hash": "ce-hash",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {
+                    "final_request_context_audit": {
+                        "schema_version": "llm.final_request_context_audit.v1",
+                        "final_request_evidence_coverage": {
+                            "schema_version": "polaris.final_request_evidence_coverage.v1",
+                            "request_hash": "provider-request-hash",
+                            "workflow_chain": {
+                                "pm_contract_hash": "pm-hash",
+                                "ce_blueprint_hash": "ce-hash",
+                                "handoff_decision_hash": "handoff-hash",
+                                "execution_profile_hash": "profile-hash",
+                                "execution_envelope_hash": "envelope-hash",
+                            },
+                        },
+                    },
+                    "commands": [{"command": "pytest", "ok": True, "exit_code": 0}],
+                },
+            },
+        )
+    )
+
+    payload = query_resident_agi_evidence_interfaces(
+        QueryResidentAgiEvidenceInterfacesV1(
+            workspace=str(workspace),
+            decision_type="quality.gate.response",
+            run_id="run-provenance-1",
+            interface_ids=("run_provenance_bundle.read",),
+        )
+    )
+
+    by_id = {item["interface_id"]: item for item in payload["interfaces"]}
+    item = by_id["run_provenance_bundle.read"]
+    bundle = item["payload"]["bundle"]
+    assert item["status"] == "available"
+    assert item["available"] is True
+    assert item["callable"] is True
+    assert item["source"] == "control_plane.run_ledger.public.read_run_provenance_bundle"
+    assert item["summary"]["missing_authority_hashes"] == []
+    assert bundle["schema_version"] == "polaris.run_provenance_bundle.v1"
+    assert bundle["pm_contract_hash"] == "pm-hash"
+    assert bundle["ce_blueprint_hash"] == "ce-hash"
+    assert bundle["handoff_decision_hash"] == "handoff-hash"
+    assert bundle["execution_envelope_hash"] == "envelope-hash"
     assert payload["summary"]["missing_required_interface_ids"] == []
 
 

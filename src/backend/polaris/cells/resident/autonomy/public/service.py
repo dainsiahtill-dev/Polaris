@@ -2323,6 +2323,12 @@ def query_resident_agi_evidence_interfaces(query: QueryResidentAgiEvidenceInterf
                 max_runs=query.max_runs,
                 base=base,
             )
+        elif interface_id == "run_provenance_bundle.read":
+            item = _resident_agi_run_provenance_bundle_interface(
+                workspace=query.workspace,
+                run_id=query.run_id,
+                base=base,
+            )
         elif interface_id == "audit.diagnosis.read":
             item = _resident_agi_audit_diagnosis_interface(
                 workspace=query.workspace,
