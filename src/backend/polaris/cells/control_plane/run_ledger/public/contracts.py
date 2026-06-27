@@ -29,6 +29,26 @@ class ReadRunLedgerProjectionQueryV1:
 
 
 @dataclass(frozen=True)
+class ReadRunProvenanceBundleQueryV1:
+    """Read the end-to-end provenance bundle for one run."""
+
+    workspace: str
+    run_id: str
+    include_compat_ledgers: bool = False
+
+    def __post_init__(self) -> None:
+        workspace = str(self.workspace or "").strip()
+        if not workspace:
+            raise ValueError("workspace must be a non-empty string")
+        run_id = str(self.run_id or "").strip()
+        if not run_id:
+            raise ValueError("run_id must be a non-empty string")
+        object.__setattr__(self, "workspace", workspace)
+        object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "include_compat_ledgers", bool(self.include_compat_ledgers))
+
+
+@dataclass(frozen=True)
 class AppendRunLedgerEventCommandV1:
     """Append one immutable platform run-ledger event."""
 
@@ -62,6 +82,13 @@ class RunLedgerProjectionResultV1:
 
 
 @dataclass(frozen=True)
+class RunProvenanceBundleResultV1:
+    """Run provenance bundle returned by the control-plane ledger service."""
+
+    bundle: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class RunLedgerAppendResultV1:
     """Append receipt returned by the platform run ledger."""
 
@@ -76,6 +103,8 @@ __all__ = [
     "AppendRunLedgerEventCommandV1",
     "ControlPlaneRunLedgerV1Error",
     "ReadRunLedgerProjectionQueryV1",
+    "ReadRunProvenanceBundleQueryV1",
     "RunLedgerAppendResultV1",
     "RunLedgerProjectionResultV1",
+    "RunProvenanceBundleResultV1",
 ]

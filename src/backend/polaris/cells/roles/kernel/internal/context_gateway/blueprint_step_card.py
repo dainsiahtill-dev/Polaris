@@ -12,7 +12,26 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
 from typing import Any
+
+_MAX_REAL_INTERFACE_FILES = 8
+_MAX_REAL_INTERFACE_SYMBOLS = 24
+_MAX_REAL_IMPORT_GAPS = 8
+_MAX_WORKSPACE_PYTHON_SCAN = 80
+_PYTHON_SCAN_EXCLUDED_PARTS = {
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "site-packages",
+    "dist-packages",
+}
 
 
 def build_blueprint_step_card(request: Any) -> str | None:
@@ -94,6 +113,15 @@ def build_blueprint_step_card(request: Any) -> str | None:
     interfaces = [str(s).strip() for s in (step.get("interface_names") or []) if str(s).strip()]
     if interfaces:
         lines.append("interfaces: " + ", ".join(interfaces[:16]))
+    public_symbols = [str(s).strip() for s in (step.get("public_symbols") or []) if str(s).strip()]
+    if public_symbols:
+        lines.append("public_symbols(本文件必须定义/导出): " + ", ".join(public_symbols[:16]))
+    consumes_symbols = _string_symbol_map(step.get("consumes_symbols"))
+    if consumes_symbols:
+        lines.append("consumes_symbols(跨文件导入/调用必须逐字匹配):")
+        for provider_target, symbols in list(consumes_symbols.items())[:6]:
+            lines.append(f"  {provider_target}: {', '.join(symbols[:12])}")
+    lines.extend(_build_real_file_interface_snapshot(request, context_override, step))
     # Interface coherence (I3-r28): the frozen identifiers OTHER files already
     # exposed. The weak Director must reuse these exact names so cross-file refs
     # resolve at runtime (live: main.js must call the id index.html froze, not
@@ -155,3 +183,341 @@ def build_blueprint_step_card(request: Any) -> str | None:
                 "任何使文件明显变小或丢失既有功能的回应都会被自动拒收并退回重做。"
             )
     return "\n".join(lines) or None
+
+
+def _build_real_file_interface_snapshot(request: Any, context_override: dict[str, Any], step: dict[str, Any]) -> list[str]:
+    workspace = _resolve_workspace(request, context_override)
+    if workspace is None:
+        return []
+    declared_paths = _collect_declared_paths(context_override, step)
+    if not declared_paths:
+        return []
+    python_files = _select_python_interface_files(workspace, declared_paths)
+    if not python_files:
+        return []
+
+    exports_by_file: dict[str, list[str]] = {}
+    for rel_path in python_files:
+        exports = _python_exports_for_file(workspace / rel_path)
+        if exports:
+            exports_by_file[rel_path.as_posix()] = exports
+
+    import_gaps = _python_import_gaps(workspace, python_files, exports_by_file)
+    if not exports_by_file and not import_gaps:
+        return []
+
+    lines = [
+        "真实文件接口快照(AST; 导入必须使用这些已存在符号；需要新符号时必须同步修改定义文件，禁止空壳占位):"
+    ]
+    emitted = 0
+    for rel_text in sorted(exports_by_file):
+        exports = exports_by_file[rel_text]
+        if not exports:
+            continue
+        lines.append(f"  {rel_text} exports: {', '.join(exports[:_MAX_REAL_INTERFACE_SYMBOLS])}")
+        emitted += 1
+        if emitted >= _MAX_REAL_INTERFACE_FILES:
+            break
+    if import_gaps:
+        lines.append("真实导入缺口(先统一定义/导入名，禁止造 class X: pass 空壳):")
+        lines.extend(f"  {gap}" for gap in import_gaps[:_MAX_REAL_IMPORT_GAPS])
+    return lines
+
+
+def _resolve_workspace(request: Any, context_override: dict[str, Any]) -> Path | None:
+    raw_workspace = getattr(request, "workspace", None)
+    if not raw_workspace:
+        for key in ("workspace", "workspace_full", "workspace_root"):
+            value = context_override.get(key)
+            if value:
+                raw_workspace = value
+                break
+    text = str(raw_workspace or "").strip()
+    if not text:
+        return None
+    try:
+        workspace = Path(text).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return workspace if workspace.is_dir() else None
+
+
+def _collect_declared_paths(context_override: dict[str, Any], step: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+
+    def add_values(value: Any) -> None:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped:
+                paths.append(stripped)
+            return
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                add_values(item)
+
+    for source in (step, context_override):
+        for key in (
+            "target_file",
+            "target_files",
+            "scope_paths",
+            "context_files",
+            "files_to_edit",
+            "declared_target_files",
+        ):
+            add_values(source.get(key))
+
+    for task_key in ("task", "pm_task", "task_contract"):
+        task = context_override.get(task_key)
+        if isinstance(task, dict):
+            for key in ("target_file", "target_files", "scope_paths", "context_files"):
+                add_values(task.get(key))
+    tasks = context_override.get("tasks")
+    if isinstance(tasks, list):
+        for task in tasks[:4]:
+            if not isinstance(task, dict):
+                continue
+            for key in ("target_file", "target_files", "scope_paths", "context_files"):
+                add_values(task.get(key))
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        normalized = path.replace("\\", "/").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique
+
+
+def _string_symbol_map(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, list[str]] = {}
+    for raw_target, raw_symbols in value.items():
+        target = str(raw_target or "").strip()
+        if not target:
+            continue
+        symbols: list[str] = []
+        if isinstance(raw_symbols, str):
+            raw_items: Any = [raw_symbols]
+        else:
+            raw_items = raw_symbols
+        if isinstance(raw_items, (list, tuple, set)):
+            for item in raw_items:
+                symbol = str(item or "").strip()
+                if symbol and symbol not in symbols:
+                    symbols.append(symbol)
+        if symbols:
+            result[target] = symbols
+    return result
+
+
+def _select_python_interface_files(workspace: Path, declared_paths: list[str]) -> list[Path]:
+    selected: list[Path] = []
+
+    def add_rel(rel_path: Path | None) -> None:
+        if rel_path is None or rel_path.suffix != ".py":
+            return
+        if rel_path in selected:
+            return
+        candidate = workspace / rel_path
+        try:
+            candidate.resolve(strict=False).relative_to(workspace)
+        except (OSError, RuntimeError, ValueError):
+            return
+        if candidate.is_file():
+            selected.append(rel_path)
+
+    declared_rels = [_workspace_relative_file(workspace, raw_path) for raw_path in declared_paths]
+    for rel_path in declared_rels:
+        add_rel(rel_path)
+
+    for rel_path in list(selected):
+        for imported_rel in _python_import_module_files(workspace, rel_path):
+            add_rel(imported_rel)
+
+    all_python = _bounded_workspace_python_files(workspace)
+    if len(all_python) <= 16:
+        for rel_path in all_python:
+            add_rel(rel_path)
+    else:
+        for rel_path in declared_rels:
+            if rel_path is None:
+                continue
+            for sibling in sorted((workspace / rel_path).parent.glob("*.py"))[:6]:
+                add_rel(_workspace_relative_path(workspace, sibling))
+        for rel_path in all_python:
+            if len(selected) >= _MAX_REAL_INTERFACE_FILES:
+                break
+            if any(part in {"models", "schemas", "domain", "entities", "contracts"} for part in rel_path.parts):
+                add_rel(rel_path)
+
+    return selected[:_MAX_REAL_INTERFACE_FILES]
+
+
+def _workspace_relative_file(workspace: Path, raw_path: str) -> Path | None:
+    if not raw_path.strip():
+        return None
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = workspace / candidate
+    return _workspace_relative_path(workspace, candidate)
+
+
+def _workspace_relative_path(workspace: Path, path: Path) -> Path | None:
+    try:
+        resolved = path.expanduser().resolve(strict=False)
+        rel = resolved.relative_to(workspace)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return rel
+
+
+def _bounded_workspace_python_files(workspace: Path) -> list[Path]:
+    scan_roots = [workspace / "src"] if (workspace / "src").is_dir() else [workspace]
+    files: list[Path] = []
+    for scan_root in scan_roots:
+        for path in sorted(scan_root.rglob("*.py")):
+            if len(files) >= _MAX_WORKSPACE_PYTHON_SCAN:
+                return files
+            rel_path = _workspace_relative_path(workspace, path)
+            if rel_path is None:
+                continue
+            if any(part in _PYTHON_SCAN_EXCLUDED_PARTS for part in rel_path.parts):
+                continue
+            files.append(rel_path)
+    return files
+
+
+def _python_exports_for_file(path: Path) -> list[str]:
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    names: list[str] = []
+    explicit_all: list[str] = []
+
+    def add_name(name: str) -> None:
+        if name.startswith("_") or name in names:
+            return
+        names.append(name)
+
+    for node in tree.body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            add_name(node.name)
+            continue
+        if isinstance(node, ast.Assign):
+            all_names = _literal_all_names(node)
+            if all_names:
+                explicit_all.extend(name for name in all_names if name not in explicit_all)
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    add_name(target.id)
+            continue
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            add_name(node.target.id)
+            continue
+        if path.name == "__init__.py" and isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                add_name(alias.asname or alias.name.split(".")[0])
+
+    if explicit_all:
+        return [name for name in explicit_all if name and not name.startswith("_")]
+    return names
+
+
+def _literal_all_names(node: ast.Assign) -> list[str]:
+    if not any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets):
+        return []
+    try:
+        value = ast.literal_eval(node.value)
+    except (ValueError, SyntaxError):
+        return []
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _python_import_module_files(workspace: Path, importer_rel: Path) -> list[Path]:
+    tree = _parse_python_file(workspace / importer_rel)
+    if tree is None:
+        return []
+    imported: list[Path] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        rel_path = _resolve_python_import_from(workspace, importer_rel, node)
+        if rel_path is not None and rel_path not in imported:
+            imported.append(rel_path)
+    return imported
+
+
+def _python_import_gaps(
+    workspace: Path,
+    importer_files: list[Path],
+    exports_by_file: dict[str, list[str]],
+) -> list[str]:
+    gaps: list[str] = []
+    for importer_rel in importer_files:
+        tree = _parse_python_file(workspace / importer_rel)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            module_rel = _resolve_python_import_from(workspace, importer_rel, node)
+            if module_rel is None:
+                continue
+            exported = set(exports_by_file.get(module_rel.as_posix()) or _python_exports_for_file(workspace / module_rel))
+            if not exported:
+                continue
+            missing = [
+                alias.name
+                for alias in node.names
+                if alias.name != "*" and alias.name.split(".")[0] not in exported and not alias.name.startswith("_")
+            ]
+            if missing:
+                gaps.append(
+                    f"{importer_rel.as_posix()} imports missing from {module_rel.as_posix()}: "
+                    + ", ".join(missing[:8])
+                )
+            if len(gaps) >= _MAX_REAL_IMPORT_GAPS:
+                return gaps
+    return gaps
+
+
+def _parse_python_file(path: Path) -> ast.Module | None:
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    try:
+        return ast.parse(source)
+    except SyntaxError:
+        return None
+
+
+def _resolve_python_import_from(workspace: Path, importer_rel: Path, node: ast.ImportFrom) -> Path | None:
+    module_parts: list[str] = []
+    if node.level:
+        package_parts = list(importer_rel.parent.parts)
+        keep = max(0, len(package_parts) - (node.level - 1))
+        module_parts.extend(package_parts[:keep])
+    if node.module:
+        module_parts.extend(part for part in node.module.split(".") if part)
+    if not module_parts:
+        return None
+
+    rel_path = Path(*module_parts)
+    for candidate in (workspace / rel_path.with_suffix(".py"), workspace / rel_path / "__init__.py"):
+        rel_candidate = _workspace_relative_path(workspace, candidate)
+        if rel_candidate is not None and candidate.is_file():
+            return rel_candidate
+    return None

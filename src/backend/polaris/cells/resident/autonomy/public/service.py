@@ -29,9 +29,11 @@ from polaris.cells.context.engine.public import (
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     ReadRunLedgerProjectionQueryV1,
+    ReadRunProvenanceBundleQueryV1,
     RunLedgerAppendResultV1,
     append_run_ledger_event,
     read_run_ledger_projection,
+    read_run_provenance_bundle,
 )
 from polaris.cells.control_plane.verifier_policy.public import (
     ReadVerifierPolicyQueryV1,
@@ -1243,6 +1245,78 @@ def _resident_agi_run_ledger_interface(
     return base
 
 
+def _resident_agi_run_provenance_bundle_interface(
+    *,
+    workspace: str,
+    run_id: str,
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    if not str(run_id or "").strip():
+        base.update(
+            {
+                "status": "unavailable",
+                "source": "control_plane.run_ledger.public.read_run_provenance_bundle",
+                "gaps": ["run_id is required to read a run provenance bundle"],
+                "recommended_next_action": "request_run_id_or_run_ledger_evidence",
+            }
+        )
+        return base
+    try:
+        bundle = read_run_provenance_bundle(
+            ReadRunProvenanceBundleQueryV1(
+                workspace=workspace,
+                run_id=run_id,
+            )
+        ).bundle
+    except (RuntimeError, ValueError, OSError) as exc:
+        base.update(
+            {
+                "status": "unavailable",
+                "source": "control_plane.run_ledger.public.read_run_provenance_bundle",
+                "gaps": [str(exc)],
+                "recommended_next_action": "request_run_provenance_evidence",
+            }
+        )
+        return base
+
+    missing_authority_hashes = [
+        key
+        for key in (
+            "pm_contract_hash",
+            "ce_blueprint_hash",
+            "handoff_decision_hash",
+            "execution_envelope_hash",
+        )
+        if str(bundle.get(key) or "").startswith("missing:")
+    ]
+    available = bool(bundle.get("bundle_id")) and not missing_authority_hashes
+    base.update(
+        {
+            "available": available,
+            "callable": True,
+            "status": "available" if available else "empty",
+            "source": "control_plane.run_ledger.public.read_run_provenance_bundle",
+            "summary": {
+                "bundle_id": str(bundle.get("bundle_id") or ""),
+                "run_id": str(bundle.get("run_id") or ""),
+                "task_id": str(bundle.get("task_id") or ""),
+                "status": str(bundle.get("status") or ""),
+                "final_status": str(bundle.get("final_status") or ""),
+                "final_provider_request_count": len(bundle.get("final_provider_request_hashes") or []),
+                "tool_receipt_count": len(bundle.get("tool_receipt_hashes") or []),
+                "command_receipt_count": len(bundle.get("command_receipt_hashes") or []),
+                "missing_authority_hashes": missing_authority_hashes,
+            },
+            "payload": {"bundle": bundle},
+            "gaps": missing_authority_hashes,
+            "recommended_next_action": "use_run_provenance_bundle"
+            if available
+            else "request_missing_provenance_evidence",
+        }
+    )
+    return base
+
+
 def _resident_agi_verifier_policy_interface(
     *,
     workspace: str,
@@ -2055,7 +2129,11 @@ def _resident_agi_evidence_interface_group_id(interface: dict[str, Any]) -> str:
         return "context"
     if interface_id.startswith("contextos.") or contract_ref == "roles.final_request_context_audit":
         return "llm_context"
-    if interface_id.startswith("run_ledger.") or contract_ref == "control_plane.run_ledger":
+    if (
+        interface_id.startswith("run_ledger.")
+        or interface_id.startswith("run_provenance_bundle.")
+        or contract_ref in {"control_plane.run_ledger", "control_plane.run_provenance_bundle"}
+    ):
         return "run_ledger"
     if "execute" in str(interface.get("access") or "").strip().lower():
         return "governed_execution"

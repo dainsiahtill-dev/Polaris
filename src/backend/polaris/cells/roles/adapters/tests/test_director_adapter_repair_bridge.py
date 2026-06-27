@@ -1625,6 +1625,8 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     migrated_legacy_helpers = (
         "_apply_deterministic_rust_crate_import_repair",
         "_apply_deterministic_rust_line_suggestion_repair",
+        "_apply_deterministic_rust_missing_lib_target_repair",
+        "_apply_deterministic_rust_lib_root_facade_repair",
         "_apply_deterministic_rust_unresolved_pub_use_repair",
         "_apply_deterministic_rust_trait_import_repair",
     )
@@ -1634,26 +1636,6 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
 
     for helper_name in migrated_legacy_helpers:
         monkeypatch.setattr(rust_repairs, helper_name, fail_if_legacy_called)
-
-    retained_legacy_calls: list[str] = []
-
-    def retained_legacy_runner(name: str) -> Any:
-        def _runner(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
-            retained_legacy_calls.append(name)
-            return []
-
-        return _runner
-
-    monkeypatch.setattr(
-        rust_repairs,
-        "_apply_deterministic_rust_missing_lib_target_repair",
-        retained_legacy_runner("missing_lib_target"),
-    )
-    monkeypatch.setattr(
-        rust_repairs,
-        "_apply_deterministic_rust_lib_root_facade_repair",
-        retained_legacy_runner("lib_root_facade"),
-    )
 
     runtime_calls: list[dict[str, Any]] = []
 
@@ -1725,6 +1707,8 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     expected_source_tools = [
         "deterministic_rust_crate_import_rewrite_repair",
         "deterministic_rust_dependency_repair",
+        "deterministic_rust_missing_lib_target_repair",
+        "deterministic_rust_lib_root_facade_repair",
         "deterministic_rust_serde_derive_repair",
         "deterministic_rust_line_suggestion_repair",
         "deterministic_rust_unresolved_pub_use_repair",
@@ -1737,12 +1721,12 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     assert all(item["base_files"]["Cargo.toml"].startswith("[package]") for item in runtime_calls)
     assert all(item["base_files"]["src/lib.rs"] == source.read_text(encoding="utf-8") for item in runtime_calls)
     assert all(set(item["allowed_paths"]) == {"Cargo.toml", "src/lib.rs"} for item in runtime_calls)
-    assert retained_legacy_calls == ["missing_lib_target", "lib_root_facade"]
     assert [item["result"]["source_tool"] for item in results] == expected_source_tools
     rust_debt = {item["step_id"]: item for item in summary["repair_kernel_migration_debt"]["legacy_callback_debt"]}[
         "materialization.rust_compiler"
     ]
-    assert rust_debt["runtime_executable_source_tools"] == expected_source_tools
+    assert "deterministic_rust_missing_lib_target_repair" in rust_debt["runtime_executable_source_tools"]
+    assert "deterministic_rust_lib_root_facade_repair" in rust_debt["runtime_executable_source_tools"]
     assert rust_debt["legacy_only_source_tools"] == []
 
 

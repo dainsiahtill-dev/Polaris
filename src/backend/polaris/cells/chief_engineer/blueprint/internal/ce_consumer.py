@@ -742,10 +742,15 @@ class CEConsumer:
             "只把后续 Director 应执行的步骤写成 JSON。\n"
             '只输出 JSON: {"construction_steps": [{"step_id", "target_file"(单文件), '
             '"est_lines"(整数,≤120), "signatures"(函数/类签名清单), '
-            '"interface_names"(跨文件接口统一定名), "verify"(机器可执行判据), '
-            '"depends_on"(step_id 列表), "title"}]}。\n'
+            '"interface_names"(跨文件接口统一定名), '
+            '"public_symbols"(本 target_file 必须定义/导出的精确符号), '
+            '"consumes_symbols"({"另一个target_file":["本步实际导入/调用的精确符号"]}), '
+            '"verify"(机器可执行判据), "depends_on"(step_id 列表), "title"}]}。\n'
             "verify 必须只包含可直接在 POSIX shell 执行的命令本身；"
             "禁止加入“通过/验证/说明/should/pass”等自然语言尾巴。\n"
+            "跨文件任务必须先让提供方 target_file 在 public_symbols 中固定真实符号名，"
+            "再让消费方用 consumes_symbols 引用完全相同的名字；禁止同一概念在不同文件使用不同名字，"
+            "禁止让消费方凭空导入提供方没有声明的符号。\n"
             # 组合律 + 经济律 (live I3-r15): a strict linear chain (S2←S3←S4)
             # makes the whole parent only as strong as its weakest step — one
             # weak-executor failure cascade-kills every later step. depends_on

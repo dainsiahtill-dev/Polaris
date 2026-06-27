@@ -502,6 +502,59 @@ class TestDirectorExecutionConsumerPollOnce:
         assert seen_context["metadata"]["blueprint_hash"] == "bh-ctx"
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_execute_task_promotes_verification_contract_to_adapter_context(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Any,
+        monkeypatch: Any,
+    ) -> None:
+        mock_get_svc.return_value = MagicMock()
+        seen_context: dict[str, Any] = {}
+
+        class FakeDirectorAdapter:
+            def __init__(self, workspace: str) -> None:
+                self.workspace = workspace
+
+            async def execute(
+                self,
+                *,
+                task_id: str,
+                input_data: dict[str, Any],
+                context: dict[str, Any],
+            ) -> dict[str, Any]:
+                seen_context.update(context)
+                return {"success": True, "task_id": task_id, "tool_results": []}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.create_role_adapter",
+            lambda role_id, workspace: FakeDirectorAdapter(workspace),
+        )
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+        consumer._execute_task(
+            "PM-GO-S1",
+            {
+                "title": "go step",
+                "target_files": ["go.mod", "main.go"],
+                "scope_paths": ["."],
+                "execution_checklist": ["Run `go test ./...` after writing code"],
+                "acceptance_criteria": ["`go test ./...` passes"],
+                "construction_step": {
+                    "step_id": "PM-GO-S1",
+                    "target_file": "main.go",
+                    "verify": "go test ./...",
+                },
+            },
+            "lease-go",
+        )
+
+        assert seen_context["target_files"] == ["go.mod", "main.go"]
+        assert seen_context["execution_checklist"] == ["Run `go test ./...` after writing code"]
+        assert seen_context["acceptance_criteria"] == ["`go test ./...` passes"]
+        assert seen_context["metadata"]["acceptance_criteria"] == ["`go test ./...` passes"]
+        assert seen_context["construction_step"]["verify"] == "go test ./..."
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_step_target_covered_advances_to_qa(self, mock_get_svc: MagicMock) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc

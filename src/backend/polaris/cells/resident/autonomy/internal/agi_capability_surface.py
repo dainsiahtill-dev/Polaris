@@ -186,6 +186,23 @@ def build_resident_agi_capability_surface() -> list[ResidentAgiCapabilityV1]:
             evidence_refs=("runtime run ledger projections",),
         ),
         ResidentAgiCapabilityV1(
+            capability_id="run_provenance_bundle.read",
+            name="Run provenance bundle",
+            category="run_ledger",
+            access="read_only",
+            purpose=(
+                "Inspect the end-to-end provenance bundle that binds PM contract, CE blueprint, handoff decision, "
+                "execution envelope, provider request hashes, tool receipts, command receipts, and QA status."
+            ),
+            contract_ref="control_plane.run_provenance_bundle",
+            risk_level="low",
+            guardrails=(
+                "Provenance is read-only evidence for AGI decisions.",
+                "Missing authority hashes must be treated as blockers or evidence gaps, never as successful proof.",
+            ),
+            evidence_refs=("ReadRunProvenanceBundleQueryV1", "polaris.run_provenance_bundle.v1"),
+        ),
+        ResidentAgiCapabilityV1(
             capability_id="verifier.policy.read",
             name="Verifier policy read model",
             category="verification_policy",
@@ -620,6 +637,7 @@ def build_resident_agi_decision_capabilities() -> list[ResidentAgiDecisionCapabi
             required_evidence_interfaces=(
                 "contextos.final_request_audit.read",
                 "run_ledger.read",
+                "run_provenance_bundle.read",
                 "audit.diagnosis.read",
                 "audit.verdict.read",
                 "context.catalog.search",
@@ -667,6 +685,7 @@ def build_resident_agi_decision_capabilities() -> list[ResidentAgiDecisionCapabi
             optional_evidence_interfaces=(
                 "audit.diagnosis.read",
                 "run_ledger.read",
+                "run_provenance_bundle.read",
             ),
             candidate_actions=("continue", "request_evidence", "escalate", "block"),
             hard_constraints=(
@@ -694,6 +713,7 @@ def build_resident_agi_decision_capabilities() -> list[ResidentAgiDecisionCapabi
             required_evidence_interfaces=(
                 "resident.decision_trace.read_write",
                 "run_ledger.read",
+                "run_provenance_bundle.read",
                 "runtime.events.read",
             ),
             optional_evidence_interfaces=(
@@ -724,6 +744,7 @@ def build_resident_agi_decision_capabilities() -> list[ResidentAgiDecisionCapabi
             risk_level="high",
             required_evidence_interfaces=(
                 "run_ledger.read",
+                "run_provenance_bundle.read",
                 "contextos.final_request_audit.read",
                 "audit.verdict.read",
                 "director.deterministic_repair_strategy_catalog.read",

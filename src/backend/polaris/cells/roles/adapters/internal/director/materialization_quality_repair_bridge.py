@@ -50,6 +50,8 @@ _NON_AUTHORITATIVE_CALLBACK_RECEIPT_AUTHORITIES = {
 _MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS = (
     "deterministic_rust_crate_import_rewrite_repair",
     "deterministic_rust_dependency_repair",
+    "deterministic_rust_missing_lib_target_repair",
+    "deterministic_rust_lib_root_facade_repair",
     "deterministic_rust_serde_derive_repair",
     "deterministic_rust_line_suggestion_repair",
     "deterministic_rust_unresolved_pub_use_repair",
@@ -453,15 +455,6 @@ def _run_materialization_rust_compiler(
     task_id: str,
     artifact_quality_errors: list[str],
 ) -> list[dict[str, Any]]:
-    from .deterministic_repairs.rust_repairs import (
-        _apply_deterministic_rust_lib_root_facade_repair,
-        _apply_deterministic_rust_missing_lib_target_repair,
-    )
-
-    legacy_step_runners = (
-        _apply_deterministic_rust_missing_lib_target_repair,
-        _apply_deterministic_rust_lib_root_facade_repair,
-    )
     results: list[dict[str, Any]] = []
     for source_tool in _MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS:
         results.extend(
@@ -470,14 +463,6 @@ def _run_materialization_rust_compiler(
                 task_id=task_id,
                 artifact_quality_errors=artifact_quality_errors,
                 source_tool=source_tool,
-            )
-        )
-    for runner in legacy_step_runners:
-        results.extend(
-            runner(
-                adapter,
-                task_id=task_id,
-                artifact_quality_errors=artifact_quality_errors,
             )
         )
     return results

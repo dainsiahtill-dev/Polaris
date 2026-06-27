@@ -14,6 +14,7 @@ current_modules:
   - polaris.cells.control_plane.run_ledger.public.job_token
   - polaris.cells.control_plane.run_ledger.public.ledger
   - polaris.cells.control_plane.run_ledger.public.projection
+  - polaris.cells.control_plane.run_ledger.public.provenance
   - polaris.cells.control_plane.run_ledger.public.service
 owned_paths:
   - polaris/cells/control_plane/run_ledger/**

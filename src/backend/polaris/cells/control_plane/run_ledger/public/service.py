@@ -18,14 +18,17 @@ from typing import Any
 from polaris.cells.control_plane.run_ledger.public.contracts import (
     AppendRunLedgerEventCommandV1,
     ReadRunLedgerProjectionQueryV1,
+    ReadRunProvenanceBundleQueryV1,
     RunLedgerAppendResultV1,
     RunLedgerProjectionResultV1,
+    RunProvenanceBundleResultV1,
 )
 from polaris.cells.control_plane.run_ledger.public.ledger import RunLedger
 from polaris.cells.control_plane.run_ledger.public.projection import (
     build_run_ledger_projection,
     summarize_run_ledger_projection,
 )
+from polaris.cells.control_plane.run_ledger.public.provenance import build_run_provenance_bundle
 from polaris.infrastructure.log_pipeline.jetstream_publisher import get_log_jetstream_publisher
 from polaris.kernelone.storage import resolve_storage_roots
 
@@ -337,4 +340,36 @@ def append_run_ledger_event(command: AppendRunLedgerEventCommandV1) -> RunLedger
     return RunLedgerAppendResultV1(receipt=persisted)
 
 
-__all__ = ["append_run_ledger_event", "read_run_ledger_projection"]
+def read_run_provenance_bundle(query: ReadRunProvenanceBundleQueryV1) -> RunProvenanceBundleResultV1:
+    """Read one run's provenance bundle through the public ledger boundary."""
+
+    workspace = Path(query.workspace).expanduser().resolve()
+    paths = _ledger_paths(
+        workspace,
+        run_id=query.run_id,
+        max_runs=1,
+        include_compat_ledgers=query.include_compat_ledgers,
+    )
+    events: list[dict[str, Any]] = []
+    for path in paths:
+        events.extend(_read_events(path))
+    projection = (
+        build_run_ledger_projection(events)
+        if events
+        else _empty_projection(
+            workspace=workspace,
+            status="pending",
+            include_compat_ledgers=query.include_compat_ledgers,
+        )
+    )
+    return RunProvenanceBundleResultV1(
+        bundle=build_run_provenance_bundle(
+            workspace=str(workspace),
+            run_id=query.run_id,
+            events=events,
+            projection=projection,
+        )
+    )
+
+
+__all__ = ["append_run_ledger_event", "read_run_ledger_projection", "read_run_provenance_bundle"]

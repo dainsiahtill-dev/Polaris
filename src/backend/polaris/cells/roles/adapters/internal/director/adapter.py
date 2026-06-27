@@ -837,10 +837,15 @@ class DirectorAdapter(BaseRoleAdapter):
             context.get("verification_commands"),
             context.get("quality_commands"),
             context.get("workspace_quality_commands"),
+            context.get("acceptance"),
+            context.get("acceptance_criteria"),
+            context.get("steps"),
+            context.get("execution_checklist"),
             context.get("construction_step"),
             metadata,
-            message,
         )
+        if not commands:
+            commands = _extract_director_verification_commands(message)
         if commands:
             context.setdefault("verification_commands", commands)
             metadata.setdefault("verification_commands", commands)
@@ -1184,25 +1189,40 @@ class DirectorAdapter(BaseRoleAdapter):
         runtime_context = context if isinstance(context, dict) else {}
         runtime_metadata_raw = runtime_context.get("metadata")
         runtime_metadata: dict[str, Any] = runtime_metadata_raw if isinstance(runtime_metadata_raw, dict) else {}
-        goal = str(metadata.get("goal") or task.get("goal") or "").strip()
-        scope = metadata.get("scope") or task.get("scope")
-        steps = (
-            metadata.get("steps")
-            if isinstance(metadata.get("steps"), list)
-            else task.get("steps")
-            if isinstance(task.get("steps"), list)
-            else metadata.get("execution_checklist")
-            if isinstance(metadata.get("execution_checklist"), list)
-            else task.get("execution_checklist")
+        goal = str(metadata.get("goal") or task.get("goal") or runtime_context.get("goal") or runtime_metadata.get("goal") or "").strip()
+
+        def _first_listish(*values: Any, limit: int = 24) -> list[str]:
+            for value in values:
+                items = _string_list_payload(value, limit=limit)
+                if items:
+                    return items
+            return []
+
+        scope = _first_listish(
+            metadata.get("scope"),
+            task.get("scope"),
+            runtime_context.get("scope"),
+            runtime_metadata.get("scope"),
         )
-        acceptance = (
-            metadata.get("acceptance")
-            if isinstance(metadata.get("acceptance"), list)
-            else task.get("acceptance")
-            if isinstance(task.get("acceptance"), list)
-            else metadata.get("acceptance_criteria")
-            if isinstance(metadata.get("acceptance_criteria"), list)
-            else task.get("acceptance_criteria")
+        steps = _first_listish(
+            metadata.get("steps"),
+            task.get("steps"),
+            runtime_context.get("steps"),
+            runtime_metadata.get("steps"),
+            metadata.get("execution_checklist"),
+            task.get("execution_checklist"),
+            runtime_context.get("execution_checklist"),
+            runtime_metadata.get("execution_checklist"),
+        )
+        acceptance = _first_listish(
+            metadata.get("acceptance"),
+            task.get("acceptance"),
+            runtime_context.get("acceptance"),
+            runtime_metadata.get("acceptance"),
+            metadata.get("acceptance_criteria"),
+            task.get("acceptance_criteria"),
+            runtime_context.get("acceptance_criteria"),
+            runtime_metadata.get("acceptance_criteria"),
         )
         raw_adapter_result = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
@@ -1218,19 +1238,19 @@ class DirectorAdapter(BaseRoleAdapter):
             return [part.strip() for part in token.split(",") if part.strip()] or [token]
 
         scope_items = _stringify_list(scope)
-        target_file_items = _stringify_list(
+        target_file_items = _first_listish(
             metadata.get("target_files")
-            if isinstance(metadata.get("target_files"), list)
-            else task.get("target_files")
-            if isinstance(task.get("target_files"), list)
-            else []
+            or task.get("target_files")
+            or runtime_context.get("target_files")
+            or runtime_metadata.get("target_files"),
+            limit=16,
         )
-        scope_path_items = _stringify_list(
+        scope_path_items = _first_listish(
             metadata.get("scope_paths")
-            if isinstance(metadata.get("scope_paths"), list)
-            else task.get("scope_paths")
-            if isinstance(task.get("scope_paths"), list)
-            else []
+            or task.get("scope_paths")
+            or runtime_context.get("scope_paths")
+            or runtime_metadata.get("scope_paths"),
+            limit=16,
         )
         for item in [*scope_path_items, *target_file_items]:
             if item not in scope_items:
@@ -1259,6 +1279,29 @@ class DirectorAdapter(BaseRoleAdapter):
             step_items,
             construction_verify,
         )
+        language_identity = ""
+        language_section = ""
+        try:
+            from polaris.cells.director.tasking.internal.language_guidance import build_language_section
+
+            guidance_metadata = {**metadata, **runtime_metadata}
+            if construction_step:
+                guidance_metadata["construction_step"] = construction_step
+            language_targets = target_file_items or ([construction_target] if construction_target else [])
+            language_identity, language_section = build_language_section(
+                language_targets,
+                str(self.workspace),
+                metadata=guidance_metadata,
+                subject=str(subject or ""),
+                description=str(description or ""),
+                scope_paths=scope_path_items,
+            )
+        except (RuntimeError, ValueError, ImportError) as exc:
+            logger.debug("Failed to build Director language guidance: %s", exc)
+        if language_identity:
+            runtime_context["director_language_identity"] = language_identity
+            runtime_metadata.setdefault("director_language_identity", language_identity)
+            runtime_context["metadata"] = runtime_metadata
         factory_project = str(
             metadata.get("factory_bench_project_id")
             or runtime_metadata.get("factory_bench_project_id")
@@ -1298,6 +1341,10 @@ class DirectorAdapter(BaseRoleAdapter):
             "",
             "Verification commands / 验证命令:" if verification_commands else "",
             *[f"- {item}" for item in verification_commands],
+            "",
+            "Director language/task identity / 语言专项身份:" if language_identity or language_section else "",
+            language_identity,
+            language_section.strip(),
             "",
             "Chief Engineer Blueprint / CE 蓝图交接:",
             *blueprint_handoff_lines,

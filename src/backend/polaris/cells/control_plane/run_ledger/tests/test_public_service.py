@@ -7,10 +7,12 @@ from types import SimpleNamespace
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     ReadRunLedgerProjectionQueryV1,
+    ReadRunProvenanceBundleQueryV1,
     RunLedger,
     append_run_ledger_event,
     build_run_ledger_projection,
     read_run_ledger_projection,
+    read_run_provenance_bundle,
     service as run_ledger_service,
     summarize_run_ledger_projection,
 )
@@ -303,3 +305,98 @@ def test_read_run_ledger_projection_returns_empty_when_no_ledger_exists(tmp_path
     assert projection["status"] == "pending"
     assert projection["compat_ledgers_included"] is False
     assert projection["projects"] == []
+
+
+def test_read_run_provenance_bundle_links_contract_blueprint_envelope_and_receipts(tmp_path: Path) -> None:
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-1",
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "qa_verifier",
+                "trace_id": "trace-1",
+                "gate": {
+                    "name": "qa_verifier",
+                    "ok": True,
+                    "summary": "verified",
+                    "content_id": "qa-hash",
+                },
+                "job_token": {
+                    "token_id": "token-1",
+                    "run_id": "run-1",
+                    "task_id": "TASK-1",
+                    "project_id": "P1",
+                    "contract_hash": "pm-hash",
+                    "blueprint_hash": "ce-hash",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {
+                        "enabled_evidence_modalities": ["tool_receipt", "command"],
+                        "required_evidence_modalities": ["tool_receipt"],
+                    },
+                },
+                "physical_evidence": {
+                    "modalities": {
+                        "tool_receipt": {"present": True, "ok": True, "detail": "receipt verified"}
+                    },
+                    "tool_receipts": [
+                        {
+                            "operation": "write_file",
+                            "file": "src/main.py",
+                            "capability_token": {"token_id": "token-1"},
+                        }
+                    ],
+                    "commands": [
+                        {"command": "python -m unittest", "ok": True, "exit_code": 0}
+                    ],
+                    "final_request_context_audit": {
+                        "schema_version": "llm.final_request_context_audit.v1",
+                        "final_request_evidence_coverage": {
+                            "schema_version": "polaris.final_request_evidence_coverage.v1",
+                            "request_hash": "provider-request-hash",
+                            "workflow_chain": {
+                                "pm_contract_hash": "pm-hash",
+                                "ce_blueprint_hash": "ce-hash",
+                                "handoff_decision_hash": "handoff-hash",
+                                "execution_profile_hash": "profile-hash",
+                                "execution_envelope_hash": "envelope-hash",
+                            },
+                        },
+                    },
+                    "context_snapshot_ref": "runtime/contexts/aa/provider-request.json",
+                },
+            },
+        )
+    )
+
+    bundle = read_run_provenance_bundle(
+        ReadRunProvenanceBundleQueryV1(workspace=str(tmp_path), run_id="run-1")
+    ).bundle
+
+    assert bundle["schema_version"] == "polaris.run_provenance_bundle.v1"
+    assert bundle["bundle_id"].startswith("run-prov-")
+    assert bundle["run_id"] == "run-1"
+    assert bundle["task_id"] == "TASK-1"
+    assert bundle["status"] == "success"
+    assert bundle["pm_contract_hash"] == "pm-hash"
+    assert bundle["ce_blueprint_hash"] == "ce-hash"
+    assert bundle["handoff_decision_hash"] == "handoff-hash"
+    assert bundle["execution_envelope_hash"] == "envelope-hash"
+    assert bundle["final_provider_request_hashes"] == ["provider-request-hash"]
+    assert bundle["tool_receipt_hashes"]
+    assert bundle["command_receipt_hashes"]
+    assert "runtime/contexts/aa/provider-request.json" in bundle["evidence_refs"]
+
+
+def test_read_run_provenance_bundle_exposes_missing_authority_hashes(tmp_path: Path) -> None:
+    bundle = read_run_provenance_bundle(
+        ReadRunProvenanceBundleQueryV1(workspace=str(tmp_path), run_id="missing-run")
+    ).bundle
+
+    assert bundle["schema_version"] == "polaris.run_provenance_bundle.v1"
+    assert bundle["run_id"] == "missing-run"
+    assert bundle["status"] == "blocked"
+    assert bundle["pm_contract_hash"] == "missing:pm_contract_hash"
+    assert bundle["ce_blueprint_hash"] == "missing:ce_blueprint_hash"
+    assert bundle["handoff_decision_hash"] == "missing:handoff_decision_hash"
+    assert bundle["execution_envelope_hash"] == "missing:execution_envelope_hash"

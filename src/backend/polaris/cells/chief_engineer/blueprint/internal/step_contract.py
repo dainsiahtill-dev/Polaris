@@ -65,6 +65,12 @@ def normalize_construction_step(raw: Any, *, parent_pm_task: str, index: int) ->
         est_lines = 0
     signatures = [str(item).strip() for item in (record.get("signatures") or []) if str(item).strip()]
     interface_names = [str(item).strip() for item in (record.get("interface_names") or []) if str(item).strip()]
+    public_symbols = _string_list(
+        record.get("public_symbols") or record.get("exports") or record.get("provided_symbols") or interface_names
+    )
+    consumes_symbols = _normalize_symbol_map(
+        record.get("consumes_symbols") or record.get("required_imports") or record.get("imports_from")
+    )
     verify = normalize_step_verify(record.get("verify"))
     # depends_on must be namespaced identically to step_id: models emit bare
     # sibling references ("S1") and prefixing only step_id manufactures
@@ -84,10 +90,55 @@ def normalize_construction_step(raw: Any, *, parent_pm_task: str, index: int) ->
         "est_lines": est_lines,
         "signatures": signatures,
         "interface_names": interface_names,
+        "public_symbols": public_symbols,
+        "consumes_symbols": consumes_symbols,
         "verify": verify,
         "depends_on": depends_on,
         "title": str(record.get("title") or "").strip(),
     }
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    result: list[str] = []
+    for item in value:
+        stripped = str(item or "").strip()
+        if stripped and stripped not in result:
+            result.append(stripped)
+    return result
+
+
+def _normalize_contract_path(raw: Any) -> str:
+    path = str(raw or "").strip().replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    return path
+
+
+def _normalize_symbol_map(value: Any) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    if isinstance(value, dict):
+        for raw_target, raw_symbols in value.items():
+            target = _normalize_contract_path(raw_target)
+            symbols = _string_list(raw_symbols)
+            if target and symbols:
+                result[target] = symbols
+        return result
+    if isinstance(value, list):
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            target = _normalize_contract_path(
+                item.get("target_file") or item.get("from_file") or item.get("file") or item.get("module")
+            )
+            symbols = _string_list(item.get("symbols") or item.get("names") or item.get("imports"))
+            if target and symbols:
+                result[target] = symbols
+    return result
 
 
 def _target_file_shape_error(target_file: str) -> str:
@@ -183,6 +234,12 @@ def validate_construction_steps(
         errors.append(f"{parent_pm_task}: too many steps ({len(steps)} > {_MAX_STEPS_PER_TASK})")
     seen_ids: set[str] = set()
     known_ids = {str(step.get("step_id") or "") for step in steps}
+    step_by_target = {str(step.get("target_file") or "").strip(): str(step.get("step_id") or "") for step in steps}
+    public_symbols_by_target = {
+        str(step.get("target_file") or "").strip(): set(_string_list(step.get("public_symbols")))
+        for step in steps
+        if str(step.get("target_file") or "").strip()
+    }
     for step in steps:
         step_id = str(step.get("step_id") or "").strip()
         label = step_id or "(missing step_id)"
@@ -222,6 +279,24 @@ def validate_construction_steps(
             )
         if not step.get("signatures") and _target_requires_signatures(str(step.get("target_file") or "")):
             errors.append(f"{label}: step requires a signatures skeleton")
+        consumes_symbols = _normalize_symbol_map(step.get("consumes_symbols"))
+        for provider_target, required_symbols in consumes_symbols.items():
+            if shape_error := _target_file_shape_error(provider_target):
+                errors.append(f"{label}: consumes_symbols provider {shape_error}")
+                continue
+            provider_symbols = public_symbols_by_target.get(provider_target)
+            if provider_symbols is not None:
+                missing = [symbol for symbol in required_symbols if symbol not in provider_symbols]
+                if missing:
+                    errors.append(
+                        f"{label}: consumes_symbols references {provider_target} symbols not declared by provider: "
+                        + ", ".join(missing[:8])
+                    )
+            provider_step_id = step_by_target.get(provider_target)
+            if provider_step_id and provider_step_id != step_id and provider_step_id not in (step.get("depends_on") or []):
+                errors.append(
+                    f"{label}: consumes_symbols from {provider_target} requires depends_on {provider_step_id!r}"
+                )
         for dep in step.get("depends_on") or []:
             if dep not in known_ids:
                 errors.append(f"{label}: depends_on references unknown step {dep!r}")

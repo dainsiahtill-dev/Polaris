@@ -1177,7 +1177,7 @@ class DirectorExecutionConsumer:
         adapter_input = _build_director_adapter_input(task_id, payload, lease_token)
         pm_task_id = str(adapter_input.get("pm_task_id") or task_id).strip() or task_id
         job_token = _job_token_from_payload(payload)
-        context = {
+        context: dict[str, Any] = {
             "run_id": str(payload.get("run_id") or f"task-market-director-{task_id}"),
             "task_id": task_id,
             "pm_task_id": pm_task_id,
@@ -1199,6 +1199,20 @@ class DirectorExecutionConsumer:
                 "route": _normalize_task_market_route(payload),
             },
         }
+        for key in (
+            "target_files",
+            "scope_paths",
+            "acceptance",
+            "acceptance_criteria",
+            "execution_checklist",
+            "verification_commands",
+            "quality_commands",
+            "workspace_quality_commands",
+        ):
+            value = payload.get(key)
+            if value:
+                context[key] = value
+                context["metadata"][key] = value
         # Three-tier fission (I2): a CE-fissioned leaf step carries its
         # construction_step blueprint card; the context gateway injects it as
         # the Director's bounded "local god view" (BlueprintStepsSignal).

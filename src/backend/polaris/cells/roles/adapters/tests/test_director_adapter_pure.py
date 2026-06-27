@@ -5191,6 +5191,45 @@ class TestBuildDirectorMessage:
         assert "- go test ./..." in msg
         assert "- go run ." in msg
 
+    def test_includes_runtime_context_verification_commands_from_acceptance(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        context = {
+            "target_files": ("go.mod", "main.go"),
+            "execution_checklist": "Run `go test ./...` after writing code",
+            "acceptance_criteria": "`go test ./...` passes",
+        }
+        msg = adapter._build_director_message(
+            {"subject": "Implement Go module"},
+            context=context,
+        )
+
+        commands = DirectorAdapter._ensure_director_verification_commands(message=msg, context=context)
+
+        assert "目标文件: go.mod, main.go" in msg
+        assert "Verification commands / 验证命令:" in msg
+        assert "- go test ./..." in msg
+        assert commands == ["go test ./..."]
+
+    def test_includes_language_specific_director_identity(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        context: dict[str, Any] = {
+            "target_files": ["go.mod", "main.go"],
+            "metadata": {"project_type": "service"},
+        }
+        msg = adapter._build_director_message(
+            {
+                "subject": "Implement Go module",
+                "description": "Use context cancellation and table-driven tests",
+            },
+            context=context,
+        )
+
+        assert "Director language/task identity / 语言专项身份:" in msg
+        assert "精通 Go" in msg
+        assert "Primary language: Go (Golang)" in msg
+        assert "=== Go (Golang) Language Best Practices ===" in msg
+        assert "软件工程师" not in str(context["metadata"]["director_language_identity"])
+
     def test_multi_target_message_requires_all_target_files(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         msg = adapter._build_director_message(

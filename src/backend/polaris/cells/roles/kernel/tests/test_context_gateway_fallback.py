@@ -39,12 +39,14 @@ class TestBlueprintStepCard:
     """I3-r28: consumed cross-file interfaces (inject-b) + R7-B repair directive."""
 
     @staticmethod
-    def _card(context_override: dict) -> str | None:
+    def _card(context_override: dict, *, workspace: Path | None = None) -> str | None:
         from types import SimpleNamespace
 
         from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
 
-        return RoleContextGateway._get_blueprint_step(SimpleNamespace(context_override=context_override))
+        return RoleContextGateway._get_blueprint_step(
+            SimpleNamespace(context_override=context_override, workspace=str(workspace or ""))
+        )
 
     def test_consumed_interfaces_rendered_for_reuse(self):
         card = self._card(
@@ -61,6 +63,80 @@ class TestBlueprintStepCard:
         card = self._card({"construction_step": {"step_id": "S", "target_file": "main.js"}})
         assert card is not None
         assert "必须复用完全相同的名字" not in card
+
+    def test_python_real_file_interface_snapshot_reports_exports_and_import_gaps(self, tmp_path: Path) -> None:
+        models = tmp_path / "src" / "models"
+        engine = tmp_path / "src" / "engine"
+        models.mkdir(parents=True)
+        engine.mkdir(parents=True)
+        (models / "weather.py").write_text(
+            "\n".join(
+                [
+                    "class WeatherSnapshot:",
+                    "    pass",
+                    "",
+                    "class WeatherReport:",
+                    "    pass",
+                    "",
+                    "class CloudCover:",
+                    "    pass",
+                    "",
+                    "class WindVector:",
+                    "    pass",
+                    "",
+                    "def forecast_for(mood):",
+                    "    return WeatherReport()",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (engine / "forecast.py").write_text(
+            "\n".join(
+                [
+                    "from src.models.weather import CloudCover, Weather, WeatherKind",
+                    "",
+                    "def build_forecast():",
+                    "    return WeatherKind",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        card = self._card(
+            {
+                "construction_step": {
+                    "step_id": "TASK-2",
+                    "target_file": "src/engine/forecast.py",
+                }
+            },
+            workspace=tmp_path,
+        )
+
+        assert card is not None
+        assert "真实文件接口快照" in card
+        assert "src/models/weather.py exports:" in card
+        assert "WeatherSnapshot" in card
+        assert "WeatherReport" in card
+        assert "forecast_for" in card
+        assert "src/engine/forecast.py imports missing from src/models/weather.py: Weather, WeatherKind" in card
+        assert "禁止造 class X: pass 空壳" in card
+
+    def test_cross_file_symbol_contract_fields_are_rendered_for_director(self) -> None:
+        card = self._card(
+            {
+                "construction_step": {
+                    "step_id": "TASK-2",
+                    "target_file": "src/engine/forecast.py",
+                    "public_symbols": ["build_forecast"],
+                    "consumes_symbols": {"src/models/weather.py": ["WeatherReport", "forecast_for"]},
+                }
+            }
+        )
+
+        assert card is not None
+        assert "public_symbols(本文件必须定义/导出): build_forecast" in card
+        assert "consumes_symbols(跨文件导入/调用必须逐字匹配):" in card
+        assert "src/models/weather.py: WeatherReport, forecast_for" in card
 
     def test_repair_turn_emits_localized_edit_directive(self):
         card = self._card(

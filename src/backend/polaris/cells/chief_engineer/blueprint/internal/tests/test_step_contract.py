@@ -49,6 +49,24 @@ class TestNormalize:
 
         assert step["verify"] == "pytest -k test_create_app"
 
+    def test_normalizes_cross_file_symbol_contract_fields(self) -> None:
+        step = normalize_construction_step(
+            {
+                "step_id": "S2",
+                "target_file": "./src/engine/forecast.py",
+                "est_lines": 40,
+                "signatures": ["def build_forecast()"],
+                "public_symbols": ["build_forecast"],
+                "consumes_symbols": {"./src/models/weather.py": ["WeatherReport", "forecast_for"]},
+                "verify": "python -m py_compile src/engine/forecast.py",
+            },
+            parent_pm_task="PM-1",
+            index=1,
+        )
+
+        assert step["public_symbols"] == ["build_forecast"]
+        assert step["consumes_symbols"] == {"src/models/weather.py": ["WeatherReport", "forecast_for"]}
+
     def test_non_dict_input_yields_empty_shape(self) -> None:
         step = normalize_construction_step("prose", parent_pm_task="PM-1", index=2)
         assert step["step_id"] == "PM-1-S3"
@@ -223,6 +241,52 @@ class TestGate:
             _step(step_id="PM-1-S4", target_file="d.js", depends_on=["PM-1-S2", "PM-1-S3"]),
         ]
         assert validate_construction_steps(steps, parent_pm_task="PM-1") == []
+
+    def test_cross_file_consumed_symbol_must_be_declared_by_provider(self) -> None:
+        steps = [
+            _step(
+                step_id="PM-1-S1",
+                target_file="src/models/weather.py",
+                signatures=["class WeatherReport"],
+                public_symbols=["WeatherReport"],
+                verify="python -m py_compile src/models/weather.py",
+            ),
+            _step(
+                step_id="PM-1-S2",
+                target_file="src/engine/forecast.py",
+                signatures=["def build_forecast()"],
+                consumes_symbols={"src/models/weather.py": ["Weather", "WeatherReport"]},
+                depends_on=["PM-1-S1"],
+                verify="python -m py_compile src/engine/forecast.py",
+            ),
+        ]
+
+        errors = validate_construction_steps(steps, parent_pm_task="PM-1")
+
+        assert any("symbols not declared by provider: Weather" in e for e in errors)
+
+    def test_cross_file_consumed_symbol_requires_provider_dependency(self) -> None:
+        steps = [
+            _step(
+                step_id="PM-1-S1",
+                target_file="src/models/weather.py",
+                signatures=["class WeatherReport"],
+                public_symbols=["WeatherReport"],
+                verify="python -m py_compile src/models/weather.py",
+            ),
+            _step(
+                step_id="PM-1-S2",
+                target_file="src/engine/forecast.py",
+                signatures=["def build_forecast()"],
+                consumes_symbols={"src/models/weather.py": ["WeatherReport"]},
+                depends_on=[],
+                verify="python -m py_compile src/engine/forecast.py",
+            ),
+        ]
+
+        errors = validate_construction_steps(steps, parent_pm_task="PM-1")
+
+        assert any("requires depends_on 'PM-1-S1'" in e for e in errors)
 
 
 class TestRefinements:
