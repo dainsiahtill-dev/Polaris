@@ -58,7 +58,7 @@ The target chain is:
 | C-15 | `bbd273e3` | ContextOS final request coverage is ref-based under low token utilization and records metadata-only redaction safety. |
 | C-16 | `e17bf247` | QA failure classification routes Director repair, CE replan, PM revision, infra retry, and hard-stop failures through a typed contract. |
 | C-17 | `f14bf8e8` | Control Plane exposes `run_provenance_bundle.v1` with PM/CE/handoff/envelope/provider/receipt/QA evidence hashes. |
-| C-18 | pending | Resident AGI handoff projections share platform contract refs and strip advisory output authority fields. |
+| C-18 | `94ea7fd2` | Resident AGI handoff projections share platform contract refs and strip advisory output authority fields. |
 
 ## Update Rules
 
