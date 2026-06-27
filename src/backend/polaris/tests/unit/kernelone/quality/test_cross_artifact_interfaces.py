@@ -204,6 +204,39 @@ class TestTypedRepairPlans:
         assert evidence.contract_amendment_request is not None
         assert evidence.contract_amendment_request.task_id == "TASK-1"
 
+    def test_artifact_quality_evidence_builds_contract_from_public_symbols(self, tmp_path: Path) -> None:
+        _write(tmp_path / "src/weather.ts", "export interface WeatherSnapshot { condition: string }\n")
+        record_declared_interfaces(
+            str(tmp_path),
+            str(tmp_path),
+            [
+                {
+                    "step_id": "S1",
+                    "target_file": "src/weather.ts",
+                    "interface_names": ["weather-panel"],
+                    "public_symbols": ["WeatherReport"],
+                }
+            ],
+        )
+
+        evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), task_id="TASK-1")
+
+        assert [issue.code for issue in evidence.cross_artifact_issues] == ["contract_export_missing"]
+        assert [plan.strategy for plan in evidence.cross_artifact_repair_plans] == ["add_real_interface_to_owner"]
+
+    def test_artifact_quality_evidence_does_not_treat_dom_identifiers_as_code_contract(self, tmp_path: Path) -> None:
+        _write(tmp_path / "src/view.js", "export function render() { return document.getElementById('game'); }\n")
+        record_declared_interfaces(
+            str(tmp_path),
+            str(tmp_path),
+            [{"step_id": "S1", "target_file": "src/view.js", "interface_names": ["#game"]}],
+        )
+
+        evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), task_id="TASK-1")
+
+        assert evidence.cross_artifact_issues == ()
+        assert evidence.cross_artifact_repair_plans == ()
+
 
 class TestGoExports:
     def test_go_exported_identifiers_are_in_snapshot(self, tmp_path: Path) -> None:

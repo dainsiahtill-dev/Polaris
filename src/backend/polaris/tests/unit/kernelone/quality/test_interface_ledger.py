@@ -43,6 +43,25 @@ class TestRecordAndRead:
         assert declared["index.html"]["identifiers"] == ["game", "score", "lives", "message", "hud"]
         assert declared["main.js"]["signatures"] == ["function update(dt)", "function draw(ctx)"]
 
+    def test_public_symbols_are_recorded_as_authoritative_identifiers(self, tmp_path: Path) -> None:
+        record_declared_interfaces(
+            str(tmp_path),
+            str(tmp_path),
+            [
+                {
+                    "step_id": "S1",
+                    "target_file": "src/models/weather.py",
+                    "interface_names": ["weather-concept"],
+                    "public_symbols": ["WeatherReport", "forecast_for"],
+                }
+            ],
+        )
+
+        declared = read_declared_interfaces(str(tmp_path), str(tmp_path), ["src/models/weather.py"])
+
+        assert declared["src/models/weather.py"]["identifiers"] == ["weather-concept"]
+        assert declared["src/models/weather.py"]["public_symbols"] == ["WeatherReport", "forecast_for"]
+
     def test_persisted_to_runtime_contracts(self, tmp_path: Path) -> None:
         record_declared_interfaces(str(tmp_path), str(tmp_path), _steps())
         assert (tmp_path / "contracts" / "interface_ledger.json").is_file()

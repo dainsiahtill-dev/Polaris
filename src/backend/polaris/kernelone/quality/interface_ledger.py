@@ -144,13 +144,15 @@ def record_declared_interfaces(
             if not target:
                 continue
             identifiers = _string_list(step.get("interface_names"))
+            public_symbols = _string_list(step.get("public_symbols"))
             signatures = _string_list(step.get("signatures"))
-            if not identifiers and not signatures:
+            if not identifiers and not public_symbols and not signatures:
                 continue
             entry = files.get(target)
             if not isinstance(entry, dict):
-                entry = {"identifiers": [], "signatures": [], "declared_by": []}
+                entry = {"identifiers": [], "public_symbols": [], "signatures": [], "declared_by": []}
             entry["identifiers"] = _merge_names(_string_list(entry.get("identifiers")), identifiers)
+            entry["public_symbols"] = _merge_names(_string_list(entry.get("public_symbols")), public_symbols)
             entry["signatures"] = _merge_names(_string_list(entry.get("signatures")), signatures)
             step_id = str(step.get("step_id") or "").strip()
             if step_id:
@@ -183,10 +185,14 @@ def read_declared_interfaces(
         if not isinstance(entry, dict):
             continue
         identifiers = _string_list(entry.get("identifiers"))
+        public_symbols = _string_list(entry.get("public_symbols"))
         signatures = _string_list(entry.get("signatures"))
-        if not identifiers and not signatures:
+        if not identifiers and not public_symbols and not signatures:
             continue
-        declared[target] = {"identifiers": identifiers, "signatures": signatures}
+        declared_entry: dict[str, Any] = {"identifiers": identifiers, "signatures": signatures}
+        if public_symbols:
+            declared_entry["public_symbols"] = public_symbols
+        declared[target] = declared_entry
     return declared
 
 
@@ -213,9 +219,13 @@ def read_all_declared_interfaces(
         if not target or target == excluded or not isinstance(entry, dict):
             continue
         identifiers = _string_list(entry.get("identifiers"))
+        public_symbols = _string_list(entry.get("public_symbols"))
         signatures = _string_list(entry.get("signatures"))
-        if identifiers or signatures:
-            declared[target] = {"identifiers": identifiers, "signatures": signatures}
+        if identifiers or public_symbols or signatures:
+            declared_entry = {"identifiers": identifiers, "signatures": signatures}
+            if public_symbols:
+                declared_entry["public_symbols"] = public_symbols
+            declared[target] = declared_entry
     return declared
 
 
@@ -251,7 +261,8 @@ def validate_declared_interfaces_against_snapshot(
         symbols = snapshot.namespace_exports.get(normalized_target, ())
         actual_names = {symbol.name for symbol in symbols}
         actual_signatures = {symbol.signature for symbol in symbols if symbol.signature}
-        for identifier in _string_list(entry.get("identifiers")):
+        symbols_to_check = _string_list(entry.get("public_symbols")) or _string_list(entry.get("identifiers"))
+        for identifier in symbols_to_check:
             if identifier not in actual_names:
                 errors.append(
                     f"Artifact quality scan failed: declared interface {identifier!r} missing from {normalized_target}"
@@ -281,9 +292,12 @@ def render_assume_contract(declared: dict[str, dict[str, Any]]) -> str:
     for target in sorted(declared):
         entry = declared[target]
         identifiers = entry.get("identifiers") or []
+        public_symbols = entry.get("public_symbols") or []
         signatures = entry.get("signatures") or []
         if identifiers:
             lines.append(f"- {target} 已公开标识符: {', '.join(identifiers)}")
+        if public_symbols:
+            lines.append(f"- {target} 已公开代码符号: {', '.join(public_symbols)}")
         if signatures:
             lines.append(f"  {target} 既有签名: {'; '.join(signatures)}")
     return "\n".join(lines)

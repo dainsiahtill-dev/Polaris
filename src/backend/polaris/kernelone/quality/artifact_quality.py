@@ -26,7 +26,11 @@ from polaris.kernelone.quality.cross_artifact_interfaces import (
     plan_cross_artifact_repairs,
     scan_cross_artifact_consistency,
 )
-from polaris.kernelone.quality.interface_ledger import validate_declared_interfaces_against_snapshot
+from polaris.kernelone.quality.interface_ledger import (
+    read_all_declared_interfaces,
+    read_declared_interfaces,
+    validate_declared_interfaces_against_snapshot,
+)
 from polaris.kernelone.quality.package_scripts import package_script_cycle_reasons
 
 _ARTIFACT_QUALITY_SKIP_DIRS = {
@@ -425,6 +429,11 @@ def scan_workspace_artifact_quality_evidence(
     scanned_relative_paths: list[str] = []
     cross_artifact_issues: tuple[CrossArtifactConsistencyIssue, ...] = ()
     try:
+        interface_contract = interface_contract or _declared_interface_contract(
+            root_full=root_full,
+            relative_paths=relative_paths,
+            task_id=task_id,
+        )
         paths = (
             _iter_target_files(root_full, relative_paths)
             if relative_paths is not None
@@ -449,7 +458,9 @@ def scan_workspace_artifact_quality_evidence(
                     contract=interface_contract,
                 )
             )
-            errors.extend(issue.to_error_message() for issue in cross_artifact_issues)
+            errors.extend(
+                issue.to_error_message() for issue in cross_artifact_issues if not issue.code.startswith("contract_")
+            )
         if len(errors) < 50:
             errors.extend(
                 _scan_declared_interface_ledger(
@@ -469,6 +480,75 @@ def scan_workspace_artifact_quality_evidence(
             issues=cross_artifact_issues,
         ),
     )
+
+
+def _declared_interface_contract(
+    *,
+    root_full: Path,
+    relative_paths: Iterable[str] | None,
+    task_id: str,
+) -> CrossArtifactInterfaceContract | None:
+    declared: dict[str, dict[str, Any]] = {}
+    target_files = list(relative_paths) if relative_paths is not None else None
+    for cache_root in ("", root_full.as_posix()):
+        try:
+            entries = (
+                read_declared_interfaces(root_full.as_posix(), cache_root, target_files)
+                if target_files is not None
+                else read_all_declared_interfaces(root_full.as_posix(), cache_root)
+            )
+        except (OSError, RuntimeError, ValueError):
+            continue
+        for target, entry in entries.items():
+            current = declared.setdefault(target, {"identifiers": [], "public_symbols": [], "signatures": []})
+            current["identifiers"] = _merge_quality_names(current.get("identifiers"), entry.get("identifiers"))
+            current["public_symbols"] = _merge_quality_names(
+                current.get("public_symbols"), entry.get("public_symbols")
+            )
+            current["signatures"] = _merge_quality_names(current.get("signatures"), entry.get("signatures"))
+    if not declared:
+        return None
+    interfaces = []
+    for owner_path, entry in sorted(declared.items()):
+        code_symbols = _quality_string_list(entry.get("public_symbols")) or [
+            identifier for identifier in _quality_string_list(entry.get("identifiers")) if _looks_like_code_symbol(identifier)
+        ]
+        for identifier in code_symbols:
+            interfaces.append(
+                {
+                    "domain": "declared_interface_ledger",
+                    "owner_path": owner_path,
+                    "name": identifier,
+                    "kind": "code_symbol",
+                }
+            )
+    if not interfaces:
+        return None
+    return CrossArtifactInterfaceContract.from_mapping(
+        {
+            "task_id": str(task_id or "").strip(),
+            "language": "",
+            "interfaces": interfaces,
+        }
+    )
+
+
+def _quality_string_list(value: Any) -> list[str]:
+    if not isinstance(value, Iterable) or isinstance(value, (str, bytes)):
+        return []
+    return [str(item).strip() for item in value if str(item or "").strip()]
+
+
+def _merge_quality_names(left: Any, right: Any) -> list[str]:
+    merged: list[str] = []
+    for item in [*_quality_string_list(left), *_quality_string_list(right)]:
+        if item not in merged:
+            merged.append(item)
+    return merged
+
+
+def _looks_like_code_symbol(value: str) -> bool:
+    return re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(value or "")) is not None
 
 
 def _artifact_quality_task_id(
