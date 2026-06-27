@@ -1,9 +1,9 @@
-"""Deterministic generic repairs and the top materialization-repair orchestrator.
+"""Deterministic generic repairs for migration-only strategy hosts.
 
 Patch-residue/scaffold-marker cleanup, declared-target repairs, the prompt
-repair block, and ``_apply_deterministic_materialization_quality_repairs``
-(which fans in to each language submodule). Carved verbatim from the original
-``deterministic_repairs`` module.
+repair block were carved verbatim from the original ``deterministic_repairs``
+module. Materialization orchestration is hard-cut to
+``materialization_quality_repair_bridge.run_materialization_quality_repairs``.
 
 Cross-module calls that must honor a test ``monkeypatch`` on the
 ``execute_method`` module namespace (``scan_workspace_artifact_quality`` and
@@ -15,18 +15,14 @@ from __future__ import annotations
 
 import contextlib
 import re
-from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
-
-from polaris.cells.director.runtime.public import RepairAdvisoryV1
 
 from .. import execute_method as _em
 from ..execution_tools import DirectorToolExecutor
 from ..helpers import has_successful_write_tool
 from ..repair_profile_projection import project_repair_kernel_summary, summarize_deterministic_repair_source_tools
 from ..task_scope_paths import (
-    _extract_task_path_candidates,
     _extract_task_target_path_candidates,
     _normalize_declared_task_path,
     _task_text_blob,
@@ -36,14 +32,6 @@ from ._common import (
     _SCAFFOLD_MARKER_REPLACEMENTS,
     _find_nearby_declared_target_source,
     _parse_missing_declared_target_files,
-)
-from ._runtime_bridge import run_runtime_repair_with_director_tools
-from .go_repairs import (
-    repair_go_bare_local_imports,  # noqa: F401 - compatibility monkeypatch surface.
-    repair_go_duplicate_declarations,
-    repair_go_import_subpaths,
-    repair_go_module_imports,  # noqa: F401 - compatibility monkeypatch surface.
-    repair_go_nested_import_keyword,
 )
 
 _SCAFFOLD_MARKER_ERROR_RE = re.compile(
@@ -263,269 +251,6 @@ def _parse_scaffold_marker_error_paths(artifact_quality_errors: list[str]) -> li
         if normalized and not any(ch in normalized for ch in ("*", "?")):
             paths.append(normalized)
     return list(dict.fromkeys(paths))
-
-
-def _apply_deterministic_patch_residue_cleanup(
-    adapter: Any,
-    *,
-    task: dict[str, Any],
-    task_id: str,
-) -> list[dict[str, Any]]:
-    """Clean leaked patch markers from declared task files through the runtime kernel."""
-
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-    workspace_name = workspace_path.name
-    base_files: dict[str, str] = {}
-    for candidate in _extract_task_path_candidates(task):
-        normalized = _normalize_declared_task_path(candidate, workspace_name=workspace_name)
-        if not normalized:
-            continue
-        target_path = (workspace_path / normalized).resolve()
-        try:
-            target_path.relative_to(workspace_path)
-        except ValueError:
-            continue
-        if not target_path.is_file() or target_path.suffix.lower() not in {
-            ".ts",
-            ".tsx",
-            ".js",
-            ".jsx",
-            ".mjs",
-            ".cjs",
-        }:
-            continue
-        try:
-            text = target_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        base_files[normalized] = text
-    if not base_files:
-        return []
-
-    return run_runtime_repair_with_director_tools(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        source_tool="deterministic_patch_residue_cleanup",
-        executor_factory=DirectorToolExecutor,
-        base_files=base_files,
-    )
-
-
-def _apply_deterministic_go_module_import_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: Sequence[str] = (),
-    advisor_notes: Sequence[RepairAdvisoryV1] = (),
-    convergence_verifier: Callable[[Any], Any] | None = None,
-) -> list[dict[str, Any]]:
-    """Repair Go import paths and cross-file coherence issues.
-
-    Runs three repair passes in order:
-    1. Module prefix normalization (``wrong-prefix/src/x`` → ``module/src/x``)
-    2. Sub-path hallucination repair (``module/hallucinated/src/x`` → ``module/src/x``)
-    3. Duplicate declaration merge (when ``go vet`` reports redeclaration errors)
-    """
-    workspace = Path(getattr(adapter, "workspace", "") or "")
-    if not workspace.is_dir():
-        return []
-    workspace_path = workspace.resolve()
-    go_files = list(workspace_path.rglob("*.go"))
-    if not go_files:
-        return []
-    results: list[dict[str, Any]] = []
-
-    def _base_files() -> dict[str, str]:
-        base_files: dict[str, str] = {}
-        go_mod = workspace_path / "go.mod"
-        if go_mod.is_file():
-            with contextlib.suppress(OSError, UnicodeDecodeError):
-                base_files["go.mod"] = go_mod.read_text(encoding="utf-8")
-        for go_file in go_files:
-            if go_file.name.endswith("_test.go"):
-                continue
-            try:
-                relative_path = go_file.relative_to(workspace_path).as_posix()
-            except ValueError:
-                continue
-            try:
-                base_files[relative_path] = go_file.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-        return base_files
-
-    # Pass -1: Bare import string repair (add missing "import" keyword).
-    # Must run BEFORE nested import keyword repair to avoid contradiction:
-    # bare_strings adds "import" to bare strings; nested_import removes extra
-    # "import" inside import blocks. Order matters.
-    base_files = _base_files()
-    if "go.mod" in base_files:
-        base_files_without_mod = {path: text for path, text in base_files.items() if path != "go.mod"}
-    else:
-        base_files_without_mod = dict(base_files)
-    if base_files_without_mod:
-        bare_import_results = run_runtime_repair_with_director_tools(
-            adapter,
-            workspace_path=workspace_path,
-            task_id=task_id,
-            source_tool="deterministic_go_bare_import_string_repair",
-            executor_factory=DirectorToolExecutor,
-            base_files=base_files_without_mod,
-            artifact_quality_errors=artifact_quality_errors,
-            advisor_notes=advisor_notes,
-            use_editor=False,
-            convergence_verifier=convergence_verifier,
-        )
-        if any(not bool(item.get("success", False)) for item in bare_import_results):
-            return bare_import_results
-        results.extend(bare_import_results)
-
-    # Pass 0: Nested import keyword repair (remove extra "import" inside import blocks).
-    # Runs AFTER bare import string repair so we don't undo each other.
-    nested_repairs = repair_go_nested_import_keyword(workspace_path)
-    for record in nested_repairs:
-        results.append(
-            {
-                "tool": "write_file",
-                "tool_name": "write_file",
-                "success": True,
-                "result": {
-                    "ok": True,
-                    "source_tool": "deterministic_go_nested_import_repair",
-                    "file": record["file"],
-                    "before": record["before"],
-                    "after": record["after"],
-                },
-            }
-        )
-
-    # Pass 1: Prefix normalization through the runtime repair kernel.
-    base_files = _base_files()
-    if "go.mod" in base_files and any(path.endswith(".go") for path in base_files):
-        prefix_results = run_runtime_repair_with_director_tools(
-            adapter,
-            workspace_path=workspace_path,
-            task_id=task_id,
-            source_tool="deterministic_go_module_import_repair",
-            executor_factory=DirectorToolExecutor,
-            base_files=base_files,
-            artifact_quality_errors=artifact_quality_errors,
-            advisor_notes=advisor_notes,
-            convergence_verifier=convergence_verifier,
-        )
-        if any(not bool(item.get("success", False)) for item in prefix_results):
-            return [*results, *prefix_results]
-        results.extend(prefix_results)
-
-    # Pass 1b: Bare local import prefix repair through the runtime repair kernel.
-    base_files = _base_files()
-    if "go.mod" in base_files and any(path.endswith(".go") for path in base_files):
-        bare_results = run_runtime_repair_with_director_tools(
-            adapter,
-            workspace_path=workspace_path,
-            task_id=task_id,
-            source_tool="deterministic_go_bare_import_repair",
-            executor_factory=DirectorToolExecutor,
-            base_files=base_files,
-            artifact_quality_errors=artifact_quality_errors,
-            advisor_notes=advisor_notes,
-            convergence_verifier=convergence_verifier,
-        )
-        if any(not bool(item.get("success", False)) for item in bare_results):
-            return [*results, *bare_results]
-        results.extend(bare_results)
-
-    # Pass 2: Sub-path hallucination repair.
-    subpath_repairs = repair_go_import_subpaths(workspace_path)
-    for record in subpath_repairs:
-        results.append(
-            {
-                "tool": "write_file",
-                "tool_name": "write_file",
-                "success": True,
-                "result": {
-                    "ok": True,
-                    "source_tool": "deterministic_go_subpath_repair",
-                    "file": record["file"],
-                    "before": record["before"],
-                    "after": record["after"],
-                },
-            }
-        )
-
-    # Pass 2b: Compiler-reported unused imports through the runtime repair kernel.
-    base_files = _base_files()
-    if any(path.endswith(".go") for path in base_files):
-        unused_import_results = run_runtime_repair_with_director_tools(
-            adapter,
-            workspace_path=workspace_path,
-            task_id=task_id,
-            source_tool="deterministic_go_unused_import_repair",
-            executor_factory=DirectorToolExecutor,
-            base_files=base_files,
-            artifact_quality_errors=artifact_quality_errors,
-            advisor_notes=advisor_notes,
-            convergence_verifier=convergence_verifier,
-        )
-        if any(not bool(item.get("success", False)) for item in unused_import_results):
-            return [*results, *unused_import_results]
-        results.extend(unused_import_results)
-
-        error_string_helper_results = run_runtime_repair_with_director_tools(
-            adapter,
-            workspace_path=workspace_path,
-            task_id=task_id,
-            source_tool="deterministic_go_error_string_helper_repair",
-            executor_factory=DirectorToolExecutor,
-            base_files=base_files,
-            artifact_quality_errors=artifact_quality_errors,
-            advisor_notes=advisor_notes,
-            convergence_verifier=convergence_verifier,
-        )
-        if any(not bool(item.get("success", False)) for item in error_string_helper_results):
-            return [*results, *error_string_helper_results]
-        results.extend(error_string_helper_results)
-
-    # Pass 3: Duplicate declaration merge.
-    dedup_repairs = repair_go_duplicate_declarations(workspace_path)
-    for record in dedup_repairs:
-        results.append(
-            {
-                "tool": "write_file",
-                "tool_name": "write_file",
-                "success": True,
-                "result": {
-                    "ok": True,
-                    "source_tool": "deterministic_go_dedup_repair",
-                    "file": record["file"],
-                    "action": record["action"],
-                },
-            }
-        )
-
-    return results
-
-
-def _apply_deterministic_materialization_quality_repairs(
-    adapter: Any,
-    *,
-    task: dict[str, Any],
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Legacy facade: materialization repair orchestration is runtime-scheduled."""
-
-    from ..materialization_quality_repair_bridge import run_materialization_quality_repairs
-
-    return run_materialization_quality_repairs(
-        adapter,
-        task=task,
-        task_id=task_id,
-        artifact_quality_errors=artifact_quality_errors,
-    )
 
 
 def _apply_deterministic_pre_materialization_declared_target_repairs(

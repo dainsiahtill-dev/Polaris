@@ -36,12 +36,10 @@ from ._common import (
     _dedupe_paths,
     _parse_named_import_symbols,
     _parse_typescript_escaped_newline_paths,
-    _parse_typescript_return_object_semicolon_paths,
     _path_inside_workspace,
     _relative_import_repair_target_candidates,
     _relative_import_suffix_order,
 )
-from ._runtime_bridge import run_runtime_repair_with_director_tools
 
 _TS_MISSING_PROPERTY_ERROR_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2339:\s*"
@@ -706,91 +704,6 @@ def _apply_deterministic_typescript_tsconfig_lib_repair(
             },
         }
     ]
-
-
-def _apply_deterministic_typescript_nullable_canvas_context_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    nullable_contexts = _parse_typescript_nullable_canvas_context_errors(artifact_quality_errors)
-    if not nullable_contexts:
-        return []
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    base_files: dict[str, str] = {}
-    by_file: dict[str, set[str]] = {}
-    for item in nullable_contexts:
-        by_file.setdefault(item["file"], set()).add(item.get("symbol") or "")
-
-    for rel_file in by_file:
-        path = (workspace_path / rel_file).resolve()
-        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
-            continue
-        try:
-            base_files[rel_file] = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-    if not base_files:
-        return []
-
-    return run_runtime_repair_with_director_tools(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        source_tool="deterministic_typescript_nullable_canvas_context_repair",
-        executor_factory=DirectorToolExecutor,
-        base_files=base_files,
-        artifact_quality_errors=artifact_quality_errors,
-    )
-
-
-def _apply_deterministic_typescript_duplicate_object_property_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    duplicate_properties = _parse_typescript_duplicate_object_property_errors(artifact_quality_errors)
-    if not duplicate_properties:
-        return []
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    base_files: dict[str, str] = {}
-    by_file: dict[str, set[int]] = {}
-    for item in duplicate_properties:
-        try:
-            line_no = int(item.get("line") or "0")
-        except ValueError:
-            continue
-        if line_no > 0:
-            by_file.setdefault(item["file"], set()).add(line_no)
-
-    for rel_file in by_file:
-        path = (workspace_path / rel_file).resolve()
-        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
-            continue
-        try:
-            base_files[rel_file] = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-    if not base_files:
-        return []
-
-    return run_runtime_repair_with_director_tools(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        source_tool="deterministic_typescript_duplicate_object_property_repair",
-        executor_factory=DirectorToolExecutor,
-        base_files=base_files,
-        artifact_quality_errors=artifact_quality_errors,
-    )
 
 
 def _apply_deterministic_html_typescript_module_script_repair(
@@ -3862,99 +3775,6 @@ def _apply_deterministic_typescript_relative_import_case_repair(
             }
         )
     return results
-
-
-def _apply_deterministic_typescript_return_object_semicolon_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    paths = _dedupe_preserve_order(
-        [
-            *_parse_typescript_return_object_semicolon_paths(artifact_quality_errors),
-            *[item["file"] for item in _parse_typescript_comma_expected_errors(artifact_quality_errors)],
-        ]
-    )
-    if not paths:
-        return []
-
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    base_files: dict[str, str] = {}
-    for relative_path in paths:
-        full_path = (workspace_path / relative_path).resolve()
-        try:
-            full_path.relative_to(workspace_path)
-        except ValueError:
-            continue
-        if not full_path.is_file():
-            continue
-        try:
-            original = full_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        base_files[relative_path] = original
-    return run_runtime_repair_with_director_tools(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        source_tool="deterministic_typescript_return_object_semicolon_repair",
-        executor_factory=DirectorToolExecutor,
-        base_files=base_files,
-        artifact_quality_errors=artifact_quality_errors,
-        use_editor=False,
-    )
-
-
-def _apply_deterministic_typescript_enum_member_separator_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    enum_errors = _parse_typescript_enum_member_separator_errors(artifact_quality_errors)
-    if not enum_errors:
-        return []
-
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    base_files: dict[str, str] = {}
-    by_file: dict[str, set[int]] = {}
-    for item in enum_errors:
-        relative_path = item["file"]
-        try:
-            line_number = int(item["line"])
-        except ValueError:
-            continue
-        if line_number <= 0:
-            continue
-        by_file.setdefault(relative_path, set()).add(line_number)
-
-    for relative_path in by_file:
-        full_path = (workspace_path / relative_path).resolve()
-        if not _path_inside_workspace(full_path, workspace_path) or not full_path.is_file():
-            continue
-        try:
-            base_files[relative_path] = full_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-    if not base_files:
-        return []
-
-    return run_runtime_repair_with_director_tools(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        source_tool="deterministic_typescript_enum_member_separator_repair",
-        executor_factory=DirectorToolExecutor,
-        base_files=base_files,
-        artifact_quality_errors=artifact_quality_errors,
-    )
 
 
 def _typescript_brace_balance_delta(source: str) -> int:

@@ -25,8 +25,10 @@ from polaris.cells.director.runtime.public.service import (
     run_director_materialization_quality_repair_schedule_result,
 )
 
+from .execution_tools import DirectorToolExecutor
 from .helpers import has_successful_write_tool
 from .repair_profile_projection import project_repair_kernel_summary, summarize_deterministic_repair_source_tools
+from .runtime_repair_tool_adapter import run_runtime_repair_with_director_tools
 
 _MATERIALIZATION_QUALITY_REPAIR_RUNNERS = {
     "materialization.hygiene_scaffold": "_run_materialization_hygiene_scaffold",
@@ -53,7 +55,22 @@ _MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS = (
     "deterministic_rust_unresolved_pub_use_repair",
     "deterministic_rust_trait_import_repair",
 )
-_MATERIALIZATION_RUNTIME_COVERAGE_SOURCE_TOOLS = frozenset(_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS)
+_MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_EXCLUDED_SOURCE_TOOLS = frozenset(
+    {
+        "deterministic_typeorm_model_normalization_repair",
+        "deterministic_typescript_scaffold_repair",
+    }
+)
+_MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_go_bare_import_string_repair",
+    "deterministic_go_nested_import_repair",
+    "deterministic_go_module_import_repair",
+    "deterministic_go_bare_import_repair",
+    "deterministic_go_subpath_repair",
+    "deterministic_go_unused_import_repair",
+    "deterministic_go_error_string_helper_repair",
+    "deterministic_go_dedup_repair",
+)
 
 
 def has_materialization_quality_runtime_repair_coverage(artifact_quality_errors: list[str]) -> bool:
@@ -63,11 +80,51 @@ def has_materialization_quality_runtime_repair_coverage(artifact_quality_errors:
         return False
     with suppress(RuntimeError, TypeError, ValueError):
         coverage = _project_coverage_preaudit(artifact_quality_errors)
-        return _coverage_has_materialization_runtime_source_tool(coverage)
+        return _coverage_has_materialization_runtime_source_tool(
+            coverage,
+            materialization_source_tools=_materialization_runtime_coverage_source_tools(),
+        )
     return False
 
 
-def _coverage_has_materialization_runtime_source_tool(coverage: Mapping[str, Any]) -> bool:
+def _materialization_runtime_coverage_source_tools() -> frozenset[str]:
+    return frozenset(
+        (
+            *_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS,
+            *_materialization_typescript_compiler_runtime_source_tools(),
+        )
+    )
+
+
+def _runtime_executable_source_tools_for_language(language: str) -> tuple[str, ...]:
+    normalized_language = str(language or "").strip().lower()
+    if not normalized_language:
+        return ()
+    catalog = query_director_repair_strategy_catalog(
+        QueryDirectorRepairStrategyCatalogV1(
+            include_items=True,
+            max_items=1000,
+        )
+    ).to_dict()
+    source_tools: list[str] = []
+    for item in catalog.get("items") or ():
+        if not isinstance(item, Mapping):
+            continue
+        if str(item.get("language") or "").strip().lower() != normalized_language:
+            continue
+        if str(item.get("implementation_status") or "").strip() != "executable_runtime":
+            continue
+        source_tool = str(item.get("source_tool") or "").strip()
+        if source_tool:
+            source_tools.append(source_tool)
+    return tuple(dict.fromkeys(source_tools))
+
+
+def _coverage_has_materialization_runtime_source_tool(
+    coverage: Mapping[str, Any],
+    *,
+    materialization_source_tools: frozenset[str],
+) -> bool:
     items = coverage.get("items") if isinstance(coverage, Mapping) else None
     if not isinstance(items, list | tuple):
         return False
@@ -79,9 +136,7 @@ def _coverage_has_materialization_runtime_source_tool(coverage: Mapping[str, Any
         source_tools = item.get("matched_source_tools")
         if not isinstance(source_tools, list | tuple):
             continue
-        if any(
-            str(source_tool or "") in _MATERIALIZATION_RUNTIME_COVERAGE_SOURCE_TOOLS for source_tool in source_tools
-        ):
+        if any(str(source_tool or "") in materialization_source_tools for source_tool in source_tools):
             return True
     return False
 
@@ -159,21 +214,15 @@ def run_typescript_semantic_quality_repairs(
 ) -> list[dict[str, Any]]:
     """Run TypeScript semantic quality repairs behind the materialization bridge boundary."""
 
-    from .deterministic_repairs.typescript_repairs import (
-        _apply_deterministic_typescript_canvas_scale_return_type_repair,
-        _apply_deterministic_typescript_missing_export_repair,
-    )
-
     results: list[dict[str, Any]] = []
-    for repair_fn in (
-        _apply_deterministic_typescript_missing_export_repair,
-        _apply_deterministic_typescript_canvas_scale_return_type_repair,
-    ):
+    for source_tool in _materialization_typescript_compiler_runtime_source_tools():
         results.extend(
-            repair_fn(
+            _run_materialization_typescript_runtime_repair(
                 adapter,
                 task_id=task_id,
                 artifact_quality_errors=artifact_quality_errors,
+                source_tool=source_tool,
+                collect_unmatched_diagnostic_paths=True,
             )
         )
     return results
@@ -204,6 +253,7 @@ def _run_legacy_materialization_quality_repair_step(
     if step_id == "materialization.typescript_compiler":
         return _run_materialization_typescript_compiler(
             adapter,
+            task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
         )
@@ -297,68 +347,63 @@ def _run_materialization_typescript_scaffold(
 def _run_materialization_typescript_compiler(
     adapter: Any,
     *,
+    task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
 ) -> list[dict[str, Any]]:
-    from .deterministic_repairs.typescript_repairs import (
-        _apply_deterministic_html_typescript_module_script_repair,
-        _apply_deterministic_typescript_canvas_scale_return_type_repair,
-        _apply_deterministic_typescript_duplicate_object_property_repair,
-        _apply_deterministic_typescript_entrypoint_repair,
-        _apply_deterministic_typescript_enum_member_separator_repair,
-        _apply_deterministic_typescript_escaped_newline_repair,
-        _apply_deterministic_typescript_member_alias_repair,
-        _apply_deterministic_typescript_missing_closing_brace_repair,
-        _apply_deterministic_typescript_missing_export_repair,
-        _apply_deterministic_typescript_missing_member_repair,
-        _apply_deterministic_typescript_nullable_canvas_context_repair,
-        _apply_deterministic_typescript_number_to_string_argument_repair,
-        _apply_deterministic_typescript_reexported_type_binding_repair,
-        _apply_deterministic_typescript_relative_import_case_repair,
-        _apply_deterministic_typescript_return_object_semicolon_repair,
-        _apply_deterministic_typescript_sourcefile_diagnostics_repair,
-        _apply_deterministic_typescript_too_few_arguments_repair,
-        _apply_deterministic_typescript_tsconfig_lib_repair,
-        _apply_deterministic_typescript_uninitialized_property_repair,
-        _apply_deterministic_typescript_unresolved_identifier_repair,
-        _apply_deterministic_typescript_vitest_globals_repair,
-    )
-    from .deterministic_repairs.zod_repairs import _apply_deterministic_typescript_zod_type_class_collision_repair
-
-    step_runners = (
-        _apply_deterministic_typescript_return_object_semicolon_repair,
-        _apply_deterministic_typescript_enum_member_separator_repair,
-        _apply_deterministic_typescript_unresolved_identifier_repair,
-        _apply_deterministic_typescript_reexported_type_binding_repair,
-        _apply_deterministic_typescript_escaped_newline_repair,
-        _apply_deterministic_typescript_missing_closing_brace_repair,
-        _apply_deterministic_typescript_zod_type_class_collision_repair,
-        _apply_deterministic_typescript_relative_import_case_repair,
-        _apply_deterministic_typescript_entrypoint_repair,
-        _apply_deterministic_typescript_tsconfig_lib_repair,
-        _apply_deterministic_typescript_duplicate_object_property_repair,
-        _apply_deterministic_typescript_nullable_canvas_context_repair,
-        _apply_deterministic_typescript_sourcefile_diagnostics_repair,
-        _apply_deterministic_html_typescript_module_script_repair,
-        _apply_deterministic_typescript_vitest_globals_repair,
-        _apply_deterministic_typescript_missing_export_repair,
-        _apply_deterministic_typescript_member_alias_repair,
-        _apply_deterministic_typescript_missing_member_repair,
-        _apply_deterministic_typescript_uninitialized_property_repair,
-        _apply_deterministic_typescript_number_to_string_argument_repair,
-        _apply_deterministic_typescript_canvas_scale_return_type_repair,
-        _apply_deterministic_typescript_too_few_arguments_repair,
-    )
     results: list[dict[str, Any]] = []
-    for runner in step_runners:
+    for source_tool in _materialization_typescript_compiler_runtime_source_tools():
         results.extend(
-            runner(
+            _run_materialization_typescript_runtime_repair(
                 adapter,
+                task=task,
                 task_id=task_id,
                 artifact_quality_errors=artifact_quality_errors,
+                source_tool=source_tool,
             )
         )
     return results
+
+
+def _materialization_typescript_compiler_runtime_source_tools() -> tuple[str, ...]:
+    return tuple(
+        source_tool
+        for source_tool in _runtime_executable_source_tools_for_language("typescript")
+        if source_tool not in _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_EXCLUDED_SOURCE_TOOLS
+    )
+
+
+def _run_materialization_typescript_runtime_repair(
+    adapter: Any,
+    *,
+    task: dict[str, Any] | None = None,
+    task_id: str,
+    artifact_quality_errors: list[str],
+    source_tool: str,
+    collect_unmatched_diagnostic_paths: bool = False,
+) -> list[dict[str, Any]]:
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    base_files = _collect_materialization_runtime_base_files(
+        workspace_path,
+        artifact_quality_errors=artifact_quality_errors,
+        source_tool=source_tool,
+        allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".html", ".json"),
+        collect_unmatched_diagnostic_paths=collect_unmatched_diagnostic_paths,
+        task=task,
+    )
+    if not base_files or not artifact_quality_errors:
+        return []
+    return run_runtime_repair_with_director_tools(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        source_tool=source_tool,
+        executor_factory=DirectorToolExecutor,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        allowed_paths=tuple(base_files.keys()),
+        use_editor=True,
+    )
 
 
 def _run_materialization_node_manifest(
@@ -426,6 +471,91 @@ def _run_materialization_rust_compiler(
     return results
 
 
+def _collect_materialization_runtime_base_files(
+    workspace_path: Path,
+    *,
+    artifact_quality_errors: list[str],
+    source_tool: str,
+    allowed_suffixes: tuple[str, ...],
+    collect_unmatched_diagnostic_paths: bool = False,
+    task: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    if not workspace_path.is_dir():
+        return {}
+    paths: list[str] = []
+    source_tool_matched = False
+    with suppress(RuntimeError, TypeError, ValueError):
+        coverage = _project_coverage_preaudit(artifact_quality_errors)
+        for item in coverage.get("items") or ():
+            if not isinstance(item, Mapping):
+                continue
+            matched_source_tools = item.get("matched_source_tools")
+            matched = isinstance(matched_source_tools, list | tuple) and source_tool in {
+                str(tool or "") for tool in matched_source_tools
+            }
+            if not matched and not collect_unmatched_diagnostic_paths:
+                continue
+            source_tool_matched = source_tool_matched or matched
+            diagnostic = item.get("diagnostic")
+            if not isinstance(diagnostic, Mapping):
+                continue
+            path = str(diagnostic.get("path") or "").strip().replace("\\", "/")
+            if path and path.endswith(allowed_suffixes):
+                paths.append(path)
+    if not source_tool_matched and not collect_unmatched_diagnostic_paths:
+        return {}
+    paths.extend(_materialization_task_candidate_paths(task, allowed_suffixes=allowed_suffixes))
+    if ".json" in allowed_suffixes:
+        for config_name in ("package.json", "tsconfig.json", "tsconfig.app.json", "tsconfig.node.json"):
+            paths.append(config_name)
+        for tsconfig_path in sorted(workspace_path.glob("tsconfig.*.json")):
+            with suppress(ValueError):
+                paths.append(tsconfig_path.relative_to(workspace_path).as_posix())
+
+    base_files: dict[str, str] = {}
+    for relative_path in dict.fromkeys(paths):
+        full_path = (workspace_path / relative_path).resolve()
+        try:
+            full_path.relative_to(workspace_path)
+        except ValueError:
+            continue
+        if not full_path.is_file():
+            continue
+        with suppress(OSError, UnicodeDecodeError):
+            base_files[relative_path] = full_path.read_text(encoding="utf-8")
+    return base_files
+
+
+def _materialization_task_candidate_paths(
+    task: Mapping[str, Any] | None,
+    *,
+    allowed_suffixes: tuple[str, ...],
+) -> tuple[str, ...]:
+    if not isinstance(task, Mapping):
+        return ()
+    raw_candidates: list[Any] = []
+    for key in ("target_files", "files", "paths"):
+        value = task.get(key)
+        if isinstance(value, str):
+            raw_candidates.append(value)
+        elif isinstance(value, list | tuple | set):
+            raw_candidates.extend(value)
+    metadata = task.get("metadata")
+    if isinstance(metadata, Mapping):
+        for key in ("target_files", "files", "paths"):
+            value = metadata.get(key)
+            if isinstance(value, str):
+                raw_candidates.append(value)
+            elif isinstance(value, list | tuple | set):
+                raw_candidates.extend(value)
+    paths: list[str] = []
+    for candidate in raw_candidates:
+        path = str(candidate or "").strip().replace("\\", "/")
+        if path and path.endswith(allowed_suffixes):
+            paths.append(path)
+    return tuple(dict.fromkeys(paths))
+
+
 def _run_materialization_rust_runtime_repair(
     adapter: Any,
     *,
@@ -433,8 +563,8 @@ def _run_materialization_rust_runtime_repair(
     artifact_quality_errors: list[str],
     source_tool: str,
 ) -> list[dict[str, Any]]:
-    from .deterministic_repairs._runtime_bridge import run_runtime_repair_with_director_tools
     from .execution_tools import DirectorToolExecutor
+    from .runtime_repair_tool_adapter import run_runtime_repair_with_director_tools
 
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
     base_files = _collect_materialization_rust_base_files(workspace_path)
@@ -586,16 +716,70 @@ def _run_materialization_go_import(
     artifact_quality_errors: list[str],
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
-    from .deterministic_repairs.generic_repairs import (
-        _apply_deterministic_go_module_import_repair,
-    )
-
-    return _apply_deterministic_go_module_import_repair(
+    return _run_materialization_go_import_repairs(
         adapter,
         task_id=task_id,
         artifact_quality_errors=artifact_quality_errors,
         convergence_verifier=convergence_verifier,
     )
+
+
+def _run_materialization_go_import_repairs(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str] | tuple[str, ...] = (),
+    advisor_notes: tuple[Any, ...] = (),
+    convergence_verifier: Callable[[Any], Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Run materialization Go import repairs from the runtime-owned schedule bridge."""
+
+    workspace = Path(getattr(adapter, "workspace", "") or "")
+    if not workspace.is_dir():
+        return []
+    workspace_path = workspace.resolve()
+    if not any(workspace_path.rglob("*.go")):
+        return []
+    results: list[dict[str, Any]] = []
+
+    for source_tool in _MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS:
+        base_files = _collect_materialization_go_base_files(workspace_path)
+        if not any(path.endswith(".go") for path in base_files):
+            return results
+        runtime_results = run_runtime_repair_with_director_tools(
+            adapter,
+            workspace_path=workspace_path,
+            task_id=task_id,
+            source_tool=source_tool,
+            executor_factory=DirectorToolExecutor,
+            base_files=base_files,
+            allowed_paths=tuple(base_files.keys()),
+            artifact_quality_errors=artifact_quality_errors,
+            advisor_notes=advisor_notes,
+            use_editor=True,
+            convergence_verifier=convergence_verifier,
+        )
+        if any(not bool(item.get("success", False)) for item in runtime_results):
+            return [*results, *runtime_results]
+        results.extend(runtime_results)
+
+    return results
+
+
+def _collect_materialization_go_base_files(workspace_path: Path) -> dict[str, str]:
+    base_files: dict[str, str] = {}
+    go_mod = workspace_path / "go.mod"
+    if go_mod.is_file():
+        with suppress(OSError, UnicodeDecodeError):
+            base_files["go.mod"] = go_mod.read_text(encoding="utf-8")
+    for go_file in sorted(workspace_path.rglob("*.go")):
+        if not go_file.is_file() or go_file.name.endswith("_test.go"):
+            continue
+        with suppress(ValueError):
+            relative_path = go_file.relative_to(workspace_path).as_posix()
+            with suppress(OSError, UnicodeDecodeError):
+                base_files[relative_path] = go_file.read_text(encoding="utf-8")
+    return base_files
 
 
 def _runtime_materialization_quality_schedule_steps() -> tuple[DirectorRepairMaterializationQualityStepV1, ...]:

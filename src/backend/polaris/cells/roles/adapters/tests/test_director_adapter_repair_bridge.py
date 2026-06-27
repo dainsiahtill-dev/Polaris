@@ -23,15 +23,12 @@ from polaris.cells.director.runtime.public.contracts import (
 from polaris.cells.roles.adapters.internal.director import (
     materialization_quality_repair_bridge,
     post_execution_repair_bridge,
-)
-from polaris.cells.roles.adapters.internal.director.deterministic_repairs import (
-    _runtime_bridge as runtime_bridge_module,
-    generic_repairs,
-)
-from polaris.cells.roles.adapters.internal.director.deterministic_repairs._runtime_bridge import (
-    run_runtime_repair_with_director_tools,
+    runtime_repair_tool_adapter as runtime_bridge_module,
 )
 from polaris.cells.roles.adapters.internal.director.execution_tools import DirectorToolExecutor
+from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
+    run_runtime_repair_with_director_tools,
+)
 from polaris.cells.roles.adapters.public import service as roles_adapters_public_service
 
 _RELATIVE_PATH = "src/models/Flight.ts"
@@ -1484,12 +1481,10 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
         "_run_materialization_python_import",
     ):
         monkeypatch.setattr(materialization_quality_repair_bridge, runner_name, lambda *args, **kwargs: [])
-    monkeypatch.setattr(generic_repairs, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
-    monkeypatch.setattr(generic_repairs, "repair_go_nested_import_keyword", lambda _: [])
-    monkeypatch.setattr(generic_repairs, "repair_go_module_imports", lambda _: [])
-    monkeypatch.setattr(generic_repairs, "repair_go_bare_local_imports", lambda _: [])
-    monkeypatch.setattr(generic_repairs, "repair_go_import_subpaths", lambda _: [])
-    monkeypatch.setattr(generic_repairs, "repair_go_duplicate_declarations", lambda _: [])
+    monkeypatch.setattr(materialization_quality_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
+    assert not hasattr(materialization_quality_repair_bridge, "repair_go_nested_import_keyword")
+    assert not hasattr(materialization_quality_repair_bridge, "repair_go_import_subpaths")
+    assert not hasattr(materialization_quality_repair_bridge, "repair_go_duplicate_declarations")
     _patch_materialization_schedule_result_as_dicts(monkeypatch)
 
     results, summary = materialization_quality_repair_bridge.run_materialization_quality_repairs(
@@ -1504,11 +1499,9 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
     assert captured["runtime_bridge"]["task_id"] == "task-go-materialization"
     assert captured["runtime_bridge"]["base_files"] == {"main.go": target.read_text(encoding="utf-8")}
     assert captured["runtime_bridge"]["convergence_verifier"] is sentinel_verifier
-    assert [call["source_tool"] for call in captured["runtime_bridge_calls"]] == [
-        "deterministic_go_bare_import_string_repair",
-        "deterministic_go_unused_import_repair",
-        "deterministic_go_error_string_helper_repair",
-    ]
+    assert [call["source_tool"] for call in captured["runtime_bridge_calls"]] == list(
+        materialization_quality_repair_bridge._MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS
+    )
     assert captured["verifier_request"].round_number == 1
     assert summary["convergence_verifier_present"] is True
     assert summary["materialization_quality_bridge"]["convergence_verifier_present"] is True
@@ -1533,7 +1526,8 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
-    from polaris.cells.roles.adapters.internal.director.deterministic_repairs import _runtime_bridge, rust_repairs
+    from polaris.cells.roles.adapters.internal.director import runtime_repair_tool_adapter
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
     (tmp_path / "Cargo.toml").write_text(
         '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n',
@@ -1545,7 +1539,6 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
 
     migrated_legacy_helpers = (
         "_apply_deterministic_rust_crate_import_repair",
-        "_apply_deterministic_rust_dependency_repair",
         "_apply_deterministic_rust_line_suggestion_repair",
         "_apply_deterministic_rust_unresolved_pub_use_repair",
         "_apply_deterministic_rust_trait_import_repair",
@@ -1624,7 +1617,7 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
             }
         ]
 
-    monkeypatch.setattr(_runtime_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
+    monkeypatch.setattr(runtime_repair_tool_adapter, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
     for runner_name in (
         "_run_materialization_hygiene_scaffold",
         "_run_materialization_typescript_scaffold",
@@ -1819,7 +1812,7 @@ def test_materialization_bridge_projects_runtime_step_metadata_and_missing_evide
     assert go_lifecycle["receipt_lifecycle_evidence_status"] == "missing_evidence"
 
 
-def test_materialization_public_legacy_facade_only_forwards_bridge(
+def test_materialization_public_schedule_entrypoint_forwards_bridge(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -1839,34 +1832,41 @@ def test_materialization_public_legacy_facade_only_forwards_bridge(
     )
 
     adapter = _FakeAdapter(tmp_path)
-    results, summary = roles_adapters_public_service.apply_deterministic_materialization_quality_repairs(
+    results, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["main.go"]},
-        task_id="task-materialization-facade",
+        task_id="task-materialization-schedule",
         artifact_quality_errors=["Go syntax check failed"],
     )
 
     assert len(calls) == 1
     assert calls[0]["adapter"] is adapter
-    assert calls[0]["task_id"] == "task-materialization-facade"
+    assert calls[0]["task_id"] == "task-materialization-schedule"
     assert results[0]["tool"] == "write_file"
     public_boundary = summary["public_boundary"]
     assert public_boundary["mode"] == "runtime_owned_schedule_public_boundary"
-    assert public_boundary["migration_only_compatibility_shim"] == (
-        "apply_deterministic_materialization_quality_repairs"
-    )
-    assert public_boundary["preferred_entrypoint"] == "run_director_materialization_quality_repair_schedule"
+    assert "migration_only_compatibility_shim" not in public_boundary
+    assert not hasattr(roles_adapters_public_service, "apply_deterministic_materialization_quality_repairs")
 
 
 def test_runtime_bridge_imports_only_public_director_runtime_surface() -> None:
-    bridge_path = (
-        Path(__file__).parent.parent / "internal" / "director" / "deterministic_repairs" / "_runtime_bridge.py"
-    )
+    bridge_path = Path(__file__).parent.parent / "internal" / "director" / "runtime_repair_tool_adapter.py"
     source = bridge_path.read_text(encoding="utf-8")
 
     assert "polaris.cells.director.runtime.public import" in source
     assert "polaris.cells.director.runtime.public.service" not in source
     assert "polaris.cells.director.runtime.internal" not in source
+
+
+def test_deterministic_repairs_directory_no_longer_hosts_runtime_bridge() -> None:
+    director_dir = Path(__file__).parent.parent / "internal" / "director"
+    deterministic_repairs_dir = director_dir / "deterministic_repairs"
+
+    assert not (deterministic_repairs_dir / "_runtime_bridge.py").exists()
+    for path in deterministic_repairs_dir.glob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        assert "._runtime_bridge" not in source
+        assert ".deterministic_repairs._runtime_bridge" not in source
 
 
 def test_post_execution_canonical_projection_preserves_receipt_evidence_and_hashes(tmp_path: Path) -> None:
@@ -2077,9 +2077,6 @@ def test_go_post_execution_uses_runtime_source_tool_sequence_without_legacy_aggr
     called_source_tools: list[str] = []
     base_file_snapshots: list[dict[str, str]] = []
 
-    def fail_if_legacy_go_aggregate_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
-        raise AssertionError("post-execution Go repair must not call legacy aggregate helper")
-
     def fake_runtime_bridge(
         adapter_arg: Any,
         *,
@@ -2106,11 +2103,6 @@ def test_go_post_execution_uses_runtime_source_tool_sequence_without_legacy_aggr
             source.write_text('package main\nimport "fmt"\nfunc main() {}\n', encoding="utf-8")
         return []
 
-    monkeypatch.setattr(
-        generic_repairs,
-        "_apply_deterministic_go_module_import_repair",
-        fail_if_legacy_go_aggregate_called,
-    )
     monkeypatch.setattr(
         post_execution_repair_bridge,
         "run_runtime_repair_with_director_tools",

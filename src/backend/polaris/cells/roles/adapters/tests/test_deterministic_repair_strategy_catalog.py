@@ -576,102 +576,17 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
     }
 
 
-def test_legacy_public_repair_wrappers_are_migration_only_compatibility_shims(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fake_materialization_schedule(
-        adapter: Any,
-        *,
-        task: dict[str, Any],
-        task_id: str,
-        artifact_quality_errors: list[str],
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        assert adapter == {"workspace": "/tmp/demo"}
-        assert task == {"target_files": ["src/app.ts"]}
-        assert task_id == "task-1"
-        assert artifact_quality_errors == ["error TS1005"]
-        return [], {
-            "public_boundary": {
-                "schema_version": "roles.adapters.materialization_quality_repair_boundary.v1",
-            }
-        }
-
-    def fake_cpp_post_execution(workspace: str | Path) -> list[dict[str, Any]]:
-        assert Path(workspace).as_posix() == "/tmp/demo"
-        return [{"tool": "write_file", "success": True}]
-
-    monkeypatch.setattr(
-        role_adapter_service,
-        "run_director_materialization_quality_repair_schedule",
-        fake_materialization_schedule,
-    )
-    monkeypatch.setattr(
-        role_adapter_service,
-        "run_director_cpp_post_execution_repairs",
-        fake_cpp_post_execution,
-    )
-
-    results, summary = role_adapter_service.apply_deterministic_materialization_quality_repairs(
-        {"workspace": "/tmp/demo"},
-        task={"target_files": ["src/app.ts"]},
-        task_id="task-1",
-        artifact_quality_errors=["error TS1005"],
-    )
-    cpp_results = role_adapter_service.apply_deterministic_cpp_post_repairs("/tmp/demo")
-
-    assert results == []
-    assert cpp_results == [{"tool": "write_file", "success": True}]
-    assert summary["public_boundary"]["migration_only_compatibility_shim"] == (
-        "apply_deterministic_materialization_quality_repairs"
-    )
-    assert summary["public_boundary"]["preferred_entrypoint"] == (
-        "run_director_materialization_quality_repair_schedule"
-    )
-    assert "migration-only" in role_adapter_service.apply_deterministic_materialization_quality_repairs.__doc__
-    assert "migration-only" in role_adapter_service.apply_deterministic_cpp_post_repairs.__doc__
-    assert "migration-only" in role_adapter_service.apply_deterministic_materialization_quality_repairs.__deprecated__
-    assert "migration-only" in role_adapter_service.apply_deterministic_cpp_post_repairs.__deprecated__
+def test_legacy_public_repair_wrappers_are_hard_cut() -> None:
+    assert not hasattr(role_adapter_service, "apply_deterministic_materialization_quality_repairs")
+    assert not hasattr(role_adapter_service, "apply_deterministic_cpp_post_repairs")
+    assert "apply_deterministic_materialization_quality_repairs" not in role_adapter_service.__all__
+    assert "apply_deterministic_cpp_post_repairs" not in role_adapter_service.__all__
+    assert "run_director_materialization_quality_repair_schedule" in role_adapter_service.__all__
+    assert "run_director_cpp_post_execution_repairs" in role_adapter_service.__all__
 
 
-def test_legacy_materialization_quality_function_facades_runtime_bridge(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    observed: dict[str, Any] = {}
-
-    def fake_bridge(
-        adapter: Any,
-        *,
-        task: dict[str, Any],
-        task_id: str,
-        artifact_quality_errors: list[str],
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        observed["adapter"] = adapter
-        observed["task"] = task
-        observed["task_id"] = task_id
-        observed["artifact_quality_errors"] = artifact_quality_errors
-        return [], {"stage": "deterministic_quality_repair", "via": "runtime_schedule"}
-
-    monkeypatch.setattr(
-        materialization_quality_repair_bridge,
-        "run_materialization_quality_repairs",
-        fake_bridge,
-    )
-
-    results, summary = generic_repairs._apply_deterministic_materialization_quality_repairs(
-        {"workspace": "/tmp/demo"},
-        task={"target_files": ["src/app.ts"]},
-        task_id="task-1",
-        artifact_quality_errors=["error TS1005"],
-    )
-
-    assert results == []
-    assert summary == {"stage": "deterministic_quality_repair", "via": "runtime_schedule"}
-    assert observed == {
-        "adapter": {"workspace": "/tmp/demo"},
-        "task": {"target_files": ["src/app.ts"]},
-        "task_id": "task-1",
-        "artifact_quality_errors": ["error TS1005"],
-    }
+def test_legacy_materialization_quality_facade_is_hard_cut() -> None:
+    assert not hasattr(generic_repairs, "_apply_deterministic_materialization_quality_repairs")
 
 
 def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(

@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs.rust_repairs import (
     _apply_deterministic_rust_crate_import_repair,
-    _apply_deterministic_rust_dependency_repair,
     _apply_deterministic_rust_derive_repair,
     _apply_deterministic_rust_lib_root_facade_repair,
     _apply_deterministic_rust_line_suggestion_repair,
@@ -14,6 +13,34 @@ from polaris.cells.roles.adapters.internal.director.deterministic_repairs.rust_r
     _apply_deterministic_rust_unresolved_pub_use_repair,
     repair_rust_missing_module_files,
 )
+from polaris.cells.roles.adapters.internal.director.execution_tools import DirectorToolExecutor
+from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
+    run_runtime_repair_with_director_tools,
+)
+
+
+def _run_runtime_rust_repair(
+    workspace: Path,
+    *,
+    source_tool: str,
+    artifact_quality_errors: list[str],
+    relative_paths: tuple[str, ...],
+) -> list[dict[str, object]]:
+    base_files = {
+        relative_path: (workspace / relative_path).read_text(encoding="utf-8")
+        for relative_path in relative_paths
+    }
+    return run_runtime_repair_with_director_tools(
+        SimpleNamespace(workspace=str(workspace), _execution=SimpleNamespace(_message_bus=None)),
+        workspace_path=workspace,
+        task_id="factory-quality-gate:test",
+        source_tool=source_tool,
+        executor_factory=DirectorToolExecutor,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        allowed_paths=relative_paths,
+        use_editor=False,
+    )
 
 
 def test_deterministic_rust_crate_import_repair_aligns_import_to_cargo_crate_name(tmp_path: Path) -> None:
@@ -128,10 +155,11 @@ def test_deterministic_rust_dependency_repair_adds_serde_and_serde_json(tmp_path
         encoding="utf-8",
     )
 
-    results = _apply_deterministic_rust_dependency_repair(
-        SimpleNamespace(workspace=str(tmp_path)),
-        task_id="factory-quality-gate:test",
+    results = _run_runtime_rust_repair(
+        tmp_path,
+        source_tool="deterministic_rust_dependency_repair",
         artifact_quality_errors=["error[E0432]: unresolved import `serde`"],
+        relative_paths=("Cargo.toml", "src/main.rs"),
     )
 
     cargo = (tmp_path / "Cargo.toml").read_text(encoding="utf-8")
@@ -663,6 +691,7 @@ def test_rust_missing_module_nested_grouped_import(tmp_path: Path) -> None:
     repairs = repair_rust_missing_module_files(tmp_path)
 
     # element.rs and flavor.rs should be created
+    assert repairs
     element_rs = (models_dir / "element.rs").read_text(encoding="utf-8")
     flavor_rs = (models_dir / "flavor.rs").read_text(encoding="utf-8")
     assert "pub enum Element" in element_rs

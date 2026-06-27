@@ -186,8 +186,9 @@ Remaining code still lives elsewhere:
   `materialization.target_runtime`, `materialization.python_import`, and
   `materialization.go_import`; do not collapse them back into a single
   `materialization.quality_repair_host` step. The legacy
-  `_apply_deterministic_materialization_quality_repairs` function is only a
-  facade to the bridge and must not regain flat orchestration logic.
+  `_apply_deterministic_materialization_quality_repairs` facade has been
+  hard-cut and must not be restored, forwarded, or used by tests, bench harnesses,
+  or agents.
 
 AGI/resident advisory is intentionally not part of the Director repair execution
 path. Future AGI integration may consume repair diagnostics and receipts to emit

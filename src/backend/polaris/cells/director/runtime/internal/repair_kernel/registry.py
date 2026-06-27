@@ -80,6 +80,7 @@ from .typescript_syntax import (
     TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL,
     TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
     TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL,
+    TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL,
     TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
     TYPESCRIPT_MISSING_CLOSING_BRACE_SOURCE_TOOL,
     TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
@@ -115,6 +116,7 @@ class RepairArchetype(str, Enum):
     MISSING_METHOD_SELF = "missing_method_self"
     NULLABLE_TYPE_MISMATCH = "nullable_type_mismatch"
     OBJECT_LITERAL_SYNTAX = "object_literal_syntax"
+    INVALID_IDENTIFIER = "invalid_identifier"
     GENERATED_RESIDUE = "generated_residue"
     WRONG_IMPORT_PATH = "wrong_import_path"
 
@@ -159,6 +161,7 @@ _RUNTIME_MIGRATION_SOURCE_TOOLS = frozenset(
         TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL,
         TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
         TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL,
+        TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL,
         TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
         TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
         TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
@@ -2122,6 +2125,23 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                     "planner_scope": "generated_marker_single_literal_safe_initializer_only",
                     "unsafe_cases_fail_closed": True,
                 },
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.hyphenated_identifier",
+                source_tool=TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.INVALID_IDENTIFIER,
+                priority=1,
+                diagnostic_codes=("typescript_ts1005",),
+                raw_terms=("hyphenated", "identifier"),
+                risk_level="low",
+                description=(
+                    "Repairs illegal hyphenated TypeScript variable identifiers reported as TS1005 when the "
+                    "diagnostic line has a safe const/let/var declaration."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="same_file_hyphenated_variable_identifier"),
             ),
             RepairRuleDefinition(
                 rule_id="typescript.object_literal_missing_comma",

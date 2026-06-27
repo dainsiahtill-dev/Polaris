@@ -8,9 +8,6 @@ from typing import Any
 
 import tomllib
 
-from ..execution_tools import DirectorToolExecutor
-from ._runtime_bridge import run_runtime_repair_with_director_tools
-
 _RUST_UNRESOLVED_CRATE_RE = re.compile(
     r"(?:cannot find (?:module or )?crate|use of unresolved module or unlinked crate) "
     r"[`'\"](?P<crate>[A-Za-z_][A-Za-z0-9_]*)[`'\"]",
@@ -115,49 +112,6 @@ def _apply_deterministic_rust_crate_import_repair(
             }
         )
     return results
-
-
-def _apply_deterministic_rust_dependency_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    workspace = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace.is_dir():
-        return []
-    cargo_path = workspace / "Cargo.toml"
-    if not cargo_path.is_file():
-        return []
-
-    base_files: dict[str, str] = {}
-    try:
-        base_files["Cargo.toml"] = cargo_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
-
-    for rust_file in sorted(workspace.rglob("*.rs")):
-        try:
-            relative_path = rust_file.relative_to(workspace)
-        except ValueError:
-            continue
-        if "target" in relative_path.parts:
-            continue
-        try:
-            base_files[relative_path.as_posix()] = rust_file.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-
-    return run_runtime_repair_with_director_tools(
-        adapter,
-        workspace_path=workspace,
-        task_id=task_id,
-        source_tool="deterministic_rust_dependency_repair",
-        executor_factory=DirectorToolExecutor,
-        base_files=base_files,
-        artifact_quality_errors=artifact_quality_errors,
-        use_editor=False,
-    )
 
 
 def _apply_deterministic_rust_derive_repair(

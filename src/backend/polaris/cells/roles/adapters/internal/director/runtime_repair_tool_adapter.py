@@ -138,7 +138,7 @@ def run_runtime_repair_with_director_tools(
                 allowed_paths=tuple(allowed_paths or base_files.keys()),
                 advisor_notes=tuple(advisor_notes),
                 max_rounds=max_rounds,
-                metadata={"adapter_bridge": "_runtime_bridge"},
+                metadata={"adapter_bridge": "runtime_repair_tool_adapter"},
             ),
             writer=_policy_gated_writer,
             editor=_policy_gated_editor if use_editor else None,
@@ -290,8 +290,8 @@ def _project_failed_planning_preflight(
 ) -> dict[str, Any]:
     return {
         "tool": "director_repair_kernel",
-                "tool_name": "director_repair_kernel",
-                "success": False,
+        "tool_name": "director_repair_kernel",
+        "success": False,
         "result": {
             "ok": False,
             "source_tool": source_tool,
@@ -368,9 +368,9 @@ def _project_failed_convergence_repair(
             "receipts": receipts,
             "rounds": rounds,
             "final_diagnostics": final_diagnostics,
-                "metadata": metadata,
-                "delete_results": dict(delete_results),
-                "repair_kernel": {
+            "metadata": metadata,
+            "delete_results": dict(delete_results),
+            "repair_kernel": {
                 "owner_cell": "director.runtime",
                 "convergence_status": getattr(convergence_result, "status", None),
                 "converged": bool(getattr(convergence_result, "converged", False)),

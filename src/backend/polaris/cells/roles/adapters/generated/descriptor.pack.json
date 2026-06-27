@@ -537,12 +537,6 @@
     },
     {
       "type": "function",
-      "name": "_apply_deterministic_patch_residue_cleanup",
-      "description": "Clean leaked patch markers from declared task files before invoking the LLM.",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
       "name": "_apply_deterministic_node_test_script_contract_repair",
       "description": "Replace an over-strict generated Node test contract with substantive checks.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
@@ -645,12 +639,6 @@
     },
     {
       "type": "function",
-      "name": "_apply_deterministic_materialization_quality_repairs",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
       "name": "_apply_deterministic_pre_materialization_declared_target_repairs",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
@@ -688,12 +676,6 @@
     {
       "type": "function",
       "name": "_normalize_ts_class_field_initialization",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_typescript_return_object_semicolon_repair",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },

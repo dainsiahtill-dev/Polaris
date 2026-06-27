@@ -27,9 +27,9 @@ from polaris.cells.director.runtime.public.service import (
     validate_director_repair_advisory,
 )
 
-from .deterministic_repairs._runtime_bridge import run_runtime_repair_with_director_tools
 from .execution_tools import DirectorToolExecutor
 from .repair_profile_projection import project_repair_kernel_summary
+from .runtime_repair_tool_adapter import run_runtime_repair_with_director_tools
 
 StepRunner = Callable[[Any, Path, str], list[dict[str, Any]]]
 RuntimeAdvisorNotes = tuple[RepairAdvisoryV1, ...]

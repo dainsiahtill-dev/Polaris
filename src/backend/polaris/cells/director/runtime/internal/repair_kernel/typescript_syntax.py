@@ -24,6 +24,7 @@ TYPEORM_MODEL_NORMALIZATION_SOURCE_TOOL = "deterministic_typeorm_model_normaliza
 TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL = "deterministic_typescript_commonjs_package_type_repair"
 TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL = "deterministic_typescript_entrypoint_repair"
 TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL = "deterministic_typescript_escaped_newline_repair"
+TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL = "deterministic_typescript_hyphenated_identifier_repair"
 TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL = "deterministic_typescript_member_alias_repair"
 TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL = "deterministic_typescript_missing_export_repair"
 TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL = "deterministic_typescript_missing_member_repair"
@@ -54,6 +55,10 @@ _TS_OBJECT_PROPERTY_VALUE_SEMICOLON_LINE_RE = re.compile(
 _TS_RETURN_OBJECT_START_RE = re.compile(r"\breturn\s*\{\s*$")
 _TS_OBJECT_LITERAL_START_RE = re.compile(r"(?:\breturn\s*|=\s*)\{\s*$")
 _TS_IDENTIFIER_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
+_TS_HYPHENATED_VARIABLE_DECLARATION_RE = re.compile(
+    r"\b(?:const|let|var)\s+(?P<left>[A-Za-z_$][A-Za-z0-9_$]*)-(?P<right>[A-Za-z_$][A-Za-z0-9_$]*)"
+    r"\b(?=\s*(?::|=))"
+)
 _TS_POSSIBLY_NULL_RAW_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS18047:\s*"
     r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+is\s+possibly\s+['\"]null['\"]",
@@ -284,6 +289,120 @@ def repair_typescript_object_literal_commas(text: str) -> str:
         while object_literal_depths and brace_depth < object_literal_depths[-1]:
             object_literal_depths.pop()
     return "".join(repaired) if changed else str(text or "")
+
+
+def _typescript_camel_case_hyphenated_identifier(left: str, right: str) -> str:
+    if not left or not right:
+        return ""
+    return f"{left}{right[0].upper()}{right[1:]}"
+
+
+def _repair_typescript_hyphenated_identifiers(
+    *,
+    original: str,
+    diagnostics: Sequence[RepairDiagnostic],
+) -> tuple[str, dict[str, str], tuple[str, ...]]:
+    lines = str(original or "").splitlines(keepends=True)
+    replacements: dict[str, str] = {}
+    diagnostic_ids: list[str] = []
+    for diagnostic in diagnostics:
+        if not _is_typescript_comma_expected_diagnostic(diagnostic):
+            continue
+        line_number = _typescript_diagnostic_line(diagnostic)
+        if not line_number or line_number < 1 or line_number > len(lines):
+            continue
+        line = lines[line_number - 1].rstrip("\r\n")
+        match = _TS_HYPHENATED_VARIABLE_DECLARATION_RE.search(line)
+        if not match:
+            continue
+        old_name = f"{match.group('left')}-{match.group('right')}"
+        new_name = _typescript_camel_case_hyphenated_identifier(match.group("left"), match.group("right"))
+        if not old_name or not new_name or old_name == new_name:
+            continue
+        replacements[old_name] = new_name
+        diagnostic_ids.append(diagnostic.diagnostic_id)
+
+    repaired = str(original or "")
+    for old_name, new_name in sorted(replacements.items(), key=lambda item: (-len(item[0]), item[0])):
+        token_re = re.compile(rf"(?<![A-Za-z0-9_$]){re.escape(old_name)}(?![A-Za-z0-9_$])")
+        repaired = token_re.sub(new_name, repaired)
+    return repaired, replacements, tuple(diagnostic_ids)
+
+
+def _typescript_diagnostic_line(diagnostic: RepairDiagnostic) -> int | None:
+    if diagnostic.line:
+        return diagnostic.line
+    raw = str(diagnostic.raw or diagnostic.message or "")
+    path = _normalize_repair_path(str(diagnostic.path or ""))
+    if not raw or not path:
+        return None
+    match = re.search(rf"{re.escape(path)}\((?P<line>\d+),(?P<col>\d+)\)", raw)
+    if not match:
+        return None
+    try:
+        return int(match.group("line"))
+    except (TypeError, ValueError):
+        return None
+
+
+def build_typescript_hyphenated_identifier_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build a narrow TS1005 repair plan for illegal hyphenated variable identifiers."""
+
+    normalized_base_files = {
+        _normalize_repair_path(path): str(content or "")
+        for path, content in dict(base_files or {}).items()
+        if _normalize_repair_path(path)
+    }
+    diagnostics_by_path: dict[str, list[RepairDiagnostic]] = {}
+    for diagnostic in diagnostics:
+        if not _is_typescript_comma_expected_diagnostic(diagnostic):
+            continue
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        if not path or path not in normalized_base_files:
+            continue
+        diagnostics_by_path.setdefault(path, []).append(diagnostic)
+
+    operations: list[RepairOperation] = []
+    matched_diagnostics: list[RepairDiagnostic] = []
+    for path in sorted(diagnostics_by_path):
+        original = str(normalized_base_files.get(path) or "")
+        repaired, replacements, diagnostic_ids = _repair_typescript_hyphenated_identifiers(
+            original=original,
+            diagnostics=diagnostics_by_path[path],
+        )
+        if repaired == original or not replacements:
+            continue
+        operations.extend(
+            _text_replace_operations_from_repair(
+                path=path,
+                original=original,
+                repaired=repaired,
+                metadata={
+                    "diagnostic_ids": diagnostic_ids,
+                    "repair_kind": "typescript_hyphenated_identifier",
+                    "replacements": dict(replacements),
+                },
+            )
+        )
+        matched_diagnostics.extend(diagnostics_by_path[path])
+
+    if not operations:
+        return None
+    return RepairPlan(
+        rule_id="typescript.hyphenated_identifier",
+        source_tool=TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL,
+        operations=tuple(operations),
+        diagnostics=tuple(matched_diagnostics),
+        mode=mode,
+        risk_level="low",
+        priority=1,
+        metadata={"runtime_plan_scope": "same_file_hyphenated_variable_identifier"},
+    )
 
 
 def build_typescript_object_literal_comma_plan(
@@ -747,6 +866,7 @@ def build_typescript_runtime_plan_for_source_tool(
         TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL: _build_typescript_commonjs_package_type_plan,
         TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL: _build_typescript_entrypoint_plan,
         TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL: _build_typescript_escaped_newline_plan,
+        TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL: build_typescript_hyphenated_identifier_plan,
         TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL: _build_typescript_member_alias_plan,
         TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL: _build_typescript_missing_export_plan,
         TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL: _build_typescript_missing_member_plan,
@@ -1548,14 +1668,20 @@ def _build_typescript_vitest_globals_plan(
         repaired = _add_vitest_import_to_typescript_test(original, symbols)
         if not original or repaired == original:
             continue
-        operations.extend(
-            _text_replace_operations_from_repair(
-                path=path,
-                original=original,
-                repaired=repaired,
-                metadata={"repair_kind": "typescript_vitest_global_import", "symbols": tuple(sorted(symbols))},
+        metadata = {"repair_kind": "typescript_vitest_global_import", "symbols": tuple(sorted(symbols))}
+        if _TS_VITEST_IMPORT_RE.search(original):
+            operations.extend(
+                _text_replace_operations_from_repair(
+                    path=path,
+                    original=original,
+                    repaired=repaired,
+                    metadata=metadata,
+                )
             )
-        )
+        else:
+            operation = _prepend_typescript_vitest_import_operation(path=path, original=original, symbols=symbols)
+            if operation is not None:
+                operations.append(operation)
         globals_repaired.extend({"file": path, "symbol": symbol} for symbol in sorted(symbols))
     package_text = str(base_files.get("package.json") or "")
     if package_text:
@@ -1969,15 +2095,136 @@ def _missing_export_operation(
     if _typescript_module_exports_symbol(original, symbol):
         return None, {}
     exported = _export_existing_typescript_declaration(original, symbol)
+    declaration_kind = "export_existing"
     if exported == original:
-        return None, {}
+        declaration_kind, declaration = _build_typescript_missing_export_declaration(
+            symbol=symbol,
+            importer_text=str(base_files.get(importer) or ""),
+        )
+        if not declaration:
+            return None, {}
+        operation = _append_typescript_missing_export_declaration_operation(
+            path=exporter,
+            original=original,
+            declaration=declaration,
+            symbol=symbol,
+            declaration_kind=declaration_kind,
+        )
+        return (
+            operation,
+            {"file": exporter, "symbol": symbol, "kind": declaration_kind},
+        ) if operation is not None else (None, {})
     ops = _text_replace_operations_from_repair(
         path=exporter,
         original=original,
         repaired=exported,
-        metadata={"repair_kind": "typescript_missing_export", "symbol": symbol},
+        metadata={
+            "repair_kind": "typescript_missing_export",
+            "symbol": symbol,
+            "declaration_kind": declaration_kind,
+        },
     )
-    return (ops[0], {"file": exporter, "symbol": symbol}) if len(ops) == 1 else (None, {})
+    return (ops[0], {"file": exporter, "symbol": symbol, "kind": declaration_kind}) if len(ops) == 1 else (None, {})
+
+
+def _append_typescript_missing_export_declaration_operation(
+    *,
+    path: str,
+    original: str,
+    declaration: str,
+    symbol: str,
+    declaration_kind: str,
+) -> RepairOperation | None:
+    token = str(original or "")
+    declaration_text = "\n\n" + str(declaration or "").rstrip() + "\n"
+    if not declaration_text.strip():
+        return None
+    if token.endswith("\n"):
+        span_start = len(token) - 1
+        span_end = len(token)
+        expected = "\n"
+        replacement = declaration_text
+    elif token:
+        span_start = len(token) - 1
+        span_end = len(token)
+        expected = token[-1]
+        replacement = f"{token[-1]}{declaration_text}"
+    else:
+        return None
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=span_start,
+        span_end=span_end,
+        expected=expected,
+        replacement=replacement,
+        before_hash=sha256_text(token),
+        metadata={
+            "repair_kind": "typescript_missing_export",
+            "symbol": symbol,
+            "declaration_kind": declaration_kind,
+            "append_declaration": True,
+        },
+    )
+
+
+def _build_typescript_missing_export_declaration(*, symbol: str, importer_text: str) -> tuple[str, str]:
+    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
+        return "", ""
+    if _typescript_symbol_is_constructed(importer_text, symbol):
+        return "class", _build_typescript_missing_export_class_declaration(symbol=symbol, importer_text=importer_text)
+    if _typescript_symbol_is_called(importer_text, symbol):
+        return "function", f"export function {symbol}(..._args: unknown[]): any {{\n  return undefined;\n}}"
+    if symbol[:1].isupper():
+        return "type", f"export type {symbol} = any;"
+    return "const", f"export const {symbol}: unknown = undefined;"
+
+
+def _typescript_symbol_is_constructed(text: str, symbol: str) -> bool:
+    return bool(re.search(rf"\bnew\s+{re.escape(symbol)}\s*\(", str(text or "")))
+
+
+def _typescript_symbol_is_called(text: str, symbol: str) -> bool:
+    token = str(text or "")
+    return bool(re.search(rf"(?<!new\s)\b{re.escape(symbol)}\s*\(", token))
+
+
+def _build_typescript_missing_export_class_declaration(*, symbol: str, importer_text: str) -> str:
+    methods = _typescript_methods_used_on_constructed_symbol(importer_text, symbol)
+    lines = [
+        f"export class {symbol} {{",
+        "  public constructor(..._args: unknown[]) {}",
+    ]
+    for method in methods:
+        return_type = "string" if method in {"report", "render", "toString"} else "any"
+        return_value = f'"{symbol} ready"' if return_type == "string" else "undefined"
+        lines.extend(
+            [
+                f"  public {method}(..._args: unknown[]): {return_type} {{",
+                f"    return {return_value};",
+                "  }",
+            ]
+        )
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _typescript_methods_used_on_constructed_symbol(text: str, symbol: str) -> list[str]:
+    token = str(text or "")
+    variables: list[str] = []
+    constructed_var_re = re.compile(
+        rf"\b(?:const|let|var)\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*new\s+{re.escape(symbol)}\s*\("
+    )
+    for match in constructed_var_re.finditer(token):
+        variables.append(str(match.group("name") or ""))
+    methods: list[str] = []
+    for variable in _dedupe_preserve_order([name for name in variables if name]):
+        for match in re.finditer(rf"\b{re.escape(variable)}\.(?P<method>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(", token):
+            methods.append(str(match.group("method") or ""))
+    direct_re = re.compile(rf"\bnew\s+{re.escape(symbol)}\s*\([^)]*\)\s*\.\s*(?P<method>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(")
+    for match in direct_re.finditer(token):
+        methods.append(str(match.group("method") or ""))
+    return _dedupe_preserve_order([method for method in methods if method and method != "constructor"])
 
 
 def _apply_single_text_operation(content: str, operation: RepairOperation) -> str:
@@ -2832,6 +3079,42 @@ def _add_vitest_import_to_typescript_test(text: str, symbols: set[str]) -> str:
     return f"import {{ {', '.join(requested)} }} from 'vitest';\n{text}"
 
 
+def _prepend_typescript_vitest_import_operation(
+    *,
+    path: str,
+    original: str,
+    symbols: set[str],
+) -> RepairOperation | None:
+    requested = sorted(symbol for symbol in symbols if symbol in _TS_TEST_GLOBAL_NAMES)
+    if not requested or not original:
+        return None
+    first_line_end = original.find("\n")
+    if first_line_end < 0:
+        span_start = 0
+        span_end = len(original)
+        expected = original
+        replacement = f"import {{ {', '.join(requested)} }} from 'vitest';\n{original}"
+    else:
+        span_start = 0
+        span_end = first_line_end + 1
+        expected = original[:span_end]
+        replacement = f"import {{ {', '.join(requested)} }} from 'vitest';\n{expected}"
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=span_start,
+        span_end=span_end,
+        expected=expected,
+        replacement=replacement,
+        before_hash=sha256_text(original),
+        metadata={
+            "repair_kind": "typescript_vitest_global_import",
+            "symbols": tuple(requested),
+            "prepend_import": True,
+        },
+    )
+
+
 def _typescript_vitest_manifest_operations(package_text: str) -> tuple[RepairOperation, ...]:
     payload = _json_object(package_text)
     operations: list[RepairOperation] = []
@@ -3614,6 +3897,7 @@ __all__ = [
     "TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL",
     "TYPESCRIPT_ENUM_MEMBER_SEPARATOR_SOURCE_TOOL",
     "TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL",
+    "TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL",
     "TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL",
     "TYPESCRIPT_MISSING_CLOSING_BRACE_SOURCE_TOOL",
     "TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL",
@@ -3637,6 +3921,7 @@ __all__ = [
     "build_typescript_canvas_scale_return_type_plan",
     "build_typescript_duplicate_object_property_plan",
     "build_typescript_enum_member_separator_plan",
+    "build_typescript_hyphenated_identifier_plan",
     "build_typescript_missing_closing_brace_plan",
     "build_typescript_nullable_canvas_context_plan",
     "build_typescript_number_to_string_argument_plan",

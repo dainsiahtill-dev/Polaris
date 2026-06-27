@@ -44,6 +44,7 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     build_typescript_canvas_scale_return_type_plan,
     build_typescript_duplicate_object_property_plan,
     build_typescript_enum_member_separator_plan,
+    build_typescript_hyphenated_identifier_plan,
     build_typescript_missing_closing_brace_plan,
     build_typescript_nullable_canvas_context_plan,
     build_typescript_number_to_string_argument_plan,
@@ -1081,6 +1082,36 @@ def test_typescript_object_literal_comma_runtime_plans_composition_inside_kernel
     assert "flightTime, landed:" in planning.composition.patches[0].content_after
 
 
+def test_typescript_hyphenated_identifier_rule_repairs_declaration_and_uses() -> None:
+    content = (
+        "export function checkScripts(scripts: Record<string, string>) {\n"
+        "  const hasSample-check = Object.values(scripts).some((value) => /DONE/.test(value));\n"
+        "  return !hasSample-check;\n"
+        "}\n"
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        ["TypeScript syntax check failed: src/verify.ts(2,18): error TS1005: ',' expected."]
+    )
+
+    plan = build_typescript_hyphenated_identifier_plan(
+        base_files={"src/verify.ts": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "typescript.hyphenated_identifier"
+    assert plan.source_tool == ts_syntax.TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == "src/verify.ts"
+    assert "const hasSampleCheck =" in str(operation.replacement)
+    assert "return !hasSampleCheck;" in str(operation.replacement)
+    assert "hasSample-check" in str(operation.expected)
+    assert "hasSample-check" not in str(operation.replacement)
+
+
 def test_typescript_nullable_canvas_context_rule_plans_precise_text_replacements() -> None:
     content = (
         "const canvas = document.querySelector('canvas') as HTMLCanvasElement;\n"
@@ -1439,6 +1470,23 @@ def _typescript_conservative_planner_safe_cases() -> dict[str, tuple[dict[str, s
             {"src/app.ts": "// generated\\nexport const value = 1;\n"},
             (_ts_diag("TypeScript escaped newline in line comment before code in src/app.ts"),),
         ),
+        ts_syntax.TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL: (
+            {
+                "src/verify.ts": (
+                    "export function checkScripts(scripts: Record<string, string>) {\n"
+                    "  const hasSample-check = Object.values(scripts).some((v) => /DONE/.test(v));\n"
+                    "  return !hasSample-check;\n"
+                    "}\n"
+                )
+            },
+            (
+                _ts_diag(
+                    "src/verify.ts(2,18): error TS1005: ',' expected.",
+                    path="src/verify.ts",
+                    code="typescript_ts1005",
+                ),
+            ),
+        ),
         ts_syntax.TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL: (
             {
                 "src/app.ts": (
@@ -1620,6 +1668,7 @@ def test_typescript_conservative_planner_recognizes_all_legacy_ts_html_source_to
         ts_syntax.TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
@@ -1639,7 +1688,7 @@ def test_typescript_conservative_planner_recognizes_all_legacy_ts_html_source_to
     }
 
     assert set(cases) == expected_source_tools
-    assert len(cases) == 22
+    assert len(cases) == 23
 
     plans = []
     for source_tool, (base_files, diagnostics) in cases.items():
@@ -1909,7 +1958,7 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
     assert "deterministic_rust_post_repair" in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert len(runtime_repair_source_tools()) == len(bindings)
-    assert len(runtime_repair_source_tools()) == 88
+    assert len(runtime_repair_source_tools()) == 89
     assert sum(1 for binding in bindings if binding["language"] == "rust") == 21
     assert runtime_repair_source_tools() == tuple(binding["source_tool"] for binding in bindings)
     assert all(set(binding) == {"source_tool", "language", "rule_id"} for binding in bindings)
@@ -7589,7 +7638,7 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         or source_tool == "deterministic_javascript_typescript_annotation_repair"
     ]
     catalog_failure_message = (
-        "expected public strategy catalog ledger total=88 executable_runtime=88 legacy_strategy_host=0; "
+        "expected public strategy catalog ledger total=89 executable_runtime=89 legacy_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
         "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
     )
@@ -7598,14 +7647,14 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
-    assert catalog_summary["total"] == 88
+    assert catalog_summary["total"] == 89
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert legacy_source_tools == [], catalog_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 88, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 89, catalog_failure_message
     assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, catalog_failure_message
-    assert catalog_summary["executable_runtime_binding_count"] == 88, catalog_failure_message
+    assert catalog_summary["executable_runtime_binding_count"] == 89, catalog_failure_message
     assert catalog_summary["legacy_strategy_host_count"] == 0, catalog_failure_message
-    assert len(catalog_summary["executable_runtime_source_tools"]) == 88, catalog_failure_message
+    assert len(catalog_summary["executable_runtime_source_tools"]) == 89, catalog_failure_message
     assert set(catalog_summary["implementation_status_counts"]).issubset({"executable_runtime", "legacy_strategy_host"})
     assert "reserved_only" not in catalog_summary["implementation_status_counts"]
     assert "metadata_rule_registered" not in catalog_summary["implementation_status_counts"]

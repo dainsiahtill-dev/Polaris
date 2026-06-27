@@ -10,6 +10,7 @@ continues.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from polaris.cells.director.runtime.public.service import query_director_repair_strategy_catalog
@@ -84,6 +85,9 @@ from .deterministic_repairs import (
     _typescript_module_runtime_exports_symbol as _typescript_module_runtime_exports_symbol,
     _typescript_relative_import_without_suffix as _typescript_relative_import_without_suffix,
 )
+from .execution_tools import DirectorToolExecutor
+from .runtime_repair_tool_adapter import run_runtime_repair_with_director_tools
+from .task_scope_paths import _extract_task_path_candidates, _normalize_declared_task_path
 
 _LEGACY_DETERMINISTIC_REPAIR_COMPAT_PREFIXES = ("_apply_deterministic_", "repair_")
 # Migration-only surface for old ``execute_method`` imports. Production calls
@@ -175,10 +179,44 @@ def run_patch_residue_cleanup(
     task: dict[str, Any],
     task_id: str,
 ) -> list[dict[str, Any]]:
-    return _legacy_deterministic_repairs._apply_deterministic_patch_residue_cleanup(
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+    workspace_name = workspace_path.name
+    base_files: dict[str, str] = {}
+    for candidate in _extract_task_path_candidates(task):
+        normalized = _normalize_declared_task_path(candidate, workspace_name=workspace_name)
+        if not normalized:
+            continue
+        target_path = (workspace_path / normalized).resolve()
+        try:
+            target_path.relative_to(workspace_path)
+        except ValueError:
+            continue
+        if not target_path.is_file() or target_path.suffix.lower() not in {
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".mjs",
+            ".cjs",
+        }:
+            continue
+        try:
+            text = target_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        base_files[normalized] = text
+    if not base_files:
+        return []
+
+    return run_runtime_repair_with_director_tools(
         adapter,
-        task=task,
+        workspace_path=workspace_path,
         task_id=task_id,
+        source_tool="deterministic_patch_residue_cleanup",
+        executor_factory=DirectorToolExecutor,
+        base_files=base_files,
     )
 
 
