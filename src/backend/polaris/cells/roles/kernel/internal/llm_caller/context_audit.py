@@ -14,6 +14,12 @@ from .response_types import PreparedLLMRequest
 _UNDERUTILIZED_WINDOW_THRESHOLD = 8192
 _UNDERUTILIZED_RATIO = 0.15
 _RECEIPT_REF_RE = re.compile(r"receipt://([A-Za-z0-9_.:/-]+)")
+_REF_BASED_SUPERSEDED_FINDING_CODES = frozenset(
+    {
+        "missing_context_coverage",
+        "underutilized_with_missing_context",
+    }
+)
 _COVERAGE_FLAG_TO_REF = {
     "has_pm_contract": "pm_contract",
     "has_chief_engineer_blueprint": "ce_blueprint",
@@ -94,6 +100,28 @@ def _message_chars(messages: list[dict[str, Any]]) -> int:
         total += len(str(message.get("role") or ""))
         total += len(str(message.get("content") or ""))
     return total
+
+
+def _message_content_chars(messages: list[dict[str, Any]]) -> int:
+    total = 0
+    for message in messages:
+        if isinstance(message, dict):
+            total += len(str(message.get("content") or ""))
+    return total
+
+
+def _final_request_redaction_safety(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Describe whether coverage metadata embeds prompt text."""
+
+    return {
+        "schema_version": "polaris.final_request_redaction_safety.v1",
+        "snapshot_content_policy": "metadata_only",
+        "message_count": len(messages),
+        "message_content_chars_observed": _message_content_chars(messages),
+        "message_content_embedded": False,
+        "evidence_coverage_embeds_content": False,
+        "safe": True,
+    }
 
 
 def _request_messages(ai_request: Any, fallback: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1371,6 +1399,7 @@ def _final_request_evidence_coverage(
         },
         "workflow_chain": workflow_chain,
         "ledger_evidence": _ledger_evidence(ai_request, receipt_refs=receipt_refs),
+        "redaction_safety": _final_request_redaction_safety(messages),
         "coverage_ratio": round(coverage_ratio, 4),
         "pass": bool(role_identity_ok and not missing_required_refs and not missing_required_tools),
     }
@@ -1378,6 +1407,13 @@ def _final_request_evidence_coverage(
 
 def _add_evidence_coverage_findings(quality: dict[str, Any], evidence_coverage: dict[str, Any]) -> dict[str, Any]:
     findings = list(quality.get("findings") or [])
+    evidence_pass = bool(evidence_coverage.get("pass"))
+    if evidence_pass:
+        findings = [
+            item
+            for item in findings
+            if not (isinstance(item, dict) and item.get("code") in _REF_BASED_SUPERSEDED_FINDING_CODES)
+        ]
     missing_refs = evidence_coverage.get("missing_required_refs")
     if isinstance(missing_refs, list) and missing_refs:
         findings.append(
@@ -1410,9 +1446,10 @@ def _add_evidence_coverage_findings(quality: dict[str, Any], evidence_coverage: 
         )
     return {
         **quality,
+        "missing_coverage": [] if evidence_pass else list(quality.get("missing_coverage") or []),
         "context_needs_review": bool(findings),
         "findings": findings,
-        "final_request_evidence_coverage_pass": bool(evidence_coverage.get("pass")),
+        "final_request_evidence_coverage_pass": evidence_pass,
         "missing_required_refs": list(evidence_coverage.get("missing_required_refs") or []),
         "missing_required_tools": list(evidence_coverage.get("missing_required_tools") or []),
     }

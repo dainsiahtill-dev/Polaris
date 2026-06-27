@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
@@ -330,6 +331,104 @@ def test_final_request_context_audit_includes_execution_envelope_coverage() -> N
     }
     assert evidence_coverage["missing_required_refs"] == []
     assert evidence_coverage["pass"] is True
+
+
+def test_final_request_evidence_coverage_is_ref_based_and_redacted_when_underutilized() -> None:
+    secret = "sk-test-context-secret-should-not-leak"
+    execution_profile = {
+        "schema_version": "task.execution_profile.v1",
+        "source": "director.tasking",
+        "task_type": "implement",
+        "phase": "materialize",
+        "language": "python",
+        "target_files": ["src/main.py"],
+    }
+    execution_strategy = {
+        "schema_version": "task.execution_strategy.v1",
+        "source": "director.tasking",
+        "evidence_requirements": [
+            "pm_task_contract",
+            "chief_engineer_blueprint",
+            "target_files_or_declared_scopes",
+            "execution_profile",
+            "execution_strategy",
+            "execution_envelope",
+        ],
+    }
+    execution_envelope = {
+        "schema_version": "polaris.execution_envelope.v1",
+        "run_id": "run-1",
+        "task_id": "TASK-1",
+        "trace_id": "trace-1",
+        "pm_contract": {"ref": "tasks/plan.json", "hash": "pm-hash"},
+        "ce_blueprint": {"ref": "runtime/contracts/ce.json", "hash": "ce-hash"},
+        "handoff_decision": {
+            "ref": "runtime/contracts/handoff.json",
+            "hash": "handoff-hash",
+            "allowed": True,
+        },
+        "execution_profile": {"ref": "runtime/contracts/profile.json", "hash": "profile-hash"},
+        "authorization": {
+            "target_files": ["src/main.py"],
+            "scope_paths": ["src/main.py"],
+            "allowed_write_paths": ["src/main.py"],
+        },
+        "audit_policy": {"final_provider_request_required": True},
+        "envelope_hash": "envelope-hash",
+    }
+    message = (
+        "PM Task Contract / 任务合同: TASK-1 target_files src/main.py. "
+        "Chief Engineer Blueprint / CE 蓝图交接: blueprint_id ce_TASK-1. "
+        f"Private diagnostic token: {secret}."
+    )
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 48000},
+        context={
+            "chat_messages": [{"role": "user", "content": message}],
+            "director_execution_profile": execution_profile,
+            "director_execution_strategy": execution_strategy,
+            "director_execution_envelope": execution_envelope,
+            "execution_envelope_hash": "envelope-hash",
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[{"role": "user", "content": message}],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    profile = SimpleNamespace(role_id="director", max_context_tokens=1_000_000)
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=profile,
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    finding_codes = {item["code"] for item in audit["context_quality"]["findings"]}
+    assert audit["context_underutilized"] is True
+    assert evidence_coverage["missing_required_refs"] == []
+    assert evidence_coverage["coverage_ratio"] == 1.0
+    assert evidence_coverage["pass"] is True
+    assert evidence_coverage["redaction_safety"]["safe"] is True
+    assert evidence_coverage["redaction_safety"]["message_content_embedded"] is False
+    assert evidence_coverage["redaction_safety"]["evidence_coverage_embeds_content"] is False
+    assert "underutilized_with_missing_context" not in finding_codes
+    assert audit["context_quality"]["context_needs_review"] is False
+    enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
+
+    snapshot = build_final_provider_request_snapshot(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=profile,
+    )
+    assert secret not in json.dumps(snapshot, ensure_ascii=False)
 
 
 def test_final_request_context_audit_tracks_receipt_store_refs() -> None:
