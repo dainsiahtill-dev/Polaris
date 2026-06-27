@@ -108,18 +108,14 @@ class CompileEvidencePolicyCommandV1:
             self,
             "explicit_required_modalities",
             tuple(
-                str(item or "").strip().lower()
-                for item in self.explicit_required_modalities
-                if str(item or "").strip()
+                str(item or "").strip().lower() for item in self.explicit_required_modalities if str(item or "").strip()
             ),
         )
         object.__setattr__(
             self,
             "explicit_advisory_modalities",
             tuple(
-                str(item or "").strip().lower()
-                for item in self.explicit_advisory_modalities
-                if str(item or "").strip()
+                str(item or "").strip().lower() for item in self.explicit_advisory_modalities if str(item or "").strip()
             ),
         )
         object.__setattr__(self, "risk_level", str(self.risk_level or "medium").strip().lower() or "medium")
@@ -144,13 +140,13 @@ class ControlPlaneVerifierPolicyV1Error(Exception):
 
 
 __all__ = [
-    "OPTIONAL_VERIFIER_MODALITIES",
     "CORE_EVIDENCE_MODALITIES",
+    "OPTIONAL_VERIFIER_MODALITIES",
+    "SUPPORTED_EVIDENCE_MODALITIES",
     "CompileEvidencePolicyCommandV1",
     "ControlPlaneVerifierPolicyV1Error",
     "EvidencePolicyResultV1",
     "ReadVerifierPolicyQueryV1",
-    "SUPPORTED_EVIDENCE_MODALITIES",
     "UpdateVerifierPolicyCommandV1",
     "VerifierPolicyResultV1",
 ]

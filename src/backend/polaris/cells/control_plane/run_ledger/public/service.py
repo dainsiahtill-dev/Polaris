@@ -130,9 +130,7 @@ def _event_matches_barrier(event: dict[str, Any], *, append_id: str, event_hash:
         return True
     if event_hash and str(event.get("content_id") or "").strip() == event_hash:
         return True
-    if event_hash and str(event.get("event_id") or "").strip() == event_hash:
-        return True
-    return False
+    return bool(event_hash and str(event.get("event_id") or "").strip() == event_hash)
 
 
 def _event_project_id(event: dict[str, Any]) -> str:

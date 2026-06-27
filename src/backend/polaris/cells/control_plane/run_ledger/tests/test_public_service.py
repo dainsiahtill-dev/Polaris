@@ -6,12 +6,14 @@ from types import SimpleNamespace
 
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
+    ReadRunLedgerProjectionBarrierQueryV1,
     ReadRunLedgerProjectionQueryV1,
     ReadRunProvenanceBundleQueryV1,
     RunLedger,
     append_run_ledger_event,
     build_run_ledger_projection,
     read_run_ledger_projection,
+    read_run_ledger_projection_barrier,
     read_run_provenance_bundle,
     service as run_ledger_service,
     summarize_run_ledger_projection,
@@ -207,6 +209,89 @@ def test_read_run_ledger_projection_evidence_policy_failed_is_not_ok(tmp_path: P
     assert projection["evidence_policy"]["failed_required_modalities"] == ["command"]
 
 
+def test_read_run_ledger_projection_barrier_waits_for_effect_receipt(tmp_path: Path) -> None:
+    result = append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-barrier",
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "director_mutation",
+                "gate": {"name": "director_mutation", "ok": True, "summary": "effect persisted"},
+                "job_token": {
+                    "token_id": "token-barrier",
+                    "run_id": "run-barrier",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {
+                        "enabled_evidence_modalities": ["tool_receipt"],
+                        "required_evidence_modalities": ["tool_receipt"],
+                    },
+                },
+                "physical_evidence": {
+                    "modalities": {
+                        "tool_receipt": {
+                            "present": True,
+                            "ok": True,
+                            "detail": "write_file receipt recorded",
+                        }
+                    }
+                },
+            },
+        )
+    )
+    event = result.receipt["event"]
+
+    barrier_result = read_run_ledger_projection_barrier(
+        ReadRunLedgerProjectionBarrierQueryV1(
+            workspace=str(tmp_path),
+            run_id="run-barrier",
+            min_append_id=str(event["append_id"]),
+        )
+    )
+
+    assert barrier_result.barrier["barrier_satisfied"] is True
+    assert barrier_result.barrier["consumed_until_append_id"] == event["append_id"]
+    assert event["append_id"] in barrier_result.barrier["consumed_append_ids"]
+    assert barrier_result.projection["available"] is True
+    assert barrier_result.projection["ok"] is True
+
+
+def test_read_run_ledger_projection_barrier_reports_unsatisfied_snapshot(tmp_path: Path) -> None:
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-barrier-miss",
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "qa",
+                "gate": {"name": "qa_verdict", "ok": True, "summary": "qa passed"},
+                "job_token": {
+                    "token_id": "token-barrier-miss",
+                    "run_id": "run-barrier-miss",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {},
+            },
+        )
+    )
+
+    barrier_result = read_run_ledger_projection_barrier(
+        ReadRunLedgerProjectionBarrierQueryV1(
+            workspace=str(tmp_path),
+            run_id="run-barrier-miss",
+            min_append_id="append-not-yet-consumed",
+            timeout_ms=0,
+        )
+    )
+
+    assert barrier_result.barrier["barrier_satisfied"] is False
+    assert barrier_result.barrier["event_count"] == 1
+    assert barrier_result.projection["available"] is True
+
+
 def test_append_run_ledger_event_publishes_control_plane_projection_event(tmp_path: Path, monkeypatch) -> None:
     class FakePublisher:
         def __init__(self) -> None:
@@ -336,9 +421,7 @@ def test_read_run_provenance_bundle_links_contract_blueprint_envelope_and_receip
                     },
                 },
                 "physical_evidence": {
-                    "modalities": {
-                        "tool_receipt": {"present": True, "ok": True, "detail": "receipt verified"}
-                    },
+                    "modalities": {"tool_receipt": {"present": True, "ok": True, "detail": "receipt verified"}},
                     "tool_receipts": [
                         {
                             "operation": "write_file",
@@ -346,9 +429,7 @@ def test_read_run_provenance_bundle_links_contract_blueprint_envelope_and_receip
                             "capability_token": {"token_id": "token-1"},
                         }
                     ],
-                    "commands": [
-                        {"command": "python -m unittest", "ok": True, "exit_code": 0}
-                    ],
+                    "commands": [{"command": "python -m unittest", "ok": True, "exit_code": 0}],
                     "final_request_context_audit": {
                         "schema_version": "llm.final_request_context_audit.v1",
                         "final_request_evidence_coverage": {
@@ -369,9 +450,7 @@ def test_read_run_provenance_bundle_links_contract_blueprint_envelope_and_receip
         )
     )
 
-    bundle = read_run_provenance_bundle(
-        ReadRunProvenanceBundleQueryV1(workspace=str(tmp_path), run_id="run-1")
-    ).bundle
+    bundle = read_run_provenance_bundle(ReadRunProvenanceBundleQueryV1(workspace=str(tmp_path), run_id="run-1")).bundle
 
     assert bundle["schema_version"] == "polaris.run_provenance_bundle.v1"
     assert bundle["bundle_id"].startswith("run-prov-")

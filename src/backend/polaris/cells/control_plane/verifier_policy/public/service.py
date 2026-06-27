@@ -7,6 +7,7 @@ providers consume this public policy later and must emit Run Ledger evidence.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,10 @@ from typing import Any
 
 from polaris.cells.control_plane.verifier_policy.public.contracts import (
     OPTIONAL_VERIFIER_MODALITIES,
+    SUPPORTED_EVIDENCE_MODALITIES,
+    CompileEvidencePolicyCommandV1,
     ControlPlaneVerifierPolicyV1Error,
+    EvidencePolicyResultV1,
     ReadVerifierPolicyQueryV1,
     UpdateVerifierPolicyCommandV1,
     VerifierPolicyResultV1,
@@ -54,6 +58,14 @@ def _string_list(value: Any) -> list[str]:
             output.append(token)
             seen.add(token)
     return output
+
+
+def _stable_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _stable_hash(value: Any) -> str:
+    return hashlib.sha256(_stable_json(value).encode("utf-8")).hexdigest()
 
 
 def _available_from_env(name: str) -> bool:
@@ -199,6 +211,22 @@ def _environment_status() -> dict[str, Any]:
             if custom_script_available
             else "Set KERNELONE_CUSTOM_VERIFIER_SCRIPTS_ENABLED=1 before executing custom verifier scripts.",
         },
+        "qa": {"available": True, "reason": ""},
+        "code": {"available": True, "reason": ""},
+        "command": {"available": True, "reason": ""},
+        "tool_receipt": {"available": True, "reason": ""},
+        "verifier": {"available": True, "reason": ""},
+        "domain": {"available": True, "reason": ""},
+        "api_contract": {"available": True, "reason": ""},
+        "integration": {"available": True, "reason": ""},
+        "performance": {"available": False, "reason": "Performance verifier provider is not configured."},
+        "security": {"available": False, "reason": "Security verifier provider is not configured."},
+        "device": {"available": False, "reason": "Device verifier provider is not configured."},
+        "plugin_compat": {"available": True, "reason": ""},
+        "accessibility": {
+            "available": browser_available,
+            "reason": "" if browser_available else "Requires browser verifier support.",
+        },
     }
 
 
@@ -254,6 +282,153 @@ def verifier_policy_to_gate_policy(policy: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _task_text(command: CompileEvidencePolicyCommandV1) -> str:
+    parts = [
+        command.project_type,
+        command.language,
+        " ".join(command.target_files),
+        " ".join(command.acceptance_criteria),
+    ]
+    return "\n".join(parts).lower()
+
+
+def _infer_project_profile(command: CompileEvidencePolicyCommandV1) -> str:
+    project_type = command.project_type
+    text = _task_text(command)
+    if project_type:
+        return project_type
+    if any(term in text for term in ("canvas", "webgl", "html5", "interactive_visual", "browser")):
+        return "web_ui"
+    if any(term in text for term in ("game", "游戏", "physics", "collision", "fps")):
+        return "game"
+    if any(term in text for term in ("api", "service", "endpoint", "health check", "openapi")):
+        return "api_service"
+    if any(term in text for term in ("mobile", "android", "ios", "device", "apk", "ipa")):
+        return "mobile_app"
+    if any(term in text for term in ("plugin", "extension", "host lifecycle")):
+        return "plugin_platform"
+    if any(path.endswith((".html", ".tsx", ".jsx", ".vue", ".svelte")) for path in command.target_files):
+        return "web_ui"
+    return "generic"
+
+
+def _add_unique(target: list[str], *items: str) -> None:
+    for item in items:
+        token = str(item or "").strip().lower()
+        if token and token not in target:
+            target.append(token)
+
+
+def _compile_required_modalities(command: CompileEvidencePolicyCommandV1, profile: str) -> tuple[list[str], list[str]]:
+    required: list[str] = []
+    advisory: list[str] = []
+    _add_unique(required, "qa")
+    if command.target_files:
+        _add_unique(required, "code", "tool_receipt")
+    text = _task_text(command)
+    if any(term in text for term in ("build", "test", "lint", "compile", "npm ", "pytest", "go test", "cargo")):
+        _add_unique(required, "command")
+    if profile in {"web_ui", "interactive_visual", "frontend", "html5_canvas"}:
+        _add_unique(required, "browser")
+        _add_unique(advisory, "visual", "accessibility", "performance")
+    elif profile in {"game", "game_loop", "simulation"}:
+        _add_unique(required, "domain")
+        _add_unique(advisory, "visual", "performance", "browser", "device")
+    elif profile in {"api_service", "microservice"}:
+        _add_unique(required, "api_contract", "integration")
+        _add_unique(advisory, "security", "performance")
+    elif profile in {"mobile_app", "desktop_app"}:
+        _add_unique(required, "command")
+        _add_unique(advisory, "device", "visual")
+    elif profile in {"plugin_platform", "plugin"}:
+        _add_unique(required, "plugin_compat", "security", "api_contract")
+    _add_unique(required, *command.explicit_required_modalities)
+    _add_unique(advisory, *command.explicit_advisory_modalities)
+    required = [item for item in required if item in SUPPORTED_EVIDENCE_MODALITIES]
+    advisory = [item for item in advisory if item in SUPPORTED_EVIDENCE_MODALITIES and item not in required]
+    return required, advisory
+
+
+def compile_evidence_policy(command: CompileEvidencePolicyCommandV1) -> EvidencePolicyResultV1:
+    """Compile a QA evidence policy without executing any verifier.
+
+    The compiler must run before Director execution. QA later compares this
+    declaration with Run Ledger evidence instead of inventing requirements at
+    verdict time.
+    """
+
+    if not isinstance(command, CompileEvidencePolicyCommandV1):
+        raise TypeError("command must be CompileEvidencePolicyCommandV1")
+    workspace = Path(command.workspace).expanduser().resolve()
+    persisted_policy = read_verifier_policy(ReadVerifierPolicyQueryV1(workspace=str(workspace))).policy
+    enabled = _string_list(persisted_policy.get("enabled_modalities"))
+    environment = _environment_status()
+    profile = _infer_project_profile(command)
+    required, advisory = _compile_required_modalities(command, profile)
+    persisted_required = _string_list(persisted_policy.get("required_modalities"))
+    for modality in persisted_required:
+        _add_unique(required, modality)
+    hard_required = set(_string_list(command.explicit_required_modalities)) | set(persisted_required)
+    effective_required: list[str] = []
+    waived_modalities: list[dict[str, str]] = []
+    unavailable_required_blockers = []
+    for modality in required:
+        status = environment.get(modality)
+        available = bool(status.get("available")) if isinstance(status, dict) else False
+        reason = str(status.get("reason") if isinstance(status, dict) else "modality is not available")
+        if available:
+            _add_unique(effective_required, modality)
+            continue
+        if modality in hard_required:
+            _add_unique(effective_required, modality)
+            unavailable_required_blockers.append({"modality": modality, "reason": reason})
+            continue
+        waived_modalities.append({"modality": modality, "reason": reason})
+        _add_unique(advisory, modality)
+    required = effective_required
+    advisory = [item for item in advisory if item not in required]
+    enabled_all = list(dict.fromkeys([*enabled, *required]))
+    inputs = {
+        "workspace": str(workspace),
+        "task_id": command.task_id,
+        "run_id": command.run_id,
+        "project_profile": profile,
+        "language": command.language,
+        "target_files": list(command.target_files),
+        "acceptance_criteria": list(command.acceptance_criteria),
+        "explicit_required_modalities": list(command.explicit_required_modalities),
+        "explicit_advisory_modalities": list(command.explicit_advisory_modalities),
+        "risk_level": command.risk_level,
+        "persisted_policy_hash": _stable_hash(persisted_policy),
+    }
+    policy = {
+        "schema_version": "evidence_policy.v1",
+        "source": "control_plane.verifier_policy.evidence_policy_compiler",
+        "workspace": str(workspace),
+        "run_id": command.run_id,
+        "task_id": command.task_id,
+        "project_profile": profile,
+        "risk_level": command.risk_level,
+        "enabled_evidence_modalities": enabled_all,
+        "required_evidence_modalities": required,
+        "advisory_modalities": advisory,
+        "waived_modalities": waived_modalities,
+        "unavailable_required_blockers": unavailable_required_blockers,
+        "compiler_inputs_hash": _stable_hash(inputs),
+        "environment": environment,
+    }
+    policy["policy_hash"] = _stable_hash(policy)
+    policy["gate_policy"] = {
+        "source": policy["source"],
+        "enabled_evidence_modalities": enabled_all,
+        "required_evidence_modalities": required,
+        "advisory_modalities": advisory,
+        "unavailable_required_blockers": unavailable_required_blockers,
+        "policy_hash": policy["policy_hash"],
+    }
+    return EvidencePolicyResultV1(policy=policy)
+
+
 def _write_config(path: Path, config: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
@@ -299,6 +474,7 @@ def update_verifier_policy(command: UpdateVerifierPolicyCommandV1) -> VerifierPo
 __all__ = [
     "POLICY_RELATIVE_PATH",
     "POLICY_SOURCE",
+    "compile_evidence_policy",
     "read_verifier_policy",
     "update_verifier_policy",
     "verifier_policy_to_gate_policy",

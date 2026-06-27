@@ -70,9 +70,7 @@ def _normalize_declared_modalities(value: Any) -> dict[str, dict[str, Any]]:
         entries = [(str(name), raw) for name, raw in value.items() if isinstance(raw, dict)]
     elif isinstance(value, list):
         entries = [
-            (str(item.get("name") or item.get("modality") or ""), item)
-            for item in value
-            if isinstance(item, dict)
+            (str(item.get("name") or item.get("modality") or ""), item) for item in value if isinstance(item, dict)
         ]
     else:
         return modalities
@@ -168,10 +166,7 @@ def _receipt_entries(value: Any) -> list[dict[str, Any]]:
             return _receipt_entries(nested_results)
 
     if "operation" in value and (
-        "capability_token" in value
-        or "director_policy" in value
-        or "command" in value
-        or "file" in value
+        "capability_token" in value or "director_policy" in value or "command" in value or "file" in value
     ):
         return [value]
 

@@ -4,9 +4,11 @@ from pathlib import Path
 
 import pytest
 from polaris.cells.control_plane.verifier_policy.public import (
+    CompileEvidencePolicyCommandV1,
     ControlPlaneVerifierPolicyV1Error,
     ReadVerifierPolicyQueryV1,
     UpdateVerifierPolicyCommandV1,
+    compile_evidence_policy,
     read_verifier_policy,
     update_verifier_policy,
     verifier_policy_to_gate_policy,
@@ -143,3 +145,94 @@ def test_verifier_policy_exports_gate_policy_fragment(
         "required_evidence_modalities": ["browser"],
         "custom_scripts": [],
     }
+
+
+def test_evidence_policy_compiler_keeps_unavailable_browser_advisory_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("KERNELONE_BROWSER_VERIFIER_AVAILABLE", raising=False)
+
+    policy = compile_evidence_policy(
+        CompileEvidencePolicyCommandV1(
+            workspace=str(tmp_path),
+            task_id="task-web",
+            run_id="run-web",
+            project_type="interactive_visual",
+            language="typescript",
+            target_files=("index.html", "src/main.ts"),
+            acceptance_criteria=("HTML5 canvas paints a visible first frame",),
+        )
+    ).policy
+
+    assert {"qa", "code", "tool_receipt"} <= set(policy["required_evidence_modalities"])
+    assert "browser" not in policy["required_evidence_modalities"]
+    assert "browser" in policy["advisory_modalities"]
+    assert policy["unavailable_required_blockers"] == []
+    waived = {item["modality"] for item in policy["waived_modalities"]}
+    assert "browser" in waived
+
+
+def test_evidence_policy_compiler_requires_browser_when_available(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KERNELONE_BROWSER_VERIFIER_AVAILABLE", "1")
+
+    policy = compile_evidence_policy(
+        CompileEvidencePolicyCommandV1(
+            workspace=str(tmp_path),
+            task_id="task-web",
+            run_id="run-web",
+            project_type="html5_canvas",
+            target_files=("index.html", "src/main.ts"),
+            acceptance_criteria=("browser smoke test must pass",),
+        )
+    ).policy
+
+    assert "browser" in policy["required_evidence_modalities"]
+    assert "browser" in policy["enabled_evidence_modalities"]
+    assert policy["unavailable_required_blockers"] == []
+    assert policy["gate_policy"]["required_evidence_modalities"] == policy["required_evidence_modalities"]
+    assert policy["policy_hash"]
+
+
+def test_evidence_policy_compiler_blocks_explicit_unavailable_required_modality(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("KERNELONE_BROWSER_VERIFIER_AVAILABLE", raising=False)
+
+    policy = compile_evidence_policy(
+        CompileEvidencePolicyCommandV1(
+            workspace=str(tmp_path),
+            task_id="task-hard-browser",
+            explicit_required_modalities=("browser",),
+        )
+    ).policy
+
+    assert "browser" in policy["required_evidence_modalities"]
+    assert policy["unavailable_required_blockers"] == [
+        {
+            "modality": "browser",
+            "reason": "Set KERNELONE_BROWSER_VERIFIER_AVAILABLE=1 to advertise browser verifier support.",
+        }
+    ]
+
+
+def test_evidence_policy_compiler_maps_api_service_to_contract_and_integration(tmp_path: Path) -> None:
+    policy = compile_evidence_policy(
+        CompileEvidencePolicyCommandV1(
+            workspace=str(tmp_path),
+            task_id="task-api",
+            project_type="api_service",
+            language="python",
+            target_files=("src/api.py", "tests/test_api.py"),
+            acceptance_criteria=("health check endpoint and integration test pass",),
+        )
+    ).policy
+
+    assert {"qa", "code", "tool_receipt", "api_contract", "integration", "command"} <= set(
+        policy["required_evidence_modalities"]
+    )
+    assert "security" in policy["advisory_modalities"]

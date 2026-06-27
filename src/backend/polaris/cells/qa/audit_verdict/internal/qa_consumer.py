@@ -179,6 +179,7 @@ def _qa_findings_count(findings: Any) -> int:
 
 _QA_LLM_AUDIT_ENABLED_ENV = "KERNELONE_QA_LLM_AUDIT_ENABLED"
 _QA_LLM_AUDIT_TIMEOUT_ENV = "KERNELONE_QA_LLM_AUDIT_TIMEOUT_SECONDS"
+_QA_VERDICT_ENGINE_MODE_ENV = "KERNELONE_QA_VERDICT_ENGINE_MODE"
 _BOOL_TRUE = {"1", "true", "yes", "on", "enabled"}
 _BOOL_FALSE = {"0", "false", "no", "off", "disabled"}
 _VERIFY_SCRIPT_NAMES = frozenset({"verify.js", "scripts/verify.js"})
@@ -218,6 +219,33 @@ def _read_bool_env(name: str, *, default: bool = False) -> bool:
     if value in _BOOL_FALSE:
         return False
     return default
+
+
+def _qa_verdict_engine_mode() -> str:
+    raw = os.environ.get(_QA_VERDICT_ENGINE_MODE_ENV, "shadow").strip().lower()
+    if raw in {"off", "disabled", "false", "0", "legacy"}:
+        return "off"
+    if raw in {"engine", "authoritative"}:
+        return "engine"
+    return "shadow"
+
+
+def _qa_verdict_engine_shadow_payload(envelope: dict[str, Any], diff: dict[str, Any]) -> dict[str, Any]:
+    classification = envelope.get("classification")
+    classification_map = classification if isinstance(classification, dict) else {}
+    return {
+        "schema_version": "qa.verdict_engine_shadow.v1",
+        "authoritative": False,
+        "mode": _qa_verdict_engine_mode(),
+        "content_hash": str(envelope.get("content_hash") or ""),
+        "verdict": str(envelope.get("verdict") or ""),
+        "next_stage": str(envelope.get("next_stage") or ""),
+        "terminal_status": str(envelope.get("terminal_status") or ""),
+        "failure_class": str(classification_map.get("failure_class") or ""),
+        "route": str(classification_map.get("route") or ""),
+        "repairable_by_director": bool(classification_map.get("repairable_by_director")),
+        "diff": diff,
+    }
 
 
 def _qa_llm_audit_timeout_seconds() -> float:
@@ -753,6 +781,52 @@ class QAConsumer:
         qa_config = QAConfig(workspace=self._workspace, enable_auto_audit=False)
         self._qa_svc = QAService(qa_config)
 
+    def _build_verdict_engine_shadow(
+        self,
+        *,
+        task_id: str,
+        payload: dict[str, Any],
+        gate_name: str = "",
+        gate_summary: str = "",
+        audit_result: dict[str, Any] | None = None,
+        legacy_verdict: str,
+        legacy_next_stage: str = "",
+        legacy_terminal_status: str = "",
+    ) -> dict[str, Any]:
+        """Build a non-authoritative Verdict Engine comparison payload."""
+
+        if _qa_verdict_engine_mode() == "off":
+            return {}
+        try:
+            from polaris.cells.qa.audit_verdict.internal.verdict_engine import (
+                QAVerdictEngine,
+                diff_verdicts,
+            )
+
+            envelope = QAVerdictEngine(self._workspace).build_envelope(
+                task_id=task_id,
+                payload=payload,
+                gate_name=gate_name,
+                gate_summary=gate_summary,
+                audit_result=audit_result,
+            )
+            diff = diff_verdicts(
+                legacy_verdict=legacy_verdict,
+                legacy_next_stage=legacy_next_stage,
+                legacy_terminal_status=legacy_terminal_status,
+                engine_envelope=envelope,
+            )
+            if diff.get("mismatch"):
+                logger.warning("QA verdict engine shadow mismatch for task %s: %s", task_id, diff)
+            return _qa_verdict_engine_shadow_payload(envelope.to_dict(), diff)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "schema_version": "qa.verdict_engine_shadow.v1",
+                "authoritative": False,
+                "mode": _qa_verdict_engine_mode(),
+                "error": str(exc),
+            }
+
     def poll_once(self) -> list[dict[str, Any]]:
         """Poll once for PENDING_QA tasks.
 
@@ -935,6 +1009,9 @@ class QAConsumer:
                 }
             ],
         }
+        shadow = audit.get("qa_verdict_engine_shadow")
+        if isinstance(shadow, dict):
+            physical_evidence["qa_verdict_engine_shadow"] = shadow
         append_run_ledger_event(
             AppendRunLedgerEventCommandV1(
                 workspace=self._workspace,
@@ -986,6 +1063,15 @@ class QAConsumer:
             # requeues to pending_exec so the Director can correct course.
             verify_failure = self._run_step_verify(payload)
             if verify_failure:
+                shadow = self._build_verdict_engine_shadow(
+                    task_id=task_id,
+                    payload=payload,
+                    gate_name="qa_step_verify",
+                    gate_summary=verify_failure,
+                    audit_result={"verdict": "FAIL", "findings": [verify_failure]},
+                    legacy_verdict="FAIL",
+                    legacy_next_stage="pending_exec",
+                )
                 self._append_qa_gate_to_run_ledger(
                     task_id=task_id,
                     payload=payload,
@@ -993,6 +1079,11 @@ class QAConsumer:
                     ok=False,
                     summary=verify_failure,
                     verdict="FAIL",
+                    audit_result={
+                        "verdict": "FAIL",
+                        "findings": [verify_failure],
+                        "qa_verdict_engine_shadow": shadow,
+                    },
                     failure_reason="step_verify_failed",
                 )
                 self._svc.fail_task_stage(
@@ -1003,7 +1094,10 @@ class QAConsumer:
                         error_code="QA_step_verify_failed",
                         error_message=verify_failure,
                         requeue_stage="pending_exec",
-                        metadata=_qa_control_plane_metadata(payload),
+                        metadata=_qa_control_plane_metadata(
+                            payload,
+                            {"qa_verdict_engine_shadow": shadow} if shadow else {},
+                        ),
                     )
                 )
                 return {
@@ -1021,6 +1115,15 @@ class QAConsumer:
             # only when no checker could run (node absent / unknown ext / timeout).
             syntax_failure = self._run_syntax_gate(payload)
             if syntax_failure:
+                shadow = self._build_verdict_engine_shadow(
+                    task_id=task_id,
+                    payload=payload,
+                    gate_name="qa_syntax",
+                    gate_summary=syntax_failure,
+                    audit_result={"verdict": "FAIL", "findings": [syntax_failure]},
+                    legacy_verdict="FAIL",
+                    legacy_next_stage="pending_exec",
+                )
                 self._append_qa_gate_to_run_ledger(
                     task_id=task_id,
                     payload=payload,
@@ -1028,6 +1131,11 @@ class QAConsumer:
                     ok=False,
                     summary=syntax_failure,
                     verdict="FAIL",
+                    audit_result={
+                        "verdict": "FAIL",
+                        "findings": [syntax_failure],
+                        "qa_verdict_engine_shadow": shadow,
+                    },
                     failure_reason="syntax_failed",
                 )
                 self._svc.fail_task_stage(
@@ -1038,7 +1146,10 @@ class QAConsumer:
                         error_code="QA_syntax_failed",
                         error_message=syntax_failure,
                         requeue_stage="pending_exec",
-                        metadata=_qa_control_plane_metadata(payload),
+                        metadata=_qa_control_plane_metadata(
+                            payload,
+                            {"qa_verdict_engine_shadow": shadow} if shadow else {},
+                        ),
                     )
                 )
                 return {
@@ -1055,6 +1166,15 @@ class QAConsumer:
             # contract misses before the LLM reviewer can rubber-stamp them.
             contract_failure = self._run_contract_gate(payload)
             if contract_failure:
+                shadow = self._build_verdict_engine_shadow(
+                    task_id=task_id,
+                    payload=payload,
+                    gate_name="qa_contract",
+                    gate_summary=contract_failure,
+                    audit_result={"verdict": "FAIL", "findings": [contract_failure]},
+                    legacy_verdict="FAIL",
+                    legacy_next_stage="pending_exec",
+                )
                 self._append_qa_gate_to_run_ledger(
                     task_id=task_id,
                     payload=payload,
@@ -1062,6 +1182,11 @@ class QAConsumer:
                     ok=False,
                     summary=contract_failure,
                     verdict="FAIL",
+                    audit_result={
+                        "verdict": "FAIL",
+                        "findings": [contract_failure],
+                        "qa_verdict_engine_shadow": shadow,
+                    },
                     failure_reason="contract_gate_failed",
                 )
                 self._svc.fail_task_stage(
@@ -1072,7 +1197,10 @@ class QAConsumer:
                         error_code="QA_contract_gate_failed",
                         error_message=contract_failure,
                         requeue_stage="pending_exec",
-                        metadata=_qa_control_plane_metadata(payload),
+                        metadata=_qa_control_plane_metadata(
+                            payload,
+                            {"qa_verdict_engine_shadow": shadow} if shadow else {},
+                        ),
                     )
                 )
                 return {
@@ -1086,6 +1214,16 @@ class QAConsumer:
             audit_result = self._run_qa_audit(task_id, payload)
 
             verdict, next_stage, terminal_status = _resolve_qa_route(audit_result)
+            shadow = self._build_verdict_engine_shadow(
+                task_id=task_id,
+                payload=payload,
+                audit_result=audit_result,
+                legacy_verdict=verdict,
+                legacy_next_stage=next_stage,
+                legacy_terminal_status=terminal_status,
+            )
+            if shadow:
+                audit_result["qa_verdict_engine_shadow"] = shadow
 
             # RANK 1 (Reflexion/Actor-Critic): a content FAIL with actionable findings
             # must hand them to the Director, not die in a terminal reject. acknowledge_
@@ -1129,7 +1267,12 @@ class QAConsumer:
                         requeue_stage="pending_exec",
                         metadata=_qa_control_plane_metadata(
                             payload,
-                            {_QA_FEEDBACK_COUNTERS_KEY: feedback_counters},
+                            {
+                                _QA_FEEDBACK_COUNTERS_KEY: feedback_counters,
+                                "qa_verdict_engine_shadow": shadow,
+                            }
+                            if shadow
+                            else {_QA_FEEDBACK_COUNTERS_KEY: feedback_counters},
                         ),
                     )
                 )
@@ -1171,6 +1314,7 @@ class QAConsumer:
                                 _QA_FEEDBACK_COUNTERS_KEY: feedback_counters,
                                 "qa_next_stage": next_stage,
                                 "qa_terminal_status": terminal_status,
+                                "qa_verdict_engine_shadow": shadow,
                             },
                         ),
                     )
@@ -1194,6 +1338,8 @@ class QAConsumer:
             }
             if feedback_counters:
                 ack_payload[_QA_FEEDBACK_COUNTERS_KEY] = feedback_counters
+            if shadow:
+                ack_payload["qa_verdict_engine_shadow"] = shadow
             ack_payload = _qa_control_plane_metadata(payload, ack_payload)
             self._append_qa_gate_to_run_ledger(
                 task_id=task_id,

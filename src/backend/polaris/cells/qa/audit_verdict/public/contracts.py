@@ -280,6 +280,148 @@ class QaAuditResultV1:
             raise ValueError("score must be >= 0")
 
 
+@dataclass(frozen=True)
+class QaFailureClassificationV1:
+    """Typed QA failure routing decision."""
+
+    failure_class: str
+    route: str
+    reason: str
+    repairable_by_director: bool
+    severity: str = "medium"
+    requires_ce_replan: bool = False
+    requires_pm_revision: bool = False
+    owner: str = ""
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    schema_version: str = "polaris.qa_failure_classification.v1"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "failure_class", _require_non_empty("failure_class", self.failure_class))
+        object.__setattr__(self, "route", _require_non_empty("route", self.route))
+        object.__setattr__(self, "reason", _require_non_empty("reason", self.reason))
+        object.__setattr__(self, "severity", _require_non_empty("severity", self.severity))
+        object.__setattr__(self, "owner", str(self.owner or "").strip())
+        object.__setattr__(self, "evidence_refs", _to_string_tuple(list(self.evidence_refs)))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "failure_class": self.failure_class,
+            "route": self.route,
+            "reason": self.reason,
+            "repairable_by_director": bool(self.repairable_by_director),
+            "severity": self.severity,
+            "requires_ce_replan": bool(self.requires_ce_replan),
+            "requires_pm_revision": bool(self.requires_pm_revision),
+            "owner": self.owner,
+            "evidence_refs": list(self.evidence_refs),
+        }
+
+
+@dataclass(frozen=True)
+class QaVerdictLineageV1:
+    """Compact verdict history used to prevent QA/CE/Director macro loops."""
+
+    previous_verdict_refs: tuple[str, ...] = field(default_factory=tuple)
+    latest_blocking_verdict_ref: str = ""
+    latest_blocking_verdict_hash: str = ""
+    failure_class_history: tuple[str, ...] = field(default_factory=tuple)
+    repeat_failure_count: int = 0
+    lineage_hash: str = ""
+    schema_version: str = "polaris.qa_verdict_lineage.v1"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "previous_verdict_refs", _to_string_tuple(list(self.previous_verdict_refs)))
+        object.__setattr__(self, "latest_blocking_verdict_ref", str(self.latest_blocking_verdict_ref or "").strip())
+        object.__setattr__(self, "latest_blocking_verdict_hash", str(self.latest_blocking_verdict_hash or "").strip())
+        object.__setattr__(self, "failure_class_history", _to_string_tuple(list(self.failure_class_history)))
+        object.__setattr__(self, "repeat_failure_count", max(0, int(self.repeat_failure_count or 0)))
+        object.__setattr__(self, "lineage_hash", str(self.lineage_hash or "").strip())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "previous_verdict_refs": list(self.previous_verdict_refs),
+            "latest_blocking_verdict_ref": self.latest_blocking_verdict_ref,
+            "latest_blocking_verdict_hash": self.latest_blocking_verdict_hash,
+            "failure_class_history": list(self.failure_class_history),
+            "repeat_failure_count": self.repeat_failure_count,
+            "lineage_hash": self.lineage_hash,
+        }
+
+
+@dataclass(frozen=True)
+class QaVerdictEnvelopeV1:
+    """Canonical QA verdict envelope for evidence-based routing."""
+
+    workspace: str
+    task_id: str
+    run_id: str
+    verdict: str
+    ok: bool
+    classification: QaFailureClassificationV1
+    stage: str = "qa"
+    next_stage: str = ""
+    terminal_status: str = ""
+    authority: Mapping[str, Any] = field(default_factory=dict)
+    ledger: Mapping[str, Any] = field(default_factory=dict)
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+    receipts: Mapping[str, Any] = field(default_factory=dict)
+    artifact_quality: Mapping[str, Any] = field(default_factory=dict)
+    lineage: QaVerdictLineageV1 = field(default_factory=QaVerdictLineageV1)
+    findings: tuple[str, ...] = field(default_factory=tuple)
+    metrics: Mapping[str, Any] = field(default_factory=dict)
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    content_hash: str = ""
+    schema_version: str = "qa.verdict_envelope.v1"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "run_id", str(self.run_id or "").strip())
+        object.__setattr__(self, "stage", _require_non_empty("stage", self.stage))
+        object.__setattr__(self, "verdict", _require_non_empty("verdict", self.verdict))
+        if not isinstance(self.classification, QaFailureClassificationV1):
+            raise TypeError("classification must be QaFailureClassificationV1")
+        if not isinstance(self.lineage, QaVerdictLineageV1):
+            raise TypeError("lineage must be QaVerdictLineageV1")
+        object.__setattr__(self, "next_stage", str(self.next_stage or "").strip())
+        object.__setattr__(self, "terminal_status", str(self.terminal_status or "").strip())
+        object.__setattr__(self, "authority", _to_dict_copy(self.authority))
+        object.__setattr__(self, "ledger", _to_dict_copy(self.ledger))
+        object.__setattr__(self, "evidence", _to_dict_copy(self.evidence))
+        object.__setattr__(self, "receipts", _to_dict_copy(self.receipts))
+        object.__setattr__(self, "artifact_quality", _to_dict_copy(self.artifact_quality))
+        object.__setattr__(self, "findings", _to_string_tuple(list(self.findings)))
+        object.__setattr__(self, "metrics", _to_dict_copy(self.metrics))
+        object.__setattr__(self, "evidence_refs", _to_string_tuple(list(self.evidence_refs)))
+        object.__setattr__(self, "content_hash", str(self.content_hash or "").strip())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "workspace": self.workspace,
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "stage": self.stage,
+            "verdict": self.verdict,
+            "ok": bool(self.ok),
+            "next_stage": self.next_stage,
+            "terminal_status": self.terminal_status,
+            "authority": dict(self.authority),
+            "ledger": dict(self.ledger),
+            "evidence": dict(self.evidence),
+            "receipts": dict(self.receipts),
+            "artifact_quality": dict(self.artifact_quality),
+            "classification": self.classification.to_dict(),
+            "lineage": self.lineage.to_dict(),
+            "findings": list(self.findings),
+            "metrics": dict(self.metrics),
+            "evidence_refs": list(self.evidence_refs),
+            "content_hash": self.content_hash,
+        }
+
+
 class QaAuditErrorV1(RuntimeError):  # noqa: N818
     """Raised when `qa.audit_verdict` contract processing fails."""
 
@@ -347,7 +489,10 @@ __all__ = [
     "QaAuditError",
     "QaAuditErrorV1",
     "QaAuditResultV1",
+    "QaFailureClassificationV1",
+    "QaVerdictEnvelopeV1",
     "QaVerdictIssuedEventV1",
+    "QaVerdictLineageV1",
     "RunQaAuditCommandV1",
     "RunVisualQaAuditCommandV1",
     "TracebackFrameV1",

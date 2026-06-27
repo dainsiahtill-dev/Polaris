@@ -136,6 +136,10 @@ class TestCEConsumerPollOnce:
         assert cmd.metadata["job_token"]["token_id"] == cmd.metadata["job_token_id"]
         assert cmd.metadata["job_token"]["contract_hash"] == cmd.metadata["contract_hash"]
         assert cmd.metadata["job_token"]["blueprint_hash"] == cmd.metadata["blueprint_hash"]
+        gate_policy = cmd.metadata["job_token"]["gate_policy"]
+        assert {"qa", "code", "tool_receipt"} <= set(gate_policy["required_evidence_modalities"])
+        assert gate_policy["evidence_policy_compiler"]["ok"] is True
+        assert gate_policy["compiled_evidence_policy_hash"]
         assert cmd.metadata["control_plane_lineage"]["blueprint_hash"] == cmd.metadata["blueprint_hash"]
         assert cmd.metadata["route"] == "chief_blueprint_required"
         assert cmd.metadata["blueprint_required"] is True

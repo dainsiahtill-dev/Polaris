@@ -31,6 +31,10 @@ from polaris.cells.chief_engineer.blueprint.internal.step_contract import (
     validate_construction_steps,
 )
 from polaris.cells.control_plane.run_ledger.public import JobToken, stable_hash
+from polaris.cells.control_plane.verifier_policy.public import (
+    CompileEvidencePolicyCommandV1,
+    compile_evidence_policy,
+)
 from polaris.cells.runtime.task_market.public.contracts import (
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
@@ -112,8 +116,85 @@ def _payload_hash(value: Any) -> str:
     return stable_hash(_hashable_payload(value))
 
 
+def _default_gate_policy() -> dict[str, Any]:
+    return {
+        "source": "chief_engineer.default_gate_policy",
+        "enabled_evidence_modalities": ["tool_receipt", "build_test", "entry_smoke"],
+        "required_evidence_modalities": ["tool_receipt"],
+    }
+
+
+def _compiled_gate_policy(
+    *,
+    workspace: str,
+    task_id: str,
+    run_id: str,
+    target_files: list[str],
+    acceptance_criteria: list[str],
+    project_type: str,
+    language: str,
+) -> dict[str, Any]:
+    default_policy = _default_gate_policy()
+    try:
+        compiled_policy = compile_evidence_policy(
+            CompileEvidencePolicyCommandV1(
+                workspace=workspace,
+                task_id=task_id,
+                run_id=run_id,
+                project_type=project_type,
+                language=language,
+                target_files=tuple(target_files),
+                acceptance_criteria=tuple(acceptance_criteria),
+            )
+        ).policy
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.warning("CE evidence policy compilation failed for task %s: %s", task_id, exc)
+        return {
+            **default_policy,
+            "evidence_policy_compiler": {
+                "ok": False,
+                "error": str(exc),
+            },
+        }
+    compiled_gate = compiled_policy.get("gate_policy")
+    gate_policy = dict(compiled_gate) if isinstance(compiled_gate, dict) else {}
+    enabled = list(
+        dict.fromkeys(
+            [
+                *default_policy["enabled_evidence_modalities"],
+                *_string_list(gate_policy.get("enabled_evidence_modalities")),
+            ]
+        )
+    )
+    required = list(
+        dict.fromkeys(
+            [
+                *default_policy["required_evidence_modalities"],
+                *_string_list(gate_policy.get("required_evidence_modalities")),
+            ]
+        )
+    )
+    return {
+        **default_policy,
+        **gate_policy,
+        "enabled_evidence_modalities": enabled,
+        "required_evidence_modalities": required,
+        "advisory_modalities": _string_list(gate_policy.get("advisory_modalities")),
+        "waived_modalities": list(compiled_policy.get("waived_modalities") or []),
+        "unavailable_required_blockers": list(compiled_policy.get("unavailable_required_blockers") or []),
+        "compiled_evidence_policy_hash": str(compiled_policy.get("policy_hash") or ""),
+        "evidence_policy_compiler": {
+            "ok": True,
+            "policy_hash": str(compiled_policy.get("policy_hash") or ""),
+            "project_profile": str(compiled_policy.get("project_profile") or ""),
+            "source": str(compiled_policy.get("source") or ""),
+        },
+    }
+
+
 def _control_plane_job_token(
     *,
+    workspace: str,
     task_id: str,
     payload: dict[str, Any],
     blueprint_id: str,
@@ -122,6 +203,9 @@ def _control_plane_job_token(
     contract_hash: str,
     target_files: list[str],
     scope_paths: list[str],
+    acceptance_criteria: list[str],
+    project_type: str,
+    language: str,
 ) -> dict[str, Any]:
     run_id = str(payload.get("run_id") or "").strip()
     project_id = (
@@ -151,6 +235,15 @@ def _control_plane_job_token(
         )
         if missing
     ]
+    gate_policy = _compiled_gate_policy(
+        workspace=workspace,
+        task_id=task_id,
+        run_id=run_id,
+        target_files=target_files,
+        acceptance_criteria=acceptance_criteria,
+        project_type=project_type,
+        language=language,
+    )
     return JobToken(
         schema_version=1,
         token_id=token_id,
@@ -161,10 +254,7 @@ def _control_plane_job_token(
         target_files=list(target_files),
         allowed_paths=allowed_paths,
         required_artifacts=[blueprint_path, *target_files],
-        gate_policy={
-            "enabled_evidence_modalities": ["tool_receipt", "build_test", "entry_smoke"],
-            "required_evidence_modalities": ["tool_receipt"],
-        },
+        gate_policy=gate_policy,
         capability_audit={"ok": not missing_issues, "issues": missing_issues},
         contract_hash=contract_hash,
         blueprint_hash=blueprint_hash,
@@ -264,7 +354,9 @@ def _target_files_from_payload(
     )
     if target_like:
         return target_like
-    return _merge_string_lists(scope_paths or [], blueprint.get("scope_paths"), payload.get("scope_paths"), task.get("scope_paths"))
+    return _merge_string_lists(
+        scope_paths or [], blueprint.get("scope_paths"), payload.get("scope_paths"), task.get("scope_paths")
+    )
 
 
 def _contract_fields(payload: dict[str, Any]) -> dict[str, Any]:
@@ -483,7 +575,24 @@ class CEConsumer:
             contract_hash = str(payload.get("contract_hash") or payload.get("pm_contract_hash") or "").strip()
             if not contract_hash:
                 contract_hash = _payload_hash(dict(contract["task"]))
+            project_metadata = _mapping(payload.get("project_metadata"))
+            task_metadata = _mapping(_mapping(contract["task"]).get("metadata"))
+            project_type = str(
+                payload.get("project_type")
+                or project_metadata.get("project_type")
+                or task_metadata.get("project_type")
+                or ""
+            )
+            language = str(
+                payload.get("language")
+                or payload.get("main_language")
+                or project_metadata.get("language")
+                or project_metadata.get("main_language")
+                or task_metadata.get("language")
+                or ""
+            )
             job_token = _control_plane_job_token(
+                workspace=self._workspace,
                 task_id=task_id,
                 payload=payload,
                 blueprint_id=blueprint_id,
@@ -492,6 +601,9 @@ class CEConsumer:
                 contract_hash=contract_hash,
                 target_files=target_files,
                 scope_paths=scope_paths,
+                acceptance_criteria=acceptance_criteria,
+                project_type=project_type,
+                language=language,
             )
             control_plane_lineage = {
                 "source": "chief_engineer.handoff",
