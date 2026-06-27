@@ -21,6 +21,10 @@ _MISSING_NPM_SCRIPT_ENTRYPOINT_RE = re.compile(
     r"npm package manifest script '([^']+)' references missing local entrypoint '([^']+)'",
     re.IGNORECASE,
 )
+_RECURSIVE_NPM_SCRIPT_RE = re.compile(
+    r"npm package manifest script '([^']+)' recursively invokes itself",
+    re.IGNORECASE,
+)
 _UNRESOLVED_IMPORT_SYMBOL_RE = re.compile(
     r"unresolved (?:import )?symbol ['\"](?P<symbol>[^'\"]+)['\"] "
     r"from ['\"](?P<module>[^'\"]+)['\"] in (?P<path>\S+)",
@@ -56,7 +60,9 @@ _COMMONJS_MODULE_EXPORTS_OBJECT_RE = re.compile(
     r"^(?P<indent>\s*)module\.exports\s*=\s*\{(?P<bindings>[^}]+)\}\s*;?\s*$"
 )
 _JS_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][\w$]*$")
-_JS_DECLARATION_RE_TEMPLATE = r"(?m)^(?P<indent>\s*)(?P<decl>(?:async\s+)?(?:class|function)\s+{symbol}\b|(?:const|let|var)\s+{symbol}\b)"
+_JS_DECLARATION_RE_TEMPLATE = (
+    r"(?m)^(?P<indent>\s*)(?P<decl>(?:async\s+)?(?:class|function)\s+{symbol}\b|(?:const|let|var)\s+{symbol}\b)"
+)
 _JS_CLASS_RE_TEMPLATE = r"(?m)^(?P<indent>\s*)class\s+{class_name}\b[^\n]*\{{"
 _JS_METHOD_RE = re.compile(r"(?m)^\s{2,}(?P<name>[A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{")
 
@@ -88,6 +94,12 @@ def build_npm_script_contract_plan(
     raw_errors = [str(diagnostic.raw or diagnostic.message or "") for diagnostic in matched_diagnostics]
     has_typescript_context = _has_typescript_context(normalized_base, package_payload)
     has_node_test_runner_contract = _has_node_test_runner_contract_error(raw_errors)
+
+    if has_typescript_context:
+        for script_name in _recursive_scripts(raw_errors):
+            replacement = _fallback_script_for_recursive_script(script_name, normalized_base, package_payload)
+            if replacement:
+                updates[("scripts", script_name)] = replacement
 
     if has_typescript_context and "build" not in scripts:
         compile_script = str(scripts.get("compile") or "").strip()
@@ -637,6 +649,42 @@ def _missing_entrypoints(errors: Sequence[str]) -> dict[str, str]:
     return entrypoints
 
 
+def _recursive_scripts(errors: Sequence[str]) -> tuple[str, ...]:
+    scripts: list[str] = []
+    for error in errors:
+        match = _RECURSIVE_NPM_SCRIPT_RE.search(str(error or ""))
+        if not match:
+            continue
+        script_name = str(match.group(1) or "").strip()
+        if script_name:
+            scripts.append(script_name)
+    return tuple(dict.fromkeys(scripts))
+
+
+def _fallback_script_for_recursive_script(
+    script_name: str,
+    base_files: Mapping[str, str],
+    package_payload: Mapping[str, Any],
+) -> str:
+    normalized = str(script_name or "").strip().lower()
+    if normalized in {"build", "compile"}:
+        return "tsc -p tsconfig.json" if "tsconfig.json" in base_files else "tsc"
+    if normalized in {"check", "typecheck"}:
+        return "tsc --noEmit"
+    if normalized == "verify":
+        if "src/verify.ts" in base_files:
+            return "npm run build && node dist/verify.js"
+        return "npm run build"
+    if normalized == "test":
+        if "src/verify.ts" in base_files:
+            return "npm run build && node dist/verify.js"
+        return "npm run build"
+    if normalized in {"start", "serve", "dev", "preview"}:
+        entrypoint = _compiled_typescript_entrypoint(base_files, package_payload)
+        return f"npm run build && node {entrypoint}" if entrypoint else "npm run build"
+    return ""
+
+
 def _compiled_typescript_entrypoint(base_files: Mapping[str, str], package_payload: Mapping[str, Any]) -> str:
     entrypoint = str(package_payload.get("main") or "").strip().replace("\\", "/")
     if entrypoint.startswith("src/") and entrypoint.endswith(".ts"):
@@ -948,9 +996,7 @@ def _missing_method_alias_operation(
         return None
     class_body = text[class_match.end() : class_end]
     existing_methods = [
-        match.group("name")
-        for match in _JS_METHOD_RE.finditer(class_body)
-        if match.group("name") != "constructor"
+        match.group("name") for match in _JS_METHOD_RE.finditer(class_body) if match.group("name") != "constructor"
     ]
     existing_methods = list(dict.fromkeys(existing_methods))
     if len(existing_methods) != 1:

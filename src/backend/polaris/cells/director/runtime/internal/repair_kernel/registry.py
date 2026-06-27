@@ -1011,7 +1011,7 @@ def _coverage_recommended_route(
         return "runtime_rule"
     if not known_rule_matched:
         if slot is not None:
-            return "llm_repair"
+            return "runtime_rule"
         if str(diagnostic_language or "unknown") != "unknown":
             return "add_reserved_slot"
         if str(diagnostic_archetype or "unknown") != "unknown":

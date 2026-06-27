@@ -23,6 +23,18 @@ def test_scoped_scan_detects_placeholder_tests_in_target_file(tmp_path: Path) ->
     assert "tests/unit/card-rules.test.ts" in errors[0]
 
 
+def test_scoped_scan_detects_recursive_npm_package_script(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"build":"npm run build","test":"npm run build"}}\n',
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert errors
+    assert "npm package manifest script 'build' recursively invokes itself via build -> build" in errors[0]
+
+
 def test_scoped_scan_ignores_unrelated_placeholder_tests(tmp_path: Path) -> None:
     _write_trivial_test(tmp_path / "tests" / "unit" / "legacy.test.ts")
     changed = tmp_path / "src" / "feature.ts"

@@ -87,6 +87,9 @@ from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy impor
     FORBIDDEN_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import FILE_ABSENT_HASH, sha256_text
+from polaris.cells.director.runtime.internal.repair_kernel.generic_hygiene_syntax import (
+    build_scaffold_marker_cleanup_plan,
+)
 from polaris.cells.director.runtime.internal.repair_kernel.java_syntax import (
     build_java_eof_truncation_plan,
     build_java_test_dependency_plan,
@@ -1912,6 +1915,30 @@ def test_patch_residue_cleanup_rule_plans_precise_text_replacements() -> None:
     assert composition.ok
     assert ">>>> REPLACE" not in composition.patches[0].content_after
     assert composition.patches[0].content_after == remove_patch_residue_lines(composition.patches[0].content_after)
+
+
+def test_scaffold_marker_cleanup_prefers_longest_non_overlapping_marker() -> None:
+    content = 'console.log("Hello from Polaris TypeScript scaffold.");\n'
+    diagnostics = normalize_artifact_quality_errors(
+        ["Artifact quality scan failed: deterministic scaffold marker 'Polaris TypeScript scaffold' in src/main.ts"]
+    )
+
+    plan = build_scaffold_marker_cleanup_plan(
+        base_files={"src/main.ts": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+        source_tool="deterministic_scaffold_marker_quality_cleanup",
+        rule_id="generic.scaffold_marker_quality_cleanup",
+        diagnostic_paths_only=True,
+    )
+
+    assert plan is not None
+    assert len(plan.operations) == 1
+    assert plan.operations[0].expected == "Polaris TypeScript scaffold"
+    composition = PatchComposer().compose({"src/main.ts": content}, plan.operations)
+    assert composition.ok
+    assert "Polaris TypeScript scaffold" not in composition.patches[0].content_after
+    assert "TypeScript application" in composition.patches[0].content_after
 
 
 def test_java_test_dependency_rule_builds_whole_file_fallback_runtime_plan() -> None:

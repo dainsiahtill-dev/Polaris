@@ -131,6 +131,56 @@ def test_npm_script_contract_uses_structured_json_plan_and_fail_closed_run(tmp_p
     assert write_calls == []
 
 
+def test_npm_script_contract_repairs_recursive_build_script_with_structured_json() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "devDependencies": {"typescript": "^5.0.0"},
+            "scripts": {
+                "build": "npm run build",
+                "verify": "npm run build",
+                "test": "npm run verify",
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            (
+                "Artifact quality scan failed: npm package manifest script 'build' "
+                "recursively invokes itself via build -> build in package.json"
+            )
+        ]
+    )
+
+    base_files = {
+        "package.json": package_text,
+        "tsconfig.json": "{}\n",
+        "src/index.ts": "export {};\n",
+        "src/verify.ts": "export {};\n",
+    }
+    plan = build_npm_script_contract_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.source_tool == "deterministic_npm_script_contract_repair"
+    assert [operation.kind for operation in plan.operations] == ["json_set"]
+    assert plan.operations[0].path == "package.json"
+    assert plan.operations[0].json_path == ("scripts", "build")
+    assert plan.operations[0].value == "tsc -p tsconfig.json"
+    composition = PatchComposer().compose(base_files, plan.operations)
+    assert composition.ok
+    repaired = json.loads(composition.patches[0].content_after)
+    assert repaired["scripts"]["build"] == "tsc -p tsconfig.json"
+    assert repaired["scripts"]["verify"] == "npm run build"
+    assert repaired["scripts"]["test"] == "npm run verify"
+
+
 def test_npm_script_contract_public_run_records_receipt_revalidation_evidence(tmp_path: Path) -> None:
     package_path = tmp_path / "package.json"
     tsconfig_path = tmp_path / "tsconfig.json"

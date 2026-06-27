@@ -40,3 +40,29 @@ def test_check_package_scripts_accepts_build_script_before_dist_entrypoint(tmp_p
     result = check_package_scripts(str(tmp_path))
 
     assert result.ok is True
+
+
+def test_check_package_scripts_rejects_direct_recursive_npm_script(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"build":"npm run build","test":"npm run build"}}\n',
+        encoding="utf-8",
+    )
+
+    result = check_package_scripts(str(tmp_path))
+
+    assert result.ok is False
+    assert "recursively invokes itself" in result.detail
+    assert "build -> build" in result.detail
+
+
+def test_check_package_scripts_rejects_transitive_recursive_npm_script(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"build":"npm run verify","verify":"npm run build"}}\n',
+        encoding="utf-8",
+    )
+
+    result = check_package_scripts(str(tmp_path))
+
+    assert result.ok is False
+    assert "recursively invokes itself" in result.detail
+    assert "build -> verify -> build" in result.detail

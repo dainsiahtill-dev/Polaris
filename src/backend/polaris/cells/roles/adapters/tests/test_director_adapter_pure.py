@@ -21,6 +21,13 @@ from unittest.mock import MagicMock
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
+from polaris.cells.director.runtime.internal.repair_kernel.generic_hygiene_syntax import (
+    remove_patch_residue_lines as _remove_patch_residue_lines,
+)
+from polaris.cells.director.runtime.internal.repair_kernel.javascript_syntax import (
+    _is_overstrict_node_test_script_contract,
+    build_substantive_node_test_script as _build_substantive_node_test_script,
+)
 from polaris.cells.roles.adapters.internal.director import execute_method as execute_method_module
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _normalize_director_role_response
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
@@ -37,11 +44,11 @@ from polaris.cells.roles.adapters.internal.director.deterministic_repairs.python
 )
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
     _apply_deterministic_typescript_reexport_repair,
+    _looks_like_typescript_reexport_failure,
 )
 from polaris.cells.roles.adapters.internal.director.execute_method import (
     _build_empty_write_content_retry_message,
     _build_existing_workspace_task_evidence,
-    _build_substantive_node_test_script,
     _can_accept_existing_workspace_scope,
     _deterministic_repair_profile_summary_from_tool_results,
     _deterministic_repair_source_tools_from_tool_results,
@@ -51,9 +58,6 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _empty_write_content_retry_needed,
     _extract_task_target_path_candidates,
     _finalize_claimed_execution,
-    _is_overstrict_node_test_script_contract,
-    _looks_like_typescript_reexport_failure,
-    _remove_patch_residue_lines,
     _resolve_claim_external_task_id,
     _run_empty_write_content_materialization_retry,
     _task_requires_fresh_materialization,

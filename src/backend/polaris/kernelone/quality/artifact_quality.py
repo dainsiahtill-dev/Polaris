@@ -16,6 +16,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.quality.package_scripts import package_script_cycle_reasons
+
 _ARTIFACT_QUALITY_SKIP_DIRS = {
     ".git",
     ".mypy_cache",
@@ -629,6 +631,8 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
     errors: list[str] = []
     scripts = payload.get("scripts")
     if isinstance(scripts, dict):
+        for reason in package_script_cycle_reasons(scripts):
+            errors.append(f"Artifact quality scan failed: {reason} in {relative_path}")
         test_script = str(scripts.get("test") or "")
         lowered = test_script.lower()
         if "no test specified" in lowered or "no tests specified" in lowered:

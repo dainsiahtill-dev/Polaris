@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shlex
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +20,13 @@ _SCRIPT_PATH_EXTENSIONS = {".cjs", ".js", ".mjs", ".py", ".sh", ".ts", ".tsx"}
 _SHELL_OPERATORS = {"&&", "||", ";", "|"}
 _BUILD_OUTPUT_DIR_NAMES = {"dist", "build", "out", "bin"}
 _PLACEHOLDER_SCRIPT_COMMANDS = {"echo", "printf"}
+_NPM_SCRIPT_ALIAS_COMMANDS = {
+    "install": "install",
+    "restart": "restart",
+    "start": "start",
+    "stop": "stop",
+    "test": "test",
+}
 _SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(
     r"(?:npm\s+run\s+(?:build|compile)|pnpm\s+(?:build|compile)|yarn\s+(?:build|compile)|\btsc\b)",
     re.IGNORECASE,
@@ -153,6 +161,130 @@ def _placeholder_package_script_reason(script_name: str, command: str) -> str:
     return f"script {script_name!r} is a placeholder command: {command}"
 
 
+def package_script_cycle_reasons(scripts: Mapping[str, Any]) -> list[str]:
+    """Return package script dependency-cycle reasons for npm-compatible scripts."""
+
+    script_commands = {
+        str(name): command
+        for name, command in scripts.items()
+        if isinstance(name, str) and isinstance(command, str) and name.strip()
+    }
+    if not script_commands:
+        return []
+    graph = {
+        name: tuple(dep for dep in _npm_script_dependencies(command) if dep in script_commands)
+        for name, command in script_commands.items()
+    }
+    reasons: list[str] = []
+    seen_cycles: set[tuple[str, ...]] = set()
+    for script_name in sorted(graph):
+        cycle = _script_cycle_from(graph, start=script_name, current=script_name, path=(script_name,))
+        if cycle is None:
+            continue
+        canonical = _canonical_cycle(cycle)
+        if canonical in seen_cycles:
+            continue
+        seen_cycles.add(canonical)
+        chain = " -> ".join(cycle)
+        reasons.append(f"npm package manifest script {script_name!r} recursively invokes itself via {chain}")
+    return reasons
+
+
+def _npm_script_dependencies(command: str) -> tuple[str, ...]:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return ()
+    dependencies: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = os.path.basename(str(tokens[index] or "")).lower()
+        if token in {"npm", "npm.cmd"}:
+            dependency, consumed = _npm_dependency_after_command(tokens, index)
+        elif token in {"pnpm", "pnpm.cmd"}:
+            dependency, consumed = _pnpm_dependency_after_command(tokens, index)
+        elif token in {"yarn", "yarnpkg", "yarn.cmd", "yarnpkg.cmd"}:
+            dependency, consumed = _yarn_dependency_after_command(tokens, index)
+        else:
+            dependency, consumed = "", 1
+        if dependency:
+            dependencies.append(dependency)
+        index += max(consumed, 1)
+    return tuple(dict.fromkeys(dependencies))
+
+
+def _npm_dependency_after_command(tokens: list[str], command_index: int) -> tuple[str, int]:
+    next_index = command_index + 1
+    if next_index >= len(tokens):
+        return "", 1
+    subcommand = str(tokens[next_index] or "").strip().lower()
+    if subcommand in {"run", "run-script"}:
+        dependency = _first_script_name_argument(tokens, next_index + 1)
+        return dependency, 3 if dependency else 2
+    return _NPM_SCRIPT_ALIAS_COMMANDS.get(subcommand, ""), 2
+
+
+def _pnpm_dependency_after_command(tokens: list[str], command_index: int) -> tuple[str, int]:
+    next_index = command_index + 1
+    if next_index >= len(tokens):
+        return "", 1
+    subcommand = str(tokens[next_index] or "").strip().lower()
+    if subcommand == "run":
+        dependency = _first_script_name_argument(tokens, next_index + 1)
+        return dependency, 3 if dependency else 2
+    return _NPM_SCRIPT_ALIAS_COMMANDS.get(subcommand, ""), 2
+
+
+def _yarn_dependency_after_command(tokens: list[str], command_index: int) -> tuple[str, int]:
+    next_index = command_index + 1
+    if next_index >= len(tokens):
+        return "", 1
+    subcommand = str(tokens[next_index] or "").strip().lower()
+    if subcommand == "run":
+        dependency = _first_script_name_argument(tokens, next_index + 1)
+        return dependency, 3 if dependency else 2
+    return "", 1
+
+
+def _first_script_name_argument(tokens: list[str], start_index: int) -> str:
+    for index in range(start_index, len(tokens)):
+        token = str(tokens[index] or "").strip()
+        if not token:
+            continue
+        if token in _SHELL_OPERATORS:
+            return ""
+        if token.startswith("-"):
+            continue
+        return token
+    return ""
+
+
+def _script_cycle_from(
+    graph: Mapping[str, tuple[str, ...]],
+    *,
+    start: str,
+    current: str,
+    path: tuple[str, ...],
+) -> tuple[str, ...] | None:
+    for dependency in graph.get(current, ()):
+        if dependency == start:
+            return (*path, dependency)
+        if dependency in path:
+            continue
+        cycle = _script_cycle_from(graph, start=start, current=dependency, path=(*path, dependency))
+        if cycle is not None:
+            return cycle
+    return None
+
+
+def _canonical_cycle(cycle: tuple[str, ...]) -> tuple[str, ...]:
+    nodes = cycle[:-1] if len(cycle) > 1 and cycle[0] == cycle[-1] else cycle
+    if not nodes:
+        return cycle
+    rotations = [(*nodes[index:], *nodes[:index]) for index in range(len(nodes))]
+    return min(rotations)
+
+
 def check_package_scripts(workspace: str) -> PackageScriptsCheckResult:
     """Validate package.json scripts through a platform quality gate."""
 
@@ -168,6 +300,7 @@ def check_package_scripts(workspace: str) -> PackageScriptsCheckResult:
     if not isinstance(scripts, dict) or not scripts:
         return PackageScriptsCheckResult(False, "package.json has no scripts to validate")
     failures: list[str] = []
+    failures.extend(package_script_cycle_reasons(scripts))
     for script_name, command in scripts.items():
         if not isinstance(command, str):
             failures.append(f"script {script_name!r} is not a string")
@@ -182,4 +315,4 @@ def check_package_scripts(workspace: str) -> PackageScriptsCheckResult:
     return PackageScriptsCheckResult(True, f"{len(scripts)} package scripts have valid local entrypoint references")
 
 
-__all__ = ["PackageScriptsCheckResult", "check_package_scripts"]
+__all__ = ["PackageScriptsCheckResult", "check_package_scripts", "package_script_cycle_reasons"]

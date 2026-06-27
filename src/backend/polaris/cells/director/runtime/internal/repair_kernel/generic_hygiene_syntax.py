@@ -450,27 +450,39 @@ def _scaffold_marker_operations(*, path: str, content: str, cleanup: str) -> tup
     operations: list[RepairOperation] = []
     text = str(content or "")
     before_hash = sha256_text(text)
+    matches: list[tuple[int, int, str, str]] = []
     for marker, replacement in _SCAFFOLD_MARKER_REPLACEMENTS:
         start = text.find(marker)
         while start >= 0:
             end = start + len(marker)
-            operations.append(
-                RepairOperation(
-                    kind="text_replace",
-                    path=path,
-                    span_start=start,
-                    span_end=end,
-                    expected=marker,
-                    replacement=replacement,
-                    before_hash=before_hash,
-                    metadata={
-                        "cleanup": cleanup,
-                        "marker": marker,
-                        **_span_context_metadata(text, start, end),
-                    },
-                )
-            )
+            matches.append((start, end, marker, replacement))
             start = text.find(marker, end)
+
+    selected: list[tuple[int, int, str, str]] = []
+    covered_until = -1
+    for start, end, marker, replacement in sorted(matches, key=lambda item: (item[0], -(item[1] - item[0]))):
+        if start < covered_until:
+            continue
+        selected.append((start, end, marker, replacement))
+        covered_until = end
+
+    for start, end, marker, replacement in selected:
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=path,
+                span_start=start,
+                span_end=end,
+                expected=marker,
+                replacement=replacement,
+                before_hash=before_hash,
+                metadata={
+                    "cleanup": cleanup,
+                    "marker": marker,
+                    **_span_context_metadata(text, start, end),
+                },
+            )
+        )
     return tuple(operations)
 
 
