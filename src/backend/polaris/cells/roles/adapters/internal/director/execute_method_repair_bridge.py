@@ -254,6 +254,16 @@ def _runtime_base_files_for_task(
     )
     if not base_files and scan_when_unscoped:
         base_files = _runtime_base_files_by_scan(workspace_path, suffixes=suffixes)
+    elif scan_when_unscoped:
+        scoped_dirs = tuple(
+            path.rstrip("/") + "/"
+            for path in declared_paths
+            if path and not Path(path).suffix and (workspace_path / path).is_dir()
+        )
+        if scoped_dirs:
+            for path, content in _runtime_base_files_by_scan(workspace_path, suffixes=suffixes).items():
+                if path.startswith(scoped_dirs):
+                    base_files.setdefault(path, content)
     allowed_paths = _dedupe_posix_paths([*base_files.keys(), *declared_paths, *extra_paths])
     return base_files, allowed_paths
 
@@ -355,13 +365,17 @@ def run_node_test_script_contract_repair(
     task: dict[str, Any],
     task_id: str,
 ) -> list[dict[str, Any]]:
+    artifact_quality_errors = (
+        *_adapter_artifact_quality_errors(adapter),
+        "Artifact quality scan failed: over-strict generated node test contract in scripts/test.mjs",
+    )
     return _runtime_repair_tool_results(
         adapter,
         task=task,
         task_id=task_id,
         source_tool="deterministic_node_test_script_contract_repair",
         suffixes=frozenset({".mjs"}),
-        artifact_quality_errors=_adapter_artifact_quality_errors(adapter),
+        artifact_quality_errors=artifact_quality_errors,
         extra_paths=("scripts/test.mjs",),
         use_editor=False,
     )

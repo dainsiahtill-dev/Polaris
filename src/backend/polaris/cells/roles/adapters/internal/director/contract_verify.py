@@ -110,9 +110,24 @@ def _commands_from_value(value: Any) -> Iterable[str]:
             yield command
     raw_match = _RAW_COMMAND_RE.match(text)
     if raw_match:
-        command = _safe_normalized_command(raw_match.group(1))
+        raw_command = raw_match.group(1)
+        if _raw_command_has_narrative_tail(raw_command):
+            return
+        command = _safe_normalized_command(raw_command)
         if command:
             yield command
+
+
+def _raw_command_has_narrative_tail(command: str) -> bool:
+    tokens = str(command or "").strip().split()
+    if len(tokens) <= 3:
+        return False
+    first = tokens[0].lower()
+    if first not in {"npm", "pnpm", "yarn"}:
+        return False
+    if tokens[1].lower() != "run":
+        return False
+    return not (tokens[3].startswith("-") or tokens[3] in {"&&", "||", "|"})
 
 
 def _safe_normalized_command(value: Any) -> str:

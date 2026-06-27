@@ -113,10 +113,10 @@ def test_selected_materialization_step_blocks_cutover_when_callback_projection_s
     assert evidence["native_revalidation_evidence_status"] == "resolved_evidence"
     assert evidence["callback_projection_present"] is True
     assert evidence["cutover_ready"] is False
-    assert evidence["missing_required_evidence"] == ["callback_projection_absent"]
-    assert evidence["cutover_blockers"] == ["callback_projection_still_present"]
+    assert evidence["missing_required_evidence"] == ["adapter_projection_absent"]
+    assert evidence["cutover_blockers"] == ["adapter_projection_still_present"]
     assert scheduler_bridge["selected_step_native_cutover_ready"] is False
-    assert scheduler_bridge["selected_step_native_cutover_blockers"] == ["callback_projection_still_present"]
+    assert scheduler_bridge["selected_step_native_cutover_blockers"] == ["adapter_projection_still_present"]
 
 
 def test_selected_materialization_step_distinguishes_failed_native_revalidation_evidence() -> None:

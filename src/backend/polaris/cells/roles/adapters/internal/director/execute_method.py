@@ -1986,7 +1986,6 @@ def _phase_finalize_materialization(
     decision_signals: list[dict[str, Any]],
     direct_fallback_summary: dict[str, Any] | None,
     empty_write_content_retry_summary: dict[str, Any] | None,
-    no_write_materialization_retry_summary: dict[str, Any] | None,
     materialization_mode: str,
     primary_llm_summary: dict[str, Any] | None,
     quality_repair_attempts: list[dict[str, Any]],
@@ -1999,6 +1998,7 @@ def _phase_finalize_materialization(
     task_claim_session_id: str,
     write_tool_evidence: bool,
     state: MaterializationState,
+    no_write_materialization_retry_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Materialized-paths reconcile + completion-metadata + finalize (Block D).
 
@@ -2720,9 +2720,17 @@ def _phase_pre_materialization_target_repair(
 ) -> tuple[MaterializationState, dict[str, Any] | None]:
     current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
     quality_repair_summary: dict[str, Any] | None = None
-    if not all_affected_files or (
-        not has_successful_write_tool(tool_results)
-        and _stage_summary_has_recoverable_no_write_mutation_contract_exception(primary_llm_summary)
+    missing_declared_targets = _missing_declared_target_files(
+        task,
+        str(getattr(adapter, "workspace", "") or ""),
+    )
+    if (
+        missing_declared_targets
+        or not all_affected_files
+        or (
+            not has_successful_write_tool(tool_results)
+            and _stage_summary_has_recoverable_no_write_mutation_contract_exception(primary_llm_summary)
+        )
     ):
         deterministic_prematerialization_tool_results, deterministic_prematerialization_summary = (
             run_pre_materialization_declared_target_repairs(

@@ -1937,10 +1937,19 @@ def _normalize_ts_class_field_initialization(line: str) -> str:
     indent = str(match.group("indent") or "")
     name = str(match.group("name") or "")
     optional = str(match.group("optional") or "")
-    type_text = str(match.group("type") or "unknown").strip()
+    type_text = _normalize_typeorm_detached_field_type(str(match.group("type") or "unknown").strip())
     if optional:
         return f"{indent}{name}?: {type_text};"
     return f"{indent}{name}: {type_text} = {_typescript_default_value_for_type(type_text)};"
+
+
+def _normalize_typeorm_detached_field_type(type_text: str) -> str:
+    stripped = str(type_text or "unknown").strip() or "unknown"
+    if re.fullmatch(r"[A-Z][A-Za-z0-9_]*\[\]", stripped):
+        return "unknown[]"
+    if re.fullmatch(r"[A-Z][A-Za-z0-9_]*", stripped):
+        return "unknown"
+    return stripped
 
 
 def _typescript_commonjs_package_type_signal(diagnostics: Sequence[RepairDiagnostic]) -> bool:

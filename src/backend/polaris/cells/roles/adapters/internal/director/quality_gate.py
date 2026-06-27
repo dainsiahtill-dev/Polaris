@@ -1331,8 +1331,9 @@ async def _run_materialization_quality_repair_retry(
     existing_repair_target_files = [path for path in repair_target_files if path not in missing_target_set]
     deterministic_quality_tool_results: list[dict[str, Any]] = []
     deterministic_quality_summary: dict[str, Any] = {}
-    if _has_scaffold_marker_quality_error(repair_quality_errors) or has_materialization_quality_runtime_repair_coverage(
-        repair_quality_errors
+    if not missing_repair_target_files and (
+        _has_scaffold_marker_quality_error(repair_quality_errors)
+        or has_materialization_quality_runtime_repair_coverage(repair_quality_errors)
     ):
         deterministic_quality_tool_results, deterministic_quality_summary = run_materialization_quality_repairs(
             adapter,
@@ -1340,7 +1341,32 @@ async def _run_materialization_quality_repair_retry(
             task_id=target_task_id,
             artifact_quality_errors=repair_quality_errors,
         )
-    if deterministic_quality_tool_results and has_successful_write_tool(deterministic_quality_tool_results):
+    deterministic_quality_write_paths = _extract_successful_write_paths(deterministic_quality_tool_results)
+    missing_targets_repaired_by_deterministic_quality = all(
+        path in set(deterministic_quality_write_paths) for path in missing_repair_target_files
+    )
+    deterministic_quality_source_tools = {
+        str(item or "")
+        for item in (deterministic_quality_summary or {}).get("source_tools", [])
+        if str(item or "").strip()
+    }
+    deterministic_quality_package_only = bool(deterministic_quality_source_tools) and all(
+        "npm_script" in source_tool or "package" in source_tool or "manifest" in source_tool
+        for source_tool in deterministic_quality_source_tools
+    )
+    deterministic_quality_left_source_targets = deterministic_quality_package_only and any(
+        path not in {"package.json"} and not path.endswith("/package.json") for path in repair_target_files
+    )
+    deterministic_quality_can_short_circuit = not missing_repair_target_files or (
+        missing_targets_repaired_by_deterministic_quality and bool(deterministic_quality_write_paths)
+    )
+    if deterministic_quality_left_source_targets:
+        deterministic_quality_can_short_circuit = False
+    if (
+        deterministic_quality_tool_results
+        and has_successful_write_tool(deterministic_quality_tool_results)
+        and deterministic_quality_can_short_circuit
+    ):
         summary = dict(deterministic_quality_summary or {})
         summary.update(
             {

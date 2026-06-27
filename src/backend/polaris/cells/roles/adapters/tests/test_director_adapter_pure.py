@@ -6567,13 +6567,14 @@ export function summary() {
 
         package_text = (tmp_path / "package.json").read_text(encoding="utf-8")
         tenant_text = (tmp_path / "src" / "models" / "tenant.model.ts").read_text(encoding="utf-8")
+        source_tools = _source_tools_from_tool_results(result["tool_results"])
         assert result["success"] is True
         assert stage_labels == ["first_call"]
-        assert '"typeorm":' in package_text
+        assert '"typeorm":' not in package_text
         assert "from 'typeorm'" not in tenant_text
         assert "@Entity" not in tenant_text
         assert "tasks: unknown[] = [];" in tenant_text
-        assert "package.json" in result["changed_files"]
+        assert "deterministic_typeorm_model_normalization_repair" in source_tools
         assert "src/models/tenant.model.ts" in result["changed_files"]
 
     @pytest.mark.asyncio
@@ -7533,6 +7534,24 @@ export function summary() {
 
         assert _is_overstrict_node_test_script_contract(legacy_script) is True
         assert _is_overstrict_node_test_script_contract(_build_substantive_node_test_script()) is False
+
+    def test_narrative_npm_acceptance_is_not_step_verify_command(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.contract_verify import (
+            resolve_contract_step_verify_command,
+        )
+
+        assert (
+            resolve_contract_step_verify_command(
+                {"acceptance": ["npm run test verifies the Card3D behavior test suite"], "language": "typescript"}
+            )
+            == ""
+        )
+        assert (
+            resolve_contract_step_verify_command(
+                {"acceptance": ["`npm run test` verifies the Card3D behavior test suite"], "language": "typescript"}
+            )
+            == "npm run test"
+        )
 
     def test_substantive_node_test_script_accepts_named_export_blocks(self, tmp_path: Any) -> None:
         script = tmp_path / "scripts" / "test.mjs"
@@ -11037,7 +11056,7 @@ class TestQualityRepairMissingTargetContract:
         )
 
         assert tool_results
-        assert summary["stage"] == "deterministic_semantic_quality_repair"
+        assert summary["stage"] == "deterministic_materialization_quality_repair"
         assert "deterministic_typescript_missing_export_repair" in summary["source_tools"]
         repaired = (tmp_path / "src" / "verify.ts").read_text(encoding="utf-8")
         assert "runVerification" in repaired

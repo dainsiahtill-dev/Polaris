@@ -105,6 +105,22 @@ _PLACEHOLDER_SOURCE_RE = re.compile(
     r"\b(todo|fixme|notimplemented|not implemented|placeholder|stub)\b|^\s*pass\s*(?:#.*)?$",
     re.IGNORECASE | re.MULTILINE,
 )
+# Pure-comment line prefixes across bench languages (Go/JS/TS ``//``, Python/shell
+# ``#``, block-comment continuations ``*`` / ``/*``, SQL ``--``, HTML ``<!--``).
+# Documentation comments legitimately mention words like "stub"/"todo" (e.g. a Go
+# doc comment ``// pass a stub from tests instead of``); those are NOT unfinished-
+# code markers and must not be flagged as placeholder hits (factory_bench L1-04
+# museum.go false positive). Bare ``pass`` bodies and code-level markers stay
+# flagged because their lines are not pure comments.
+_COMMENT_LINE_PREFIXES: tuple[str, ...] = ("//", "#", "*", "/*", "--", "<!--")
+
+
+def _has_unfinished_placeholder(text: str) -> bool:
+    """Return True if a placeholder/stub marker appears outside pure-comment lines."""
+    scan = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(_COMMENT_LINE_PREFIXES))
+    return bool(_PLACEHOLDER_SOURCE_RE.search(scan))
+
+
 _STRUCTURAL_SYMBOL_LINE_RE = re.compile(
     r"\b(function|func|def|fn|class|struct|enum|interface|record|mod)\b|"
     r"\b(public|private|protected)\s+[\w<>, ?\[\]]+\s+\w+\s*\(",
@@ -292,7 +308,7 @@ def _implementation_depth_metrics(workspace: str, inventory: dict[str, Any]) -> 
         production_lines += line_count
         behavior_symbols += len(_BEHAVIOR_SYMBOL_RE.findall(text))
         branches += len(_BRANCH_RE.findall(text))
-        if _PLACEHOLDER_SOURCE_RE.search(text):
+        if _has_unfinished_placeholder(text):
             placeholder_hits.append(rel)
 
     return {
