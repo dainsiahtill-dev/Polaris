@@ -7,7 +7,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from polaris.cells.control_plane.run_ledger.public import (
     ReadRunLedgerProjectionQueryV1,
+    ReadRunProvenanceBundleQueryV1,
     read_run_ledger_projection,
+    read_run_provenance_bundle,
 )
 from polaris.cells.control_plane.verifier_policy.public import (
     ControlPlaneVerifierPolicyV1Error,
@@ -66,6 +68,28 @@ def get_control_plane_ledger_projection(
         max_runs=max_runs,
     )
     return read_run_ledger_projection(query).projection
+
+
+@router.get("/ledger/provenance")
+def get_control_plane_run_provenance_bundle(
+    request: Request,
+    workspace: str = Query(default=""),
+    run_id: str = Query(default=""),
+    include_compat_ledgers: bool = Query(default=False),
+) -> dict[str, Any]:
+    """Return the platform provenance bundle for one run."""
+
+    state = get_state(request)
+    resolved_workspace = requested_or_active_workspace(state.settings, workspace)
+    try:
+        query = ReadRunProvenanceBundleQueryV1(
+            workspace=resolved_workspace,
+            run_id=run_id,
+            include_compat_ledgers=include_compat_ledgers,
+        )
+        return read_run_provenance_bundle(query).bundle
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/verifier-policy")
