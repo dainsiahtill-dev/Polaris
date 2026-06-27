@@ -586,7 +586,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         "schema_version": "director.materialization_quality_repair_bridge.v1",
         "mode": "runtime_schedule_step_runner_adapter",
         "bridge_file": "roles.adapters.internal.director.materialization_quality_repair_bridge",
-        "legacy_strategy_host": "roles.adapters.internal.director.deterministic_repairs",
+        "retired_strategy_host_removed": True,
         "runtime_schedule_owner": "director.runtime",
         "runner_binding_owner": "roles.adapters",
         "ordered_step_ids": expected_step_ids,
@@ -610,21 +610,28 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
     }
     debt = summary["repair_kernel_migration_debt"]
     assert debt["schema_version"] == "director.materialization_quality_repair_migration_debt.v1"
-    assert debt["legacy_callback_bridge"] is True
+    assert debt["adapter_projection_bridge"] is True
+    assert debt["legacy_callback_bridge"] is False
     assert debt["convergence_verifier_present"] is False
     assert debt["cutover_ready"] is False
     assert debt["step_count"] == len(expected_step_ids)
     assert debt["blocked_step_count"] == len(expected_step_ids)
     assert debt["authoritative_receipts_allowed"] is False
     assert debt["native_receipt_present_step_count"] == 0
+    assert debt["adapter_projection_present_step_count"] == 0
     assert debt["callback_projection_present_step_count"] == 0
+    assert debt["adapter_projection_only_step_count"] == 0
     assert debt["callback_only_step_count"] == 0
     assert debt["native_receipt_step_ids"] == []
+    assert debt["adapter_projection_step_ids"] == []
     assert debt["callback_projection_step_ids"] == []
+    assert debt["remaining_adapter_projection_only_step_ids"] == []
     assert debt["remaining_callback_only_step_ids"] == []
+    assert summary["adapter_projection_debt"] == debt["adapter_projection_debt"]
     assert summary["legacy_callback_debt"] == debt["legacy_callback_debt"]
-    assert [item["step_id"] for item in debt["legacy_callback_debt"]] == expected_step_ids
-    for item in debt["legacy_callback_debt"]:
+    assert debt["adapter_projection_debt"] == debt["legacy_callback_debt"]
+    assert [item["step_id"] for item in debt["adapter_projection_debt"]] == expected_step_ids
+    for item in debt["adapter_projection_debt"]:
         assert {
             "step_id",
             "language",
@@ -636,8 +643,11 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
             "legacy_only_source_tools",
             "native_receipt_present",
             "native_repair_kernel_receipt_count",
+            "adapter_projection_present",
             "callback_projection_present",
+            "adapter_receipt_projection_count",
             "callback_receipt_projection_count",
+            "adapter_projection_only",
             "callback_only",
             "projection_only",
             "authoritative_receipts_allowed",
@@ -647,6 +657,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
             "verifier_evidence_required",
             "verifier_evidence_present",
             "native_verifier_evidence_present",
+            "adapter_verifier_evidence_present",
             "callback_verifier_evidence_present",
             "cutover_ready",
             "cutover_blockers",
@@ -657,8 +668,11 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         assert item["legacy_only_source_tools"] == []
         assert item["native_receipt_present"] is False
         assert item["native_repair_kernel_receipt_count"] == 0
+        assert item["adapter_projection_present"] is False
         assert item["callback_projection_present"] is False
+        assert item["adapter_receipt_projection_count"] == 0
         assert item["callback_receipt_projection_count"] == 0
+        assert item["adapter_projection_only"] is False
         assert item["callback_only"] is False
         assert item["projection_only"] is False
         assert item["authoritative_receipts_allowed"] is False
@@ -666,10 +680,11 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         assert item["verifier_evidence_required"] is True
         assert item["verifier_evidence_present"] is False
         assert item["native_verifier_evidence_present"] is False
+        assert item["adapter_verifier_evidence_present"] is False
         assert item["callback_verifier_evidence_present"] is False
         assert item["cutover_ready"] is False
         assert item["cutover_blockers"] == item["blockers"]
-        assert "legacy_callback_runner" in item["blockers"]
+        assert "adapter_schedule_runner" in item["blockers"]
         assert "missing_revalidation_evidence" in item["blockers"]
         assert "independent_shadow_required" in item["blockers"]
     assert summary["public_boundary"] == {
@@ -759,7 +774,7 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
     assert node_manifest_debt["verifier_evidence_required"] is True
     assert node_manifest_debt["verifier_evidence_present"] is False
     assert node_manifest_debt["cutover_ready"] is False
-    assert "legacy_callback_runner" in node_manifest_debt["blockers"]
+    assert "adapter_schedule_runner" in node_manifest_debt["blockers"]
     assert "legacy_only_source_tools" not in node_manifest_debt["blockers"]
     assert "missing_revalidation_evidence" in node_manifest_debt["blockers"]
     assert "independent_shadow_required" in node_manifest_debt["blockers"]
@@ -823,20 +838,26 @@ def test_materialization_quality_migration_debt_lists_remaining_callback_only_st
     assert debt["cutover_ready"] is False
     assert debt["authoritative_receipts_allowed"] is False
     assert debt["native_receipt_step_ids"] == []
+    assert debt["adapter_projection_step_ids"] == ["materialization.go_import"]
     assert debt["callback_projection_step_ids"] == ["materialization.go_import"]
+    assert debt["remaining_adapter_projection_only_step_ids"] == ["materialization.go_import"]
     assert debt["remaining_callback_only_step_ids"] == ["materialization.go_import"]
+    assert debt["adapter_projection_only_step_count"] == 1
     assert debt["callback_only_step_count"] == 1
-    step_debt = debt["legacy_callback_debt"][0]
+    step_debt = debt["adapter_projection_debt"][0]
     assert step_debt["native_receipt_present"] is False
+    assert step_debt["adapter_projection_present"] is True
     assert step_debt["callback_projection_present"] is True
+    assert step_debt["adapter_projection_only"] is True
     assert step_debt["callback_only"] is True
     assert step_debt["projection_only"] is True
     assert step_debt["authoritative_receipts_allowed"] is False
     assert step_debt["verifier_evidence_present"] is True
     assert step_debt["native_verifier_evidence_present"] is False
+    assert step_debt["adapter_verifier_evidence_present"] is True
     assert step_debt["callback_verifier_evidence_present"] is True
     assert step_debt["cutover_ready"] is False
-    assert "callback_projection_only" in step_debt["cutover_blockers"]
+    assert "adapter_projection_only" in step_debt["cutover_blockers"]
     assert "missing_native_repair_receipt" in step_debt["cutover_blockers"]
 
 
@@ -889,8 +910,8 @@ def test_materialization_hygiene_native_cutover_evidence_requires_all_selected_s
     assert callback_blocked_evidence["native_verifier_evidence_present"] is True
     assert callback_blocked_evidence["native_evidence_resolved"] is True
     assert callback_blocked_evidence["cutover_ready"] is False
-    assert "callback_projection_absent" in callback_blocked_evidence["missing_required_evidence"]
-    assert "callback_projection_still_present" in callback_blocked_evidence["cutover_blockers"]
+    assert "adapter_projection_absent" in callback_blocked_evidence["missing_required_evidence"]
+    assert "adapter_projection_still_present" in callback_blocked_evidence["cutover_blockers"]
 
     ready_lifecycle = materialization_quality_repair_bridge._materialization_receipt_lifecycle_by_step(
         ordered_steps=(step,),

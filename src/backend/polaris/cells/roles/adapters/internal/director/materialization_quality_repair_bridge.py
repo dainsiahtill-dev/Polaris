@@ -40,9 +40,10 @@ _MATERIALIZATION_QUALITY_REPAIR_RUNNERS = {
     "materialization.python_import": "_run_materialization_python_import",
     "materialization.go_import": "_run_materialization_go_import",
 }
-_CALLBACK_RECEIPT_MIGRATION_BLOCKER = "callback runners still return tool_results instead of RepairReceipt"
+_CALLBACK_RECEIPT_MIGRATION_BLOCKER = "adapter schedule runners still return tool_results instead of RepairReceipt"
 _MATERIALIZATION_NATIVE_RECEIPT_STANDARDIZATION_STEP_IDS = ("materialization.hygiene_scaffold",)
 _NON_AUTHORITATIVE_CALLBACK_RECEIPT_AUTHORITIES = {
+    "non_authoritative_adapter_projection",
     "non_authoritative_callback_projection",
     "non_authoritative_callback_receipt_projection",
     "non_authoritative_callback_tool_result_projection",
@@ -1134,6 +1135,7 @@ def _annotate_materialization_quality_summary(
         "materialization_quality_step_summaries": step_summaries,
         "coverage_preaudit": coverage_preaudit,
         "repair_kernel_migration_debt": migration_debt,
+        "adapter_projection_debt": migration_debt["adapter_projection_debt"],
         "legacy_callback_debt": migration_debt["legacy_callback_debt"],
     }
     repair_kernel = project_repair_kernel_summary(
@@ -1160,7 +1162,7 @@ def _annotate_materialization_quality_summary(
         "schema_version": "director.materialization_quality_repair_bridge.v1",
         "mode": "runtime_schedule_step_runner_adapter",
         "bridge_file": "roles.adapters.internal.director.materialization_quality_repair_bridge",
-        "legacy_strategy_host": "roles.adapters.internal.director.deterministic_repairs",
+        "retired_strategy_host_removed": True,
         "runtime_schedule_owner": "director.runtime",
         "runner_binding_owner": "roles.adapters",
         "ordered_step_ids": [step.step_id for step in ordered_steps],
@@ -1236,10 +1238,12 @@ def _build_materialization_scheduler_bridge_summary(
     )
     return {
         "schema_version": "director.materialization_quality_scheduler_bridge.v1",
-        "mode": "legacy_callback_bridge",
+        "mode": "adapter_projection_bridge",
         "target_scheduler": "director.runtime.repair_kernel.scheduler",
         "schedule_source": "director.runtime.public.query_director_repair_materialization_quality_schedule",
         "runner_binding_owner": "roles.adapters",
+        "adapter_projection_bridge": True,
+        "legacy_callback_bridge": False,
         "runner_binding_reconciliation": dict(schedule_reconciliation or {}),
         "step_order": [step.to_dict() for step in ordered_steps],
         "active_step_ids": _sorted_unique(_payload_step_id(payload) for payload in payloads),
@@ -1270,6 +1274,29 @@ def _build_materialization_scheduler_bridge_summary(
         ),
         "receipts_with_revalidation": sum(
             1 for receipt in receipt_payloads if _mapping_has_verifier_evidence(receipt.get("revalidation_evidence"))
+        ),
+        "adapter_receipt_projection_count": len(callback_receipt_projections),
+        "adapter_projection_only_count": sum(
+            1 for projection in callback_receipt_projections if bool(projection.get("projection_only", True))
+        ),
+        "adapter_authoritative_receipt_count": 0,
+        "adapter_receipts_authoritative": False,
+        "adapter_receipt_authority_values": _sorted_unique(
+            _callback_receipt_authority_value(projection) for projection in callback_receipt_projections
+        ),
+        "adapter_receipts_with_revalidation": sum(
+            1 for projection in callback_receipt_projections if _callback_projection_has_revalidation(projection)
+        ),
+        "adapter_receipt_evidence_statuses": [
+            str(projection.get("evidence_status") or "missing_evidence") for projection in callback_receipt_projections
+        ],
+        "adapter_receipt_evidence_status_counts": _count_values(
+            str(projection.get("evidence_status") or "missing_evidence") for projection in callback_receipt_projections
+        ),
+        "adapter_projection_claimed_typed_receipt_path_count": sum(
+            1
+            for projection in callback_receipt_projections
+            if _callback_projection_claims_typed_receipt_path_available(projection)
         ),
         "callback_receipt_projection_count": len(callback_receipt_projections),
         "callback_projection_only_count": sum(
@@ -1322,9 +1349,14 @@ def _build_materialization_scheduler_bridge_summary(
         "receipt_lifecycle_status_counts": _count_values(
             lifecycle.get("receipt_lifecycle_evidence_status") for lifecycle in receipt_lifecycle_by_step.values()
         ),
+        "remaining_adapter_projection_only_step_ids": list(
+            migration_debt.get("remaining_adapter_projection_only_step_ids") or []
+        ),
+        "adapter_projection_only_step_count": int(migration_debt.get("adapter_projection_only_step_count") or 0),
         "remaining_callback_only_step_ids": list(migration_debt.get("remaining_callback_only_step_ids") or []),
         "callback_only_step_count": int(migration_debt.get("callback_only_step_count") or 0),
         "native_receipt_step_ids": list(migration_debt.get("native_receipt_step_ids") or []),
+        "adapter_projection_step_ids": list(migration_debt.get("adapter_projection_step_ids") or []),
         "callback_projection_step_ids": list(migration_debt.get("callback_projection_step_ids") or []),
         "cutover_blockers_by_step": {
             step_id: list(lifecycle.get("cutover_blockers") or ())
@@ -1332,6 +1364,7 @@ def _build_materialization_scheduler_bridge_summary(
         },
         "migration_blocker": _CALLBACK_RECEIPT_MIGRATION_BLOCKER,
         "repair_kernel_migration_debt": migration_debt,
+        "adapter_projection_debt": list(migration_debt.get("adapter_projection_debt") or []),
         "legacy_callback_debt": list(migration_debt.get("legacy_callback_debt") or []),
     }
 
@@ -1370,7 +1403,7 @@ def _materialization_callback_receipt_projections_from_schedule_result(
                 normalized["bridge_step_id"] = step_id
         normalized["receipt_authority"] = _non_authoritative_callback_receipt_authority(
             _callback_receipt_authority_value(normalized),
-            default="non_authoritative_callback_projection",
+            default="non_authoritative_adapter_projection",
         )
         projections.append(normalized)
     return projections
@@ -1937,10 +1970,13 @@ def _materialization_receipt_lifecycle_by_step(
             "selected_for_native_receipt_standardization": bool(
                 native_cutover_evidence.get("selected_for_standardization")
             ),
+            "adapter_typed_receipt_path_available": False,
             "callback_typed_receipt_path_available": False,
             "authoritative_receipts_allowed": False,
             "native_receipt_present": native_receipt_present,
+            "adapter_projection_present": callback_projection_present,
             "callback_projection_present": callback_projection_present,
+            "adapter_projection_only": callback_only,
             "callback_only": callback_only,
             "projection_only": callback_only,
             "verifier_evidence_present": (
@@ -1949,14 +1985,21 @@ def _materialization_receipt_lifecycle_by_step(
                 or _has_native_verifier_evidence(step_tool_results)
             ),
             "native_verifier_evidence_present": native_verifier_evidence_present,
+            "adapter_verifier_evidence_present": callback_verifier_evidence_present,
             "callback_verifier_evidence_present": callback_verifier_evidence_present,
             "native_repair_kernel_receipt_count": len(native_receipts),
+            "adapter_receipt_projection_count": len(callback_projections),
             "callback_receipt_projection_count": len(callback_projections),
+            "adapter_projection_only_count": sum(
+                1 for projection in callback_projections if bool(projection.get("projection_only", True))
+            ),
             "callback_projection_only_count": sum(
                 1 for projection in callback_projections if bool(projection.get("projection_only", True))
             ),
+            "adapter_authoritative_receipt_count": 0,
             "callback_authoritative_receipt_count": 0,
             "native_receipt_evidence_status_counts": _count_values(native_statuses),
+            "adapter_receipt_evidence_status_counts": _count_values(callback_statuses),
             "callback_receipt_evidence_status_counts": _count_values(callback_statuses),
             "tool_result_evidence_status_counts": _count_values(tool_result_statuses),
             "receipt_lifecycle_evidence_status_counts": _count_values(lifecycle_statuses),
@@ -1991,7 +2034,7 @@ def _materialization_native_receipt_cutover_evidence(
             "native_repair_kernel.receipts",
             "native_revalidation_evidence",
             "resolved_native_evidence_status",
-            "callback_projection_absent",
+            "adapter_projection_absent",
         ]
         if selected_for_standardization
         else []
@@ -2014,8 +2057,8 @@ def _materialization_native_receipt_cutover_evidence(
             missing_required_evidence.append("resolved_native_evidence_status")
             blockers.append("missing_native_revalidation_evidence")
         if callback_projection_present:
-            missing_required_evidence.append("callback_projection_absent")
-            blockers.append("callback_projection_still_present")
+            missing_required_evidence.append("adapter_projection_absent")
+            blockers.append("adapter_projection_still_present")
     missing_required_evidence = _ordered_unique(missing_required_evidence)
     cutover_blockers = _ordered_unique(blockers)
     return {
@@ -2027,7 +2070,9 @@ def _materialization_native_receipt_cutover_evidence(
         "native_path_available": native_path_available,
         "native_receipt_path_available": native_path_available,
         "native_repair_kernel_receipt_count": len(native_receipts),
+        "adapter_projection_present": callback_projection_present,
         "callback_projection_present": callback_projection_present,
+        "adapter_receipt_projection_count": len(callback_projections),
         "callback_receipt_projection_count": len(callback_projections),
         "native_verifier_evidence_required": selected_for_standardization,
         "native_verifier_evidence_present": native_verifier_evidence_present,
@@ -2058,7 +2103,7 @@ def _materialization_step_cutover_blockers(
 ) -> list[str]:
     blockers = list(debt.get("blockers") or [])
     if callback_projections:
-        blockers.append("callback_projection_only")
+        blockers.append("adapter_projection_only")
     if (tool_results or callback_projections) and not native_receipts:
         blockers.append("missing_native_repair_receipt")
     statuses = native_statuses + callback_statuses
@@ -2170,9 +2215,10 @@ def _project_materialization_quality_migration_debt(
         "schema_version": "director.materialization_quality_repair_migration_debt.v1",
         "owner_cell": "roles.adapters",
         "runtime_schedule_owner": "director.runtime",
-        "legacy_strategy_host": "roles.adapters.internal.director.deterministic_repairs",
+        "retired_strategy_host_removed": True,
         "bridge_mode": "runtime_schedule_step_runner_adapter",
-        "legacy_callback_bridge": True,
+        "adapter_projection_bridge": True,
+        "legacy_callback_bridge": False,
         "convergence_verifier_present": convergence_verifier_present,
         "authoritative_receipts_allowed": False,
         "cutover_ready": not blocked_steps and bool(legacy_callback_debt),
@@ -2181,14 +2227,19 @@ def _project_materialization_quality_migration_debt(
         "cutover_ready_step_count": len(legacy_callback_debt) - len(blocked_steps),
         "native_receipt_present_step_count": len(native_receipt_step_ids),
         "callback_projection_present_step_count": len(callback_projection_step_ids),
+        "adapter_projection_present_step_count": len(callback_projection_step_ids),
         "callback_only_step_count": len(remaining_callback_only_step_ids),
+        "adapter_projection_only_step_count": len(remaining_callback_only_step_ids),
         "native_receipt_step_ids": native_receipt_step_ids,
         "callback_projection_step_ids": callback_projection_step_ids,
+        "adapter_projection_step_ids": callback_projection_step_ids,
         "remaining_callback_only_step_ids": remaining_callback_only_step_ids,
+        "remaining_adapter_projection_only_step_ids": remaining_callback_only_step_ids,
         "cutover_blockers_by_step": {
             str(item.get("step_id") or ""): list(item.get("cutover_blockers") or ()) for item in legacy_callback_debt
         },
         "blockers": blockers,
+        "adapter_projection_debt": legacy_callback_debt,
         "legacy_callback_debt": legacy_callback_debt,
     }
 
@@ -2260,7 +2311,7 @@ def _project_legacy_callback_debt_for_step(
     )
     evidence_status = _aggregate_evidence_status(_tool_result_evidence_status(item) for item in tool_results)
     convergence_path_available = bool(runtime_executable_source_tools)
-    blockers = ["legacy_callback_runner", "independent_shadow_required"]
+    blockers = ["adapter_schedule_runner", "independent_shadow_required"]
     if _repair_source_tool_status(step.source_tool, catalog) != "executable_runtime":
         blockers.append("declared_source_tool_not_runtime_executable")
     if not convergence_path_available:
@@ -2268,7 +2319,7 @@ def _project_legacy_callback_debt_for_step(
     if legacy_only_source_tools:
         blockers.append("legacy_only_source_tools")
     if callback_only:
-        blockers.append("callback_projection_only")
+        blockers.append("adapter_projection_only")
     if (tool_results or callback_projection_present) and not native_receipt_present:
         blockers.append("missing_native_repair_receipt")
     if verifier_evidence_required and not verifier_evidence_present:
@@ -2287,8 +2338,11 @@ def _project_legacy_callback_debt_for_step(
         "legacy_only_source_tools": legacy_only_source_tools,
         "native_receipt_present": native_receipt_present,
         "native_repair_kernel_receipt_count": native_receipt_count,
+        "adapter_projection_present": callback_projection_present,
         "callback_projection_present": callback_projection_present,
+        "adapter_receipt_projection_count": callback_projection_count,
         "callback_receipt_projection_count": callback_projection_count,
+        "adapter_projection_only": callback_only,
         "callback_only": callback_only,
         "projection_only": callback_only,
         "authoritative_receipts_allowed": False,
@@ -2298,6 +2352,7 @@ def _project_legacy_callback_debt_for_step(
         "verifier_evidence_required": verifier_evidence_required,
         "verifier_evidence_present": verifier_evidence_present,
         "native_verifier_evidence_present": native_verifier_evidence_present,
+        "adapter_verifier_evidence_present": callback_verifier_evidence_present,
         "callback_verifier_evidence_present": callback_verifier_evidence_present,
         "evidence_status": evidence_status,
         "cutover_ready": False,

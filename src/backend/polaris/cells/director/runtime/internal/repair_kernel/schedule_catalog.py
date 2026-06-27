@@ -10,9 +10,14 @@ from .scheduler import CONVERGENCE_PIPELINE_ORDER, convergence_envelope_metadata
 
 DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS = 1
 _MAX_REPAIR_SCHEDULE_MAX_ROUNDS = 10
-_CALLBACK_RECEIPT_PROJECTION_SCHEMA_VERSION = "director.repair_callback_receipt_projection.v1"
-_CALLBACK_RECEIPT_PROJECTION_AUTHORITY = "non_authoritative_callback_projection"
-_CALLBACK_RECEIPT_PROJECTION_MIGRATION_BLOCKER = "callback runners still return tool_results instead of RepairReceipt"
+_ADAPTER_RECEIPT_PROJECTION_SCHEMA_VERSION = "director.repair_adapter_receipt_projection.v1"
+_ADAPTER_RECEIPT_PROJECTION_AUTHORITY = "non_authoritative_adapter_projection"
+_ADAPTER_RECEIPT_PROJECTION_MIGRATION_BLOCKER = (
+    "adapter schedule runners still return tool_results instead of RepairReceipt"
+)
+_CALLBACK_RECEIPT_PROJECTION_SCHEMA_VERSION = _ADAPTER_RECEIPT_PROJECTION_SCHEMA_VERSION
+_CALLBACK_RECEIPT_PROJECTION_AUTHORITY = _ADAPTER_RECEIPT_PROJECTION_AUTHORITY
+_CALLBACK_RECEIPT_PROJECTION_MIGRATION_BLOCKER = _ADAPTER_RECEIPT_PROJECTION_MIGRATION_BLOCKER
 _CANONICAL_CONVERGENCE_EXECUTOR = "RepairConvergenceScheduler"
 _FINAL_TYPED_RECEIPT_ENTRYPOINT = "run_runtime_repair_convergence"
 _CALLBACK_ROUND_ACCOUNTING_FIELDS = ("max_rounds", "rounds_run", "convergence_status", "stopped_reason")
@@ -333,23 +338,32 @@ def _callback_schedule_summary(
         "rounds_run": max(0, int(rounds_run)),
         "convergence_status": convergence_status,
         "stopped_reason": stopped_reason,
+        "adapter_projection_bridge": True,
+        "adapter_bridge_uses_repair_convergence_scheduler": False,
         "callback_bridge_uses_repair_convergence_scheduler": False,
         "typed_convergence_scheduler_cutover_required": True,
+        "adapter_runner_self_loop_allowed": False,
         "callback_runner_self_loop_allowed": False,
         "bounded_round_accounting_visible": True,
         "round_accounting_fields": list(_CALLBACK_ROUND_ACCOUNTING_FIELDS),
         "receipt_projection_count": max(0, int(receipt_projection_count)),
+        "adapter_receipt_projection_available": receipt_projection_count > 0,
         "callback_receipt_projection_available": receipt_projection_count > 0,
         "native_receipt_count": 0,
         "post_check_evidence_complete": False,
         "native_post_check_evidence_complete": False,
         "missing_native_revalidation_evidence": receipt_projection_count > 0,
+        "adapter_projection_not_authoritative": True,
         "non_authoritative_projection": True,
         "cutover_ready": False,
-        "cutover_blockers": ["missing_native_revalidation_evidence", "callback_projection_not_authoritative_receipt"],
+        "cutover_blockers": [
+            "missing_native_revalidation_evidence",
+            "adapter_projection_not_authoritative_receipt",
+        ],
         **evidence_summary,
-        "legacy_callback_bridge": True,
-        "migration_callback_envelope": True,
+        "legacy_callback_bridge": False,
+        "migration_callback_envelope": False,
+        "adapter_projection_envelope": True,
         "runner_binding_owner": "roles.adapters",
         "produces_tool_results_only": True,
         "final_typed_receipt_path": _FINAL_TYPED_RECEIPT_ENTRYPOINT,
@@ -459,6 +473,7 @@ def _project_callback_schedule_receipts(
                 "source_tool": source_tool,
                 "scheduled_source_tool": scheduled_source_tool,
                 "callback_source_tool": callback_source_tool,
+                "adapter_source_tool": callback_source_tool,
                 "round_number": round_number,
                 "tool_name": _first_non_empty(
                     tool_result.get("tool_name"),
@@ -479,6 +494,7 @@ def _project_callback_schedule_receipts(
                 "pipeline_order": CONVERGENCE_PIPELINE_ORDER,
                 "hidden_language_loop_allowed": False,
                 "language_self_loop_allowed": False,
+                "adapter_runner_self_loop_allowed": False,
                 "callback_runner_self_loop_allowed": False,
                 "typed_convergence_scheduler_cutover_required": True,
                 "preferred_typed_receipt_entrypoint": _FINAL_TYPED_RECEIPT_ENTRYPOINT,

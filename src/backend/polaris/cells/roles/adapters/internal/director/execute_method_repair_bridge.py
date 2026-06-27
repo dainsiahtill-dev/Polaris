@@ -8,82 +8,17 @@ only as non-repair smoke checks until they move to a verifier cell.
 
 from __future__ import annotations
 
+import contextlib
+import os
+import re
+import subprocess
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from polaris.cells.director.runtime.public.service import query_director_repair_strategy_catalog
 
-from . import deterministic_repairs as _legacy_deterministic_repairs
-from .deterministic_repairs import (
-    _DECLARED_TARGET_FILE_MISSING_ERROR_RE as _DECLARED_TARGET_FILE_MISSING_ERROR_RE,
-    _KNOWN_DEV_DEPENDENCY_VERSIONS as _KNOWN_DEV_DEPENDENCY_VERSIONS,
-    _KNOWN_RUNTIME_DEPENDENCY_VERSIONS as _KNOWN_RUNTIME_DEPENDENCY_VERSIONS,
-    _NODE_TEST_RUNNER_WITHOUT_TEST_FILES_ERROR_RE as _NODE_TEST_RUNNER_WITHOUT_TEST_FILES_ERROR_RE,
-    _PATCH_RESIDUE_LINE_RE as _PATCH_RESIDUE_LINE_RE,
-    _PYTHON_MAIN_BLOCK_RE as _PYTHON_MAIN_BLOCK_RE,
-    _PYTHON_RUNTIME_SMOKE_TIMEOUT_SECONDS as _PYTHON_RUNTIME_SMOKE_TIMEOUT_SECONDS,
-    _SCAFFOLD_MARKER_REPLACEMENTS as _SCAFFOLD_MARKER_REPLACEMENTS,
-    _TS_CLASS_FIELD_DECL_RE as _TS_CLASS_FIELD_DECL_RE,
-    _TS_DECORATOR_LINE_RE as _TS_DECORATOR_LINE_RE,
-    _TS_ESCAPED_NEWLINE_IN_LINE_COMMENT_ERROR_RE as _TS_ESCAPED_NEWLINE_IN_LINE_COMMENT_ERROR_RE,
-    _TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE as _TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE,
-    _TS_MISSING_CLOSING_BRACE_ERROR_RE as _TS_MISSING_CLOSING_BRACE_ERROR_RE,
-    _TS_NAMED_IMPORT_RE as _TS_NAMED_IMPORT_RE,
-    _TS_NODE_BUILTIN_TYPES_ERROR_RE as _TS_NODE_BUILTIN_TYPES_ERROR_RE,
-    _TS_OBJECT_PROPERTY_SEMICOLON_LINE_RE as _TS_OBJECT_PROPERTY_SEMICOLON_LINE_RE,
-    _TS_RETURN_OBJECT_END_RE as _TS_RETURN_OBJECT_END_RE,
-    _TS_RETURN_OBJECT_SEMICOLON_ERROR_RE as _TS_RETURN_OBJECT_SEMICOLON_ERROR_RE,
-    _TS_RETURN_OBJECT_START_RE as _TS_RETURN_OBJECT_START_RE,
-    _TS_RUNTIME_EXPORT_TEMPLATE as _TS_RUNTIME_EXPORT_TEMPLATE,
-    _TS_ZOD_INFERRED_TYPE_ALIAS_LINE_RE as _TS_ZOD_INFERRED_TYPE_ALIAS_LINE_RE,
-    _TS_ZOD_TYPE_CLASS_COLLISION_ERROR_RE as _TS_ZOD_TYPE_CLASS_COLLISION_ERROR_RE,
-    _TYPEORM_IMPORT_LINE_RE as _TYPEORM_IMPORT_LINE_RE,
-    _UNDECLARED_RUNTIME_IMPORT_ERROR_RE as _UNDECLARED_RUNTIME_IMPORT_ERROR_RE,
-    _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE as _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE,
-    _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE as _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE,
-    _build_javascript_frontend_smoke_test_content as _build_javascript_frontend_smoke_test_content,
-    _build_python_symbol_stub as _build_python_symbol_stub,
-    _build_substantive_node_test_script as _build_substantive_node_test_script,
-    _build_typescript_reexport_line as _build_typescript_reexport_line,
-    _build_unresolved_import_symbol_repair_block as _build_unresolved_import_symbol_repair_block,
-    _dedupe_paths as _dedupe_paths,
-    _dependency_root_name as _dependency_root_name,
-    _extract_relative_import_refs as _extract_relative_import_refs,
-    _filter_pre_materialization_declared_target_errors as _filter_pre_materialization_declared_target_errors,
-    _filter_satisfied_declared_target_missing_errors as _filter_satisfied_declared_target_missing_errors,
-    _find_nearby_declared_target_source as _find_nearby_declared_target_source,
-    _find_typescript_runtime_symbol_source as _find_typescript_runtime_symbol_source,
-    _is_overstrict_node_test_script_contract as _is_overstrict_node_test_script_contract,
-    _is_repairable_npm_test_script_error as _is_repairable_npm_test_script_error,
-    _iter_typescript_files as _iter_typescript_files,
-    _looks_like_typescript_reexport_failure as _looks_like_typescript_reexport_failure,
-    _missing_unresolved_relative_import_target_files as _missing_unresolved_relative_import_target_files,
-    _nearby_declared_target_source_candidates as _nearby_declared_target_source_candidates,
-    _normalize_ts_class_field_initialization as _normalize_ts_class_field_initialization,
-    _normalize_undeclared_typeorm_model_source as _normalize_undeclared_typeorm_model_source,
-    _package_declared_in_manifest as _package_declared_in_manifest,
-    _parse_materialization_quality_error_paths as _parse_materialization_quality_error_paths,
-    _parse_missing_declared_target_files as _parse_missing_declared_target_files,
-    _parse_named_import_symbols as _parse_named_import_symbols,
-    _parse_required_dev_dependency_packages as _parse_required_dev_dependency_packages,
-    _parse_typescript_escaped_newline_paths as _parse_typescript_escaped_newline_paths,
-    _parse_typescript_zod_type_class_collision_paths as _parse_typescript_zod_type_class_collision_paths,
-    _parse_undeclared_runtime_import_packages as _parse_undeclared_runtime_import_packages,
-    _parse_undeclared_runtime_import_paths as _parse_undeclared_runtime_import_paths,
-    _path_inside_workspace as _path_inside_workspace,
-    _pre_materialization_declared_target_repair_allowed as _pre_materialization_declared_target_repair_allowed,
-    _python_symbol_defined as _python_symbol_defined,
-    _relative_import_repair_target_candidates as _relative_import_repair_target_candidates,
-    _relative_import_suffix_order as _relative_import_suffix_order,
-    _remove_patch_residue_lines as _remove_patch_residue_lines,
-    _replace_deterministic_scaffold_markers as _replace_deterministic_scaffold_markers,
-    _resolve_relative_ts_module as _resolve_relative_ts_module,
-    _task_allows_scaffold_marker_cleanup as _task_allows_scaffold_marker_cleanup,
-    _typescript_file_declares_runtime_export as _typescript_file_declares_runtime_export,
-    _typescript_module_runtime_exports_symbol as _typescript_module_runtime_exports_symbol,
-    _typescript_relative_import_without_suffix as _typescript_relative_import_without_suffix,
-)
 from .execution_tools import DirectorToolExecutor
 from .repair_profile_projection import project_repair_kernel_summary
 from .runtime_repair_tool_adapter import run_runtime_repair_with_director_tools
@@ -157,6 +92,11 @@ _DECLARED_TARGET_REPAIR_SUFFIXES = frozenset(
         ".tsx",
     }
 )
+_PYTHON_MAIN_BLOCK_RE = re.compile(
+    r'^\s*if\s+__name__\s*==\s*["\']__main__["\']\s*:',
+    re.MULTILINE,
+)
+_PYTHON_RUNTIME_SMOKE_TIMEOUT_SECONDS = 5.0
 
 
 def _legacy_execute_method_helper_source_tool(name: str) -> str:
@@ -185,14 +125,10 @@ def _runtime_executable_repair_source_tools() -> frozenset[str]:
 def get_legacy_execute_method_repair_helper(name: str) -> Any:
     """Return an allowlisted migration helper for old execute_method imports."""
 
-    if name not in _LEGACY_EXECUTE_METHOD_REPAIR_HELPER_ALLOWLIST:
-        source_tool = _legacy_execute_method_helper_source_tool(name)
-        if source_tool in _runtime_executable_repair_source_tools():
-            raise AttributeError(
-                f"{name} is owned by director.runtime; use polaris.cells.director.runtime.public.service"
-            )
-        raise AttributeError(f"{name} is not an allowlisted execute_method legacy repair helper")
-    return getattr(_legacy_deterministic_repairs, name)
+    source_tool = _legacy_execute_method_helper_source_tool(name)
+    if source_tool in _runtime_executable_repair_source_tools():
+        raise AttributeError(f"{name} is owned by director.runtime; use director.runtime.public")
+    raise AttributeError(f"{name} is not an allowlisted execute_method legacy repair helper")
 
 
 def _adapter_workspace_path(adapter: Any) -> Path | None:
@@ -233,6 +169,23 @@ def _task_declared_paths(task: dict[str, Any], *, workspace_name: str) -> tuple[
         if normalized:
             paths.append(normalized)
     return _dedupe_posix_paths(paths)
+
+
+def _task_allows_scaffold_marker_cleanup(task: dict[str, Any]) -> bool:
+    metadata_raw = task.get("metadata")
+    metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+    if str(metadata.get("autofix_reason") or "").strip() == "deterministic_scaffold_residue_cleanup":
+        return True
+    task_text = _task_text_blob(task).lower()
+    return "scaffold" in task_text and "residue" in task_text and "audit-seed" in task_text
+
+
+def _task_text_blob(value: Any) -> str:
+    if isinstance(value, dict):
+        return "\n".join(_task_text_blob(item) for item in value.values())
+    if isinstance(value, list | tuple | set):
+        return "\n".join(_task_text_blob(item) for item in value)
+    return str(value or "")
 
 
 def _runtime_base_files_from_paths(
@@ -574,10 +527,43 @@ def run_python_static_smoke(
     *,
     all_affected_files: list[str],
 ) -> list[str]:
-    return _legacy_deterministic_repairs._apply_deterministic_python_static_smoke(
-        adapter,
-        all_affected_files=all_affected_files,
-    )
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    errors: list[str] = []
+    for rel in all_affected_files:
+        if not isinstance(rel, str) or not rel.endswith(".py"):
+            continue
+        candidate = (workspace_path / rel).resolve()
+        try:
+            candidate.relative_to(workspace_path)
+        except ValueError:
+            continue
+        if not candidate.is_file():
+            continue
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "py_compile", str(candidate)],
+                cwd=str(workspace_path),
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            errors.append(
+                f"Artifact quality scan failed: python static smoke could not "
+                f"check {rel!r}: {type(exc).__name__}: {exc}"
+            )
+            continue
+        if proc.returncode != 0:
+            stderr = (proc.stderr or proc.stdout or "").strip()
+            tail = "\n".join(line for line in stderr.splitlines()[-6:] if line)
+            errors.append(
+                f"Artifact quality scan failed: python static smoke found syntax error in {rel!r}; tail:\n{tail}"
+            )
+    return errors
 
 
 def run_python_runtime_smoke(
@@ -587,15 +573,171 @@ def run_python_runtime_smoke(
     all_affected_files: list[str],
     timeout_seconds: float | None = None,
 ) -> list[str]:
-    if timeout_seconds is None:
-        return _legacy_deterministic_repairs._apply_deterministic_python_runtime_smoke(
-            adapter,
-            task_id=task_id,
-            all_affected_files=all_affected_files,
+    del task_id
+    bounded_timeout = _PYTHON_RUNTIME_SMOKE_TIMEOUT_SECONDS if timeout_seconds is None else float(timeout_seconds)
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    errors: list[str] = []
+    for rel in all_affected_files:
+        if not isinstance(rel, str) or not rel.endswith(".py"):
+            continue
+        candidate = (workspace_path / rel).resolve()
+        try:
+            candidate.relative_to(workspace_path)
+        except ValueError:
+            continue
+        if not candidate.is_file():
+            continue
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not _PYTHON_MAIN_BLOCK_RE.search(text):
+            continue
+        env = os.environ.copy()
+        current_pythonpath = str(env.get("PYTHONPATH") or "").strip()
+        env["PYTHONPATH"] = (
+            str(workspace_path)
+            if not current_pythonpath
+            else os.pathsep.join([str(workspace_path), current_pythonpath])
         )
-    return _legacy_deterministic_repairs._apply_deterministic_python_runtime_smoke(
-        adapter,
-        task_id=task_id,
-        all_affected_files=all_affected_files,
-        timeout_seconds=timeout_seconds,
+        proc = subprocess.Popen(
+            [sys.executable, str(candidate)],
+            cwd=str(workspace_path),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=max(0.5, bounded_timeout))
+            returncode = proc.returncode
+        except subprocess.TimeoutExpired:
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                finally:
+                    with contextlib.suppress(OSError):
+                        proc.wait(timeout=2.0)
+                continue
+            stdout = proc.stdout.read() if proc.stdout else ""
+            stderr = proc.stderr.read() if proc.stderr else ""
+            tail = "\n".join(line for line in (stderr or "").strip().splitlines()[-8:] if line)
+            errors.append(
+                f"Artifact quality scan failed: python runtime smoke timed out for {rel!r} "
+                f"after {bounded_timeout}s; tail:\n{tail}"
+            )
+            continue
+        except (OSError, ValueError) as exc:
+            errors.append(
+                f"Artifact quality scan failed: python runtime smoke could not launch "
+                f"{rel!r}: {type(exc).__name__}: {exc}"
+            )
+            continue
+
+        if returncode == 0:
+            continue
+        stderr_tail = (stderr or stdout or "").strip().splitlines()
+        tail = "\n".join(line for line in stderr_tail[-8:] if line)
+        if returncode < 0:
+            errors.append(
+                f"Artifact quality scan failed: python runtime smoke was killed for {rel!r} "
+                f"(returncode={returncode}, signal={-returncode}); tail:\n{tail}"
+            )
+        else:
+            errors.append(
+                f"Artifact quality scan failed: python runtime smoke crashed for {rel!r} "
+                f"(returncode={returncode}); tail:\n{tail}"
+            )
+    errors.extend(
+        _run_python_unittest_discover_smoke(
+            adapter,
+            all_affected_files=all_affected_files,
+            timeout_seconds=bounded_timeout,
+        )
     )
+    return errors
+
+
+def _run_python_unittest_discover_smoke(
+    adapter: Any,
+    *,
+    all_affected_files: list[str],
+    timeout_seconds: float,
+) -> list[str]:
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    touched_test_files = [
+        _normalize_declared_task_path(str(item or ""))
+        for item in all_affected_files
+        if _looks_like_python_unittest_test_path(str(item or ""))
+    ]
+    if not touched_test_files:
+        return []
+    tests_dir = workspace_path / "tests"
+    if not tests_dir.is_dir():
+        return []
+    try:
+        has_discoverable_tests = any(path.is_file() for path in tests_dir.rglob("test_*.py"))
+    except (OSError, RuntimeError):
+        return []
+    if not has_discoverable_tests:
+        return []
+
+    env = os.environ.copy()
+    current_pythonpath = str(env.get("PYTHONPATH") or "").strip()
+    env["PYTHONPATH"] = (
+        str(workspace_path) if not current_pythonpath else os.pathsep.join([str(workspace_path), current_pythonpath])
+    )
+    command = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(workspace_path),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=max(1.0, float(timeout_seconds)),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        output = "\n".join(str(part or "").strip() for part in (exc.stdout, exc.stderr) if part)
+        tail = "\n".join(line for line in output.splitlines()[-40:] if line)
+        return [
+            "Artifact quality scan failed: workspace validation command timed out "
+            "(python -m unittest discover -s tests -p test_*.py -v); "
+            f"touched_tests={touched_test_files[:6]}; tail:\n{tail}"
+        ]
+    except (OSError, ValueError) as exc:
+        return [
+            "Artifact quality scan failed: workspace validation command could not launch "
+            "(python -m unittest discover -s tests -p test_*.py -v): "
+            f"{type(exc).__name__}: {exc}"
+        ]
+
+    output = (completed.stderr or completed.stdout or "").strip()
+    if completed.returncode == 0 or _unittest_discover_only_found_no_tests(output):
+        return []
+    tail = "\n".join(line for line in output.splitlines()[-80:] if line)
+    return [
+        "Artifact quality scan failed: workspace validation command failed "
+        "(python -m unittest discover -s tests -p test_*.py -v); "
+        f"touched_tests={touched_test_files[:6]}; tail:\n{tail}"
+    ]
+
+
+def _looks_like_python_unittest_test_path(rel_path: str) -> bool:
+    normalized = _normalize_declared_task_path(rel_path)
+    name = Path(normalized).name
+    return normalized.endswith(".py") and (
+        name.startswith("test_") or name.endswith("_test.py") or "/tests/" in normalized
+    )
+
+
+def _unittest_discover_only_found_no_tests(output: str) -> bool:
+    token = str(output or "").lower()
+    return "ran 0 tests" in token and "no tests ran" in token and "traceback" not in token

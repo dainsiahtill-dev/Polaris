@@ -89,7 +89,7 @@ def _patch_post_execution_schedule_result_as_dicts(monkeypatch: Any) -> None:
                 receipt_projections.append(
                     {
                         "projection_id": f"projection-{len(receipt_projections) + 1}",
-                        "receipt_authority": "non_authoritative_callback_projection",
+                        "receipt_authority": "non_authoritative_adapter_projection",
                         "schedule_kind": "post_execution",
                         "step_id": step.step_id,
                         "source_tool": payload.get("source_tool"),
@@ -219,10 +219,12 @@ def _assert_non_authoritative_callback_projection_boundary(
     forbidden_receipt_ids: set[str],
 ) -> None:
     scheduler_bridge = summary["scheduler_bridge"]
+    assert scheduler_bridge["adapter_receipts_authoritative"] is False
     assert scheduler_bridge["callback_receipts_authoritative"] is False
     assert scheduler_bridge["typed_receipt_path_available"] is False
     assert (
-        scheduler_bridge["migration_blocker"] == "callback runners still return tool_results instead of RepairReceipt"
+        scheduler_bridge["migration_blocker"]
+        == "adapter schedule runners still return tool_results instead of RepairReceipt"
     )
     repair_kernel_receipts = [
         receipt for receipt in summary["repair_kernel"].get("receipts", []) if isinstance(receipt, dict)
@@ -1516,7 +1518,7 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
     assert go_debt["verifier_evidence_present"] is True
     assert go_debt["cutover_ready"] is False
     assert "missing_revalidation_evidence" not in go_debt["blockers"]
-    assert "legacy_callback_runner" in go_debt["blockers"]
+    assert "adapter_schedule_runner" in go_debt["blockers"]
     repair_kernel = results[0]["result"]["repair_kernel"]
     assert repair_kernel["convergence_status"] == "converged"
     assert repair_kernel["revalidation_evidence"]["command"] == ["rtk", "go", "test", "./..."]
@@ -2736,7 +2738,7 @@ def test_post_execution_scheduler_bridge_counts_callback_receipt_projections_wit
                     "operation": "write_file",
                     "callback_receipt_projection": {
                         "receipt_id": "callback-receipt-singular",
-                        "receipt_authority": "non_authoritative_callback_receipt_projection",
+                        "receipt_authority": "non_authoritative_adapter_projection",
                         "authoritative": False,
                         "typed_receipt_path_available": True,
                         "revalidation": {
@@ -2759,7 +2761,7 @@ def test_post_execution_scheduler_bridge_counts_callback_receipt_projections_wit
                     "callback_receipt_projections": [
                         {
                             "receipt_id": "callback-receipt-plural",
-                            "receipt_authority": "non_authoritative_callback_receipt_projection",
+                            "receipt_authority": "non_authoritative_adapter_projection",
                             "authoritative": False,
                             "typed_receipt_path_available": False,
                             "revalidation_evidence": {
@@ -2824,14 +2826,20 @@ def test_post_execution_scheduler_bridge_counts_callback_receipt_projections_wit
 
     assert summary is not None
     scheduler_bridge = summary["scheduler_bridge"]
+    assert scheduler_bridge["adapter_receipt_projection_count"] == 3
     assert scheduler_bridge["callback_receipt_projection_count"] == 3
+    assert scheduler_bridge["adapter_receipts_authoritative"] is False
     assert scheduler_bridge["callback_receipts_authoritative"] is False
-    assert scheduler_bridge["callback_receipt_authority_values"] == ["non_authoritative_callback_projection"]
+    assert scheduler_bridge["adapter_receipt_authority_values"] == ["non_authoritative_adapter_projection"]
+    assert scheduler_bridge["callback_receipt_authority_values"] == ["non_authoritative_adapter_projection"]
+    assert scheduler_bridge["adapter_receipts_with_revalidation"] == 1
     assert scheduler_bridge["callback_receipts_with_revalidation"] == 1
     assert scheduler_bridge["typed_receipt_path_available"] is False
+    assert scheduler_bridge["adapter_projection_claimed_typed_receipt_path_count"] == 0
     assert scheduler_bridge["callback_projection_claimed_typed_receipt_path_count"] == 0
     assert (
-        scheduler_bridge["migration_blocker"] == "callback runners still return tool_results instead of RepairReceipt"
+        scheduler_bridge["migration_blocker"]
+        == "adapter schedule runners still return tool_results instead of RepairReceipt"
     )
     repair_kernel_receipts = [
         receipt for receipt in summary["repair_kernel"].get("receipts", []) if isinstance(receipt, dict)
@@ -2940,8 +2948,11 @@ def test_post_execution_scheduler_bridge_prefers_public_result_receipt_projectio
 
     assert summary is not None
     scheduler_bridge = summary["scheduler_bridge"]
+    assert scheduler_bridge["adapter_receipt_projection_count"] == 1
     assert scheduler_bridge["callback_receipt_projection_count"] == 1
+    assert scheduler_bridge["adapter_receipts_authoritative"] is False
     assert scheduler_bridge["callback_receipts_authoritative"] is False
+    assert scheduler_bridge["adapter_receipts_with_revalidation"] == 1
     assert scheduler_bridge["callback_receipts_with_revalidation"] == 1
     assert scheduler_bridge["typed_receipt_path_available"] is False
     assert scheduler_bridge["callback_projection_claimed_typed_receipt_path_count"] == 1
@@ -3067,44 +3078,63 @@ def test_materialization_scheduler_bridge_keeps_callback_projection_non_authorit
     assert scheduler_bridge["typed_receipt_path_available"] is False
     assert scheduler_bridge["authoritative_receipts_allowed"] is False
     assert scheduler_bridge["native_repair_kernel_receipt_count"] == 0
+    assert scheduler_bridge["adapter_projection_only_count"] == 1
     assert scheduler_bridge["callback_projection_only_count"] == 1
+    assert scheduler_bridge["adapter_authoritative_receipt_count"] == 0
     assert scheduler_bridge["callback_authoritative_receipt_count"] == 0
-    assert scheduler_bridge["callback_receipt_authority_values"] == ["non_authoritative_callback_projection"]
+    assert scheduler_bridge["adapter_receipt_authority_values"] == ["non_authoritative_adapter_projection"]
+    assert scheduler_bridge["callback_receipt_authority_values"] == ["non_authoritative_adapter_projection"]
+    assert scheduler_bridge["adapter_projection_claimed_typed_receipt_path_count"] == 1
     assert scheduler_bridge["callback_projection_claimed_typed_receipt_path_count"] == 1
     assert scheduler_bridge.get("projection_only", True) is True
+    assert scheduler_bridge["remaining_adapter_projection_only_step_ids"] == ["materialization.go_import"]
     assert scheduler_bridge["remaining_callback_only_step_ids"] == ["materialization.go_import"]
+    assert scheduler_bridge["adapter_projection_only_step_count"] == 1
     assert scheduler_bridge["callback_only_step_count"] == 1
     go_lifecycle = scheduler_bridge["receipt_lifecycle_by_step"]["materialization.go_import"]
     assert go_lifecycle["typed_receipt_path_available"] is False
     assert go_lifecycle["authoritative_receipts_allowed"] is False
     assert go_lifecycle["native_receipt_present"] is False
+    assert go_lifecycle["adapter_projection_present"] is True
     assert go_lifecycle["callback_projection_present"] is True
+    assert go_lifecycle["adapter_projection_only"] is True
     assert go_lifecycle["callback_only"] is True
     assert go_lifecycle["projection_only"] is True
     assert go_lifecycle["verifier_evidence_present"] is False
     assert go_lifecycle["native_verifier_evidence_present"] is False
+    assert go_lifecycle["adapter_verifier_evidence_present"] is False
     assert go_lifecycle["callback_verifier_evidence_present"] is False
     assert go_lifecycle["native_repair_kernel_receipt_count"] == 0
+    assert go_lifecycle["adapter_receipt_projection_count"] == 1
     assert go_lifecycle["callback_receipt_projection_count"] == 1
+    assert go_lifecycle["adapter_projection_only_count"] == 1
     assert go_lifecycle["callback_projection_only_count"] == 1
+    assert go_lifecycle["adapter_receipt_evidence_status_counts"] == {"missing_evidence": 1}
     assert go_lifecycle["callback_receipt_evidence_status_counts"] == {"missing_evidence": 1}
     assert go_lifecycle["receipt_lifecycle_evidence_status"] == "missing_evidence"
-    assert "callback_projection_only" in go_lifecycle["cutover_blockers"]
+    assert "adapter_projection_only" in go_lifecycle["cutover_blockers"]
     assert "missing_native_repair_receipt" in go_lifecycle["cutover_blockers"]
     migration_debt = summary["repair_kernel_migration_debt"]
+    assert migration_debt["remaining_adapter_projection_only_step_ids"] == ["materialization.go_import"]
     assert migration_debt["remaining_callback_only_step_ids"] == ["materialization.go_import"]
+    assert migration_debt["adapter_projection_only_step_count"] == 1
     assert migration_debt["callback_only_step_count"] == 1
-    go_debt = {item["step_id"]: item for item in migration_debt["legacy_callback_debt"]}["materialization.go_import"]
+    go_debt = {item["step_id"]: item for item in migration_debt["adapter_projection_debt"]}[
+        "materialization.go_import"
+    ]
     assert go_debt["native_receipt_present"] is False
+    assert go_debt["adapter_projection_present"] is True
     assert go_debt["callback_projection_present"] is True
+    assert go_debt["adapter_projection_only"] is True
     assert go_debt["callback_only"] is True
     assert go_debt["projection_only"] is True
     assert go_debt["authoritative_receipts_allowed"] is False
     assert go_debt["cutover_ready"] is False
     assert go_debt["verifier_evidence_present"] is False
     assert go_debt["native_verifier_evidence_present"] is False
+    assert go_debt["adapter_verifier_evidence_present"] is False
     assert go_debt["callback_verifier_evidence_present"] is False
-    assert "callback_projection_only" in go_debt["cutover_blockers"]
+    assert "adapter_projection_only" in go_debt["cutover_blockers"]
     assert "missing_native_repair_receipt" in go_debt["cutover_blockers"]
     _assert_non_authoritative_callback_projection_boundary(
         summary,
@@ -3231,38 +3261,49 @@ def test_materialization_scheduler_bridge_separates_native_receipts_from_callbac
     scheduler_bridge = summary["scheduler_bridge"]
     assert scheduler_bridge["repair_kernel_receipt_count"] == 1
     assert scheduler_bridge["native_repair_kernel_receipt_count"] == 1
+    assert scheduler_bridge["adapter_receipt_projection_count"] == 1
     assert scheduler_bridge["callback_receipt_projection_count"] == 1
+    assert scheduler_bridge["adapter_projection_only_count"] == 1
     assert scheduler_bridge["callback_projection_only_count"] == 1
+    assert scheduler_bridge["adapter_authoritative_receipt_count"] == 0
     assert scheduler_bridge["callback_authoritative_receipt_count"] == 0
+    assert scheduler_bridge["adapter_receipts_authoritative"] is False
     assert scheduler_bridge["callback_receipts_authoritative"] is False
     assert scheduler_bridge["authoritative_receipts_allowed"] is False
     assert scheduler_bridge["remaining_callback_only_step_ids"] == []
     assert scheduler_bridge["callback_only_step_count"] == 0
     assert scheduler_bridge["native_receipt_step_ids"] == ["materialization.go_import"]
+    assert scheduler_bridge["adapter_projection_step_ids"] == ["materialization.go_import"]
     assert scheduler_bridge["callback_projection_step_ids"] == ["materialization.go_import"]
     assert scheduler_bridge["native_receipt_evidence_status_counts"] == {"resolved_evidence": 1}
+    assert scheduler_bridge["adapter_receipt_evidence_status_counts"] == {"missing_evidence": 1}
     assert scheduler_bridge["callback_receipt_evidence_status_counts"] == {"missing_evidence": 1}
 
     go_lifecycle = scheduler_bridge["receipt_lifecycle_by_step"]["materialization.go_import"]
     assert go_lifecycle["typed_receipt_path_available"] is True
     assert go_lifecycle["authoritative_receipts_allowed"] is False
     assert go_lifecycle["native_receipt_present"] is True
+    assert go_lifecycle["adapter_projection_present"] is True
     assert go_lifecycle["callback_projection_present"] is True
+    assert go_lifecycle["adapter_projection_only"] is False
     assert go_lifecycle["callback_only"] is False
     assert go_lifecycle["projection_only"] is False
     assert go_lifecycle["verifier_evidence_present"] is True
     assert go_lifecycle["native_verifier_evidence_present"] is True
+    assert go_lifecycle["adapter_verifier_evidence_present"] is False
     assert go_lifecycle["callback_verifier_evidence_present"] is False
     assert go_lifecycle["native_repair_kernel_receipt_count"] == 1
+    assert go_lifecycle["adapter_receipt_projection_count"] == 1
     assert go_lifecycle["callback_receipt_projection_count"] == 1
     assert go_lifecycle["native_receipt_evidence_status_counts"] == {"resolved_evidence": 1}
+    assert go_lifecycle["adapter_receipt_evidence_status_counts"] == {"missing_evidence": 1}
     assert go_lifecycle["callback_receipt_evidence_status_counts"] == {"missing_evidence": 1}
     assert go_lifecycle["receipt_lifecycle_evidence_status_counts"] == {
         "missing_evidence": 1,
         "resolved_evidence": 1,
     }
     assert go_lifecycle["receipt_lifecycle_evidence_status"] == "missing_evidence"
-    assert "callback_projection_only" in go_lifecycle["cutover_blockers"]
+    assert "adapter_projection_only" in go_lifecycle["cutover_blockers"]
 
     step_summary = summary["materialization_quality_step_summaries"]["materialization.go_import"]
     assert step_summary["native_repair_kernel_receipt_count"] == 1
@@ -3271,7 +3312,9 @@ def test_materialization_scheduler_bridge_separates_native_receipts_from_callbac
 
     migration_debt = summary["repair_kernel_migration_debt"]
     assert migration_debt["native_receipt_step_ids"] == ["materialization.go_import"]
+    assert migration_debt["adapter_projection_step_ids"] == ["materialization.go_import"]
     assert migration_debt["callback_projection_step_ids"] == ["materialization.go_import"]
+    assert migration_debt["remaining_adapter_projection_only_step_ids"] == []
     assert migration_debt["remaining_callback_only_step_ids"] == []
     assert migration_debt["callback_only_step_count"] == 0
     go_debt = {item["step_id"]: item for item in migration_debt["legacy_callback_debt"]}["materialization.go_import"]

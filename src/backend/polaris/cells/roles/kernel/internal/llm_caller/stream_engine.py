@@ -12,7 +12,11 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from .context_audit import build_final_provider_request_snapshot, build_final_request_context_audit_for_request
+from .context_audit import (
+    build_final_provider_request_snapshot,
+    build_final_request_context_audit_for_request,
+    enforce_final_request_evidence_coverage,
+)
 from .error_handling import (
     ERROR_CATEGORY_CANCELLED,
     build_native_tool_unavailable_error,
@@ -308,6 +312,10 @@ class StreamEngine:
             profile=profile,
         )
         final_context_tokens = _final_request_context_tokens(final_context_audit, prompt_tokens)
+        enforce_final_request_evidence_coverage(
+            ai_request=active_request,
+            audit=final_context_audit,
+        )
 
         # Phase 1 critical fix (CRITICAL FIX_SCHEMA): stream path was never
         # persisting context snapshots, so the per-LLM context viewer in

@@ -200,7 +200,7 @@ def _validate_or_repair_json_config_content(
     if not _is_json_config_path(rel_path):
         return {"ok": True, "content": content, "repaired": False}
 
-    from .deterministic_repairs.json_config_repairs import validate_json_config_file
+    from .json_config_validation import validate_json_config_file
 
     result = validate_json_config_file(content, rel_path, allow_repair=True)
     if result.get("ok"):

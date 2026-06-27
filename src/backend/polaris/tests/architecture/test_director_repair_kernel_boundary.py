@@ -85,15 +85,7 @@ CONCRETE_LEGACY_REPAIR_EXPORT_PREFIXES = (
     "_repair_",
     "repair_",
 )
-LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST_REASONS = {
-    EXECUTE_METHOD_REPAIR_BRIDGE_PATH: "migration-only execute_method compatibility bridge",
-    MATERIALIZATION_QUALITY_BRIDGE_PATH: (
-        "migration bridge may bind step_id -> runner, but runtime owns materialization schedule catalog"
-    ),
-    POST_EXECUTION_BRIDGE_PATH: (
-        "migration bridge may bind step_id -> runner, but runtime owns post-execution schedule catalog"
-    ),
-}
+LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST_REASONS: dict[Path, str] = {}
 LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST = set(LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST_REASONS)
 SCHEDULE_RUNNER_BINDING_BRIDGES = {
     MATERIALIZATION_QUALITY_BRIDGE_PATH,
@@ -643,31 +635,21 @@ def test_only_director_repair_bridges_import_concrete_legacy_repair_functions() 
 
 
 def test_legacy_repair_bridge_allowlist_is_explicit_and_schedule_limited() -> None:
-    expected_bridge_import_allowlist = {
-        EXECUTE_METHOD_REPAIR_BRIDGE_PATH,
-        MATERIALIZATION_QUALITY_BRIDGE_PATH,
-        POST_EXECUTION_BRIDGE_PATH,
-    }
+    expected_bridge_import_allowlist: set[Path] = set()
     assert set(LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST_REASONS) == LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST
     assert expected_bridge_import_allowlist == LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST
-    assert len(LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST) == 3
-    assert LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST_REASONS[EXECUTE_METHOD_REPAIR_BRIDGE_PATH] == (
-        "migration-only execute_method compatibility bridge"
-    )
+    assert len(LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST) == 0
     assert {
         MATERIALIZATION_QUALITY_BRIDGE_PATH,
         POST_EXECUTION_BRIDGE_PATH,
     } == SCHEDULE_RUNNER_BINDING_BRIDGES
     for path in SCHEDULE_RUNNER_BINDING_BRIDGES:
-        reason = LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST_REASONS[path]
         source = _read_text(path)
-        assert "may bind step_id -> runner" in reason
-        assert "runtime owns" in reason
-        assert "schedule catalog" in reason
         assert "query_director_repair_" in source
         assert "run_director_" in source
         assert "_REPAIR_RUNNERS" in source
         assert "_REPAIR_STEPS" not in source
+        assert "deterministic_repairs" not in source
         assert "_ordered_post_execution_steps" not in source
         assert "_ordered_materialization_quality_steps" not in source
         assert "class PostExecutionRepairStep" not in source
@@ -867,10 +849,7 @@ def test_execute_method_legacy_deterministic_repair_calls_are_explicitly_bounded
 def test_execute_method_legacy_repairs_delegate_to_controlled_bridge() -> None:
     execute_calls = _called_function_names(EXECUTE_METHOD_PATH)
     bridge_calls = _called_deterministic_repair_names(EXECUTE_METHOD_REPAIR_BRIDGE_PATH)
-    expected_bridge_calls = {
-        "_apply_deterministic_python_runtime_smoke",
-        "_apply_deterministic_python_static_smoke",
-    }
+    bridge_source = _read_text(EXECUTE_METHOD_REPAIR_BRIDGE_PATH)
 
     assert "run_declared_target_contract_repairs" in execute_calls
     assert "run_node_test_script_contract_repair" in execute_calls
@@ -881,7 +860,9 @@ def test_execute_method_legacy_repairs_delegate_to_controlled_bridge() -> None:
     assert "run_python_unittest_missing_target_repair" in execute_calls
     assert "run_scaffold_marker_cleanup" in execute_calls
     assert "run_typescript_reexport_repair" in execute_calls
-    assert bridge_calls == expected_bridge_calls
+    assert bridge_calls == set()
+    assert "deterministic_repairs" not in bridge_source
+    assert "is owned by director.runtime; use director.runtime.public" in bridge_source
 
 
 def test_roles_adapter_public_boundary_blocks_internal_kernel_and_direct_legacy_helpers() -> None:

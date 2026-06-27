@@ -40,7 +40,11 @@ from polaris.kernelone.llm.runtime_config import (
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 
 from ..llm_cache import get_global_llm_cache
-from .context_audit import build_final_provider_request_snapshot, build_final_request_context_audit_for_request
+from .context_audit import (
+    build_final_provider_request_snapshot,
+    build_final_request_context_audit_for_request,
+    enforce_final_request_evidence_coverage,
+)
 from .error_handling import (
     ERROR_CATEGORY_CANCELLED,
     build_native_tool_unavailable_error,
@@ -1448,6 +1452,10 @@ class LLMInvoker:
             final_context_tokens = int(
                 raw_final_context_tokens if raw_final_context_tokens is not None else prompt_tokens
             )
+            enforce_final_request_evidence_coverage(
+                ai_request=prepared.ai_request,
+                audit=final_context_audit,
+            )
 
             self._emit_call_start_event(
                 event_emitter=event_emitter,
@@ -2245,6 +2253,10 @@ class LLMInvoker:
             raw_final_context_tokens = final_context_audit.get("final_request_token_estimate")
             final_context_tokens = int(
                 raw_final_context_tokens if raw_final_context_tokens is not None else prompt_tokens
+            )
+            enforce_final_request_evidence_coverage(
+                ai_request=prepared.ai_request,
+                audit=final_context_audit,
             )
 
             self._emit_call_start_event(

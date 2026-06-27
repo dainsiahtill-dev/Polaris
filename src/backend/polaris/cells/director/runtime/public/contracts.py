@@ -36,13 +36,18 @@ def _default_repairer_module_name(language: str) -> str:
     return f"polaris.cells.director.runtime.internal.repair_kernel.{normalized_language or 'unknown'}_runtime"
 
 
-_CALLBACK_RECEIPT_PROJECTION_SCHEMA_VERSION = "director.repair_callback_receipt_projection.v1"
-_DEFAULT_CALLBACK_RECEIPT_AUTHORITY = "non_authoritative_callback_receipt_projection"
+_ADAPTER_RECEIPT_PROJECTION_SCHEMA_VERSION = "director.repair_adapter_receipt_projection.v1"
+_DEFAULT_ADAPTER_RECEIPT_AUTHORITY = "non_authoritative_adapter_projection"
+_DEFAULT_ADAPTER_RECEIPT_MIGRATION_BLOCKER = "adapter_projection_not_authoritative_receipt"
+_CALLBACK_RECEIPT_PROJECTION_SCHEMA_VERSION = _ADAPTER_RECEIPT_PROJECTION_SCHEMA_VERSION
+_DEFAULT_CALLBACK_RECEIPT_AUTHORITY = _DEFAULT_ADAPTER_RECEIPT_AUTHORITY
 _ALLOWED_CALLBACK_RECEIPT_AUTHORITIES = {
     _DEFAULT_CALLBACK_RECEIPT_AUTHORITY,
+    "non_authoritative_callback_receipt_projection",
     "non_authoritative_callback_projection",
+    "non_authoritative_adapter_projection",
 }
-_DEFAULT_CALLBACK_RECEIPT_MIGRATION_BLOCKER = "callback_projection_not_authoritative_receipt"
+_DEFAULT_CALLBACK_RECEIPT_MIGRATION_BLOCKER = _DEFAULT_ADAPTER_RECEIPT_MIGRATION_BLOCKER
 
 
 def _optional_non_empty_str(value: Any) -> str | None:
@@ -1339,6 +1344,7 @@ class DirectorRepairCallbackReceiptProjectionV1:
     source_tool: str | None = None
     scheduled_source_tool: str | None = None
     callback_source_tool: str | None = None
+    adapter_source_tool: str | None = None
     round_number: int | None = None
     tool_name: str | None = None
     touched_path: str | None = None
@@ -1373,6 +1379,10 @@ class DirectorRepairCallbackReceiptProjectionV1:
         object.__setattr__(self, "source_tool", _optional_non_empty_str(self.source_tool))
         object.__setattr__(self, "scheduled_source_tool", _optional_non_empty_str(self.scheduled_source_tool))
         object.__setattr__(self, "callback_source_tool", _optional_non_empty_str(self.callback_source_tool))
+        adapter_source_tool = _optional_non_empty_str(self.adapter_source_tool) or _optional_non_empty_str(
+            self.callback_source_tool
+        )
+        object.__setattr__(self, "adapter_source_tool", adapter_source_tool)
         object.__setattr__(self, "round_number", _optional_non_negative_int(self.round_number))
         object.__setattr__(self, "tool_name", _optional_non_empty_str(self.tool_name))
         object.__setattr__(self, "touched_path", _optional_non_empty_str(self.touched_path))
@@ -1420,6 +1430,7 @@ class DirectorRepairCallbackReceiptProjectionV1:
             "source_tool": self.source_tool,
             "scheduled_source_tool": self.scheduled_source_tool,
             "callback_source_tool": self.callback_source_tool,
+            "adapter_source_tool": self.adapter_source_tool,
             "round_number": self.round_number,
             "tool_name": self.tool_name,
             "touched_path": self.touched_path,
@@ -1472,11 +1483,12 @@ class DirectorRepairPostExecutionScheduleRunResultV1:
     stopped_reason: str = "not_run"
     owner_cell: str = "director.runtime"
     runner_binding_owner: str = "roles.adapters"
-    legacy_callback_bridge: bool = True
+    legacy_callback_bridge: bool = False
+    adapter_projection_bridge: bool = True
     typed_receipt_path_available: bool = False
     authoritative_receipts_allowed: bool = False
     projection_only: bool = True
-    receipt_authority: str = "non_authoritative_callback_projection"
+    receipt_authority: str = _DEFAULT_ADAPTER_RECEIPT_AUTHORITY
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
@@ -1501,7 +1513,8 @@ class DirectorRepairPostExecutionScheduleRunResultV1:
         object.__setattr__(
             self, "runner_binding_owner", _require_non_empty("runner_binding_owner", self.runner_binding_owner)
         )
-        object.__setattr__(self, "legacy_callback_bridge", True)
+        object.__setattr__(self, "legacy_callback_bridge", False)
+        object.__setattr__(self, "adapter_projection_bridge", True)
         object.__setattr__(self, "typed_receipt_path_available", False)
         object.__setattr__(self, "authoritative_receipts_allowed", False)
         object.__setattr__(self, "projection_only", True)
@@ -1516,7 +1529,8 @@ class DirectorRepairPostExecutionScheduleRunResultV1:
             "source": self.source,
             "owner_cell": self.owner_cell,
             "runner_binding_owner": self.runner_binding_owner,
-            "legacy_callback_bridge": True,
+            "legacy_callback_bridge": False,
+            "adapter_projection_bridge": True,
             "ordered_steps": [item.to_dict() for item in self.ordered_steps],
             "tool_results": [dict(item) for item in self.tool_results],
             "receipt_projections": [item.to_dict() for item in self.receipt_projections],
@@ -1639,11 +1653,12 @@ class DirectorRepairMaterializationQualityScheduleRunResultV1:
     stopped_reason: str = "not_run"
     owner_cell: str = "director.runtime"
     runner_binding_owner: str = "roles.adapters"
-    legacy_callback_bridge: bool = True
+    legacy_callback_bridge: bool = False
+    adapter_projection_bridge: bool = True
     typed_receipt_path_available: bool = False
     authoritative_receipts_allowed: bool = False
     projection_only: bool = True
-    receipt_authority: str = "non_authoritative_callback_projection"
+    receipt_authority: str = _DEFAULT_ADAPTER_RECEIPT_AUTHORITY
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
@@ -1668,7 +1683,8 @@ class DirectorRepairMaterializationQualityScheduleRunResultV1:
         object.__setattr__(
             self, "runner_binding_owner", _require_non_empty("runner_binding_owner", self.runner_binding_owner)
         )
-        object.__setattr__(self, "legacy_callback_bridge", True)
+        object.__setattr__(self, "legacy_callback_bridge", False)
+        object.__setattr__(self, "adapter_projection_bridge", True)
         object.__setattr__(self, "typed_receipt_path_available", False)
         object.__setattr__(self, "authoritative_receipts_allowed", False)
         object.__setattr__(self, "projection_only", True)
@@ -1683,7 +1699,8 @@ class DirectorRepairMaterializationQualityScheduleRunResultV1:
             "source": self.source,
             "owner_cell": self.owner_cell,
             "runner_binding_owner": self.runner_binding_owner,
-            "legacy_callback_bridge": True,
+            "legacy_callback_bridge": False,
+            "adapter_projection_bridge": True,
             "ordered_steps": [item.to_dict() for item in self.ordered_steps],
             "tool_results": [dict(item) for item in self.tool_results],
             "receipt_projections": [item.to_dict() for item in self.receipt_projections],

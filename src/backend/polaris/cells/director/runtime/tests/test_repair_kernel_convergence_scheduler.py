@@ -343,8 +343,11 @@ def test_callback_schedule_to_dict_and_annotations_mark_migration_envelope() -> 
     assert summary["pipeline_order"] == CONVERGENCE_PIPELINE_ORDER
     assert summary["hidden_language_loop_allowed"] is False
     assert summary["language_self_loop_allowed"] is False
+    assert summary["adapter_projection_bridge"] is True
+    assert summary["adapter_bridge_uses_repair_convergence_scheduler"] is False
     assert summary["callback_bridge_uses_repair_convergence_scheduler"] is False
     assert summary["typed_convergence_scheduler_cutover_required"] is True
+    assert summary["adapter_runner_self_loop_allowed"] is False
     assert summary["callback_runner_self_loop_allowed"] is False
     assert summary["bounded_round_accounting_visible"] is True
     assert summary["round_accounting_fields"] == [
@@ -360,17 +363,19 @@ def test_callback_schedule_to_dict_and_annotations_mark_migration_envelope() -> 
     assert summary["post_check_evidence_complete"] is False
     assert summary["native_post_check_evidence_complete"] is False
     assert summary["missing_native_revalidation_evidence"] is True
+    assert summary["adapter_projection_not_authoritative"] is True
     assert summary["non_authoritative_projection"] is True
     assert summary["cutover_ready"] is False
     assert summary["cutover_blockers"] == [
         "missing_native_revalidation_evidence",
-        "callback_projection_not_authoritative_receipt",
+        "adapter_projection_not_authoritative_receipt",
     ]
     assert summary["evidence_status_counts"]["resolved_evidence"] == 1
     assert summary["evidence_status_counts"]["missing_evidence"] == 0
     assert summary["resolved_evidence_projection_source_tools"] == ["deterministic_rust_dependency_repair"]
     assert summary["resolved_evidence_receipt_ids"] == []
     assert payload["callback_migration_envelope"] is True
+    assert summary["adapter_projection_envelope"] is True
     assert payload["typed_receipt_path_available"] is False
     assert payload["canonical_convergence_executor"] == "RepairConvergenceScheduler"
     assert payload["pipeline_order"] == CONVERGENCE_PIPELINE_ORDER
@@ -381,11 +386,12 @@ def test_callback_schedule_to_dict_and_annotations_mark_migration_envelope() -> 
     assert payload["bounded_round_accounting_visible"] is True
     assert payload["preferred_typed_receipt_entrypoint"] == "run_runtime_repair_convergence"
     assert payload["callback_receipt_projection_available"] is True
-    assert receipt_projection["schema_version"] == "director.repair_callback_receipt_projection.v1"
-    assert receipt_projection["receipt_authority"] == "non_authoritative_callback_projection"
+    assert receipt_projection["schema_version"] == "director.repair_adapter_receipt_projection.v1"
+    assert receipt_projection["receipt_authority"] == "non_authoritative_adapter_projection"
     assert receipt_projection["schedule_kind"] == "post_execution"
     assert receipt_projection["step_id"] == "rust.dependency_resolution"
     assert receipt_projection["source_tool"] == "deterministic_rust_dependency_repair"
+    assert receipt_projection["adapter_source_tool"] == "deterministic_rust_dependency_repair"
     assert receipt_projection["round_number"] == 1
     assert receipt_projection["tool_name"] == "write_file"
     assert receipt_projection["touched_path"] == "Cargo.toml"
@@ -400,11 +406,13 @@ def test_callback_schedule_to_dict_and_annotations_mark_migration_envelope() -> 
     assert receipt_projection["pipeline_order"] == CONVERGENCE_PIPELINE_ORDER
     assert receipt_projection["hidden_language_loop_allowed"] is False
     assert receipt_projection["language_self_loop_allowed"] is False
+    assert receipt_projection["adapter_runner_self_loop_allowed"] is False
     assert receipt_projection["callback_runner_self_loop_allowed"] is False
     assert receipt_projection["typed_convergence_scheduler_cutover_required"] is True
     assert receipt_projection["preferred_typed_receipt_entrypoint"] == "run_runtime_repair_convergence"
     assert (
-        receipt_projection["migration_blocker"] == "callback runners still return tool_results instead of RepairReceipt"
+        receipt_projection["migration_blocker"]
+        == "adapter schedule runners still return tool_results instead of RepairReceipt"
     )
     assert receipt_projection["revalidation_evidence_present"] is True
     assert receipt_projection["revalidation_exit_code"] == 0
@@ -451,8 +459,11 @@ def test_materialization_callback_schedule_to_dict_projects_non_authoritative_re
     assert summary["typed_convergence_scheduler_active"] is False
     assert summary["pipeline_order"] == CONVERGENCE_PIPELINE_ORDER
     assert summary["hidden_language_loop_allowed"] is False
+    assert summary["adapter_projection_bridge"] is True
+    assert summary["adapter_bridge_uses_repair_convergence_scheduler"] is False
     assert summary["callback_bridge_uses_repair_convergence_scheduler"] is False
     assert summary["typed_convergence_scheduler_cutover_required"] is True
+    assert summary["adapter_runner_self_loop_allowed"] is False
     assert summary["callback_runner_self_loop_allowed"] is False
     assert summary["receipt_projection_count"] == 1
     assert summary["post_check_evidence_complete"] is False
@@ -463,11 +474,12 @@ def test_materialization_callback_schedule_to_dict_projects_non_authoritative_re
     assert summary["evidence_status_counts"]["failed_evidence"] == 0
     assert summary["missing_evidence_projection_source_tools"] == ["deterministic_typescript_materialization_repair"]
     assert summary["missing_evidence_receipt_ids"] == []
-    assert receipt_projection["schema_version"] == "director.repair_callback_receipt_projection.v1"
-    assert receipt_projection["receipt_authority"] == "non_authoritative_callback_projection"
+    assert receipt_projection["schema_version"] == "director.repair_adapter_receipt_projection.v1"
+    assert receipt_projection["receipt_authority"] == "non_authoritative_adapter_projection"
     assert receipt_projection["schedule_kind"] == "materialization_quality"
     assert receipt_projection["step_id"] == "materialization.typescript_compiler"
     assert receipt_projection["source_tool"] == "deterministic_typescript_materialization_repair"
+    assert receipt_projection["adapter_source_tool"] == "deterministic_typescript_materialization_repair"
     assert receipt_projection["round_number"] == 1
     assert receipt_projection["tool_name"] == "edit_file"
     assert receipt_projection["touched_path"] == "src/main.ts"
@@ -478,10 +490,12 @@ def test_materialization_callback_schedule_to_dict_projects_non_authoritative_re
     assert receipt_projection["authoritative"] is False
     assert receipt_projection["canonical_convergence_executor"] == "RepairConvergenceScheduler"
     assert receipt_projection["hidden_language_loop_allowed"] is False
+    assert receipt_projection["adapter_runner_self_loop_allowed"] is False
     assert receipt_projection["callback_runner_self_loop_allowed"] is False
     assert receipt_projection["typed_convergence_scheduler_cutover_required"] is True
     assert (
-        receipt_projection["migration_blocker"] == "callback runners still return tool_results instead of RepairReceipt"
+        receipt_projection["migration_blocker"]
+        == "adapter schedule runners still return tool_results instead of RepairReceipt"
     )
 
 
@@ -569,12 +583,15 @@ def test_public_post_execution_schedule_run_result_exposes_summary_and_receipts(
     assert payload["schema_version"] == "director.repair_post_execution_schedule_run_result.v1"
     assert payload["owner_cell"] == "director.runtime"
     assert payload["runner_binding_owner"] == "roles.adapters"
-    assert payload["legacy_callback_bridge"] is True
+    assert payload["legacy_callback_bridge"] is False
+    assert payload["adapter_projection_bridge"] is True
     assert payload["projection_only"] is True
     assert payload["typed_receipt_path_available"] is False
     assert payload["authoritative_receipts_allowed"] is False
     assert payload["summary"]["receipt_projection_count"] == 1
     assert payload["summary"]["schedule_kind"] == "post_execution"
+    assert payload["summary"]["adapter_projection_bridge"] is True
+    assert payload["summary"]["adapter_bridge_uses_repair_convergence_scheduler"] is False
     assert payload["summary"]["callback_bridge_uses_repair_convergence_scheduler"] is False
     assert payload["summary"]["typed_convergence_scheduler_cutover_required"] is True
     assert payload["summary"]["callback_runner_self_loop_allowed"] is False
@@ -624,11 +641,11 @@ def test_public_callback_receipt_projection_forces_non_authoritative_payload() -
 
     assert isinstance(result.receipt_projections[0], DirectorRepairCallbackReceiptProjectionV1)
     projection = result.to_dict()["receipt_projections"][0]
-    assert projection["receipt_authority"] == "non_authoritative_callback_receipt_projection"
+    assert projection["receipt_authority"] == "non_authoritative_adapter_projection"
     assert projection["projection_only"] is True
     assert projection["typed_receipt_path_available"] is False
     assert projection["authoritative"] is False
-    assert projection["migration_blocker"] == "callback_projection_not_authoritative_receipt"
+    assert projection["migration_blocker"] == "adapter_projection_not_authoritative_receipt"
     assert projection["revalidation_command"] == ["cargo", "test"]
     assert projection["metadata"]["claimed_typed_receipt_path_available"] is True
 
@@ -690,7 +707,8 @@ def test_public_materialization_schedule_run_result_exposes_summary_and_receipts
     assert payload["schema_version"] == "director.repair_materialization_quality_schedule_run_result.v1"
     assert payload["owner_cell"] == "director.runtime"
     assert payload["runner_binding_owner"] == "roles.adapters"
-    assert payload["legacy_callback_bridge"] is True
+    assert payload["legacy_callback_bridge"] is False
+    assert payload["adapter_projection_bridge"] is True
     assert payload["projection_only"] is True
     assert payload["typed_receipt_path_available"] is False
     assert payload["authoritative_receipts_allowed"] is False

@@ -5,9 +5,8 @@ repair flow (including ``scan_workspace_artifact_quality`` orchestration),
 extracted verbatim from ``execute_method.py`` during the lossless
 decomposition of that god-module.
 
-The ``scan_workspace_artifact_quality`` reference and the
-``quality_gate`` <-> ``deterministic_repairs`` reference cycle are resolved
-through ``execute_method`` (aliased ``_em``) at call time so a test
+The ``scan_workspace_artifact_quality`` reference is resolved through
+``execute_method`` (aliased ``_em``) at call time so a test
 ``monkeypatch`` on the ``execute_method`` module namespace still takes effect.
 The canonical import path remains ``execute_method`` (which re-exports every
 symbol here).
@@ -25,6 +24,14 @@ from pathlib import Path
 from typing import Any
 
 from . import execute_method as _em
+from .artifact_quality_diagnostics import (
+    _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE,
+    _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE,
+    _build_unresolved_import_symbol_repair_block,
+    _missing_unresolved_relative_import_target_files,
+    _parse_missing_declared_target_files,
+    _relative_import_repair_target_candidates,
+)
 from .contract_verify import resolve_contract_step_verify_command
 from .execution_tools import DirectorToolExecutor
 from .helpers import has_successful_write_tool
@@ -128,14 +135,14 @@ def _quality_repair_edit_file_tool_definition() -> dict[str, Any]:
 def _format_unresolved_relative_import_error_for_repair_prompt(error: Any) -> str | None:
     """Return a path-safe repair prompt line for unresolved relative imports."""
 
-    match = _em._UNRESOLVED_RELATIVE_IMPORT_ERROR_RE.search(str(error or ""))
+    match = _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE.search(str(error or ""))
     if not match:
         return None
     importer_rel = _normalize_declared_task_path(match.group("path"))
     specifier = str(match.group("specifier") or "").strip()
     if not importer_rel or not specifier.startswith("."):
         return None
-    candidates = _em._relative_import_repair_target_candidates(
+    candidates = _relative_import_repair_target_candidates(
         root=Path("/__polaris_workspace__"),
         importer_rel=importer_rel,
         specifier=specifier,
@@ -1282,12 +1289,8 @@ async def _run_materialization_quality_repair_retry(
     )
     explicit_missing_quality_targets = _dedupe_preserve_order(
         [
-            *[
-                rel
-                for item in _em._parse_missing_declared_target_files(repair_quality_errors)
-                if (rel := _normalize_declared_task_path(item))
-            ],
-            *_em._missing_unresolved_relative_import_target_files(repair_quality_errors, workspace_full),
+            *_parse_missing_declared_target_files(repair_quality_errors),
+            *_missing_unresolved_relative_import_target_files(repair_quality_errors, workspace_full),
             *_missing_workspace_file_quality_repair_target_files(
                 artifact_quality_errors=repair_quality_errors,
                 workspace_full=workspace_full,
@@ -3136,7 +3139,7 @@ def _semantic_quality_exporting_module_targets(
     importing_files: set[str] = set()
     for item in artifact_quality_errors:
         text = str(item or "")
-        symbol_match = _em._UNRESOLVED_IMPORT_SYMBOL_ERROR_RE.search(text)
+        symbol_match = _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE.search(text)
         if symbol_match:
             importer_rel = _normalize_declared_task_path(symbol_match.group("path"))
             module_ref = str(symbol_match.group("module") or "").strip().strip("\"'")
@@ -3455,15 +3458,11 @@ def _missing_materialization_quality_repair_target_files(
     workspace_full: str,
     artifact_quality_errors: list[str],
 ) -> list[str]:
-    explicit_missing_declared = _em._parse_missing_declared_target_files(artifact_quality_errors)
+    explicit_missing_declared = _parse_missing_declared_target_files(artifact_quality_errors)
     declared_missing_now = _missing_declared_target_files(task, workspace_full)
     declared_missing_set = set(declared_missing_now)
-    missing = [
-        rel
-        for item in explicit_missing_declared
-        if (rel := _normalize_declared_task_path(item)) and rel in declared_missing_set
-    ]
-    missing.extend(_em._missing_unresolved_relative_import_target_files(artifact_quality_errors, workspace_full))
+    missing = [rel for rel in explicit_missing_declared if rel in declared_missing_set]
+    missing.extend(_missing_unresolved_relative_import_target_files(artifact_quality_errors, workspace_full))
     missing.extend(
         _missing_workspace_file_quality_repair_target_files(
             artifact_quality_errors=artifact_quality_errors,
@@ -3822,7 +3821,7 @@ def _build_materialization_quality_repair_message(
             "edit the importing file.\n"
             f"{coherence_lines}\n"
         )
-    symbol_repair_block = _em._build_unresolved_import_symbol_repair_block(artifact_quality_errors)
+    symbol_repair_block = _build_unresolved_import_symbol_repair_block(artifact_quality_errors)
     javascript_named_export_block = _build_javascript_named_export_repair_block(artifact_quality_errors)
     javascript_module_system_block = _build_javascript_module_system_repair_block(
         directive_quality_errors,

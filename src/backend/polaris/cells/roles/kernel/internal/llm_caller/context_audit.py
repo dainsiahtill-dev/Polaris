@@ -44,6 +44,14 @@ _EVIDENCE_REQUIREMENT_TO_REF = {
 }
 
 
+class FinalRequestEvidenceCoverageError(RuntimeError):
+    """Raised when a strict final provider request evidence policy fails."""
+
+    def __init__(self, violation: dict[str, Any]) -> None:
+        self.violation = dict(violation)
+        super().__init__(str(self.violation.get("message") or "Final provider request evidence coverage failed"))
+
+
 def _json_chars(value: Any) -> int:
     if value is None:
         return 0
@@ -1053,7 +1061,8 @@ def _included_evidence_refs(
     request_metadata_summary: dict[str, Any],
     receipt_refs: list[str] | None = None,
 ) -> list[str]:
-    refs = [ref for flag, ref in _COVERAGE_FLAG_TO_REF.items() if coverage.get(flag)]
+    refs = ["final_provider_request"]
+    refs.extend(ref for flag, ref in _COVERAGE_FLAG_TO_REF.items() if coverage.get(flag))
     if request_metadata_summary.get("has_execution_profile"):
         refs.append("execution_profile")
     if request_metadata_summary.get("has_execution_strategy"):
@@ -1071,6 +1080,83 @@ def _included_evidence_refs(
     if receipt_refs:
         refs.append("receipt_store_refs")
     return _unique_strings(refs)
+
+
+def _final_request_evidence_enforcement_source(ai_request: Any) -> str:
+    context_payload = _request_context(ai_request)
+    option_payload = getattr(ai_request, "options", None)
+    option_payload = option_payload if isinstance(option_payload, dict) else {}
+    execution_strategy = _execution_strategy(ai_request)
+    envelope = _execution_envelope(ai_request)
+    envelope_audit_policy = _mapping(envelope.get("audit_policy"))
+
+    for key in (
+        "final_request_evidence_required",
+        "enforce_final_request_evidence_coverage",
+        "required_evidence_enforcement",
+    ):
+        if _bool_value(context_payload.get(key)) or _bool_value(option_payload.get(key)):
+            return f"request.{key}"
+        if _bool_value(execution_strategy.get(key)):
+            return f"execution_strategy.{key}"
+        if _bool_value(envelope_audit_policy.get(key)):
+            return f"execution_envelope.audit_policy.{key}"
+
+    if _bool_value(envelope_audit_policy.get("final_provider_request_required")):
+        return "execution_envelope.audit_policy.final_provider_request_required"
+
+    return ""
+
+
+def final_request_evidence_coverage_violation(
+    *,
+    ai_request: Any,
+    audit: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return a strict evidence coverage violation, if this request must fail closed."""
+
+    source = _final_request_evidence_enforcement_source(ai_request)
+    if not source:
+        return None
+    evidence_coverage = audit.get("final_request_evidence_coverage")
+    if not isinstance(evidence_coverage, dict) or evidence_coverage.get("pass") is True:
+        return None
+    missing_refs = [str(item) for item in evidence_coverage.get("missing_required_refs") or [] if str(item).strip()]
+    missing_tools = [
+        str(item) for item in evidence_coverage.get("missing_required_tools") or [] if str(item).strip()
+    ]
+    if not missing_refs and not missing_tools and evidence_coverage.get("role_identity_ok", True):
+        return None
+    message_parts = ["Final provider request evidence coverage failed"]
+    if missing_refs:
+        message_parts.append("missing_required_refs=" + ",".join(missing_refs))
+    if missing_tools:
+        message_parts.append("missing_required_tools=" + ",".join(missing_tools))
+    if evidence_coverage.get("role_identity_ok") is False:
+        message_parts.append("role_identity_mismatch")
+    return {
+        "schema_version": "polaris.final_request_evidence_enforcement.v1",
+        "source": source,
+        "role_id": str(evidence_coverage.get("role_id") or ""),
+        "expected_role_id": str(evidence_coverage.get("expected_role_id") or ""),
+        "role_identity_ok": bool(evidence_coverage.get("role_identity_ok", True)),
+        "missing_required_refs": missing_refs,
+        "missing_required_tools": missing_tools,
+        "request_hash": str(evidence_coverage.get("request_hash") or audit.get("request_hash") or ""),
+        "message": "; ".join(message_parts),
+    }
+
+
+def enforce_final_request_evidence_coverage(
+    *,
+    ai_request: Any,
+    audit: dict[str, Any],
+) -> None:
+    """Fail closed when strict final-request evidence coverage is incomplete."""
+
+    violation = final_request_evidence_coverage_violation(ai_request=ai_request, audit=audit)
+    if violation is not None:
+        raise FinalRequestEvidenceCoverageError(violation)
 
 
 def _coverage_source(

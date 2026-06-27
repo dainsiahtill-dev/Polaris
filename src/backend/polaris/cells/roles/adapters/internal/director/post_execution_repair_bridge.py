@@ -38,7 +38,7 @@ ConvergenceVerifier = Callable[[Any], Any]
 _CPP_REPAIR_FILE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx")
 _RUST_SHADOW_COPY_IGNORES = frozenset({".git", ".venv", "__pycache__", "node_modules", "target"})
 _POST_EXECUTION_REPAIR_MAX_ROUNDS = 3
-_CALLBACK_RECEIPT_MIGRATION_BLOCKER = "callback runners still return tool_results instead of RepairReceipt"
+_CALLBACK_RECEIPT_MIGRATION_BLOCKER = "adapter schedule runners still return tool_results instead of RepairReceipt"
 _RUST_LEGACY_AGGREGATE_REMAINING_SOURCE_TOOLS = frozenset(
     {
         "deterministic_rust_missing_fields_repair",
@@ -2474,10 +2474,12 @@ def _build_scheduler_bridge_summary(
     callback_receipt_projections = schedule_receipt_projections or _callback_receipt_projections_from_payloads(payloads)
     return {
         "schema_version": "director.post_execution_scheduler_bridge.v1",
-        "mode": "legacy_callback_bridge",
+        "mode": "adapter_projection_bridge",
         "target_scheduler": "director.runtime.repair_kernel.scheduler",
         "schedule_source": "director.runtime.public.query_director_repair_post_execution_schedule",
         "runner_binding_owner": "roles.adapters",
+        "adapter_projection_bridge": True,
+        "legacy_callback_bridge": False,
         "step_order": [step.to_dict() for step in ordered_steps],
         "active_step_ids": active_step_ids,
         "observed_max_round": max(
@@ -2497,6 +2499,14 @@ def _build_scheduler_bridge_summary(
         "receipt_count": len(receipt_payloads),
         "receipts_with_revalidation": sum(1 for receipt in receipt_payloads if receipt.get("revalidation_evidence")),
         "authoritative": bool(repair_kernel.get("authoritative")),
+        "adapter_receipt_projection_count": len(callback_receipt_projections),
+        "adapter_receipts_authoritative": False,
+        "adapter_receipt_authority_values": _sorted_unique(
+            _callback_receipt_authority_value(projection) for projection in callback_receipt_projections
+        ),
+        "adapter_receipts_with_revalidation": sum(
+            1 for projection in callback_receipt_projections if _callback_projection_has_revalidation(projection)
+        ),
         "callback_receipt_projection_count": len(callback_receipt_projections),
         "callback_receipts_authoritative": False,
         "callback_receipt_authority_values": _sorted_unique(
@@ -2506,6 +2516,11 @@ def _build_scheduler_bridge_summary(
             1 for projection in callback_receipt_projections if _callback_projection_has_revalidation(projection)
         ),
         "typed_receipt_path_available": False,
+        "adapter_projection_claimed_typed_receipt_path_count": sum(
+            1
+            for projection in callback_receipt_projections
+            if _callback_projection_claims_typed_receipt_path_available(projection)
+        ),
         "callback_projection_claimed_typed_receipt_path_count": sum(
             1
             for projection in callback_receipt_projections
@@ -2516,6 +2531,7 @@ def _build_scheduler_bridge_summary(
         "resident_agi_advisory_note_count": int(agi_overlay.get("advisor_note_count") or 0),
         "resident_agi_suggested_rule_count": int(agi_overlay.get("suggested_rule_count") or 0),
         "repair_kernel_migration_debt": migration_debt,
+        "adapter_projection_debt": dict(migration_debt.get("adapter_projection_debt") or {}),
         "legacy_callback_debt": dict(migration_debt.get("legacy_callback_debt") or {}),
         **_legacy_aggregate_cutover_projection_fields(legacy_aggregate_cutover_evidence),
     }
@@ -2537,7 +2553,7 @@ def _callback_receipt_projections_from_schedule_result(
         if "bridge_step_id" not in normalized and normalized.get("step_id"):
             normalized["bridge_step_id"] = normalized.get("step_id")
         if not _callback_receipt_authority_value(normalized):
-            normalized["receipt_authority"] = "non_authoritative_callback_projection"
+            normalized["receipt_authority"] = "non_authoritative_adapter_projection"
         projections.append(normalized)
     return projections
 
@@ -2614,9 +2630,7 @@ def _normalize_callback_receipt_projection(
     normalized.setdefault("typed_receipt_path_available", _payload_typed_receipt_path_available(payload))
     normalized.setdefault("migration_blocker", _payload_migration_blocker(payload))
     if not _callback_receipt_authority_value(normalized):
-        normalized["receipt_authority"] = (
-            _payload_receipt_authority(payload) or "non_authoritative_callback_receipt_projection"
-        )
+        normalized["receipt_authority"] = _payload_receipt_authority(payload) or "non_authoritative_adapter_projection"
     _attach_payload_revalidation_to_projection(normalized, payload)
     return normalized
 
@@ -2628,7 +2642,7 @@ def _summary_only_callback_receipt_projection(payload: dict[str, Any]) -> dict[s
         "source_tool": payload.get("source_tool"),
         "bridge_step_id": payload.get("bridge_step_id"),
         "authoritative": False,
-        "receipt_authority": _payload_receipt_authority(payload) or "non_authoritative_callback_tool_result_projection",
+        "receipt_authority": _payload_receipt_authority(payload) or "non_authoritative_adapter_projection",
         "typed_receipt_path_available": _payload_typed_receipt_path_available(payload),
         "migration_blocker": _payload_migration_blocker(payload),
     }
