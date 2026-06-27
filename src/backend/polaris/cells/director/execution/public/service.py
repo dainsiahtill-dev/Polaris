@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Mapping
 from threading import Thread
 from typing import Any
 
@@ -84,6 +84,102 @@ def _coerce_timeout_seconds(metadata: dict[str, Any]) -> int:
     return timeout_seconds
 
 
+def _mapping_value(metadata: Mapping[str, Any], *keys: str) -> dict[str, Any]:
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, Mapping):
+            payload = dict(value)
+            if payload:
+                return payload
+    return {}
+
+
+def _string_value(metadata: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _ref_hash(value: Any) -> str:
+    if not isinstance(value, Mapping):
+        return ""
+    return str(value.get("hash") or "").strip()
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"true", "1", "yes", "allowed"}:
+            return True
+        if token in {"false", "0", "no", "denied"}:
+            return False
+    return None
+
+
+def _build_execution_contract_audit(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    envelope = _mapping_value(metadata, "director_execution_envelope", "task_execution_envelope", "execution_envelope")
+    handoff = _mapping_value(metadata, "ce_handoff_decision", "handoff_decision")
+    if not handoff:
+        handoff = _mapping_value(envelope, "handoff_decision")
+
+    execution_envelope_hash = (
+        _string_value(
+            metadata,
+            "execution_envelope_hash",
+            "director_execution_envelope_hash",
+            "task_execution_envelope_hash",
+        )
+        or str(envelope.get("envelope_hash") or "").strip()
+    )
+    handoff_decision_hash = _string_value(
+        metadata,
+        "handoff_decision_hash",
+        "ce_handoff_decision_hash",
+    ) or _ref_hash(handoff)
+    pm_contract_hash = _string_value(metadata, "pm_contract_hash", "contract_hash") or _ref_hash(
+        envelope.get("pm_contract")
+    )
+    ce_blueprint_hash = _string_value(metadata, "ce_blueprint_hash", "blueprint_hash") or _ref_hash(
+        envelope.get("ce_blueprint")
+    )
+    execution_profile_hash = _string_value(
+        metadata,
+        "execution_profile_hash",
+        "task_execution_profile_hash",
+        "director_execution_profile_hash",
+    ) or _ref_hash(envelope.get("execution_profile"))
+    handoff_allowed = _optional_bool(handoff.get("allowed")) if handoff else None
+
+    required_refs = {
+        "execution_envelope_hash": execution_envelope_hash,
+        "handoff_decision_hash": handoff_decision_hash,
+        "pm_contract_hash": pm_contract_hash,
+        "ce_blueprint_hash": ce_blueprint_hash,
+        "execution_profile_hash": execution_profile_hash,
+    }
+    missing_required_refs = [name for name, value in required_refs.items() if not value]
+
+    return {
+        "schema_version": "director.execution_contract_audit.v1",
+        "source": "director.execution.public.service",
+        "public_contract": "ExecuteDirectorTaskCommandV1",
+        "has_execution_envelope": bool(envelope),
+        "execution_envelope_hash": execution_envelope_hash,
+        "has_ce_handoff_decision": bool(handoff),
+        "ce_handoff_allowed": handoff_allowed,
+        "handoff_decision_hash": handoff_decision_hash,
+        "pm_contract_hash": pm_contract_hash,
+        "ce_blueprint_hash": ce_blueprint_hash,
+        "execution_profile_hash": execution_profile_hash,
+        "missing_required_refs": missing_required_refs,
+        "enforcement": "audit_only",
+    }
+
+
 def _build_director_task(command: ExecuteDirectorTaskCommandV1) -> Task:
     metadata = dict(command.metadata)
     metadata.setdefault("role_capability_id", "execute_director_task")
@@ -91,6 +187,7 @@ def _build_director_task(command: ExecuteDirectorTaskCommandV1) -> Task:
     metadata.setdefault("director_execution_attempt", command.attempt)
     if command.run_id:
         metadata.setdefault("run_id", command.run_id)
+    metadata["execution_contract_audit"] = _build_execution_contract_audit(metadata)
     command_line = str(metadata.get("command") or "").strip() or None
     working_directory = str(metadata.get("working_directory") or command.workspace).strip()
     return Task(
@@ -119,6 +216,7 @@ def execute_director_task(
 
     try:
         task = _build_director_task(command)
+        execution_contract_audit = dict(task.metadata.get("execution_contract_audit") or {})
         service = director_service or DirectorService(DirectorConfig(workspace=command.workspace))
         maybe_result = service._execute_task_work(task)
         task_result = _run_director_awaitable(maybe_result) if inspect.isawaitable(maybe_result) else maybe_result
@@ -137,6 +235,7 @@ def execute_director_task(
             run_id=command.run_id,
             error_code=exc.code,
             error_message=str(exc),
+            metadata={"execution_contract_audit": _build_execution_contract_audit(command.metadata)},
         )
     except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
         return DirectorExecutionResultV1(
@@ -147,6 +246,7 @@ def execute_director_task(
             run_id=command.run_id,
             error_code="director_execution_failed",
             error_message=str(exc),
+            metadata={"execution_contract_audit": _build_execution_contract_audit(command.metadata)},
         )
 
     evidence_paths = tuple(evidence.path for evidence in task_result.evidence if evidence.path)
@@ -159,6 +259,7 @@ def execute_director_task(
             run_id=command.run_id,
             evidence_paths=evidence_paths,
             output_summary=task_result.output,
+            metadata={"execution_contract_audit": execution_contract_audit},
         )
     return DirectorExecutionResultV1(
         ok=False,
@@ -170,6 +271,7 @@ def execute_director_task(
         output_summary=task_result.output,
         error_code="director_task_failed",
         error_message=task_result.error or "director task failed",
+        metadata={"execution_contract_audit": execution_contract_audit},
     )
 
 

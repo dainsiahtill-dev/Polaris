@@ -142,6 +142,29 @@ class TestExecuteDirectorTaskPublicService:
             run_id="run-1",
             evidence_paths=("src/app.py",),
             output_summary="applied patch",
+            metadata={
+                "execution_contract_audit": {
+                    "schema_version": "director.execution_contract_audit.v1",
+                    "source": "director.execution.public.service",
+                    "public_contract": "ExecuteDirectorTaskCommandV1",
+                    "has_execution_envelope": False,
+                    "execution_envelope_hash": "",
+                    "has_ce_handoff_decision": False,
+                    "ce_handoff_allowed": None,
+                    "handoff_decision_hash": "",
+                    "pm_contract_hash": "",
+                    "ce_blueprint_hash": "",
+                    "execution_profile_hash": "",
+                    "missing_required_refs": [
+                        "execution_envelope_hash",
+                        "handoff_decision_hash",
+                        "pm_contract_hash",
+                        "ce_blueprint_hash",
+                        "execution_profile_hash",
+                    ],
+                    "enforcement": "audit_only",
+                }
+            },
         )
         assert len(service.executed_tasks) == 1
         task = service.executed_tasks[0]
@@ -149,6 +172,45 @@ class TestExecuteDirectorTaskPublicService:
         assert task.subject == "Apply approved diff"
         assert task.command == "python -m pytest"
         assert task.metadata["role_capability_id"] == "execute_director_task"
+        assert task.metadata["execution_contract_audit"] == result.metadata["execution_contract_audit"]
+
+    def test_execute_director_task_projects_execution_envelope_audit(self) -> None:
+        from polaris.cells.director.execution.public.service import execute_director_task
+
+        envelope = {
+            "schema_version": "polaris.execution_envelope.v1",
+            "envelope_hash": "env-hash-1",
+            "pm_contract": {"ref": "runtime/contracts/task.json", "hash": "pm-hash-1"},
+            "ce_blueprint": {"ref": "runtime/contracts/ce.json", "hash": "ce-hash-1"},
+            "handoff_decision": {
+                "ref": "runtime/contracts/handoff.json",
+                "hash": "handoff-hash-1",
+                "allowed": True,
+            },
+            "execution_profile": {"ref": "runtime/contracts/profile.json", "hash": "profile-hash-1"},
+        }
+        service = FakeDirectorExecutionService()
+        result = execute_director_task(
+            ExecuteDirectorTaskCommandV1(
+                task_id="task-456",
+                workspace="/repo",
+                instruction="Execute approved task",
+                metadata={"director_execution_envelope": envelope},
+            ),
+            director_service=service,
+        )
+
+        audit = result.metadata["execution_contract_audit"]
+        assert audit["has_execution_envelope"] is True
+        assert audit["execution_envelope_hash"] == "env-hash-1"
+        assert audit["has_ce_handoff_decision"] is True
+        assert audit["ce_handoff_allowed"] is True
+        assert audit["handoff_decision_hash"] == "handoff-hash-1"
+        assert audit["pm_contract_hash"] == "pm-hash-1"
+        assert audit["ce_blueprint_hash"] == "ce-hash-1"
+        assert audit["execution_profile_hash"] == "profile-hash-1"
+        assert audit["missing_required_refs"] == []
+        assert service.executed_tasks[0].metadata["execution_contract_audit"] == audit
 
 
 class TestRetryDirectorTaskCommandV1:
@@ -293,6 +355,19 @@ class TestDirectorExecutionResultV1:
         )
         assert result.evidence_paths == ("/path/to/evidence1", "/path/to/evidence2")
         assert result.output_summary == "Task completed successfully"
+
+    def test_result_metadata_is_copied(self) -> None:
+        """Test result metadata is copied into a stable dict."""
+        metadata = {"execution_contract_audit": {"execution_envelope_hash": "env-hash"}}
+        result = DirectorExecutionResultV1(
+            ok=True,
+            task_id="task-123",
+            workspace=".",
+            status="completed",
+            metadata=metadata,
+        )
+        metadata["execution_contract_audit"] = {"execution_envelope_hash": "mutated"}
+        assert result.metadata == {"execution_contract_audit": {"execution_envelope_hash": "env-hash"}}
 
     def test_failed_result_requires_error(self) -> None:
         """Test that failed result requires error_code or error_message."""

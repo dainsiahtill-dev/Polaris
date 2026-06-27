@@ -107,12 +107,14 @@ class DirectorExecutionResultV1:
     output_summary: str = ""
     error_code: str | None = None
     error_message: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "status", _require_non_empty("status", self.status))
         object.__setattr__(self, "evidence_paths", tuple(str(v) for v in self.evidence_paths))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
         if not self.ok and not (self.error_code or self.error_message):
             raise ValueError("failed result must include error_code or error_message")
 
