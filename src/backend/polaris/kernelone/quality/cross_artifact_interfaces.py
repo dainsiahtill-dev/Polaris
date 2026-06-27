@@ -226,6 +226,17 @@ class CrossArtifactConsistencyIssue:
     def to_error_message(self) -> str:
         return self.message
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "severity": self.severity,
+            "importer_path": self.importer_path,
+            "owner_path": self.owner_path,
+            "symbol": self.symbol,
+            "details": dict(self.details),
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class ContractAmendmentRequest:
@@ -336,6 +347,17 @@ def scan_cross_artifact_consistency(
 
     snapshot = build_symbol_index_snapshot(workspace, relative_paths=relative_paths)
     issues: list[CrossArtifactConsistencyIssue] = []
+    parsed_contract: CrossArtifactInterfaceContract | None = None
+    requirement_by_owner_symbol: dict[tuple[str, str], CrossArtifactInterfaceRequirement] = {}
+    if contract is not None:
+        parsed_contract = (
+            contract
+            if isinstance(contract, CrossArtifactInterfaceContract)
+            else CrossArtifactInterfaceContract.from_mapping(contract)
+        )
+        requirement_by_owner_symbol = {
+            (requirement.owner_path, requirement.name): requirement for requirement in parsed_contract.interfaces
+        }
     for import_ref in snapshot.imports:
         owner_path = import_ref.resolved_owner_path
         if not owner_path:
@@ -352,6 +374,17 @@ def scan_cross_artifact_consistency(
                 name,
             ):
                 continue
+            declared_requirement = requirement_by_owner_symbol.get((owner_path, name))
+            details: dict[str, Any] = {"available_exports": sorted(export_names)[:20]}
+            if declared_requirement is not None and parsed_contract is not None:
+                details.update(
+                    {
+                        "contract_declared": True,
+                        "task_id": parsed_contract.task_id,
+                        "domain": declared_requirement.domain,
+                        "signature_digest": declared_requirement.signature_digest,
+                    }
+                )
             issues.append(
                 CrossArtifactConsistencyIssue(
                     code="unresolved_import_symbol",
@@ -363,16 +396,11 @@ def scan_cross_artifact_consistency(
                     importer_path=import_ref.importer_path,
                     owner_path=owner_path,
                     symbol=name,
-                    details={"available_exports": sorted(export_names)[:20]},
+                    details=details,
                 )
             )
 
-    if contract is not None:
-        parsed_contract = (
-            contract
-            if isinstance(contract, CrossArtifactInterfaceContract)
-            else CrossArtifactInterfaceContract.from_mapping(contract)
-        )
+    if parsed_contract is not None:
         issues.extend(_validate_contract_against_snapshot(parsed_contract, snapshot))
 
     return _dedupe_issues(issues)
@@ -396,15 +424,34 @@ def build_contract_amendment_request(
     issues: Iterable[CrossArtifactConsistencyIssue],
     requested_by: str = "director",
 ) -> ContractAmendmentRequest | None:
-    """Build a CE amendment request for contract-level mismatches."""
+    """Build a CE amendment request for contract-level mismatches.
 
-    contract_issues = [issue for issue in issues if issue.code.startswith("contract_")]
-    if not contract_issues:
+    Unresolved imports without a declared interface and without a close existing
+    export are design gaps, not deterministic code repairs. They must return to
+    CE instead of encouraging Director to invent new public contracts.
+    """
+
+    amendment_issues: list[CrossArtifactConsistencyIssue] = []
+    for issue in issues:
+        if issue.code.startswith("contract_") and issue.code not in {
+            "contract_export_missing",
+            "contract_signature_mismatch",
+        }:
+            amendment_issues.append(issue)
+            continue
+        if issue.code != "unresolved_import_symbol":
+            continue
+        if issue.details.get("contract_declared"):
+            continue
+        available = tuple(str(item) for item in issue.details.get("available_exports", ()) if str(item or "").strip())
+        if not _closest_symbol(issue.symbol, available):
+            amendment_issues.append(issue)
+    if not amendment_issues:
         return None
     return ContractAmendmentRequest(
         task_id=str(task_id or "").strip(),
-        reason="cross-artifact interface contract does not match current source evidence",
-        evidence=tuple(issue.message for issue in contract_issues),
+        reason="cross-artifact interface contract is missing, ambiguous, or does not match current source evidence",
+        evidence=tuple(issue.message for issue in amendment_issues),
         requested_by=str(requested_by or "director").strip() or "director",
     )
 
@@ -416,6 +463,41 @@ def plan_cross_artifact_repairs(
 
     plans: list[CrossArtifactRepairPlan] = []
     for issue in issues:
+        if issue.code == "contract_export_missing":
+            plans.append(
+                CrossArtifactRepairPlan(
+                    strategy="add_real_interface_to_owner",
+                    authority="director_repair_within_contract",
+                    issue_code=issue.code,
+                    owner_path=issue.owner_path,
+                    symbol=issue.symbol,
+                    confidence="high",
+                    evidence=(issue.message,),
+                    constraints=(
+                        "Implement the real exported interface declared by CE in the owner artifact.",
+                        "Do not change the interface contract from Director.",
+                        "Do not satisfy this plan with pass, TODO, NotImplemented, or placeholder-only stubs.",
+                    ),
+                )
+            )
+            continue
+        if issue.code == "contract_signature_mismatch":
+            plans.append(
+                CrossArtifactRepairPlan(
+                    strategy="align_owner_signature_to_contract",
+                    authority="director_repair_within_contract",
+                    issue_code=issue.code,
+                    owner_path=issue.owner_path,
+                    symbol=issue.symbol,
+                    confidence="high",
+                    evidence=(issue.message,),
+                    constraints=(
+                        "Align the owner artifact implementation to the CE-declared signature.",
+                        "If the declared signature is no longer correct, return a contract amendment request to CE.",
+                    ),
+                )
+            )
+            continue
         if issue.code.startswith("contract_"):
             plans.append(
                 CrossArtifactRepairPlan(
@@ -450,6 +532,24 @@ def plan_cross_artifact_repairs(
                 )
             )
             continue
+        if not issue.details.get("contract_declared"):
+            plans.append(
+                CrossArtifactRepairPlan(
+                    strategy="contract_amendment_required",
+                    authority="ce_amendment_required",
+                    issue_code=issue.code,
+                    importer_path=issue.importer_path,
+                    owner_path=issue.owner_path,
+                    symbol=issue.symbol,
+                    confidence="high",
+                    evidence=(issue.message,),
+                    constraints=(
+                        "CE must declare the intended owner export or revise the consumer design.",
+                        "Director must not invent owner exports outside a declared interface contract.",
+                    ),
+                )
+            )
+            continue
         plans.append(
             CrossArtifactRepairPlan(
                 strategy="add_real_interface_to_owner",
@@ -458,15 +558,16 @@ def plan_cross_artifact_repairs(
                 importer_path=issue.importer_path,
                 owner_path=issue.owner_path,
                 symbol=issue.symbol,
-                confidence="medium",
+                confidence="high",
                 evidence=(issue.message,),
                 constraints=(
-                    "Implement the real exported interface in the owner artifact.",
+                    "Implement the real exported interface declared by CE in the owner artifact.",
+                    "Do not change the interface contract from Director.",
                     "Do not satisfy this plan with pass, TODO, NotImplemented, or placeholder-only stubs.",
                 ),
             )
         )
-    return plans
+    return _dedupe_repair_plans(plans)
 
 
 def _validate_contract_against_snapshot(
@@ -950,6 +1051,24 @@ def _dedupe_issues(issues: Iterable[CrossArtifactConsistencyIssue]) -> list[Cros
             continue
         seen.add(key)
         unique.append(issue)
+    return unique
+
+
+def _dedupe_repair_plans(plans: Iterable[CrossArtifactRepairPlan]) -> list[CrossArtifactRepairPlan]:
+    seen: set[tuple[str, str, str, str, str]] = set()
+    unique: list[CrossArtifactRepairPlan] = []
+    for plan in plans:
+        key = (
+            plan.strategy,
+            plan.authority,
+            plan.owner_path,
+            plan.symbol,
+            plan.replacement_symbol,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(plan)
     return unique
 
 

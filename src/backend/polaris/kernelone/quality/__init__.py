@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from polaris.kernelone.quality.artifact_quality import check_source_file_syntax, scan_workspace_artifact_quality
+from polaris.kernelone.quality.artifact_quality import (
+    ArtifactQualityEvidence,
+    check_source_file_syntax,
+    scan_workspace_artifact_quality,
+    scan_workspace_artifact_quality_evidence,
+)
 from polaris.kernelone.quality.cross_artifact_interfaces import (
     CrossArtifactConsistencyIssue,
     CrossArtifactInterfaceContract,
@@ -27,6 +32,7 @@ from polaris.kernelone.quality.syntax_gate import (
 
 __all__ = [
     "DEBT_MARKERS",
+    "ArtifactQualityEvidence",
     "CrossArtifactConsistencyIssue",
     "CrossArtifactInterfaceContract",
     "CrossArtifactInterfaceRequirement",
@@ -46,4 +52,5 @@ __all__ = [
     "scan_cross_artifact_consistency",
     "scan_cross_artifact_consistency_errors",
     "scan_workspace_artifact_quality",
+    "scan_workspace_artifact_quality_evidence",
 ]

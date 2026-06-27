@@ -1727,10 +1727,14 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 phase="quality_repair",
                 archetype=RepairArchetype.WRONG_IMPORT_PATH,
                 priority=1,
+                diagnostic_codes=("cross_artifact_unresolved_import_symbol",),
                 raw_terms=("unresolved import symbol",),
                 excluded_raw_terms=(".ts", ".tsx", ".js", ".jsx"),
                 risk_level="medium",
-                description="Adds conservative aliases or class stubs for unresolved Python import symbols.",
+                description=(
+                    "Repairs Python cross-artifact import symbols only through real similar aliases; "
+                    "missing interface contracts fail closed for CE amendment."
+                ),
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
@@ -2436,9 +2440,13 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 phase="quality_repair",
                 archetype=RepairArchetype.WRONG_IMPORT_PATH,
                 priority=1,
+                diagnostic_codes=("cross_artifact_unresolved_import_symbol",),
                 raw_terms=("unresolved import symbol", ".ts"),
                 risk_level="low",
-                description="Routes TypeScript unresolved import symbol diagnostics to the missing-export runtime planner.",
+                description=(
+                    "Routes TypeScript cross-artifact unresolved symbol diagnostics through the interface "
+                    "contract plane before any missing-export repair."
+                ),
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="missing_export_unresolved_import_symbol"),
             ),

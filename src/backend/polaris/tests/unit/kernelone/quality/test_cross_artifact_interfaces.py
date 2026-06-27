@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from polaris.kernelone.quality.artifact_quality import scan_workspace_artifact_quality
+from polaris.kernelone.quality.artifact_quality import (
+    scan_workspace_artifact_quality,
+    scan_workspace_artifact_quality_evidence,
+)
 from polaris.kernelone.quality.cross_artifact_interfaces import (
     CrossArtifactInterfaceContract,
     CrossArtifactInterfaceRequirement,
@@ -114,27 +117,17 @@ class TestSnapshotSignatures:
 
         assert [issue.code for issue in issues] == ["contract_signature_mismatch"]
 
-    def test_contract_mismatch_can_be_promoted_to_ce_amendment_request(self, tmp_path: Path) -> None:
-        _write(tmp_path / "src/engine/forecast.py", "def forecast_for(mood):\n    return mood\n")
-        contract = CrossArtifactInterfaceContract(
-            task_id="TASK-1",
-            interfaces=(
-                CrossArtifactInterfaceRequirement(
-                    domain="code_symbol",
-                    owner_path="src/engine/forecast.py",
-                    name="missing_forecast",
-                    kind="function",
-                ),
-            ),
-        )
-        issues = scan_cross_artifact_consistency(tmp_path, contract=contract)
+    def test_uncontracted_symbol_gap_can_be_promoted_to_ce_amendment_request(self, tmp_path: Path) -> None:
+        _write(tmp_path / "src/weather.ts", "export interface WeatherSnapshot { condition: string }\n")
+        _write(tmp_path / "src/forecast.ts", "import { WeatherReport } from './weather';\n")
+        issues = scan_cross_artifact_consistency(tmp_path)
 
         amendment = build_contract_amendment_request(task_id="TASK-1", issues=issues)
 
         assert amendment is not None
         assert amendment.to_dict()["schema_version"] == "cross_artifact.contract_amendment_request.v1"
         assert amendment.to_dict()["task_id"] == "TASK-1"
-        assert "missing_forecast" in amendment.to_dict()["evidence"][0]
+        assert "WeatherReport" in amendment.to_dict()["evidence"][0]
 
 
 class TestTypedRepairPlans:
@@ -148,18 +141,20 @@ class TestTypedRepairPlans:
         assert plans[0].authority == "director_repair_within_contract"
         assert plans[0].replacement_symbol == "WeatherReport"
 
-    def test_missing_symbol_without_close_match_plans_real_owner_export(self, tmp_path: Path) -> None:
+    def test_missing_symbol_without_contract_requires_ce_amendment(self, tmp_path: Path) -> None:
         _write(tmp_path / "src/weather.ts", "export interface WeatherSnapshot { condition: string }\n")
         _write(tmp_path / "src/forecast.ts", "import { WeatherReport } from './weather';\n")
 
         plans = plan_cross_artifact_repairs(scan_cross_artifact_consistency(tmp_path))
 
-        assert [plan.strategy for plan in plans] == ["add_real_interface_to_owner"]
+        assert [plan.strategy for plan in plans] == ["contract_amendment_required"]
         assert plans[0].owner_path == "src/weather.ts"
-        assert any("Do not satisfy" in constraint for constraint in plans[0].constraints)
+        assert plans[0].authority == "ce_amendment_required"
+        assert any("must not invent" in constraint for constraint in plans[0].constraints)
 
-    def test_contract_issue_plans_ce_amendment_not_director_repair(self, tmp_path: Path) -> None:
+    def test_contract_declared_missing_export_plans_real_owner_export(self, tmp_path: Path) -> None:
         _write(tmp_path / "src/weather.ts", "export interface WeatherSnapshot { condition: string }\n")
+        _write(tmp_path / "src/forecast.ts", "import { WeatherReport } from './weather';\n")
         contract = CrossArtifactInterfaceContract(
             task_id="TASK-1",
             interfaces=(
@@ -173,8 +168,41 @@ class TestTypedRepairPlans:
 
         plans = plan_cross_artifact_repairs(scan_cross_artifact_consistency(tmp_path, contract=contract))
 
-        assert [plan.strategy for plan in plans] == ["contract_amendment_required"]
-        assert plans[0].authority == "ce_amendment_required"
+        assert [plan.strategy for plan in plans] == ["add_real_interface_to_owner"]
+        assert plans[0].authority == "director_repair_within_contract"
+        assert any("declared by CE" in constraint for constraint in plans[0].constraints)
+
+    def test_contract_signature_mismatch_plans_signature_alignment(self, tmp_path: Path) -> None:
+        _write(tmp_path / "src/engine/forecast.py", "def forecast_for(mood):\n    return mood\n")
+        contract = CrossArtifactInterfaceContract(
+            task_id="TASK-1",
+            interfaces=(
+                CrossArtifactInterfaceRequirement(
+                    domain="code_symbol",
+                    owner_path="src/engine/forecast.py",
+                    name="forecast_for",
+                    kind="function",
+                    signature_digest="expected-different-signature",
+                ),
+            ),
+        )
+
+        plans = plan_cross_artifact_repairs(scan_cross_artifact_consistency(tmp_path, contract=contract))
+
+        assert [plan.strategy for plan in plans] == ["align_owner_signature_to_contract"]
+        assert plans[0].authority == "director_repair_within_contract"
+
+    def test_artifact_quality_evidence_exposes_cross_artifact_plan_and_amendment(self, tmp_path: Path) -> None:
+        _write(tmp_path / "src/weather.ts", "export interface WeatherSnapshot { condition: string }\n")
+        _write(tmp_path / "src/forecast.ts", "import { WeatherReport } from './weather';\n")
+
+        evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), task_id="TASK-1")
+
+        assert any("WeatherReport" in error for error in evidence.errors)
+        assert [issue.code for issue in evidence.cross_artifact_issues] == ["unresolved_import_symbol"]
+        assert [plan.strategy for plan in evidence.cross_artifact_repair_plans] == ["contract_amendment_required"]
+        assert evidence.contract_amendment_request is not None
+        assert evidence.contract_amendment_request.task_id == "TASK-1"
 
 
 class TestGoExports:

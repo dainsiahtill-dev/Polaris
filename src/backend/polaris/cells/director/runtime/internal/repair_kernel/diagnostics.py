@@ -57,6 +57,11 @@ _UNRESOLVED_RELATIVE_IMPORT_RE = re.compile(
     r"unresolved relative import ['\"](?P<specifier>[^'\"]+)['\"] in (?P<path>\S+)",
     re.IGNORECASE,
 )
+_UNRESOLVED_IMPORT_SYMBOL_RE = re.compile(
+    r"unresolved (?:import )?symbol ['\"](?P<symbol>[^'\"]+)['\"] "
+    r"from ['\"](?P<module>[^'\"]+)['\"] in (?P<path>\S+)",
+    re.IGNORECASE,
+)
 _WORKSPACE_VALIDATION_RE = re.compile(
     r"workspace validation command failed(?:\s+\((?P<command>[^)]+)\))?",
     re.IGNORECASE,
@@ -194,6 +199,21 @@ def _normalize_one_error(text: str) -> RepairDiagnostic:
             path=str(match.group("path") or "").strip(),
             raw=text,
             metadata={"specifier": str(match.group("specifier") or "").strip()},
+        )
+
+    match = _UNRESOLVED_IMPORT_SYMBOL_RE.search(text)
+    if match:
+        return RepairDiagnostic(
+            source="artifact_quality",
+            code="cross_artifact_unresolved_import_symbol",
+            message="Cross-artifact import symbol is not exported by the resolved owner.",
+            path=str(match.group("path") or "").strip(),
+            raw=text,
+            metadata={
+                "symbol": str(match.group("symbol") or "").strip(),
+                "module": str(match.group("module") or "").strip(),
+                "contract_plane": "cross_artifact_interface",
+            },
         )
 
     match = _PYTHON_RUNTIME_SMOKE_RE.search(text)

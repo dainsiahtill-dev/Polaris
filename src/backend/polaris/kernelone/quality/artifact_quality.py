@@ -13,10 +13,19 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
-from polaris.kernelone.quality.cross_artifact_interfaces import scan_cross_artifact_consistency_errors
+from polaris.kernelone.quality.cross_artifact_interfaces import (
+    ContractAmendmentRequest,
+    CrossArtifactConsistencyIssue,
+    CrossArtifactInterfaceContract,
+    CrossArtifactRepairPlan,
+    build_contract_amendment_request,
+    plan_cross_artifact_repairs,
+    scan_cross_artifact_consistency,
+)
 from polaris.kernelone.quality.interface_ledger import validate_declared_interfaces_against_snapshot
 from polaris.kernelone.quality.package_scripts import package_script_cycle_reasons
 
@@ -358,6 +367,28 @@ def check_source_file_syntax(absolute_path: str) -> dict[str, Any] | None:
     return None
 
 
+@dataclass(frozen=True, slots=True)
+class ArtifactQualityEvidence:
+    """Structured quality evidence used by audit, AGI, and repair planning."""
+
+    errors: tuple[str, ...] = ()
+    scanned_relative_paths: tuple[str, ...] = ()
+    cross_artifact_issues: tuple[CrossArtifactConsistencyIssue, ...] = ()
+    cross_artifact_repair_plans: tuple[CrossArtifactRepairPlan, ...] = ()
+    contract_amendment_request: ContractAmendmentRequest | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "errors": list(self.errors),
+            "scanned_relative_paths": list(self.scanned_relative_paths),
+            "cross_artifact_issues": [issue.to_dict() for issue in self.cross_artifact_issues],
+            "cross_artifact_repair_plans": [plan.to_dict() for plan in self.cross_artifact_repair_plans],
+            "contract_amendment_request": self.contract_amendment_request.to_dict()
+            if self.contract_amendment_request is not None
+            else None,
+        }
+
+
 def scan_workspace_artifact_quality(
     workspace_full: str,
     *,
@@ -371,36 +402,54 @@ def scan_workspace_artifact_quality(
     calls this without ``relative_paths`` to scan the complete final workspace.
     """
 
+    return list(scan_workspace_artifact_quality_evidence(workspace_full, relative_paths=relative_paths).errors)
+
+
+def scan_workspace_artifact_quality_evidence(
+    workspace_full: str,
+    *,
+    relative_paths: Iterable[str] | None = None,
+    interface_contract: CrossArtifactInterfaceContract | Mapping[str, Any] | None = None,
+    task_id: str = "",
+) -> ArtifactQualityEvidence:
+    """Scan artifacts and return structured evidence without changing old callers."""
+
     try:
         root_full = Path(workspace_full).resolve()
     except (OSError, RuntimeError, ValueError):
-        return ["Artifact quality scan failed: workspace path cannot be resolved"]
+        return ArtifactQualityEvidence(errors=("Artifact quality scan failed: workspace path cannot be resolved",))
     if not root_full.exists() or not root_full.is_dir():
-        return ["Artifact quality scan failed: workspace path does not exist"]
+        return ArtifactQualityEvidence(errors=("Artifact quality scan failed: workspace path does not exist",))
 
     errors: list[str] = []
+    scanned_relative_paths: list[str] = []
+    cross_artifact_issues: tuple[CrossArtifactConsistencyIssue, ...] = ()
     try:
         paths = (
             _iter_target_files(root_full, relative_paths)
             if relative_paths is not None
             else _iter_workspace_source_files(root_full)
         )
-        scanned_relative_paths: list[str] = []
         for full_path in paths:
             if len(errors) >= 50:
-                return list(dict.fromkeys(errors))
+                return ArtifactQualityEvidence(
+                    errors=tuple(dict.fromkeys(errors)),
+                    scanned_relative_paths=tuple(scanned_relative_paths),
+                )
             relative_path = full_path.relative_to(root_full).as_posix()
             scanned_relative_paths.append(relative_path)
             errors.extend(_scan_file(root_full, full_path, relative_path))
         if len(errors) < 50:
             errors.extend(_scan_typescript_project_typecheck(root_full, scanned_relative_paths))
         if len(errors) < 50:
-            errors.extend(
-                scan_cross_artifact_consistency_errors(
+            cross_artifact_issues = tuple(
+                scan_cross_artifact_consistency(
                     root_full,
                     relative_paths=scanned_relative_paths if relative_paths is not None else None,
+                    contract=interface_contract,
                 )
             )
+            errors.extend(issue.to_error_message() for issue in cross_artifact_issues)
         if len(errors) < 50:
             errors.extend(
                 _scan_declared_interface_ledger(
@@ -409,8 +458,32 @@ def scan_workspace_artifact_quality(
                 )
             )
     except (OSError, RuntimeError, ValueError) as exc:
-        return [f"Artifact quality scan failed: {exc}"]
-    return list(dict.fromkeys(errors))
+        return ArtifactQualityEvidence(errors=(f"Artifact quality scan failed: {exc}",))
+    return ArtifactQualityEvidence(
+        errors=tuple(dict.fromkeys(errors)),
+        scanned_relative_paths=tuple(scanned_relative_paths),
+        cross_artifact_issues=cross_artifact_issues,
+        cross_artifact_repair_plans=tuple(plan_cross_artifact_repairs(cross_artifact_issues)),
+        contract_amendment_request=build_contract_amendment_request(
+            task_id=_artifact_quality_task_id(task_id=task_id, interface_contract=interface_contract),
+            issues=cross_artifact_issues,
+        ),
+    )
+
+
+def _artifact_quality_task_id(
+    *,
+    task_id: str,
+    interface_contract: CrossArtifactInterfaceContract | Mapping[str, Any] | None,
+) -> str:
+    explicit = str(task_id or "").strip()
+    if explicit:
+        return explicit
+    if isinstance(interface_contract, CrossArtifactInterfaceContract):
+        return interface_contract.task_id
+    if isinstance(interface_contract, Mapping):
+        return str(interface_contract.get("task_id") or "").strip()
+    return ""
 
 
 def _scan_declared_interface_ledger(root_full: Path, relative_paths: Iterable[str] | None) -> list[str]:

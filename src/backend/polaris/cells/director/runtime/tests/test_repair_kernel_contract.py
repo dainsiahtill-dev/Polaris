@@ -268,6 +268,44 @@ def test_normalizer_builds_typed_typescript_return_object_semicolon_diagnostic()
     assert coverage.items[0].matched_rules[0].rule_id == "typescript.object_literal_property_semicolon"
 
 
+def test_normalizer_builds_cross_artifact_unresolved_symbol_diagnostic() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "Artifact quality scan failed: unresolved import symbol 'WeatherReport' "
+            "from './weather' in src/forecast.ts (sibling module does not define it)"
+        ]
+    )
+
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic.code == "cross_artifact_unresolved_import_symbol"
+    assert diagnostic.path == "src/forecast.ts"
+    assert diagnostic.metadata == {
+        "symbol": "WeatherReport",
+        "module": "./weather",
+        "contract_plane": "cross_artifact_interface",
+    }
+
+    coverage = default_repair_rule_registry().coverage(diagnostics)
+    assert coverage.covered_diagnostic_count == 1
+    assert coverage.executable_runtime_plan_diagnostic_count == 1
+    assert coverage.items[0].matched_rules[0].rule_id == "typescript.unresolved_import_symbol_missing_export"
+
+
+def test_cross_artifact_unresolved_symbol_routes_to_python_rule_for_python_paths() -> None:
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "Artifact quality scan failed: unresolved import symbol 'WeatherReport' "
+            "from 'src.models.weather' in src/engine/forecast.py (sibling module does not define it)"
+        ]
+    )
+
+    coverage = default_repair_rule_registry().coverage(diagnostics)
+
+    assert coverage.covered_diagnostic_count == 1
+    assert coverage.items[0].matched_rules[0].rule_id == "python.unresolved_import_symbol"
+
+
 def test_repair_rule_registry_reports_known_and_unknown_diagnostic_coverage() -> None:
     diagnostics = normalize_artifact_quality_errors(
         [
