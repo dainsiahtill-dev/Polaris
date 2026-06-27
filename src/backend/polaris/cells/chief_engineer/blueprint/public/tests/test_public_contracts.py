@@ -18,6 +18,7 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
 )
 from polaris.cells.chief_engineer.blueprint.public.service import (
     BlueprintPersistence,
+    build_ce_handoff_decision,
     generate_task_blueprint,
     get_blueprint_status,
 )
@@ -116,6 +117,74 @@ class TestHandoffDecisionContract:
         assert data["blocker_count"] == 2
         assert data["blockers"] == ["a", "b"]
         assert data["open_blocker_risk_count"] == 1
+
+    def test_strict_ce_handoff_decision_binds_required_hashes(self, tmp_path) -> None:
+        base_decision = HandoffDecisionV1(
+            allowed=True,
+            blueprint_id="ce_TASK-1",
+            task_id="TASK-1",
+            blocker_count=0,
+            warning_count=0,
+            open_blocker_risk_count=0,
+            reason="handoff allowed",
+            evaluated_at="2026-06-27T00:00:00Z",
+        )
+        blueprint = {
+            "task_id": "TASK-1",
+            "blueprint_id": "ce_TASK-1",
+            "pm_contract_ref": "tasks/plan.json",
+            "pm_contract_hash": "pm-contract-hash",
+            "blueprint_ref": "runtime/blueprints/ce_TASK-1.json",
+            "blueprint_hash": "blueprint-hash",
+            "execution_profile_ref": "runtime/contracts/profile.json",
+            "execution_profile_hash": "execution-profile-hash",
+        }
+
+        decision = build_ce_handoff_decision(
+            str(tmp_path),
+            blueprint=blueprint,
+            blueprint_id="ce_TASK-1",
+            task_id="TASK-1",
+            base_decision=base_decision,
+        )
+
+        payload = decision.to_dict()
+        assert decision.allowed is True
+        assert payload["schema_version"] == "polaris.ce_handoff_decision.v1"
+        assert payload["policy_version"] == "chief_engineer.handoff.v1"
+        assert payload["bindings"] == {
+            "pm_contract_ref": "tasks/plan.json",
+            "pm_contract_hash": "pm-contract-hash",
+            "blueprint_ref": "runtime/blueprints/ce_TASK-1.json",
+            "blueprint_hash": "blueprint-hash",
+            "execution_profile_ref": "runtime/contracts/profile.json",
+            "execution_profile_hash": "execution-profile-hash",
+        }
+        assert payload["decision_hash"]
+
+    def test_strict_ce_handoff_decision_fails_closed_without_required_bindings(self, tmp_path) -> None:
+        base_decision = HandoffDecisionV1(
+            allowed=True,
+            blueprint_id="ce_TASK-2",
+            task_id="TASK-2",
+            blocker_count=0,
+            warning_count=0,
+            open_blocker_risk_count=0,
+            reason="legacy gate allowed",
+            evaluated_at="2026-06-27T00:00:00Z",
+        )
+
+        decision = build_ce_handoff_decision(
+            str(tmp_path),
+            blueprint={"task_id": "TASK-2", "blueprint_id": "ce_TASK-2"},
+            blueprint_id="ce_TASK-2",
+            task_id="TASK-2",
+            base_decision=base_decision,
+        )
+
+        assert decision.allowed is False
+        assert "missing required handoff binding: pm_contract_hash" in decision.blockers
+        assert "missing required handoff binding: execution_profile_hash" in decision.blockers
 
 
 class TestGenerateTaskBlueprintCommandV1HappyPath:

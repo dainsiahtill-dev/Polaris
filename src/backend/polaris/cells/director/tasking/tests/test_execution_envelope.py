@@ -73,6 +73,77 @@ def test_build_execution_envelope_binds_contracts_and_capability() -> None:
     assert payload["audit_policy"]["final_provider_request_required"] is True
 
 
+def test_build_execution_envelope_consumes_strict_handoff_bindings() -> None:
+    profile = TaskExecutionProfileV1(
+        task_type="implement",
+        phase="implementation",
+        language="python",
+        target_files=("src/main.py",),
+        scope_paths=("src",),
+    )
+    strategy = TaskExecutionStrategyV1(
+        temperature=0.1,
+        output_budget_tokens=48_000,
+        input_budget_tokens=48_000,
+        evidence_requirements=("pm_task_contract", "chief_engineer_blueprint", "execution_envelope"),
+        target_files=profile.target_files,
+        scope_paths=profile.scope_paths,
+    )
+    contract = build_task_execution_contract(profile, strategy, metadata={})
+    strict_handoff_decision = {
+        "schema_version": "polaris.ce_handoff_decision.v1",
+        "decision_id": "ce-handoff-1",
+        "task_id": "TASK-STRICT",
+        "blueprint_id": "ce_TASK-STRICT",
+        "allowed": True,
+        "decision_hash": "handoff-decision-hash",
+        "bindings": {
+            "pm_contract_ref": "tasks/plan.json",
+            "pm_contract_hash": "pm-contract-hash",
+            "blueprint_ref": "runtime/blueprints/ce_TASK-STRICT.json",
+            "blueprint_hash": "blueprint-hash",
+            "execution_profile_ref": "runtime/contracts/profile.json",
+            "execution_profile_hash": "execution-profile-hash",
+        },
+    }
+
+    envelope = build_execution_envelope(
+        workspace="/workspace",
+        task_id="TASK-STRICT",
+        run_id="run-strict",
+        trace_id="trace-strict",
+        profile=profile,
+        strategy=strategy,
+        contract=contract,
+        metadata={
+            "ce_handoff_decision": strict_handoff_decision,
+            "job_token": {
+                "token_id": "job-strict",
+                "allowed_paths": ["src/main.py"],
+                "target_files": ["src/main.py"],
+            },
+            "model": "test-model",
+        },
+        created_at="2026-06-27T00:00:00Z",
+    )
+
+    payload = envelope.to_dict()
+    assert payload["pm_contract"] == {"ref": "tasks/plan.json", "hash": "pm-contract-hash"}
+    assert payload["ce_blueprint"] == {
+        "ref": "runtime/blueprints/ce_TASK-STRICT.json",
+        "hash": "blueprint-hash",
+    }
+    assert payload["handoff_decision"] == {
+        "ref": "",
+        "hash": "handoff-decision-hash",
+        "allowed": True,
+    }
+    assert payload["execution_profile"] == {
+        "ref": "runtime/contracts/profile.json",
+        "hash": "execution-profile-hash",
+    }
+
+
 def test_build_execution_envelope_marks_missing_evidence() -> None:
     profile = TaskExecutionProfileV1(target_files=("src/main.py",))
     strategy = TaskExecutionStrategyV1(target_files=profile.target_files)

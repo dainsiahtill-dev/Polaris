@@ -76,6 +76,10 @@ def _metadata_hash(metadata: Mapping[str, Any], *keys: str, fallback: Any = None
     return _stable_hash_or_missing(fallback, missing_key)
 
 
+def _metadata_has_value(metadata: Mapping[str, Any], *keys: str) -> bool:
+    return any(str(metadata.get(key) or "").strip() for key in keys)
+
+
 def _job_token(metadata: Mapping[str, Any]) -> dict[str, Any]:
     for key in ("job_token", "control_plane_job_token", "capability_token"):
         token = _mapping(metadata.get(key))
@@ -132,6 +136,7 @@ def build_execution_envelope(
     handoff_payload = _mapping(normalized_metadata.get("ce_handoff_decision")) or _mapping(
         normalized_metadata.get("handoff_decision")
     )
+    handoff_bindings = _mapping(handoff_payload.get("bindings"))
     execution_profile_hash = _metadata_hash(
         normalized_metadata,
         "execution_profile_hash",
@@ -140,6 +145,13 @@ def build_execution_envelope(
         fallback=profile.to_dict(),
         missing_key="execution_profile_hash",
     )
+    if not _metadata_has_value(
+        normalized_metadata,
+        "execution_profile_hash",
+        "task_execution_profile_hash",
+        "director_execution_profile_hash",
+    ) and handoff_bindings.get("execution_profile_hash"):
+        execution_profile_hash = str(handoff_bindings["execution_profile_hash"])
     pm_contract_hash = _metadata_hash(
         normalized_metadata,
         "pm_contract_hash",
@@ -147,6 +159,10 @@ def build_execution_envelope(
         fallback=pm_contract_payload,
         missing_key="pm_contract_hash",
     )
+    if not _metadata_has_value(normalized_metadata, "pm_contract_hash", "contract_hash") and handoff_bindings.get(
+        "pm_contract_hash"
+    ):
+        pm_contract_hash = str(handoff_bindings["pm_contract_hash"])
     ce_blueprint_hash = _metadata_hash(
         normalized_metadata,
         "blueprint_hash",
@@ -154,6 +170,10 @@ def build_execution_envelope(
         fallback=ce_blueprint_payload,
         missing_key="blueprint_hash",
     )
+    if not _metadata_has_value(normalized_metadata, "blueprint_hash", "ce_blueprint_hash") and handoff_bindings.get(
+        "blueprint_hash"
+    ):
+        ce_blueprint_hash = str(handoff_bindings["blueprint_hash"])
     handoff_hash = _metadata_hash(
         normalized_metadata,
         "handoff_decision_hash",
@@ -161,6 +181,10 @@ def build_execution_envelope(
         fallback=handoff_payload,
         missing_key="handoff_decision_hash",
     )
+    if not _metadata_has_value(normalized_metadata, "handoff_decision_hash", "ce_handoff_decision_hash") and handoff_payload.get(
+        "decision_hash"
+    ):
+        handoff_hash = str(handoff_payload["decision_hash"])
     allowed_read_paths, allowed_write_paths = _allowed_paths(
         metadata=normalized_metadata,
         profile=profile,
@@ -212,9 +236,17 @@ def build_execution_envelope(
         "task_id": task_id,
         "workspace": workspace,
         "trace_id": trace_id,
-        "pm_contract": _hash_ref(ref=_string_value(normalized_metadata, "pm_contract_ref"), hash_value=pm_contract_hash),
+        "pm_contract": _hash_ref(
+            ref=_string_value(normalized_metadata, "pm_contract_ref", default=str(handoff_bindings.get("pm_contract_ref") or "")),
+            hash_value=pm_contract_hash,
+        ),
         "ce_blueprint": _hash_ref(
-            ref=_string_value(normalized_metadata, "blueprint_path", "ce_blueprint_ref"),
+            ref=_string_value(
+                normalized_metadata,
+                "blueprint_path",
+                "ce_blueprint_ref",
+                default=str(handoff_bindings.get("blueprint_ref") or ""),
+            ),
             hash_value=ce_blueprint_hash,
         ),
         "handoff_decision": {
@@ -223,7 +255,12 @@ def build_execution_envelope(
             "allowed": bool(handoff_payload.get("allowed")),
         },
         "execution_profile": _hash_ref(
-            ref=_string_value(normalized_metadata, "execution_profile_ref", "task_execution_profile_ref"),
+            ref=_string_value(
+                normalized_metadata,
+                "execution_profile_ref",
+                "task_execution_profile_ref",
+                default=str(handoff_bindings.get("execution_profile_ref") or ""),
+            ),
             hash_value=execution_profile_hash,
         ),
         "authorization": authorization,
