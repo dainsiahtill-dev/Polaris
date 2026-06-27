@@ -219,6 +219,52 @@ def read_all_declared_interfaces(
     return declared
 
 
+def validate_declared_interfaces_against_snapshot(
+    workspace: str,
+    cache_root: str,
+    target_files: list[str] | None = None,
+) -> list[str]:
+    """Validate CE-declared interfaces against deterministic source snapshots.
+
+    The ledger is intentionally language-agnostic and may contain HTML ids,
+    asset keys, or other domains the source-code scanner does not yet parse.
+    Unsupported files fail open: only files present in the symbol snapshot are
+    checked.
+    """
+
+    from polaris.kernelone.quality.cross_artifact_interfaces import build_symbol_index_snapshot
+
+    declared = (
+        read_declared_interfaces(workspace, cache_root, target_files)
+        if target_files is not None
+        else read_all_declared_interfaces(workspace, cache_root)
+    )
+    if not declared:
+        return []
+
+    snapshot = build_symbol_index_snapshot(workspace)
+    errors: list[str] = []
+    for target, entry in sorted(declared.items()):
+        normalized_target = _normalize_target(target)
+        if normalized_target not in snapshot.files:
+            continue
+        symbols = snapshot.namespace_exports.get(normalized_target, ())
+        actual_names = {symbol.name for symbol in symbols}
+        actual_signatures = {symbol.signature for symbol in symbols if symbol.signature}
+        for identifier in _string_list(entry.get("identifiers")):
+            if identifier not in actual_names:
+                errors.append(
+                    f"Artifact quality scan failed: declared interface {identifier!r} missing from {normalized_target}"
+                )
+        for signature in _string_list(entry.get("signatures")):
+            if signature not in actual_signatures:
+                errors.append(
+                    "Artifact quality scan failed: declared interface signature "
+                    f"{signature!r} missing from {normalized_target}"
+                )
+    return errors
+
+
 def render_assume_contract(declared: dict[str, dict[str, Any]]) -> str:
     """Render the frozen cross-file interface contract for the fission prompt.
 
@@ -248,4 +294,5 @@ __all__ = [
     "read_declared_interfaces",
     "record_declared_interfaces",
     "render_assume_contract",
+    "validate_declared_interfaces_against_snapshot",
 ]

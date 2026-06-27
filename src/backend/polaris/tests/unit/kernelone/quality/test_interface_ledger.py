@@ -14,6 +14,7 @@ from polaris.kernelone.quality.interface_ledger import (
     read_declared_interfaces,
     record_declared_interfaces,
     render_assume_contract,
+    validate_declared_interfaces_against_snapshot,
 )
 
 
@@ -181,3 +182,45 @@ class TestReadAllDeclaredInterfaces:
 
     def test_missing_ledger_is_empty(self, tmp_path: Path) -> None:
         assert read_all_declared_interfaces(str(tmp_path), str(tmp_path)) == {}
+
+
+class TestValidateDeclaredInterfacesAgainstSnapshot:
+    def test_declared_source_interface_present(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src/weather.ts").write_text(
+            "export interface WeatherReport { condition: string }\n", encoding="utf-8"
+        )
+        record_declared_interfaces(
+            str(tmp_path),
+            str(tmp_path),
+            [{"step_id": "S1", "target_file": "src/weather.ts", "interface_names": ["WeatherReport"]}],
+        )
+
+        assert validate_declared_interfaces_against_snapshot(str(tmp_path), str(tmp_path)) == []
+
+    def test_declared_source_interface_missing(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src/weather.ts").write_text(
+            "export interface WeatherSnapshot { condition: string }\n", encoding="utf-8"
+        )
+        record_declared_interfaces(
+            str(tmp_path),
+            str(tmp_path),
+            [{"step_id": "S1", "target_file": "src/weather.ts", "interface_names": ["WeatherReport"]}],
+        )
+
+        errors = validate_declared_interfaces_against_snapshot(str(tmp_path), str(tmp_path))
+
+        assert errors == [
+            "Artifact quality scan failed: declared interface 'WeatherReport' missing from src/weather.ts"
+        ]
+
+    def test_unsupported_declared_interface_domain_fails_open(self, tmp_path: Path) -> None:
+        (tmp_path / "index.html").write_text("<html><canvas id='game'></canvas></html>\n", encoding="utf-8")
+        record_declared_interfaces(
+            str(tmp_path),
+            str(tmp_path),
+            [{"step_id": "S1", "target_file": "index.html", "interface_names": ["game"]}],
+        )
+
+        assert validate_declared_interfaces_against_snapshot(str(tmp_path), str(tmp_path)) == []

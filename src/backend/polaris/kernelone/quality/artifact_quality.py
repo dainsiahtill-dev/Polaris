@@ -16,6 +16,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.quality.cross_artifact_interfaces import scan_cross_artifact_consistency_errors
 from polaris.kernelone.quality.package_scripts import package_script_cycle_reasons
 
 _ARTIFACT_QUALITY_SKIP_DIRS = {
@@ -386,15 +387,22 @@ def scan_workspace_artifact_quality(
         scanned_relative_paths: list[str] = []
         for full_path in paths:
             if len(errors) >= 50:
-                return errors
+                return list(dict.fromkeys(errors))
             relative_path = full_path.relative_to(root_full).as_posix()
             scanned_relative_paths.append(relative_path)
             errors.extend(_scan_file(root_full, full_path, relative_path))
         if len(errors) < 50:
             errors.extend(_scan_typescript_project_typecheck(root_full, scanned_relative_paths))
+        if len(errors) < 50:
+            errors.extend(
+                scan_cross_artifact_consistency_errors(
+                    root_full,
+                    relative_paths=scanned_relative_paths if relative_paths is not None else None,
+                )
+            )
     except (OSError, RuntimeError, ValueError) as exc:
         return [f"Artifact quality scan failed: {exc}"]
-    return errors
+    return list(dict.fromkeys(errors))
 
 
 def _iter_workspace_source_files(root_full: Path) -> Iterable[Path]:
