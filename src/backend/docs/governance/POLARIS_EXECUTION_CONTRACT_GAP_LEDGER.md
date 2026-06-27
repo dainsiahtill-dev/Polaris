@@ -37,6 +37,17 @@ The target chain is:
 | P2-12 | P2 | AGI decision handoff consumes evidence but does not yet share the same envelope/capability ledger end-to-end. | Resident AGI handoff contracts and inbox projections now expose platform contract refs, missing platform refs, and blocked authority fields while forcing advisory-only authority. | AGI reads the same execution profile/envelope/audit/provenance contracts and can request governed actions without becoming a second authority source. | Closed | Resident contract/service tests show AGI handoff refs include execution profile, envelope, final request audit, provenance, and malicious authority fields are stripped. |
 | P2-13 | P2 | AGI cockpit UI is too dense for users and not yet a task-control console. | Resident workspace now defaults to a Chinese AGI cockpit plus tactical console; raw matrices/registries are hidden behind advanced audit, and chat/quick commands emit evidence/action receipts. | Chinese-first AGI cockpit: robot-like command console, concise status push, chat pull-and-act, evidence cards, governed action receipts. | Closed | ResidentWorkspace tests cover shell readability, hidden dense audit by default, tactical chat, quick commands, and governed action receipts; frontend typecheck passes. |
 
+## Post-Closure Alignment Audit
+
+These items were discovered after the P0/P1/P2 implementation ledger was closed. They are documentation-and-contract alignment gaps: leaving them open would let future developers miss already-implemented contracts by reading only the main audit specification.
+
+| ID | Severity | Residual Gap | Resolution | Status | Verification |
+| --- | --- | --- | --- | --- | --- |
+| A-01 | P1 | Main audit spec did not name `chief_engineer.module_interface_contract.v1`, even though CE and Director already emit/render it. | `POLARIS_TASK_EXECUTION_AUDIT_SPEC.md` now defines the module interface contract, invariants, and Director prompt requirement. | Closed | CE blueprint tests and Director prompt tests cover generation/rendering. |
+| A-02 | P1 | Main audit spec described QA failure routing but did not bind it to `polaris.qa_failure_classification.v1`. | QA section now names the typed contract, required fields, example payload, and non-Director route blocking rule. | Closed | Repair service tests cover classification and route blocking. |
+| A-03 | P1 | Main audit spec did not document metadata-only `redaction_safety` or the rule suppressing stale low-utilization findings when ref coverage passes. | Evidence coverage section now records `polaris.final_request_redaction_safety.v1` and clarifies token utilization is not a substitute for ref coverage. | Closed | Final request audit tests cover redaction safety and low-utilization complete-ref pass. |
+| A-04 | P2 | Main audit spec did not document Resident AGI handoff `platform_contract_refs`, `missing_platform_contract_refs`, and `blocked_authority_fields`. | AGI section now defines the advisory-only handoff projection and blocked authority field rules. | Closed | Resident contract/service tests cover platform refs and authority stripping. |
+
 ## Closed Items
 
 | ID | Closed In | Result |

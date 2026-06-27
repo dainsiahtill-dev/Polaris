@@ -1,6 +1,6 @@
 # Polaris Task Execution Audit Specification
 
-状态: Active draft  
+状态: Active
 适用范围: Polaris 后端 `src/backend`、PM -> Chief Engineer -> Director -> QA 执行链路、Resident AGI 监督链路  
 目标: 把现有 PM 合同、CE 蓝图、任务执行画像、工具授权、最终 LLM 请求审计、Run Ledger、ReceiptStore 和 QA 裁决收敛成同一套长期契约。
 
@@ -80,6 +80,36 @@ CE blueprint 是 PM contract 的技术施工蓝图。它可以补充模块边界
 - `blueprint_hash`
 - `execution_profile_hash`
 - `policy_version`
+
+#### 2.2.1 CE Module Interface Contract
+
+多文件任务必须把跨文件接口写进 CE blueprint，而不是只依赖 Director 临场猜测 sibling module 的导出符号。
+
+结构化契约:
+
+```yaml
+schema_version: chief_engineer.module_interface_contract.v1
+task_id: ...
+language: python
+modules:
+  - path: src/models/weather.py
+    module_role: model
+    owner_terms: [weather, cloud, wind]
+    planned_public_symbols: [Weather, WeatherKind, CloudCover]
+  - path: src/engine/forecast.py
+    module_role: engine
+    owner_terms: [forecast]
+    planned_public_symbols: [build_forecast, forecast_for]
+import_consistency_rules:
+  - Shared types/constants must have a single owner module.
+  - Import names must match the owner module planned_public_symbols.
+```
+
+不变量:
+
+- 每个 target file 应有清晰的 `module_role`、`owner_terms` 和候选 `planned_public_symbols`。
+- 导入方不得凭空引入不在 owner module `planned_public_symbols` 或真实符号证据中的名称。
+- Director prompt 必须渲染该契约；工具 guard 仍以 PM/envelope scope 为准，该契约只约束实现一致性，不扩权。
 
 ### 2.3 CE Handoff Decision
 
@@ -342,6 +372,22 @@ Director / CE / PM 的上下文健康判断必须同时看:
 
 最终 provider request 的首条 system message、role metadata、run_id、trace_id 和 expected role 必须一致。PM、Chief Engineer、Director、QA 的 system prompt 串线必须视为 P0。
 
+### 7.4 Redaction Safety 与低利用率判定
+
+`final_request_evidence_coverage` 必须记录 metadata-only redaction safety，证明 coverage 对象没有把完整 provider message content 或敏感正文嵌入审计字段。
+
+推荐字段:
+
+```yaml
+redaction_safety:
+  schema_version: polaris.final_request_redaction_safety.v1
+  safe: true
+  message_content_embedded: false
+  evidence_coverage_embeds_content: false
+```
+
+当 required refs、workflow hashes、role identity 和 tool coverage 均通过时，低 token/window utilization 只能作为容量提示，不得继续触发旧的 `missing_context_coverage` 或 `underutilized_with_missing_context` 阻断式结论。反之，token 利用率高也不能掩盖缺少 PM contract、CE blueprint、handoff decision、execution envelope 或 failed gate evidence 的事实。
+
 ## 8. QA 失败分类
 
 QA failed 不能默认回到 Director repair。必须分类:
@@ -357,12 +403,29 @@ QA failed 不能默认回到 Director repair。必须分类:
 
 每条 QA failure 必须包含:
 
+- `schema_version: polaris.qa_failure_classification.v1`
 - `class`
 - `severity`
 - `repairable_by_director`
 - `requires_ce_replan`
 - `requires_pm_revision`
 - `evidence_refs`
+
+推荐对象:
+
+```yaml
+schema_version: polaris.qa_failure_classification.v1
+failure_class: IMPLEMENTATION_DEFECT
+route: director_repair
+severity: medium
+repairable_by_director: true
+requires_ce_replan: false
+requires_pm_revision: false
+evidence_refs:
+  - run_ledger:...
+```
+
+Director repair loop 只能处理 `repairable_by_director=true` 的分类；`SCOPE_MISMATCH`、`CONTRACT_AMBIGUOUS`、`ACCEPTANCE_INVALID`、`SECURITY_POLICY_VIOLATION` 等必须先返回 CE/PM/QA 或 hard stop 路径，禁止让 Director 在错误合同或错误蓝图下反复自修。
 
 ## 9. AGI 集成边界
 
@@ -392,6 +455,39 @@ repair_advisor_note:
   confidence: 0.0
   evidence: []
 ```
+
+### 9.1 Resident AGI Decision Handoff
+
+Resident AGI handoff 必须消费同一套平台契约引用，并显式暴露缺失引用和被阻断的越权字段。
+
+推荐对象:
+
+```yaml
+schema_version: resident.agi_decision_handoff.v1
+advisory_only: true
+authoritative: false
+agi_execution_authority: false
+platform_contract_refs:
+  execution_profile: runtime/contracts/task.execution_profile.json
+  execution_envelope: runtime/contracts/execution_envelope.json
+  final_provider_request_audit: runtime/contexts/<shard>/<hash>
+  run_provenance_bundle: runtime/ledger/provenance/<run>.json
+  run_ledger_projection: runtime/ledger/projection/<run>.json
+missing_platform_contract_refs: []
+blocked_authority_fields:
+  - repair_plan
+  - policy_override
+  - success_verdict
+  - capability_token
+  - execution_envelope_override
+```
+
+不变量:
+
+- `platform_contract_refs` 只作为证据定位入口，不授予 AGI 执行权限。
+- `missing_platform_contract_refs` 非空时，AGI 只能请求补证或受控执行，不能给出成功裁决。
+- `blocked_authority_fields` 必须记录被剥离的 `repair_plan`、`policy_override`、`success_verdict`、`capability_token`、`execution_envelope_override` 等字段。
+- AGI suggested rules 可以进入 repair advisory overlay，但不得直接变成 Director repair plan。
 
 ## 10. Path Safety Invariants
 
@@ -537,11 +633,15 @@ created_at: ...
 - 是否拒绝 PM -> Director 直连。
 - 是否基于 validated PM contract，而不是 PM LLM raw output。
 - 是否使用 immutable blueprint snapshot 和 hash。
+- 多文件任务的 CE blueprint 是否包含 `chief_engineer.module_interface_contract.v1`，且 Director prompt 是否可见。
 - 是否创建 execution envelope。
 - tool/write/command guard 是否验证 envelope/capability。
 - final provider request audit 是否能逐字段比对实际 invoker payload。
+- final request evidence coverage 是否包含 ref/hash 级证据和 `redaction_safety`，而不是只看 token 利用率。
 - CE overlay 是否无法覆盖 PM authoritative fields。
 - QA failed 是否不会生成 success ledger。
+- QA failed 是否先产出 `polaris.qa_failure_classification.v1`，再决定 Director repair / CE replan / PM revision / infra retry / hard stop。
+- Resident AGI handoff 是否暴露 `platform_contract_refs`、`missing_platform_contract_refs` 和 `blocked_authority_fields`，且保持 advisory-only。
 - ContextOS coverage 是否报告 required evidence 缺失。
 - 每个关键对象是否包含 `schema_version`、hash、policy_version。
 
@@ -559,6 +659,9 @@ created_at: ...
 8. 所有关键对象都有 `schema_version`、hash、policy_version。
 9. 所有 bypass 类问题都有 negative test。
 10. 每次 run 都能生成 provenance bundle。
+11. 多文件任务的 CE blueprint 能给 Director 提供模块接口契约，避免跨文件符号漂移。
+12. QA failure 先分类再路由，不能把所有失败都交给 Director repair。
+13. Resident AGI 只能以同一套平台契约 refs 做 advisory 决策，不能成为第二权威源。
 
 ## 16. 分阶段落地路线
 
