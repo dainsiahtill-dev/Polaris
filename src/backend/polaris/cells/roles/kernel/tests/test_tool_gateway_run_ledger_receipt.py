@@ -168,3 +168,37 @@ class TestRoleTurnCapabilityToken:
         assert capability_token["token_id"] == "job-1"
         assert capability_token["execution_envelope_hash"] == "env-hash"
         assert capability_token["allowed_commands"] == ["python --version"]
+
+    def test_derives_capability_from_execution_envelope_authorization(self) -> None:
+        request = RoleTurnRequest(
+            message="run verification",
+            metadata={
+                "director_execution_envelope": {
+                    "schema_version": "polaris.execution_envelope.v1",
+                    "envelope_id": "exec-env-1",
+                    "run_id": "run-1",
+                    "workspace": "/workspace",
+                    "envelope_hash": "env-hash",
+                    "pm_contract": {"hash": "pm-hash"},
+                    "ce_blueprint": {"hash": "blueprint-hash"},
+                    "handoff_decision": {"allowed": True},
+                    "authorization": {
+                        "capability_token_ref": "job-env",
+                        "allowed_write_paths": ["src/main.py"],
+                        "target_files": ["src/main.py"],
+                        "allowed_commands": ["python --version"],
+                    },
+                },
+            },
+        )
+
+        capability_scope = derive_role_turn_capability_scope(request)
+        capability_token = derive_role_turn_capability_token(request, capability_scope)
+
+        assert capability_scope == ("src/main.py",)
+        assert capability_token["source"] == "director.execution_envelope.authorization"
+        assert capability_token["token_id"] == "job-env"
+        assert capability_token["contract_hash"] == "pm-hash"
+        assert capability_token["blueprint_hash"] == "blueprint-hash"
+        assert capability_token["execution_envelope_hash"] == "env-hash"
+        assert capability_token["allowed_commands"] == ["python --version"]

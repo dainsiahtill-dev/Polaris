@@ -109,6 +109,10 @@ def _allowed_paths(
     return allowed_read_paths, allowed_write_paths
 
 
+def _allowed_commands(*, metadata: Mapping[str, Any], token: Mapping[str, Any]) -> list[str]:
+    return _string_list(metadata.get("allowed_commands")) or _string_list(token.get("allowed_commands"))
+
+
 def build_execution_envelope(
     *,
     workspace: str,
@@ -195,7 +199,7 @@ def build_execution_envelope(
     authorization = {
         "allowed_read_paths": allowed_read_paths,
         "allowed_write_paths": allowed_write_paths,
-        "allowed_commands": _string_list(normalized_metadata.get("allowed_commands")),
+        "allowed_commands": _allowed_commands(metadata=normalized_metadata, token=token),
         "target_files": target_files,
         "scope_paths": scope_paths,
         "capability_token_ref": str(token.get("token_id") or "").strip(),

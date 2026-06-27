@@ -30,6 +30,8 @@ _DIRECT_SCOPE_KEYS: tuple[str, ...] = (
     "allowed_scope",
     "allowed_scope_paths",
     "allowed_paths",
+    "allowed_write_paths",
+    "allowed_read_paths",
     "authorized_paths",
     "scope_paths",
     "target_files",
@@ -44,6 +46,10 @@ _SCOPE_CONTAINER_KEYS: tuple[str, ...] = (
     "capability",
     "capability_permissions",
     "permissions",
+    "authorization",
+    "director_execution_envelope",
+    "task_execution_envelope",
+    "execution_envelope",
 )
 
 _NO_AUTHORIZED_SCOPE_SENTINEL = "__polaris_no_authorized_paths__"
@@ -176,8 +182,52 @@ def _first_capability_token_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
         token = _mapping_from_value(mapping.get(key))
         if token is not None:
             return token
+    envelope_token = _execution_envelope_capability_token(mapping)
+    if envelope_token:
+        return envelope_token
     if any(str(mapping.get(key) or "").strip() for key in ("token_id", "contract_hash", "blueprint_hash")):
         return dict(mapping)
+    return {}
+
+
+def _hash_ref_value(value: Any) -> str:
+    mapping = _mapping_from_value(value)
+    if mapping is None:
+        return ""
+    return str(mapping.get("hash") or "").strip()
+
+
+def _execution_envelope_capability_token(mapping: dict[str, Any]) -> dict[str, Any]:
+    envelopes: list[dict[str, Any]] = []
+    if str(mapping.get("schema_version") or "").strip() == "polaris.execution_envelope.v1":
+        envelopes.append(mapping)
+    for key in ("director_execution_envelope", "task_execution_envelope", "execution_envelope"):
+        envelope = _mapping_from_value(mapping.get(key))
+        if envelope is not None:
+            envelopes.append(envelope)
+    for envelope in envelopes:
+        authorization = _mapping_from_value(envelope.get("authorization")) or {}
+        envelope_hash = str(envelope.get("envelope_hash") or "").strip()
+        token_id = str(authorization.get("capability_token_ref") or envelope.get("envelope_id") or "").strip()
+        if not token_id and envelope_hash:
+            token_id = f"execution-envelope:{envelope_hash[:16]}"
+        if not token_id:
+            continue
+        handoff_decision = _mapping_from_value(envelope.get("handoff_decision")) or {}
+        return {
+            "source": "director.execution_envelope.authorization",
+            "token_id": token_id,
+            "run_id": str(envelope.get("run_id") or ""),
+            "project_id": str(envelope.get("workspace") or ""),
+            "stage": "director_execution",
+            "contract_hash": _hash_ref_value(envelope.get("pm_contract")),
+            "blueprint_hash": _hash_ref_value(envelope.get("ce_blueprint")),
+            "execution_envelope_hash": envelope_hash,
+            "allowed_paths": authorization.get("allowed_write_paths") or authorization.get("target_files") or (),
+            "target_files": authorization.get("target_files") or (),
+            "allowed_commands": authorization.get("allowed_commands") or (),
+            "capability_audit": {"ok": bool(handoff_decision.get("allowed"))},
+        }
     return {}
 
 

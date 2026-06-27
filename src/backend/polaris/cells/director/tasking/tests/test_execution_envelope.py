@@ -50,6 +50,7 @@ def test_build_execution_envelope_binds_contracts_and_capability() -> None:
                 "token_id": "job-1",
                 "allowed_paths": ["src/main.py", "src"],
                 "target_files": ["src/main.py"],
+                "allowed_commands": ["python --version"],
             },
             "model": "test-model",
             "tool_choice": "auto",
@@ -68,6 +69,7 @@ def test_build_execution_envelope_binds_contracts_and_capability() -> None:
     assert payload["execution_profile"]["hash"] == "profile-hash"
     assert payload["authorization"]["capability_token_ref"] == "job-1"
     assert payload["authorization"]["allowed_write_paths"] == ["src/main.py", "src"]
+    assert payload["authorization"]["allowed_commands"] == ["python --version"]
     assert payload["model_policy"]["temperature"] == 0.05
     assert payload["model_policy"]["max_tokens"] == 64_000
     assert payload["audit_policy"]["final_provider_request_required"] is True
