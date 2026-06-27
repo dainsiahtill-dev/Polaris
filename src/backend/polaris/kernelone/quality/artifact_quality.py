@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.quality.cross_artifact_interfaces import scan_cross_artifact_consistency_errors
+from polaris.kernelone.quality.interface_ledger import validate_declared_interfaces_against_snapshot
 from polaris.kernelone.quality.package_scripts import package_script_cycle_reasons
 
 _ARTIFACT_QUALITY_SKIP_DIRS = {
@@ -400,8 +401,32 @@ def scan_workspace_artifact_quality(
                     relative_paths=scanned_relative_paths if relative_paths is not None else None,
                 )
             )
+        if len(errors) < 50:
+            errors.extend(
+                _scan_declared_interface_ledger(
+                    root_full,
+                    scanned_relative_paths if relative_paths is not None else None,
+                )
+            )
     except (OSError, RuntimeError, ValueError) as exc:
         return [f"Artifact quality scan failed: {exc}"]
+    return list(dict.fromkeys(errors))
+
+
+def _scan_declared_interface_ledger(root_full: Path, relative_paths: Iterable[str] | None) -> list[str]:
+    errors: list[str] = []
+    target_files = list(relative_paths) if relative_paths is not None else None
+    for cache_root in ("", root_full.as_posix()):
+        try:
+            errors.extend(
+                validate_declared_interfaces_against_snapshot(
+                    root_full.as_posix(),
+                    cache_root,
+                    target_files,
+                )
+            )
+        except (OSError, RuntimeError, ValueError):
+            continue
     return list(dict.fromkeys(errors))
 
 

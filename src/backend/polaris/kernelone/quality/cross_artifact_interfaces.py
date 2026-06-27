@@ -10,6 +10,7 @@ of inventing failures.
 from __future__ import annotations
 
 import ast
+import difflib
 import hashlib
 import json
 import os
@@ -236,6 +237,45 @@ class ContractAmendmentRequest:
     requested_by: str = "director"
     schema_version: str = "cross_artifact.contract_amendment_request.v1"
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "task_id": self.task_id,
+            "reason": self.reason,
+            "evidence": list(self.evidence),
+            "requested_by": self.requested_by,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CrossArtifactRepairPlan:
+    """Typed advisory plan for repair-kernel integration."""
+
+    strategy: str
+    authority: str
+    issue_code: str
+    importer_path: str = ""
+    owner_path: str = ""
+    symbol: str = ""
+    replacement_symbol: str = ""
+    confidence: str = "medium"
+    evidence: tuple[str, ...] = field(default_factory=tuple)
+    constraints: tuple[str, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "strategy": self.strategy,
+            "authority": self.authority,
+            "issue_code": self.issue_code,
+            "importer_path": self.importer_path,
+            "owner_path": self.owner_path,
+            "symbol": self.symbol,
+            "replacement_symbol": self.replacement_symbol,
+            "confidence": self.confidence,
+            "evidence": list(self.evidence),
+            "constraints": list(self.constraints),
+        }
+
 
 def build_symbol_index_snapshot(
     workspace: str | Path,
@@ -348,6 +388,85 @@ def scan_cross_artifact_consistency_errors(
     return [
         issue.to_error_message() for issue in scan_cross_artifact_consistency(workspace, relative_paths=relative_paths)
     ]
+
+
+def build_contract_amendment_request(
+    *,
+    task_id: str,
+    issues: Iterable[CrossArtifactConsistencyIssue],
+    requested_by: str = "director",
+) -> ContractAmendmentRequest | None:
+    """Build a CE amendment request for contract-level mismatches."""
+
+    contract_issues = [issue for issue in issues if issue.code.startswith("contract_")]
+    if not contract_issues:
+        return None
+    return ContractAmendmentRequest(
+        task_id=str(task_id or "").strip(),
+        reason="cross-artifact interface contract does not match current source evidence",
+        evidence=tuple(issue.message for issue in contract_issues),
+        requested_by=str(requested_by or "director").strip() or "director",
+    )
+
+
+def plan_cross_artifact_repairs(
+    issues: Iterable[CrossArtifactConsistencyIssue],
+) -> list[CrossArtifactRepairPlan]:
+    """Classify consistency issues into bounded repair or CE-amendment plans."""
+
+    plans: list[CrossArtifactRepairPlan] = []
+    for issue in issues:
+        if issue.code.startswith("contract_"):
+            plans.append(
+                CrossArtifactRepairPlan(
+                    strategy="contract_amendment_required",
+                    authority="ce_amendment_required",
+                    issue_code=issue.code,
+                    owner_path=issue.owner_path,
+                    symbol=issue.symbol,
+                    confidence="high",
+                    evidence=(issue.message,),
+                    constraints=("Director must not mutate the interface contract.",),
+                )
+            )
+            continue
+        if issue.code != "unresolved_import_symbol":
+            continue
+        available = tuple(str(item) for item in issue.details.get("available_exports", ()) if str(item or "").strip())
+        replacement = _closest_symbol(issue.symbol, available)
+        if replacement:
+            plans.append(
+                CrossArtifactRepairPlan(
+                    strategy="rename_consumer_to_existing_interface",
+                    authority="director_repair_within_contract",
+                    issue_code=issue.code,
+                    importer_path=issue.importer_path,
+                    owner_path=issue.owner_path,
+                    symbol=issue.symbol,
+                    replacement_symbol=replacement,
+                    confidence="high",
+                    evidence=(issue.message,),
+                    constraints=("Update the consumer reference only; do not create empty stubs.",),
+                )
+            )
+            continue
+        plans.append(
+            CrossArtifactRepairPlan(
+                strategy="add_real_interface_to_owner",
+                authority="director_repair_within_contract",
+                issue_code=issue.code,
+                importer_path=issue.importer_path,
+                owner_path=issue.owner_path,
+                symbol=issue.symbol,
+                confidence="medium",
+                evidence=(issue.message,),
+                constraints=(
+                    "Implement the real exported interface in the owner artifact.",
+                    "Do not satisfy this plan with pass, TODO, NotImplemented, or placeholder-only stubs.",
+                ),
+            )
+        )
+    return plans
 
 
 def _validate_contract_against_snapshot(
@@ -834,6 +953,25 @@ def _dedupe_issues(issues: Iterable[CrossArtifactConsistencyIssue]) -> list[Cros
     return unique
 
 
+def _closest_symbol(symbol: str, available: tuple[str, ...]) -> str:
+    if not symbol or not available:
+        return ""
+    lowered = {item.lower(): item for item in available}
+    direct = lowered.get(symbol.lower())
+    if direct:
+        return direct
+    normalized_symbol = _symbol_similarity_key(symbol)
+    for item in available:
+        if _symbol_similarity_key(item) == normalized_symbol:
+            return item
+    matches = difflib.get_close_matches(symbol, available, n=1, cutoff=0.78)
+    return matches[0] if matches else ""
+
+
+def _symbol_similarity_key(symbol: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(symbol or "").lower())
+
+
 __all__ = [
     "CONTRACT_SCHEMA_VERSION",
     "SCHEMA_VERSION",
@@ -841,10 +979,13 @@ __all__ = [
     "CrossArtifactConsistencyIssue",
     "CrossArtifactInterfaceContract",
     "CrossArtifactInterfaceRequirement",
+    "CrossArtifactRepairPlan",
     "InterfaceImport",
     "InterfaceSymbol",
     "SymbolIndexSnapshot",
+    "build_contract_amendment_request",
     "build_symbol_index_snapshot",
+    "plan_cross_artifact_repairs",
     "scan_cross_artifact_consistency",
     "scan_cross_artifact_consistency_errors",
 ]

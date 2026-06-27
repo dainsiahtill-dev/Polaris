@@ -8,9 +8,12 @@ from polaris.kernelone.quality.artifact_quality import scan_workspace_artifact_q
 from polaris.kernelone.quality.cross_artifact_interfaces import (
     CrossArtifactInterfaceContract,
     CrossArtifactInterfaceRequirement,
+    build_contract_amendment_request,
     build_symbol_index_snapshot,
+    plan_cross_artifact_repairs,
     scan_cross_artifact_consistency,
 )
+from polaris.kernelone.quality.interface_ledger import record_declared_interfaces
 
 
 def _write(path: Path, content: str) -> None:
@@ -68,6 +71,18 @@ class TestTypescriptNamespaceExports:
 
         assert any("unresolved import symbol 'WeatherReport' from './index'" in error for error in errors)
 
+    def test_artifact_quality_consumes_ce_interface_ledger(self, tmp_path: Path) -> None:
+        _write(tmp_path / "src/weather.ts", "export interface WeatherSnapshot { condition: string }\n")
+        record_declared_interfaces(
+            str(tmp_path),
+            str(tmp_path),
+            [{"step_id": "CE-S1", "target_file": "src/weather.ts", "interface_names": ["WeatherReport"]}],
+        )
+
+        errors = scan_workspace_artifact_quality(str(tmp_path))
+
+        assert "Artifact quality scan failed: declared interface 'WeatherReport' missing from src/weather.ts" in errors
+
 
 class TestSnapshotSignatures:
     def test_python_signature_digest_is_stable_contract_evidence(self, tmp_path: Path) -> None:
@@ -98,6 +113,68 @@ class TestSnapshotSignatures:
         issues = scan_cross_artifact_consistency(tmp_path, contract=contract)
 
         assert [issue.code for issue in issues] == ["contract_signature_mismatch"]
+
+    def test_contract_mismatch_can_be_promoted_to_ce_amendment_request(self, tmp_path: Path) -> None:
+        _write(tmp_path / "src/engine/forecast.py", "def forecast_for(mood):\n    return mood\n")
+        contract = CrossArtifactInterfaceContract(
+            task_id="TASK-1",
+            interfaces=(
+                CrossArtifactInterfaceRequirement(
+                    domain="code_symbol",
+                    owner_path="src/engine/forecast.py",
+                    name="missing_forecast",
+                    kind="function",
+                ),
+            ),
+        )
+        issues = scan_cross_artifact_consistency(tmp_path, contract=contract)
+
+        amendment = build_contract_amendment_request(task_id="TASK-1", issues=issues)
+
+        assert amendment is not None
+        assert amendment.to_dict()["schema_version"] == "cross_artifact.contract_amendment_request.v1"
+        assert amendment.to_dict()["task_id"] == "TASK-1"
+        assert "missing_forecast" in amendment.to_dict()["evidence"][0]
+
+
+class TestTypedRepairPlans:
+    def test_close_symbol_mismatch_plans_consumer_rename(self, tmp_path: Path) -> None:
+        _write(tmp_path / "src/weather.ts", "export interface WeatherReport { condition: string }\n")
+        _write(tmp_path / "src/forecast.ts", "import { WeatherReprot } from './weather';\n")
+
+        plans = plan_cross_artifact_repairs(scan_cross_artifact_consistency(tmp_path))
+
+        assert [plan.strategy for plan in plans] == ["rename_consumer_to_existing_interface"]
+        assert plans[0].authority == "director_repair_within_contract"
+        assert plans[0].replacement_symbol == "WeatherReport"
+
+    def test_missing_symbol_without_close_match_plans_real_owner_export(self, tmp_path: Path) -> None:
+        _write(tmp_path / "src/weather.ts", "export interface WeatherSnapshot { condition: string }\n")
+        _write(tmp_path / "src/forecast.ts", "import { WeatherReport } from './weather';\n")
+
+        plans = plan_cross_artifact_repairs(scan_cross_artifact_consistency(tmp_path))
+
+        assert [plan.strategy for plan in plans] == ["add_real_interface_to_owner"]
+        assert plans[0].owner_path == "src/weather.ts"
+        assert any("Do not satisfy" in constraint for constraint in plans[0].constraints)
+
+    def test_contract_issue_plans_ce_amendment_not_director_repair(self, tmp_path: Path) -> None:
+        _write(tmp_path / "src/weather.ts", "export interface WeatherSnapshot { condition: string }\n")
+        contract = CrossArtifactInterfaceContract(
+            task_id="TASK-1",
+            interfaces=(
+                CrossArtifactInterfaceRequirement(
+                    domain="code_symbol",
+                    owner_path="src/weather.ts",
+                    name="WeatherReport",
+                ),
+            ),
+        )
+
+        plans = plan_cross_artifact_repairs(scan_cross_artifact_consistency(tmp_path, contract=contract))
+
+        assert [plan.strategy for plan in plans] == ["contract_amendment_required"]
+        assert plans[0].authority == "ce_amendment_required"
 
 
 class TestGoExports:
