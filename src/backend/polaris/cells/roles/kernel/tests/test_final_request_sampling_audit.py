@@ -329,6 +329,61 @@ def test_final_request_context_audit_includes_execution_envelope_coverage() -> N
     assert evidence_coverage["pass"] is True
 
 
+def test_final_request_context_audit_tracks_receipt_store_refs() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 48000},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {
+                    "role": "system",
+                    "name": "chief_engineer_blueprint",
+                    "content": "[chief_engineer_blueprint stored - receipt://chief_engineer_blueprint]",
+                    "receipt_refs": ["chief_engineer_blueprint"],
+                },
+                {"role": "user", "content": "Implement the scoped change."},
+            ],
+            "run_ledger_projection": {
+                "ref": "runtime/run-ledger/latest.json",
+                "receipt_refs": ["quality_gate_receipt"],
+            },
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {
+                "role": "system",
+                "name": "chief_engineer_blueprint",
+                "content": "[chief_engineer_blueprint stored - receipt://chief_engineer_blueprint]",
+                "receipt_refs": ["chief_engineer_blueprint"],
+            },
+            {"role": "user", "content": "Implement the scoped change."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert evidence_coverage["ledger_evidence"]["receipt_refs"] == [
+        "quality_gate_receipt",
+        "chief_engineer_blueprint",
+    ]
+    assert "receipt_store_refs" in evidence_coverage["included_refs"]
+
+
 def test_final_request_context_audit_flags_required_tool_pruning() -> None:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,

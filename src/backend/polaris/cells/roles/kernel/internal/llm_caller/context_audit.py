@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
@@ -12,6 +13,7 @@ from .response_types import PreparedLLMRequest
 
 _UNDERUTILIZED_WINDOW_THRESHOLD = 8192
 _UNDERUTILIZED_RATIO = 0.15
+_RECEIPT_REF_RE = re.compile(r"receipt://([A-Za-z0-9_.:/-]+)")
 _COVERAGE_FLAG_TO_REF = {
     "has_pm_contract": "pm_contract",
     "has_chief_engineer_blueprint": "ce_blueprint",
@@ -186,6 +188,41 @@ def _unique_strings(values: Any) -> list[str]:
         seen.add(value)
         result.append(value)
     return result
+
+
+def _receipt_refs_from_payload(value: Any, *, depth: int = 0) -> list[str]:
+    if depth > 4:
+        return []
+    if isinstance(value, str):
+        return [match.group(1).strip() for match in _RECEIPT_REF_RE.finditer(value) if match.group(1).strip()]
+    if isinstance(value, dict):
+        mapping_refs = _string_list(value.get("receipt_refs"))
+        for key in ("content", "text", "message", "messages", "parts"):
+            mapping_refs.extend(_receipt_refs_from_payload(value.get(key), depth=depth + 1))
+        return mapping_refs
+    if isinstance(value, (list, tuple, set)):
+        sequence_refs: list[str] = []
+        for item in value:
+            sequence_refs.extend(_receipt_refs_from_payload(item, depth=depth + 1))
+        return sequence_refs
+    return []
+
+
+def _final_request_receipt_refs(
+    *,
+    ai_request: Any,
+    prepared: PreparedLLMRequest,
+    messages: list[dict[str, Any]],
+) -> list[str]:
+    context_payload = _request_context(ai_request)
+    raw_messages = context_payload.get("chat_messages")
+    if raw_messages is None:
+        raw_messages = context_payload.get("messages")
+    refs: list[str] = []
+    refs.extend(_receipt_refs_from_payload(raw_messages))
+    refs.extend(_receipt_refs_from_payload(getattr(prepared, "messages", None)))
+    refs.extend(_receipt_refs_from_payload(messages))
+    return _unique_strings(refs)
 
 
 def _resident_agi_audit_context(ai_request: Any) -> dict[str, Any]:
@@ -1014,6 +1051,7 @@ def _included_evidence_refs(
     *,
     coverage: dict[str, bool],
     request_metadata_summary: dict[str, Any],
+    receipt_refs: list[str] | None = None,
 ) -> list[str]:
     refs = [ref for flag, ref in _COVERAGE_FLAG_TO_REF.items() if coverage.get(flag)]
     if request_metadata_summary.get("has_execution_profile"):
@@ -1030,6 +1068,8 @@ def _included_evidence_refs(
         refs.append("output_contract")
     if request_metadata_summary.get("has_task_metadata"):
         refs.append("task_metadata")
+    if receipt_refs:
+        refs.append("receipt_store_refs")
     return _unique_strings(refs)
 
 
@@ -1077,9 +1117,13 @@ def _coverage_source(
     return result
 
 
-def _ledger_evidence(ai_request: Any) -> dict[str, Any]:
+def _ledger_evidence(ai_request: Any, *, receipt_refs: list[str] | None = None) -> dict[str, Any]:
     context_payload = _request_context(ai_request)
     ledger = _mapping(context_payload.get("run_ledger")) or _mapping(context_payload.get("run_ledger_projection"))
+    merged_receipt_refs: list[str] = []
+    merged_receipt_refs.extend(_string_list(context_payload.get("receipt_refs")))
+    merged_receipt_refs.extend(_string_list(ledger.get("receipt_refs")))
+    merged_receipt_refs.extend(receipt_refs or [])
     return {
         "run_ledger_ref": str(
             context_payload.get("run_ledger_ref")
@@ -1093,7 +1137,7 @@ def _ledger_evidence(ai_request: Any) -> dict[str, Any]:
         "missing_required_modalities": _string_list(
             context_payload.get("missing_required_modalities") or ledger.get("missing_required_modalities")
         ),
-        "receipt_refs": _string_list(context_payload.get("receipt_refs") or ledger.get("receipt_refs")),
+        "receipt_refs": _unique_strings(merged_receipt_refs),
     }
 
 
@@ -1133,9 +1177,15 @@ def _final_request_evidence_coverage(
     role_id = _non_empty_attr(ai_request, name="role") or _non_empty_attr(profile, name="role_id") or "unknown"
     expected_role_id = _non_empty_attr(profile, name="role_id") or role_id
     role_identity_ok = role_id.strip().lower() == expected_role_id.strip().lower()
+    receipt_refs = _final_request_receipt_refs(
+        ai_request=ai_request,
+        prepared=prepared,
+        messages=messages,
+    )
     included_refs = _included_evidence_refs(
         coverage=coverage,
         request_metadata_summary=request_metadata_summary,
+        receipt_refs=receipt_refs,
     )
     required_refs = _required_evidence_refs(
         ai_request=ai_request,
@@ -1202,7 +1252,7 @@ def _final_request_evidence_coverage(
             "missing_schema_tools": missing_required_tools,
         },
         "workflow_chain": workflow_chain,
-        "ledger_evidence": _ledger_evidence(ai_request),
+        "ledger_evidence": _ledger_evidence(ai_request, receipt_refs=receipt_refs),
         "coverage_ratio": round(coverage_ratio, 4),
         "pass": bool(role_identity_ok and not missing_required_refs and not missing_required_tools),
     }

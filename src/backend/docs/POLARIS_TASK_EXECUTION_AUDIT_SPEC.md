@@ -474,6 +474,10 @@ workflow_chain:
   handoff_decision_hash: ...
   execution_profile_hash: ...
   execution_envelope_hash: ...
+ledger_evidence:
+  run_ledger_ref: ...
+  receipt_refs:
+    - chief_engineer_blueprint
 coverage_ratio: 1.0
 pass: true
 ```
@@ -484,6 +488,7 @@ pass: true
 - 如果 prompt 或 metadata 声明 `required_tools`，最终 provider request 的 `tools` schema 中必须能逐项找到对应工具名，否则记录 `missing_required_final_request_tools`。
 - 如果 execution strategy 或 execution envelope 声明 `required_evidence`，最终请求必须包含映射后的证据引用；缺失时记录 `missing_required_final_request_evidence`。
 - Director 请求必须能把 PM contract、CE blueprint、handoff decision、execution profile 与 execution envelope hash 串成同一条 workflow chain。
+- ReceiptStore 卸载的大块上下文必须在最终请求审计中留下 `receipt_refs`。`receipt_refs` 只作为证据定位与复盘入口，不能作为路径、命令或写入授权来源。
 - 该对象当前是审计信号；提升为阻断门禁时必须先完成所有 Director/CE/PM 入口的兼容迁移。
 
 ## 14. Run Provenance Bundle
