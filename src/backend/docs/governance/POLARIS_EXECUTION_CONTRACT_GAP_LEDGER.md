@@ -71,6 +71,7 @@ These items were discovered after the P0/P1/P2 implementation ledger was closed.
 | C-17 | `f14bf8e8` | Control Plane exposes `run_provenance_bundle.v1` with PM/CE/handoff/envelope/provider/receipt/QA evidence hashes. |
 | C-18 | `94ea7fd2` | Resident AGI handoff projections share platform contract refs and strip advisory output authority fields. |
 | C-19 | `602fb4f5` | Resident AGI UI ships cockpit overview, tactical console, quick commands, advanced audit containment, and governed action receipts. |
+| C-20 | `a7c773ee` | Main audit specification records the closed module-interface, QA classification, final-request redaction safety, and Resident AGI handoff-ref contracts. |
 
 ## Update Rules
 
