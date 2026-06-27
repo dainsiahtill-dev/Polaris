@@ -27,6 +27,14 @@ _COVERAGE_FLAG_TO_REF = {
 _EVIDENCE_REQUIREMENT_TO_REF = {
     "pm_task_contract": "pm_contract",
     "pm_contract": "pm_contract",
+    "pm_delivery_plan_document": "delivery_plan_document",
+    "delivery_plan_document": "delivery_plan_document",
+    "delivery_plan": "delivery_plan_document",
+    "design_intent": "delivery_plan_document",
+    "pm_delivery_depth_contract": "delivery_depth_contract",
+    "delivery_depth_contract": "delivery_depth_contract",
+    "behavior_contract": "delivery_depth_contract",
+    "behavior_matrix": "delivery_depth_contract",
     "chief_engineer_blueprint": "ce_blueprint",
     "ce_blueprint": "ce_blueprint",
     "target_files_or_declared_scopes": "target_files",
@@ -186,6 +194,7 @@ def _string_list(value: Any) -> list[str]:
         if token:
             result.append(token)
     return result
+
 
 def _unique_strings(values: Any) -> list[str]:
     seen: set[str] = set()
@@ -621,6 +630,21 @@ def _execution_contract(ai_request: Any) -> dict[str, Any]:
     return {}
 
 
+def _delivery_contract_payload(ai_request: Any, key: str) -> dict[str, Any]:
+    context_payload = _request_context(ai_request)
+    for container in (
+        context_payload,
+        _mapping(context_payload.get("metadata")),
+        _mapping(context_payload.get("task")),
+        _mapping(_mapping(context_payload.get("task")).get("metadata")),
+        _execution_contract(ai_request),
+    ):
+        raw_payload = container.get(key)
+        if isinstance(raw_payload, dict):
+            return dict(raw_payload)
+    return {}
+
+
 def _execution_envelope(ai_request: Any) -> dict[str, Any]:
     context_payload = _request_context(ai_request)
     for key in (
@@ -794,6 +818,8 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
     execution_profile_summary = _execution_profile_summary(ai_request)
     execution_contract_summary = _execution_contract_summary(ai_request)
     execution_envelope_summary = _execution_envelope_summary(ai_request)
+    delivery_plan_document = _delivery_contract_payload(ai_request, "delivery_plan_document")
+    delivery_depth_contract = _delivery_contract_payload(ai_request, "delivery_depth_contract")
     task_metadata = _task_metadata(ai_request)
     resident_agi_audit_context = _resident_agi_audit_context_summary(ai_request)
     summary: dict[str, Any] = {
@@ -833,6 +859,10 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
         "has_execution_envelope": bool(execution_envelope),
         "execution_envelope_summary": execution_envelope_summary,
         "execution_envelope_hash": _execution_envelope_hash(ai_request, execution_envelope),
+        "has_delivery_plan_document": bool(delivery_plan_document),
+        "delivery_plan_document_hash": _stable_digest(delivery_plan_document) if delivery_plan_document else "",
+        "has_delivery_depth_contract": bool(delivery_depth_contract),
+        "delivery_depth_contract_hash": _stable_digest(delivery_depth_contract) if delivery_depth_contract else "",
         "has_task_metadata": bool(task_metadata),
         "task_metadata_keys": sorted(str(key) for key in task_metadata),
         "task_metadata_hash": _stable_digest(task_metadata) if task_metadata else "",
@@ -1071,6 +1101,10 @@ def _included_evidence_refs(
         refs.append("execution_contract")
     if request_metadata_summary.get("has_execution_envelope"):
         refs.append("execution_envelope")
+    if request_metadata_summary.get("has_delivery_plan_document"):
+        refs.append("delivery_plan_document")
+    if request_metadata_summary.get("has_delivery_depth_contract"):
+        refs.append("delivery_depth_contract")
     if request_metadata_summary.get("has_language_guidance"):
         refs.append("language_guidance")
     if request_metadata_summary.get("has_output_contract"):
@@ -1122,9 +1156,7 @@ def final_request_evidence_coverage_violation(
     if not isinstance(evidence_coverage, dict) or evidence_coverage.get("pass") is True:
         return None
     missing_refs = [str(item) for item in evidence_coverage.get("missing_required_refs") or [] if str(item).strip()]
-    missing_tools = [
-        str(item) for item in evidence_coverage.get("missing_required_tools") or [] if str(item).strip()
-    ]
+    missing_tools = [str(item) for item in evidence_coverage.get("missing_required_tools") or [] if str(item).strip()]
     if not missing_refs and not missing_tools and evidence_coverage.get("role_identity_ok", True):
         return None
     message_parts = ["Final provider request evidence coverage failed"]

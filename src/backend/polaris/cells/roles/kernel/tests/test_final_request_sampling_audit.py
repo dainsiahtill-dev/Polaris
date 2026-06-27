@@ -565,6 +565,83 @@ def test_final_request_evidence_coverage_counts_current_provider_request() -> No
     enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
 
 
+def test_final_request_evidence_coverage_tracks_delivery_plan_and_depth_contract() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "audit_policy": {
+                    "final_provider_request_required": True,
+                    "required_evidence": ["delivery_plan_document", "delivery_depth_contract"],
+                },
+            },
+            "delivery_plan_document": {
+                "schema_version": "polaris.delivery_plan_document.v1",
+                "product_summary": {
+                    "intent": "Deliver a playable mood color wheel with visible doodle behavior.",
+                    "core_terms": ["mood", "color", "wheel", "doodle"],
+                },
+                "user_journey": ["Open canvas", "Pick mood", "Inspect color wheel report"],
+            },
+            "delivery_depth_contract": {
+                "schema_version": "polaris.delivery_depth_contract.v1",
+                "product_intent": {
+                    "subject": "mood doodle color wheel",
+                    "primary_entities": ["mood", "color", "wheel", "doodle"],
+                },
+                "behavior_contract": {
+                    "rule_matrix": [
+                        "mood controls brush color",
+                        "beat intensity changes stroke width",
+                        "report summarizes dominant color wheel sector",
+                    ],
+                    "edge_cases": ["unknown mood uses explicit fallback"],
+                },
+            },
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Implement the mood doodle color wheel."},
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Implement the mood doodle color wheel."},
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    metadata_summary = audit["request_metadata_summary"]
+    assert metadata_summary["has_delivery_plan_document"] is True
+    assert metadata_summary["delivery_plan_document_hash"]
+    assert metadata_summary["has_delivery_depth_contract"] is True
+    assert metadata_summary["delivery_depth_contract_hash"]
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert "delivery_plan_document" in evidence_coverage["required_refs"]
+    assert "delivery_depth_contract" in evidence_coverage["required_refs"]
+    assert "delivery_plan_document" in evidence_coverage["included_refs"]
+    assert "delivery_depth_contract" in evidence_coverage["included_refs"]
+    assert evidence_coverage["missing_required_refs"] == []
+    assert evidence_coverage["pass"] is True
+    enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
+
+
 def test_final_request_context_audit_flags_required_tool_pruning() -> None:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
