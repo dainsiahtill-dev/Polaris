@@ -143,7 +143,7 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
     try:
         from polaris.cells.chief_engineer.blueprint.public import (
             BlueprintPersistence,
-            evaluate_handoff_decision_for_blueprint,
+            validate_director_handoff_from_payload,
         )
     except (ImportError, RuntimeError) as exc:
         lines.append(f"- blueprint_payload: unavailable ({type(exc).__name__})")
@@ -154,10 +154,11 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
         lines.append("- blueprint_payload: missing or unreadable")
         return lines
 
-    decision = evaluate_handoff_decision_for_blueprint(workspace, resolved_blueprint_id)
-    if decision is not None:
-        lines.append(f"- handoff_ready: {'yes' if decision.allowed else 'no'} ({decision.reason})")
-        blockers = _string_list_payload(list(decision.blockers), limit=4)
+    validation = validate_director_handoff_from_payload(workspace, {"blueprint_id": resolved_blueprint_id})
+    lines.append(f"- handoff_ready: {'yes' if validation.get('allowed') else 'no'} ({validation.get('reason')})")
+    decision_payload = validation.get("decision_payload")
+    if isinstance(decision_payload, dict):
+        blockers = _string_list_payload(decision_payload.get("blockers"), limit=4)
         if blockers:
             lines.append(_join_limited_values("handoff blockers", blockers))
 
@@ -1189,7 +1190,13 @@ class DirectorAdapter(BaseRoleAdapter):
         runtime_context = context if isinstance(context, dict) else {}
         runtime_metadata_raw = runtime_context.get("metadata")
         runtime_metadata: dict[str, Any] = runtime_metadata_raw if isinstance(runtime_metadata_raw, dict) else {}
-        goal = str(metadata.get("goal") or task.get("goal") or runtime_context.get("goal") or runtime_metadata.get("goal") or "").strip()
+        goal = str(
+            metadata.get("goal")
+            or task.get("goal")
+            or runtime_context.get("goal")
+            or runtime_metadata.get("goal")
+            or ""
+        ).strip()
 
         def _first_listish(*values: Any, limit: int = 24) -> list[str]:
             for value in values:

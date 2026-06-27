@@ -26,8 +26,8 @@ if TYPE_CHECKING:
 
 from polaris.cells.chief_engineer.blueprint.public import (
     GenerateTaskBlueprintCommandV1,
-    evaluate_handoff_decision_for_blueprint,
     generate_task_blueprint,
+    validate_director_handoff_from_payload,
 )
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
 from polaris.cells.roles.kernel.public.service import QualityChecker
@@ -932,28 +932,38 @@ class OrchestrationStageExecutor:
                 )
                 continue
 
-            decision = evaluate_handoff_decision_for_blueprint(str(self.workspace), blueprint_id)
-            if decision is None:
+            validation = validate_director_handoff_from_payload(
+                str(self.workspace),
+                {"task_id": task_id, "blueprint_id": blueprint_id},
+            )
+            handoff_payload_raw = validation.get("decision_payload")
+            handoff_payload: dict[str, Any] = handoff_payload_raw if isinstance(handoff_payload_raw, dict) else {}
+            if not validation.get("allowed") and not handoff_payload:
                 signals.append(
                     {
                         "code": "director.chief_engineer_blueprint_unreadable",
                         "severity": "error",
-                        "detail": "Chief Engineer blueprint could not be loaded for handoff validation.",
+                        "detail": str(
+                            validation.get("reason")
+                            or "Chief Engineer blueprint could not be loaded for handoff validation."
+                        ),
                         "task_id": task_id,
                         "blueprint_id": blueprint_id,
+                        "handoff_validation": validation,
                     }
                 )
                 continue
-            if not decision.allowed:
+            if not validation.get("allowed"):
                 signals.append(
                     {
                         "code": "director.chief_engineer_handoff_blocked",
                         "severity": "error",
-                        "detail": decision.reason,
+                        "detail": str(validation.get("reason") or "Chief Engineer handoff blocked Director dispatch."),
                         "task_id": task_id,
                         "blueprint_id": blueprint_id,
-                        "blockers": list(decision.blockers),
-                        "handoff_decision": decision.to_dict(),
+                        "blockers": list(handoff_payload.get("blockers") or []),
+                        "handoff_decision": handoff_payload,
+                        "handoff_validation": validation,
                     }
                 )
         return signals
@@ -3021,28 +3031,37 @@ class OrchestrationStageExecutor:
                     }
                 )
 
-            handoff_decision = evaluate_handoff_decision_for_blueprint(str(self.workspace), result.blueprint_id)
-            handoff_payload: dict[str, Any] = handoff_decision.to_dict() if handoff_decision is not None else {}
-            if handoff_decision is None:
+            handoff_validation = validate_director_handoff_from_payload(
+                str(self.workspace),
+                {"task_id": task_id, "blueprint_id": result.blueprint_id},
+            )
+            handoff_payload_raw = handoff_validation.get("decision_payload")
+            handoff_payload: dict[str, Any] = handoff_payload_raw if isinstance(handoff_payload_raw, dict) else {}
+            if not handoff_validation.get("allowed") and not handoff_payload:
                 stage_signals.append(
                     {
                         "code": "chief_engineer.handoff_decision_unreadable",
                         "severity": "error",
-                        "detail": "Generated CE blueprint could not be loaded for handoff validation.",
+                        "detail": str(
+                            handoff_validation.get("reason")
+                            or "Generated CE blueprint could not be loaded for handoff validation."
+                        ),
                         "task_id": task_id,
                         "blueprint_id": result.blueprint_id,
+                        "handoff_validation": handoff_validation,
                     }
                 )
-            elif not handoff_decision.allowed:
+            elif not handoff_validation.get("allowed"):
                 stage_signals.append(
                     {
                         "code": "chief_engineer.handoff_blocked",
                         "severity": "error",
-                        "detail": handoff_decision.reason,
+                        "detail": str(handoff_validation.get("reason") or "Chief Engineer handoff blocked."),
                         "task_id": task_id,
                         "blueprint_id": result.blueprint_id,
-                        "blockers": list(handoff_decision.blockers),
+                        "blockers": list(handoff_payload.get("blockers") or []),
                         "handoff_decision": handoff_payload,
+                        "handoff_validation": handoff_validation,
                     }
                 )
 
@@ -3055,7 +3074,7 @@ class OrchestrationStageExecutor:
                     "summary": result.summary,
                     "recommendations": list(result.recommendations),
                     "risks": list(result.risks),
-                    "handoff_ready": bool(handoff_decision and handoff_decision.allowed),
+                    "handoff_ready": bool(handoff_validation.get("allowed")),
                     "handoff_decision": handoff_payload,
                     "llm_evidence": ce_evidence,
                     "llm_blueprint_consumed": bool(ce_llm_blueprint),

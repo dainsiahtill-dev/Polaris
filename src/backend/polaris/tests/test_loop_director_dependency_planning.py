@@ -91,6 +91,11 @@ async def test_runner_uses_planned_order_for_single_iteration(monkeypatch) -> No
     monkeypatch.setattr(loop_director.DirectorV2Runner, "execute_task", _fake_execute_task)
     monkeypatch.setattr(
         loop_director,
+        "validate_director_handoff_from_payload",
+        lambda _workspace, _payload: {"allowed": True},
+    )
+    monkeypatch.setattr(
+        loop_director,
         "load_pm_task_contract",
         lambda _path: {
             "tasks": [

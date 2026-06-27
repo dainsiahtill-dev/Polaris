@@ -36,8 +36,7 @@ _bootstrap_backend_import_path()
 
 # Polaris execution/runtime services
 from polaris.cells.chief_engineer.blueprint.public import (
-    BlueprintPersistence,
-    evaluate_handoff_decision_for_blueprint,
+    validate_director_handoff_from_payload,
 )
 from polaris.cells.director.execution.public.service import (
     DirectorConfig,
@@ -254,37 +253,8 @@ def extract_pm_tasks(pm_contract: dict) -> list[dict]:
     return extracted
 
 
-def _chief_engineer_blueprint_id_from_task(task: dict[str, Any]) -> str:
-    metadata_raw = task.get("metadata")
-    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
-    for key in (
-        "blueprint_id",
-        "chief_engineer_blueprint_id",
-        "chief_engineer_handoff_id",
-    ):
-        token = str(metadata.get(key) or task.get(key) or "").strip()
-        if token:
-            return Path(token).stem if token.endswith(".json") else token
-    for key in ("blueprint_path", "runtime_blueprint_path"):
-        token = str(metadata.get(key) or task.get(key) or "").strip()
-        if token:
-            return Path(token).stem
-    return ""
-
-
 def _has_chief_engineer_handoff(workspace: str, task: dict[str, Any]) -> bool:
-    blueprint_id = _chief_engineer_blueprint_id_from_task(task)
-    if not blueprint_id:
-        return False
-    blueprint = BlueprintPersistence(workspace, ensure_directory=False).load(blueprint_id)
-    if not isinstance(blueprint, dict):
-        return False
-    task_id = str(task.get("task_id") or task.get("id") or "").strip()
-    blueprint_task_id = str(blueprint.get("task_id") or blueprint.get("pm_task_id") or "").strip()
-    if task_id and blueprint_task_id and task_id != blueprint_task_id:
-        return False
-    decision = evaluate_handoff_decision_for_blueprint(workspace, blueprint_id)
-    return bool(decision and decision.allowed)
+    return bool(validate_director_handoff_from_payload(workspace, task).get("allowed"))
 
 
 def _normalize_dependency_ids(value: Any) -> list[str]:
