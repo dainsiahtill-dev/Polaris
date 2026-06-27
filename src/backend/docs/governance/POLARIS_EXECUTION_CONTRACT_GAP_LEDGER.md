@@ -52,7 +52,7 @@ The target chain is:
 | C-09 | `3fbe373a` | Public Director execution strict mode blocks before service execution when required contract refs are missing. |
 | C-10 | `70d0c284` | Execution-envelope capability evidence is proven to block write scope expansion and unlisted commands through RoleToolGateway and toolkit handlers. |
 | C-11 | `e2c30deb` | Final provider request evidence coverage fails closed before sync, structured, and stream provider invocation when strict policy is active. |
-| C-12 | pending | PM deterministic route probe is regression-tested as text-only from adapter context through TransactionKernel tool schema and final provider snapshot. |
+| C-12 | `64326302` | PM deterministic route probe is regression-tested as text-only from adapter context through TransactionKernel tool schema and final provider snapshot. |
 
 ## Update Rules
 
