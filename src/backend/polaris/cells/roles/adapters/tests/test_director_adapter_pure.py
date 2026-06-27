@@ -66,6 +66,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge
     run_python_static_smoke,
 )
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
+from polaris.cells.roles.adapters.internal.director.quality_gate import _go_runtime_smoke_repair_target_files
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
 from polaris.kernelone.quality import scan_workspace_artifact_quality
 
@@ -957,6 +958,37 @@ def test_deterministic_materialization_repair_cleans_scaffold_marker_from_report
     repaired = (tmp_path / "src" / "main.ts").read_text(encoding="utf-8")
     assert "Polaris TypeScript scaffold" not in repaired
     assert "TypeScript application" in repaired
+
+
+def test_deterministic_materialization_repair_cleans_scaffold_marker_from_go_source(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    (tmp_path / "go.mod").write_text("module example\n\ngo 1.21\n", encoding="utf-8")
+    (tmp_path / "main.go").write_text(
+        "package main\n\n// output reflects real state rather than a static placeholder.\nfunc main() {}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Director output quality gate failed: generic/placeholder content detected: "
+        "main.go:(?<![.:'\"-])\\bplaceholder\\b(?!\\s*[=:])(?![-'\"])"
+    ]
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        _make_adapter(tmp_path),
+        task={"metadata": {"target_files": ["main.go"]}},
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    assert summary["source_tools"] == ["deterministic_scaffold_marker_quality_cleanup"]
+    repaired = (tmp_path / "main.go").read_text(encoding="utf-8")
+    assert "placeholder" not in repaired.lower()
+    assert "sample-check" in repaired
 
 
 def test_deterministic_typescript_missing_member_repair_adds_class_members(tmp_path: Any) -> None:
@@ -3140,7 +3172,7 @@ def test_java_post_accessor_alias_repair_uses_director_runtime_kernel(
     assert "public int temperament()" in target.read_text(encoding="utf-8")
     assert len(results) == 1
     result = results[0]["result"]
-    assert result["source_tool"] == "deterministic_java_accessor_alias_repair"
+    assert result["source_tool"] == "deterministic_java_post_repair"
     assert result["file"] == relative_path
     assert result["repair_kernel"]["owner_cell"] == "director.runtime"
     assert result["repair_kernel"]["status"] == "applied"
@@ -4836,6 +4868,24 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
             "approved_by": "director_adapter",
         }
 
+    def test_director_verification_commands_are_promoted_to_runtime_context(self) -> None:
+        context: dict[str, Any] = {
+            "task_id": "TASK-GO",
+            "construction_step": {"verify": "go test ./..."},
+            "metadata": {
+                "acceptance_criteria": ["`go run .` returns success"],
+            },
+        }
+
+        commands = DirectorAdapter._ensure_director_verification_commands(
+            message="Acceptance: `go test ./...` and `go run .` must pass.",
+            context=context,
+        )
+
+        assert commands == ["go test ./...", "go run ."]
+        assert context["verification_commands"] == ["go test ./...", "go run ."]
+        assert context["metadata"]["verification_commands"] == ["go test ./...", "go run ."]
+
     def test_director_execution_profile_is_added_to_runtime_context_and_metadata(self, tmp_path: Any) -> None:
         context = {
             "task_id": "TASK-1",
@@ -5138,6 +5188,23 @@ class TestBuildDirectorMessage:
         assert "目标文件: src/client/three-scene.ts" in msg
         assert "- Modify the existing Three.js scene file" in msg
         assert "- Run `npm run build` passes" in msg
+
+    def test_includes_explicit_verification_commands_from_acceptance(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        msg = adapter._build_director_message(
+            {
+                "subject": "Implement Go module",
+                "metadata": {
+                    "target_files": ["go.mod", "main.go", "models/capsule.go"],
+                    "execution_checklist": ["Run `go test ./...` after writing code"],
+                    "acceptance_criteria": ["`go run .` returns success", "`go test ./...` passes"],
+                },
+            }
+        )
+
+        assert "Verification commands / 验证命令:" in msg
+        assert "- go test ./..." in msg
+        assert "- go run ." in msg
 
     def test_multi_target_message_requires_all_target_files(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -9884,6 +9951,115 @@ def test_python_runtime_smoke_traceback_quality_repair_preserves_batch(tmp_path:
     assert selected == targets
 
 
+def test_python_harness_behavior_failure_preserves_cross_language_source_batch() -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _select_materialization_quality_repair_target_batch,
+        _should_preserve_materialization_quality_repair_batch,
+    )
+
+    error = (
+        "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_product.py' (returncode=1); tail:\n"
+        "workspace validation command failed (python -m unittest discover -s tests -p test_*.py -v):\n"
+        "FAIL: test_flavors_are_normalized_lowercase_and_deduped (test_product.ProductTest)\n"
+        "AssertionError: 'sweet' not found in ['spicy', 'Sweet', 'salty', 'umami', 'xyz']\n"
+    )
+    targets = [
+        "src/engine/mapper.rs",
+        "src/engine/mod.rs",
+        "src/engine/plating.rs",
+        "src/main.rs",
+        "tests/test_product.py",
+    ]
+
+    preserve_batch = _should_preserve_materialization_quality_repair_batch(
+        [error],
+        repair_target_candidates=targets,
+    )
+    selected = _select_materialization_quality_repair_target_batch(
+        targets,
+        repair_attempt=3,
+        preserve_batch_after_first_attempt=preserve_batch,
+    )
+
+    assert preserve_batch is True
+    assert selected == targets
+
+
+def test_python_harness_behavior_failure_without_cross_language_batch_stays_narrow() -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _should_preserve_materialization_quality_repair_batch,
+    )
+
+    error = (
+        "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_product.py' (returncode=1); tail:\n"
+        "AssertionError: expected rendered output marker\n"
+    )
+
+    assert (
+        _should_preserve_materialization_quality_repair_batch(
+            [error],
+            repair_target_candidates=["src/engine/mapper.rs", "tests/test_product.py"],
+        )
+        is False
+    )
+
+
+def test_python_runtime_smoke_embedded_rust_compile_targets_workspace_sources(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _python_runtime_smoke_repair_target_files,
+        _select_materialization_quality_repair_target_batch,
+        _should_preserve_materialization_quality_repair_batch,
+    )
+
+    tests = tmp_path / "tests"
+    src = tmp_path / "src"
+    models = src / "models"
+    engine = src / "engine"
+    tests.mkdir()
+    models.mkdir(parents=True)
+    engine.mkdir()
+    (tests / "test_product.py").write_text("import unittest\n", encoding="utf-8")
+    (src / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+    (models / "flavor.rs").write_text("pub struct Flavor;\n", encoding="utf-8")
+    (models / "palette.rs").write_text("pub struct Palette;\n", encoding="utf-8")
+    (engine / "mod.rs").write_text("pub mod mapper;\n", encoding="utf-8")
+    (engine / "mapper.rs").write_text("use crate::models::flavor::Taste;\n", encoding="utf-8")
+    error = (
+        "Artifact quality scan failed: workspace validation command failed "
+        "(python -m unittest discover -s tests -p test_*.py -v); touched_tests=['tests/test_product.py']; tail:\n"
+        "test_cargo_check (test_product.CargoBuildTests.test_cargo_check) ... skipped "
+        "'cargo check did not succeed in this environment; stderr tail: "
+        "> src/models/palette.rs:9:1\\n"
+        "error[E0432]: unresolved import `crate::models::flavor::Taste`\\n"
+        "Some errors have detailed explanations: E0432, E0609.\\n"
+        "error: could not compile `example` (lib) due to 22 previous errors; 1 warning emitted\\n'\n"
+        "FAIL: test_html_report_wired (test_product.ContentCoverageTests.test_html_report_wired)\n"
+        "AssertionError: False is not true : main.rs (or engine module) must produce an HTML report.\n"
+    )
+
+    targets = _python_runtime_smoke_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=["tests/test_product.py"],
+        workspace_full=str(tmp_path),
+    )
+    preserve_batch = _should_preserve_materialization_quality_repair_batch(
+        [error],
+        repair_target_candidates=targets,
+    )
+    selected = _select_materialization_quality_repair_target_batch(
+        targets,
+        repair_attempt=3,
+        preserve_batch_after_first_attempt=preserve_batch,
+    )
+
+    assert targets[0] == "src/models/palette.rs"
+    assert "src/models/flavor.rs" in targets
+    assert "src/engine/mapper.rs" in targets
+    assert "src/main.rs" in targets
+    assert preserve_batch is True
+    assert selected == targets
+
+
 def test_javascript_runtime_smoke_traceback_targets_workspace_entrypoint(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.quality_gate import (
         _javascript_runtime_smoke_repair_target_files,
@@ -10549,6 +10725,33 @@ class TestQualityRepairMissingTargetContract:
 
         assert missing == ["requirements.txt"]
 
+    def test_repair_targets_missing_java_source_file_from_unittest_error(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _missing_materialization_quality_repair_target_files,
+        )
+
+        java_root = tmp_path / "src" / "main" / "java" / "polaris" / "factory" / "domain"
+        java_root.mkdir(parents=True)
+        (java_root / "RhythmMonster.java").write_text("package polaris.factory.domain;\n", encoding="utf-8")
+        test_file = tmp_path / "tests" / "test_product.py"
+        test_file.parent.mkdir()
+        test_file.write_text("import unittest\n", encoding="utf-8")
+        error = (
+            "Artifact quality scan failed: workspace validation command failed "
+            "(python -m unittest discover -s tests -p test_*.py -v); tail:\n"
+            f'  File "{test_file}", line 79, in test_source_files_present\n'
+            "AssertionError: False is not true : missing or empty: "
+            "src/main/java/polaris/factory/domain/Season.java\n"
+        )
+
+        missing = _missing_materialization_quality_repair_target_files(
+            {"target_files": ["src/main/java/polaris/factory/domain/RhythmMonster.java"]},
+            str(tmp_path),
+            [error],
+        )
+
+        assert missing == ["src/main/java/polaris/factory/domain/Season.java"]
+
     def test_repair_targets_workspace_file_named_by_assertion_requirement(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _missing_materialization_quality_repair_target_files,
@@ -10698,8 +10901,8 @@ class TestQualityRepairMissingTargetContract:
         assert "tests/test_scaffold.py" in summary["repair_target_files"]
         assert "requirements.txt" in adapter.repair_context["repair_target_files"]
         assert "MISSING TARGET FILES" in adapter.repair_message
-        assert adapter._execution.allowed_tool_names == {"write_file"}
-        assert adapter._execution.allow_patch_fallback is False
+        assert adapter._execution.allowed_tool_names == {"edit_file", "write_file"}
+        assert adapter._execution.allow_patch_fallback is True
 
     @pytest.mark.asyncio
     async def test_quality_repair_deterministically_creates_single_missing_requirements(self, tmp_path) -> None:
@@ -11151,10 +11354,8 @@ class TestQualityRepairMissingTargetContract:
 
         assert summary["semantic_quality_target_files"] == ["package.json"]
         assert summary["repair_target_files"] == ["package.json"]
-        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
-            "tool": "write_file",
-            "target_file": "package.json",
-        }
+        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["package.json"]
+        assert "_transaction_kernel_forced_tool_choice" not in adapter.repair_context
         assert "NPM PACKAGE MANIFEST REPAIR" in adapter.repair_message
 
     def test_node_test_directory_quality_error_targets_package_json(self, tmp_path) -> None:
@@ -11622,6 +11823,279 @@ class TestQualityRepairMissingTargetContract:
         }
 
     @pytest.mark.asyncio
+    async def test_existing_compile_target_repair_prefers_edit_file_not_forced_write_only(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        (tmp_path / "models").mkdir()
+        (tmp_path / "models" / "exhibit.go").write_text(
+            "package models\n\n"
+            "type Exhibit struct {\n"
+            "\tTitle string\n"
+            "}\n\n"
+            "func UseExhibit(e Exhibit) string {\n"
+            "\treturn e.ID\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+                self.allow_patch_fallback: bool | None = None
+
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            async def execute_tools(
+                self,
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self._execution = _Execution()
+                self.repair_message = ""
+                self.repair_context: dict[str, Any] = {}
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del timeout_seconds, stage_label
+                self.repair_message = message
+                self.repair_context = context
+                return {"content": "No native tool call", "success": True}
+
+        adapter = _Adapter()
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["models/exhibit.go"]},
+            target_task_id="factory-quality-gate:run-go-repair",
+            run_id="run-go-existing-repair",
+            context={},
+            original_message="Repair Go compile diagnostics.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+                "# example/models\n"
+                "models/exhibit.go:8:11: e.ID undefined (type Exhibit has no field or method ID)"
+            ],
+            changed_files=["models/exhibit.go"],
+        )
+
+        forced_defs = adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
+        forced_names = [item["function"]["name"] for item in forced_defs]
+        assert forced_names == ["edit_file", "write_file"]
+        assert "_transaction_kernel_forced_tool_choice" not in adapter.repair_context
+        assert "_transaction_kernel_force_exact_tools" not in adapter.repair_context
+        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["models/exhibit.go"]
+        assert "edit_preferred_single_target" in adapter.repair_message
+        assert "Do not call read_file" not in adapter.repair_message
+        assert "call read_file for this target first when required by tool policy" in adapter.repair_message
+        assert "write_only_single_target" not in adapter.repair_message
+        assert adapter._execution.allowed_tool_names == {"edit_file", "write_file"}
+        assert adapter._execution.allow_patch_fallback is True
+        assert summary["repair_target_files"] == ["models/exhibit.go"]
+
+    @pytest.mark.asyncio
+    async def test_rust_line_suggestion_quality_error_runs_runtime_bridge_before_llm(
+        self,
+        tmp_path,
+        monkeypatch,
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director import quality_gate
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        src = tmp_path / "src" / "models"
+        src.mkdir(parents=True)
+        (src / "flavor.rs").write_text(
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\npub enum FlavorKind {\n    Salty,\n}\n",
+            encoding="utf-8",
+        )
+        (src / "palette.rs").write_text(
+            "use std::collections::BTreeMap;\n"
+            "use super::flavor::FlavorKind;\n"
+            "pub fn demo(kind: FlavorKind) {\n"
+            "    let mut map: BTreeMap<FlavorKind, u8> = BTreeMap::new();\n"
+            "    let _ = map.entry(kind).or_insert(0);\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        calls: list[dict[str, Any]] = []
+
+        def fake_runtime_bridge(
+            adapter: Any,
+            *,
+            task: dict[str, Any],
+            task_id: str,
+            artifact_quality_errors: list[str],
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            del adapter, task, artifact_quality_errors
+            calls.append({"task_id": task_id})
+            return (
+                [
+                    {
+                        "tool_name": "edit_file",
+                        "tool": "edit_file",
+                        "success": True,
+                        "file": "src/models/flavor.rs",
+                        "result": {
+                            "success": True,
+                            "file": "src/models/flavor.rs",
+                            "source_tool": "deterministic_rust_line_suggestion_repair",
+                            "repair_kernel": {"owner_cell": "director.runtime"},
+                        },
+                    }
+                ],
+                {
+                    "source_tools": ["deterministic_rust_line_suggestion_repair"],
+                    "repair_kernel": {"owner_cell": "director.runtime"},
+                },
+            )
+
+        monkeypatch.setattr(quality_gate, "run_materialization_quality_repairs", fake_runtime_bridge)
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+                raise AssertionError("LLM repair should not run when runtime bridge produced a write receipt")
+
+        rust_error = (
+            "Artifact quality scan failed: workspace validation command failed (cargo check):\n"
+            "error[E0599]: the method `or_insert` exists for enum "
+            "`std::collections::btree_map::Entry<'_, FlavorKind, u8>`, but its trait bounds were not satisfied\n"
+            "  --> src/models/palette.rs:5:29\n"
+            "   |\n"
+            "5 |     let _ = map.entry(kind).or_insert(0);\n"
+            "   |                             ^^^^^^^^^ method cannot be called due to unsatisfied trait bounds\n"
+            "  ::: src/models/flavor.rs:2:1\n"
+            "   |\n"
+            "2 | pub enum FlavorKind {\n"
+            "   | ------------------- doesn't satisfy `FlavorKind: Ord`\n"
+            "help: consider annotating `FlavorKind` with `#[derive(Eq, Ord, PartialEq, PartialOrd)]`\n"
+            "  --> src/models/flavor.rs:2:1\n"
+            "   |\n"
+            "2 + #[derive(Eq, Ord, PartialEq, PartialOrd)]\n"
+            "3 | pub enum FlavorKind {\n"
+        )
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["src/models/flavor.rs", "src/models/palette.rs"]},
+            target_task_id="task-rust-line-suggestion",
+            run_id="run-rust-line-suggestion",
+            context={},
+            original_message="Repair Rust compiler diagnostics.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[rust_error],
+            changed_files=["src/models/flavor.rs", "src/models/palette.rs"],
+        )
+
+        assert calls == [{"task_id": "task-rust-line-suggestion"}]
+        assert tool_results[0]["result"]["source_tool"] == "deterministic_rust_line_suggestion_repair"
+        assert summary["stage"] == "deterministic_materialization_quality_repair"
+        assert summary["write_tool_evidence"] is True
+        assert summary["source_tools"] == ["deterministic_rust_line_suggestion_repair"]
+
+    @pytest.mark.asyncio
+    async def test_go_scaffold_marker_quality_repair_runs_deterministic_before_llm(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        (tmp_path / "main.go").write_text(
+            "package main\n\n// output reflects real state rather than a static placeholder.\nfunc main() {}\n",
+            encoding="utf-8",
+        )
+
+        class _Execution:
+            _message_bus = None
+
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress, kwargs
+                raise AssertionError("LLM fallback tools should not run when deterministic cleanup applies")
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                raise AssertionError("LLM should not be invoked for deterministic scaffold marker cleanup")
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["main.go"]},
+            target_task_id="factory-quality-gate:run-go-marker",
+            run_id="run-go-marker",
+            context={},
+            original_message="Repair Go source quality marker.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[
+                "Director output quality gate failed: generic/placeholder content detected: "
+                "main.go:(?<![.:'\"-])\\bplaceholder\\b(?!\\s*[=:])(?![-'\"])"
+            ],
+            changed_files=["main.go"],
+        )
+
+        repaired = (tmp_path / "main.go").read_text(encoding="utf-8")
+        assert tool_results
+        assert summary["stage"] == "deterministic_materialization_quality_repair"
+        assert "deterministic_scaffold_marker_quality_cleanup" in summary["source_tools"]
+        assert "placeholder" not in repaired.lower()
+        assert "sample-check" in repaired
+
+    @pytest.mark.asyncio
     async def test_single_missing_target_repair_coerces_raw_content_to_write_file(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
@@ -11871,21 +12345,15 @@ class TestQualityRepairMissingTargetContract:
         assert summary["missing_target_files"] == []
         assert summary["runtime_smoke_target_files"] == ["calculator.py"]
         assert summary["repair_target_files"] == ["calculator.py"]
-        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
-            "type": "function",
-            "function": {"name": "write_file"},
-        }
-        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
-            "tool": "write_file",
-            "target_file": "calculator.py",
-        }
-        assert adapter._execution.allowed_tool_names == {"write_file"}
-        assert adapter._execution.allow_patch_fallback is False
+        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["calculator.py"]
+        assert "_transaction_kernel_forced_tool_choice" not in adapter.repair_context
+        assert adapter._execution.allowed_tool_names == {"edit_file", "write_file"}
+        assert adapter._execution.allow_patch_fallback is True
         assert "EXISTING FAILED TARGET FILES" in adapter.repair_message
         assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
         assert "MISSING TARGET FILES" not in adapter.repair_message
         assert "calculator.py" in adapter.repair_message
-        assert "rewrite only the existing failed target" in adapter.repair_message
+        assert "edit only the existing failed target" in adapter.repair_message
 
     @pytest.mark.asyncio
     async def test_python_runtime_smoke_repair_targets_existing_workspace_file_across_tasks(self, tmp_path) -> None:
@@ -11965,12 +12433,9 @@ class TestQualityRepairMissingTargetContract:
         assert summary["missing_target_files"] == []
         assert summary["runtime_smoke_target_files"] == ["src/cli.py"]
         assert summary["repair_target_files"] == ["src/cli.py"]
-        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
-            "tool": "write_file",
-            "target_file": "src/cli.py",
-        }
-        assert adapter._execution.allowed_tool_names == {"write_file"}
-        assert adapter._execution.allow_patch_fallback is False
+        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["src/cli.py"]
+        assert adapter._execution.allowed_tool_names == {"edit_file", "write_file"}
+        assert adapter._execution.allow_patch_fallback is True
         assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
         assert "src/cli.py" in adapter.repair_message
 
@@ -12053,6 +12518,546 @@ class TestQualityRepairMissingTargetContract:
         )
 
         assert targets == ["src/main.rs", "tests/test_product.py"]
+
+    def test_python_runtime_smoke_harness_targets_changed_non_python_sources(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _explicit_artifact_quality_repair_target_files,
+            _python_runtime_smoke_repair_target_files,
+        )
+
+        engine = tmp_path / "src" / "engine"
+        engine.mkdir(parents=True)
+        (engine / "mapper.rs").write_text('pub fn map() -> &\'static str { "ok" }\n', encoding="utf-8")
+        (engine / "mod.rs").write_text("pub mod mapper;\npub mod plating;\n", encoding="utf-8")
+        (engine / "plating.rs").write_text('pub fn plate() -> &\'static str { "basic" }\n', encoding="utf-8")
+        (tmp_path / "src" / "main.rs").write_text('fn main() { println!("basic"); }\n', encoding="utf-8")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "test_product.py"
+        test_file.write_text("def test_cli_output():\n    assert False\n", encoding="utf-8")
+        error = (
+            "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_product.py' "
+            "(returncode=1); tail:\n"
+            "pytest tests/test_product.py\n"
+            f'  File "{test_file}", line 2, in test_cli_output\n'
+            "AssertionError: 'illegal rarity' not found in command output\n"
+        )
+        changed_files = [
+            "src/engine/mapper.rs",
+            "src/engine/mod.rs",
+            "src/engine/plating.rs",
+            "src/main.rs",
+            "tests/test_product.py",
+        ]
+
+        runtime_targets = _python_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=changed_files,
+            workspace_full=str(tmp_path),
+        )
+        explicit_targets = _explicit_artifact_quality_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=changed_files,
+            workspace_full=str(tmp_path),
+        )
+
+        assert runtime_targets == changed_files
+        assert explicit_targets == changed_files
+
+    def test_go_runtime_smoke_targets_existing_entrypoint(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _go_runtime_smoke_repair_target_files,
+        )
+
+        (tmp_path / "go.mod").write_text("module example\n", encoding="utf-8")
+        (tmp_path / "main.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
+        (tmp_path / "engine").mkdir()
+        (tmp_path / "engine" / "rules.go").write_text("package engine\n", encoding="utf-8")
+
+        targets = _go_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (go run .): "
+                "stdout\nexpected runtime error\nexit status 1"
+            ],
+            changed_files=["engine/rules.go"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["main.go"]
+
+    def test_go_compile_failure_targets_reported_source_file(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _go_runtime_smoke_repair_target_files,
+        )
+
+        (tmp_path / "models").mkdir()
+        (tmp_path / "models" / "gallery.go").write_text("package models\n", encoding="utf-8")
+        (tmp_path / "models" / "capsule.go").write_text("package models\n", encoding="utf-8")
+
+        targets = _go_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+                "# module/models\nmodels/gallery.go:13:14: undefined: Capsule"
+            ],
+            changed_files=["models/capsule.go"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["models/gallery.go"]
+
+    def test_go_missing_field_compile_failure_also_targets_type_definition_file(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _go_runtime_smoke_repair_target_files,
+        )
+
+        (tmp_path / "models").mkdir()
+        (tmp_path / "models" / "gallery.go").write_text(
+            "package models\n\nfunc use(e *Exhibit) string { return e.ID }\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "models" / "exhibit.go").write_text(
+            "package models\n\ntype Exhibit struct { Name string }\n",
+            encoding="utf-8",
+        )
+
+        targets = _go_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+                "# module/models\n"
+                "models/gallery.go:3:40: e.ID undefined (type *Exhibit has no field or method ID)"
+            ],
+            changed_files=[],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["models/gallery.go", "models/exhibit.go"]
+
+    def test_go_workspace_compile_repair_preserves_batch_after_first_attempt(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _select_materialization_quality_repair_target_batch,
+            _should_preserve_materialization_quality_repair_batch,
+        )
+
+        errors = [
+            "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+            "# module/models\n"
+            "models/exhibit.go:43:34: undefined: TimeSource\n"
+            "models/gallery.go:49:28: e.ID undefined (type *Exhibit has no field or method ID)"
+        ]
+        targets = ["models/exhibit.go", "models/gallery.go", "models/capsule.go"]
+
+        preserve = _should_preserve_materialization_quality_repair_batch(errors)
+        selected = _select_materialization_quality_repair_target_batch(
+            targets,
+            repair_attempt=2,
+            preserve_batch_after_first_attempt=preserve,
+        )
+
+        assert preserve is True
+        assert selected == targets
+
+    def test_go_runtime_target_is_prioritized_before_broad_missing_targets(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _ordered_materialization_quality_repair_target_candidates,
+            _select_materialization_quality_repair_target_batch,
+        )
+
+        missing_targets = [
+            "go.mod",
+            "models/capsule.go",
+            "models/exhibit.go",
+            "models/gallery.go",
+            "engine/museum.go",
+            "engine/riddle.go",
+            "engine/unlock.go",
+            "main.go",
+        ]
+
+        ordered = _ordered_materialization_quality_repair_target_candidates(
+            missing_target_files=missing_targets,
+            runtime_smoke_target_files=["engine/unlock.go"],
+            semantic_quality_target_files=[],
+            explicit_quality_target_files=[],
+            should_merge_missing_targets=True,
+        )
+        selected = _select_materialization_quality_repair_target_batch(ordered)
+
+        assert ordered[0] == "engine/unlock.go"
+        assert "engine/unlock.go" in selected
+
+    def test_go_module_import_repair_runs_through_runtime_bridge(self, tmp_path) -> None:
+        from types import SimpleNamespace
+
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
+            _apply_deterministic_go_module_import_repair,
+        )
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = SimpleNamespace(_message_bus=None)
+
+            @staticmethod
+            def _update_task_progress(*args: Any, **kwargs: Any) -> None:
+                del args, kwargs
+
+        (tmp_path / "models").mkdir()
+        (tmp_path / "engine").mkdir()
+        (tmp_path / "go.mod").write_text("module example/app\n\ngo 1.21\n", encoding="utf-8")
+        (tmp_path / "models" / "capsule.go").write_text("package models\n\ntype Capsule struct{}\n", encoding="utf-8")
+        (tmp_path / "engine" / "unlock.go").write_text(
+            'package engine\n\nimport "example-app/models"\n\nfunc Use() models.Capsule { return models.Capsule{} }\n',
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_go_module_import_repair(
+            _Adapter(),
+            task_id="factory-quality-gate:test",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+                "engine/unlock.go:3:8: package example-app/models is not in std"
+            ],
+        )
+
+        repaired = (tmp_path / "engine" / "unlock.go").read_text(encoding="utf-8")
+        source_tools = {
+            str((item.get("result") or {}).get("source_tool") or item.get("source_tool") or "")
+            for item in results
+            if isinstance(item, dict)
+        }
+        assert 'import "example/app/models"' in repaired
+        assert "deterministic_go_module_import_repair" in source_tools
+
+    def test_go_unused_import_repair_runs_through_runtime_bridge(self, tmp_path) -> None:
+        from types import SimpleNamespace
+
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
+            _apply_deterministic_go_module_import_repair,
+        )
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = SimpleNamespace(_message_bus=None)
+
+            @staticmethod
+            def _update_task_progress(*args: Any, **kwargs: Any) -> None:
+                del args, kwargs
+
+        (tmp_path / "models").mkdir()
+        (tmp_path / "engine").mkdir()
+        (tmp_path / "go.mod").write_text("module example/app\n\ngo 1.21\n", encoding="utf-8")
+        (tmp_path / "models" / "capsule.go").write_text("package models\n\ntype Capsule struct{}\n", encoding="utf-8")
+        (tmp_path / "engine" / "riddle.go").write_text(
+            "package engine\n"
+            "\n"
+            "import (\n"
+            '    "errors"\n'
+            '    "example/app/models"\n'
+            ")\n"
+            "\n"
+            'func Riddle() error { return errors.New("sealed") }\n',
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_go_module_import_repair(
+            _Adapter(),
+            task_id="factory-quality-gate:test",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+                'engine/riddle.go:5:5: "example/app/models" imported and not used'
+            ],
+        )
+
+        repaired = (tmp_path / "engine" / "riddle.go").read_text(encoding="utf-8")
+        source_tools = {
+            str((item.get("result") or {}).get("source_tool") or item.get("source_tool") or "")
+            for item in results
+            if isinstance(item, dict)
+        }
+        assert '"example/app/models"' not in repaired
+        assert '"errors"' in repaired
+        assert "deterministic_go_unused_import_repair" in source_tools
+
+    def test_go_error_string_helper_repair_runs_through_runtime_bridge(self, tmp_path) -> None:
+        from types import SimpleNamespace
+
+        from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
+            _apply_deterministic_go_module_import_repair,
+        )
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = SimpleNamespace(_message_bus=None)
+
+            @staticmethod
+            def _update_task_progress(*args: Any, **kwargs: Any) -> None:
+                del args, kwargs
+
+        (tmp_path / "models").mkdir()
+        (tmp_path / "go.mod").write_text("module example/app\n\ngo 1.21\n", encoding="utf-8")
+        (tmp_path / "models" / "gallery.go").write_text(
+            "package models\n"
+            "\n"
+            'import "errors"\n'
+            "\n"
+            "var (\n"
+            '    ErrDuplicateCapsule = errString("capsule id already exists")\n'
+            '    ErrUnknownCapsule   = errString("capsule id not found")\n'
+            ")\n"
+            "\n"
+            'func Existing() error { return errors.New("x") }\n',
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_go_module_import_repair(
+            _Adapter(),
+            task_id="factory-quality-gate:test",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+                "models/gallery.go:6:27: undefined: errString"
+            ],
+        )
+
+        repaired = (tmp_path / "models" / "gallery.go").read_text(encoding="utf-8")
+        source_tools = {
+            str((item.get("result") or {}).get("source_tool") or item.get("source_tool") or "")
+            for item in results
+            if isinstance(item, dict)
+        }
+        assert "type errString string" in repaired
+        assert "func (e errString) Error() string { return string(e) }" in repaired
+        assert repaired.index("type errString string") < repaired.index("var (")
+        assert "deterministic_go_error_string_helper_repair" in source_tools
+
+    def test_go_missing_member_repair_targets_package_qualified_definition(self, tmp_path) -> None:
+        (tmp_path / "engine").mkdir()
+        (tmp_path / "models").mkdir()
+        (tmp_path / "engine" / "riddle.go").write_text(
+            "package engine\n"
+            "\n"
+            'import "example.com/timecapsule/models"\n'
+            "\n"
+            "func needsCapsule(c models.Capsule) string {\n"
+            "    return c.Validate()\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "models" / "capsule.go").write_text(
+            "package models\n\ntype Capsule struct {\n    ID string\n}\n",
+            encoding="utf-8",
+        )
+        errors = [
+            "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+            "engine/riddle.go:6:14: c.Validate undefined "
+            "(type models.Capsule has no field or method Validate)"
+        ]
+
+        targets = _go_runtime_smoke_repair_target_files(
+            artifact_quality_errors=errors,
+            changed_files=["engine/riddle.go", "models/capsule.go"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert "engine/riddle.go" in targets
+        assert "models/capsule.go" in targets
+
+    def test_go_test_behavior_repair_targets_production_sources_not_tests(self, tmp_path) -> None:
+        for directory in ("engine", "models"):
+            (tmp_path / directory).mkdir()
+        for rel in (
+            "engine/museum.go",
+            "engine/riddle.go",
+            "engine/unlock.go",
+            "main.go",
+            "main_test.go",
+            "models/capsule.go",
+            "models/exhibit.go",
+            "models/gallery.go",
+        ):
+            (tmp_path / rel).write_text("package main\n", encoding="utf-8")
+        errors = [
+            "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+            "--- FAIL: TestGallery_AddAndFindExhibits (0.00s)\n"
+            "    main_test.go:91: expected ErrDuplicateExhibitID, got gallery is full\n"
+            "--- FAIL: TestUnlocker_AttemptFlow (0.00s)\n"
+            "    main_test.go:205: expected unlock success, got capsule is not ready to open\n"
+            "--- FAIL: TestMainEntrypointOutput (0.00s)\n"
+            "    main_test.go:256: unlock: capsule is not ready to open"
+        ]
+
+        targets = _go_runtime_smoke_repair_target_files(
+            artifact_quality_errors=errors,
+            changed_files=[
+                "engine/museum.go",
+                "engine/riddle.go",
+                "engine/unlock.go",
+                "main.go",
+                "main_test.go",
+                "models/capsule.go",
+                "models/exhibit.go",
+                "models/gallery.go",
+            ],
+            workspace_full=str(tmp_path),
+        )
+
+        assert "main_test.go" not in targets
+        assert targets[:3] == ["models/gallery.go", "engine/unlock.go", "main.go"]
+        assert "engine/riddle.go" in targets
+        assert "models/capsule.go" in targets
+
+    @pytest.mark.asyncio
+    async def test_existing_go_runtime_smoke_failure_repair_forces_write_context(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+                self.allow_patch_fallback: bool | None = None
+
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            async def execute_tools(
+                self,
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self._execution = _Execution()
+                self.repair_context: dict[str, Any] = {}
+                self.repair_message = ""
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del timeout_seconds, stage_label
+                self.repair_context = context
+                self.repair_message = message
+                return {"content": ""}
+
+        adapter = _Adapter()
+        (tmp_path / "go.mod").write_text("module example\n", encoding="utf-8")
+        (tmp_path / "main.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["go.mod", "main.go"]},
+            target_task_id="PM-0001-1",
+            run_id="run-go-runtime-smoke-write-only",
+            context={},
+            original_message="Create a runnable Go CLI.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (go run .): "
+                "stdout\nexpected runtime error\nexit status 1"
+            ],
+            changed_files=["main.go"],
+        )
+
+        assert summary["runtime_smoke_target_files"] == ["main.go"]
+        assert summary["repair_target_files"] == ["main.go"]
+        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["main.go"]
+        assert "_transaction_kernel_forced_tool_choice" not in adapter.repair_context
+        assert adapter._execution.allowed_tool_names == {"edit_file", "write_file"}
+        assert adapter._execution.allow_patch_fallback is True
+        assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
+        assert "CURRENT UTF-8 CONTENT OF REPAIR TARGETS" in adapter.repair_message
+        assert "Before edit_file, call read_file" not in adapter.repair_message
+        assert "main.go" in adapter.repair_message
+
+    @pytest.mark.asyncio
+    async def test_existing_go_compile_failure_repair_forces_reported_file(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+                self.allow_patch_fallback: bool | None = None
+
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            async def execute_tools(
+                self,
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self._execution = _Execution()
+                self.repair_context: dict[str, Any] = {}
+                self.repair_message = ""
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del timeout_seconds, stage_label
+                self.repair_context = context
+                self.repair_message = message
+                return {"content": ""}
+
+        adapter = _Adapter()
+        (tmp_path / "models").mkdir()
+        (tmp_path / "models" / "gallery.go").write_text("package models\n", encoding="utf-8")
+        (tmp_path / "models" / "capsule.go").write_text("package models\n", encoding="utf-8")
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["models/gallery.go", "models/capsule.go"]},
+            target_task_id="PM-0001-1",
+            run_id="run-go-compile-write-only",
+            context={},
+            original_message="Repair a Go package compile failure.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+                "# module/models\nmodels/gallery.go:13:14: undefined: Entity"
+            ],
+            changed_files=["models/capsule.go"],
+        )
+
+        assert summary["runtime_smoke_target_files"] == ["models/gallery.go"]
+        assert summary["repair_target_files"] == ["models/gallery.go"]
+        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["models/gallery.go"]
+        assert adapter._execution.allowed_tool_names == {"edit_file", "write_file"}
+        assert adapter._execution.allow_patch_fallback is True
+        assert "models/gallery.go" in adapter.repair_message
 
     def test_python_unittest_discover_result_lines_infer_imported_src_modules(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
@@ -12400,8 +13405,8 @@ class TestQualityRepairMissingTargetContract:
         assert adapter.repair_context["repair_target_files"] == expected_targets
         assert adapter.repair_context["director_quality_repair"]["repair_target_files"] == expected_targets
         assert "src/models/weather.py" in adapter.repair_message
-        assert adapter._execution.allowed_tool_names == {"write_file"}
-        assert adapter._execution.allow_patch_fallback is False
+        assert adapter._execution.allowed_tool_names == {"edit_file", "write_file"}
+        assert adapter._execution.allow_patch_fallback is True
 
     @pytest.mark.asyncio
     async def test_semantic_quality_single_changed_file_repair_forces_write_context(self, tmp_path) -> None:
@@ -12476,12 +13481,11 @@ class TestQualityRepairMissingTargetContract:
         assert summary["missing_target_files"] == []
         assert summary["semantic_quality_target_files"] == ["test_calculator.py"]
         assert summary["repair_target_files"] == ["test_calculator.py"]
-        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
-            "tool": "write_file",
-            "target_file": "test_calculator.py",
-        }
-        assert adapter._execution.allowed_tool_names == {"write_file"}
-        assert adapter._execution.allow_patch_fallback is False
+        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == [
+            "test_calculator.py"
+        ]
+        assert adapter._execution.allowed_tool_names == {"edit_file", "write_file"}
+        assert adapter._execution.allow_patch_fallback is True
         assert "EXISTING FAILED TARGET FILES" in adapter.repair_message
         assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
         assert "test_calculator.py" in adapter.repair_message
@@ -12870,12 +13874,11 @@ class TestQualityRepairMissingTargetContract:
 
         assert summary["explicit_quality_target_files"] == ["src/engine/simulation.ts"]
         assert summary["repair_target_files"] == ["src/engine/simulation.ts"]
-        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
-            "tool": "write_file",
-            "target_file": "src/engine/simulation.ts",
-        }
-        assert adapter._execution.allowed_tool_names == {"write_file"}
-        assert adapter._execution.allow_patch_fallback is False
+        assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == [
+            "src/engine/simulation.ts"
+        ]
+        assert adapter._execution.allowed_tool_names == {"edit_file", "write_file"}
+        assert adapter._execution.allow_patch_fallback is True
         assert "EXISTING FAILED TARGET FILES" in adapter.repair_message
         assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
         assert "src/engine/simulation.ts" in adapter.repair_message
@@ -14561,6 +15564,83 @@ class TestCollectStepVerifyErrors:
         context = {"construction_step": {"verify": ["test -f ./a.md", "grep -q x ./a.md"]}}
         assert self._collect(context, str(tmp_path)) == []
 
+    def test_acceptance_go_verify_is_executed_from_task_payload(self, tmp_path: Any, monkeypatch: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director import quality_gate
+
+        seen: dict[str, Any] = {}
+
+        def _run(command: str, **kwargs: Any) -> Any:
+            seen["command"] = command
+            seen["cwd"] = kwargs.get("cwd")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(quality_gate.subprocess, "run", _run)
+
+        context = {
+            "metadata": {
+                "task_payload": {
+                    "target_files": ["go.mod", "main.go", "main_test.go"],
+                    "acceptance_criteria": [
+                        "`go test ./...` returns success",
+                        "`python -m unittest discover -s tests -p 'test_*.py' -v` returns success",
+                    ],
+                }
+            }
+        }
+
+        assert self._collect(context, str(tmp_path)) == []
+        assert seen == {"command": "go test ./...", "cwd": str(tmp_path)}
+
+    def test_verification_commands_go_verify_is_executed(self, tmp_path: Any, monkeypatch: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director import quality_gate
+
+        seen: dict[str, Any] = {}
+
+        def _run(command: str, **kwargs: Any) -> Any:
+            seen["command"] = command
+            seen["cwd"] = kwargs.get("cwd")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(quality_gate.subprocess, "run", _run)
+
+        context = {
+            "target_files": ["go.mod", "main.go"],
+            "verification_commands": ["go test ./...", "go run ."],
+        }
+
+        assert self._collect(context, str(tmp_path)) == []
+        assert seen == {"command": "go test ./...", "cwd": str(tmp_path)}
+
+    def test_acceptance_go_verify_failure_enters_repair_errors(self, tmp_path: Any, monkeypatch: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director import quality_gate
+
+        def _run(command: str, **kwargs: Any) -> Any:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="FAIL\tmodule [build failed]\n",
+                stderr="./main_test.go:3:6: multiple-value call in single-value context\n",
+            )
+
+        monkeypatch.setattr(quality_gate.subprocess, "run", _run)
+        monkeypatch.setattr(quality_gate, "_first_failing_verify_clause", lambda _verify, *, cwd: "")
+
+        context = {
+            "metadata": {
+                "task_payload": {
+                    "target_files": ["go.mod", "main.go", "main_test.go"],
+                    "steps": ["run `go test ./...` before completion"],
+                    "acceptance_criteria": ["`go test ./...` returns success"],
+                }
+            }
+        }
+
+        errors = self._collect(context, str(tmp_path))
+
+        assert len(errors) == 1
+        assert "step verify failed" in errors[0]
+        assert "go test ./..." in errors[0]
+        assert "multiple-value call" in errors[0]
+
     def test_near_miss_verify_target_path_is_repairable_error(self, tmp_path: Any) -> None:
         target = tmp_path / "src" / "rules" / "dancerule.ts"
         target.parent.mkdir(parents=True)
@@ -14720,3 +15800,57 @@ class TestSingleFileStepTarget:
             context={"run_id": "r"},
         )
         assert set(seen["paths"]) >= {"a.js", "b.js"}
+
+
+@pytest.mark.asyncio
+async def test_phase_first_llm_call_retries_transient_provider_error(tmp_path: Any) -> None:
+    adapter = _make_adapter(tmp_path)
+    calls = 0
+
+    async def _flaky_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError(
+                "HTTPSConnectionPool(host='api.example.test', port=443): Max retries exceeded "
+                "with url: /anthropic/v1/messages (Caused by SSLError(SSLEOFError()))"
+            )
+        return {
+            "content": "",
+            "success": True,
+            "tool_results": [
+                {
+                    "tool_name": "write_file",
+                    "status": "success",
+                    "success": True,
+                    "arguments": {"file": "src/Main.java", "content": "class Main {}"},
+                }
+            ],
+        }
+
+    adapter._invoke_role_dialogue_with_timeout = _flaky_dialogue  # type: ignore[method-assign]
+
+    state, summary = await execute_method_module._phase_first_llm_call(
+        adapter,
+        baseline_files={},
+        context={},
+        decision_signals=[],
+        llm_call_timeout=5.0,
+        message="create files",
+        target_task_id="task-1",
+        task={"target_files": ["src/Main.java"]},
+        workspace_name=tmp_path.name,
+        state=execute_method_module.MaterializationState(
+            current_files={},
+            new_files=[],
+            modified_files=[],
+            all_affected_files=[],
+            tool_results=[],
+        ),
+    )
+
+    assert calls == 2
+    assert summary is not None
+    assert summary["success"] is True
+    assert state.tool_results[0]["tool_name"] == "write_file"

@@ -25,10 +25,14 @@ _PATCH_RESIDUE_LINE_RE = re.compile(
 )
 _PATCH_RESIDUE_FILE_SUFFIXES = frozenset((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"))
 _SCAFFOLD_MARKER_FILE_SUFFIXES = frozenset(
-    (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".html", ".css", ".json")
+    (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".html", ".css", ".json")
 )
 _SCAFFOLD_MARKER_ERROR_RE = re.compile(
     r"deterministic scaffold marker ['\"][^'\"]+['\"] in (?P<path>\S+)",
+    re.IGNORECASE,
+)
+_GENERIC_PLACEHOLDER_ERROR_RE = re.compile(
+    r"generic/placeholder content detected:\s*(?P<path>[^:\s]+):",
     re.IGNORECASE,
 )
 _DECLARED_TARGET_FILE_MISSING_RE = re.compile(
@@ -496,7 +500,7 @@ def _scaffold_marker_error_paths(diagnostics: Sequence[RepairDiagnostic]) -> tup
             )
             if item
         )
-        match = _SCAFFOLD_MARKER_ERROR_RE.search(text)
+        match = _SCAFFOLD_MARKER_ERROR_RE.search(text) or _GENERIC_PLACEHOLDER_ERROR_RE.search(text)
         if match:
             path = _normalize_repair_path(str(match.group("path") or ""))
             if path:

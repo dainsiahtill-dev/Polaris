@@ -21,6 +21,7 @@ from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
     bootstrap_receipt_contains_whole_file_replacement_marker,
     build_forced_write_only_retry_tool_definitions,
     build_retry_tool_definitions_for_mutation,
+    build_retry_write_after_bootstrap_context,
     resolve_retry_model_override,
     select_bootstrap_followup_write_tool_name,
 )
@@ -286,6 +287,98 @@ def test_bootstrap_followup_switches_whole_file_edit_blocks_error_to_write_file(
     )
 
     assert selected == "write_file"
+
+
+def test_bootstrap_followup_does_not_force_create_tool_for_opaque_read_failure() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "read_file",
+                "status": "error",
+                "arguments": {"file": "src/main/java/app/Service.java"},
+                "result": {},
+            }
+        ]
+    }
+
+    selected = select_bootstrap_followup_write_tool_name(
+        allowed_tool_names={"read_file", "edit_blocks", "write_file", "edit_file"},
+        default_write_tool_name="write_file",
+        bootstrap_receipt=receipt,
+        failed_bootstrap_files=["src/main/java/app/Service.java"],
+    )
+
+    assert selected is None
+
+
+def test_bootstrap_followup_missing_file_failure_can_create() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "read_file",
+                "status": "error",
+                "arguments": {"file": "src/main/java/app/NewType.java"},
+                "result": {"error": "file not found: src/main/java/app/NewType.java"},
+            }
+        ]
+    }
+
+    selected = select_bootstrap_followup_write_tool_name(
+        allowed_tool_names={"read_file", "edit_blocks", "write_file", "edit_file"},
+        default_write_tool_name="edit_blocks",
+        bootstrap_receipt=receipt,
+        failed_bootstrap_files=["src/main/java/app/NewType.java"],
+    )
+
+    assert selected == "write_file"
+
+
+def test_bootstrap_followup_successful_existing_content_prefers_edit_tool_over_create_default() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "read_file",
+                "status": "success",
+                "result": {
+                    "file": "src/test/java/app/ServiceTest.java",
+                    "content": "class ServiceTest { void verifiesBehavior() {} }\n",
+                },
+            }
+        ]
+    }
+
+    selected = select_bootstrap_followup_write_tool_name(
+        allowed_tool_names={"read_file", "edit_blocks", "write_file", "edit_file"},
+        default_write_tool_name="write_file",
+        bootstrap_receipt=receipt,
+        failed_bootstrap_files=[],
+    )
+
+    assert selected == "edit_blocks"
+
+
+def test_bootstrap_followup_context_keeps_medium_file_tail() -> None:
+    content = "\n".join(f"{line:03d}: value" for line in range(1, 700))
+    content += "\nTAIL_COMPILER_ERROR_CONTEXT\n"
+    receipt = {
+        "results": [
+            {
+                "tool_name": "read_file",
+                "status": "success",
+                "result": {"file": "src/test/java/app/ServiceTest.java", "content": content},
+            }
+        ]
+    }
+
+    retry_context = build_retry_write_after_bootstrap_context(
+        original_context=[{"role": "user", "content": "Fix src/test/java/app/ServiceTest.java"}],
+        bootstrap_receipt=receipt,
+        forced_write_tool_name="edit_blocks",
+    )
+    system_text = str(retry_context[0]["content"])
+
+    assert "TAIL_COMPILER_ERROR_CONTEXT" in system_text
+    assert "content truncated" not in system_text
 
 
 @pytest.mark.asyncio
@@ -1284,6 +1377,7 @@ async def test_retry_bootstrap_scaffold_followup_forces_write_file(monkeypatch) 
     captured: dict[str, object] = {
         "execute_calls": 0,
         "tool_choice_overrides": [],
+        "max_tokens_floors": [],
         "llm_tool_definition_names": [],
         "execute_allowed_names": [],
     }
@@ -1301,6 +1395,7 @@ async def test_retry_bootstrap_scaffold_followup_forces_write_file(monkeypatch) 
     ):
         del ctx, llm_ledger, model_override
         cast(list[object], captured["tool_choice_overrides"]).append(tool_choice_override)
+        cast(list[object], captured["max_tokens_floors"]).append(max_tokens_floor)
         cast(list[set[str]], captured["llm_tool_definition_names"]).append(
             extract_allowed_tool_names_from_definitions(list(tool_definitions))
         )
@@ -1421,6 +1516,7 @@ async def test_retry_bootstrap_scaffold_followup_forces_write_file(monkeypatch) 
     overrides = cast(list[object], captured["tool_choice_overrides"])
     assert overrides[0] == {"type": "function", "function": {"name": "write_file"}}
     assert overrides[1] == {"type": "function", "function": {"name": "write_file"}}
+    assert cast(list[object], captured["max_tokens_floors"]) == [7000, 7000]
     assert cast(list[set[str]], captured["llm_tool_definition_names"])[0] == {"write_file"}
     assert cast(list[set[str]], captured["llm_tool_definition_names"])[1] == {"write_file"}
     assert cast(list[set[str]], captured["execute_allowed_names"])[0] == {"write_file"}

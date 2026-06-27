@@ -2050,6 +2050,7 @@ def build_director_repair_coverage_gap_summary(
 
     reports = _collect_repair_coverage_reports((record, audit_bundle))
     gaps: list[dict[str, Any]] = []
+    seen_gap_keys: set[tuple[str, str, str, str, str]] = set()
     languages: set[str] = set()
     archetypes: set[str] = set()
     diagnostic_codes: set[str] = set()
@@ -2061,6 +2062,16 @@ def build_director_repair_coverage_gap_summary(
             if not isinstance(raw_gap, Mapping):
                 continue
             gap = _bench_repair_coverage_gap_payload(raw_gap, record=record)
+            gap_key = (
+                str(gap.get("diagnostic_id") or ""),
+                str(gap.get("diagnostic_code") or ""),
+                str(gap.get("diagnostic_language") or ""),
+                str(gap.get("path") or ""),
+                str(gap.get("message") or ""),
+            )
+            if gap_key in seen_gap_keys:
+                continue
+            seen_gap_keys.add(gap_key)
             gaps.append(gap)
             languages.add(str(gap.get("diagnostic_language") or "unknown"))
             archetypes.add(str(gap.get("diagnostic_archetype") or "unknown"))
@@ -2082,6 +2093,84 @@ def build_director_repair_coverage_gap_summary(
         "coverage_gap_slot_statuses": sorted(slot_statuses),
         "coverage_gaps": gaps,
     }
+
+
+def load_workspace_validation_repair_coverage(
+    workspace: Path,
+    runtime_dirs: Path | list[Path] | tuple[Path, ...] | None,
+) -> dict[str, Any]:
+    """Load Director repair coverage embedded in workspace validation artifacts."""
+
+    reports: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    for candidate in _workspace_validation_artifact_candidates(workspace, runtime_dirs):
+        try:
+            key = candidate.resolve().as_posix()
+        except OSError:
+            key = candidate.as_posix()
+        if key in seen_paths or not candidate.is_file():
+            continue
+        seen_paths.add(key)
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError, UnicodeDecodeError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        reports.extend(_workspace_validation_repair_coverage_reports(payload))
+    return {
+        "schema_version": "factory_bench.workspace_validation_repair_coverage.v1",
+        "source": "workspace_validation_artifacts",
+        "report_count": len(reports),
+        "reports": reports,
+    }
+
+
+def _workspace_validation_artifact_candidates(
+    workspace: Path,
+    runtime_dirs: Path | list[Path] | tuple[Path, ...] | None,
+) -> list[Path]:
+    candidates = [
+        workspace / ".polaris" / "qa" / "latest.workspace-validation.json",
+        *sorted((workspace / ".polaris" / "qa").glob("*.workspace-validation.json")),
+        *sorted((workspace / ".polaris" / "roles" / "qa").glob("*/workspace-validation.json")),
+    ]
+    if runtime_dirs is None:
+        runtime_dir_list: list[Path] = []
+    elif isinstance(runtime_dirs, Path):
+        runtime_dir_list = [runtime_dirs]
+    else:
+        runtime_dir_list = list(runtime_dirs)
+    for runtime_dir in runtime_dir_list:
+        candidates.append(runtime_dir / "qa" / "workspace-validation.json")
+    return candidates
+
+
+def _workspace_validation_repair_coverage_reports(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    repair = payload.get("repair")
+    if not isinstance(repair, Mapping):
+        return reports
+    raw_report = repair.get("director_runtime_repair_coverage")
+    if _looks_like_repair_coverage_report(raw_report):
+        reports.append(dict(cast(Mapping[str, Any], raw_report)))
+    rounds = repair.get("rounds")
+    if isinstance(rounds, Sequence) and not isinstance(rounds, (str, bytes, bytearray)):
+        for item in rounds:
+            if not isinstance(item, Mapping):
+                continue
+            round_report = item.get("director_runtime_repair_coverage")
+            if _looks_like_repair_coverage_report(round_report):
+                reports.append(dict(cast(Mapping[str, Any], round_report)))
+    return reports
+
+
+def _looks_like_repair_coverage_report(value: object) -> bool:
+    return (
+        isinstance(value, Mapping)
+        and isinstance(value.get("coverage_gaps"), list)
+        and ("coverage_gap_count" in value or "uncovered_diagnostic_count" in value)
+    )
 
 
 def _collect_repair_coverage_reports(sources: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -3501,6 +3590,10 @@ def main() -> int:
             expected_bindings=expected_llm_bindings,
             required_roles=required_llm_roles,
             require_all_director_routes=False,
+        )
+        record["workspace_validation_repair_coverage"] = load_workspace_validation_repair_coverage(
+            workspace,
+            runtime_dirs,
         )
         record["director_repair_coverage_gap_summary"] = build_director_repair_coverage_gap_summary(
             record,

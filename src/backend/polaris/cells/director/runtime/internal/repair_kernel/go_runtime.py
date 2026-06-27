@@ -20,15 +20,19 @@ from .go_syntax import (
     GO_BARE_IMPORT_STRING_SOURCE_TOOL,
     GO_BARE_LOCAL_IMPORT_SOURCE_TOOL,
     GO_DEDUP_SOURCE_TOOL,
+    GO_ERROR_STRING_HELPER_SOURCE_TOOL,
     GO_MODULE_IMPORT_SOURCE_TOOL,
     GO_NESTED_IMPORT_SOURCE_TOOL,
     GO_SUBPATH_IMPORT_SOURCE_TOOL,
+    GO_UNUSED_IMPORT_SOURCE_TOOL,
     build_go_bare_import_string_plan,
     build_go_bare_local_import_plan,
     build_go_dedup_plan,
+    build_go_error_string_helper_plan,
     build_go_module_import_plan,
     build_go_nested_import_plan,
     build_go_subpath_import_plan,
+    build_go_unused_import_plan,
 )
 from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
 
@@ -188,6 +192,44 @@ def plan_go_subpath_import_repair(
         mode=mode,
         source_tool=GO_SUBPATH_IMPORT_SOURCE_TOOL,
         planner=build_go_subpath_import_plan,
+    )
+
+
+def plan_go_unused_import_repair(
+    *,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> GoBareImportStringPlanning:
+    """Plan Go unused import removal inside the runtime kernel."""
+
+    return _plan_go_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        source_tool=GO_UNUSED_IMPORT_SOURCE_TOOL,
+        planner=build_go_unused_import_plan,
+    )
+
+
+def plan_go_error_string_helper_repair(
+    *,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> GoBareImportStringPlanning:
+    """Plan missing Go error-string helper declarations inside the runtime kernel."""
+
+    return _plan_go_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        source_tool=GO_ERROR_STRING_HELPER_SOURCE_TOOL,
+        planner=build_go_error_string_helper_plan,
     )
 
 
@@ -402,6 +444,62 @@ def run_go_subpath_import_repair(
     )
 
 
+def run_go_unused_import_repair(
+    *,
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> GoBareImportStringRun:
+    """Run Go unused import repair through Plan→Compose→Policy→Execute."""
+
+    return _run_go_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        planner=plan_go_unused_import_repair,
+        missing_plan_message="No matching Go unused import repair plan.",
+        missing_composition_message="Go unused import repair composition was not produced.",
+    )
+
+
+def run_go_error_string_helper_repair(
+    *,
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> GoBareImportStringRun:
+    """Run missing Go error-string helper repair through Plan→Compose→Policy→Execute."""
+
+    return _run_go_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        planner=plan_go_error_string_helper_repair,
+        missing_plan_message="No matching Go error-string helper repair plan.",
+        missing_composition_message="Go error-string helper repair composition was not produced.",
+    )
+
+
 def _plan_go_repair(
     *,
     base_files: Mapping[str, str],
@@ -532,13 +630,17 @@ __all__ = [
     "plan_go_bare_import_string_repair",
     "plan_go_bare_local_import_repair",
     "plan_go_dedup_repair",
+    "plan_go_error_string_helper_repair",
     "plan_go_module_import_repair",
     "plan_go_nested_import_repair",
     "plan_go_subpath_import_repair",
+    "plan_go_unused_import_repair",
     "run_go_bare_import_string_repair",
     "run_go_bare_local_import_repair",
     "run_go_dedup_repair",
+    "run_go_error_string_helper_repair",
     "run_go_module_import_repair",
     "run_go_nested_import_repair",
     "run_go_subpath_import_repair",
+    "run_go_unused_import_repair",
 ]

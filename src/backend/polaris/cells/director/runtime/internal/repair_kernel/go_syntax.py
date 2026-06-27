@@ -10,15 +10,20 @@ from .contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_tex
 GO_BARE_IMPORT_STRING_SOURCE_TOOL = "deterministic_go_bare_import_string_repair"
 GO_BARE_LOCAL_IMPORT_SOURCE_TOOL = "deterministic_go_bare_import_repair"
 GO_DEDUP_SOURCE_TOOL = "deterministic_go_dedup_repair"
+GO_ERROR_STRING_HELPER_SOURCE_TOOL = "deterministic_go_error_string_helper_repair"
 GO_MODULE_IMPORT_SOURCE_TOOL = "deterministic_go_module_import_repair"
 GO_NESTED_IMPORT_SOURCE_TOOL = "deterministic_go_nested_import_repair"
 GO_SUBPATH_IMPORT_SOURCE_TOOL = "deterministic_go_subpath_repair"
+GO_UNUSED_IMPORT_SOURCE_TOOL = "deterministic_go_unused_import_repair"
 
 _GO_MOD_MODULE_RE = re.compile(r"^module\s+(\S+)", re.MULTILINE)
 _GO_IMPORT_RE = re.compile(r'"([^"]+)"')
+_GO_UNUSED_IMPORT_RE = re.compile(r'"(?P<import_path>[^"]+)"\s+imported and not used', re.IGNORECASE)
+_GO_UNDEFINED_IDENTIFIER_RE = re.compile(r"\bundefined:\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b")
 _GO_DECLARATION_LINE_RE = re.compile(
     r"^(?P<indent>\s*)(?P<kind>type|const|var)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b(?P<body>[^\n]*)$"
 )
+_GO_ERROR_STRING_HELPER_NAMES = frozenset({"errString", "errorString"})
 _GO_GENERATED_MARKER_TERMS = (
     "polaris marker:",
     "polaris generated",
@@ -240,6 +245,115 @@ def build_go_dedup_plan(
         depends_on=("go.module_import_path",),
         transform=_go_intra_file_dedup_operations,
         mode=mode,
+    )
+
+
+def build_go_unused_import_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build a span-based plan for Go compiler unused-import diagnostics."""
+
+    normalized_base_files = _normalize_base_files(base_files)
+    operations: list[RepairOperation] = []
+    planned_diagnostics: list[RepairDiagnostic] = []
+    seen_spans: set[tuple[str, int, int]] = set()
+    for diagnostic in diagnostics:
+        import_path = _go_unused_import_path(diagnostic)
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        if not import_path or not path or not path.endswith(".go") or path.endswith("_test.go"):
+            continue
+        content = normalized_base_files.get(path)
+        if content is None:
+            continue
+        operation = _go_unused_import_operation(
+            path=path,
+            text=content,
+            line_number=diagnostic.line,
+            import_path=import_path,
+        )
+        if operation is None:
+            continue
+        span_key = (operation.path, int(operation.span_start or 0), int(operation.span_end or 0))
+        if span_key in seen_spans:
+            continue
+        seen_spans.add(span_key)
+        operations.append(operation)
+        planned_diagnostics.append(diagnostic)
+
+    if not operations:
+        return None
+    return RepairPlan(
+        rule_id="go.unused_import",
+        source_tool=GO_UNUSED_IMPORT_SOURCE_TOOL,
+        operations=tuple(operations),
+        diagnostics=tuple(planned_diagnostics),
+        mode=mode,
+        risk_level="low",
+        priority=2,
+        depends_on=("go.module_import_path", "go.bare_local_import", "go.import_subpath"),
+        metadata={
+            "repair_kind": "go_unused_import",
+            "edit_strategy": "text_replace",
+            "span_based": True,
+            "diagnostic_count": len(planned_diagnostics),
+        },
+    )
+
+
+def build_go_error_string_helper_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build a narrow plan for missing Go error-string helper declarations."""
+
+    normalized_base_files = _normalize_base_files(base_files)
+    operations: list[RepairOperation] = []
+    planned_diagnostics: list[RepairDiagnostic] = []
+    seen_helpers: set[tuple[str, str]] = set()
+    for diagnostic in diagnostics:
+        identifier = _go_undefined_identifier_name(diagnostic)
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        helper_key = (path, identifier)
+        if (
+            not _is_go_error_string_helper_name(identifier)
+            or not path
+            or not path.endswith(".go")
+            or path.endswith("_test.go")
+            or helper_key in seen_helpers
+        ):
+            continue
+        content = normalized_base_files.get(path)
+        if content is None:
+            continue
+        operation = _go_error_string_helper_operation(path=path, text=content, identifier=identifier)
+        if operation is None:
+            continue
+        seen_helpers.add(helper_key)
+        operations.append(operation)
+        planned_diagnostics.append(diagnostic)
+
+    if not operations:
+        return None
+    return RepairPlan(
+        rule_id="go.error_string_helper",
+        source_tool=GO_ERROR_STRING_HELPER_SOURCE_TOOL,
+        operations=tuple(operations),
+        diagnostics=tuple(planned_diagnostics),
+        mode=mode,
+        risk_level="low",
+        priority=3,
+        depends_on=("go.unused_import",),
+        metadata={
+            "repair_kind": "go_error_string_helper",
+            "edit_strategy": "text_replace",
+            "span_based": True,
+            "diagnostic_count": len(planned_diagnostics),
+        },
     )
 
 
@@ -495,6 +609,247 @@ def _go_intra_file_dedup_operations(path: str, text: str) -> tuple[RepairOperati
     return tuple(operations)
 
 
+def _go_unused_import_operation(
+    *,
+    path: str,
+    text: str,
+    line_number: int | None,
+    import_path: str,
+) -> RepairOperation | None:
+    line_span = _go_import_line_span(text, line_number=line_number, import_path=import_path)
+    if line_span is None:
+        return None
+    line_start, line_end, line = line_span
+    if f'"{import_path}"' not in line or _GO_IMPORT_RE.search(line) is None:
+        return None
+
+    block_span = _go_import_block_span_for_line(text, line_start=line_start, line_end=line_end)
+    if block_span is not None and not _go_import_block_has_remaining_imports(
+        text,
+        block_start=block_span[0],
+        block_end=block_span[1],
+        removed_start=line_start,
+        removed_end=line_end,
+    ):
+        start, end = block_span
+        expected = text[start:end]
+        replacement = ""
+    else:
+        start, end = line_start, line_end
+        expected = line
+        replacement = ""
+
+    if not expected or start < 0 or end <= start:
+        return None
+    return _text_replace_operation(
+        path=path,
+        text=text,
+        start=start,
+        end=end,
+        expected=expected,
+        replacement=replacement,
+        repair_kind="go_unused_import",
+        extra_metadata={
+            "edit_strategy": "text_replace",
+            "span_based": "true",
+            "line_number": str(line_number or ""),
+            "import_path": import_path,
+        },
+    )
+
+
+def _go_unused_import_path(diagnostic: RepairDiagnostic) -> str:
+    if str(diagnostic.code or "") != "go_compile_error":
+        return ""
+    message = f"{diagnostic.message}\n{diagnostic.raw}"
+    match = _GO_UNUSED_IMPORT_RE.search(message)
+    return str(match.group("import_path") or "").strip() if match else ""
+
+
+def _go_undefined_identifier_name(diagnostic: RepairDiagnostic) -> str:
+    for candidate in (diagnostic.message, diagnostic.raw):
+        match = _GO_UNDEFINED_IDENTIFIER_RE.search(str(candidate or ""))
+        if match is not None:
+            return str(match.group("name") or "").strip()
+    return ""
+
+
+def _is_go_error_string_helper_name(identifier: str) -> bool:
+    return str(identifier or "") in _GO_ERROR_STRING_HELPER_NAMES
+
+
+def _go_error_string_helper_operation(path: str, text: str, *, identifier: str) -> RepairOperation | None:
+    if _go_error_string_helper_declared(text, identifier=identifier):
+        return None
+    if _go_error_string_helper_call_re(identifier).search(text) is None:
+        return None
+    insert_at = _go_error_string_helper_insert_offset(text)
+    if insert_at is None:
+        return None
+    insertion = _go_error_string_helper_insert_text(text, insert_at=insert_at, identifier=identifier)
+    return _text_replace_operation(
+        path=path,
+        text=text,
+        start=insert_at,
+        end=insert_at,
+        expected="",
+        replacement=insertion,
+        repair_kind="go_error_string_helper",
+        extra_metadata={"identifier": identifier},
+    )
+
+
+def _go_error_string_helper_declared(text: str, *, identifier: str) -> bool:
+    escaped = re.escape(identifier)
+    return re.search(rf"(?m)^(?:type\s+{escaped}\b|func\s+{escaped}\b)", str(text or "")) is not None
+
+
+def _go_error_string_helper_call_re(identifier: str) -> re.Pattern[str]:
+    escaped = re.escape(identifier)
+    return re.compile(rf"(?<![\w.]){escaped}\s*\(\s*(?:\"(?:\\.|[^\"])*\"|`[^`]*`)\s*\)")
+
+
+def _go_error_string_helper_insert_offset(text: str) -> int | None:
+    lines = str(text or "").splitlines(keepends=True)
+    offset = 0
+    package_end: int | None = None
+    import_end: int | None = None
+    in_import_block = False
+    for line in lines:
+        stripped = line.strip()
+        line_start = offset
+        line_end = offset + len(line)
+        top_level = not line.startswith((" ", "\t"))
+        if package_end is None:
+            if top_level and stripped.startswith("package "):
+                package_end = line_end
+            offset = line_end
+            continue
+        if in_import_block:
+            if top_level and stripped == ")":
+                import_end = line_end
+                in_import_block = False
+            offset = line_end
+            continue
+        if top_level and stripped.startswith("import ("):
+            in_import_block = True
+            import_end = line_end
+            offset = line_end
+            continue
+        if top_level and stripped.startswith("import "):
+            import_end = line_end
+            offset = line_end
+            continue
+        if import_end is not None and line_start >= import_end:
+            break
+        offset = line_end
+    anchor = import_end if import_end is not None else package_end
+    if anchor is None:
+        return None
+    return _consume_blank_lines(text, anchor)
+
+
+def _consume_blank_lines(text: str, offset: int) -> int:
+    cursor = int(offset)
+    while cursor < len(text):
+        next_newline = text.find("\n", cursor)
+        if next_newline == -1:
+            line = text[cursor:]
+            if line.strip():
+                return cursor
+            return len(text)
+        line = text[cursor : next_newline + 1]
+        if line.strip():
+            return cursor
+        cursor = next_newline + 1
+    return cursor
+
+
+def _go_error_string_helper_insert_text(text: str, *, insert_at: int, identifier: str) -> str:
+    prefix = "" if insert_at == 0 or str(text or "")[:insert_at].endswith("\n\n") else "\n"
+    suffix = "" if str(text or "")[insert_at:].startswith("\n") else "\n"
+    return f"{prefix}type {identifier} string\n\nfunc (e {identifier}) Error() string {{ return string(e) }}\n{suffix}"
+
+
+def _go_import_line_span(
+    text: str,
+    *,
+    line_number: int | None,
+    import_path: str,
+) -> tuple[int, int, str] | None:
+    lines = str(text or "").splitlines(keepends=True)
+    if line_number is not None and line_number > 0:
+        offset = 0
+        for current_line_number, line in enumerate(lines, start=1):
+            next_offset = offset + len(line)
+            if current_line_number == line_number:
+                return (offset, next_offset, line) if f'"{import_path}"' in line else None
+            offset = next_offset
+        return None
+
+    matches: list[tuple[int, int, str]] = []
+    offset = 0
+    for line in lines:
+        next_offset = offset + len(line)
+        if f'"{import_path}"' in line and _GO_IMPORT_RE.search(line) is not None:
+            matches.append((offset, next_offset, line))
+        offset = next_offset
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def _go_import_block_span_for_line(
+    text: str,
+    *,
+    line_start: int,
+    line_end: int,
+) -> tuple[int, int] | None:
+    lines = str(text or "").splitlines(keepends=True)
+    spans: list[tuple[int, int, str]] = []
+    offset = 0
+    for line in lines:
+        next_offset = offset + len(line)
+        spans.append((offset, next_offset, line))
+        offset = next_offset
+
+    line_index = next(
+        (index for index, (start, end, _line) in enumerate(spans) if start == line_start and end == line_end),
+        None,
+    )
+    if line_index is None:
+        return None
+
+    block_start_index: int | None = None
+    for index in range(line_index, -1, -1):
+        stripped = spans[index][2].strip()
+        if stripped.startswith("import ("):
+            block_start_index = index
+            break
+        if stripped.startswith("package ") or stripped == ")":
+            break
+    if block_start_index is None:
+        return None
+
+    for index in range(block_start_index + 1, len(spans)):
+        if spans[index][2].strip() == ")":
+            return spans[block_start_index][0], spans[index][1]
+    return None
+
+
+def _go_import_block_has_remaining_imports(
+    text: str,
+    *,
+    block_start: int,
+    block_end: int,
+    removed_start: int,
+    removed_end: int,
+) -> bool:
+    before = str(text or "")[block_start:removed_start]
+    after = str(text or "")[removed_end:block_end]
+    return _GO_IMPORT_RE.search(before + after) is not None
+
+
 def _go_dedup_line_is_safe(line: str) -> bool:
     stripped = str(line or "").strip()
     if not stripped or stripped.startswith("//"):
@@ -612,15 +967,19 @@ __all__ = [
     "GO_BARE_IMPORT_STRING_SOURCE_TOOL",
     "GO_BARE_LOCAL_IMPORT_SOURCE_TOOL",
     "GO_DEDUP_SOURCE_TOOL",
+    "GO_ERROR_STRING_HELPER_SOURCE_TOOL",
     "GO_MODULE_IMPORT_SOURCE_TOOL",
     "GO_NESTED_IMPORT_SOURCE_TOOL",
     "GO_SUBPATH_IMPORT_SOURCE_TOOL",
+    "GO_UNUSED_IMPORT_SOURCE_TOOL",
     "build_go_bare_import_string_plan",
     "build_go_bare_local_import_plan",
     "build_go_dedup_plan",
+    "build_go_error_string_helper_plan",
     "build_go_module_import_plan",
     "build_go_nested_import_plan",
     "build_go_subpath_import_plan",
+    "build_go_unused_import_plan",
     "repair_go_bare_import_strings_text",
     "repair_go_nested_import_keywords_text",
 ]

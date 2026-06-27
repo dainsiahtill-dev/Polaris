@@ -260,6 +260,38 @@ def test_qwen_textual_function_call_recovers_when_enabled() -> None:
     assert invocation["arguments"] == {"file": "src/app.py", "content": "print('ok')"}
 
 
+def test_textual_function_call_recovers_when_native_call_fails_decode() -> None:
+    decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code", enable_textual_fallback=True))
+    response = RawLLMResponse(
+        content=(
+            "I will create the file now.\n"
+            "<function=write_file>\n"
+            "<parameter=path>src/app.py</parameter>\n"
+            "<parameter=text>print('ok')\n</parameter>\n"
+            "</function>"
+        ),
+        thinking=None,
+        native_tool_calls=[
+            {
+                "id": "call_bad_native",
+                "type": "function",
+                "function": {"name": "write_file", "arguments": ["not", "a", "mapping"]},
+            }
+        ],
+        model="qwen3.6",
+        usage={},
+    )
+
+    decision = decoder.decode(response, TurnId("turn_native_fail_textual_recovery"))
+
+    assert decision["kind"] == TurnDecisionKind.TOOL_BATCH
+    assert decision["tool_batch"] is not None
+    invocation = decision["tool_batch"]["invocations"][0]
+    assert invocation["tool_name"] == "write_file"
+    assert invocation["arguments"] == {"file": "src/app.py", "content": "print('ok')"}
+    assert decision["metadata"]["decode_failures"][0]["tool"] == "write_file"
+
+
 def test_textual_tool_recovery_ignores_thinking_when_enabled() -> None:
     decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code", enable_textual_fallback=True))
     response = RawLLMResponse(

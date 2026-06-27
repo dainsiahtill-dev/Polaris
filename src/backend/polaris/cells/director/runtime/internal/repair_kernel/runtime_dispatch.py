@@ -79,23 +79,29 @@ from .go_runtime import (
     plan_go_bare_import_string_repair,
     plan_go_bare_local_import_repair,
     plan_go_dedup_repair,
+    plan_go_error_string_helper_repair,
     plan_go_module_import_repair,
     plan_go_nested_import_repair,
     plan_go_subpath_import_repair,
+    plan_go_unused_import_repair,
     run_go_bare_import_string_repair,
     run_go_bare_local_import_repair,
     run_go_dedup_repair,
+    run_go_error_string_helper_repair,
     run_go_module_import_repair,
     run_go_nested_import_repair,
     run_go_subpath_import_repair,
+    run_go_unused_import_repair,
 )
 from .go_syntax import (
     GO_BARE_IMPORT_STRING_SOURCE_TOOL,
     GO_BARE_LOCAL_IMPORT_SOURCE_TOOL,
     GO_DEDUP_SOURCE_TOOL,
+    GO_ERROR_STRING_HELPER_SOURCE_TOOL,
     GO_MODULE_IMPORT_SOURCE_TOOL,
     GO_NESTED_IMPORT_SOURCE_TOOL,
     GO_SUBPATH_IMPORT_SOURCE_TOOL,
+    GO_UNUSED_IMPORT_SOURCE_TOOL,
 )
 from .java_runtime import (
     JavaAccessorAliasPlanning,
@@ -143,11 +149,13 @@ from .python_runtime import (
     PythonRepairRun,
     plan_python_package_child_reexport_repair,
     plan_python_package_shadow_bridge_repair,
+    plan_python_readme_required_token_repair,
     plan_python_unittest_missing_target_repair,
     plan_python_unittest_runtime_failure_repair,
     plan_python_unresolved_import_symbol_repair,
     run_python_package_child_reexport_repair,
     run_python_package_shadow_bridge_repair,
+    run_python_readme_required_token_repair,
     run_python_unittest_missing_target_repair,
     run_python_unittest_runtime_failure_repair,
     run_python_unresolved_import_symbol_repair,
@@ -155,6 +163,7 @@ from .python_runtime import (
 from .python_syntax import (
     PYTHON_PACKAGE_CHILD_REEXPORT_SOURCE_TOOL,
     PYTHON_PACKAGE_SHADOW_BRIDGE_SOURCE_TOOL,
+    PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
     PYTHON_UNITTEST_MISSING_TARGET_SOURCE_TOOL,
     PYTHON_UNITTEST_RUNTIME_FAILURE_SOURCE_TOOL,
     PYTHON_UNRESOLVED_IMPORT_SYMBOL_SOURCE_TOOL,
@@ -1121,6 +1130,21 @@ def _plan_python_unittest_runtime_failure(
     return _runtime_planning_from_python(planning)
 
 
+def _plan_python_readme_required_token(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_python_readme_required_token_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_python(planning)
+
+
 def _plan_python_package_child_reexport(
     base_files: Mapping[str, str],
     artifact_quality_errors: Sequence[str],
@@ -1248,6 +1272,36 @@ def _plan_go_subpath_import(
     mode: str,
 ) -> RuntimeRepairPlanning:
     planning = plan_go_subpath_import_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_go(planning)
+
+
+def _plan_go_unused_import(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_go_unused_import_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_go(planning)
+
+
+def _plan_go_error_string_helper(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_go_error_string_helper_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         advisor_notes=advisor_notes,
@@ -2172,6 +2226,30 @@ def _run_python_unittest_runtime_failure(
     return _runtime_run_from_python(run)
 
 
+def _run_python_readme_required_token(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_python_readme_required_token_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_python(run)
+
+
 def _run_python_package_child_reexport(
     workspace: str | Path,
     base_files: Mapping[str, str],
@@ -2376,6 +2454,54 @@ def _run_go_dedup(
     mode: str,
 ) -> RuntimeRepairRun:
     run = run_go_dedup_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_go(run)
+
+
+def _run_go_unused_import(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_go_unused_import_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_go(run)
+
+
+def _run_go_error_string_helper(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_go_error_string_helper_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
@@ -3615,6 +3741,20 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         planner=_plan_go_subpath_import,
         runner=_run_go_subpath_import,
     ),
+    GO_UNUSED_IMPORT_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=GO_UNUSED_IMPORT_SOURCE_TOOL,
+        language="go",
+        rule_id="go.unused_import",
+        planner=_plan_go_unused_import,
+        runner=_run_go_unused_import,
+    ),
+    GO_ERROR_STRING_HELPER_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=GO_ERROR_STRING_HELPER_SOURCE_TOOL,
+        language="go",
+        rule_id="go.error_string_helper",
+        planner=_plan_go_error_string_helper,
+        runner=_run_go_error_string_helper,
+    ),
     RUST_DEPENDENCY_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=RUST_DEPENDENCY_SOURCE_TOOL,
         language="rust",
@@ -3901,6 +4041,13 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="python.unittest_runtime_failure",
         planner=_plan_python_unittest_runtime_failure,
         runner=_run_python_unittest_runtime_failure,
+    ),
+    PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
+        language="python",
+        rule_id="python.readme_required_token",
+        planner=_plan_python_readme_required_token,
+        runner=_run_python_readme_required_token,
     ),
     PYTHON_PACKAGE_CHILD_REEXPORT_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=PYTHON_PACKAGE_CHILD_REEXPORT_SOURCE_TOOL,

@@ -322,6 +322,37 @@ class TestSearchReplaceEdgeCases:
         content = (Path(temp_workspace) / "src" / "win.py").read_text(encoding="utf-8")
         assert "def bar" in content
 
+    def test_search_replace_exact_search_self_verifies_without_prior_read(self, temp_workspace) -> None:
+        """Exact search text can be verified against disk without an LLM read turn."""
+        executor = AgentAccelToolExecutor(workspace=temp_workspace)
+        result = executor.execute(
+            "search_replace",
+            {
+                "file": "src/main.py",
+                "search": "def foo(): pass",
+                "replace": "def foo(): return 1",
+            },
+        )
+
+        assert result["ok"] is True
+        content = (Path(temp_workspace) / "src" / "main.py").read_text(encoding="utf-8")
+        assert "def foo(): return 1" in content
+
+    def test_search_replace_without_matching_search_still_requires_fresh_read(self, temp_workspace) -> None:
+        """Generated edits that cannot be verified remain blocked by stale_edit."""
+        executor = AgentAccelToolExecutor(workspace=temp_workspace)
+        result = executor.execute(
+            "search_replace",
+            {
+                "file": "src/main.py",
+                "search": "def missing(): pass",
+                "replace": "def missing(): return 1",
+            },
+        )
+
+        assert result["ok"] is False
+        assert result.get("error_type") == "stale_edit"
+
     def test_search_replace_nonexistent_file(self, temp_workspace) -> None:
         """search_replace should handle non-existent file gracefully."""
         executor = AgentAccelToolExecutor(workspace=temp_workspace)

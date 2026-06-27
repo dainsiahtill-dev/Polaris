@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from polaris.cells.director.runtime.internal.repair_kernel import (
+    PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
     PatchComposer,
     RepairAdvisorNote,
     RepairArchetype,
@@ -30,10 +31,13 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     build_cpp_struct_getter_field_access_plan,
     build_go_bare_import_string_plan,
     build_go_bare_local_import_plan,
+    build_go_error_string_helper_plan,
     build_go_nested_import_plan,
     build_go_subpath_import_plan,
+    build_go_unused_import_plan,
     build_java_accessor_alias_plan,
     build_patch_residue_cleanup_plan,
+    build_python_readme_required_token_plan,
     build_repair_receipt_context,
     build_rust_dependency_plan,
     build_rust_missing_binary_entrypoint_plan,
@@ -80,7 +84,11 @@ from polaris.cells.director.runtime.internal.repair_kernel.advisory_policy impor
     FORBIDDEN_REPAIR_ADVISORY_SUGGESTED_RULE_FIELDS,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import FILE_ABSENT_HASH, sha256_text
-from polaris.cells.director.runtime.internal.repair_kernel.java_syntax import build_java_test_dependency_plan
+from polaris.cells.director.runtime.internal.repair_kernel.java_syntax import (
+    build_java_eof_truncation_plan,
+    build_java_test_dependency_plan,
+    repair_java_eof_truncation_text,
+)
 from polaris.cells.director.runtime.internal.repair_kernel.rust_syntax import (
     build_rust_crate_import_rewrite_plan,
     build_rust_field_rename_suggestion_plan,
@@ -342,7 +350,7 @@ def test_repair_rule_registry_matches_existing_multilanguage_legacy_strategy_met
     assert matched_source_tools[0] == ["deterministic_cpp_include_path_repair"]
     assert payload["items"][0]["runtime_plan_rule_ids"] == ["cpp.include_path"]
     assert payload["items"][0]["diagnostic_language"] == "cpp"
-    assert matched_source_tools[1] == ["deterministic_java_post_repair"]
+    assert "deterministic_java_post_repair" in matched_source_tools[1]
     assert payload["items"][1]["diagnostic_language"] == "java"
     assert matched_source_tools[2] == ["deterministic_python_package_shadow_bridge_repair"]
     assert payload["items"][2]["diagnostic_language"] == "python"
@@ -1784,13 +1792,124 @@ def test_java_test_dependency_rule_builds_whole_file_fallback_runtime_plan() -> 
     assert planning.composition.ok is True
 
 
+def test_java_eof_truncation_rule_plans_precise_tail_repair() -> None:
+    relative_path = "src/test/java/polaris/factory/RhythmEngineTest.java"
+    absolute_path = f"/tmp/factory-bench-L2-06-r09/L2-06/{relative_path}"
+    content = (
+        "package polaris.factory;\n\n"
+        "public final class RhythmEngineTest {\n"
+        "    public static void main(String[] args) {\n"
+        "        int defaultRc = Main.run(new String[]{});\n"
+        '        check("cli",\n'
+    )
+    raw = (
+        f"{absolute_path}:6: error: reached end of file while parsing\n"
+        '        check("cli",\n'
+        "                    ^\n"
+        "1 error"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_java_eof_truncation_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+    coverage = default_repair_rule_registry().coverage(diagnostics).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_java_post_repair",
+        base_files={relative_path: content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "java.eof_truncation_closure"
+    assert plan.source_tool == "deterministic_java_post_repair"
+    assert plan.operations[0].kind == "text_replace"
+    assert plan.operations[0].path == relative_path
+    assert plan.operations[0].expected == '        check("cli",\n'
+    assert plan.operations[0].metadata["dropped_incomplete_tail"] is True
+    assert plan.operations[0].metadata["missing_closing_braces"] == 2
+    composition = PatchComposer().compose({relative_path: content}, plan.operations)
+    assert composition.ok is True
+    repaired = composition.patches[0].content_after
+    assert repaired == repair_java_eof_truncation_text(content)
+    assert 'check("cli",' not in repaired
+    assert repaired.endswith("}\n}\n")
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "java.eof_truncation_closure" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert "deterministic_java_post_repair" in coverage["items"][0]["matched_source_tools"]
+    assert planning.plan is not None
+    assert planning.plan.rule_id == "java.post_execution_conservative"
+    assert "java.eof_truncation_closure" in planning.plan.depends_on
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+
+
+def test_java_post_rule_repairs_numeric_constant_and_missing_score_aliases() -> None:
+    relative_path = "src/main/java/polaris/factory/engine/RhythmEngine.java"
+    test_path = "src/test/java/polaris/factory/RhythmEngineTest.java"
+    content = (
+        "package polaris.factory.engine;\n\n"
+        "public final class RhythmEngine {\n"
+        "    public static final int HARMONISE_THRESHOLD = 80;\n"
+        "    public static final int SULK_THRESHOLD = 40;\n"
+        "    private static final int MAX_DENSITY_DELTA = 1.0;\n\n"
+        "    public int scoreAgainst(RhythmMonster monster, BeatPattern pattern) {\n"
+        "        return 90;\n"
+        "    }\n"
+        "}\n"
+    )
+    raw = (
+        f"{relative_path}:6: error: incompatible types: possible lossy conversion from double to int\n"
+        "    private static final int MAX_DENSITY_DELTA = 1.0;\n"
+        "                                                 ^\n"
+        f"{test_path}:60: error: cannot find symbol\n"
+        "                scoreBad < RhythmEngine.TOLERATE_THRESHOLD,\n"
+        "                                       ^\n"
+        "  symbol:   variable TOLERATE_THRESHOLD\n"
+        "  location: class RhythmEngine\n"
+        f"{test_path}:65: error: cannot find symbol\n"
+        "                engine.willHarmonise(inSeason, good));\n"
+        "                      ^\n"
+        "  symbol:   method willHarmonise(RhythmMonster,BeatPattern)\n"
+        "  location: variable engine of type RhythmEngine\n"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    coverage = default_repair_rule_registry().coverage(diagnostics).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_java_post_repair",
+        base_files={relative_path: content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "java.numeric_constant_literal_type" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert planning.plan is not None
+    assert planning.plan.rule_id == "java.post_execution_conservative"
+    assert "java.numeric_constant_literal_type" in planning.plan.depends_on
+    assert "java.missing_symbol_compatibility" in planning.plan.depends_on
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+    repaired = planning.composition.patches[0].content_after
+    assert "private static final double MAX_DENSITY_DELTA = 1.0;" in repaired
+    assert "public static final int TOLERATE_THRESHOLD = SULK_THRESHOLD;" in repaired
+    assert "public boolean willHarmonise(RhythmMonster rhythmMonster, BeatPattern beatPattern)" in repaired
+    assert "return scoreAgainst(rhythmMonster, beatPattern) >= HARMONISE_THRESHOLD;" in repaired
+
+
 def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
     bindings = runtime_repair_bindings()
 
     assert "deterministic_rust_post_repair" in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert len(runtime_repair_source_tools()) == len(bindings)
-    assert len(runtime_repair_source_tools()) == 85
+    assert len(runtime_repair_source_tools()) == 88
     assert sum(1 for binding in bindings if binding["language"] == "rust") == 21
     assert runtime_repair_source_tools() == tuple(binding["source_tool"] for binding in bindings)
     assert all(set(binding) == {"source_tool", "language", "rule_id"} for binding in bindings)
@@ -1800,8 +1919,10 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
         "deterministic_javascript_missing_export_repair",
         "deterministic_javascript_missing_method_runtime_repair",
         "deterministic_javascript_test_missing_target_repair",
+        "deterministic_go_error_string_helper_repair",
         "deterministic_python_package_child_reexport_repair",
         "deterministic_python_package_shadow_bridge_repair",
+        "deterministic_python_readme_required_token_repair",
         "deterministic_python_unittest_runtime_failure_repair",
         "deterministic_unresolved_import_symbol_repair",
     } <= set(bindings_by_tool)
@@ -1814,6 +1935,21 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
         "source_tool": "deterministic_unresolved_import_symbol_repair",
         "language": "python",
         "rule_id": "python.unresolved_import_symbol",
+    }
+    assert bindings_by_tool[PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL] == {
+        "source_tool": PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
+        "language": "python",
+        "rule_id": "python.readme_required_token",
+    }
+    assert bindings_by_tool["deterministic_go_unused_import_repair"] == {
+        "source_tool": "deterministic_go_unused_import_repair",
+        "language": "go",
+        "rule_id": "go.unused_import",
+    }
+    assert bindings_by_tool["deterministic_go_error_string_helper_repair"] == {
+        "source_tool": "deterministic_go_error_string_helper_repair",
+        "language": "go",
+        "rule_id": "go.error_string_helper",
     }
 
 
@@ -2098,6 +2234,139 @@ def test_public_rust_lib_root_facade_export_signal_runs_with_editor_only(tmp_pat
     assert len(edits) == 1
     assert target.read_text(encoding="utf-8") == "mod engine;\npub use crate::engine::generate_palette;\n"
     record = run_result.receipts[0].metadata["execution_records"][0]
+    assert record["operation"] == "edit_file"
+    assert record["span_based"] is True
+
+
+def test_python_readme_required_token_rule_builds_append_plan() -> None:
+    raw_error = "AssertionError: 'unittest' not found in README text : README missing required token: unittest"
+    plan = build_python_readme_required_token_plan(
+        base_files={
+            "README.md": "# Demo\n\nExisting workflow notes.\n",
+            "tests/test_product.py": "import unittest\n",
+        },
+        diagnostics=normalize_artifact_quality_errors([raw_error]),
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "python.readme_required_token"
+    assert plan.source_tool == PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL
+    assert plan.metadata["runtime_plan_scope"] == "existing_readme_append_only"
+    assert plan.metadata["tokens"] == ["unittest"]
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == "README.md"
+    assert operation.expected == ""
+    assert "python -m unittest discover" in str(operation.replacement)
+    assert operation.metadata["repair_kind"] == "python_readme_required_token"
+    assert operation.metadata["edit_file_preferred"] is True
+    assert operation.metadata["expected_context_before"] == "# Demo\n\nExisting workflow notes.\n"
+
+
+def test_python_readme_required_token_rule_accepts_compact_missing_form() -> None:
+    raw_error = "AssertionError: README missing: javac"
+    plan = build_python_readme_required_token_plan(
+        base_files={
+            "README.md": "# Demo\n\nExisting workflow notes.\n",
+            "src/Main.java": "public final class Main {}\n",
+        },
+        diagnostics=normalize_artifact_quality_errors([raw_error]),
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "python.readme_required_token"
+    assert plan.source_tool == PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL
+    assert plan.metadata["tokens"] == ["javac"]
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == "README.md"
+    assert "javac" in str(operation.replacement)
+    assert operation.metadata["repair_kind"] == "python_readme_required_token"
+
+
+def test_public_python_readme_required_token_repair_runs_with_editor_only(tmp_path: Path) -> None:
+    source_tool = PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL
+    raw_error = (
+        "FAIL: test_readme_documents_workflow (tests.test_product.ProductTests)\n"
+        "AssertionError: 'unittest' not found in README text : README missing required token: unittest"
+    )
+    base_files = {
+        "README.md": "# Demo\n\nUse the documented CLI workflow.\n",
+        "tests/test_product.py": "import unittest\n",
+    }
+    readme = tmp_path / "README.md"
+    readme.write_text(base_files["README.md"], encoding="utf-8")
+    writes: list[tuple[str, str]] = []
+    edits: list[str] = []
+
+    coverage_payload = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(artifact_quality_errors=(raw_error,))
+    ).to_dict()
+    coverage_item = coverage_payload["items"][0]
+    assert coverage_item["known_rule_matched"] is True
+    assert coverage_item["executable_runtime_plan_matched"] is True
+    assert coverage_item["metadata_only_match"] is False
+    assert coverage_item["matched_source_tools"] == [source_tool]
+    assert coverage_item["runtime_plan_rule_ids"] == ["python.readme_required_token"]
+    assert coverage_item["coverage_status"] == "executable_runtime"
+
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=(raw_error,),
+            mode="shadow",
+        )
+    )
+    planning_payload = planning_result.to_dict()
+
+    assert planning_payload["ok"] is True
+    assert planning_payload["planned"] is True
+    assert planning_payload["source_tool"] == source_tool
+    assert planning_payload["plan_summary"]["rule_id"] == "python.readme_required_token"
+    assert planning_payload["composition_summary"]["ok"] is True
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        writes.append((path, content))
+        raise AssertionError("README required-token repair must prefer edit_file over write_file")
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        edits.append(operation.operation_id)
+        path = tmp_path / operation.path
+        content = path.read_text(encoding="utf-8")
+        start = int(operation.span_start or 0)
+        end = int(operation.span_end or 0)
+        assert content[start:end] == operation.expected
+        path.write_text(content[:start] + str(operation.replacement) + content[end:], encoding="utf-8")
+        return {"ok": True, "path": operation.path}
+
+    run_result = run_director_repair(
+        RunDirectorRepairCommandV1(
+            task_id="task-python-readme-required-token",
+            workspace=str(tmp_path),
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=(raw_error,),
+            allowed_paths=("README.md", "tests/test_product.py"),
+        ),
+        writer=writer,
+        editor=editor,
+    )
+
+    assert run_result.ok is True
+    assert run_result.error_code is None
+    assert writes == []
+    assert len(edits) == 1
+    assert "python -m unittest discover" in readme.read_text(encoding="utf-8")
+    receipt = run_result.receipts[0]
+    assert receipt.rule_id == "python.readme_required_token"
+    assert receipt.source_tool == source_tool
+    assert receipt.files_changed == ("README.md",)
+    record = receipt.metadata["execution_records"][0]
     assert record["operation"] == "edit_file"
     assert record["span_based"] is True
 
@@ -2480,6 +2749,191 @@ def test_go_import_followup_rules_build_precise_plans_with_ordering_and_coverage
     assert "deterministic_go_subpath_repair" in coverage_items[1]["matched_source_tools"]
     assert "deterministic_go_nested_import_repair" in coverage_items[2]["matched_source_tools"]
     assert all(item["executable_runtime_plan_matched"] is True for item in coverage_items)
+
+
+def test_go_unused_import_rule_removes_compiler_reported_line_with_text_replace() -> None:
+    relative_path = "engine/riddle.go"
+    content = (
+        "package engine\n"
+        "\n"
+        "import (\n"
+        '    "errors"\n'
+        '    "timecapsulemuseum/models"\n'
+        ")\n"
+        "\n"
+        'func Riddle() error { return errors.New("sealed") }\n'
+    )
+    raw = (
+        "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+        'engine/riddle.go:5:5: "timecapsulemuseum/models" imported and not used'
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_go_unused_import_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "go.unused_import"
+    assert plan.source_tool == "deterministic_go_unused_import_repair"
+    assert plan.priority == 2
+    assert plan.metadata["span_based"] is True
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == relative_path
+    assert operation.expected == '    "timecapsulemuseum/models"\n'
+    assert operation.replacement == ""
+    assert operation.before_hash == sha256_text(content)
+    assert operation.metadata["repair_kind"] == "go_unused_import"
+    assert operation.metadata["import_path"] == "timecapsulemuseum/models"
+
+    planning = plan_runtime_repair(
+        source_tool="deterministic_go_unused_import_repair",
+        base_files={relative_path: content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert planning.plan is not None
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+    assert '"timecapsulemuseum/models"' not in planning.composition.patches[0].content_after
+    assert '"errors"' in planning.composition.patches[0].content_after
+
+
+def test_go_unused_import_coverage_matches_executable_runtime_plan() -> None:
+    raw = 'engine/riddle.go:5:5: "timecapsulemuseum/models" imported and not used'
+    diagnostics = normalize_artifact_quality_errors([raw])
+    coverage = default_repair_rule_registry().coverage(diagnostics).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_go_unused_import_repair",
+        base_files={
+            "engine/riddle.go": (
+                "package engine\n\nimport (\n"
+                '    "errors"\n'
+                '    "timecapsulemuseum/models"\n'
+                ")\n\n"
+                'func Riddle() error { return errors.New("sealed") }\n'
+            )
+        },
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "go.unused_import" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert "deterministic_go_unused_import_repair" in coverage["items"][0]["matched_source_tools"]
+    assert coverage["items"][0]["archetypes"] == ["generated_residue"]
+    assert coverage["items"][0]["phases"] == ["code_repair"]
+    assert coverage["items"][0]["diagnostic_archetype"] == "generated_residue"
+    assert coverage["items"][0]["diagnostic_phase"] == "code_repair"
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_go_unused_import_repair"
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+
+
+def test_go_error_string_helper_rule_inserts_narrow_error_type() -> None:
+    relative_path = "models/gallery.go"
+    content = (
+        "package models\n"
+        "\n"
+        'import "errors"\n'
+        "\n"
+        "var (\n"
+        '    ErrDuplicateCapsule = errString("capsule id already exists")\n'
+        '    ErrUnknownCapsule   = errString("capsule id not found")\n'
+        ")\n"
+        "\n"
+        'func Existing() error { return errors.New("x") }\n'
+    )
+    raw = (
+        "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+        "models/gallery.go:6:27: undefined: errString"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    plan = build_go_error_string_helper_plan(
+        base_files={relative_path: content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "go.error_string_helper"
+    assert plan.source_tool == "deterministic_go_error_string_helper_repair"
+    assert plan.priority == 3
+    assert len(plan.operations) == 1
+    operation = plan.operations[0]
+    assert operation.kind == "text_replace"
+    assert operation.path == relative_path
+    assert operation.expected == ""
+    assert (
+        operation.replacement == "type errString string\n\nfunc (e errString) Error() string { return string(e) }\n\n"
+    )
+    assert operation.before_hash == sha256_text(content)
+    assert operation.metadata["repair_kind"] == "go_error_string_helper"
+    assert operation.metadata["identifier"] == "errString"
+
+    planning = plan_runtime_repair(
+        source_tool="deterministic_go_error_string_helper_repair",
+        base_files={relative_path: content},
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert planning.plan is not None
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+    repaired = planning.composition.patches[0].content_after
+    assert "type errString string" in repaired
+    assert "func (e errString) Error() string { return string(e) }" in repaired
+    assert repaired.index("type errString string") < repaired.index("var (")
+
+
+def test_go_error_string_helper_coverage_matches_executable_runtime_plan() -> None:
+    raw = "models/gallery.go:52:24: undefined: errString"
+    diagnostics = normalize_artifact_quality_errors([raw])
+    coverage = default_repair_rule_registry().coverage(diagnostics).to_dict()
+    planning = plan_runtime_repair(
+        source_tool="deterministic_go_error_string_helper_repair",
+        base_files={
+            "models/gallery.go": (
+                'package models\n\nvar (\n    ErrDuplicateCapsule = errString("capsule id already exists")\n)\n'
+            )
+        },
+        artifact_quality_errors=(raw,),
+        mode="shadow",
+    )
+
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert "go.error_string_helper" in coverage["items"][0]["runtime_plan_rule_ids"]
+    assert "deterministic_go_error_string_helper_repair" in coverage["items"][0]["matched_source_tools"]
+    assert coverage["items"][0]["archetypes"] == ["missing_dependency"]
+    assert coverage["items"][0]["phases"] == ["code_repair"]
+    assert planning.plan is not None
+    assert planning.plan.source_tool == "deterministic_go_error_string_helper_repair"
+    assert planning.composition is not None
+    assert planning.composition.ok is True
+
+
+def test_go_error_string_helper_rule_rejects_non_error_undefined_symbols() -> None:
+    raw = "models/gallery.go:52:24: undefined: buildCapsule"
+    diagnostics = normalize_artifact_quality_errors([raw])
+    plan = build_go_error_string_helper_plan(
+        base_files={"models/gallery.go": ('package models\n\nvar CapsuleFactory = buildCapsule("demo")\n')},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+    coverage = default_repair_rule_registry().coverage(diagnostics).to_dict()
+
+    assert plan is None
+    assert coverage["items"][0]["known_rule_matched"] is False
 
 
 def test_rust_dependency_rule_builds_canonical_plan_from_diagnostics() -> None:
@@ -5248,6 +5702,53 @@ def test_executor_commit_uses_writer_and_records_hashes(tmp_path: Path) -> None:
     assert result.receipt.after_hashes["src/app.ts"] == sha256_text("new\n")
 
 
+def test_executor_falls_back_to_writer_when_first_editor_operation_is_rejected(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "app.ts"
+    target.parent.mkdir()
+    target.write_text("old\n", encoding="utf-8")
+    operation = RepairOperation(
+        kind="text_replace",
+        path="src/app.ts",
+        span_start=0,
+        span_end=4,
+        expected="old\n",
+        replacement="new\nold\n",
+        before_hash=sha256_text("old\n"),
+        metadata={"repair_kind": "insert_prefix", "precision_strategy": "span_context_text_patch"},
+    )
+    plan = RepairPlan(
+        rule_id="rule.ts",
+        source_tool="deterministic_typescript_missing_export_repair",
+        operations=(operation,),
+    )
+    composition = PatchComposer().compose({"src/app.ts": "old\n"}, plan.operations)
+    writer_calls: list[tuple[str, str]] = []
+    editor_calls: list[str] = []
+
+    def editor(edit_operation: RepairOperation) -> dict[str, bool]:
+        editor_calls.append(edit_operation.operation_id)
+        return {"ok": False}
+
+    def writer(path: str, content: str) -> dict[str, bool]:
+        writer_calls.append((path, content))
+        (tmp_path / path).write_text(content, encoding="utf-8")
+        return {"ok": True}
+
+    result = TransactionalRepairExecutor().execute(
+        workspace=tmp_path,
+        plan=plan,
+        composition=composition,
+        writer=writer,
+        editor=editor,
+    )
+
+    assert result.ok
+    assert editor_calls == [operation.operation_id]
+    assert writer_calls == [("src/app.ts", "new\nold\n")]
+    assert target.read_text(encoding="utf-8") == "new\nold\n"
+    assert result.receipt.metadata["execution_records"][0]["operation"] == "write_file"
+
+
 def test_executor_reports_rollback_failed_when_restore_is_rejected(tmp_path: Path) -> None:
     app = tmp_path / "src" / "app.ts"
     config = tmp_path / "src" / "config.ts"
@@ -7088,7 +7589,7 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         or source_tool == "deterministic_javascript_typescript_annotation_repair"
     ]
     catalog_failure_message = (
-        "expected public strategy catalog ledger total=85 executable_runtime=85 legacy_strategy_host=0; "
+        "expected public strategy catalog ledger total=88 executable_runtime=88 legacy_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
         "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
     )
@@ -7097,14 +7598,14 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
-    assert catalog_summary["total"] == 85
+    assert catalog_summary["total"] == 88
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert legacy_source_tools == [], catalog_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 85, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 88, catalog_failure_message
     assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, catalog_failure_message
-    assert catalog_summary["executable_runtime_binding_count"] == 85, catalog_failure_message
+    assert catalog_summary["executable_runtime_binding_count"] == 88, catalog_failure_message
     assert catalog_summary["legacy_strategy_host_count"] == 0, catalog_failure_message
-    assert len(catalog_summary["executable_runtime_source_tools"]) == 85, catalog_failure_message
+    assert len(catalog_summary["executable_runtime_source_tools"]) == 88, catalog_failure_message
     assert set(catalog_summary["implementation_status_counts"]).issubset({"executable_runtime", "legacy_strategy_host"})
     assert "reserved_only" not in catalog_summary["implementation_status_counts"]
     assert "metadata_rule_registered" not in catalog_summary["implementation_status_counts"]

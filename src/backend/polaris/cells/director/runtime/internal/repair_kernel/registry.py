@@ -30,11 +30,13 @@ from .generic_hygiene_syntax import (
 from .go_syntax import (
     GO_BARE_LOCAL_IMPORT_SOURCE_TOOL,
     GO_DEDUP_SOURCE_TOOL,
+    GO_ERROR_STRING_HELPER_SOURCE_TOOL,
     GO_MODULE_IMPORT_SOURCE_TOOL,
     GO_NESTED_IMPORT_SOURCE_TOOL,
     GO_SUBPATH_IMPORT_SOURCE_TOOL,
+    GO_UNUSED_IMPORT_SOURCE_TOOL,
 )
-from .java_syntax import JAVA_TEST_DEPENDENCY_SOURCE_TOOL
+from .java_syntax import JAVA_POST_SOURCE_TOOL, JAVA_TEST_DEPENDENCY_SOURCE_TOOL
 from .javascript_syntax import (
     JAVASCRIPT_ESM_COMMONJS_ENTRYPOINT_SOURCE_TOOL,
     JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
@@ -46,6 +48,7 @@ from .javascript_syntax import (
 from .python_syntax import (
     PYTHON_PACKAGE_CHILD_REEXPORT_SOURCE_TOOL,
     PYTHON_PACKAGE_SHADOW_BRIDGE_SOURCE_TOOL,
+    PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
     PYTHON_UNITTEST_MISSING_TARGET_SOURCE_TOOL,
     PYTHON_UNITTEST_RUNTIME_FAILURE_SOURCE_TOOL,
     PYTHON_UNRESOLVED_IMPORT_SYMBOL_SOURCE_TOOL,
@@ -298,7 +301,11 @@ _DEFAULT_REPAIR_LANGUAGE_SLOTS: tuple[RepairLanguageSlot, ...] = (
         language="java",
         file_extensions=(".java",),
         diagnostic_sources=("javac", "maven", "gradle", "junit"),
-        preferred_archetypes=(RepairArchetype.WRONG_IMPORT_PATH, RepairArchetype.MISSING_DEPENDENCY),
+        preferred_archetypes=(
+            RepairArchetype.WRONG_IMPORT_PATH,
+            RepairArchetype.MISSING_DEPENDENCY,
+            RepairArchetype.OBJECT_LITERAL_SYNTAX,
+        ),
     ),
     RepairLanguageSlot(
         language="python",
@@ -1265,6 +1272,38 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
+                rule_id="go.unused_import",
+                source_tool=GO_UNUSED_IMPORT_SOURCE_TOOL,
+                language="go",
+                phase="code_repair",
+                archetype=RepairArchetype.GENERATED_RESIDUE,
+                priority=2,
+                diagnostic_codes=("go_compile_error",),
+                message_terms=("imported and not used",),
+                risk_level="low",
+                description="Removes compiler-reported unused Go imports through span-based text replacement.",
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="unused_import_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="go.error_string_helper",
+                source_tool=GO_ERROR_STRING_HELPER_SOURCE_TOOL,
+                language="go",
+                phase="code_repair",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=3,
+                depends_on=("go.unused_import",),
+                diagnostic_codes=("go_compile_error",),
+                message_terms=("undefined:", "errstring"),
+                risk_level="low",
+                description=(
+                    "Adds a missing Go error-string helper type only when a compiler undefined "
+                    "identifier diagnostic matches an error-string literal conversion pattern."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="go_error_string_helper_text_insert"),
+            ),
+            RepairRuleDefinition(
                 rule_id="cpp.include_path",
                 source_tool=CPP_INCLUDE_PATH_SOURCE_TOOL,
                 language="cpp",
@@ -1359,7 +1398,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
             ),
             RepairRuleDefinition(
                 rule_id="java.cannot_find_symbol",
-                source_tool="deterministic_java_post_repair",
+                source_tool=JAVA_POST_SOURCE_TOOL,
                 language="java",
                 phase="post_materialization",
                 archetype=RepairArchetype.WRONG_IMPORT_PATH,
@@ -1369,6 +1408,48 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 risk_level="medium",
                 description="Covers Java post-pass repairs for unresolved symbols after generation.",
                 runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="java.eof_truncation_closure",
+                source_tool=JAVA_POST_SOURCE_TOOL,
+                language="java",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("java_compile_error",),
+                message_terms=("reached end of file while parsing",),
+                risk_level="low",
+                description="Repairs bounded generated Java EOF truncation by removing an incomplete tail statement and closing braces.",
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="java_eof_truncation_span_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="java.numeric_constant_literal_type",
+                source_tool=JAVA_POST_SOURCE_TOOL,
+                language="java",
+                phase="quality_repair",
+                archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
+                priority=1,
+                diagnostic_codes=("java_compile_error",),
+                message_terms=("possible lossy conversion from double to int",),
+                risk_level="low",
+                description="Repairs generated Java int constants initialized with decimal literals by widening the constant type.",
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="java_numeric_constant_type_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="java.missing_symbol_compatibility",
+                source_tool=JAVA_POST_SOURCE_TOOL,
+                language="java",
+                phase="quality_repair",
+                archetype=RepairArchetype.MISSING_METHOD_SELF,
+                priority=1,
+                diagnostic_codes=("java_compile_error",),
+                message_terms=("cannot find symbol",),
+                risk_level="medium",
+                description="Adds conservative Java compatibility aliases for generated tests that reference missing threshold constants or will* score helpers.",
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="java_missing_symbol_compatibility_text_replace"),
             ),
             RepairRuleDefinition(
                 rule_id="java.common_accessor_aliases",
@@ -1424,7 +1505,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
             ),
             RepairRuleDefinition(
                 rule_id="java.package_does_not_exist",
-                source_tool="deterministic_java_post_repair",
+                source_tool=JAVA_POST_SOURCE_TOOL,
                 language="java",
                 phase="post_materialization",
                 archetype=RepairArchetype.MISSING_DEPENDENCY,
@@ -1535,6 +1616,19 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 raw_terms=("tests/", "test_", ".py"),
                 risk_level="low",
                 description="Creates missing declared Python unittest smoke targets from existing module files.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="python.readme_required_token",
+                source_tool=PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
+                language="python",
+                phase="quality_repair",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                diagnostic_codes=("python_assertionerror",),
+                raw_terms=("readme missing required token",),
+                risk_level="low",
+                description="Appends verifier-required tokens to existing README documentation.",
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
@@ -2484,6 +2578,10 @@ def _suggest_rule_family(diagnostic: RepairDiagnostic) -> str:
         return RepairArchetype.MISSING_DEPENDENCY.value
     if language == "rust" and _looks_like_rust_missing_method_self(message):
         return RepairArchetype.MISSING_METHOD_SELF.value
+    if language == "go" and "imported and not used" in message:
+        return RepairArchetype.GENERATED_RESIDUE.value
+    if language == "java" and "reached end of file while parsing" in message:
+        return RepairArchetype.OBJECT_LITERAL_SYNTAX.value
     if "import" in message or "unresolved" in message:
         return RepairArchetype.WRONG_IMPORT_PATH.value
     if "null" in message or "undefined" in message:
@@ -2578,6 +2676,8 @@ def _infer_diagnostic_phase(diagnostic: RepairDiagnostic, archetype: str) -> str
         return "code_repair"
     if archetype == RepairArchetype.WRONG_IMPORT_PATH.value:
         return "quality_repair"
+    if archetype == RepairArchetype.GENERATED_RESIDUE.value:
+        return "code_repair"
     if archetype == RepairArchetype.NULLABLE_TYPE_MISMATCH.value:
         return "quality_repair"
     if archetype == RepairArchetype.OBJECT_LITERAL_SYNTAX.value:

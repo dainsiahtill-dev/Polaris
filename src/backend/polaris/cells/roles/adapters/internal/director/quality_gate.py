@@ -25,9 +25,14 @@ from pathlib import Path
 from typing import Any
 
 from . import execute_method as _em
+from .contract_verify import resolve_contract_step_verify_command
 from .execution_tools import DirectorToolExecutor
 from .helpers import has_successful_write_tool
-from .materialization_quality_repair_bridge import run_typescript_semantic_quality_repairs
+from .materialization_quality_repair_bridge import (
+    has_materialization_quality_runtime_repair_coverage,
+    run_materialization_quality_repairs,
+    run_typescript_semantic_quality_repairs,
+)
 from .repair_profile_projection import project_repair_kernel_summary
 from .task_scope_paths import (
     _dedupe_preserve_order,
@@ -78,6 +83,46 @@ def _safe_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _quality_repair_write_file_tool_definition() -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Write a complete UTF-8 text file at the requested target path.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": {"type": "string"},
+                    "content": {"type": "string", "minLength": 1},
+                },
+                "required": ["file", "content"],
+            },
+        },
+    }
+
+
+def _quality_repair_edit_file_tool_definition() -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": (
+                "Replace one exact UTF-8 search string in an existing file. "
+                "Use this for compiler/test repair when preserving the rest of the file."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": {"type": "string"},
+                    "search": {"type": "string", "minLength": 1},
+                    "replace": {"type": "string"},
+                },
+                "required": ["file", "search", "replace"],
+            },
+        },
+    }
 
 
 def _format_unresolved_relative_import_error_for_repair_prompt(error: Any) -> str | None:
@@ -954,23 +999,21 @@ def _collect_step_verify_errors(adapter: Any, context: dict[str, Any] | None) ->
     """
     if not isinstance(context, dict):
         return []
-    step = context.get("construction_step")
-    if not isinstance(step, dict):
-        return []
     from polaris.kernelone.quality.step_verify import (
         assess_legacy_step_verify_command_safety,
-        normalize_step_verify,
     )
 
-    verify = normalize_step_verify(step.get("verify"))
+    verify = resolve_contract_step_verify_command(context)
     if not verify:
         return []
     safety = assess_legacy_step_verify_command_safety(verify)
     if not safety.allowed:
         return [f"step verify command rejected by safety policy: {safety.reason} :: {verify!r}"]
-    target_mismatch = _step_verify_target_mismatch_error(step, verify)
-    if target_mismatch:
-        return [target_mismatch]
+    step = context.get("construction_step")
+    if isinstance(step, dict):
+        target_mismatch = _step_verify_target_mismatch_error(step, verify)
+        if target_mismatch:
+            return [target_mismatch]
     workspace = str(getattr(adapter, "workspace", "") or "")
     if not workspace or not os.path.isdir(workspace):
         return []
@@ -1220,6 +1263,11 @@ async def _run_materialization_quality_repair_retry(
                 changed_files=changed_files,
                 workspace_full=workspace_full,
             ),
+            *_go_runtime_smoke_repair_target_files(
+                artifact_quality_errors=repair_quality_errors,
+                changed_files=changed_files,
+                workspace_full=workspace_full,
+            ),
         ]
     )
     semantic_quality_target_files = _semantic_quality_repair_target_files(
@@ -1270,11 +1318,50 @@ async def _run_materialization_quality_repair_retry(
         repair_target_candidates,
         repair_attempt=repair_attempt,
         rotate_after_first_attempt=rotate_repair_targets,
-        preserve_batch_after_first_attempt=_should_preserve_materialization_quality_repair_batch(repair_quality_errors),
+        preserve_batch_after_first_attempt=_should_preserve_materialization_quality_repair_batch(
+            repair_quality_errors,
+            repair_target_candidates=repair_target_candidates,
+        ),
     )
     missing_target_set = set(missing_target_files)
     missing_repair_target_files = [path for path in repair_target_files if path in missing_target_set]
     existing_repair_target_files = [path for path in repair_target_files if path not in missing_target_set]
+    deterministic_quality_tool_results: list[dict[str, Any]] = []
+    deterministic_quality_summary: dict[str, Any] = {}
+    if _has_scaffold_marker_quality_error(repair_quality_errors) or has_materialization_quality_runtime_repair_coverage(
+        repair_quality_errors
+    ):
+        deterministic_quality_tool_results, deterministic_quality_summary = run_materialization_quality_repairs(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+            artifact_quality_errors=repair_quality_errors,
+        )
+    if deterministic_quality_tool_results and has_successful_write_tool(deterministic_quality_tool_results):
+        summary = dict(deterministic_quality_summary or {})
+        summary.update(
+            {
+                "stage": "deterministic_materialization_quality_repair",
+                "attempted": True,
+                "attempt": repair_attempt,
+                "success": False,
+                "success_reason": "repair_actions_require_quality_gate_rerun",
+                "tool_results": len(deterministic_quality_tool_results),
+                "write_tool_evidence": True,
+                "missing_target_files": missing_target_files[:12],
+                "runtime_smoke_target_files": runtime_smoke_target_files[:12],
+                "semantic_quality_target_files": semantic_quality_target_files[:12],
+                "explicit_quality_target_files": explicit_quality_target_files[:12],
+                "repair_target_files": repair_target_files[:12],
+                "rotated_repair_targets": rotate_repair_targets,
+                "repair_kernel": project_repair_kernel_summary(
+                    stage="deterministic_materialization_quality_repair",
+                    tool_results=deterministic_quality_tool_results,
+                    artifact_quality_errors=repair_quality_errors,
+                ),
+            }
+        )
+        return deterministic_quality_tool_results, summary
     deterministic_semantic_tool_results = run_typescript_semantic_quality_repairs(
         adapter,
         task_id=target_task_id,
@@ -1346,41 +1433,33 @@ async def _run_materialization_quality_repair_retry(
         repair_context["metadata"] = repair_metadata
     repair_metadata["delivery_mode"] = "materialize_changes"
     repair_metadata["task_id"] = target_task_id
-    # Force tool_choice=write_file whenever repair can be tied to exact target
-    # files. Missing files need creation; Python runtime-smoke failures need a
-    # complete rewrite of the already-written failing script. Leaving either
-    # case to the default repair path lets weak Director models drift into
-    # repeated reads, prose, or malformed edit_blocks.
     if repair_target_files:
-        repair_context["_transaction_kernel_forced_tool_choice"] = {
-            "type": "function",
-            "function": {"name": "write_file"},
-        }
-        repair_context["_transaction_kernel_forced_tool_definitions"] = [
-            {
+        if missing_repair_target_files and not existing_repair_target_files:
+            # Missing-file repair is creation, so keep the historically narrow
+            # write-only path. Existing-file compiler/test repair is different:
+            # forcing whole-file writes steers weak models into destructive
+            # shrink attempts, so that case uses edit-preferred tools below.
+            repair_context["_transaction_kernel_forced_tool_choice"] = {
                 "type": "function",
-                "function": {
-                    "name": "write_file",
-                    "description": ("Write a complete UTF-8 text file at the requested target path."),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "file": {"type": "string"},
-                            "content": {"type": "string", "minLength": 1},
-                        },
-                        "required": ["file", "content"],
-                    },
-                },
+                "function": {"name": "write_file"},
             }
-        ]
-        repair_context["_transaction_kernel_force_exact_tools"] = True
-        if len(repair_target_files) == 1:
+            repair_context["_transaction_kernel_forced_tool_definitions"] = [
+                _quality_repair_write_file_tool_definition()
+            ]
+            repair_context["_transaction_kernel_force_exact_tools"] = True
+        else:
+            repair_context["_transaction_kernel_forced_tool_definitions"] = [
+                _quality_repair_edit_file_tool_definition(),
+                _quality_repair_write_file_tool_definition(),
+            ]
+            repair_context["director_quality_repair"]["edit_preferred_target_files"] = existing_repair_target_files[:12]
+        if len(missing_repair_target_files) == 1 and not existing_repair_target_files:
             # Single-missing: also name the specific target file in the
             # context, so any downstream code that special-cases a single
             # target can read it from director_quality_repair.
             repair_context["director_quality_repair"]["write_only_single_target"] = {
                 "tool": "write_file",
-                "target_file": repair_target_files[0],
+                "target_file": missing_repair_target_files[0],
             }
     try:
         result = await adapter._invoke_role_dialogue_with_timeout(
@@ -1426,12 +1505,19 @@ async def _run_materialization_quality_repair_retry(
     content = str(result.get("content") or "")
     repair_tool_results = adapter._execution.extract_kernel_tool_results(result)
     if not repair_tool_results or not has_successful_write_tool(repair_tool_results):
+        allowed_tool_names = None
+        allow_patch_fallback = True
+        if repair_target_files and not existing_repair_target_files:
+            allowed_tool_names = {"write_file"}
+            allow_patch_fallback = False
+        elif repair_target_files:
+            allowed_tool_names = {"edit_file", "write_file"}
         fallback_tool_results = await adapter._execution.execute_tools(
             content,
             target_task_id,
             adapter._update_task_progress,
-            allowed_tool_names={"write_file"} if repair_target_files else None,
-            allow_patch_fallback=not bool(repair_target_files),
+            allowed_tool_names=allowed_tool_names,
+            allow_patch_fallback=allow_patch_fallback,
         )
         if fallback_tool_results:
             repair_tool_results.extend(fallback_tool_results)
@@ -1541,6 +1627,7 @@ def _ordered_materialization_quality_repair_target_candidates(
     should_merge_missing_targets: bool,
 ) -> list[str]:
     missing_repair_candidates = missing_target_files if should_merge_missing_targets else []
+    runtime_targets_precede_missing = _runtime_quality_targets_should_precede_missing(runtime_smoke_target_files)
     if semantic_quality_target_files or explicit_quality_target_files:
         source_missing_candidates = [
             path for path in missing_repair_candidates if not _is_generated_quality_repair_target(path)
@@ -1557,6 +1644,15 @@ def _ordered_materialization_quality_repair_target_candidates(
                 *generated_missing_candidates,
             ]
         )
+    if runtime_targets_precede_missing:
+        return _dedupe_preserve_order(
+            [
+                *runtime_smoke_target_files,
+                *missing_repair_candidates,
+                *semantic_quality_target_files,
+                *explicit_quality_target_files,
+            ]
+        )
     return _dedupe_preserve_order(
         [
             *missing_repair_candidates,
@@ -1565,6 +1661,10 @@ def _ordered_materialization_quality_repair_target_candidates(
             *explicit_quality_target_files,
         ]
     )
+
+
+def _runtime_quality_targets_should_precede_missing(runtime_smoke_target_files: list[str]) -> bool:
+    return any(str(path or "").endswith(".go") for path in runtime_smoke_target_files)
 
 
 def _filter_materialization_quality_errors_for_repair_targets(
@@ -1598,8 +1698,14 @@ def _should_rotate_materialization_quality_repair_targets(artifact_quality_error
     )
 
 
-def _should_preserve_materialization_quality_repair_batch(artifact_quality_errors: list[str]) -> bool:
+def _should_preserve_materialization_quality_repair_batch(
+    artifact_quality_errors: list[str],
+    *,
+    repair_target_candidates: list[str] | None = None,
+) -> bool:
     joined_errors = "\n".join(str(item or "").lower() for item in artifact_quality_errors)
+    if _looks_like_go_workspace_quality_error(joined_errors) and _GO_COMPILE_PATH_RE.search(joined_errors):
+        return True
     if _artifact_quality_failed_test_count(artifact_quality_errors) >= 2:
         return True
     if "python runtime smoke" in joined_errors and (
@@ -1623,6 +1729,11 @@ def _should_preserve_materialization_quality_repair_batch(artifact_quality_error
         return True
     if "ts2693" in joined_errors or "only refers to a type" in joined_errors:
         return True
+    if repair_target_candidates and _should_preserve_python_cross_language_harness_repair_batch(
+        joined_errors,
+        repair_target_candidates,
+    ):
+        return True
     coupled_hints = (
         "unresolved import symbol",
         "typescript project typecheck failed",
@@ -1630,6 +1741,35 @@ def _should_preserve_materialization_quality_repair_batch(artifact_quality_error
         "npm package manifest has test runner script",
     )
     return sum(1 for hint in coupled_hints if hint in joined_errors) >= 2
+
+
+def _should_preserve_python_cross_language_harness_repair_batch(
+    joined_errors: str,
+    repair_target_candidates: list[str],
+) -> bool:
+    if not _looks_like_python_test_behavior_failure(joined_errors):
+        return False
+    if not _looks_like_python_test_harness_quality_failure(joined_errors):
+        return False
+    production_targets: list[str] = []
+    for item in repair_target_candidates:
+        rel = _normalize_declared_task_path(str(item or ""))
+        if not rel:
+            continue
+        suffix = Path(rel).suffix.lower()
+        if suffix not in _SOURCE_REPAIR_EXTENSIONS:
+            continue
+        if _is_test_like_python_path(rel) or _is_test_like_javascript_path(rel):
+            continue
+        production_targets.append(rel)
+    if len(_dedupe_preserve_order(production_targets)) < 2:
+        return False
+    return any(not target.endswith(".py") for target in production_targets)
+
+
+def _has_scaffold_marker_quality_error(artifact_quality_errors: list[str]) -> bool:
+    joined_errors = "\n".join(str(item or "").lower() for item in artifact_quality_errors)
+    return "generic/placeholder content detected" in joined_errors or "deterministic scaffold marker" in joined_errors
 
 
 _PYTHON_RUNTIME_SMOKE_TARGET_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -1654,7 +1794,11 @@ _MISSING_WORKSPACE_FILE_PATTERNS: tuple[re.Pattern[str], ...] = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:cfg|conf|env|html|ini|json|lock|md|py|rst|toml|txt|xml|yaml|yml))"
+        r"missing or empty:\s*(?P<path>['\"`][^'\"`]+['\"`]|[^\s;\n]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:c|cc|cfg|conf|cpp|css|cxx|env|go|h|hpp|html|ini|java|js|jsx|json|lock|md|py|rs|rst|toml|ts|tsx|txt|xml|yaml|yml))"
         r"\s+must\s+(?:be|contain|declare|exist|include|provide)\b",
         re.IGNORECASE,
     ),
@@ -1711,6 +1855,10 @@ _PYTHON_MODULE_NOT_FOUND_RE = re.compile(
 )
 _SEMANTIC_QUALITY_EXPLICIT_PATH_RE = re.compile(
     r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:c|cc|cpp|cxx|go|h|hpp|html|java|js|jsx|json|md|py|rs|ts|tsx|css))(?=[:\s(]|$)",
+    re.IGNORECASE,
+)
+_RUST_COMPILE_PATH_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z]:)?[^\s:()'\"\n>]+?\.rs):\d+:\d+",
     re.IGNORECASE,
 )
 _FAILED_TEST_TITLE_RE = re.compile(
@@ -1777,17 +1925,22 @@ def _python_runtime_smoke_repair_target_files(
         if not _looks_like_python_runtime_smoke_quality_error(text):
             continue
         if workspace_root is not None and workspace_root.is_dir() and _looks_like_python_test_behavior_failure(text):
+            targets.extend(_embedded_rust_compile_repair_target_files(text, workspace_root))
             if _looks_like_python_missing_module_failure(text):
                 targets.extend(
                     rel
                     for rel in _python_runtime_smoke_traceback_repair_target_files(text, workspace_root)
                     if not _is_test_like_python_path(rel)
                 )
-            if _looks_like_python_regex_source_quality_failure(text):
+            regex_source_failure = _looks_like_python_regex_source_quality_failure(text)
+            if regex_source_failure:
                 targets.extend(_changed_source_repair_target_files(changed_files, workspace_root))
-            if _looks_like_cli_subcommand_quality_failure(text):
+            cli_subcommand_failure = _looks_like_cli_subcommand_quality_failure(text)
+            if cli_subcommand_failure:
                 entrypoints = _workspace_cli_entrypoint_repair_target_files(workspace_root)
                 targets.extend(entrypoints or _changed_source_repair_target_files(changed_files, workspace_root))
+            if not regex_source_failure and not cli_subcommand_failure:
+                targets.extend(_python_test_harness_changed_source_target_files(text, changed_files, workspace_root))
             failed_test_targets = _python_unittest_failure_test_target_files(text, workspace_root)
             for rel in failed_test_targets:
                 targets.extend(
@@ -1837,6 +1990,379 @@ def _python_runtime_smoke_repair_target_files(
                     targets.append(rel)
             break
     return _dedupe_preserve_order(targets)
+
+
+def _embedded_rust_compile_repair_target_files(text: str, workspace_root: Path) -> list[str]:
+    if not _looks_like_embedded_rust_compile_failure(text):
+        return []
+    targets: list[str] = []
+    for match in _RUST_COMPILE_PATH_RE.finditer(str(text or "")):
+        rel = _workspace_relative_rust_repair_target(str(match.group("path") or ""), workspace_root)
+        if rel:
+            targets.append(rel)
+    lowered = str(text or "").lower()
+    if (
+        "could not compile" in lowered
+        or "previous errors" in lowered
+        or "some errors have detailed explanations" in lowered
+    ):
+        targets.extend(_workspace_rust_source_repair_target_files(workspace_root))
+    return _dedupe_preserve_order(targets)[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT]
+
+
+def _looks_like_embedded_rust_compile_failure(text: str) -> bool:
+    lowered = str(text or "").lower()
+    if not any(hint in lowered for hint in ("cargo check", "cargo build", "cargo test", "rustc", "could not compile")):
+        return False
+    return "error[" in lowered or ".rs:" in lowered or "could not compile" in lowered
+
+
+def _workspace_relative_rust_repair_target(raw_path: str, workspace_root: Path) -> str:
+    token = str(raw_path or "").strip().strip("'\"`>").replace("\\", "/")
+    if not token:
+        return ""
+    candidate = Path(token)
+    if candidate.is_absolute():
+        try:
+            rel = candidate.resolve().relative_to(workspace_root.resolve()).as_posix()
+        except (OSError, RuntimeError, ValueError):
+            return ""
+    else:
+        rel = _normalize_declared_task_path(token)
+    if not rel.endswith(".rs"):
+        return ""
+    if not _workspace_path_exists_case_insensitive(workspace_root, rel):
+        return ""
+    return rel
+
+
+def _workspace_rust_source_repair_target_files(workspace_root: Path) -> list[str]:
+    src_dir = workspace_root / "src"
+    if not src_dir.is_dir():
+        return []
+    targets: list[str] = []
+    for path in sorted(src_dir.rglob("*.rs"), key=lambda item: item.as_posix()):
+        if not path.is_file():
+            continue
+        try:
+            targets.append(path.relative_to(workspace_root).as_posix())
+        except ValueError:
+            continue
+    return _dedupe_preserve_order(targets)[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT]
+
+
+_GO_RUN_COMMAND_TARGET_RE = re.compile(r"(?:^|[\s(>])go\s+run\s+(?P<target>(?!-)[^\s'\"\n]+)")
+_GO_COMPILE_PATH_RE = re.compile(r"(?P<path>(?:[A-Za-z]:)?[^\s:()'\"\n]+?\.go):\d+:\d+")
+_GO_MISSING_MEMBER_TYPE_RE = re.compile(
+    r"type\s+\*?(?:(?P<package_name>[A-Za-z_][A-Za-z0-9_]*)\.)?"
+    r"(?P<type_name>[A-Za-z_][A-Za-z0-9_]*)\s+has\s+no\s+field\s+or\s+method",
+    re.IGNORECASE,
+)
+_GO_IMPORT_SPEC_RE = re.compile(r"(?m)^\s*(?:(?P<alias>[A-Za-z_][A-Za-z0-9_]*|\.)\s+)?\"(?P<import_path>[^\"]+)\"")
+_GO_TEST_FAILURE_TITLE_RE = re.compile(
+    r"(?:^|[\n:])\s*---\s+FAIL:\s+(?P<title>[A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _go_runtime_smoke_repair_target_files(
+    *,
+    artifact_quality_errors: list[str],
+    changed_files: list[str],
+    workspace_full: str = "",
+) -> list[str]:
+    """Extract Go entrypoint/source files that failed a workspace runtime smoke."""
+
+    changed_go_files = {
+        rel for item in changed_files if (rel := _normalize_declared_task_path(str(item or ""))) and rel.endswith(".go")
+    }
+    workspace_root = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
+    targets: list[str] = []
+    for item in artifact_quality_errors:
+        text = str(item or "")
+        if not _looks_like_go_workspace_quality_error(text):
+            continue
+        if workspace_root is not None and workspace_root.is_dir():
+            targets.extend(_go_compile_error_target_files(text, workspace_root))
+            targets.extend(_go_runtime_smoke_command_target_files(text, workspace_root))
+            targets.extend(
+                _go_test_behavior_repair_target_files(
+                    text=text,
+                    changed_files=changed_go_files,
+                    workspace_root=workspace_root,
+                )
+            )
+            if not targets:
+                targets.extend(_workspace_go_entrypoint_repair_target_files(workspace_root))
+        if not targets:
+            targets.extend(sorted(changed_go_files))
+    return _dedupe_preserve_order(targets)
+
+
+def _looks_like_go_workspace_quality_error(text: str) -> bool:
+    lowered = str(text or "").lower()
+    if "workspace validation command failed" in lowered and ("go run" in lowered or "go test" in lowered):
+        return True
+    return ("go test" in lowered or "go compile" in lowered) and ".go:" in lowered
+
+
+def _go_runtime_smoke_command_target_files(text: str, workspace_root: Path) -> list[str]:
+    targets: list[str] = []
+    for match in _GO_RUN_COMMAND_TARGET_RE.finditer(text):
+        raw_target = str(match.group("target") or "").strip()
+        if not raw_target:
+            continue
+        if raw_target in {".", "./"}:
+            targets.extend(_workspace_go_entrypoint_repair_target_files(workspace_root))
+            continue
+        rel = _normalize_declared_task_path(raw_target)
+        if not rel:
+            continue
+        candidate = workspace_root / rel
+        if candidate.is_file() and candidate.suffix.lower() == ".go":
+            targets.append(rel)
+            continue
+        if candidate.is_dir():
+            targets.extend(_go_files_in_directory(candidate, workspace_root))
+    return _dedupe_preserve_order(targets)
+
+
+def _go_test_behavior_repair_target_files(
+    *,
+    text: str,
+    changed_files: set[str],
+    workspace_root: Path,
+) -> list[str]:
+    lowered = str(text or "").lower()
+    if "go test" not in lowered or "--- fail:" not in lowered:
+        return []
+
+    production_files = [
+        rel
+        for rel in sorted(changed_files)
+        if rel.endswith(".go")
+        and not Path(rel).name.endswith("_test.go")
+        and _workspace_path_exists_case_insensitive(workspace_root, rel)
+    ]
+    if not production_files:
+        return []
+
+    matched: list[str] = []
+    for title_match in _GO_TEST_FAILURE_TITLE_RE.finditer(str(text or "")):
+        tokens = _go_test_title_tokens(str(title_match.group("title") or ""))
+        if tokens:
+            matched.extend(_go_production_files_matching_tokens(production_files, tokens))
+
+    return _dedupe_preserve_order([*matched, *production_files])
+
+
+def _go_test_title_tokens(title: str) -> list[str]:
+    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(title or ""))
+    raw_tokens = re.split(r"[^A-Za-z0-9]+", normalized)
+    stop_words = {"test", "tests", "and", "or", "the", "flow", "path", "case", "output", "entrypoint"}
+    return _dedupe_preserve_order(
+        [token.lower() for token in raw_tokens if len(token) >= 3 and token.lower() not in stop_words]
+    )
+
+
+def _go_production_files_matching_tokens(production_files: list[str], tokens: list[str]) -> list[str]:
+    scored_matches: list[tuple[int, int, str]] = []
+    primary_token = tokens[0] if tokens else ""
+    for index, rel in enumerate(production_files):
+        path_tokens = [
+            token.lower()
+            for token in re.split(r"[^A-Za-z0-9]+", f"{Path(rel).stem} {' '.join(Path(rel).parts)}")
+            if len(token) >= 3
+        ]
+        score = 99
+        if primary_token and primary_token in path_tokens:
+            score = 0
+        elif any(token in path_tokens for token in tokens):
+            score = 1
+        elif any(token in path_token or path_token in token for token in tokens for path_token in path_tokens):
+            score = 2
+        if score < 99:
+            scored_matches.append((score, index, rel))
+    if not scored_matches:
+        return []
+    best_score = min(score for score, _index, _rel in scored_matches)
+    return [rel for score, _index, rel in sorted(scored_matches) if score == best_score]
+
+
+def _go_compile_error_target_files(text: str, workspace_root: Path) -> list[str]:
+    targets: list[str] = []
+    for match in _GO_COMPILE_PATH_RE.finditer(text):
+        raw_path = str(match.group("path") or "").strip()
+        rel = _workspace_relative_go_repair_target(raw_path, workspace_root)
+        if rel:
+            targets.append(rel)
+    targets.extend(
+        _go_missing_member_type_definition_target_files(
+            text=text,
+            direct_targets=targets,
+            workspace_root=workspace_root,
+        )
+    )
+    return _dedupe_preserve_order(targets)
+
+
+def _go_missing_member_type_definition_target_files(
+    *,
+    text: str,
+    direct_targets: list[str],
+    workspace_root: Path,
+) -> list[str]:
+    missing_member_refs = _go_missing_member_type_refs(text)
+    if not missing_member_refs or not direct_targets:
+        return []
+
+    directories = _dedupe_preserve_order(
+        [
+            str(Path(rel).parent).replace("\\", "/")
+            for rel in direct_targets
+            if str(Path(rel).parent).replace("\\", "/") not in {"", "."}
+        ]
+    )
+    for package_name, _type_name in missing_member_refs:
+        if package_name:
+            directories.extend(
+                _go_package_qualifier_target_directories(
+                    package_name=package_name,
+                    direct_targets=direct_targets,
+                    workspace_root=workspace_root,
+                )
+            )
+    directories = _dedupe_preserve_order(directories)
+    targets: list[str] = []
+    type_names = _dedupe_preserve_order([type_name for _package_name, type_name in missing_member_refs])
+    for directory in directories:
+        package_dir = (workspace_root / directory).resolve()
+        with contextlib.suppress(OSError, RuntimeError, ValueError):
+            package_dir.relative_to(workspace_root.resolve())
+            if not package_dir.is_dir():
+                continue
+            for path in sorted(package_dir.glob("*.go"), key=lambda item: item.as_posix()):
+                if path.name.endswith("_test.go"):
+                    continue
+                try:
+                    content = path.read_text(encoding="utf-8")
+                    rel = path.relative_to(workspace_root).as_posix()
+                except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+                    continue
+                if any(re.search(rf"\btype\s+{re.escape(type_name)}\b", content) for type_name in type_names):
+                    targets.append(rel)
+    return _dedupe_preserve_order(targets)
+
+
+def _go_missing_member_type_refs(text: str) -> list[tuple[str, str]]:
+    refs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for match in _GO_MISSING_MEMBER_TYPE_RE.finditer(str(text or "")):
+        package_name = str(match.group("package_name") or "").strip()
+        type_name = str(match.group("type_name") or "").strip()
+        ref = (package_name, type_name)
+        if type_name and ref not in seen:
+            seen.add(ref)
+            refs.append(ref)
+    return refs
+
+
+def _go_package_qualifier_target_directories(
+    *,
+    package_name: str,
+    direct_targets: list[str],
+    workspace_root: Path,
+) -> list[str]:
+    qualifier = str(package_name or "").strip()
+    if not qualifier:
+        return []
+
+    candidates: list[str] = []
+    direct_target_contents: list[str] = []
+    for rel in direct_targets:
+        normalized = _normalize_declared_task_path(rel)
+        if not normalized:
+            continue
+        with contextlib.suppress(OSError, RuntimeError, UnicodeDecodeError, ValueError):
+            path = (workspace_root / normalized).resolve()
+            path.relative_to(workspace_root.resolve())
+            if path.is_file():
+                direct_target_contents.append(path.read_text(encoding="utf-8"))
+
+    for content in direct_target_contents:
+        for match in _GO_IMPORT_SPEC_RE.finditer(content):
+            alias = str(match.group("alias") or "").strip()
+            import_path = str(match.group("import_path") or "").strip()
+            if not import_path:
+                continue
+            default_package = import_path.rstrip("/").rsplit("/", 1)[-1]
+            if qualifier not in {alias, default_package}:
+                continue
+            candidates.extend(_go_import_path_workspace_directories(import_path, workspace_root))
+
+    direct_candidate = workspace_root / qualifier
+    if direct_candidate.is_dir():
+        candidates.append(qualifier)
+    return _dedupe_preserve_order(candidates)
+
+
+def _go_import_path_workspace_directories(import_path: str, workspace_root: Path) -> list[str]:
+    parts = [part for part in str(import_path or "").strip().split("/") if part and part != "."]
+    candidates: list[str] = []
+    for index in range(len(parts)):
+        rel = "/".join(parts[index:])
+        if not rel:
+            continue
+        candidate = (workspace_root / rel).resolve()
+        with contextlib.suppress(OSError, RuntimeError, ValueError):
+            candidate.relative_to(workspace_root.resolve())
+            if candidate.is_dir():
+                candidates.append(rel)
+    return _dedupe_preserve_order(candidates)
+
+
+def _workspace_relative_go_repair_target(raw_path: str, workspace_root: Path) -> str:
+    token = str(raw_path or "").strip()
+    if not token:
+        return ""
+    candidate = Path(token)
+    if candidate.is_absolute():
+        try:
+            rel = candidate.resolve().relative_to(workspace_root.resolve()).as_posix()
+        except (OSError, RuntimeError, ValueError):
+            return ""
+    else:
+        rel = _normalize_declared_task_path(token)
+    if not rel.endswith(".go"):
+        return ""
+    if _workspace_path_exists_case_insensitive(workspace_root, rel):
+        return rel
+    return ""
+
+
+def _workspace_go_entrypoint_repair_target_files(workspace_root: Path) -> list[str]:
+    targets: list[str] = []
+    root_main = workspace_root / "main.go"
+    if root_main.is_file():
+        targets.append("main.go")
+    cmd_root = workspace_root / "cmd"
+    if cmd_root.is_dir():
+        for path in sorted(cmd_root.glob("*/main.go"), key=lambda item: item.as_posix()):
+            try:
+                targets.append(path.relative_to(workspace_root).as_posix())
+            except ValueError:
+                continue
+    return _dedupe_preserve_order(targets)
+
+
+def _go_files_in_directory(directory: Path, workspace_root: Path) -> list[str]:
+    targets: list[str] = []
+    for path in sorted(directory.glob("*.go"), key=lambda item: item.as_posix()):
+        try:
+            targets.append(path.relative_to(workspace_root).as_posix())
+        except ValueError:
+            continue
+    return targets
 
 
 _NODE_STACK_JS_PATH_RE = re.compile(r"(?P<path>(?:[A-Za-z]:)?[/\\][^\s()'\"\n]+?\.js):\d+:\d+")
@@ -2030,6 +2556,42 @@ def _changed_source_repair_target_files(changed_files: list[str], workspace_root
         if _workspace_path_exists_case_insensitive(root, rel):
             targets.append(rel)
     return _dedupe_preserve_order(targets)
+
+
+_PYTHON_TEST_HARNESS_PATH_RE = re.compile(
+    r"(?:^|[\s'\"`(])(?P<path>(?:[A-Za-z]:)?[^\s'\"`()]*?(?:tests?/[^\s'\"`()]*test[^\s'\"`()]*\.py|test_[^\s'\"`()]*\.py))",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_python_test_harness_quality_failure(text: str) -> bool:
+    token = str(text or "").lower()
+    if any(
+        hint in token
+        for hint in (
+            "python runtime smoke",
+            "python -m unittest",
+            "pytest",
+            "unittest discover",
+        )
+    ):
+        return True
+    return bool(_PYTHON_TEST_HARNESS_PATH_RE.search(str(text or "")))
+
+
+def _python_test_harness_changed_source_target_files(
+    text: str,
+    changed_files: list[str],
+    workspace_root: Path,
+) -> list[str]:
+    if not _looks_like_python_test_behavior_failure(text):
+        return []
+    if not _looks_like_python_test_harness_quality_failure(text):
+        return []
+    targets = _changed_source_repair_target_files(changed_files, workspace_root)
+    if not any(not target.endswith(".py") for target in targets):
+        return []
+    return targets
 
 
 def _python_runtime_smoke_traceback_repair_target_files(text: str, workspace_root: Path) -> list[str]:
@@ -2269,15 +2831,23 @@ def _explicit_artifact_quality_repair_target_files(
     changed_source_set = set(changed_source_files)
     changed_by_lower = {item.lower(): item for item in changed_source_files}
     candidates: list[str] = []
+    priority_candidates: list[str] = []
     traceback_source_candidates: list[str] = []
     imported_source_candidates: list[str] = []
     for item in artifact_quality_errors:
         text = str(item or "")
         if not any(hint in text.lower() for hint in _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS):
             continue
-        candidates.extend(_failed_test_title_target_files(text, workspace_root, changed_source_files))
+        failed_title_targets = _failed_test_title_target_files(text, workspace_root, changed_source_files)
+        candidates.extend(failed_title_targets)
+        priority_candidates.extend(
+            rel
+            for rel in failed_title_targets
+            if not _is_test_like_python_path(rel) and not _is_test_like_javascript_path(rel)
+        )
         if _looks_like_javascript_module_system_failure(text) and "package.json" in changed_source_set:
             candidates.append("package.json")
+            priority_candidates.append("package.json")
         explicit_paths = [match.group("path") for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(text)]
         if _looks_like_python_test_behavior_failure(text):
             for rel in _python_unittest_failure_test_target_files(text, workspace_root):
@@ -2298,6 +2868,9 @@ def _explicit_artifact_quality_repair_target_files(
             candidates.extend(missing_module_sources)
             if not _looks_like_python_missing_module_failure(text):
                 imported_source_candidates.extend(missing_module_sources)
+            harness_sources = _python_test_harness_changed_source_target_files(text, changed_files, workspace_root)
+            candidates.extend(harness_sources)
+            imported_source_candidates.extend(harness_sources)
             explicit_paths.extend(traceback_targets)
         for raw_path in explicit_paths:
             rel = _map_quality_error_path_to_changed_file(raw_path, changed_by_lower)
@@ -2341,10 +2914,20 @@ def _explicit_artifact_quality_repair_target_files(
     traceback_source_order = {
         item.lower(): index for index, item in enumerate(_dedupe_preserve_order(traceback_source_candidates))
     }
+    priority_order = {item.lower(): index for index, item in enumerate(_dedupe_preserve_order(priority_candidates))}
     return sorted(
         deduped_candidates,
         key=lambda item: (
-            0 if item.lower() in traceback_source_order else 1 if item.lower() in imported_source_order else 2,
+            (
+                0
+                if item.lower() in priority_order
+                else 1
+                if item.lower() in traceback_source_order
+                else 2
+                if item.lower() in imported_source_order
+                else 3
+            ),
+            priority_order.get(item.lower(), len(priority_order)),
             traceback_source_order.get(item.lower(), len(traceback_source_order)),
             imported_source_order.get(item.lower(), len(imported_source_order)),
             changed_order.get(item.lower(), len(changed_order)),
@@ -3186,18 +3769,24 @@ def _build_materialization_quality_repair_message(
     if existing_repair_target_files:
         repair_lines = "\n".join(f"- {item}" for item in existing_repair_target_files[:12])
         existing_repair_block = (
-            "EXISTING FAILED TARGET FILES — rewrite these exact paths NOW, one write_file call per path:\n"
+            "EXISTING FAILED TARGET FILES — repair these exact paths NOW. Prefer edit_file search/replace "
+            "for the minimal lines needed to satisfy the quality errors; use write_file only when you emit "
+            "a complete corrected file body that preserves unrelated existing code. Use the CURRENT UTF-8 "
+            "CONTENT block below to choose exact edit_file SEARCH strings; if the tool policy requires a "
+            "fresh read before edit_file, read the target file first and then apply the edit:\n"
             f"{repair_lines}\n"
         )
         if len(existing_repair_target_files) == 1:
             single_target = existing_repair_target_files[0]
             single_existing_repair_block = (
                 "SINGLE FAILED TARGET REPAIR:\n"
-                "[director_quality_repair:write_only_single_target]\n"
+                "[director_quality_repair:edit_preferred_single_target]\n"
                 f"- Target path: {single_target}\n"
-                "- Emit exactly one write_file tool call for that target path.\n"
-                "- The write_file content must be the complete corrected UTF-8 file body.\n"
-                "- Do not read files first. Do not list directories. Do not explore. Do not explain.\n"
+                "- For edit_file, use an exact SEARCH string copied from the CURRENT UTF-8 CONTENT block below.\n"
+                "- If edit_file is not enough, write_file must contain the complete corrected UTF-8 file body, "
+                "not a shortened replacement.\n"
+                "- If using edit_file, call read_file for this target first when required by tool policy. "
+                "Do not list directories. Do not explore. Do not explain.\n"
             )
     prompt_repair_target_files = [*(missing_target_files or []), *existing_repair_target_files]
     repair_context_block = _repair_target_context_block(
@@ -3315,10 +3904,21 @@ def _build_materialization_quality_repair_message(
             "verification script. The test script must not be placeholder-only and must exit non-zero "
             "when the checked rule fails.\n"
         )
+    forbidden_marker_block = ""
+    if (
+        "generic/placeholder content detected" in runtime_smoke_text
+        or "deterministic scaffold marker" in runtime_smoke_text
+    ):
+        forbidden_marker_block = (
+            "FORBIDDEN MARKER REPAIR: remove the reported scaffold marker without introducing another forbidden "
+            "marker. Do not replace placeholder with stub, TODO, FIXME, TBD, NotImplemented, or placeholder-only "
+            "phrasing. Use concrete neutral words such as sample-check, verified sample, implemented path, or "
+            "real output.\n"
+        )
     if existing_repair_target_files and not missing_target_files and not symbol_repair_block:
         changed_line = (
-            f"{len(changed_files)} file(s) were already written; rewrite only the existing failed target "
-            "file(s) named above, not unrelated files."
+            f"{len(changed_files)} file(s) were already written; edit only the existing failed target "
+            "file(s) named above, preserving unrelated code."
         )
     elif not missing_target_files and not symbol_repair_block:
         if syntax_block and "TRUNCATED FILE DIRECTIVE" in syntax_block:
@@ -3350,6 +3950,7 @@ def _build_materialization_quality_repair_message(
         f"{syntax_block}"
         f"{cli_entrypoint_block}"
         f"{npm_manifest_block}"
+        f"{forbidden_marker_block}"
         "Do not repeat the same package/script/test scaffold. Replace the bad artifact with concrete runnable code, "
         "source files, and executable tests required by the task contract.\n"
         "If package.json has an npm test script, it must run a real local test/check and must not contain "

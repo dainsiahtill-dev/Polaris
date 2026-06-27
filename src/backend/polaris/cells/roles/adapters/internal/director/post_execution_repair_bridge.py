@@ -68,6 +68,8 @@ _GO_POST_EXECUTION_RUNTIME_SOURCE_TOOLS = (
     "deterministic_go_module_import_repair",
     "deterministic_go_bare_import_repair",
     "deterministic_go_subpath_repair",
+    "deterministic_go_unused_import_repair",
+    "deterministic_go_error_string_helper_repair",
     "deterministic_go_dedup_repair",
 )
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -1051,23 +1053,24 @@ def _run_java_post_repairs(
     if not any(workspace.rglob("*.java")):
         return []
 
-    tool_results = _run_java_accessor_alias_runtime_repair(
+    workspace_path = workspace.resolve()
+    base_files = _collect_java_base_files(workspace_path)
+    if not base_files:
+        return []
+    return run_runtime_repair_with_director_tools(
         adapter,
-        workspace,
+        workspace_path=workspace_path,
         task_id=task_id,
+        source_tool="deterministic_java_post_repair",
+        executor_factory=DirectorToolExecutor,
+        base_files=base_files,
+        artifact_quality_errors=_post_execution_artifact_quality_errors(adapter),
+        allowed_paths=tuple(base_files.keys()),
         advisor_notes=advisor_notes,
+        use_editor=True,
         convergence_verifier=convergence_verifier,
+        max_rounds=_POST_EXECUTION_REPAIR_MAX_ROUNDS,
     )
-    tool_results.extend(
-        _run_java_test_dependency_runtime_repair(
-            adapter,
-            workspace,
-            task_id=task_id,
-            advisor_notes=advisor_notes,
-            convergence_verifier=convergence_verifier,
-        )
-    )
-    return tool_results
 
 
 def _run_java_accessor_alias_runtime_repair(
@@ -1459,7 +1462,7 @@ def _normalize_rust_missing_module_create_path(path: str) -> str:
     return normalized
 
 
-def _rust_post_execution_artifact_quality_errors(adapter: Any) -> tuple[str, ...]:
+def _post_execution_artifact_quality_errors(adapter: Any) -> tuple[str, ...]:
     candidates: list[Any] = [
         getattr(adapter, "artifact_quality_errors", None),
         getattr(adapter, "_artifact_quality_errors", None),
@@ -1492,6 +1495,26 @@ def _rust_post_execution_artifact_quality_errors(adapter: Any) -> tuple[str, ...
             seen.add(text)
             errors.append(text)
     return tuple(errors)
+
+
+def _rust_post_execution_artifact_quality_errors(adapter: Any) -> tuple[str, ...]:
+    return _post_execution_artifact_quality_errors(adapter)
+
+
+def _collect_java_base_files(workspace: Path) -> dict[str, str]:
+    base_files: dict[str, str] = {}
+    for path in sorted(workspace.rglob("*.java")):
+        if not path.is_file() or _is_generated_build_path(path):
+            continue
+        try:
+            relative_path = path.relative_to(workspace).as_posix()
+        except ValueError:
+            continue
+        try:
+            base_files[relative_path] = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+    return base_files
 
 
 def _collect_java_test_base_files(workspace: Path) -> dict[str, str]:

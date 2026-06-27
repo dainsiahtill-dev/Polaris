@@ -20,11 +20,13 @@ from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
 from .python_syntax import (
     PYTHON_PACKAGE_CHILD_REEXPORT_SOURCE_TOOL,
     PYTHON_PACKAGE_SHADOW_BRIDGE_SOURCE_TOOL,
+    PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
     PYTHON_UNITTEST_MISSING_TARGET_SOURCE_TOOL,
     PYTHON_UNITTEST_RUNTIME_FAILURE_SOURCE_TOOL,
     PYTHON_UNRESOLVED_IMPORT_SYMBOL_SOURCE_TOOL,
     build_python_package_child_reexport_plan,
     build_python_package_shadow_bridge_plan,
+    build_python_readme_required_token_plan,
     build_python_unittest_missing_target_plan,
     build_python_unittest_runtime_failure_plan,
     build_python_unresolved_import_symbol_plan,
@@ -92,6 +94,25 @@ def plan_python_unittest_runtime_failure_repair(
         advisor_notes=advisor_notes,
         mode=mode,
         builder=build_python_unittest_runtime_failure_plan,
+    )
+
+
+def plan_python_readme_required_token_repair(
+    *,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> PythonRepairPlanning:
+    """Plan README required-token documentation repairs inside the runtime kernel."""
+
+    return _plan_python_repair(
+        source_tool=PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        builder=build_python_readme_required_token_plan,
     )
 
 
@@ -238,6 +259,34 @@ def run_python_unittest_runtime_failure_repair(
         planner=plan_python_unittest_runtime_failure_repair,
         not_planned_message="No matching Python unittest runtime-failure repair plan.",
         composition_missing_message="Python unittest runtime-failure repair composition was not produced.",
+    )
+
+
+def run_python_readme_required_token_repair(
+    *,
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> PythonRepairRun:
+    """Run README required-token repair through Plan->Compose->Policy->Execute."""
+
+    return _run_python_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        planner=plan_python_readme_required_token_repair,
+        not_planned_message="No matching Python README required-token repair plan.",
+        composition_missing_message="Python README required-token repair composition was not produced.",
     )
 
 
@@ -417,11 +466,13 @@ __all__ = [
     "PythonRepairRun",
     "plan_python_package_child_reexport_repair",
     "plan_python_package_shadow_bridge_repair",
+    "plan_python_readme_required_token_repair",
     "plan_python_unittest_missing_target_repair",
     "plan_python_unittest_runtime_failure_repair",
     "plan_python_unresolved_import_symbol_repair",
     "run_python_package_child_reexport_repair",
     "run_python_package_shadow_bridge_repair",
+    "run_python_readme_required_token_repair",
     "run_python_unittest_missing_target_repair",
     "run_python_unittest_runtime_failure_repair",
     "run_python_unresolved_import_symbol_repair",

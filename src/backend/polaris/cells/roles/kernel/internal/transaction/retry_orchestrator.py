@@ -18,6 +18,7 @@ re-export 的是同一实例引用，绝不复制。
 
 from __future__ import annotations
 
+import asyncio
 import json  # noqa: F401  (lossless re-export: top-level name at original path)
 import logging
 import os  # noqa: F401  (lossless re-export: top-level name at original path)
@@ -148,6 +149,30 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 )
 
 logger = logging.getLogger(__name__)
+
+_TRANSIENT_LLM_PROVIDER_ERROR_MARKERS = (
+    "connection aborted",
+    "connection reset",
+    "connectionpool",
+    "eof occurred",
+    "httpsconnectionpool",
+    "max retries exceeded",
+    "read timed out",
+    "server disconnected",
+    "ssl",
+    "ssleoferror",
+    "temporarily unavailable",
+    "timed out",
+    "timeout",
+)
+
+
+def _is_transient_llm_provider_exception(exc: BaseException) -> bool:
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in _TRANSIENT_LLM_PROVIDER_ERROR_MARKERS)
+
 
 # Lossless re-export surface: every moved symbol (public AND the private
 # ``_``-prefixed functions/constants that tests and in-cell consumers import
@@ -528,45 +553,60 @@ class RetryOrchestrator:
             llm_call_kwargs["max_tokens_floor"] = retry_output_floor
         stream_callable = self.call_llm_for_decision_stream
         use_stream_retry = stream and stream_callable is not None
-        if use_stream_retry and stream_callable is not None:
+        for provider_attempt in range(2):
+            retry_response = None
             try:
-                async for retry_event in stream_callable(
+                if use_stream_retry and stream_callable is not None:
+                    async for retry_event in stream_callable(
+                        attempt_context,
+                        attempt_tool_definitions,
+                        ledger,
+                        shadow_engine=shadow_engine,
+                        tool_choice_override=attempt_tool_choice_override,
+                        model_override=attempt_model_override,
+                        **llm_call_kwargs,
+                    ):
+                        if not isinstance(retry_event, Mapping):
+                            continue
+                        event_type = str(retry_event.get("type") or "").strip()
+                        if event_type == "_internal_materialize":
+                            candidate_response = retry_event.get("response")
+                            if isinstance(candidate_response, RawLLMResponse):
+                                retry_response = candidate_response
+                        elif self.emit_event is not None and event_type:
+                            self.emit_event(retry_event)
+                    if retry_response is None:
+                        raise RuntimeError(
+                            "single_batch_contract_violation_retry_failed: retry stream did not materialize response"
+                        )
+                    return retry_response
+                retry_response = await self.call_llm_for_decision(
                     attempt_context,
                     attempt_tool_definitions,
                     ledger,
-                    shadow_engine=shadow_engine,
                     tool_choice_override=attempt_tool_choice_override,
                     model_override=attempt_model_override,
                     **llm_call_kwargs,
-                ):
-                    if not isinstance(retry_event, Mapping):
-                        continue
-                    event_type = str(retry_event.get("type") or "").strip()
-                    if event_type == "_internal_materialize":
-                        candidate_response = retry_event.get("response")
-                        if isinstance(candidate_response, RawLLMResponse):
-                            retry_response = candidate_response
-                    elif self.emit_event is not None and event_type:
-                        self.emit_event(retry_event)
-            except Exception as stream_exc:
-                logger.exception("retry stream failed: turn_id=%s", turn_id)
-                raise RuntimeError(
-                    f"single_batch_contract_violation_retry_failed: retry stream error: {stream_exc}"
-                ) from stream_exc
-            if retry_response is None:
-                raise RuntimeError(
-                    "single_batch_contract_violation_retry_failed: retry stream did not materialize response"
                 )
-        else:
-            retry_response = await self.call_llm_for_decision(
-                attempt_context,
-                attempt_tool_definitions,
-                ledger,
-                tool_choice_override=attempt_tool_choice_override,
-                model_override=attempt_model_override,
-                **llm_call_kwargs,
-            )
-        return retry_response
+                return retry_response
+            except asyncio.CancelledError:
+                raise
+            except Exception as retry_exc:
+                if provider_attempt == 0 and _is_transient_llm_provider_exception(retry_exc):
+                    logger.warning(
+                        "mutation-contract retry provider transient failure; retrying once: turn_id=%s error=%s",
+                        turn_id,
+                        retry_exc,
+                    )
+                    await asyncio.sleep(0)
+                    continue
+                if use_stream_retry:
+                    logger.exception("retry stream failed: turn_id=%s", turn_id)
+                    raise RuntimeError(
+                        f"single_batch_contract_violation_retry_failed: retry stream error: {retry_exc}"
+                    ) from retry_exc
+                raise
+        raise RuntimeError("single_batch_contract_violation_retry_failed: retry provider attempts exhausted")
 
     async def _execute_deterministic_bootstrap_followup_write_fallback(
         self,
@@ -1015,6 +1055,10 @@ class RetryOrchestrator:
             # follow-up write, 16000 chars of injected file content). Reserve a
             # reasoning-sized output floor so the write can be emitted.
             followup_output_floor = resolve_retry_output_floor()
+            if followup_forced_write_tool_name == "write_file":
+                full_file_floor = resolve_retry_create_output_floor()
+                floor_candidates = [floor for floor in (followup_output_floor, full_file_floor) if floor is not None]
+                followup_output_floor = max(floor_candidates) if floor_candidates else None
             if followup_output_floor is not None:
                 followup_llm_kwargs["max_tokens_floor"] = followup_output_floor
             max_followup_attempts = 3
@@ -1024,40 +1068,58 @@ class RetryOrchestrator:
                 followup_response: RawLLMResponse | None = None
                 retry_llm_call_ordinal += 1
                 followup_model_override = resolve_retry_model_override(retry_llm_call_ordinal)
-                if stream and self.call_llm_for_decision_stream is not None:
+                for provider_attempt in range(2):
+                    followup_response = None
                     try:
-                        async for retry_event in self.call_llm_for_decision_stream(
-                            current_write_context,
-                            followup_tool_definitions,
-                            ledger,
-                            shadow_engine=shadow_engine,
-                            tool_choice_override=followup_tool_choice_override,
-                            model_override=followup_model_override,
-                            **followup_llm_kwargs,
-                        ):
-                            if not isinstance(retry_event, Mapping):
-                                continue
-                            event_type = str(retry_event.get("type") or "").strip()
-                            if event_type == "_internal_materialize":
-                                candidate_response = retry_event.get("response")
-                                if isinstance(candidate_response, RawLLMResponse):
-                                    followup_response = candidate_response
-                            elif self.emit_event is not None and event_type:
-                                self.emit_event(retry_event)
-                    except Exception as stream_exc:
-                        logger.exception("bootstrap follow-up stream failed: turn_id=%s", turn_id)
-                        raise RuntimeError(
-                            f"single_batch_contract_violation_retry_failed: bootstrap follow-up stream error: {stream_exc}"
-                        ) from stream_exc
-                else:
-                    followup_response = await self.call_llm_for_decision(
-                        current_write_context,
-                        followup_tool_definitions,
-                        ledger,
-                        tool_choice_override=followup_tool_choice_override,
-                        model_override=followup_model_override,
-                        **followup_llm_kwargs,
-                    )
+                        if stream and self.call_llm_for_decision_stream is not None:
+                            async for retry_event in self.call_llm_for_decision_stream(
+                                current_write_context,
+                                followup_tool_definitions,
+                                ledger,
+                                shadow_engine=shadow_engine,
+                                tool_choice_override=followup_tool_choice_override,
+                                model_override=followup_model_override,
+                                **followup_llm_kwargs,
+                            ):
+                                if not isinstance(retry_event, Mapping):
+                                    continue
+                                event_type = str(retry_event.get("type") or "").strip()
+                                if event_type == "_internal_materialize":
+                                    candidate_response = retry_event.get("response")
+                                    if isinstance(candidate_response, RawLLMResponse):
+                                        followup_response = candidate_response
+                                elif self.emit_event is not None and event_type:
+                                    self.emit_event(retry_event)
+                        else:
+                            followup_response = await self.call_llm_for_decision(
+                                current_write_context,
+                                followup_tool_definitions,
+                                ledger,
+                                tool_choice_override=followup_tool_choice_override,
+                                model_override=followup_model_override,
+                                **followup_llm_kwargs,
+                            )
+                        break
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as followup_call_exc:
+                        if provider_attempt == 0 and _is_transient_llm_provider_exception(followup_call_exc):
+                            logger.warning(
+                                "mutation-contract bootstrap-followup provider transient failure; "
+                                "retrying once: turn_id=%s attempt=%s error=%s",
+                                turn_id,
+                                followup_attempt + 1,
+                                followup_call_exc,
+                            )
+                            await asyncio.sleep(0)
+                            continue
+                        if stream and self.call_llm_for_decision_stream is not None:
+                            logger.exception("bootstrap follow-up stream failed: turn_id=%s", turn_id)
+                            raise RuntimeError(
+                                "single_batch_contract_violation_retry_failed: "
+                                f"bootstrap follow-up stream error: {followup_call_exc}"
+                            ) from followup_call_exc
+                        raise
                 if followup_model_override:
                     logger.warning(
                         "mutation-contract bootstrap-followup attempt=%s uses model override: %s",

@@ -54,6 +54,8 @@ _FILE_AS_DIRECTORY_SUFFIXES = frozenset(
         ".yml",
     }
 )
+_MAX_DECLARED_DELIVERY_TARGET_CHARS = 240
+_PATHLIKE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_./@+-]+$")
 
 
 def extend_artifacts(artifacts: list[str], *paths: str) -> None:
@@ -68,6 +70,14 @@ def extend_artifacts(artifacts: list[str], *paths: str) -> None:
 
 def normalize_declared_delivery_target(value: Any) -> str:
     token = str(value or "").replace("\\", "/").strip().strip("`'\"")
+    if (
+        not token
+        or "\n" in token
+        or "\r" in token
+        or len(token) > _MAX_DECLARED_DELIVERY_TARGET_CHARS
+        or not _PATHLIKE_TOKEN_RE.fullmatch(token)
+    ):
+        return ""
     while token.startswith("./"):
         token = token[2:]
     token = token.lstrip("/")
@@ -80,6 +90,8 @@ def normalize_declared_delivery_target(value: Any) -> str:
         return ""
     parts = tuple(part for part in token.split("/") if part)
     if not parts or any(part in {"", ".."} for part in parts):
+        return ""
+    if any(len(part) > 120 for part in parts):
         return ""
     if parts[0] in {".git", ".polaris", "runtime"}:
         return ""

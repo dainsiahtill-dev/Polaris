@@ -262,6 +262,61 @@ def bootstrap_receipt_contains_whole_file_edit_error(bootstrap_receipt: Mapping[
     return False
 
 
+def _bootstrap_receipt_has_successful_file_content(bootstrap_receipt: Mapping[str, Any]) -> bool:
+    for item in list(bootstrap_receipt.get("results", []) or []):
+        if not isinstance(item, Mapping):
+            continue
+        status = str(item.get("status") or "").strip().lower()
+        if status and status != "success":
+            continue
+        payload = item.get("result")
+        if not isinstance(payload, Mapping):
+            continue
+        content = next(
+            (value for key in ("content", "text", "body", "data") if isinstance((value := payload.get(key)), str)),
+            "",
+        )
+        if content.strip():
+            return True
+    return False
+
+
+def _bootstrap_receipt_failure_indicates_missing_file(bootstrap_receipt: Mapping[str, Any]) -> bool:
+    for item in list(bootstrap_receipt.get("results", []) or []):
+        if not isinstance(item, Mapping):
+            continue
+        status = str(item.get("status") or "").strip().lower()
+        if status == "success":
+            continue
+        payload = item.get("result")
+        error_parts: list[str] = []
+        if isinstance(payload, Mapping):
+            error_type = str(payload.get("error_type") or "").strip().lower()
+            if error_type in _BOOTSTRAP_MISSING_FILE_ERROR_TYPES:
+                return True
+            for key in ("error", "message", "stderr", "details", "reason"):
+                value = payload.get(key)
+                if isinstance(value, str) and value:
+                    error_parts.append(value)
+        elif isinstance(payload, str) and payload:
+            error_parts.append(payload)
+        for key in ("error", "message"):
+            value = item.get(key)
+            if isinstance(value, str) and value:
+                error_parts.append(value)
+        combined = "\n".join(error_parts).lower()
+        if combined and any(fragment in combined for fragment in _BOOTSTRAP_MISSING_FILE_ERROR_FRAGMENTS):
+            return True
+    return False
+
+
+def _select_existing_content_edit_tool(allowed_tool_names: set[str]) -> str | None:
+    for candidate in _BOOTSTRAP_EXISTING_CONTENT_EDIT_TOOL_PRIORITY:
+        if candidate in allowed_tool_names:
+            return candidate
+    return None
+
+
 def select_bootstrap_followup_write_tool_name(
     *,
     allowed_tool_names: set[str],
@@ -270,14 +325,17 @@ def select_bootstrap_followup_write_tool_name(
     failed_bootstrap_files: list[str],
 ) -> str | None:
     """Select the write tool for the post-bootstrap implementation stage."""
+    has_successful_file_content = _bootstrap_receipt_has_successful_file_content(bootstrap_receipt)
     if failed_bootstrap_files:
-        for creation_candidate in ("write_file", "create_file", "append_to_file"):
+        if not _bootstrap_receipt_failure_indicates_missing_file(bootstrap_receipt):
+            return _select_existing_content_edit_tool(allowed_tool_names) if has_successful_file_content else None
+        for creation_candidate in _BOOTSTRAP_CREATE_TOOL_NAMES:
             if creation_candidate in allowed_tool_names:
                 return creation_candidate
         return default_write_tool_name
 
     if bootstrap_receipt_contains_whole_file_edit_error(bootstrap_receipt):
-        for creation_candidate in ("write_file", "create_file", "append_to_file"):
+        for creation_candidate in _BOOTSTRAP_CREATE_TOOL_NAMES:
             if creation_candidate in allowed_tool_names:
                 return creation_candidate
         return default_write_tool_name
@@ -286,6 +344,11 @@ def select_bootstrap_followup_write_tool_name(
         for replacement_candidate in ("write_file", "edit_file", "repo_apply_diff", "edit_blocks"):
             if replacement_candidate in allowed_tool_names:
                 return replacement_candidate
+
+    if has_successful_file_content and default_write_tool_name in _BOOTSTRAP_CREATE_TOOL_NAMES:
+        existing_content_tool = _select_existing_content_edit_tool(allowed_tool_names)
+        if existing_content_tool:
+            return existing_content_tool
 
     return default_write_tool_name
 
@@ -420,4 +483,30 @@ _BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_TYPES = frozenset({"new_file_via_edit_blocks"})
 _BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_FRAGMENTS: tuple[str, ...] = (
     "whole-file write, not edit",
     "whole-file write",
+)
+_BOOTSTRAP_CREATE_TOOL_NAMES: tuple[str, ...] = ("write_file", "create_file", "append_to_file")
+_BOOTSTRAP_EXISTING_CONTENT_EDIT_TOOL_PRIORITY: tuple[str, ...] = (
+    "edit_blocks",
+    "edit_file",
+    "repo_apply_diff",
+    "search_replace",
+    "precision_edit",
+)
+_BOOTSTRAP_MISSING_FILE_ERROR_TYPES = frozenset(
+    {
+        "file_not_found",
+        "missing_file",
+        "path_not_found",
+        "not_found",
+        "new_file_via_edit_blocks",
+    }
+)
+_BOOTSTRAP_MISSING_FILE_ERROR_FRAGMENTS: tuple[str, ...] = (
+    "file not found",
+    "no such file",
+    "does not exist",
+    "doesn't exist",
+    "not found",
+    "path not found",
+    "missing file",
 )

@@ -231,12 +231,13 @@ class TurnDecisionDecoder:
                 )
                 continue
 
-        if (
+        should_attempt_textual_fallback = (
             self.config.enable_textual_fallback
-            and not response.native_tool_calls
             and not tools
+            and (not response.native_tool_calls or bool(failures))
             and has_textual_tool_calls(response.content)
-        ):
+        )
+        if should_attempt_textual_fallback:
             for recovered in recover_textual_tool_calls(response.content):
                 try:
                     tool = self._parse_recovered_textual_tool(recovered)

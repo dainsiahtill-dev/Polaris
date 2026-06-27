@@ -236,6 +236,34 @@ class AgentAccelToolExecutor:
             return True  # Never read → stale
         return (self._read_sequence - last_read_seq) > self._read_sequence_window
 
+    def _can_verify_stale_search_edit(
+        self,
+        *,
+        file_path: Path,
+        rel_path: str,
+        search: Any,
+    ) -> bool:
+        """Allow stale exact-search edits that can be verified against disk.
+
+        Some repair prompts already embed the current UTF-8 file body. When the
+        model supplies an exact SEARCH string from that body, the executor can
+        cheaply validate the edit against the current file before dispatching to
+        the handler. This keeps the read-before-edit guard fail-closed for
+        generated line/range edits while allowing exact search/replace repairs
+        to proceed without an extra model turn.
+        """
+
+        if not isinstance(search, str) or not search:
+            return False
+        try:
+            current_content = file_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return False
+        if search not in current_content:
+            return False
+        self._record_file_read(rel_path)
+        return True
+
     async def __aenter__(self) -> AgentAccelToolExecutor:
         return self
 
@@ -387,7 +415,11 @@ class AgentAccelToolExecutor:
                 try:
                     edit_target = resolve_workspace_path(self._kernel_fs, str(edit_file_arg))
                     edit_rel = to_workspace_relative_path(self._kernel_fs, edit_target)
-                    if self._is_file_stale_for_edit(edit_rel):
+                    if self._is_file_stale_for_edit(edit_rel) and not self._can_verify_stale_search_edit(
+                        file_path=edit_target,
+                        rel_path=edit_rel,
+                        search=normalized_arguments.get("search", raw_arguments.get("search")),
+                    ):
                         stale_error = (
                             f"Action Denied: You are attempting to edit '{edit_rel}' "
                             "without a fresh read. "

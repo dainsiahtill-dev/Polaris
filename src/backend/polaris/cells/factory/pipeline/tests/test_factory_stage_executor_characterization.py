@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -187,10 +188,43 @@ class TestDeliveryTargetNormalization:
             ("", ""),
             ("../escape.py", ""),
             ("/abs/path.py", "abs/path.py"),
+            ('func main() {\n\tprintln("not a path")\n}', ""),
+            (" SortedExhibits returns exhibits ordered by Position ascending.", ""),
+            ("src/" + ("x" * 241) + ".go", ""),
         ],
     )
     def test_normalize_declared_delivery_target(self, value: str, expected: str) -> None:
         assert OrchestrationStageExecutor._normalize_declared_delivery_target(value) == expected
+
+    def test_collect_declared_delivery_targets_rejects_code_fragments(self, tmp_path: Path) -> None:
+        source_fragment = (
+            " SortedExhibits returns exhibits ordered by Position ascending.\n"
+            "func (g *Gallery) SortedExhibits() []*Exhibit {\n"
+            "\treturn nil\n"
+            "}\n"
+        )
+        executor = _executor(tmp_path)
+
+        targets = executor._collect_declared_delivery_targets(
+            [
+                {
+                    "target_files": ["models/gallery.go", source_fragment],
+                    "steps": [source_fragment, "run go test ./..."],
+                }
+            ]
+        )
+
+        assert targets == ["models/gallery.go"]
+
+    def test_missing_declared_delivery_targets_handles_invalid_pathlike_input(self, tmp_path: Path) -> None:
+        source_fragment = " SortedExhibits returns exhibits ordered by Position ascending.\nfunc broken() {}"
+        executor = _executor(tmp_path)
+
+        missing = executor._missing_declared_delivery_targets(
+            [{"target_files": ["models/gallery.go", source_fragment]}]
+        )
+
+        assert missing == ["models/gallery.go"]
 
     def test_extend_artifacts_dedupes_and_normalizes(self) -> None:
         artifacts: list[str] = ["a/b.py"]
@@ -1233,6 +1267,17 @@ class TestMirrorHelpers:
         assert "workspace/plans/run-9.plan.json" in artifacts
         assert "workspace/plans/latest.plan.json" in artifacts
 
+    def test_load_pm_plan_tasks_falls_back_to_mirrored_plan(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        plan_path = tmp_path / ".polaris" / "plans" / "latest.plan.json"
+        plan_path.parent.mkdir(parents=True)
+        plan_path.write_text(
+            json.dumps({"tasks": [{"id": "TASK-1", "target_files": ["main.go"]}]}),
+            encoding="utf-8",
+        )
+
+        assert executor._load_pm_plan_tasks("tasks/plan.json") == [{"id": "TASK-1", "target_files": ["main.go"]}]
+
     def test_mirror_director_artifacts(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         executor._write_json_artifact("dispatch/log.json", {"status": "ok"})
@@ -1394,6 +1439,28 @@ class TestPackageJsonParsing:
 
         assert executor._workspace_quality_commands({}) == [["cargo", "check", "--quiet"]]
 
+    def test_workspace_quality_commands_go_project_include_go_verify_and_entrypoint(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "go.mod").write_text("module timecapsule\n\ngo 1.22\n", encoding="utf-8")
+        (tmp_path / "main.go").write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
+        (tmp_path / "models").mkdir()
+        (tmp_path / "models" / "capsule.go").write_text("package models\n\ntype Capsule struct{}\n", encoding="utf-8")
+
+        commands = executor._workspace_quality_commands({})
+
+        assert commands == [["go", "test", "./..."], ["go", "run", "."]]
+
+    def test_workspace_quality_commands_mixed_go_python_keep_go_verify_first(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "go.mod").write_text("module timecapsule\n\ngo 1.22\n", encoding="utf-8")
+        (tmp_path / "main.go").write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_product.py").write_text("def test_contract():\n    assert True\n", encoding="utf-8")
+
+        commands = executor._workspace_quality_commands({})
+
+        assert commands == [["go", "test", "./..."], ["go", "run", "."]]
+
     def test_workspace_quality_commands_mixed_rust_python_keep_cargo_check_first(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         (tmp_path / "Cargo.toml").write_text('[package]\nname = "kitchen-flavor-palette"\n', encoding="utf-8")
@@ -1479,6 +1546,73 @@ class TestRunWorkspaceQualityCommand:
         assert result["exit_code"] == 0
         assert result["passed"] is False
         assert "TypeScript compiler errors" in result["error"]
+
+    def test_real_subprocess_zero_exit_with_skipped_javac_failure_fails(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        result = executor._run_workspace_quality_command(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; "
+                    'print("setUpClass (test_product.JavaCompileAndRunTests) ... '
+                    "skipped 'javac (main) failed; cannot continue runtime tests.\\n"
+                    "stderr:\\n"
+                    "src/main/java/polaris/factory/Main.java:119: error: incompatible types'\", file=sys.stderr)"
+                ),
+            ],
+            30.0,
+        )
+        assert result["exit_code"] == 0
+        assert result["passed"] is False
+        assert "skipped tests caused by compile/build failure" in result["error"]
+
+    def test_real_subprocess_enriches_nested_javac_called_process_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        bin_dir = tmp_path / "bin"
+        source_path = tmp_path / "src" / "main" / "java" / "polaris" / "factory" / "Main.java"
+        output_dir = tmp_path / "build" / "classes"
+        bin_dir.mkdir()
+        source_path.parent.mkdir(parents=True)
+        output_dir.mkdir(parents=True)
+        source_path.write_text("package polaris.factory;\nclass Main {}\n", encoding="utf-8")
+        fake_javac = bin_dir / "javac"
+        fake_javac.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "print(f'{sys.argv[-1]}:7: error: cannot find symbol', file=sys.stderr)\n"
+            "print('  symbol:   class RhythmReport', file=sys.stderr)\n"
+            "print('1 error', file=sys.stderr)\n"
+            "raise SystemExit(1)\n",
+            encoding="utf-8",
+        )
+        fake_javac.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+
+        result = executor._run_workspace_quality_command(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import subprocess; "
+                    "subprocess.run("
+                    f"['javac', '-encoding', 'UTF-8', '-d', {str(output_dir)!r}, {str(source_path)!r}], "
+                    "check=True, capture_output=True)"
+                ),
+            ],
+            30.0,
+        )
+
+        assert result["exit_code"] == 1
+        assert result["passed"] is False
+        assert "Nested javac diagnostics from unittest subprocess" in result["stderr_tail"]
+        assert "cannot find symbol" in result["stderr_tail"]
+        assert "RhythmReport" in result["stderr_tail"]
+        assert result["nested_diagnostics"] in result["stderr_tail"]
 
     def test_real_subprocess_nonzero_exit(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -2302,6 +2436,18 @@ class TestDirectorEvidenceStatics:
         )
         assert OrchestrationStageExecutor._metadata_indicates_execution({"task_status_counts": {"pending": 5}}) is False
         assert OrchestrationStageExecutor._metadata_indicates_execution({}) is False
+
+    def test_workspace_materialized_delivery_evidence_recognizes_rust_fallback(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "lib.rs").write_text("pub fn budget_total() -> u64 { 1 }\n", encoding="utf-8")
+        (tmp_path / "Cargo.toml").write_text(
+            '[package]\nname = "budget-map"\nversion = "0.1.0"\nedition = "2021"\n',
+            encoding="utf-8",
+        )
+
+        executor = _executor(tmp_path)
+
+        assert executor._workspace_has_materialized_delivery_evidence([]) is True
 
     def test_has_execution_evidence_from_completed_delta(self) -> None:
         assert OrchestrationStageExecutor._has_director_execution_evidence(
@@ -3187,6 +3333,129 @@ class TestDirectorDispatchLoop:
         assert "director.materialization_quality_handoff_ready" in codes
         assert "director.materialization_quality_handoff" in codes
         assert "director.partial_failure_progress_continued" not in codes
+
+    @pytest.mark.asyncio
+    async def test_no_claimable_tasks_after_attempt_does_not_replay_requested_pm_tasks(self, tmp_path: Path) -> None:
+        class _NoClaimableAfterProgressExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.stats = [
+                    {
+                        "total": 2,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 1,
+                    },
+                    {
+                        "total": 2,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 1,
+                    },
+                    {
+                        "total": 2,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 1,
+                        "failed": 0,
+                        "blocked": 1,
+                    },
+                    {
+                        "total": 2,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 1,
+                        "failed": 0,
+                        "blocked": 1,
+                    },
+                ]
+                self.execute_calls = 0
+                self.captured_tasks: list[list[str]] = []
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                if len(self.stats) > 1:
+                    return dict(self.stats.pop(0))
+                return dict(self.stats[0])
+
+            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
+                del limit
+                return ["TASK-1"] if self.execute_calls == 0 else []
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                executor = self
+
+                class _Service:
+                    async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                        tasks = kwargs.get("tasks")
+                        if isinstance(tasks, list):
+                            executor.captured_tasks.append([str(item) for item in tasks])
+                        executor.execute_calls += 1
+                        return CommandResult(
+                            run_id=f"director-{executor.execute_calls}", status="running", message="ok"
+                        )
+
+                return _Service()
+
+            async def _wait_run_completion(
+                self,
+                service: Any,
+                initial_result: CommandResult,
+                timeout_seconds: int = 300,
+                *,
+                cancel_event: asyncio.Event | None = None,
+                abort_checker: Any = None,
+            ) -> CommandResult:
+                del service, timeout_seconds, cancel_event, abort_checker
+                return CommandResult(
+                    run_id=initial_result.run_id,
+                    status="completed",
+                    message="Run status: completed",
+                    metadata={"task_status_counts": {"completed": 1}},
+                )
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        executor = _NoClaimableAfterProgressExecutor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {"id": "TASK-1", "target_files": ["src/one.rs"]},
+                    {"id": "TASK-2", "target_files": ["src/two.rs"], "depends_on": ["TASK-1"]},
+                ]
+            },
+        )
+        run = FactoryRun(
+            id="factory-no-claimable-after-progress",
+            config=FactoryConfig(name="no-claimable-after-progress"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-23T00:00:00+00:00",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"director_max_rounds": 3, "timeout": 1, "execution_mode": "serial", "max_workers": 1},
+        )
+
+        assert result.status == "failed"
+        assert executor.execute_calls == 1
+        assert executor.captured_tasks == [["TASK-1"]]
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        codes = [item.get("code") for item in payload["signals"]]
+        assert "director.no_claimable_tasks_after_progress" in codes
+        assert "director.taskboard_not_converged" in codes
+        assert "director.run_status_non_success" not in codes
 
     @pytest.mark.asyncio
     async def test_missing_write_receipt_with_artifacts_enters_quality_gate_handoff(self, tmp_path: Path) -> None:

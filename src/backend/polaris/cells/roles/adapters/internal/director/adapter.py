@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 from dataclasses import replace
 from typing import Any
 
@@ -115,6 +116,73 @@ def _first_dict_list_payload(*values: Any) -> list[dict[str, Any]]:
         if copied:
             return copied
     return []
+
+
+_VERIFICATION_COMMAND_MARKERS = (
+    "go test",
+    "go run",
+    "go vet",
+    "go build",
+    "npm test",
+    "npm run",
+    "cargo check",
+    "cargo test",
+    "python -m unittest",
+    "pytest",
+    "ruff check",
+    "mypy",
+)
+_BACKTICK_VERIFICATION_COMMAND_RE = re.compile(r"`([^`\n]*(?:" + "|".join(re.escape(item) for item in _VERIFICATION_COMMAND_MARKERS) + r")[^`\n]*)`", re.IGNORECASE)
+
+
+def _flatten_verification_command_sources(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        token = value.strip()
+        return [token] if token else []
+    if isinstance(value, (list, tuple, set)):
+        flattened: list[str] = []
+        for item in value:
+            flattened.extend(_flatten_verification_command_sources(item))
+        return flattened
+    if isinstance(value, dict):
+        flattened = []
+        for key in (
+            "verification_commands",
+            "verify_commands",
+            "quality_commands",
+            "workspace_quality_commands",
+            "acceptance",
+            "acceptance_criteria",
+            "steps",
+            "execution_checklist",
+            "verify",
+        ):
+            if key in value:
+                flattened.extend(_flatten_verification_command_sources(value.get(key)))
+        return flattened
+    return []
+
+
+def _extract_director_verification_commands(*values: Any) -> list[str]:
+    commands: list[str] = []
+    seen: set[str] = set()
+    for source in values:
+        for text in _flatten_verification_command_sources(source):
+            candidates = [match.group(1).strip() for match in _BACKTICK_VERIFICATION_COMMAND_RE.finditer(text)]
+            stripped = text.strip().strip("`")
+            if not candidates and any(stripped.lower().startswith(marker) for marker in _VERIFICATION_COMMAND_MARKERS):
+                candidates.append(stripped)
+            for candidate in candidates:
+                normalized = " ".join(candidate.strip().strip("`").split())
+                if not normalized:
+                    continue
+                lowered = normalized.lower()
+                if lowered not in seen:
+                    seen.add(lowered)
+                    commands.append(normalized)
+    return commands
 
 
 def _normalize_director_role_response(role_response: Any) -> dict[str, Any]:
@@ -479,6 +547,10 @@ class DirectorAdapter(BaseRoleAdapter):
         from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
         context_payload = dict(context) if isinstance(context, dict) else {}
+        self._ensure_director_verification_commands(
+            message=message,
+            context=context_payload,
+        )
         metadata = self._build_role_runtime_metadata(context_payload, max_retries=max_retries)
         self._ensure_director_execution_profile(
             message=message,
@@ -663,6 +735,24 @@ class DirectorAdapter(BaseRoleAdapter):
             },
         )
         return metadata
+
+    @staticmethod
+    def _ensure_director_verification_commands(*, message: str, context: dict[str, Any]) -> list[str]:
+        metadata_raw = context.get("metadata")
+        metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+        commands = _extract_director_verification_commands(
+            context.get("verification_commands"),
+            context.get("quality_commands"),
+            context.get("workspace_quality_commands"),
+            context.get("construction_step"),
+            metadata,
+            message,
+        )
+        if commands:
+            context.setdefault("verification_commands", commands)
+            metadata.setdefault("verification_commands", commands)
+            context["metadata"] = metadata
+        return commands
 
     @staticmethod
     def _resolve_runtime_identity_field(
@@ -1067,6 +1157,15 @@ class DirectorAdapter(BaseRoleAdapter):
         construction_target = str(construction_step.get("target_file") or "").strip()
         construction_signatures = _stringify_list(construction_step.get("signatures"))[:8]
         construction_verify = str(construction_step.get("verify") or "").strip()
+        verification_commands = _extract_director_verification_commands(
+            metadata.get("verification_commands"),
+            task.get("verification_commands"),
+            runtime_context.get("verification_commands"),
+            runtime_metadata.get("verification_commands"),
+            acceptance_items,
+            step_items,
+            construction_verify,
+        )
         factory_project = str(
             metadata.get("factory_bench_project_id")
             or runtime_metadata.get("factory_bench_project_id")
@@ -1102,6 +1201,9 @@ class DirectorAdapter(BaseRoleAdapter):
             "",
             "Acceptance criteria / 验收标准:",
             *[f"- {item}" for item in acceptance_items],
+            "",
+            "Verification commands / 验证命令:" if verification_commands else "",
+            *[f"- {item}" for item in verification_commands],
             "",
             "Chief Engineer Blueprint / CE 蓝图交接:",
             f"- blueprint_id: {blueprint_id}" if blueprint_id else "- blueprint_id: not provided",

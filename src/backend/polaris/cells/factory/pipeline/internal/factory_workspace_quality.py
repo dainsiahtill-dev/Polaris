@@ -20,6 +20,7 @@ Behavior preservation notes:
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -41,7 +42,20 @@ _MASKED_WORKSPACE_FAILURE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"\bTypeScript check skipped\b", re.IGNORECASE),
         "command exited 0 but output reports TypeScript check skipped",
     ),
+    (
+        re.compile(
+            r"\bskipped\s+['\"][\s\S]{0,240}\b(?:javac|compile|compilation|build)[\s\S]{0,160}\bfailed\b",
+            re.IGNORECASE,
+        ),
+        "command exited 0 but output reports skipped tests caused by compile/build failure",
+    ),
 )
+_CALLED_PROCESS_ERROR_COMMAND_RE = re.compile(
+    r"CalledProcessError:\s+Command\s+['\"]?(?P<command>\[[^\n]+?\])['\"]?\s+"
+    r"returned\s+non-zero\s+exit\s+status\s+\d+",
+    re.IGNORECASE,
+)
+_NESTED_JAVAC_DIAGNOSTIC_TIMEOUT_SECONDS = 30.0
 
 
 class WorkspaceQualityRunner:
@@ -139,11 +153,36 @@ class WorkspaceQualityRunner:
             and "start" in scripts
         ):
             commands.append(["npm", "run", "start"])
+        go_commands = self._go_workspace_quality_commands(context)
+        commands.extend(go_commands)
         commands.extend(self._rust_workspace_quality_commands())
         cpp_commands = self._cpp_workspace_quality_commands()
         commands.extend(cpp_commands)
-        if not cpp_commands and not (self.workspace / "Cargo.toml").is_file():
+        if not go_commands and not cpp_commands and not (self.workspace / "Cargo.toml").is_file():
             commands.extend(self._python_workspace_quality_commands(context))
+        return commands
+
+    def _go_workspace_quality_commands(self, context: dict[str, Any]) -> list[list[str]]:
+        go_files = [
+            path
+            for path in self.workspace.rglob("*.go")
+            if path.is_file()
+            and "vendor" not in path.parts
+            and "runtime" not in path.parts
+            and ".polaris" not in path.parts
+        ]
+        if not go_files and not (self.workspace / "go.mod").is_file():
+            return []
+
+        commands: list[list[str]] = [["go", "test", "./..."]]
+        if (self.workspace / "main.go").is_file() and helpers.bool_from_context_or_env(
+            context,
+            "workspace_validation_entrypoint_smoke",
+            "qa_workspace_validation_entrypoint_smoke",
+            env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION_ENTRYPOINT_SMOKE",
+            default=True,
+        ):
+            commands.append(["go", "run", "."])
         return commands
 
     def _rust_workspace_quality_commands(self) -> list[list[str]]:
@@ -463,6 +502,17 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
             )
             stdout = helpers.trim_command_output(completed.stdout)
             stderr = helpers.trim_command_output(completed.stderr)
+            nested_diagnostics = _nested_javac_diagnostics_from_output(
+                workspace=self.workspace,
+                stdout=stdout,
+                stderr=stderr,
+                timeout_seconds=min(
+                    _NESTED_JAVAC_DIAGNOSTIC_TIMEOUT_SECONDS,
+                    max(1.0, float(timeout_seconds or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS)),
+                ),
+            )
+            if nested_diagnostics:
+                stderr = helpers.trim_command_output("\n\n".join(part for part in (stderr, nested_diagnostics) if part))
             masked_failure_reason = ""
             if int(completed.returncode) == 0:
                 masked_failure_reason = _masked_workspace_failure_reason(stdout, stderr)
@@ -475,6 +525,8 @@ print(f"C++ syntax check passed for {len(files)} translation unit(s)")
                 "stdout_tail": stdout,
                 "stderr_tail": stderr,
             }
+            if nested_diagnostics:
+                result["nested_diagnostics"] = nested_diagnostics
             if masked_failure_reason:
                 result["error"] = masked_failure_reason
             return result
@@ -508,3 +560,78 @@ def _masked_workspace_failure_reason(stdout: str, stderr: str) -> str:
         if pattern.search(output):
             return reason
     return ""
+
+
+def _nested_javac_diagnostics_from_output(
+    *,
+    workspace: Path,
+    stdout: str,
+    stderr: str,
+    timeout_seconds: float,
+) -> str:
+    command = _called_process_error_javac_command(f"{stdout}\n{stderr}")
+    if not command or not _safe_javac_diagnostic_command(command, workspace=workspace):
+        return ""
+    resolved = helpers.resolve_workspace_quality_command(command)
+    if not resolved:
+        return ""
+    try:
+        completed = subprocess.run(
+            resolved,
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=max(1.0, timeout_seconds),
+            env={**os.environ, "CI": os.environ.get("CI", "1")},
+            check=False,
+        )
+    except (OSError, RuntimeError, subprocess.TimeoutExpired, TypeError, ValueError) as exc:
+        return f"Nested javac diagnostics unavailable: {type(exc).__name__}: {exc}"
+    diagnostic_output = helpers.trim_command_output(
+        "\n".join(part for part in (completed.stderr, completed.stdout) if part)
+    )
+    if not diagnostic_output:
+        return ""
+    return (
+        "Nested javac diagnostics from unittest subprocess "
+        f"(exit_code={int(completed.returncode)}):\n{diagnostic_output}"
+    )
+
+
+def _called_process_error_javac_command(output: str) -> list[str]:
+    for match in _CALLED_PROCESS_ERROR_COMMAND_RE.finditer(str(output or "")):
+        try:
+            parsed = ast.literal_eval(match.group("command"))
+        except (SyntaxError, ValueError):
+            continue
+        if not isinstance(parsed, list) or not parsed:
+            continue
+        command = [str(part) for part in parsed if isinstance(part, str) and part]
+        if len(command) == len(parsed) and Path(command[0]).name == "javac":
+            return command
+    return []
+
+
+def _safe_javac_diagnostic_command(command: list[str], *, workspace: Path) -> bool:
+    if not command or Path(command[0]).name != "javac" or len(command) > 200:
+        return False
+    workspace_root = workspace.resolve()
+    for part in command[1:]:
+        if not _javac_arg_is_path_like(part):
+            continue
+        try:
+            candidate = Path(part)
+            resolved = candidate.resolve() if candidate.is_absolute() else (workspace_root / candidate).resolve()
+            resolved.relative_to(workspace_root)
+        except (OSError, RuntimeError, ValueError):
+            return False
+    return True
+
+
+def _javac_arg_is_path_like(value: str) -> bool:
+    token = str(value or "").strip()
+    if not token or token.startswith("-"):
+        return False
+    return "/" in token or "\\" in token or token.endswith((".java", ".class", ".jar"))

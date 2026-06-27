@@ -225,13 +225,14 @@ class OrchestrationStageExecutor:
         workspace_root = self.workspace.resolve()
         missing: list[str] = []
         for target in self._collect_declared_delivery_targets(tasks):
-            path = (workspace_root / target).resolve()
             try:
+                path = (workspace_root / target).resolve()
                 path.relative_to(workspace_root)
-            except ValueError:
+                target_exists = path.exists()
+            except (OSError, RuntimeError, ValueError):
                 missing.append(target)
                 continue
-            if not path.exists():
+            if not target_exists:
                 missing.append(target)
                 continue
             if path.is_file():
@@ -541,14 +542,35 @@ class OrchestrationStageExecutor:
             f"PM likely confused this project with a different language project."
         )
 
-    def _load_pm_plan_tasks(self, relative_path: str = "tasks/plan.json") -> list[dict[str, Any]]:
-        target = self._artifact_path(relative_path)
-        if not target.exists():
-            return []
-        try:
-            payload = json.loads(target.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            return []
+    def _load_pm_plan_tasks(
+        self,
+        relative_path: str = "tasks/plan.json",
+        *,
+        include_mirrors: bool = True,
+    ) -> list[dict[str, Any]]:
+        candidates = [self._artifact_path(relative_path)]
+        if include_mirrors and relative_path == "tasks/plan.json":
+            candidates.extend(self._iter_pm_plan_contract_candidates())
+
+        seen: set[str] = set()
+        for target in candidates:
+            key = target.resolve().as_posix()
+            if key in seen:
+                continue
+            seen.add(key)
+            if not target.exists():
+                continue
+            try:
+                payload = json.loads(target.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, TypeError, ValueError, UnicodeDecodeError):
+                continue
+            tasks = self._pm_plan_tasks_from_payload(payload)
+            if tasks:
+                return tasks
+        return []
+
+    @staticmethod
+    def _pm_plan_tasks_from_payload(payload: Any) -> list[dict[str, Any]]:
         if not isinstance(payload, dict):
             return []
         tasks = payload.get("tasks")
@@ -579,7 +601,7 @@ class OrchestrationStageExecutor:
     def _ensure_pm_plan_contract_available(self) -> str:
         """Copy PM's workspace mirror into the runtime artifact path consumed downstream."""
 
-        if self._load_pm_plan_tasks("tasks/plan.json"):
+        if self._load_pm_plan_tasks("tasks/plan.json", include_mirrors=False):
             return ""
 
         for candidate in self._iter_pm_plan_contract_candidates():
@@ -3143,6 +3165,20 @@ class OrchestrationStageExecutor:
                     or director_timeout_seconds
                 )
                 round_requested_task_ids = self._read_claimable_director_task_ids(limit=max_workers)
+                if not round_requested_task_ids and attempts:
+                    stage_signals.append(
+                        {
+                            "code": "director.no_claimable_tasks_after_progress",
+                            "severity": "warning",
+                            "detail": (
+                                "TaskBoard has no claimable Director tasks after previous dispatch attempt; "
+                                "stopping dispatch instead of replaying terminal or blocked PM tasks"
+                            ),
+                            "round": round_index,
+                            "taskboard_before": before_stats,
+                        }
+                    )
+                    break
                 if not round_requested_task_ids:
                     round_requested_task_ids = list(requested_task_ids or [])
                 base_options["metadata"]["director_claimable_task_ids"] = list(round_requested_task_ids)
@@ -3821,9 +3857,44 @@ class OrchestrationStageExecutor:
             "src/**/*.js",
             "src/**/*.jsx",
             "src/**/*.py",
+            "src/**/*.html",
+            "src/**/*.rs",
+            "src/**/*.go",
+            "src/**/*.java",
+            "src/**/*.c",
+            "src/**/*.cc",
+            "src/**/*.cpp",
+            "src/**/*.h",
+            "app/**/*.py",
+            "app/**/*.js",
+            "app/**/*.ts",
+            "app/**/*.go",
+            "cmd/**/*.go",
+            "pkg/**/*.go",
+            "internal/**/*.go",
+            "crates/**/*.rs",
+            "bin/**/*.rs",
+            "tests/**/*.rs",
+            "tests/**/*.go",
+            "tests/**/*.py",
+            "tests/**/*.js",
+            "tests/**/*.ts",
+            "include/**/*.h",
             "tests/**/*.*",
             "package.json",
+            "Cargo.toml",
+            "Cargo.lock",
+            "go.mod",
+            "go.sum",
+            "pyproject.toml",
+            "pom.xml",
+            "build.gradle",
+            "CMakeLists.txt",
+            "Makefile",
+            "lib.rs",
+            "main.rs",
             "index.html",
+            "public/**/*.html",
         ):
             for candidate in workspace_root.glob(pattern):
                 if not candidate.is_file():
@@ -3940,6 +4011,34 @@ class OrchestrationStageExecutor:
             seen.add(normalized)
             deduped.append(normalized)
         return deduped
+
+    @staticmethod
+    def _workspace_quality_repair_coverage_report(artifact_quality_errors: list[str]) -> dict[str, Any]:
+        if not artifact_quality_errors:
+            return {}
+        try:
+            from polaris.cells.director.runtime.public import (
+                QueryDirectorRepairCoverageV1,
+                query_director_repair_coverage,
+            )
+
+            return query_director_repair_coverage(
+                QueryDirectorRepairCoverageV1(
+                    artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+                )
+            ).to_dict()
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "schema_version": "factory.workspace_quality_repair_coverage_query_error.v1",
+                "source": "factory_stage_executor",
+                "access": "read_only",
+                "coverage_query_failed": True,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "total_diagnostics": len(artifact_quality_errors),
+                "coverage_gap_count": 0,
+                "coverage_gaps": [],
+            }
 
     def _apply_workspace_quality_repairs(
         self,
@@ -4395,6 +4494,9 @@ class OrchestrationStageExecutor:
                         "round": round_index + 1,
                         "attempted": True,
                         "artifact_quality_errors": repair_errors[:10],
+                        "director_runtime_repair_coverage": self._workspace_quality_repair_coverage_report(
+                            repair_errors
+                        ),
                         "tool_results": len(round_repair_results),
                         "source_tools": round_source_tools,
                         "write_tool_evidence": round_write_tool_evidence,
@@ -4439,15 +4541,16 @@ class OrchestrationStageExecutor:
                         latest_check_results.append(result)
                         rerun_results.append(result)
             residual_failures = [item for item in latest_check_results if not bool(item.get("passed"))]
+            residual_errors = self._workspace_quality_repair_errors(residual_failures) if residual_failures else []
+            residual_coverage_report = self._workspace_quality_repair_coverage_report(residual_errors)
             repair_revalidated = bool(rerun_results)
             repair_summary = {
                 "attempted": bool(repair_rounds),
                 "success": repair_revalidated and not residual_failures,
                 "revalidated": repair_revalidated,
                 "residual_error_count": len(residual_failures),
-                "residual_errors": self._workspace_quality_repair_errors(residual_failures)[:10]
-                if residual_failures
-                else [],
+                "residual_errors": residual_errors[:10],
+                "director_runtime_repair_coverage": residual_coverage_report,
                 "source_tools": list(dict.fromkeys(source_tools)),
                 "tool_results": len(repair_results),
                 "write_tool_evidence": write_tool_evidence,

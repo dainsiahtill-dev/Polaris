@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polaris.cells.roles.adapters.internal.director.execute_method import (
+from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
     _apply_deterministic_typescript_reexport_repair,
 )
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor

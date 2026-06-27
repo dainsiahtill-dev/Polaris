@@ -279,10 +279,11 @@ def append_retry_enforcement_hint(
 # On a 16384-token LOCAL Director they inject ~4000 tokens of verbatim read
 # content — the dominant input cost — which fills the window and collapses the
 # output budget so the model truncates mid-reasoning and emits no write (live
-# main.js empty-output dead-letter). Sized for the small window here and made
-# env-tunable so a large-window provider can restore the bigger budget.
-_DEFAULT_BOOTSTRAP_READ_CONTENT_MAX_CHARS = 5000
-_DEFAULT_BOOTSTRAP_READ_CONTENT_TOTAL_CHARS = 6000
+# main.js empty-output dead-letter). A later Java repair showed the 5000-char
+# per-file cap can truncate a medium 5KB source before the compiler error line,
+# so keep the cap moderate but high enough for typical single-file syntax fixes.
+_DEFAULT_BOOTSTRAP_READ_CONTENT_MAX_CHARS = 9000
+_DEFAULT_BOOTSTRAP_READ_CONTENT_TOTAL_CHARS = 12000
 _BOOTSTRAP_READ_MAX_CHARS_ENV = "KERNELONE_BOOTSTRAP_READ_MAX_CHARS"
 _BOOTSTRAP_READ_TOTAL_CHARS_ENV = "KERNELONE_BOOTSTRAP_READ_TOTAL_CHARS"
 

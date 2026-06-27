@@ -280,6 +280,42 @@ class TestExecuteRetryBatchTemperaturePassThrough:
         assert captured["max_tokens_floor"] == 2500
 
     @pytest.mark.asyncio
+    async def test_non_stream_path_retries_transient_provider_error_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(_FLOOR_ENV, "off")
+        calls = 0
+
+        async def _flaky_decision(context: Any, tools: Any, ledger: Any, **kwargs: Any) -> RawLLMResponse:
+            del context, tools, ledger, kwargs
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError(
+                    "HTTPSConnectionPool(host='api.example.test', port=443): Max retries exceeded "
+                    "with url: /anthropic/v1/messages (Caused by SSLError(SSLEOFError()))"
+                )
+            return _raw_response()
+
+        orchestrator = _build_orchestrator(
+            call_llm_for_decision=_flaky_decision,
+            call_llm_for_decision_stream=None,
+        )
+
+        response = await orchestrator._execute_retry_batch(
+            turn_id="t4b",
+            attempt_context=[],
+            attempt_tool_definitions=[],
+            ledger=TurnLedger(turn_id="t4b"),
+            attempt_tool_choice_override=None,
+            attempt_model_override=None,
+            stream=False,
+            shadow_engine=None,
+            attempt_temperature_override=None,
+        )
+
+        assert response.content == "ok"
+        assert calls == 2
+
+    @pytest.mark.asyncio
     async def test_floor_disabled_does_not_widen_shape(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(_FLOOR_ENV, "off")
         captured: dict[str, Any] = {}

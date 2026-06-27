@@ -39,10 +39,10 @@ from ._common import (
 )
 from ._runtime_bridge import run_runtime_repair_with_director_tools
 from .go_repairs import (
-    repair_go_bare_local_imports,
+    repair_go_bare_local_imports,  # noqa: F401 - compatibility monkeypatch surface.
     repair_go_duplicate_declarations,
     repair_go_import_subpaths,
-    repair_go_module_imports,
+    repair_go_module_imports,  # noqa: F401 - compatibility monkeypatch surface.
     repair_go_nested_import_keyword,
 )
 
@@ -133,6 +133,7 @@ def _apply_deterministic_scaffold_marker_cleanup(
             ".mjs",
             ".cjs",
             ".py",
+            ".go",
             ".html",
             ".css",
             ".json",
@@ -206,6 +207,7 @@ def _apply_deterministic_scaffold_marker_error_cleanup(
             ".mjs",
             ".cjs",
             ".py",
+            ".go",
             ".html",
             ".css",
             ".json",
@@ -249,7 +251,12 @@ def _apply_deterministic_scaffold_marker_error_cleanup(
 def _parse_scaffold_marker_error_paths(artifact_quality_errors: list[str]) -> list[str]:
     paths: list[str] = []
     for error in artifact_quality_errors:
-        match = _SCAFFOLD_MARKER_ERROR_RE.search(str(error or ""))
+        text = str(error or "")
+        match = _SCAFFOLD_MARKER_ERROR_RE.search(text) or re.search(
+            r"generic/placeholder content detected:\s*(?P<path>[^:\s]+):",
+            text,
+            re.IGNORECASE,
+        )
         if not match:
             continue
         normalized = _normalize_declared_task_path(str(match.group("path") or ""))
@@ -311,6 +318,7 @@ def _apply_deterministic_go_module_import_repair(
     adapter: Any,
     *,
     task_id: str,
+    artifact_quality_errors: Sequence[str] = (),
     advisor_notes: Sequence[RepairAdvisoryV1] = (),
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
@@ -330,30 +338,43 @@ def _apply_deterministic_go_module_import_repair(
         return []
     results: list[dict[str, Any]] = []
 
+    def _base_files() -> dict[str, str]:
+        base_files: dict[str, str] = {}
+        go_mod = workspace_path / "go.mod"
+        if go_mod.is_file():
+            with contextlib.suppress(OSError, UnicodeDecodeError):
+                base_files["go.mod"] = go_mod.read_text(encoding="utf-8")
+        for go_file in go_files:
+            if go_file.name.endswith("_test.go"):
+                continue
+            try:
+                relative_path = go_file.relative_to(workspace_path).as_posix()
+            except ValueError:
+                continue
+            try:
+                base_files[relative_path] = go_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+        return base_files
+
     # Pass -1: Bare import string repair (add missing "import" keyword).
     # Must run BEFORE nested import keyword repair to avoid contradiction:
     # bare_strings adds "import" to bare strings; nested_import removes extra
     # "import" inside import blocks. Order matters.
-    base_files: dict[str, str] = {}
-    for go_file in go_files:
-        if go_file.name.endswith("_test.go"):
-            continue
-        try:
-            relative_path = go_file.relative_to(workspace_path).as_posix()
-        except ValueError:
-            continue
-        try:
-            base_files[relative_path] = go_file.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-    if base_files:
+    base_files = _base_files()
+    if "go.mod" in base_files:
+        base_files_without_mod = {path: text for path, text in base_files.items() if path != "go.mod"}
+    else:
+        base_files_without_mod = dict(base_files)
+    if base_files_without_mod:
         bare_import_results = run_runtime_repair_with_director_tools(
             adapter,
             workspace_path=workspace_path,
             task_id=task_id,
             source_tool="deterministic_go_bare_import_string_repair",
             executor_factory=DirectorToolExecutor,
-            base_files=base_files,
+            base_files=base_files_without_mod,
+            artifact_quality_errors=artifact_quality_errors,
             advisor_notes=advisor_notes,
             use_editor=False,
             convergence_verifier=convergence_verifier,
@@ -381,43 +402,41 @@ def _apply_deterministic_go_module_import_repair(
             }
         )
 
-    # Pass 1: Prefix normalization.
-    if (workspace_path / "go.mod").is_file():
-        prefix_repairs = repair_go_module_imports(workspace_path)
-        for record in prefix_repairs:
-            results.append(
-                {
-                    "tool": "write_file",
-                    "tool_name": "write_file",
-                    "success": True,
-                    "result": {
-                        "ok": True,
-                        "source_tool": "deterministic_go_module_import_repair",
-                        "file": record["file"],
-                        "before": record["before"],
-                        "after": record["after"],
-                    },
-                }
-            )
+    # Pass 1: Prefix normalization through the runtime repair kernel.
+    base_files = _base_files()
+    if "go.mod" in base_files and any(path.endswith(".go") for path in base_files):
+        prefix_results = run_runtime_repair_with_director_tools(
+            adapter,
+            workspace_path=workspace_path,
+            task_id=task_id,
+            source_tool="deterministic_go_module_import_repair",
+            executor_factory=DirectorToolExecutor,
+            base_files=base_files,
+            artifact_quality_errors=artifact_quality_errors,
+            advisor_notes=advisor_notes,
+            convergence_verifier=convergence_verifier,
+        )
+        if any(not bool(item.get("success", False)) for item in prefix_results):
+            return [*results, *prefix_results]
+        results.extend(prefix_results)
 
-    # Pass 1b: Bare local import prefix repair (e.g. "src/models" → "module/src/models").
-    if (workspace_path / "go.mod").is_file():
-        bare_repairs = repair_go_bare_local_imports(workspace_path)
-        for record in bare_repairs:
-            results.append(
-                {
-                    "tool": "write_file",
-                    "tool_name": "write_file",
-                    "success": True,
-                    "result": {
-                        "ok": True,
-                        "source_tool": "deterministic_go_bare_import_repair",
-                        "file": record["file"],
-                        "before": record["before"],
-                        "after": record["after"],
-                    },
-                }
-            )
+    # Pass 1b: Bare local import prefix repair through the runtime repair kernel.
+    base_files = _base_files()
+    if "go.mod" in base_files and any(path.endswith(".go") for path in base_files):
+        bare_results = run_runtime_repair_with_director_tools(
+            adapter,
+            workspace_path=workspace_path,
+            task_id=task_id,
+            source_tool="deterministic_go_bare_import_repair",
+            executor_factory=DirectorToolExecutor,
+            base_files=base_files,
+            artifact_quality_errors=artifact_quality_errors,
+            advisor_notes=advisor_notes,
+            convergence_verifier=convergence_verifier,
+        )
+        if any(not bool(item.get("success", False)) for item in bare_results):
+            return [*results, *bare_results]
+        results.extend(bare_results)
 
     # Pass 2: Sub-path hallucination repair.
     subpath_repairs = repair_go_import_subpaths(workspace_path)
@@ -436,6 +455,39 @@ def _apply_deterministic_go_module_import_repair(
                 },
             }
         )
+
+    # Pass 2b: Compiler-reported unused imports through the runtime repair kernel.
+    base_files = _base_files()
+    if any(path.endswith(".go") for path in base_files):
+        unused_import_results = run_runtime_repair_with_director_tools(
+            adapter,
+            workspace_path=workspace_path,
+            task_id=task_id,
+            source_tool="deterministic_go_unused_import_repair",
+            executor_factory=DirectorToolExecutor,
+            base_files=base_files,
+            artifact_quality_errors=artifact_quality_errors,
+            advisor_notes=advisor_notes,
+            convergence_verifier=convergence_verifier,
+        )
+        if any(not bool(item.get("success", False)) for item in unused_import_results):
+            return [*results, *unused_import_results]
+        results.extend(unused_import_results)
+
+        error_string_helper_results = run_runtime_repair_with_director_tools(
+            adapter,
+            workspace_path=workspace_path,
+            task_id=task_id,
+            source_tool="deterministic_go_error_string_helper_repair",
+            executor_factory=DirectorToolExecutor,
+            base_files=base_files,
+            artifact_quality_errors=artifact_quality_errors,
+            advisor_notes=advisor_notes,
+            convergence_verifier=convergence_verifier,
+        )
+        if any(not bool(item.get("success", False)) for item in error_string_helper_results):
+            return [*results, *error_string_helper_results]
+        results.extend(error_string_helper_results)
 
     # Pass 3: Duplicate declaration merge.
     dedup_repairs = repair_go_duplicate_declarations(workspace_path)

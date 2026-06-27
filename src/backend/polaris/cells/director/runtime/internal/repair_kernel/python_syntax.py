@@ -10,6 +10,7 @@ from .contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_tex
 
 PYTHON_PACKAGE_CHILD_REEXPORT_SOURCE_TOOL = "deterministic_python_package_child_reexport_repair"
 PYTHON_PACKAGE_SHADOW_BRIDGE_SOURCE_TOOL = "deterministic_python_package_shadow_bridge_repair"
+PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL = "deterministic_python_readme_required_token_repair"
 PYTHON_UNITTEST_MISSING_TARGET_SOURCE_TOOL = "deterministic_python_unittest_missing_target_repair"
 PYTHON_UNITTEST_RUNTIME_FAILURE_SOURCE_TOOL = "deterministic_python_unittest_runtime_failure_repair"
 PYTHON_UNRESOLVED_IMPORT_SYMBOL_SOURCE_TOOL = "deterministic_unresolved_import_symbol_repair"
@@ -24,12 +25,18 @@ _PYTHON_RUNTIME_TEST_FAILURE_RE = re.compile(
     r"['\"](?P<path>tests/[^'\"]*test[^'\"]*\.py)['\"]",
     re.IGNORECASE | re.DOTALL,
 )
+_PYTHON_README_REQUIRED_TOKEN_RE = re.compile(
+    r"README\s+missing(?:\s+required\s+token)?:\s*(?P<token>[A-Za-z0-9_.-]{1,64})\b",
+    re.IGNORECASE,
+)
 _UNRESOLVED_IMPORT_SYMBOL_RE = re.compile(
     r"unresolved (?:import )?symbol ['\"](?P<symbol>[^'\"]+)['\"] "
     r"from ['\"](?P<module>[^'\"]+)['\"] in (?P<path>\S+)",
     re.IGNORECASE,
 )
 _PYTHON_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PYTHON_README_TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+_README_FILE_PRIORITY = ("readme.md", "readme.rst", "readme.txt", "readme")
 
 
 def build_python_unittest_missing_target_plan(
@@ -131,6 +138,73 @@ def build_python_unittest_runtime_failure_plan(
             "replaced_test_targets": [operation.path for operation in operations],
             "runtime_plan_scope": "existing_unittest_file_replacement_only",
             "unsafe_cases_fail_closed": True,
+        },
+    )
+
+
+def build_python_readme_required_token_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Append missing verifier-required README tokens to existing README files."""
+
+    normalized_base = _normalize_base_files(base_files)
+    targets: dict[str, list[tuple[str, RepairDiagnostic]]] = {}
+    seen: set[tuple[str, str]] = set()
+    for diagnostic in diagnostics:
+        target = _python_readme_required_token_target(diagnostic, normalized_base)
+        if target is None:
+            continue
+        path, token = target
+        key = (path, token.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        targets.setdefault(path, []).append((token, diagnostic))
+    if not targets:
+        return None
+
+    operations: list[RepairOperation] = []
+    matched: list[RepairDiagnostic] = []
+    for path, token_diagnostics in sorted(targets.items()):
+        text = normalized_base[path]
+        context_before = _unique_text_suffix_context(text)
+        if not context_before:
+            continue
+        tokens = tuple(token for token, _diagnostic in token_diagnostics)
+        first_diagnostic = token_diagnostics[0][1]
+        operations.append(
+            _append_text_operation(
+                path=path,
+                text=text,
+                addition=_build_python_readme_required_token_appendix(tokens),
+                repair_kind="python_readme_required_token",
+                diagnostic=first_diagnostic,
+                metadata={
+                    "tokens": list(tokens),
+                    "target_kind": "readme",
+                    "edit_scope": "append_documentation_token_only",
+                    "expected_context_before": context_before,
+                },
+            )
+        )
+        matched.extend(diagnostic for _token, diagnostic in token_diagnostics)
+    if not operations:
+        return None
+    return RepairPlan(
+        rule_id="python.readme_required_token",
+        source_tool=PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL,
+        operations=tuple(operations),
+        diagnostics=tuple(_dedupe_diagnostics(matched)),
+        mode=mode,
+        risk_level="low",
+        priority=1,
+        metadata={
+            "runtime_plan_scope": "existing_readme_append_only",
+            "unsafe_cases_fail_closed": True,
+            "tokens": sorted({token for items in targets.values() for token, _diagnostic in items}),
         },
     )
 
@@ -313,6 +387,81 @@ def _python_runtime_failure_target(diagnostic: RepairDiagnostic) -> str:
         return _normalize_repair_path(str(match.group("path") or ""))
     if diagnostic.code == "python_runtime_smoke_failed":
         return _normalize_repair_path(str(diagnostic.path or ""))
+    return ""
+
+
+def _python_readme_required_token_target(
+    diagnostic: RepairDiagnostic,
+    base_files: Mapping[str, str],
+) -> tuple[str, str] | None:
+    if diagnostic.code != "python_assertionerror":
+        return None
+    raw = str(diagnostic.raw or diagnostic.message or "")
+    match = _PYTHON_README_REQUIRED_TOKEN_RE.search(raw)
+    if not match:
+        return None
+    token = str(match.group("token") or "").strip()
+    if not _PYTHON_README_TOKEN_RE.match(token):
+        return None
+    path = _select_existing_readme_path(diagnostic, base_files)
+    if not path:
+        return None
+    if token.lower() in base_files[path].lower():
+        return None
+    return path, token
+
+
+def _select_existing_readme_path(
+    diagnostic: RepairDiagnostic,
+    base_files: Mapping[str, str],
+) -> str:
+    diagnostic_path = _normalize_repair_path(str(diagnostic.path or ""))
+    if diagnostic_path in base_files and PurePosixPath(diagnostic_path).name.lower() in _README_FILE_PRIORITY:
+        return diagnostic_path
+    candidates = [
+        path
+        for path in base_files
+        if PurePosixPath(path).name.lower() in _README_FILE_PRIORITY
+        and not path.lower().startswith(("tests/", "test/"))
+    ]
+    if not candidates:
+        return ""
+    priority = {name: index for index, name in enumerate(_README_FILE_PRIORITY)}
+    candidates.sort(key=lambda path: (priority.get(PurePosixPath(path).name.lower(), 99), path.count("/"), path))
+    return candidates[0]
+
+
+def _build_python_readme_required_token_appendix(tokens: Sequence[str]) -> str:
+    unique_tokens = tuple(dict.fromkeys(str(token) for token in tokens if str(token or "").strip()))
+    if not unique_tokens:
+        return ""
+    body: list[str] = ["## Verification", ""]
+    if any(token.lower() == "unittest" for token in unique_tokens):
+        body.extend(
+            [
+                "Run the unittest workflow with:",
+                "",
+                "```bash",
+                "python -m unittest discover -s tests -p 'test_*.py' -v",
+                "```",
+            ]
+        )
+    other_tokens = [token for token in unique_tokens if token.lower() != "unittest"]
+    if other_tokens:
+        if len(body) > 2:
+            body.append("")
+        body.extend(f"- Required verification token: `{token}`." for token in other_tokens)
+    return "\n" + "\n".join(body) + "\n"
+
+
+def _unique_text_suffix_context(text: str) -> str:
+    if not text:
+        return ""
+    for max_chars in (240, 480, 960, len(text)):
+        start = max(0, len(text) - max_chars)
+        candidate = text[start:]
+        if candidate and text.find(candidate) == start and text.find(candidate, start + 1) < 0:
+            return candidate
     return ""
 
 
@@ -575,11 +724,13 @@ def _dedupe_diagnostics(diagnostics: Sequence[RepairDiagnostic]) -> tuple[Repair
 __all__ = [
     "PYTHON_PACKAGE_CHILD_REEXPORT_SOURCE_TOOL",
     "PYTHON_PACKAGE_SHADOW_BRIDGE_SOURCE_TOOL",
+    "PYTHON_README_REQUIRED_TOKEN_SOURCE_TOOL",
     "PYTHON_UNITTEST_MISSING_TARGET_SOURCE_TOOL",
     "PYTHON_UNITTEST_RUNTIME_FAILURE_SOURCE_TOOL",
     "PYTHON_UNRESOLVED_IMPORT_SYMBOL_SOURCE_TOOL",
     "build_python_package_child_reexport_plan",
     "build_python_package_shadow_bridge_plan",
+    "build_python_readme_required_token_plan",
     "build_python_unittest_missing_target_plan",
     "build_python_unittest_runtime_failure_plan",
     "build_python_unittest_smoke_content",

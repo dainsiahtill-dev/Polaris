@@ -118,31 +118,41 @@ class TransactionalRepairExecutor:
                     continue
                 text_operations = _text_replace_operations_for_patch(plan.operations, patch.path)
                 if editor is not None and _can_apply_with_editor(current, text_operations):
+                    editor_results: list[dict[str, Any]] = []
+                    editor_rejected = False
                     for operation in text_operations:
                         result = dict(editor(operation))
                         if not bool(result.get("ok")):
-                            raise RuntimeError(f"repair editor rejected {patch.path}")
-                    written.append(_rollback_entry_for_patch(patch))
-                    edit_strategy = _precise_edit_strategy(
-                        patch=patch,
-                        operation="edit_file",
-                        operation_ids=[operation.operation_id for operation in text_operations],
-                        unique_context_checked=any(
-                            _operation_has_context_metadata(operation) for operation in text_operations
-                        ),
-                    )
-                    execution_records.append(
-                        _execution_record(
+                            editor_rejected = True
+                            break
+                        editor_results.append(result)
+                    if not editor_rejected:
+                        written.append(_rollback_entry_for_patch(patch))
+                        edit_strategy = _precise_edit_strategy(
                             patch=patch,
                             operation="edit_file",
                             operation_ids=[operation.operation_id for operation in text_operations],
-                            large_file_safe=True,
-                            span_based=True,
-                            unique_context_checked=bool(edit_strategy["unique_context_checked"]),
-                            precise_edit_strategy=edit_strategy,
+                            unique_context_checked=any(
+                                _operation_has_context_metadata(operation) for operation in text_operations
+                            ),
                         )
-                    )
-                    continue
+                        execution_records.append(
+                            _execution_record(
+                                patch=patch,
+                                operation="edit_file",
+                                operation_ids=[operation.operation_id for operation in text_operations],
+                                large_file_safe=True,
+                                span_based=True,
+                                unique_context_checked=bool(edit_strategy["unique_context_checked"]),
+                                precise_edit_strategy=edit_strategy,
+                            )
+                        )
+                        continue
+                    if editor_results:
+                        raise RuntimeError(f"repair editor rejected {patch.path}")
+                    current_after_editor_reject = target.read_text(encoding="utf-8") if target.is_file() else ""
+                    if current_after_editor_reject != current:
+                        raise RuntimeError(f"repair editor rejected after mutating {patch.path}")
                 if writer is None:
                     raise RuntimeError(f"repair patch requires whole-file writer for {patch.path}")
                 result = dict(writer(patch.path, patch.content_after))

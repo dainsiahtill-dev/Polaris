@@ -33,8 +33,8 @@ from polaris.kernelone.fs.materialization import materialized_file_paths
 from polaris.kernelone.quality import (
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
 )
-from polaris.kernelone.quality.step_verify import normalize_step_verify
 
+from .contract_verify import resolve_contract_step_verify_command
 from .execution_tools import (
     DirectorToolExecutor as DirectorToolExecutor,
 )
@@ -53,6 +53,75 @@ from .repair_convergence_verifier import (
 from .repair_profile_projection import summarize_deterministic_repair_source_tools
 
 logger = logging.getLogger(__name__)
+
+_TRANSIENT_LLM_PROVIDER_ERROR_MARKERS = (
+    "connection aborted",
+    "connection reset",
+    "connectionpool",
+    "eof occurred",
+    "httpsconnectionpool",
+    "max retries exceeded",
+    "read timed out",
+    "server disconnected",
+    "ssl",
+    "ssleoferror",
+    "temporarily unavailable",
+    "timed out",
+    "timeout",
+)
+
+
+def _is_transient_llm_provider_exception(exc: BaseException) -> bool:
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in _TRANSIENT_LLM_PROVIDER_ERROR_MARKERS)
+
+
+async def _invoke_role_dialogue_with_transient_provider_retry(
+    adapter: Any,
+    *,
+    message: str,
+    context: dict[str, Any],
+    timeout_seconds: float,
+    stage_label: str,
+    target_task_id: str,
+) -> dict[str, Any]:
+    """Retry a Director LLM call once when the provider fails before a response."""
+
+    for provider_attempt in range(2):
+        try:
+            return await adapter._invoke_role_dialogue_with_timeout(
+                message,
+                context=context,
+                timeout_seconds=timeout_seconds,
+                stage_label=stage_label,
+            )
+        except asyncio.CancelledError:
+            raise
+        except (OSError, RuntimeError) as exc:
+            if provider_attempt == 0 and _is_transient_llm_provider_exception(exc):
+                logger.warning(
+                    "director %s transient provider failure; retrying once: task=%s error=%s",
+                    stage_label,
+                    target_task_id,
+                    exc,
+                )
+                state_tracker = getattr(adapter, "_state_tracker", None)
+                if state_tracker is not None and hasattr(state_tracker, "append_debug_event"):
+                    state_tracker.append_debug_event(
+                        target_task_id,
+                        "llm_transient_provider_retry",
+                        {
+                            "stage": stage_label,
+                            "attempt": provider_attempt + 1,
+                            "error": str(exc),
+                        },
+                    )
+                await asyncio.sleep(0)
+                continue
+            raise
+    raise RuntimeError("director_llm_transient_provider_retry_exhausted")
 
 
 _DIAG_WRITE_TOOL_NAMES = frozenset(
@@ -215,13 +284,8 @@ def _build_post_execution_artifact_quality_convergence_verifier(
 
 
 def _post_execution_convergence_step_verify_command(context: dict[str, Any] | None) -> str:
-    if not isinstance(context, dict):
-        return ""
-    construction_step = context.get("construction_step")
-    if not isinstance(construction_step, dict):
-        return ""
     try:
-        return normalize_step_verify(construction_step.get("verify"))
+        return resolve_contract_step_verify_command(context)
     except (OSError, RuntimeError, TypeError, ValueError):
         return ""
 
@@ -235,7 +299,9 @@ def _post_execution_convergence_prefers_step_verify(
         return False
     if artifact_quality_errors is None:
         return False
-    normalized_errors = [str(error or "").strip().lower() for error in artifact_quality_errors if str(error or "").strip()]
+    normalized_errors = [
+        str(error or "").strip().lower() for error in artifact_quality_errors if str(error or "").strip()
+    ]
     if not normalized_errors:
         return True
     return all(_post_execution_convergence_error_is_step_verify(error) for error in normalized_errors)
@@ -2156,11 +2222,13 @@ async def _phase_first_llm_call(
             }
         else:
             try:
-                result = await adapter._invoke_role_dialogue_with_timeout(
-                    message,
+                result = await _invoke_role_dialogue_with_transient_provider_retry(
+                    adapter,
+                    message=message,
                     context=context,
                     timeout_seconds=llm_call_timeout,
                     stage_label="first_call",
+                    target_task_id=target_task_id,
                 )
             except asyncio.CancelledError:
                 raise

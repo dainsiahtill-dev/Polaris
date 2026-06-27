@@ -248,6 +248,7 @@ class _FakeAdapter:
         self.workspace = str(workspace)
         self._execution = SimpleNamespace(_message_bus=None)
         self.progress: list[tuple[str, str, str | None]] = []
+        self.artifact_quality_errors: list[str] = []
 
     def _update_task_progress(self, task_id: str, state: str, *, current_file: str | None = None) -> None:
         self.progress.append((task_id, state, current_file))
@@ -1431,14 +1432,17 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         del adapter, executor_factory, kwargs
-        captured["runtime_bridge"] = {
+        call = {
             "workspace_path": workspace_path,
             "task_id": task_id,
             "source_tool": source_tool,
             "base_files": dict(base_files),
             "convergence_verifier": convergence_verifier,
         }
-        assert source_tool == "deterministic_go_bare_import_string_repair"
+        captured.setdefault("runtime_bridge_calls", []).append(call)
+        if source_tool != "deterministic_go_bare_import_string_repair":
+            return []
+        captured["runtime_bridge"] = call
         assert convergence_verifier is sentinel_verifier
         verifier_snapshot = convergence_verifier(
             SimpleNamespace(workspace=str(workspace_path), round_number=1, receipts=())
@@ -1500,6 +1504,11 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
     assert captured["runtime_bridge"]["task_id"] == "task-go-materialization"
     assert captured["runtime_bridge"]["base_files"] == {"main.go": target.read_text(encoding="utf-8")}
     assert captured["runtime_bridge"]["convergence_verifier"] is sentinel_verifier
+    assert [call["source_tool"] for call in captured["runtime_bridge_calls"]] == [
+        "deterministic_go_bare_import_string_repair",
+        "deterministic_go_unused_import_repair",
+        "deterministic_go_error_string_helper_repair",
+    ]
     assert captured["verifier_request"].round_number == 1
     assert summary["convergence_verifier_present"] is True
     assert summary["materialization_quality_bridge"]["convergence_verifier_present"] is True
@@ -1657,6 +1666,37 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     ]
     assert rust_debt["runtime_executable_source_tools"] == expected_source_tools
     assert rust_debt["legacy_only_source_tools"] == []
+
+
+def test_materialization_runtime_coverage_detects_rust_line_suggestion() -> None:
+    errors = [
+        "Artifact quality scan failed: workspace validation command failed (cargo check):\n"
+        "error[E0599]: the method `or_insert` exists for enum "
+        "`std::collections::btree_map::Entry<'_, FlavorKind, u8>`, but its trait bounds were not satisfied\n"
+        "  --> src/models/palette.rs:33:53\n"
+        "   |\n"
+        "33 |             let entry = intensities.entry(f.kind()).or_insert(0);\n"
+        "   |                                                     ^^^^^^^^^ method cannot be called due to "
+        "unsatisfied trait bounds\n"
+        "   |\n"
+        "  ::: src/models/flavor.rs:16:1\n"
+        "   |\n"
+        "16 | pub enum FlavorKind {\n"
+        "   | ------------------- doesn't satisfy `FlavorKind: Ord`\n"
+        "help: consider annotating `FlavorKind` with `#[derive(Eq, Ord, PartialEq, PartialOrd)]`\n"
+        "  --> src/models/flavor.rs:16:1\n"
+        "   |\n"
+        "16 + #[derive(Eq, Ord, PartialEq, PartialOrd)]\n"
+        "17 | pub enum FlavorKind {\n"
+    ]
+
+    assert materialization_quality_repair_bridge.has_materialization_quality_runtime_repair_coverage(errors) is True
+    assert (
+        materialization_quality_repair_bridge.has_materialization_quality_runtime_repair_coverage(
+            ["Artifact quality scan failed: python runtime smoke crashed for 'tests/test_product.py'"]
+        )
+        is False
+    )
 
 
 def test_materialization_bridge_schedule_drift_fails_closed(
@@ -2356,14 +2396,55 @@ def test_java_post_execution_junit_dependency_runs_runtime_binding(
 
     payloads = [item["result"] for item in results]
     source_tools = [payload["source_tool"] for payload in payloads]
-    assert source_tools == ["deterministic_java_test_dependency_repair"]
-    assert "deterministic_java_post_repair" not in source_tools
+    assert source_tools == ["deterministic_java_post_repair"]
     updated = target.read_text(encoding="utf-8")
     assert "org.junit" not in updated
     assert "assertEquals" not in updated
     assert "public static void main" in updated
     repair_kernel = payloads[0]["repair_kernel"]
     assert repair_kernel["owner_cell"] == "director.runtime"
+    assert repair_kernel["planning_preflight"]["plan_summary"]["rule_id"] == "java.post_execution_conservative"
+
+
+def test_java_post_execution_eof_truncation_runs_aggregate_runtime_binding(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    relative_path = "src/test/java/polaris/factory/RhythmEngineTest.java"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "package polaris.factory;\n\n"
+        "public final class RhythmEngineTest {\n"
+        "    public static void main(String[] args) {\n"
+        "        int defaultRc = Main.run(new String[]{});\n"
+        '        check("cli",\n',
+        encoding="utf-8",
+    )
+    raw_error = (
+        f'{target}:6: error: reached end of file while parsing\n        check("cli",\n                    ^\n1 error'
+    )
+    adapter = _FakeAdapter(tmp_path)
+    adapter.artifact_quality_errors = [raw_error]
+    monkeypatch.setattr(post_execution_repair_bridge, "DirectorToolExecutor", _FakeDirectorToolExecutor)
+
+    results = post_execution_repair_bridge._run_java_post_repairs(
+        adapter,
+        tmp_path,
+        task_id="task-java-eof-runtime",
+    )
+
+    payloads = [item["result"] for item in results]
+    source_tools = [payload["source_tool"] for payload in payloads]
+    assert source_tools == ["deterministic_java_post_repair"]
+    updated = target.read_text(encoding="utf-8")
+    assert 'check("cli",' not in updated
+    assert updated.endswith("}\n}\n")
+    repair_kernel = payloads[0]["repair_kernel"]
+    assert repair_kernel["owner_cell"] == "director.runtime"
+    assert repair_kernel["planning_preflight"]["plan_summary"]["rule_id"] == "java.post_execution_conservative"
+    assert repair_kernel["planning_preflight"]["diagnostic_count"] == 1
+    assert payloads[0]["operation"] == "edit_file"
 
 
 def test_post_execution_runtime_bound_repair_passes_convergence_verifier(

@@ -53,6 +53,37 @@ _MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS = (
     "deterministic_rust_unresolved_pub_use_repair",
     "deterministic_rust_trait_import_repair",
 )
+_MATERIALIZATION_RUNTIME_COVERAGE_SOURCE_TOOLS = frozenset(_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS)
+
+
+def has_materialization_quality_runtime_repair_coverage(artifact_quality_errors: list[str]) -> bool:
+    """Return true when runtime coverage maps diagnostics to this bridge's executable schedule."""
+
+    if not artifact_quality_errors:
+        return False
+    with suppress(RuntimeError, TypeError, ValueError):
+        coverage = _project_coverage_preaudit(artifact_quality_errors)
+        return _coverage_has_materialization_runtime_source_tool(coverage)
+    return False
+
+
+def _coverage_has_materialization_runtime_source_tool(coverage: Mapping[str, Any]) -> bool:
+    items = coverage.get("items") if isinstance(coverage, Mapping) else None
+    if not isinstance(items, list | tuple):
+        return False
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        if not bool(item.get("executable_runtime_plan_matched")):
+            continue
+        source_tools = item.get("matched_source_tools")
+        if not isinstance(source_tools, list | tuple):
+            continue
+        if any(
+            str(source_tool or "") in _MATERIALIZATION_RUNTIME_COVERAGE_SOURCE_TOOLS for source_tool in source_tools
+        ):
+            return True
+    return False
 
 
 def run_materialization_quality_repairs(
@@ -206,6 +237,7 @@ def _run_legacy_materialization_quality_repair_step(
         return _run_materialization_go_import(
             adapter,
             task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
             convergence_verifier=convergence_verifier,
         )
     raise RuntimeError(f"materialization quality repair step has no legacy runner: {step_id}")
@@ -551,6 +583,7 @@ def _run_materialization_go_import(
     adapter: Any,
     *,
     task_id: str,
+    artifact_quality_errors: list[str],
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     from .deterministic_repairs.generic_repairs import (
@@ -560,6 +593,7 @@ def _run_materialization_go_import(
     return _apply_deterministic_go_module_import_repair(
         adapter,
         task_id=task_id,
+        artifact_quality_errors=artifact_quality_errors,
         convergence_verifier=convergence_verifier,
     )
 

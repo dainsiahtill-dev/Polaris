@@ -30,6 +30,7 @@ from scripts.factory_bench.run_factory_bench import (
     build_director_repair_coverage_gap_summary,
     build_requirements_doc,
     discover_artifacts,
+    load_workspace_validation_repair_coverage,
     map_factory_run_to_chain_results,
     read_chain_results_from_runtime_dirs,
     resolve_runtime_dirs_for_workspace,
@@ -2530,6 +2531,81 @@ def test_director_repair_coverage_gap_summary_projects_bench_handoff_fields() ->
     factory_gates = record.get("factory_gates")
     assert isinstance(factory_gates, list)
     assert all(gate["gate"] != "director_repair_coverage_gap_summary" for gate in factory_gates)
+
+
+def test_director_repair_coverage_gap_summary_reads_workspace_validation_artifact(tmp_path: Path) -> None:
+    qa_dir = tmp_path / ".polaris" / "qa"
+    qa_dir.mkdir(parents=True)
+    (qa_dir / "latest.workspace-validation.json").write_text(
+        json.dumps(
+            {
+                "repair": {
+                    "director_runtime_repair_coverage": {
+                        "coverage_gap_count": 1,
+                        "coverage_gaps": [
+                            {
+                                "diagnostic": {
+                                    "diagnostic_id": "diag-go-1",
+                                    "code": "go_compile_error",
+                                    "path": "engine/riddle.go",
+                                    "message": "undefined: Riddle",
+                                },
+                                "diagnostic_language": "go",
+                                "diagnostic_archetype": "missing_dependency",
+                                "diagnostic_phase": "quality_repair",
+                                "slot_status": "reserved_slot_available",
+                                "recommended_route": "runtime_rule",
+                                "handoff_recommendation": "runtime_rule_backlog",
+                            }
+                        ],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    record = {
+        "project_id": "L2-03",
+        "run_id": "run-go-gap",
+        "workspace_validation_repair_coverage": load_workspace_validation_repair_coverage(tmp_path, []),
+    }
+
+    summary = build_director_repair_coverage_gap_summary(record, {})
+
+    assert record["workspace_validation_repair_coverage"]["report_count"] == 1
+    assert summary["coverage_gap_count"] == 1
+    assert summary["coverage_gap_languages"] == ["go"]
+    assert summary["coverage_gaps"][0]["path"] == "engine/riddle.go"
+
+
+def test_director_repair_coverage_gap_summary_dedupes_mirrored_validation_reports() -> None:
+    gap = {
+        "diagnostic": {
+            "diagnostic_id": "diag-go-1",
+            "code": "workspace_validation_failed",
+            "path": "",
+            "message": "Workspace validation command failed.",
+        },
+        "diagnostic_language": "go",
+        "diagnostic_archetype": "unknown",
+        "diagnostic_phase": "unknown",
+        "slot_status": "reserved_slot_available",
+        "recommended_route": "llm_repair",
+        "handoff_recommendation": "llm_triage_then_runtime_rule",
+    }
+    report = {"coverage_gap_count": 1, "coverage_gaps": [gap]}
+    record = {
+        "project_id": "L2-03",
+        "run_id": "run-go-gap",
+        "workspace_validation_repair_coverage": {
+            "reports": [report, report],
+        },
+    }
+
+    summary = build_director_repair_coverage_gap_summary(record, {})
+
+    assert summary["coverage_gap_count"] == 1
+    assert len(summary["coverage_gaps"]) == 1
 
 
 # --- R18-B: audit snapshot terminal/non-terminal ---
