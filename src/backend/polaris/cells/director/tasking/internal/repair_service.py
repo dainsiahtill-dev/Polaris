@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,55 @@ if TYPE_CHECKING:
 
     from polaris.domain.verification import ProgressDelta, SoftCheckResult
     from polaris.domain.verification.evidence_collector import EvidenceCollector, EvidencePackage
+
+QAFailureClass = Literal[
+    "passed",
+    "implementation_defect",
+    "scope_mismatch",
+    "contract_ambiguous",
+    "test_environment_failure",
+    "acceptance_invalid",
+    "security_policy_violation",
+    "resource_budget_exhausted",
+    "progress_stalled",
+]
+QAFailureRoute = Literal[
+    "no_action",
+    "director_repair",
+    "ce_replan_required",
+    "pm_revision_required",
+    "infra_retry",
+    "hard_stop",
+]
+QAFailureSeverity = Literal["info", "low", "medium", "high", "critical"]
+
+
+@dataclass(frozen=True)
+class QAFailureClassification:
+    """Typed routing decision for a failed QA/verifier result."""
+
+    failure_class: QAFailureClass
+    route: QAFailureRoute
+    reason: str
+    repairable_by_director: bool
+    severity: QAFailureSeverity = "medium"
+    requires_ce_replan: bool = False
+    requires_pm_revision: bool = False
+    evidence_refs: tuple[str, ...] = ()
+    schema_version: str = "polaris.qa_failure_classification.v1"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "failure_class": self.failure_class,
+            "route": self.route,
+            "reason": self.reason,
+            "repairable_by_director": self.repairable_by_director,
+            "severity": self.severity,
+            "requires_ce_replan": self.requires_ce_replan,
+            "requires_pm_revision": self.requires_pm_revision,
+            "evidence_refs": list(self.evidence_refs),
+        }
 
 
 @dataclass
@@ -85,6 +134,144 @@ class RepairService:
         self._repair_executor = repair_executor
         self._repair_history: list[RepairResult] = []
 
+    def classify_qa_failure(
+        self,
+        *,
+        audit_accepted: bool = False,
+        soft_check: SoftCheckResult | None = None,
+        progress: ProgressDelta | None = None,
+        context: RepairContext | None = None,
+        qa_feedback: str = "",
+        evidence_refs: list[str] | tuple[str, ...] | None = None,
+    ) -> QAFailureClassification:
+        """Classify QA failure routing before starting Director repair."""
+
+        refs = tuple(str(ref) for ref in (evidence_refs or ()) if str(ref).strip())
+        if audit_accepted:
+            return QAFailureClassification(
+                failure_class="passed",
+                route="no_action",
+                reason="Audit passed, no repair needed",
+                repairable_by_director=False,
+                severity="info",
+                evidence_refs=refs,
+            )
+
+        if context is not None and context.build_round >= context.max_build_rounds:
+            return QAFailureClassification(
+                failure_class="resource_budget_exhausted",
+                route="ce_replan_required",
+                reason=f"Build budget exhausted ({context.build_round}/{context.max_build_rounds})",
+                repairable_by_director=False,
+                severity="high",
+                requires_ce_replan=True,
+                evidence_refs=refs,
+            )
+
+        is_stalled = bool(getattr(progress, "is_stalled", False))
+        if (
+            context is not None
+            and is_stalled
+            and context.build_round >= 2
+            and context.stall_rounds >= context.stall_threshold
+        ):
+            return QAFailureClassification(
+                failure_class="progress_stalled",
+                route="ce_replan_required",
+                reason=f"Progress stalled for {context.stall_rounds} rounds",
+                repairable_by_director=False,
+                severity="high",
+                requires_ce_replan=True,
+                evidence_refs=refs,
+            )
+
+        missing_targets = list(getattr(soft_check, "missing_targets", []) or [])
+        if missing_targets:
+            return QAFailureClassification(
+                failure_class="implementation_defect",
+                route="director_repair",
+                reason=f"Missing targets to create: {missing_targets}",
+                repairable_by_director=True,
+                evidence_refs=refs,
+            )
+
+        unresolved_imports = list(getattr(soft_check, "unresolved_imports", []) or [])
+        if unresolved_imports:
+            return QAFailureClassification(
+                failure_class="implementation_defect",
+                route="director_repair",
+                reason=f"Unresolved imports to fix: {unresolved_imports}",
+                repairable_by_director=True,
+                evidence_refs=refs,
+            )
+
+        feedback = qa_feedback.lower()
+        if any(term in feedback for term in ("security policy", "policy violation", "path traversal", "unauthorized")):
+            return QAFailureClassification(
+                failure_class="security_policy_violation",
+                route="hard_stop",
+                reason="QA failure indicates a security or authorization policy violation",
+                repairable_by_director=False,
+                severity="critical",
+                evidence_refs=refs,
+            )
+        if any(
+            term in feedback
+            for term in ("scope mismatch", "outside scope", "target file not declared", "scope expansion")
+        ):
+            return QAFailureClassification(
+                failure_class="scope_mismatch",
+                route="ce_replan_required",
+                reason="QA failure requires CE scope or blueprint replanning",
+                repairable_by_director=False,
+                severity="high",
+                requires_ce_replan=True,
+                evidence_refs=refs,
+            )
+        if any(
+            term in feedback
+            for term in ("contract ambiguous", "ambiguous requirement", "missing acceptance", "clarification")
+        ):
+            return QAFailureClassification(
+                failure_class="contract_ambiguous",
+                route="pm_revision_required",
+                reason="QA failure requires PM contract clarification",
+                repairable_by_director=False,
+                severity="high",
+                requires_pm_revision=True,
+                evidence_refs=refs,
+            )
+        if any(term in feedback for term in ("acceptance invalid", "invalid acceptance", "undeclared acceptance")):
+            return QAFailureClassification(
+                failure_class="acceptance_invalid",
+                route="pm_revision_required",
+                reason="QA failure indicates invalid or undeclared acceptance criteria",
+                repairable_by_director=False,
+                severity="high",
+                requires_pm_revision=True,
+                evidence_refs=refs,
+            )
+        if any(
+            term in feedback
+            for term in ("test environment", "environment failure", "network timeout", "dependency outage")
+        ):
+            return QAFailureClassification(
+                failure_class="test_environment_failure",
+                route="infra_retry",
+                reason="QA failure appears to be caused by test infrastructure or environment",
+                repairable_by_director=False,
+                severity="medium",
+                evidence_refs=refs,
+            )
+
+        return QAFailureClassification(
+            failure_class="implementation_defect",
+            route="director_repair",
+            reason="QA failed with an implementation defect, attempting Director repair",
+            repairable_by_director=True,
+            evidence_refs=refs,
+        )
+
     def should_attempt_repair(
         self,
         audit_accepted: bool,
@@ -103,26 +290,13 @@ class RepairService:
         Returns:
             Tuple of (should_repair, reason)
         """
-        if audit_accepted:
-            return False, "Audit passed, no repair needed"
-
-        # Check build budget
-        if context.build_round >= context.max_build_rounds:
-            return False, f"Build budget exhausted ({context.build_round}/{context.max_build_rounds})"
-
-        # Check stall threshold
-        if progress.is_stalled and context.build_round >= 2 and context.stall_rounds >= context.stall_threshold:
-            return False, f"Progress stalled for {context.stall_rounds} rounds"
-
-        # Check for resolvable issues
-        if soft_check.missing_targets:
-            return True, f"Missing targets to create: {soft_check.missing_targets}"
-
-        if soft_check.unresolved_imports:
-            return True, f"Unresolved imports to fix: {soft_check.unresolved_imports}"
-
-        # Generic repair for QA failure
-        return True, "QA failed, attempting repair"
+        classification = self.classify_qa_failure(
+            audit_accepted=audit_accepted,
+            soft_check=soft_check,
+            progress=progress,
+            context=context,
+        )
+        return classification.repairable_by_director, classification.reason
 
     async def run_repair(
         self,
@@ -230,6 +404,12 @@ class RepairService:
             Tuple of (final_success, all_results, final_message)
         """
         results: list[RepairResult] = []
+        classification = self.classify_qa_failure(
+            qa_feedback=qa_feedback,
+            context=context,
+        )
+        if not classification.repairable_by_director:
+            return False, results, classification.reason
 
         for round_num in range(1, max_repair_rounds + 1):
             result = await self.run_repair(

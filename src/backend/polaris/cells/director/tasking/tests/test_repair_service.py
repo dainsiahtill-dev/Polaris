@@ -116,6 +116,137 @@ class TestRepairService:
         service = RepairService(repair_executor=executor)
         assert service._repair_executor is not None
 
+    def test_qa_failure_classification_to_dict_contract(self) -> None:
+        """Test QA failure classification contract serialization."""
+        from polaris.cells.director.tasking.internal.repair_service import QAFailureClassification
+
+        classification = QAFailureClassification(
+            failure_class="scope_mismatch",
+            route="ce_replan_required",
+            reason="scope changed",
+            repairable_by_director=False,
+            severity="high",
+            requires_ce_replan=True,
+            evidence_refs=("qa/latest.json",),
+        )
+
+        payload = classification.to_dict()
+        assert payload["schema_version"] == "polaris.qa_failure_classification.v1"
+        assert payload["failure_class"] == "scope_mismatch"
+        assert payload["route"] == "ce_replan_required"
+        assert payload["repairable_by_director"] is False
+        assert payload["requires_ce_replan"] is True
+        assert payload["evidence_refs"] == ["qa/latest.json"]
+
+    @pytest.mark.parametrize(
+        ("feedback", "failure_class", "route", "repairable_by_director", "ce_replan", "pm_revision"),
+        [
+            (
+                "scope mismatch: target file not declared by PM contract",
+                "scope_mismatch",
+                "ce_replan_required",
+                False,
+                True,
+                False,
+            ),
+            (
+                "contract ambiguous: missing acceptance for login flow",
+                "contract_ambiguous",
+                "pm_revision_required",
+                False,
+                False,
+                True,
+            ),
+            (
+                "test environment failure: network timeout while installing dependencies",
+                "test_environment_failure",
+                "infra_retry",
+                False,
+                False,
+                False,
+            ),
+            (
+                "acceptance invalid: verifier expects undeclared acceptance behavior",
+                "acceptance_invalid",
+                "pm_revision_required",
+                False,
+                False,
+                True,
+            ),
+            (
+                "security policy violation: unauthorized path traversal attempt",
+                "security_policy_violation",
+                "hard_stop",
+                False,
+                False,
+                False,
+            ),
+        ],
+    )
+    def test_classify_qa_failure_routes_non_director_failures(
+        self,
+        feedback: str,
+        failure_class: str,
+        route: str,
+        repairable_by_director: bool,
+        ce_replan: bool,
+        pm_revision: bool,
+    ) -> None:
+        """Test typed QA failure routing for non-Director outcomes."""
+        from polaris.cells.director.tasking.internal.repair_service import RepairService
+
+        service = RepairService()
+        classification = service.classify_qa_failure(
+            qa_feedback=feedback,
+            evidence_refs=["qa/latest.json"],
+        )
+
+        assert classification.failure_class == failure_class
+        assert classification.route == route
+        assert classification.repairable_by_director is repairable_by_director
+        assert classification.requires_ce_replan is ce_replan
+        assert classification.requires_pm_revision is pm_revision
+        assert classification.evidence_refs == ("qa/latest.json",)
+
+    def test_classify_qa_failure_routes_implementation_defects_to_director(self) -> None:
+        """Test implementation defects remain Director-repairable."""
+        from polaris.cells.director.tasking.internal.repair_service import RepairService
+
+        service = RepairService()
+        mock_soft_check = MagicMock()
+        mock_soft_check.missing_targets = ["src/main.py"]
+        mock_soft_check.unresolved_imports = []
+
+        classification = service.classify_qa_failure(
+            soft_check=mock_soft_check,
+            qa_feedback="ordinary unit test assertion failed",
+        )
+
+        assert classification.failure_class == "implementation_defect"
+        assert classification.route == "director_repair"
+        assert classification.repairable_by_director is True
+
+    @pytest.mark.asyncio
+    async def test_run_repair_loop_blocks_non_director_failure_routes(self) -> None:
+        """Test non-Director QA failure routes do not call the repair executor."""
+        from polaris.cells.director.tasking.internal.repair_service import RepairContext, RepairService
+
+        def executor(brief: str, files: list[str]) -> tuple[list[str], str | None]:
+            raise AssertionError("repair executor must not run for scope mismatch")
+
+        service = RepairService(repair_executor=executor)
+        ctx = RepairContext(task_id="task-1", target_files=["src/main.py"])
+
+        success, results, message = await service.run_repair_loop(
+            qa_feedback="scope mismatch: target file not declared by PM contract",
+            context=ctx,
+            max_repair_rounds=3,
+        )
+
+        assert success is False
+        assert results == []
+        assert "scope" in message.lower() or "replan" in message.lower()
+
     def test_should_attempt_repair_audit_passed(self) -> None:
         """Test should_attempt_repair when audit passed."""
         from polaris.cells.director.tasking.internal.repair_service import RepairContext, RepairService
