@@ -53,6 +53,7 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     build_typescript_readonly_assignment_plan,
     default_repair_rule_registry,
     deterministic_repair_source_tool_known,
+    javascript_syntax as js_syntax,
     normalize_artifact_quality_errors,
     order_repair_plans,
     plan_runtime_repair,
@@ -2476,6 +2477,53 @@ def test_public_runtime_dependency_repair_covers_node_scheme_ts2307() -> None:
     assert planning_payload["plan_summary"]["rule_id"] == "generic.runtime_dependency"
     assert planning_payload["plan_summary"]["operation_count"] == 1
     assert '"@types/node"' in planning_payload["composition_summary"]["patches"][0]["content_after"]
+
+
+def test_public_javascript_missing_test_target_covers_npm_module_not_found() -> None:
+    source_tool = js_syntax.JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL
+    diagnostic = (
+        "step verify failed (exit 1): npm run test :: :diagnostics_channel:328:14)\n"
+        "    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)\n"
+        "    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)\n"
+        "    at node:internal/main/run_main_module:36:49 {\n"
+        "  code: 'MODULE_NOT_FOUND',\n"
+        "  requireStack: []\n"
+        "}\n"
+    )
+    package_json = (
+        '{"name":"node-ts-app","private":true,"main":"dist/main.js",'
+        '"scripts":{"build":"tsc -p tsconfig.json","test":"npm run build && node tests/smoke.js"},'
+        '"devDependencies":{"typescript":"5.4.5"}}\n'
+    )
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,)))
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={
+                "package.json": package_json,
+                "tsconfig.json": '{"compilerOptions":{"outDir":"dist","rootDir":"src"}}\n',
+                "src/main.ts": "console.log('ok');\n",
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    )
+    coverage_payload = coverage.to_dict()
+    planning_payload = planning_result.to_dict()
+
+    assert coverage_payload["covered_diagnostic_count"] == 1
+    assert coverage_payload["uncovered_diagnostic_count"] == 0
+    assert coverage_payload["items"][0]["matched_source_tools"] == [source_tool]
+    assert planning_payload["ok"] is True
+    assert planning_payload["planned"] is True
+    assert planning_payload["plan_summary"]["rule_id"] == "javascript.test_missing_target"
+    assert planning_payload["plan_summary"]["operation_count"] == 1
+    assert planning_payload["composition_summary"]["changed_paths"] == ["tests/smoke.js"]
+    smoke_content = planning_payload["composition_summary"]["patches"][0]["content_after"]
+    assert "childProcess.execFileSync" in smoke_content
+    assert '"dist/main.js"' in smoke_content
+    assert "assert.ok(packageJson.name" in smoke_content
 
 
 def test_public_typescript_tsconfig_repair_plans_import_meta_module_option() -> None:

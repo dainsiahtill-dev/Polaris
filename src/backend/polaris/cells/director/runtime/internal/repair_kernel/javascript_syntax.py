@@ -34,6 +34,10 @@ _MISSING_NAMED_EXPORT_RE = re.compile(
     r"The requested module ['\"](?P<module>\.[^'\"]+)['\"] does not provide an export named "
     r"['\"](?P<symbol>[A-Za-z_$][\w$]*)['\"]",
 )
+_NODE_LOCAL_TEST_TARGET_RE = re.compile(
+    r"(?:^|[;&|]\s*)node\s+(?!-)(?P<target>(?:\./)?(?:tests?|scripts?)/[^\s;&|]+)",
+    re.IGNORECASE,
+)
 _JS_RUNTIME_FILE_RE = re.compile(r"(?:file://)?(?P<path>/[^\s:]+\.js):(?P<line>\d+)")
 _JS_MISSING_METHOD_RUNTIME_RE = re.compile(
     r"(?P<file>(?:file://)?/[^\s:]+\.js):(?P<line>\d+).*?"
@@ -221,27 +225,29 @@ def build_javascript_test_missing_target_plan(
 
     normalized_base = _normalize_base_files(base_files)
     declared_paths = _declared_frontend_paths(normalized_base)
-    if not any(path.endswith(".html") for path in declared_paths):
-        return None
-    if not any(PurePosixPath(path).suffix.lower() in {".js", ".mjs", ".cjs"} for path in declared_paths):
-        return None
     matched_diagnostics = tuple(
         diagnostic for diagnostic in diagnostics if _is_javascript_test_missing_target_diagnostic(diagnostic)
     )
     operations: list[RepairOperation] = []
-    for diagnostic in matched_diagnostics:
-        target = _normalize_repair_path(str(diagnostic.path or ""))
+    for diagnostic, target in _missing_javascript_test_targets(
+        base_files=normalized_base,
+        diagnostics=matched_diagnostics,
+    ):
         if not target or target in normalized_base:
             continue
+        content = build_javascript_node_smoke_test_content(target, normalized_base)
+        if _can_build_frontend_smoke_test(declared_paths):
+            content = build_javascript_frontend_smoke_test_content(target, declared_paths)
         operations.append(
             RepairOperation(
                 kind="write_file",
                 path=target,
-                content=build_javascript_frontend_smoke_test_content(target, declared_paths),
+                content=content,
+                before_hash=sha256_text(""),
                 metadata={
                     "repair_kind": "javascript_test_missing_target",
                     "declared_files": list(declared_paths),
-                    "write_file_reason": "new_javascript_frontend_smoke_target",
+                    "write_file_reason": "new_javascript_smoke_target",
                     "diagnostic_id": diagnostic.diagnostic_id,
                 },
             )
@@ -536,6 +542,59 @@ console.log(`frontend smoke checks passed for ${{declaredFiles.length}} declared
 """
 
 
+def build_javascript_node_smoke_test_content(test_rel_path: str, base_files: Mapping[str, str]) -> str:
+    """Return a deterministic CommonJS smoke test for a generated Node package."""
+
+    package_payload = _parse_package_json(str(base_files.get("package.json") or "")) or {}
+    entrypoint = _compiled_typescript_entrypoint(base_files, package_payload)
+    source_files = [
+        path
+        for path in sorted(base_files)
+        if path.startswith("src/") and PurePosixPath(path).suffix.lower() in {".ts", ".tsx", ".js", ".mjs", ".cjs"}
+    ]
+    root_depth = len(PurePosixPath(test_rel_path).parent.parts)
+    root_args = ", ".join(["'..'"] * root_depth)
+    root_expr = f"path.resolve(__dirname, {root_args})" if root_args else "path.resolve(__dirname)"
+    source_json = json.dumps(source_files[:12], ensure_ascii=True)
+    entrypoint_json = json.dumps(entrypoint, ensure_ascii=True)
+    return f"""const assert = require('assert');
+const childProcess = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+const projectRoot = {root_expr};
+const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
+const entrypoint = {entrypoint_json};
+const sourceFiles = {source_json};
+const entrypointPath = path.join(projectRoot, entrypoint);
+
+assert.ok(packageJson.name, 'package name is required');
+assert.ok(packageJson.scripts && packageJson.scripts.build, 'build script is required');
+assert.ok(packageJson.scripts && packageJson.scripts.test, 'test script is required');
+assert.ok(entrypoint.endsWith('.js'), 'compiled Node entrypoint must be JavaScript');
+assert.ok(fs.existsSync(entrypointPath), `compiled entrypoint missing: ${{entrypoint}}`);
+assert.ok(sourceFiles.length > 0, 'at least one source file is required');
+
+for (const file of sourceFiles) {{
+  const absolutePath = path.join(projectRoot, file);
+  assert.ok(fs.existsSync(absolutePath), `missing source file ${{file}}`);
+  assert.ok(fs.readFileSync(absolutePath, 'utf8').trim().length > 0, `empty source file ${{file}}`);
+}}
+
+let output = '';
+assert.doesNotThrow(() => {{
+  output = childProcess.execFileSync(process.execPath, [entrypointPath], {{
+    cwd: projectRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }});
+}}, 'compiled entrypoint should execute');
+assert.strictEqual(typeof output, 'string', 'entrypoint output must be string');
+
+console.log(`node smoke checks passed for ${{sourceFiles.length}} source files`);
+"""
+
+
 def _normalize_base_files(base_files: Mapping[str, str]) -> dict[str, str]:
     return {
         normalized: str(content or "")
@@ -718,10 +777,51 @@ def _declared_frontend_paths(base_files: Mapping[str, str]) -> tuple[str, ...]:
     )
 
 
+def _can_build_frontend_smoke_test(declared_paths: Sequence[str]) -> bool:
+    return any(path.endswith(".html") for path in declared_paths) and any(
+        PurePosixPath(path).suffix.lower() in {".js", ".mjs", ".cjs"} for path in declared_paths
+    )
+
+
 def _is_javascript_test_missing_target_diagnostic(diagnostic: RepairDiagnostic) -> bool:
-    if diagnostic.code != "declared_target_missing":
+    if diagnostic.code == "declared_target_missing":
+        return _is_javascript_test_target_path(str(diagnostic.path or ""))
+    if diagnostic.code != "artifact_quality_error":
         return False
-    return _is_javascript_test_target_path(str(diagnostic.path or ""))
+    raw = str(diagnostic.raw or diagnostic.message or "").lower()
+    return "npm run test" in raw and ("module_not_found" in raw or "cannot find module" in raw)
+
+
+def _missing_javascript_test_targets(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+) -> tuple[tuple[RepairDiagnostic, str], ...]:
+    targets: list[tuple[RepairDiagnostic, str]] = []
+    inferred_targets = _node_test_targets_from_package(base_files)
+    for diagnostic in diagnostics:
+        target = _normalize_repair_path(str(diagnostic.path or ""))
+        if target:
+            targets.append((diagnostic, target))
+            continue
+        targets.extend((diagnostic, inferred_target) for inferred_target in inferred_targets)
+    return tuple((diagnostic, target) for diagnostic, target in targets if _is_javascript_test_target_path(target))
+
+
+def _node_test_targets_from_package(base_files: Mapping[str, str]) -> tuple[str, ...]:
+    package_payload = _parse_package_json(str(base_files.get("package.json") or ""))
+    if package_payload is None:
+        return ()
+    scripts = package_payload.get("scripts")
+    if not isinstance(scripts, Mapping):
+        return ()
+    test_script = str(scripts.get("test") or "")
+    targets: list[str] = []
+    for match in _NODE_LOCAL_TEST_TARGET_RE.finditer(test_script):
+        target = _normalize_repair_path(str(match.group("target") or ""))
+        if target:
+            targets.append(target)
+    return tuple(dict.fromkeys(targets))
 
 
 def _is_javascript_test_target_path(path: str) -> bool:
@@ -1062,6 +1162,7 @@ __all__ = [
     "build_javascript_frontend_smoke_test_content",
     "build_javascript_missing_export_plan",
     "build_javascript_missing_method_runtime_plan",
+    "build_javascript_node_smoke_test_content",
     "build_javascript_test_missing_target_plan",
     "build_node_test_script_contract_plan",
     "build_npm_script_contract_plan",
