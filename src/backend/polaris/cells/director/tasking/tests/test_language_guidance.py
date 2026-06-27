@@ -273,6 +273,76 @@ def test_execution_strategy_overrides_project_to_context_gateway_controls() -> N
     assert metadata["cognitive_strategy_override"]["task_execution"]["schema_version"] == strategy.schema_version
 
 
+def test_execution_strategy_overrides_publish_execution_envelope_to_context_and_metadata() -> None:
+    from polaris.cells.director.tasking.internal.execution_strategy import apply_execution_strategy_overrides
+
+    profile = resolve_director_execution_profile(
+        subject="Implement Python CLI",
+        description="Build the scoped CLI and tests",
+        metadata={"project_type": "cli", "language": "python"},
+        target_files=["src/main.py"],
+        scope_paths=["src"],
+    )
+    strategy = resolve_director_execution_strategy(profile)
+    strict_handoff_decision = {
+        "schema_version": "polaris.ce_handoff_decision.v1",
+        "decision_id": "ce-handoff-1",
+        "task_id": "TASK-1",
+        "blueprint_id": "ce_TASK-1",
+        "allowed": True,
+        "decision_hash": "handoff-hash",
+        "bindings": {
+            "pm_contract_ref": "tasks/plan.json",
+            "pm_contract_hash": "pm-hash",
+            "blueprint_ref": "runtime/blueprints/ce_TASK-1.json",
+            "blueprint_hash": "blueprint-hash",
+            "execution_profile_ref": "runtime/contracts/profile.json",
+            "execution_profile_hash": "profile-hash",
+        },
+    }
+    context: dict[str, Any] = {
+        "workspace": "/workspace",
+        "run_id": "run-1",
+        "trace_id": "trace-1",
+        "ce_handoff_decision": strict_handoff_decision,
+    }
+    metadata: dict[str, Any] = {
+        "task_id": "TASK-1",
+        "job_token": {
+            "token_id": "job-1",
+            "allowed_paths": ["src/main.py"],
+            "target_files": ["src/main.py"],
+            "allowed_commands": ["python --version"],
+        },
+    }
+
+    apply_execution_strategy_overrides(
+        context=context,
+        metadata=metadata,
+        profile=profile,
+        strategy=strategy,
+    )
+
+    envelope = context["director_execution_envelope"]
+    assert envelope == context["task_execution_envelope"]
+    assert envelope == metadata["director_execution_envelope"]
+    assert context["execution_envelope_hash"] == envelope["envelope_hash"]
+    assert metadata["execution_envelope_hash"] == envelope["envelope_hash"]
+    assert envelope["pm_contract"] == {"ref": "tasks/plan.json", "hash": "pm-hash"}
+    assert envelope["ce_blueprint"] == {
+        "ref": "runtime/blueprints/ce_TASK-1.json",
+        "hash": "blueprint-hash",
+    }
+    assert envelope["handoff_decision"] == {"ref": "", "hash": "handoff-hash", "allowed": True}
+    assert envelope["execution_profile"] == {
+        "ref": "runtime/contracts/profile.json",
+        "hash": "profile-hash",
+    }
+    assert envelope["authorization"]["capability_token_ref"] == "job-1"
+    assert envelope["authorization"]["allowed_write_paths"] == ["src/main.py"]
+    assert envelope["authorization"]["allowed_commands"] == ["python --version"]
+
+
 def test_legacy_task_classifier_delegates_to_execution_profile() -> None:
     task = MagicMock()
     task.subject = "Build service"
