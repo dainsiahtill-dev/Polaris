@@ -453,7 +453,7 @@ class TestChiefEngineerBlueprintPublicService:
         assert persisted["target_files"] == list(result.target_files)
         assert persisted["contract_completeness"]["handoff_ready"] is True
 
-    def test_generate_task_blueprint_blocks_domain_mismatched_handoff(self, tmp_path) -> None:
+    def test_generate_task_blueprint_does_not_block_path_only_domain_mismatch(self, tmp_path) -> None:
         cmd = GenerateTaskBlueprintCommandV1(
             task_id="TASK-L2-RUST",
             workspace=str(tmp_path),
@@ -503,11 +503,71 @@ class TestChiefEngineerBlueprintPublicService:
         assert result.ok is True
         persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
         assert isinstance(persisted, dict)
-        assert persisted["contract_completeness"]["handoff_ready"] is False
-        assert persisted["handoff_ready"] is False
+        assert persisted["contract_completeness"]["handoff_ready"] is True
+        assert persisted["handoff_ready"] is True
         semantic_alignment = persisted["contract_completeness"]["semantic_alignment"]
         assert semantic_alignment["expected_terms"] == ["budget", "port", "reef", "treasure"]
         assert semantic_alignment["target_file_matches"] == []
+        assert semantic_alignment["advisory"]
+        assert persisted["contract_completeness"]["semantic_blockers"] == []
+        governance = persisted["governance"]["quality_gate"]
+        assert governance["passed"] is True
+        assert governance["blockers"] == []
+
+    def test_generate_task_blueprint_blocks_domain_mismatched_planning_text(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-L2-RUST-MISMATCHED-PLAN",
+            workspace=str(tmp_path),
+            objective="Build flavor recipe planner",
+            context={
+                "task_title": "Flavor recipe planner",
+                "target_files": [
+                    "src/models/flavor.rs",
+                    "src/models/recipe.rs",
+                    "src/engine/palette_rules.rs",
+                    "src/engine/plating_runner.rs",
+                ],
+                "acceptance_criteria": [
+                    "cargo test passes",
+                    "recipe behavior tests pass",
+                ],
+                "execution_checklist": [
+                    "Implement flavor and recipe models",
+                    "Implement palette rules and plating runner",
+                ],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "product_summary": {
+                        "intent": "Deliver a pirate treasure budget planner.",
+                        "core_terms": ["treasure", "budget", "port", "reef"],
+                    },
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "product_intent": {
+                        "subject": "pirate treasure budget planner",
+                        "primary_entities": ["treasure", "budget", "port", "reef"],
+                    },
+                    "behavior_contract": {
+                        "rule_matrix": [
+                            "treasure cargo affects route budget",
+                            "port fees affect unlock decisions",
+                            "reef danger changes final recommendation",
+                        ],
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["contract_completeness"]["handoff_ready"] is False
+        assert persisted["handoff_ready"] is False
+        semantic_alignment = persisted["contract_completeness"]["semantic_alignment"]
+        assert semantic_alignment["planning_text_matches"] == []
         assert persisted["contract_completeness"]["semantic_blockers"]
         governance = persisted["governance"]["quality_gate"]
         assert governance["passed"] is False

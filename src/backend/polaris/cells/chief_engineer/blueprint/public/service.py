@@ -239,6 +239,7 @@ def _semantic_alignment_audit(
             "required_term_count": 0,
             "target_file_matches": [],
             "planning_text_matches": [],
+            "advisory": [],
             "blockers": [],
         }
 
@@ -250,9 +251,10 @@ def _semantic_alignment_audit(
     planning_matches = sorted(expected_set & planning_tokens)
 
     blockers: list[str] = []
+    advisory: list[str] = []
     minimum_target_matches = min(required_term_count, 2)
     if len(target_matches) < minimum_target_matches:
-        blockers.append(
+        advisory.append(
             "semantic_alignment.target_files: "
             f"matched {len(target_matches)}/{minimum_target_matches} required domain terms"
         )
@@ -267,6 +269,7 @@ def _semantic_alignment_audit(
         "required_term_count": required_term_count,
         "target_file_matches": target_matches,
         "planning_text_matches": planning_matches,
+        "advisory": advisory,
         "blockers": blockers,
     }
 

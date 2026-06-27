@@ -24,7 +24,11 @@ if TYPE_CHECKING:
 
     from polaris.cells.orchestration.orchestration_engine.public.service import OrchestrationCommandService
 
-from polaris.cells.chief_engineer.blueprint.public import GenerateTaskBlueprintCommandV1, generate_task_blueprint
+from polaris.cells.chief_engineer.blueprint.public import (
+    GenerateTaskBlueprintCommandV1,
+    evaluate_handoff_decision_for_blueprint,
+    generate_task_blueprint,
+)
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
 from polaris.cells.roles.kernel.public.service import QualityChecker
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleTaskCommandV1
@@ -845,6 +849,148 @@ class OrchestrationStageExecutor:
                 ids.append(task_id)
             return ids
         return self._director_task_ids_from_pm_tasks(pm_tasks) or None
+
+    def _read_json_artifact_payload(self, relative_path: str) -> dict[str, Any]:
+        target = self._artifact_path(relative_path)
+        if not target.exists() or not target.is_file():
+            return {}
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError, UnicodeDecodeError):
+            return {}
+        return dict(payload) if isinstance(payload, dict) else {}
+
+    def _load_chief_engineer_review_payload(self, *, run_id: str = "") -> dict[str, Any]:
+        candidates: list[str] = []
+        if str(run_id or "").strip():
+            candidates.append(f"runtime/state/blueprints/{run_id}.review.json")
+        candidates.append("workspace/blueprints/latest.review.json")
+        for candidate in candidates:
+            payload = self._read_json_artifact_payload(candidate)
+            if payload:
+                return payload
+        return {}
+
+    def _latest_blueprint_rows_from_workspace(self) -> list[dict[str, Any]]:
+        blueprint_dir = self.workspace / ".polaris" / "blueprints"
+        if not blueprint_dir.is_dir():
+            return []
+
+        rows_by_task: dict[str, tuple[float, dict[str, Any]]] = {}
+        for path in sorted(blueprint_dir.glob("ce_*.json")):
+            if not path.is_file():
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, TypeError, ValueError, UnicodeDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            task_id = str(payload.get("task_id") or "").strip()
+            blueprint_id = str(payload.get("blueprint_id") or path.stem).strip()
+            if not task_id or not blueprint_id:
+                continue
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            row = {
+                "task_id": task_id,
+                "blueprint_id": blueprint_id,
+                "blueprint_path": f"workspace/blueprints/{path.name}",
+            }
+            existing = rows_by_task.get(task_id)
+            if existing is None or mtime >= existing[0]:
+                rows_by_task[task_id] = (mtime, row)
+        return [row for _, row in rows_by_task.values()]
+
+    def _chief_engineer_handoff_signals_for_director(
+        self,
+        pm_tasks: list[dict[str, Any]],
+        *,
+        run_id: str = "",
+    ) -> list[dict[str, Any]]:
+        """Validate PM task contracts have handoff-ready CE blueprints."""
+
+        expected_task_ids = [self._task_id(task, index) for index, task in enumerate(pm_tasks, start=1)]
+        expected_task_ids = [task_id for task_id in expected_task_ids if task_id]
+        if not expected_task_ids:
+            return []
+
+        review_payload = self._load_chief_engineer_review_payload(run_id=run_id)
+        raw_rows = review_payload.get("blueprints") if isinstance(review_payload, dict) else None
+        rows = [dict(item) for item in raw_rows if isinstance(item, dict)] if isinstance(raw_rows, list) else []
+        if not rows:
+            rows = self._latest_blueprint_rows_from_workspace()
+
+        rows_by_task: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            task_id = str(row.get("task_id") or "").strip()
+            if task_id:
+                rows_by_task[task_id] = row
+
+        signals: list[dict[str, Any]] = []
+        if not rows_by_task:
+            return [
+                {
+                    "code": "director.chief_engineer_handoff_missing",
+                    "severity": "error",
+                    "detail": "Director dispatch requires Chief Engineer review evidence before execution.",
+                    "expected_task_ids": expected_task_ids,
+                    "review_artifact_found": bool(review_payload),
+                }
+            ]
+
+        for task_id in expected_task_ids:
+            blueprint_row = rows_by_task.get(task_id)
+            if blueprint_row is None:
+                signals.append(
+                    {
+                        "code": "director.chief_engineer_blueprint_missing_for_task",
+                        "severity": "error",
+                        "detail": "No Chief Engineer blueprint row was found for PM task before Director dispatch.",
+                        "task_id": task_id,
+                    }
+                )
+                continue
+
+            blueprint_id = str(blueprint_row.get("blueprint_id") or "").strip()
+            if not blueprint_id:
+                signals.append(
+                    {
+                        "code": "director.chief_engineer_blueprint_id_missing",
+                        "severity": "error",
+                        "detail": "Chief Engineer blueprint row is missing blueprint_id.",
+                        "task_id": task_id,
+                    }
+                )
+                continue
+
+            decision = evaluate_handoff_decision_for_blueprint(str(self.workspace), blueprint_id)
+            if decision is None:
+                signals.append(
+                    {
+                        "code": "director.chief_engineer_blueprint_unreadable",
+                        "severity": "error",
+                        "detail": "Chief Engineer blueprint could not be loaded for handoff validation.",
+                        "task_id": task_id,
+                        "blueprint_id": blueprint_id,
+                    }
+                )
+                continue
+            if not decision.allowed:
+                signals.append(
+                    {
+                        "code": "director.chief_engineer_handoff_blocked",
+                        "severity": "error",
+                        "detail": decision.reason,
+                        "task_id": task_id,
+                        "blueprint_id": blueprint_id,
+                        "blockers": list(decision.blockers),
+                        "handoff_decision": decision.to_dict(),
+                    }
+                )
+        return signals
 
     @staticmethod
     def _task_string(task: dict[str, Any], *keys: str) -> str:
@@ -2897,6 +3043,31 @@ class OrchestrationStageExecutor:
                     }
                 )
 
+            handoff_decision = evaluate_handoff_decision_for_blueprint(str(self.workspace), result.blueprint_id)
+            handoff_payload: dict[str, Any] = handoff_decision.to_dict() if handoff_decision is not None else {}
+            if handoff_decision is None:
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.handoff_decision_unreadable",
+                        "severity": "error",
+                        "detail": "Generated CE blueprint could not be loaded for handoff validation.",
+                        "task_id": task_id,
+                        "blueprint_id": result.blueprint_id,
+                    }
+                )
+            elif not handoff_decision.allowed:
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.handoff_blocked",
+                        "severity": "error",
+                        "detail": handoff_decision.reason,
+                        "task_id": task_id,
+                        "blueprint_id": result.blueprint_id,
+                        "blockers": list(handoff_decision.blockers),
+                        "handoff_decision": handoff_payload,
+                    }
+                )
+
             blueprint_rows.append(
                 {
                     "task_id": result.task_id,
@@ -2906,6 +3077,8 @@ class OrchestrationStageExecutor:
                     "summary": result.summary,
                     "recommendations": list(result.recommendations),
                     "risks": list(result.risks),
+                    "handoff_ready": bool(handoff_decision and handoff_decision.allowed),
+                    "handoff_decision": handoff_payload,
                     "llm_evidence": ce_evidence,
                 }
             )
@@ -3113,6 +3286,12 @@ class OrchestrationStageExecutor:
                     "detail": "TaskBoard has no executable task records",
                 }
             )
+        stage_signals.extend(
+            self._chief_engineer_handoff_signals_for_director(
+                pm_tasks,
+                run_id=run.id,
+            )
+        )
 
         if not any(str(item.get("severity") or "").strip().lower() == "error" for item in stage_signals):
             director_binding_fanout = self._resolve_director_binding_fanout(context)

@@ -20,6 +20,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
 from polaris.cells.roles.adapters.internal.director import execute_method as execute_method_module
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _normalize_director_role_response
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
@@ -99,8 +100,7 @@ def _run_runtime_director_repair(
 ) -> list[dict[str, Any]]:
     workspace = Path(tmp_path)
     base_files = {
-        relative_path: (workspace / relative_path).read_text(encoding="utf-8")
-        for relative_path in relative_paths
+        relative_path: (workspace / relative_path).read_text(encoding="utf-8") for relative_path in relative_paths
     }
     return run_runtime_repair_with_director_tools(
         _make_adapter(tmp_path),
@@ -5247,6 +5247,55 @@ class TestBuildDirectorMessage:
         assert "- construction signatures: class SimulationEngine; runSimulation()" in msg
         assert "- construction verify: npm run build" in msg
         assert "- factory bench project: L1-01 - 发光昆虫花园模拟器" in msg
+
+    def test_includes_persisted_ce_blueprint_contract(self, tmp_path: Any) -> None:
+        blueprint_id = "bp-L1-01-contract"
+        BlueprintPersistence(str(tmp_path)).save(
+            blueprint_id,
+            {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": blueprint_id,
+                "task_id": "TASK-1",
+                "target_files": ["src/engine/SimulationEngine.ts"],
+                "scope_paths": ["src/engine/SimulationEngine.ts"],
+                "acceptance_criteria": ["npm run build passes"],
+                "execution_checklist": ["Write the simulation engine"],
+                "recommendations": ["Run build", "Run smoke test"],
+                "contract_completeness": {
+                    "handoff_ready": True,
+                    "missing_fields": [],
+                    "semantic_blockers": [],
+                    "semantic_alignment": {
+                        "expected_terms": ["firefly", "garden", "simulation"],
+                        "planning_text_matches": ["firefly", "garden", "simulation"],
+                        "target_file_matches": [],
+                        "advisory": ["semantic_alignment.target_files: matched 0/2 required domain terms"],
+                        "blockers": [],
+                    },
+                },
+            },
+        )
+        adapter = _make_adapter(tmp_path)
+
+        msg = adapter._build_director_message(
+            {
+                "subject": "Implement firefly garden simulator",
+                "metadata": {
+                    "blueprint_id": blueprint_id,
+                    "goal": "Create the simulator artifacts",
+                    "target_files": ["src/engine/SimulationEngine.ts"],
+                    "execution_checklist": ["Write the simulation engine"],
+                    "acceptance_criteria": ["npm run build passes"],
+                },
+            }
+        )
+
+        assert "- blueprint_id: bp-L1-01-contract" in msg
+        assert "- handoff_ready: yes" in msg
+        assert "- blueprint target_files: src/engine/SimulationEngine.ts" in msg
+        assert "- blueprint acceptance: npm run build passes" in msg
+        assert "- blueprint execution_checklist: Write the simulation engine" in msg
+        assert "- blueprint expected_terms: firefly, garden, simulation" in msg
 
     def test_message_requires_unittest_and_contract_scoped_python_tests(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from polaris.cells.chief_engineer.blueprint.public import GenerateTaskBlueprintCommandV1, generate_task_blueprint
 from polaris.cells.chief_engineer.blueprint.public.contracts import TaskBlueprintResultV1
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
@@ -35,9 +36,188 @@ def _executor(workspace: Path) -> OrchestrationStageExecutor:
     return OrchestrationStageExecutor(workspace)
 
 
+def _write_review_for_blueprint(
+    executor: OrchestrationStageExecutor,
+    *,
+    run_id: str,
+    task_id: str,
+    blueprint_id: str,
+) -> None:
+    executor._write_json_artifact(
+        f"runtime/state/blueprints/{run_id}.review.json",
+        {
+            "schema_version": "factory.chief_engineer_review.v1",
+            "factory_run_id": run_id,
+            "blueprints": [
+                {
+                    "task_id": task_id,
+                    "blueprint_id": blueprint_id,
+                    "blueprint_path": f"runtime/state/blueprints/{blueprint_id}.json",
+                }
+            ],
+        },
+    )
+
+
+def _write_handoff_ready_review_for_tasks(
+    executor: OrchestrationStageExecutor,
+    *,
+    run_id: str,
+    tasks: list[dict[str, Any]],
+) -> None:
+    rows: list[dict[str, str]] = []
+    for index, task in enumerate(tasks, start=1):
+        task_id = str(task.get("id") or task.get("task_id") or f"TASK-{index}")
+        raw_targets = task.get("target_files")
+        target_files = (
+            [str(item) for item in raw_targets if str(item).strip()]
+            if isinstance(raw_targets, list)
+            else ["src/index.ts"]
+        )
+        result = _generate_domain_blueprint(
+            Path(executor.workspace),
+            task_id=task_id,
+            objective=f"Build pirate treasure budget planner for {task_id}",
+            target_files=target_files,
+            acceptance_criteria=[
+                "treasure, budget, port, and reef behavior tests pass",
+                "project validation passes",
+            ],
+            execution_checklist=[
+                "Implement treasure and budget models",
+                "Implement port fee and reef risk rules",
+            ],
+        )
+        assert result.ok is True
+        rows.append(
+            {
+                "task_id": task_id,
+                "blueprint_id": result.blueprint_id,
+                "blueprint_path": f"runtime/state/blueprints/{result.blueprint_id}.json",
+            }
+        )
+    executor._write_json_artifact(
+        f"runtime/state/blueprints/{run_id}.review.json",
+        {
+            "schema_version": "factory.chief_engineer_review.v1",
+            "factory_run_id": run_id,
+            "blueprints": rows,
+        },
+    )
+
+
+def _generate_domain_blueprint(
+    workspace: Path,
+    *,
+    task_id: str,
+    objective: str,
+    target_files: list[str],
+    acceptance_criteria: list[str],
+    execution_checklist: list[str],
+) -> TaskBlueprintResultV1:
+    return generate_task_blueprint(
+        GenerateTaskBlueprintCommandV1(
+            task_id=task_id,
+            workspace=str(workspace),
+            objective=objective,
+            context={
+                "task_title": objective,
+                "target_files": target_files,
+                "acceptance_criteria": acceptance_criteria,
+                "execution_checklist": execution_checklist,
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "product_summary": {
+                        "intent": "Deliver a pirate treasure budget planner.",
+                        "core_terms": ["treasure", "budget", "port", "reef"],
+                    },
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "product_intent": {
+                        "subject": "pirate treasure budget planner",
+                        "primary_entities": ["treasure", "budget", "port", "reef"],
+                    },
+                },
+            },
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pure text-shaping helpers
 # ---------------------------------------------------------------------------
+
+
+class TestChiefEngineerHandoffGuards:
+    def test_director_handoff_guard_allows_ready_blueprint(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        result = _generate_domain_blueprint(
+            tmp_path,
+            task_id="TASK-1",
+            objective="Build pirate treasure budget planner",
+            target_files=["models/capsule.go", "engine/museum.go"],
+            acceptance_criteria=[
+                "treasure, budget, port, and reef behavior tests pass",
+                "go test ./... passes",
+            ],
+            execution_checklist=[
+                "Implement treasure and budget models",
+                "Implement port fee and reef risk rules",
+            ],
+        )
+        assert result.ok is True
+        _write_review_for_blueprint(
+            executor,
+            run_id="run-1",
+            task_id="TASK-1",
+            blueprint_id=result.blueprint_id,
+        )
+
+        signals = executor._chief_engineer_handoff_signals_for_director(
+            [{"id": "TASK-1", "target_files": ["models/capsule.go"]}],
+            run_id="run-1",
+        )
+
+        assert signals == []
+
+    def test_director_handoff_guard_blocks_missing_blueprint(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+
+        signals = executor._chief_engineer_handoff_signals_for_director(
+            [{"id": "TASK-1", "target_files": ["models/capsule.go"]}],
+            run_id="run-1",
+        )
+
+        assert [signal["code"] for signal in signals] == ["director.chief_engineer_handoff_missing"]
+        assert signals[0]["severity"] == "error"
+
+    def test_director_handoff_guard_blocks_unready_blueprint(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        result = _generate_domain_blueprint(
+            tmp_path,
+            task_id="TASK-1",
+            objective="Build flavor recipe planner",
+            target_files=["models/flavor.go", "engine/palette.go"],
+            acceptance_criteria=["recipe behavior tests pass", "go test ./... passes"],
+            execution_checklist=["Implement flavor model", "Implement palette rules"],
+        )
+        assert result.ok is True
+        _write_review_for_blueprint(
+            executor,
+            run_id="run-1",
+            task_id="TASK-1",
+            blueprint_id=result.blueprint_id,
+        )
+
+        signals = executor._chief_engineer_handoff_signals_for_director(
+            [{"id": "TASK-1", "target_files": ["models/flavor.go"]}],
+            run_id="run-1",
+        )
+
+        assert [signal["code"] for signal in signals] == ["director.chief_engineer_handoff_blocked"]
+        assert signals[0]["severity"] == "error"
+        assert signals[0]["blockers"]
 
 
 class TestTextShapingHelpers:
@@ -2883,21 +3063,18 @@ class TestDirectorDispatchLoop:
                 return True, []
 
         executor = _CaptureTasksExecutor(tmp_path)
-        executor._write_json_artifact(
-            "tasks/plan.json",
-            {
-                "tasks": [
-                    {"id": "TASK-1", "target_files": ["package.json"]},
-                    {"id": "TASK-2", "target_files": ["src/index.ts"]},
-                ]
-            },
-        )
+        tasks = [
+            {"id": "TASK-1", "target_files": ["package.json"]},
+            {"id": "TASK-2", "target_files": ["src/index.ts"]},
+        ]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         run = FactoryRun(
             id="factory-capture-tasks",
             config=FactoryConfig(name="capture-tasks"),
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
@@ -2910,21 +3087,18 @@ class TestDirectorDispatchLoop:
     @pytest.mark.asyncio
     async def test_continues_after_partial_fanout_failure_when_taskboard_progresses(self, tmp_path: Path) -> None:
         executor = _PartialFailureProgressExecutor(tmp_path)
-        executor._write_json_artifact(
-            "tasks/plan.json",
-            {
-                "tasks": [
-                    {"id": "TASK-1", "target_files": ["package.json"]},
-                    {"id": "TASK-2", "target_files": ["src/index.ts"]},
-                ]
-            },
-        )
+        tasks = [
+            {"id": "TASK-1", "target_files": ["package.json"]},
+            {"id": "TASK-2", "target_files": ["src/index.ts"]},
+        ]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         run = FactoryRun(
             id="factory-progress",
             config=FactoryConfig(name="progress"),
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
@@ -3020,21 +3194,18 @@ class TestDirectorDispatchLoop:
                 return True, []
 
         executor = _AllBindingsFailedExecutor(tmp_path)
-        executor._write_json_artifact(
-            "tasks/plan.json",
-            {
-                "tasks": [
-                    {"id": "TASK-1", "target_files": ["package.json"]},
-                    {"id": "TASK-2", "target_files": ["src/index.ts"]},
-                ]
-            },
-        )
+        tasks = [
+            {"id": "TASK-1", "target_files": ["package.json"]},
+            {"id": "TASK-2", "target_files": ["src/index.ts"]},
+        ]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         run = FactoryRun(
             id="factory-all-bindings-failed",
             config=FactoryConfig(name="all-bindings-failed"),
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
@@ -3158,16 +3329,15 @@ class TestDirectorDispatchLoop:
         (tmp_path / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
 
         executor = _MaterializationQualityHandoffExecutor(tmp_path)
-        executor._write_json_artifact(
-            "tasks/plan.json",
-            {"tasks": [{"id": "TASK-1", "target_files": ["package.json", "src/index.ts"]}]},
-        )
+        tasks = [{"id": "TASK-1", "target_files": ["package.json", "src/index.ts"]}]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         run = FactoryRun(
             id="factory-quality-handoff",
             config=FactoryConfig(name="quality-handoff"),
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-22T00:00:00+00:00",
         )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
@@ -3287,16 +3457,12 @@ class TestDirectorDispatchLoop:
         (tmp_path / "tests" / "verify.test.ts").write_text("import '../src/index';\n", encoding="utf-8")
 
         executor = _SingleBindingQualityHandoffExecutor(tmp_path)
-        executor._write_json_artifact(
-            "tasks/plan.json",
-            {
-                "tasks": [
-                    {"id": "TASK-1", "target_files": ["package.json", "src/index.ts"]},
-                    {"id": "TASK-2", "target_files": ["src/engine.ts"], "depends_on": ["TASK-1"]},
-                    {"id": "TASK-3", "target_files": ["tests/verify.test.ts"], "depends_on": ["TASK-2"]},
-                ]
-            },
-        )
+        tasks = [
+            {"id": "TASK-1", "target_files": ["package.json", "src/index.ts"]},
+            {"id": "TASK-2", "target_files": ["src/engine.ts"], "depends_on": ["TASK-1"]},
+            {"id": "TASK-3", "target_files": ["tests/verify.test.ts"], "depends_on": ["TASK-2"]},
+        ]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         executor._write_json_artifact(
             "tasks/task_1.json",
             {
@@ -3317,6 +3483,7 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-23T00:00:00+00:00",
         )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
@@ -3427,21 +3594,18 @@ class TestDirectorDispatchLoop:
                 return True, []
 
         executor = _NoClaimableAfterProgressExecutor(tmp_path)
-        executor._write_json_artifact(
-            "tasks/plan.json",
-            {
-                "tasks": [
-                    {"id": "TASK-1", "target_files": ["src/one.rs"]},
-                    {"id": "TASK-2", "target_files": ["src/two.rs"], "depends_on": ["TASK-1"]},
-                ]
-            },
-        )
+        tasks = [
+            {"id": "TASK-1", "target_files": ["src/one.rs"]},
+            {"id": "TASK-2", "target_files": ["src/two.rs"], "depends_on": ["TASK-1"]},
+        ]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         run = FactoryRun(
             id="factory-no-claimable-after-progress",
             config=FactoryConfig(name="no-claimable-after-progress"),
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-23T00:00:00+00:00",
         )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
@@ -3559,17 +3723,13 @@ class TestDirectorDispatchLoop:
         (tmp_path / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
 
         executor = _MissingWriteReceiptHandoffExecutor(tmp_path)
-        executor._write_json_artifact(
-            "tasks/plan.json",
+        tasks = [
             {
-                "tasks": [
-                    {
-                        "id": "TASK-1",
-                        "target_files": ["package.json", "src/index.ts", "index.html"],
-                    }
-                ]
-            },
-        )
+                "id": "TASK-1",
+                "target_files": ["package.json", "src/index.ts", "index.html"],
+            }
+        ]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         executor._write_json_artifact(
             "tasks/task_1.json",
             {
@@ -3603,6 +3763,7 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-23T00:00:00+00:00",
         )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
@@ -3739,17 +3900,13 @@ class TestDirectorDispatchLoop:
         (tmp_path / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
 
         executor = _IdleUnresolvedHandoffExecutor(tmp_path)
-        executor._write_json_artifact(
-            "tasks/plan.json",
+        tasks = [
             {
-                "tasks": [
-                    {
-                        "id": "TASK-1",
-                        "target_files": ["package.json", "src/index.ts", "index.html", "README.md"],
-                    }
-                ]
-            },
-        )
+                "id": "TASK-1",
+                "target_files": ["package.json", "src/index.ts", "index.html", "README.md"],
+            }
+        ]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         executor._write_json_artifact(
             "tasks/task_1.json",
             {
@@ -3782,6 +3939,7 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-23T00:00:00+00:00",
         )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
@@ -3865,21 +4023,18 @@ class TestDirectorDispatchLoop:
                 return True, []
 
         executor = _NoConvergenceProgressExecutor(tmp_path)
-        executor._write_json_artifact(
-            "tasks/plan.json",
-            {
-                "tasks": [
-                    {"id": "TASK-1", "target_files": ["package.json"]},
-                    {"id": "TASK-2", "target_files": ["src/index.ts"]},
-                ]
-            },
-        )
+        tasks = [
+            {"id": "TASK-1", "target_files": ["package.json"]},
+            {"id": "TASK-2", "target_files": ["src/index.ts"]},
+        ]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         run = FactoryRun(
             id="factory-no-convergence",
             config=FactoryConfig(name="no-convergence"),
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
@@ -3942,16 +4097,15 @@ class TestDirectorDispatchLoop:
                 return True, []
 
         executor = _BlockedUnrollExecutor(tmp_path)
-        executor._write_json_artifact(
-            "tasks/plan.json",
-            {"tasks": [{"id": f"TASK-{idx}", "target_files": [f"src/{idx}.rs"]} for idx in range(1, 6)]},
-        )
+        tasks = [{"id": f"TASK-{idx}", "target_files": [f"src/{idx}.rs"]} for idx in range(1, 6)]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         run = FactoryRun(
             id="factory-blocked-unroll",
             config=FactoryConfig(name="blocked-unroll"),
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-24T00:00:00+00:00",
         )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
@@ -4006,20 +4160,15 @@ class TestDirectorDispatchLoop:
                 return True, []
 
         executor = _TimeoutExecutor(tmp_path)
-        executor._write_json_artifact(
-            "tasks/plan.json",
-            {
-                "tasks": [
-                    {"id": "TASK-1", "target_files": ["src/index.ts"]},
-                ]
-            },
-        )
+        tasks = [{"id": "TASK-1", "target_files": ["src/index.ts"]}]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         run = FactoryRun(
             id="factory-timeout",
             config=FactoryConfig(name="timeout"),
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,

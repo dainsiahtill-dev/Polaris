@@ -118,6 +118,82 @@ def _first_dict_list_payload(*values: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _string_list_payload(value: Any, *, limit: int = 8) -> list[str]:
+    if isinstance(value, str):
+        values = [part.strip() for part in value.split(",") if part.strip()] or (
+            [value.strip()] if value.strip() else []
+        )
+    elif isinstance(value, (list, tuple)):
+        values = [str(item or "").strip() for item in value if str(item or "").strip()]
+    else:
+        values = []
+    return values[: max(int(limit), 0)]
+
+
+def _join_limited_values(label: str, values: list[str]) -> str:
+    return f"- {label}: {', '.join(values)}" if values else ""
+
+
+def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -> list[str]:
+    resolved_blueprint_id = str(blueprint_id or "").strip()
+    if not resolved_blueprint_id:
+        return ["- blueprint_id: not provided"]
+
+    lines = [f"- blueprint_id: {resolved_blueprint_id}"]
+    try:
+        from polaris.cells.chief_engineer.blueprint.public import (
+            BlueprintPersistence,
+            evaluate_handoff_decision_for_blueprint,
+        )
+    except (ImportError, RuntimeError) as exc:
+        lines.append(f"- blueprint_payload: unavailable ({type(exc).__name__})")
+        return lines
+
+    payload = BlueprintPersistence(workspace, ensure_directory=False).load(resolved_blueprint_id)
+    if not isinstance(payload, dict):
+        lines.append("- blueprint_payload: missing or unreadable")
+        return lines
+
+    decision = evaluate_handoff_decision_for_blueprint(workspace, resolved_blueprint_id)
+    if decision is not None:
+        lines.append(f"- handoff_ready: {'yes' if decision.allowed else 'no'} ({decision.reason})")
+        blockers = _string_list_payload(list(decision.blockers), limit=4)
+        if blockers:
+            lines.append(_join_limited_values("handoff blockers", blockers))
+
+    for label, key in (
+        ("blueprint target_files", "target_files"),
+        ("blueprint scope_paths", "scope_paths"),
+        ("blueprint acceptance", "acceptance_criteria"),
+        ("blueprint execution_checklist", "execution_checklist"),
+    ):
+        item = _join_limited_values(label, _string_list_payload(payload.get(key), limit=8))
+        if item:
+            lines.append(item)
+
+    completeness = payload.get("contract_completeness")
+    if isinstance(completeness, dict):
+        missing = _string_list_payload(completeness.get("missing_fields"), limit=6)
+        semantic_blockers = _string_list_payload(completeness.get("semantic_blockers"), limit=4)
+        if missing:
+            lines.append(_join_limited_values("blueprint missing_fields", missing))
+        if semantic_blockers:
+            lines.append(_join_limited_values("blueprint semantic_blockers", semantic_blockers))
+        alignment = completeness.get("semantic_alignment")
+        if isinstance(alignment, dict):
+            expected_terms = _string_list_payload(alignment.get("expected_terms"), limit=8)
+            planning_matches = _string_list_payload(alignment.get("planning_text_matches"), limit=8)
+            advisory = _string_list_payload(alignment.get("advisory"), limit=4)
+            if expected_terms:
+                lines.append(_join_limited_values("blueprint expected_terms", expected_terms))
+            if planning_matches:
+                lines.append(_join_limited_values("blueprint planning_matches", planning_matches))
+            if advisory:
+                lines.append(_join_limited_values("blueprint advisory", advisory))
+
+    return lines[:18]
+
+
 _VERIFICATION_COMMAND_MARKERS = (
     "go test",
     "go run",
@@ -132,7 +208,9 @@ _VERIFICATION_COMMAND_MARKERS = (
     "ruff check",
     "mypy",
 )
-_BACKTICK_VERIFICATION_COMMAND_RE = re.compile(r"`([^`\n]*(?:" + "|".join(re.escape(item) for item in _VERIFICATION_COMMAND_MARKERS) + r")[^`\n]*)`", re.IGNORECASE)
+_BACKTICK_VERIFICATION_COMMAND_RE = re.compile(
+    r"`([^`\n]*(?:" + "|".join(re.escape(item) for item in _VERIFICATION_COMMAND_MARKERS) + r")[^`\n]*)`", re.IGNORECASE
+)
 
 
 def _flatten_verification_command_sources(value: Any) -> list[str]:
@@ -1178,6 +1256,7 @@ class DirectorAdapter(BaseRoleAdapter):
             or runtime_context.get("factory_bench_title")
             or ""
         ).strip()
+        blueprint_handoff_lines = _build_director_blueprint_handoff_lines(self.workspace, blueprint_id)
 
         lines = [
             "PM Task Contract / 任务合同:",
@@ -1206,7 +1285,7 @@ class DirectorAdapter(BaseRoleAdapter):
             *[f"- {item}" for item in verification_commands],
             "",
             "Chief Engineer Blueprint / CE 蓝图交接:",
-            f"- blueprint_id: {blueprint_id}" if blueprint_id else "- blueprint_id: not provided",
+            *blueprint_handoff_lines,
             f"- construction target: {construction_target}" if construction_target else "",
             ("- construction signatures: " + "; ".join(construction_signatures) if construction_signatures else ""),
             f"- construction verify: {construction_verify}" if construction_verify else "",
