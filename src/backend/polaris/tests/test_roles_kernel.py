@@ -532,6 +532,105 @@ class TestRoleToolGateway:
         assert policy["allowed_scope"] == ["src/allowed.py"]
         assert escaped.read_text(encoding="utf-8") == "value = 'original'\n"
 
+    def test_kernel_gateway_execution_envelope_blocks_write_scope_expansion(
+        self,
+        kernel: RoleExecutionKernel,
+        registry: RoleProfileRegistry,
+        temp_workspace: str,
+    ) -> None:
+        """Execution envelope authorization must be a real write guard."""
+        workspace = Path(temp_workspace)
+        escaped = workspace / "src" / "escaped_from_envelope.py"
+        escaped.parent.mkdir(parents=True, exist_ok=True)
+        escaped.write_text("value = 'original'\n", encoding="utf-8")
+        director_profile = registry.get_profile("director")
+        executor = KernelToolExecutor(kernel, temp_workspace)
+        gateway = executor.create_gateway(
+            director_profile,
+            RoleTurnRequest(
+                mode=RoleExecutionMode.CHAT,
+                message="run task",
+                run_id="run-envelope-scope-block",
+                task_id="task-envelope-scope-block",
+                metadata={
+                    "director_execution_envelope": {
+                        "schema_version": "polaris.execution_envelope.v1",
+                        "envelope_hash": "env-scope-hash",
+                        "pm_contract": {"hash": "pm-hash"},
+                        "ce_blueprint": {"hash": "blueprint-hash"},
+                        "handoff_decision": {"allowed": True},
+                        "authorization": {
+                            "capability_token_ref": "job-env-scope",
+                            "allowed_write_paths": ["src/allowed.py"],
+                            "allowed_commands": ["python --version"],
+                        },
+                    }
+                },
+            ),
+        )
+
+        result = gateway.execute_tool(
+            "write_file",
+            {
+                "file": "src/escaped_from_envelope.py",
+                "target_files": ["src/escaped_from_envelope.py"],
+                "content": "value = 'changed'\n",
+            },
+        )
+
+        assert result["success"] is False
+        assert result["error_type"] == "director_write_policy_denied"
+        policy = result["result"]["director_policy"]
+        assert policy["scope_source"] == "runtime_capability"
+        assert policy["allowed_scope"] == ["src/allowed.py"]
+        assert policy["capability_token"]["source"] == "director.execution_envelope.authorization"
+        assert policy["capability_token"]["execution_envelope_hash"] == "env-scope-hash"
+        assert escaped.read_text(encoding="utf-8") == "value = 'original'\n"
+
+    def test_kernel_gateway_execution_envelope_blocks_unlisted_command(
+        self,
+        kernel: RoleExecutionKernel,
+        registry: RoleProfileRegistry,
+        temp_workspace: str,
+    ) -> None:
+        """Execution envelope allowed_commands must be enforced by the executor."""
+        director_profile = registry.get_profile("director")
+        executor = KernelToolExecutor(kernel, temp_workspace)
+        gateway = executor.create_gateway(
+            director_profile,
+            RoleTurnRequest(
+                mode=RoleExecutionMode.CHAT,
+                message="run verification",
+                run_id="run-envelope-command-block",
+                task_id="task-envelope-command-block",
+                metadata={
+                    "director_execution_envelope": {
+                        "schema_version": "polaris.execution_envelope.v1",
+                        "envelope_hash": "env-command-hash",
+                        "pm_contract": {"hash": "pm-hash"},
+                        "ce_blueprint": {"hash": "blueprint-hash"},
+                        "handoff_decision": {"allowed": True},
+                        "authorization": {
+                            "capability_token_ref": "job-env-command",
+                            "allowed_write_paths": ["src/main.py"],
+                            "allowed_commands": ["python --version"],
+                        },
+                    }
+                },
+            ),
+        )
+
+        result = gateway.execute_tool(
+            "execute_command",
+            {"command": "python -m pytest"},
+        )
+
+        assert result["success"] is False
+        assert result["error_type"] == "command_capability_denied"
+        assert result["effect_receipt"]["capability_token"]["allowed_commands"] == ["python --version"]
+        assert result["effect_receipt"]["capability_token"]["source"] == ("director.execution_envelope.authorization")
+        assert result["effect_receipt"]["capability_token"]["execution_envelope_hash"] == ("env-command-hash")
+
     @pytest.mark.asyncio
     async def test_kernel_recreates_gateway_for_same_run_different_task_scope(
         self,
