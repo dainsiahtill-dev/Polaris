@@ -220,6 +220,61 @@ class TestFrontendTestRepairContracts:
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
+    def test_typescript_placeholder_script_rule_does_not_route_to_qa_repair(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+请基于 Architect 阶段产物生成 PM 执行任务合同。
+
+## Original Requirement Excerpt
+# Product Requirements — TypeScript market simulation
+
+## Goal
+- 用 TypeScript 实现管理模拟项目。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。
+
+## Project Metadata
+- 主语言: typescript
+- 项目类型: management_game
+
+## Acceptance Criteria
+- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。
+- Web/visual/simulation/game 项目提供含 <html> 的 index.html 或等价 HTML 入口。
+- package.json 脚本不得是只检查 manifest 的 placeholder 占位脚本; build/test/start 或等价脚本必须实际运行产品入口或核心规则验证。
+- 附 README.md 说明如何运行。
+
+## Deterministic Checks
+- ts_syntax
+- package_scripts
+- content_any:market|fairy|inventory|reputation
+- source_target_coverage:src/**/*.ts
+
+## Source Tree Structure Contract (MANDATORY)
+- 必须包含 `src/` 目录, 核心业务逻辑在 `src/` 下的 `.ts` 文件中。
+- 至少包含 `src/models/`, `src/engine/` 或 `src/core/`, `src/index.ts`。
+- simulation/game/interactive 项目必须包含一个可渲染的场景/引擎核心文件 (如 `src/engine/renderer.ts`, `src/core/simulation.py` 等)。
+""".strip()
+
+        contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+        _normalized, quality = adapter._evaluate_contract_quality(contracts)
+        targets = [target for item in contracts for target in item.get("target_files", [])]
+        serialized = json.dumps(contracts, ensure_ascii=False)
+
+        assert [item["id"] for item in contracts] == ["TASK-1", "TASK-2"]
+        assert all("Placeholder" not in item["title"] for item in contracts)
+        assert "package.json" in targets
+        assert "tsconfig.json" in targets
+        assert "index.html" in targets
+        assert "README.md" in targets
+        assert "src/index.ts" in targets
+        assert "src/engine/renderer.ts" in targets
+        assert any(target.startswith("src/models/") and target.endswith(".ts") for target in targets)
+        assert all(not target.endswith(".py") for target in targets)
+        assert "placeholder_content_detected" not in serialized
+        assert quality["ok"] is True
+        assert (quality.get("score") or 0) >= 80
+
     def test_javascript_directive_does_not_match_java_contracts(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         directive = """

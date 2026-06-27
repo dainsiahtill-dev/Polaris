@@ -196,6 +196,106 @@ def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _compact_llm_blueprint_value(value: Any, *, depth: int = 0) -> Any:
+    """Return a bounded JSON-safe value for advisory CE LLM blueprint data."""
+    if depth > 3:
+        return str(value)[:240]
+    if isinstance(value, dict):
+        compact: dict[str, Any] = {}
+        for key, item in list(value.items())[:24]:
+            token = str(key or "").strip()
+            if not token:
+                continue
+            compact[token] = _compact_llm_blueprint_value(item, depth=depth + 1)
+        return compact
+    if isinstance(value, (list, tuple)):
+        return [_compact_llm_blueprint_value(item, depth=depth + 1) for item in list(value)[:24]]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        if isinstance(value, str):
+            return value.strip()[:800]
+        return value
+    return str(value)[:240]
+
+
+def _plan_field_strings(plan: dict[str, Any], *keys: str, limit: int = 10) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for key in keys:
+        for item in _string_list(plan.get(key)):
+            token = str(item or "").strip()
+            marker = token.casefold()
+            if not token or marker in seen:
+                continue
+            seen.add(marker)
+            rows.append(token)
+            if len(rows) >= limit:
+                return rows
+    return rows
+
+
+def _normalize_llm_blueprint_overlay(value: Any) -> dict[str, Any]:
+    """Normalize CE LLM output into an advisory-only persisted overlay.
+
+    The overlay enriches handoff context but never owns PM contract fields such
+    as target files, dependencies, acceptance criteria, or gate authority.
+    """
+    raw = _mapping(value)
+    if not raw:
+        return {}
+
+    construction_plan = _mapping(raw.get("construction_plan"))
+    scope_for_apply = _string_list(raw.get("scope_for_apply"))
+    risk_flags = _string_list(raw.get("risk_flags"))
+    verification_steps = _plan_field_strings(
+        construction_plan,
+        "verification_steps",
+        "verification_commands",
+        "quality_gates",
+        "gate_commands",
+        "tests",
+        limit=8,
+    )
+    implementation_phases = _plan_field_strings(
+        construction_plan,
+        "phases",
+        "steps",
+        "implementation_steps",
+        "milestones",
+        limit=8,
+    )
+    module_boundaries = _plan_field_strings(
+        construction_plan,
+        "module_boundaries",
+        "modules",
+        "file_plans",
+        "files",
+        limit=8,
+    )
+
+    overlay: dict[str, Any] = {
+        "schema_version": "chief_engineer.llm_blueprint_overlay.v1",
+        "source": "chief_engineer.llm_output",
+        "authoritative": False,
+        "authority": "advisory_only",
+        "construction_plan": _compact_llm_blueprint_value(construction_plan),
+        "scope_for_apply_advisory": scope_for_apply[:16],
+        "risk_flags": risk_flags[:16],
+        "implementation_phases": implementation_phases,
+        "module_boundaries": module_boundaries,
+        "verification_steps": verification_steps,
+        "consumed_keys": sorted(str(key) for key in raw.keys()),
+        "non_overridable_contract_fields": [
+            "target_files",
+            "scope_paths",
+            "acceptance_criteria",
+            "execution_checklist",
+            "dependencies",
+            "handoff_ready",
+        ],
+    }
+    return overlay
+
+
 def _semantic_terms_from_delivery_contracts(
     *,
     delivery_depth_contract: dict[str, Any] | None,
@@ -544,6 +644,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     dependencies = list(contract_fields["dependencies"])
     delivery_plan_document = dict(contract_fields["delivery_plan_document"])
     delivery_depth_contract = dict(contract_fields["delivery_depth_contract"])
+    llm_blueprint_overlay = _normalize_llm_blueprint_overlay(command.llm_blueprint)
     inferred_decisions = infer_architecture_decisions(
         objective=command.objective,
         context=context,
@@ -579,12 +680,14 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         context.setdefault("delivery_plan_document", delivery_plan_document)
     if delivery_depth_contract:
         context.setdefault("delivery_depth_contract", delivery_depth_contract)
+    if llm_blueprint_overlay:
+        context.setdefault("llm_blueprint_overlay", llm_blueprint_overlay)
     recommendations = (
         "Validate PM acceptance criteria before Director execution.",
         "Keep implementation scope within the recorded target files.",
         "Verify delivery_depth_contract behavior rules and edge cases before marking the task complete.",
     )
-    risks = tuple(contract_fields["risks"])
+    risks = tuple(_merge_string_lists(contract_fields["risks"], llm_blueprint_overlay.get("risk_flags")))
     payload: dict[str, Any] = {
         "schema_version": "chief_engineer.blueprint.v1",
         "role": "ChiefEngineer",
@@ -609,6 +712,14 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "constraints": constraints,
         "context": context,
         "pm_task": contract_fields["task"],
+        "llm_blueprint": llm_blueprint_overlay,
+        "ce_handoff": {
+            "schema_version": "chief_engineer.handoff_context.v1",
+            "llm_blueprint_consumed": bool(llm_blueprint_overlay),
+            "llm_blueprint_authority": "advisory_only",
+            "contract_authority": "pm_task_contract",
+            "scope_authority": "runtime_target_files_or_declared_scopes",
+        },
         "contract_completeness": contract_completeness,
         "handoff_ready": bool(contract_completeness["handoff_ready"]),
         "recommendations": list(recommendations),

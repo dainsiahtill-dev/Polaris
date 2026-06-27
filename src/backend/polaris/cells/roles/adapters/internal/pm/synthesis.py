@@ -196,6 +196,26 @@ def _directive_requires_python_workspace_contract(directive: str) -> bool:
     )
 
 
+def _directive_requires_language_root_delivery_contract(directive: str) -> bool:
+    root_workspace_targets = _pm_root_workspace_contract_targets_from_directive(directive)
+    if not root_workspace_targets:
+        return False
+    source_file, _, _ = root_workspace_targets
+    if source_file != "index.html":
+        return False
+    return any(
+        (
+            _directive_requires_typescript_package_contract(directive),
+            _directive_requires_javascript_package_contract(directive),
+            _directive_requires_java_package_contract(directive),
+            _directive_requires_python_workspace_contract(directive),
+            _directive_requires_go_workspace_contract(directive),
+            _directive_requires_rust_package_contract(directive),
+            _directive_requires_cpp_package_contract(directive),
+        )
+    )
+
+
 _DETERMINISTIC_CHECK_RE = re.compile(
     r"(?i)(html|ts_syntax|js_syntax|py_compile|package_scripts|rust_compile|cpp_compile|java_compile|go_compile|min_files:\d+|source_target_coverage:[^\s]+|content_any:[A-Za-z0-9_|-]+)"
 )
@@ -1738,6 +1758,11 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             re.search(r"\bplaceholder\b", lowered)
         )
         if not has_placeholder_signal:
+            return []
+        has_explicit_qa_placeholder_signal = "placeholder_content_detected" in lowered or "qa_rework_reason" in lowered
+        if not has_explicit_qa_placeholder_signal and _directive_requires_language_root_delivery_contract(
+            directive_text
+        ):
             return []
 
         scope_paths = self._extract_directive_file_paths(directive_text, limit=12)

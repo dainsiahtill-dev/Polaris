@@ -5273,6 +5273,20 @@ class TestBuildDirectorMessage:
                         "blockers": [],
                     },
                 },
+                "llm_blueprint": {
+                    "schema_version": "chief_engineer.llm_blueprint_overlay.v1",
+                    "source": "chief_engineer.llm_output",
+                    "authoritative": False,
+                    "authority": "advisory_only",
+                    "implementation_phases": [
+                        "Split simulation state from rendering",
+                        "Add deterministic tick samples",
+                    ],
+                    "module_boundaries": ["SimulationEngine owns rules", "Canvas adapter owns drawing"],
+                    "verification_steps": ["npm run build", "npm test"],
+                    "scope_for_apply_advisory": ["src/engine/SimulationEngine.ts"],
+                    "risk_flags": ["browser bootstrap can drift from compiled output"],
+                },
             },
         )
         adapter = _make_adapter(tmp_path)
@@ -5296,6 +5310,12 @@ class TestBuildDirectorMessage:
         assert "- blueprint acceptance: npm run build passes" in msg
         assert "- blueprint execution_checklist: Write the simulation engine" in msg
         assert "- blueprint expected_terms: firefly, garden, simulation" in msg
+        assert "- ce_llm_blueprint: consumed (advisory_only)" in msg
+        assert "- ce plan phases: Split simulation state from rendering, Add deterministic tick samples" in msg
+        assert "- ce module boundaries: SimulationEngine owns rules, Canvas adapter owns drawing" in msg
+        assert "- ce verification: npm run build, npm test" in msg
+        assert "- ce scope advisory: src/engine/SimulationEngine.ts" in msg
+        assert "- ce risks: browser bootstrap can drift from compiled output" in msg
 
     def test_message_requires_unittest_and_contract_scoped_python_tests(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

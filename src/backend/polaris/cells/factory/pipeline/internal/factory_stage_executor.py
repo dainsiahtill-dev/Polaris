@@ -861,48 +861,16 @@ class OrchestrationStageExecutor:
         return dict(payload) if isinstance(payload, dict) else {}
 
     def _load_chief_engineer_review_payload(self, *, run_id: str = "") -> dict[str, Any]:
-        candidates: list[str] = []
-        if str(run_id or "").strip():
-            candidates.append(f"runtime/state/blueprints/{run_id}.review.json")
-        candidates.append("workspace/blueprints/latest.review.json")
-        for candidate in candidates:
-            payload = self._read_json_artifact_payload(candidate)
-            if payload:
-                return payload
-        return {}
-
-    def _latest_blueprint_rows_from_workspace(self) -> list[dict[str, Any]]:
-        blueprint_dir = self.workspace / ".polaris" / "blueprints"
-        if not blueprint_dir.is_dir():
-            return []
-
-        rows_by_task: dict[str, tuple[float, dict[str, Any]]] = {}
-        for path in sorted(blueprint_dir.glob("ce_*.json")):
-            if not path.is_file():
-                continue
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError, TypeError, ValueError, UnicodeDecodeError):
-                continue
-            if not isinstance(payload, dict):
-                continue
-            task_id = str(payload.get("task_id") or "").strip()
-            blueprint_id = str(payload.get("blueprint_id") or path.stem).strip()
-            if not task_id or not blueprint_id:
-                continue
-            try:
-                mtime = path.stat().st_mtime
-            except OSError:
-                mtime = 0.0
-            row = {
-                "task_id": task_id,
-                "blueprint_id": blueprint_id,
-                "blueprint_path": f"workspace/blueprints/{path.name}",
-            }
-            existing = rows_by_task.get(task_id)
-            if existing is None or mtime >= existing[0]:
-                rows_by_task[task_id] = (mtime, row)
-        return [row for _, row in rows_by_task.values()]
+        resolved_run_id = str(run_id or "").strip()
+        if not resolved_run_id:
+            return {}
+        payload = self._read_json_artifact_payload(f"runtime/state/blueprints/{resolved_run_id}.review.json")
+        if not payload:
+            return {}
+        payload_run_id = str(payload.get("factory_run_id") or "").strip()
+        if payload_run_id and payload_run_id != resolved_run_id:
+            return {}
+        return payload
 
     def _chief_engineer_handoff_signals_for_director(
         self,
@@ -920,8 +888,6 @@ class OrchestrationStageExecutor:
         review_payload = self._load_chief_engineer_review_payload(run_id=run_id)
         raw_rows = review_payload.get("blueprints") if isinstance(review_payload, dict) else None
         rows = [dict(item) for item in raw_rows if isinstance(item, dict)] if isinstance(raw_rows, list) else []
-        if not rows:
-            rows = self._latest_blueprint_rows_from_workspace()
 
         rows_by_task: dict[str, dict[str, Any]] = {}
         for row in rows:
@@ -2880,6 +2846,7 @@ class OrchestrationStageExecutor:
                 ce_provider = str(ce_evidence.get("provider") or "unknown")
                 ce_model = str(ce_evidence.get("model") or "unknown")
                 raw_output = str(getattr(ce_result, "output", "") or "")
+                ce_llm_blueprint: dict[str, Any] = {}
 
                 # Check if CE LLM call succeeded (fail-closed)
                 recovered_review_schema_failure = False
@@ -2983,6 +2950,8 @@ class OrchestrationStageExecutor:
                                 "suggestions": list(quality_result.suggestions),
                             }
                         )
+                    elif isinstance(quality_result.data, dict):
+                        ce_llm_blueprint = dict(quality_result.data)
 
                 if len(stage_signals) > task_error_count_before:
                     continue
@@ -2996,6 +2965,7 @@ class OrchestrationStageExecutor:
                         run_id=run.id,
                         constraints=task_constraints,
                         context=task_context,
+                        llm_blueprint=ce_llm_blueprint,
                     )
                 )
 
@@ -3080,6 +3050,8 @@ class OrchestrationStageExecutor:
                     "handoff_ready": bool(handoff_decision and handoff_decision.allowed),
                     "handoff_decision": handoff_payload,
                     "llm_evidence": ce_evidence,
+                    "llm_blueprint_consumed": bool(ce_llm_blueprint),
+                    "llm_blueprint_keys": sorted(str(key) for key in ce_llm_blueprint.keys()),
                 }
             )
 

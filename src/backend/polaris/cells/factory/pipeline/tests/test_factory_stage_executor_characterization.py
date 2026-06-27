@@ -192,6 +192,32 @@ class TestChiefEngineerHandoffGuards:
         assert [signal["code"] for signal in signals] == ["director.chief_engineer_handoff_missing"]
         assert signals[0]["severity"] == "error"
 
+    def test_director_handoff_guard_does_not_use_stale_persisted_blueprint_without_review(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        result = _generate_domain_blueprint(
+            tmp_path,
+            task_id="TASK-1",
+            objective="Build pirate treasure budget planner",
+            target_files=["models/capsule.go", "engine/museum.go"],
+            acceptance_criteria=[
+                "treasure, budget, port, and reef behavior tests pass",
+                "go test ./... passes",
+            ],
+            execution_checklist=[
+                "Implement treasure and budget models",
+                "Implement port fee and reef risk rules",
+            ],
+        )
+        assert result.ok is True
+
+        signals = executor._chief_engineer_handoff_signals_for_director(
+            [{"id": "TASK-1", "target_files": ["models/capsule.go"]}],
+            run_id="different-run-without-review",
+        )
+
+        assert [signal["code"] for signal in signals] == ["director.chief_engineer_handoff_missing"]
+        assert signals[0]["severity"] == "error"
+
     def test_director_handoff_guard_blocks_unready_blueprint(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         result = _generate_domain_blueprint(

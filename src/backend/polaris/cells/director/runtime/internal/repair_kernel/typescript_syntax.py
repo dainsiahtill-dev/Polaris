@@ -17,6 +17,7 @@ TYPESCRIPT_DUPLICATE_OBJECT_PROPERTY_SOURCE_TOOL = "deterministic_typescript_dup
 TYPESCRIPT_ENUM_MEMBER_SEPARATOR_SOURCE_TOOL = "deterministic_typescript_enum_member_separator_repair"
 TYPESCRIPT_MISSING_CLOSING_BRACE_SOURCE_TOOL = "deterministic_typescript_missing_closing_brace_repair"
 TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL = "deterministic_typescript_number_to_string_argument_repair"
+TYPESCRIPT_READONLY_ASSIGNMENT_SOURCE_TOOL = "deterministic_typescript_readonly_assignment_repair"
 TYPESCRIPT_CANVAS_SCALE_RETURN_TYPE_SOURCE_TOOL = "deterministic_typescript_canvas_scale_return_type_repair"
 HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL = "deterministic_html_typescript_module_script_repair"
 JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL = "deterministic_javascript_typescript_annotation_repair"
@@ -93,6 +94,12 @@ _TS_NUMBER_TO_STRING_ARGUMENT_RAW_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2345:\s*"
     r"Argument\s+of\s+type\s+['\"]number['\"]\s+is\s+not\s+assignable\s+to\s+parameter\s+"
     r"of\s+type\s+['\"]string['\"]",
+    re.IGNORECASE,
+)
+_TS_READONLY_ASSIGNMENT_RAW_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2540:\s*"
+    r"Cannot\s+assign\s+to\s+['\"](?P<property>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+"
+    r"because\s+it\s+is\s+a\s+read-only\s+property",
     re.IGNORECASE,
 )
 _TS_NUMBER_TO_FUNCTION_ARGUMENT_RAW_RE = re.compile(
@@ -805,6 +812,55 @@ def build_typescript_number_to_string_argument_plan(
         risk_level="low",
         priority=1,
         metadata={"arguments": repaired_items},
+    )
+
+
+def build_typescript_readonly_assignment_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build a narrow TS2540 repair plan for same-file readonly declarations."""
+
+    normalized_base_files = {
+        _normalize_repair_path(path): str(content or "")
+        for path, content in dict(base_files or {}).items()
+        if _normalize_repair_path(path)
+    }
+    targets_by_path = _parse_readonly_assignment_targets(diagnostics)
+    operations: list[RepairOperation] = []
+    matched_diagnostics: list[RepairDiagnostic] = []
+    repaired_items: list[dict[str, object]] = []
+    for path in sorted(targets_by_path):
+        if path not in normalized_base_files:
+            continue
+        original = str(normalized_base_files.get(path) or "")
+        path_operations = _readonly_assignment_operations(
+            path=path,
+            content=original,
+            targets=targets_by_path[path],
+        )
+        if not path_operations:
+            continue
+        path_diagnostics = tuple(diagnostic for diagnostic in diagnostics if _diagnostic_targets_path(diagnostic, path))
+        matched_diagnostics.extend(path_diagnostics)
+        operations.extend(path_operations)
+        repaired_items.extend(
+            {
+                "file": path,
+                "property": str(operation.metadata.get("property") or ""),
+                "diagnostic_lines": tuple(operation.metadata.get("diagnostic_lines") or ()),
+            }
+            for operation in path_operations
+        )
+    return _repair_plan_or_none(
+        rule_id="typescript.readonly_assignment",
+        source_tool=TYPESCRIPT_READONLY_ASSIGNMENT_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        metadata={"readonly_properties": repaired_items},
     )
 
 
@@ -3428,6 +3484,28 @@ def _parse_number_to_string_argument_targets(
     return by_path
 
 
+def _parse_readonly_assignment_targets(
+    diagnostics: Sequence[RepairDiagnostic],
+) -> dict[str, set[tuple[int, int, str]]]:
+    by_path: dict[str, set[tuple[int, int, str]]] = {}
+    for diagnostic in diagnostics:
+        text = str(diagnostic.raw or diagnostic.message or "")
+        for match in _TS_READONLY_ASSIGNMENT_RAW_RE.finditer(text):
+            path = _normalize_repair_path(str(match.group("file") or ""))
+            line = _to_positive_int(match.group("line"))
+            column = _to_positive_int(match.group("col"))
+            prop = str(match.group("property") or "").strip()
+            if path and line > 0 and column > 0 and _TS_IDENTIFIER_RE.fullmatch(prop):
+                by_path.setdefault(path, set()).add((line, column, prop))
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        if _is_readonly_assignment_diagnostic(diagnostic) and path and diagnostic.line and diagnostic.column:
+            prop_match = re.search(r"Cannot assign to ['\"](?P<property>[A-Za-z_$][A-Za-z0-9_$]*)['\"]", text)
+            prop = str(prop_match.group("property") or "").strip() if prop_match else ""
+            if _TS_IDENTIFIER_RE.fullmatch(prop):
+                by_path.setdefault(path, set()).add((int(diagnostic.line), int(diagnostic.column), prop))
+    return by_path
+
+
 def _is_missing_closing_brace_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     message = str(diagnostic.message or diagnostic.raw or "").lower()
     return diagnostic.code.lower() == "typescript_ts1005" and "expected" in message and "}" in message
@@ -3441,6 +3519,15 @@ def _is_number_to_string_argument(diagnostic: RepairDiagnostic) -> bool:
         and "number" in message
         and "not assignable" in message
         and "string" in message
+    )
+
+
+def _is_readonly_assignment_diagnostic(diagnostic: RepairDiagnostic) -> bool:
+    message = f"{diagnostic.message}\n{diagnostic.raw}".lower()
+    return (
+        diagnostic.code.lower() == "typescript_ts2540"
+        and "cannot assign to" in message
+        and "read-only property" in message
     )
 
 
@@ -3465,6 +3552,7 @@ def _diagnostic_targets_path(diagnostic: RepairDiagnostic, path: str) -> bool:
             _TS_MISSING_CLOSING_BRACE_RAW_RE,
             _TS_NUMBER_TO_STRING_ARGUMENT_RAW_RE,
             _TS_NUMBER_TO_FUNCTION_ARGUMENT_RAW_RE,
+            _TS_READONLY_ASSIGNMENT_RAW_RE,
         )
         for match in pattern.finditer(str(diagnostic.raw or diagnostic.message or ""))
     }
@@ -3478,7 +3566,7 @@ def _missing_closing_brace_operation(*, path: str, content: str) -> RepairOperat
     if repaired == content:
         return None
     start = len(content.rstrip())
-    unique_context = content[max(0, start - 160) : start]
+    unique_context = content[max(0, start - 160) : len(content)]
     return RepairOperation(
         kind="text_replace",
         path=path,
@@ -3540,6 +3628,69 @@ def _number_to_string_argument_operations(
             )
         )
     return tuple(operations)
+
+
+def _readonly_assignment_operations(
+    *,
+    path: str,
+    content: str,
+    targets: set[tuple[int, int, str]],
+) -> tuple[RepairOperation, ...]:
+    if not targets:
+        return ()
+    by_property: dict[str, set[int]] = {}
+    for line, _column, prop in targets:
+        if line > 0 and _TS_IDENTIFIER_RE.fullmatch(prop):
+            by_property.setdefault(prop, set()).add(line)
+    if not by_property:
+        return ()
+    before_hash = sha256_text(content)
+    lines = str(content or "").splitlines(keepends=True)
+    offsets = _line_start_offsets(lines)
+    operations: list[RepairOperation] = []
+    for prop in sorted(by_property):
+        declaration_spans = _readonly_property_declaration_spans(content, prop)
+        if len(declaration_spans) != 1:
+            continue
+        line_index, readonly_start, readonly_end = declaration_spans[0]
+        original_line = lines[line_index]
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=path,
+                span_start=readonly_start,
+                span_end=readonly_end,
+                expected=content[readonly_start:readonly_end],
+                replacement="",
+                before_hash=before_hash,
+                metadata={
+                    "repair_kind": "typescript_readonly_assignment",
+                    "property": prop,
+                    "diagnostic_lines": tuple(sorted(by_property[prop])),
+                    "declaration_line": line_index + 1,
+                    "unique_context": original_line,
+                },
+            )
+        )
+    return tuple(operations)
+
+
+def _readonly_property_declaration_spans(content: str, prop: str) -> list[tuple[int, int, int]]:
+    if not _TS_IDENTIFIER_RE.fullmatch(prop):
+        return []
+    lines = str(content or "").splitlines(keepends=True)
+    offsets = _line_start_offsets(lines)
+    pattern = re.compile(
+        rf"^(?P<prefix>\s*(?:(?:public|private|protected)\s+)?)"
+        rf"(?P<readonly>readonly\s+)(?P<property>{re.escape(prop)})(?=\s*[?:!:])"
+    )
+    spans: list[tuple[int, int, int]] = []
+    for index, line in enumerate(lines):
+        match = pattern.search(line)
+        if not match:
+            continue
+        spans.append((index, offsets[index] + match.start("readonly"), offsets[index] + match.end("readonly")))
+    return spans
 
 
 def _canvas_scale_return_type_operation(*, path: str, content: str) -> RepairOperation | None:

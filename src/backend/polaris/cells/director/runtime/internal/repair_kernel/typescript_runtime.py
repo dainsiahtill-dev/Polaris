@@ -24,6 +24,7 @@ from .typescript_syntax import (
     TYPESCRIPT_MISSING_CLOSING_BRACE_SOURCE_TOOL,
     TYPESCRIPT_NULLABLE_CANVAS_CONTEXT_SOURCE_TOOL,
     TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL,
+    TYPESCRIPT_READONLY_ASSIGNMENT_SOURCE_TOOL,
     TYPESCRIPT_RETURN_OBJECT_COMMA_SOURCE_TOOL,
     build_typescript_canvas_scale_return_type_plan,
     build_typescript_duplicate_object_property_plan,
@@ -32,6 +33,7 @@ from .typescript_syntax import (
     build_typescript_nullable_canvas_context_plan,
     build_typescript_number_to_string_argument_plan,
     build_typescript_object_literal_comma_plan,
+    build_typescript_readonly_assignment_plan,
     build_typescript_runtime_plan_for_source_tool,
 )
 
@@ -190,6 +192,33 @@ class TypeScriptNumberToStringArgumentRun:
     """Internal execution result for TS2345 number-to-string argument repairs."""
 
     planning: TypeScriptNumberToStringArgumentPlanning
+    ok: bool
+    execution_result: RepairExecutionResult | None = None
+    plan_decision: PolicyDecision | None = None
+    composition_decision: PolicyDecision | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class TypeScriptReadonlyAssignmentPlanning:
+    """Internal planning result for TS2540 readonly assignment repairs."""
+
+    diagnostics: tuple[RepairDiagnostic, ...]
+    plan: RepairPlan | None
+    composition: CompositionResult | None
+    advisor_notes: tuple[RepairAdvisorNote, ...] = ()
+
+    @property
+    def source_tool(self) -> str:
+        return self.plan.source_tool if self.plan is not None else TYPESCRIPT_READONLY_ASSIGNMENT_SOURCE_TOOL
+
+
+@dataclass(frozen=True)
+class TypeScriptReadonlyAssignmentRun:
+    """Internal execution result for TS2540 readonly assignment repairs."""
+
+    planning: TypeScriptReadonlyAssignmentPlanning
     ok: bool
     execution_result: RepairExecutionResult | None = None
     plan_decision: PolicyDecision | None = None
@@ -452,6 +481,41 @@ def plan_typescript_number_to_string_argument_repair(
         plan = replace(plan, advisor_notes=notes)
     composition = PatchComposer().compose(normalized_base, plan.operations)
     return TypeScriptNumberToStringArgumentPlanning(
+        diagnostics=tuple(plan.diagnostics),
+        plan=plan,
+        composition=composition,
+        advisor_notes=notes,
+    )
+
+
+def plan_typescript_readonly_assignment_repair(
+    *,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> TypeScriptReadonlyAssignmentPlanning:
+    """Plan TS2540 readonly assignment repairs inside the runtime kernel."""
+
+    normalized_base = _normalize_base_files(base_files)
+    diagnostics = tuple(normalize_artifact_quality_errors(list(artifact_quality_errors or ())))
+    notes = tuple(advisor_notes or ())
+    plan = build_typescript_readonly_assignment_plan(
+        base_files=normalized_base,
+        diagnostics=diagnostics,
+        mode=mode,
+    )
+    if plan is None:
+        return TypeScriptReadonlyAssignmentPlanning(
+            diagnostics=diagnostics,
+            plan=None,
+            composition=None,
+            advisor_notes=notes,
+        )
+    if notes:
+        plan = replace(plan, advisor_notes=notes)
+    composition = PatchComposer().compose(normalized_base, plan.operations)
+    return TypeScriptReadonlyAssignmentPlanning(
         diagnostics=tuple(plan.diagnostics),
         plan=plan,
         composition=composition,

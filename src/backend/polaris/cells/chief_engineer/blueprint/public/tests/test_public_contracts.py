@@ -327,6 +327,18 @@ class TestChiefEngineerBlueprintPublicService:
             objective="Build Director task board",
             run_id="run-1",
             constraints={"guardrail": "no target project writes"},
+            llm_blueprint={
+                "construction_plan": {
+                    "phases": ["Define typed task state", "Render board state transitions"],
+                    "module_boundaries": [
+                        "DirectorTaskPanel owns rendering only",
+                        "runtime client owns WebSocket state",
+                    ],
+                    "verification_steps": ["npm run build", "focused component smoke test"],
+                },
+                "scope_for_apply": ["src/frontend/src/app/components/director/DirectorTaskPanel.tsx"],
+                "risk_flags": ["runtime state drift between task board and ledger"],
+            },
             context={
                 "task_title": "Director board",
                 "acceptance_criteria": ["Task board shows claimed/running/completed states"],
@@ -370,6 +382,18 @@ class TestChiefEngineerBlueprintPublicService:
         assert persisted["delivery_plan_document"]["schema_version"] == "polaris.delivery_plan_document.v1"
         assert persisted["delivery_depth_contract"]["schema_version"] == "polaris.delivery_depth_contract.v1"
         assert persisted["behavior_contract"]["rule_matrix"][0] == "claimed tasks render as claimed"
+        assert persisted["ce_handoff"]["llm_blueprint_consumed"] is True
+        assert persisted["ce_handoff"]["llm_blueprint_authority"] == "advisory_only"
+        assert persisted["llm_blueprint"]["authoritative"] is False
+        assert persisted["llm_blueprint"]["implementation_phases"] == [
+            "Define typed task state",
+            "Render board state transitions",
+        ]
+        assert persisted["llm_blueprint"]["verification_steps"] == [
+            "npm run build",
+            "focused component smoke test",
+        ]
+        assert persisted["llm_blueprint"]["risk_flags"] == ["runtime state drift between task board and ledger"]
 
         status = get_blueprint_status(
             GetBlueprintStatusQueryV1(

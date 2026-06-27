@@ -158,6 +158,7 @@ class GenerateTaskBlueprintCommandV1:
     run_id: str | None = None
     constraints: Mapping[str, Any] = field(default_factory=dict)
     context: Mapping[str, Any] = field(default_factory=dict)
+    llm_blueprint: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
@@ -165,6 +166,7 @@ class GenerateTaskBlueprintCommandV1:
         object.__setattr__(self, "objective", _require_non_empty("objective", self.objective))
         object.__setattr__(self, "constraints", _to_dict_copy(self.constraints))
         object.__setattr__(self, "context", _to_dict_copy(self.context))
+        object.__setattr__(self, "llm_blueprint", _to_dict_copy(self.llm_blueprint))
 
 
 @dataclass(frozen=True)

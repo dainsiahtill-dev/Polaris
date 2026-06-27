@@ -171,6 +171,21 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
         if item:
             lines.append(item)
 
+    llm_blueprint = payload.get("llm_blueprint")
+    if isinstance(llm_blueprint, dict) and llm_blueprint:
+        authority = str(llm_blueprint.get("authority") or "advisory_only").strip()
+        lines.append(f"- ce_llm_blueprint: consumed ({authority})")
+        for label, key in (
+            ("ce plan phases", "implementation_phases"),
+            ("ce module boundaries", "module_boundaries"),
+            ("ce verification", "verification_steps"),
+            ("ce scope advisory", "scope_for_apply_advisory"),
+            ("ce risks", "risk_flags"),
+        ):
+            item = _join_limited_values(label, _string_list_payload(llm_blueprint.get(key), limit=5))
+            if item:
+                lines.append(item)
+
     completeness = payload.get("contract_completeness")
     if isinstance(completeness, dict):
         missing = _string_list_payload(completeness.get("missing_fields"), limit=6)
@@ -191,7 +206,7 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
             if advisory:
                 lines.append(_join_limited_values("blueprint advisory", advisory))
 
-    return lines[:18]
+    return lines[:28]
 
 
 _VERIFICATION_COMMAND_MARKERS = (
