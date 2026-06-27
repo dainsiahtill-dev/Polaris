@@ -87,11 +87,13 @@ def test_contract_result_metadata_folds_tool_results_and_receipt() -> None:
     result = RoleTurnResult(
         content="x",
         metadata={"a": 1},
+        structured_output={"construction_plan": {"implementation": ["build"]}},
         tool_results=[{"name": "t"}],
         batch_receipt={"rid": "abc"},
     )
     meta = runtime_service._contract_result_metadata(result)
     assert meta["a"] == 1
+    assert meta["structured_output"] == {"construction_plan": {"implementation": ["build"]}}
     assert meta["tool_results"] == [{"name": "t"}]
     assert meta["batch_receipt"] == {"rid": "abc"}
 
@@ -139,6 +141,7 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
     assert ok.tool_calls == ("write_file",)
     assert ok.artifacts == ("f.py",)
     assert ok.usage == {"k": 1}
+    assert ok.metadata["structured_output"] == {"artifacts": ["f.py"]}
     assert ok.error_code is None
 
     failed = runtime_service._to_contract_result(

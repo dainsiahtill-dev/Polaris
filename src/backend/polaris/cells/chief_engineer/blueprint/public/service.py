@@ -153,7 +153,14 @@ def _string_list(value: Any) -> list[str]:
             token = str(
                 item.get("path")
                 or item.get("file")
+                or item.get("target_file")
+                or item.get("module")
+                or item.get("phase")
+                or item.get("action")
+                or item.get("command")
+                or item.get("verify")
                 or item.get("description")
+                or item.get("mitigation")
                 or item.get("text")
                 or item.get("title")
                 or item.get("name")
@@ -248,6 +255,7 @@ def _normalize_llm_blueprint_overlay(value: Any) -> dict[str, Any]:
     risk_flags = _string_list(raw.get("risk_flags"))
     verification_steps = _plan_field_strings(
         construction_plan,
+        "verification",
         "verification_steps",
         "verification_commands",
         "quality_gates",
@@ -257,6 +265,8 @@ def _normalize_llm_blueprint_overlay(value: Any) -> dict[str, Any]:
     )
     implementation_phases = _plan_field_strings(
         construction_plan,
+        "preparation",
+        "implementation",
         "phases",
         "steps",
         "implementation_steps",
@@ -283,7 +293,7 @@ def _normalize_llm_blueprint_overlay(value: Any) -> dict[str, Any]:
         "implementation_phases": implementation_phases,
         "module_boundaries": module_boundaries,
         "verification_steps": verification_steps,
-        "consumed_keys": sorted(str(key) for key in raw.keys()),
+        "consumed_keys": sorted(str(key) for key in raw),
         "non_overridable_contract_fields": [
             "target_files",
             "scope_paths",

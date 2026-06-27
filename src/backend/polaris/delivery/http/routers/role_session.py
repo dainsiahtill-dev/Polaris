@@ -1575,6 +1575,17 @@ async def export_to_workflow(
                     "export_bundle_path": str(export_path),
                 },
             )
+            result_status = str(getattr(result, "status", "") or "").strip().lower()
+            if result_status in {"failed", "error", "blocked", "cancelled", "canceled"}:
+                raise StructuredHTTPException(
+                    status_code=409,
+                    code=str(getattr(result, "reason_code", "") or "DIRECTOR_EXPORT_BLOCKED"),
+                    message=str(getattr(result, "message", "") or "Director export was blocked"),
+                    details={
+                        "run_id": str(getattr(result, "run_id", "") or ""),
+                        "status": result_status,
+                    },
+                )
             run_id = result.run_id
 
         else:

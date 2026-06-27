@@ -2846,6 +2846,8 @@ class OrchestrationStageExecutor:
                 ce_provider = str(ce_evidence.get("provider") or "unknown")
                 ce_model = str(ce_evidence.get("model") or "unknown")
                 raw_output = str(getattr(ce_result, "output", "") or "")
+                ce_result_metadata = dict(getattr(ce_result, "metadata", {}) or {})
+                structured_output = ce_result_metadata.get("structured_output")
                 ce_llm_blueprint: dict[str, Any] = {}
 
                 # Check if CE LLM call succeeded (fail-closed)
@@ -2918,8 +2920,14 @@ class OrchestrationStageExecutor:
                         self._attach_ce_llm_evidence(missing_signal, ce_evidence)
                         stage_signals.append(missing_signal)
 
-                if not recovered_review_schema_failure and (
-                    "<SESSION_PATCH" in raw_output or "</SESSION_PATCH>" in raw_output
+                required_ce_blueprint_keys = {"construction_plan", "scope_for_apply", "risk_flags"}
+                if isinstance(structured_output, dict) and required_ce_blueprint_keys.issubset(structured_output):
+                    ce_llm_blueprint = dict(structured_output)
+
+                if (
+                    not ce_llm_blueprint
+                    and not recovered_review_schema_failure
+                    and ("<SESSION_PATCH" in raw_output or "</SESSION_PATCH>" in raw_output)
                 ):
                     stage_signals.append(
                         {
@@ -2931,7 +2939,7 @@ class OrchestrationStageExecutor:
                             "model": ce_model,
                         }
                     )
-                if not recovered_review_schema_failure:
+                if not ce_llm_blueprint and not recovered_review_schema_failure:
                     quality_result = QualityChecker(str(self.workspace)).validate_output(
                         raw_output,
                         cast(Any, SimpleNamespace(role_id="chief_engineer")),
@@ -3051,7 +3059,7 @@ class OrchestrationStageExecutor:
                     "handoff_decision": handoff_payload,
                     "llm_evidence": ce_evidence,
                     "llm_blueprint_consumed": bool(ce_llm_blueprint),
-                    "llm_blueprint_keys": sorted(str(key) for key in ce_llm_blueprint.keys()),
+                    "llm_blueprint_keys": sorted(str(key) for key in ce_llm_blueprint),
                 }
             )
 

@@ -125,6 +125,18 @@ async def create_run(request: CreateRunRequest) -> OrchestrationSnapshotResponse
     - chat: 交互式执行，适用于人机协作
     """
     try:
+        if any(str(entry.role_id or "").strip().lower() == "director" for entry in request.role_entries):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "chief_engineer_handoff_required",
+                    "message": (
+                        "Director execution must use the governed Director command path so Chief Engineer "
+                        "handoff evidence is validated before runtime submission."
+                    ),
+                    "required_chain": "PM -> Chief Engineer -> Director",
+                },
+            )
         service = await get_orchestration_service()
 
         # 生成 run_id

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import polaris.cells.director.task_consumer.internal.director_consumer as director_consumer_module
 import pytest
 from polaris.cells.director.task_consumer.internal.director_consumer import (
     DirectorExecutionConsumer,
@@ -16,6 +17,13 @@ from polaris.cells.director.task_consumer.internal.director_consumer import (
     UnrecoverableExecutionError,
     _run_coroutine_sync,
 )
+
+
+def _allow_blueprint_id_handoff(_workspace: str, _task_id: str, payload: dict[str, Any]) -> tuple[bool, str, str]:
+    blueprint_id = str(payload.get("blueprint_id") or "").strip()
+    if not blueprint_id:
+        return False, "", "Director cannot execute without blueprint_id"
+    return True, blueprint_id, "handoff_ready"
 
 
 class TestDirectorExecutionConsumerInit:
@@ -94,7 +102,43 @@ class TestRunCoroutineSync:
         assert elapsed < 1.0
 
 
+class TestDirectorExecutionConsumerHandoffGate:
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_blueprint_id_without_valid_handoff_does_not_execute(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="dead_letter")
+        claim = MagicMock()
+        claim.task_id = "TASK-1"
+        claim.lease_token = "lease-1"
+        claim.payload = {"blueprint_id": "ce_TASK-1_stale"}
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+        with patch.object(consumer, "_execute_task") as execute_task:
+            result = consumer._process_claim(claim)
+
+        assert result == {"task_id": "TASK-1", "ok": False, "reason": "invalid_blueprint_handoff"}
+        execute_task.assert_not_called()
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.error_code == "INVALID_BLUEPRINT_HANDOFF"
+        assert fail_call.to_dead_letter is True
+        assert "missing or unreadable" in fail_call.error_message
+
+
 class TestDirectorExecutionConsumerPollOnce:
+    @pytest.fixture(autouse=True)
+    def _patch_handoff_gate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            director_consumer_module,
+            "_validated_blueprint_handoff",
+            _allow_blueprint_id_handoff,
+        )
+
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_no_claimable_tasks_returns_empty_list(self, mock_get_svc: MagicMock) -> None:
         mock_svc = MagicMock()
@@ -1362,6 +1406,14 @@ class TestRepairShrinkGuard:
 
 
 class TestRepairShrinkGuardWiring:
+    @pytest.fixture(autouse=True)
+    def _patch_handoff_gate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            director_consumer_module,
+            "_validated_blueprint_handoff",
+            _allow_blueprint_id_handoff,
+        )
+
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_shrunk_repair_requeues_pending_exec(self, mock_get_svc: MagicMock, tmp_path: Any) -> None:
         mock_svc = MagicMock()

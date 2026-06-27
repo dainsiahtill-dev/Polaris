@@ -23,6 +23,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.chief_engineer.blueprint.public import (
+    BlueprintPersistence,
+    evaluate_handoff_decision_for_blueprint,
+)
 from polaris.cells.orchestration.workflow_runtime.public.service import (
     OrchestrationMode,
     OrchestrationRunRequest,
@@ -105,7 +109,7 @@ def _canonical_factory_stage_sequence(requested_stages: Any) -> list[str]:
     return stages
 
 
-def _has_chief_engineer_handoff(payload: dict[str, Any]) -> bool:
+def _chief_engineer_handoff_blueprint_id(payload: dict[str, Any]) -> str:
     metadata_raw = payload.get("metadata")
     metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
     merged: dict[str, Any] = {}
@@ -115,12 +119,52 @@ def _has_chief_engineer_handoff(payload: dict[str, Any]) -> bool:
         "blueprint_id",
         "chief_engineer_blueprint_id",
         "chief_engineer_handoff_id",
-        "blueprint_path",
-        "runtime_blueprint_path",
     ):
-        if str(merged.get(key) or "").strip():
-            return True
-    return bool(merged.get("handoff_ready") is True and str(merged.get("handoff_source") or "").strip())
+        token = str(merged.get(key) or "").strip()
+        if token:
+            return Path(token).stem if token.endswith(".json") else token
+    for key in ("blueprint_path", "runtime_blueprint_path"):
+        token = str(merged.get(key) or "").strip()
+        if token:
+            return Path(token).stem
+    return ""
+
+
+def _task_id_from_payload(payload: dict[str, Any]) -> str:
+    return str(payload.get("id") or payload.get("task_id") or payload.get("pm_task_id") or "").strip()
+
+
+def _validated_chief_engineer_handoff(
+    workspace: str,
+    payload: dict[str, Any],
+) -> tuple[bool, str, dict[str, Any]]:
+    task_id = _task_id_from_payload(payload)
+    blueprint_id = _chief_engineer_handoff_blueprint_id(payload)
+    if not blueprint_id:
+        return False, "missing Chief Engineer blueprint id", {}
+    blueprint = BlueprintPersistence(workspace, ensure_directory=False).load(blueprint_id)
+    if not isinstance(blueprint, dict):
+        return False, f"Chief Engineer blueprint {blueprint_id} missing or unreadable", {}
+    blueprint_task_id = str(blueprint.get("task_id") or blueprint.get("pm_task_id") or "").strip()
+    if task_id and blueprint_task_id and blueprint_task_id != task_id:
+        return (
+            False,
+            f"Chief Engineer blueprint {blueprint_id} belongs to {blueprint_task_id}, not {task_id}",
+            {"blueprint_id": blueprint_id, "blueprint_task_id": blueprint_task_id},
+        )
+    decision = evaluate_handoff_decision_for_blueprint(workspace, blueprint_id)
+    decision_payload = decision.to_dict() if decision is not None else {}
+    if decision is None:
+        return False, f"Chief Engineer blueprint {blueprint_id} handoff decision unreadable", {}
+    if not decision.allowed:
+        return False, decision.reason, decision_payload
+    return True, decision.reason, decision_payload
+
+
+def _has_chief_engineer_handoff(payload: dict[str, Any], *, workspace: str = "") -> bool:
+    if not workspace:
+        return False
+    return _validated_chief_engineer_handoff(workspace, payload)[0]
 
 
 def _safe_path_mtime(path: Path) -> float:
@@ -162,23 +206,44 @@ def _find_chief_engineer_blueprint_for_task(workspace: str, task_id: str) -> Pat
 
 
 def _attach_chief_engineer_handoff_from_workspace(workspace: str, payload: dict[str, Any]) -> dict[str, Any]:
-    task_id = str(payload.get("id") or payload.get("task_id") or payload.get("pm_task_id") or "").strip()
-    if not task_id or _has_chief_engineer_handoff(payload):
+    task_id = _task_id_from_payload(payload)
+    if not task_id:
+        return payload
+    if _has_chief_engineer_handoff(payload, workspace=workspace):
         return payload
     blueprint_path = _find_chief_engineer_blueprint_for_task(workspace, task_id)
     if blueprint_path is None:
+        return payload
+    candidate_id = blueprint_path.stem
+    candidate_payload = dict(payload)
+    candidate_metadata_raw = candidate_payload.get("metadata")
+    candidate_metadata: dict[str, Any] = (
+        dict(candidate_metadata_raw) if isinstance(candidate_metadata_raw, dict) else {}
+    )
+    candidate_metadata.setdefault("blueprint_id", candidate_id)
+    candidate_metadata.setdefault("chief_engineer_blueprint_id", candidate_id)
+    candidate_payload["metadata"] = candidate_metadata
+    allowed, reason, decision_payload = _validated_chief_engineer_handoff(workspace, candidate_payload)
+    if not allowed:
+        logger.warning(
+            "Ignoring invalid Chief Engineer blueprint handoff for task %s from %s: %s",
+            task_id,
+            blueprint_path,
+            reason,
+        )
         return payload
 
     updated = dict(payload)
     metadata_raw = updated.get("metadata")
     metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
-    metadata.setdefault("blueprint_id", blueprint_path.stem)
-    metadata.setdefault("chief_engineer_blueprint_id", blueprint_path.stem)
-    metadata.setdefault("chief_engineer_handoff_id", blueprint_path.stem)
+    metadata.setdefault("blueprint_id", candidate_id)
+    metadata.setdefault("chief_engineer_blueprint_id", candidate_id)
+    metadata.setdefault("chief_engineer_handoff_id", candidate_id)
     metadata.setdefault("blueprint_path", str(blueprint_path))
     metadata.setdefault("runtime_blueprint_path", str(blueprint_path))
     metadata.setdefault("handoff_ready", True)
     metadata.setdefault("handoff_source", "chief_engineer_blueprint_file")
+    metadata.setdefault("handoff_decision", decision_payload)
     updated["metadata"] = metadata
     return updated
 
@@ -713,26 +778,21 @@ class OrchestrationCommandService:
 
             selected_task_payloads = _select_pm_task_payloads(workspace, task_ids)
             if selected_task_payloads:
-                missing_handoff_ids: list[str] = []
+                invalid_handoff_reasons: list[str] = []
                 for task_payload in selected_task_payloads:
                     handoff_payload = dict(task_payload)
                     handoff_payload.update(metadata_overrides)
-                    if not _has_chief_engineer_handoff(handoff_payload):
-                        missing_handoff_ids.append(
-                            str(
-                                task_payload.get("id")
-                                or task_payload.get("task_id")
-                                or task_payload.get("pm_task_id")
-                                or "<unknown>"
-                            ).strip()
-                        )
-                if missing_handoff_ids:
+                    allowed, reason, _decision_payload = _validated_chief_engineer_handoff(workspace, handoff_payload)
+                    if not allowed:
+                        task_label = _task_id_from_payload(task_payload) or "<unknown>"
+                        invalid_handoff_reasons.append(f"{task_label}: {reason}")
+                if invalid_handoff_reasons:
                     return CommandResult(
                         run_id=run_id,
                         status="failed",
                         message=(
-                            "Director run requires Chief Engineer blueprint/handoff evidence; "
-                            f"missing for tasks: {', '.join(missing_handoff_ids)}"
+                            "Director run requires valid Chief Engineer blueprint/handoff evidence; "
+                            + "; ".join(invalid_handoff_reasons)
                         ),
                         reason_code="CHIEF_ENGINEER_HANDOFF_REQUIRED",
                         started_at=started_at,
@@ -758,11 +818,12 @@ class OrchestrationCommandService:
                         )
                     )
             else:
-                if not _has_chief_engineer_handoff(metadata_overrides):
+                allowed, reason, _decision_payload = _validated_chief_engineer_handoff(workspace, metadata_overrides)
+                if not allowed:
                     return CommandResult(
                         run_id=run_id,
                         status="failed",
-                        message="Director run requires Chief Engineer blueprint/handoff evidence",
+                        message=f"Director run requires valid Chief Engineer blueprint/handoff evidence: {reason}",
                         reason_code="CHIEF_ENGINEER_HANDOFF_REQUIRED",
                         started_at=started_at,
                         completed_at=datetime.now(timezone.utc).isoformat(),

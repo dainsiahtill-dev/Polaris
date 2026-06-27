@@ -329,12 +329,13 @@ class TestChiefEngineerBlueprintPublicService:
             constraints={"guardrail": "no target project writes"},
             llm_blueprint={
                 "construction_plan": {
-                    "phases": ["Define typed task state", "Render board state transitions"],
+                    "preparation": ["Confirm runtime state contract"],
+                    "implementation": ["Define typed task state", "Render board state transitions"],
                     "module_boundaries": [
                         "DirectorTaskPanel owns rendering only",
                         "runtime client owns WebSocket state",
                     ],
-                    "verification_steps": ["npm run build", "focused component smoke test"],
+                    "verification": ["npm run build", "focused component smoke test"],
                 },
                 "scope_for_apply": ["src/frontend/src/app/components/director/DirectorTaskPanel.tsx"],
                 "risk_flags": ["runtime state drift between task board and ledger"],
@@ -386,6 +387,7 @@ class TestChiefEngineerBlueprintPublicService:
         assert persisted["ce_handoff"]["llm_blueprint_authority"] == "advisory_only"
         assert persisted["llm_blueprint"]["authoritative"] is False
         assert persisted["llm_blueprint"]["implementation_phases"] == [
+            "Confirm runtime state contract",
             "Define typed task state",
             "Render board state transitions",
         ]

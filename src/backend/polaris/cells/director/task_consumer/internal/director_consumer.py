@@ -11,6 +11,10 @@ import warnings
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
+from polaris.cells.chief_engineer.blueprint.public import (
+    BlueprintPersistence,
+    evaluate_handoff_decision_for_blueprint,
+)
 from polaris.cells.runtime.task_market.public.contracts import (
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
@@ -67,6 +71,49 @@ def _normalize_task_market_route(payload: dict[str, Any]) -> str:
                 if bool_token in {"0", "false", "no", "n", "off"}:
                     return _ROUTE_CHIEF_BLUEPRINT_REQUIRED
     return _ROUTE_CHIEF_BLUEPRINT_REQUIRED
+
+
+def _merged_payload_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    metadata_raw = payload.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    merged = dict(payload)
+    merged.update(metadata)
+    return merged
+
+
+def _blueprint_id_from_payload(payload: dict[str, Any]) -> str:
+    merged = _merged_payload_metadata(payload)
+    for key in ("blueprint_id", "chief_engineer_blueprint_id", "chief_engineer_handoff_id"):
+        token = str(merged.get(key) or "").strip()
+        if token:
+            return Path(token).stem if token.endswith(".json") else token
+    for key in ("blueprint_path", "runtime_blueprint_path"):
+        token = str(merged.get(key) or "").strip()
+        if token:
+            return Path(token).stem
+    return ""
+
+
+def _validated_blueprint_handoff(workspace: str, task_id: str, payload: dict[str, Any]) -> tuple[bool, str, str]:
+    blueprint_id = _blueprint_id_from_payload(payload)
+    if not blueprint_id:
+        return False, "", "Director cannot execute without blueprint_id"
+    blueprint = BlueprintPersistence(workspace, ensure_directory=False).load(blueprint_id)
+    if not isinstance(blueprint, dict):
+        return False, blueprint_id, f"Chief Engineer blueprint {blueprint_id} missing or unreadable"
+    blueprint_task_id = str(blueprint.get("task_id") or blueprint.get("pm_task_id") or "").strip()
+    if blueprint_task_id and blueprint_task_id != str(task_id or "").strip():
+        return (
+            False,
+            blueprint_id,
+            f"Chief Engineer blueprint {blueprint_id} belongs to {blueprint_task_id}, not {task_id}",
+        )
+    decision = evaluate_handoff_decision_for_blueprint(workspace, blueprint_id)
+    if decision is None:
+        return False, blueprint_id, f"Chief Engineer blueprint {blueprint_id} handoff decision unreadable"
+    if not decision.allowed:
+        return False, blueprint_id, decision.reason
+    return True, blueprint_id, decision.reason
 
 
 def _job_token_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -786,19 +833,23 @@ class DirectorExecutionConsumer:
         # All Director execution must carry ChiefEngineer evidence. Legacy
         # direct PM task routes are parsed for compatibility, but never grant
         # execution authority without a blueprint handoff.
-        blueprint_id = payload.get("blueprint_id")
-        if not blueprint_id:
+        handoff_allowed, blueprint_id, handoff_error = _validated_blueprint_handoff(self._workspace, task_id, payload)
+        if not handoff_allowed:
             self._svc.fail_task_stage(
                 FailTaskStageCommandV1(
                     workspace=self._workspace,
                     task_id=task_id,
                     lease_token=lease_token,
-                    error_code="MISSING_BLUEPRINT",
-                    error_message="Director cannot execute without blueprint_id",
+                    error_code="INVALID_BLUEPRINT_HANDOFF" if blueprint_id else "MISSING_BLUEPRINT",
+                    error_message=handoff_error,
                     to_dead_letter=True,
                 )
             )
-            return {"task_id": task_id, "ok": False, "reason": "missing_blueprint"}
+            return {
+                "task_id": task_id,
+                "ok": False,
+                "reason": "invalid_blueprint_handoff" if blueprint_id else "missing_blueprint",
+            }
 
         # Safe parallel conflict check
         if self._enable_safe_parallel:

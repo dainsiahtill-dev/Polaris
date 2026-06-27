@@ -19,8 +19,13 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polaris.cells.chief_engineer.blueprint.public import GenerateTaskBlueprintCommandV1, generate_task_blueprint
+from polaris.cells.chief_engineer.blueprint.public import (
+    BlueprintPersistence,
+    GenerateTaskBlueprintCommandV1,
+    generate_task_blueprint,
+)
 from polaris.cells.chief_engineer.blueprint.public.contracts import TaskBlueprintResultV1
+from polaris.cells.factory.pipeline.internal import factory_stage_executor as stage_executor_module
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
     FactoryConfig,
@@ -150,6 +155,108 @@ def _generate_domain_blueprint(
 
 
 class TestChiefEngineerHandoffGuards:
+    def test_chief_engineer_review_consumes_llm_blueprint_overlay(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "title": "Build mood color wheel",
+                        "goal": "Build a mood color wheel with doodle behavior.",
+                        "target_files": ["models/mood.go", "engine/wheel.go", "main.go"],
+                        "scope_paths": ["models/mood.go", "engine/wheel.go", "main.go"],
+                        "acceptance_criteria": [
+                            "mood, color, wheel, and doodle behavior tests pass",
+                            "go test ./... passes",
+                        ],
+                        "execution_checklist": [
+                            "Implement mood and color models",
+                            "Implement wheel and doodle rules",
+                        ],
+                        "delivery_plan_document": {
+                            "schema_version": "polaris.delivery_plan_document.v1",
+                            "product_summary": {
+                                "intent": "Deliver a mood color wheel.",
+                                "core_terms": ["mood", "color", "wheel", "doodle"],
+                            },
+                        },
+                        "delivery_depth_contract": {
+                            "schema_version": "polaris.delivery_depth_contract.v1",
+                            "product_intent": {
+                                "subject": "mood color wheel",
+                                "primary_entities": ["mood", "color", "wheel", "doodle"],
+                            },
+                        },
+                    }
+                ]
+            },
+        )
+
+        class _FakeRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                del command
+                ce_output = {
+                    "construction_plan": {
+                        "preparation": ["Confirm Go module boundary"],
+                        "implementation": ["Model mood palette", "Render wheel report"],
+                        "verification": ["go test ./...", "go run ."],
+                    },
+                    "scope_for_apply": ["models/mood.go", "engine/wheel.go", "main.go"],
+                    "risk_flags": [
+                        {
+                            "level": "warning",
+                            "description": "visual entrypoint can drift from engine rules",
+                            "mitigation": "assert report output in tests",
+                        }
+                    ],
+                }
+                return SimpleNamespace(
+                    ok=True,
+                    output=json.dumps(ce_output, ensure_ascii=False),
+                    error_message="",
+                    error_code="",
+                    metadata={
+                        "provider_id": "test-provider",
+                        "model": "test-model",
+                        "structured_output": ce_output,
+                        "final_request_context_audit": {"context_window_utilization": 0.42},
+                        "context_snapshot_ref": "runtime/contexts/aa/bb.json",
+                    },
+                    usage={},
+                )
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _FakeRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, {}))
+
+        assert result.status == "success"
+        review_path = Path(resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run.review.json"))
+        review = json.loads(review_path.read_text(encoding="utf-8"))
+        row = review["blueprints"][0]
+        assert row["llm_blueprint_consumed"] is True
+        assert row["llm_blueprint_keys"] == ["construction_plan", "risk_flags", "scope_for_apply"]
+        blueprint = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(row["blueprint_id"])
+        assert isinstance(blueprint, dict)
+        assert blueprint["llm_blueprint"]["implementation_phases"] == [
+            "Confirm Go module boundary",
+            "Model mood palette",
+            "Render wheel report",
+        ]
+        assert blueprint["llm_blueprint"]["verification_steps"] == ["go test ./...", "go run ."]
+        assert blueprint["ce_handoff"]["llm_blueprint_consumed"] is True
+
     def test_director_handoff_guard_allows_ready_blueprint(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         result = _generate_domain_blueprint(

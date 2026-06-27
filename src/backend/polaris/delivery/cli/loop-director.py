@@ -35,6 +35,10 @@ def _bootstrap_backend_import_path() -> None:
 _bootstrap_backend_import_path()
 
 # Polaris execution/runtime services
+from polaris.cells.chief_engineer.blueprint.public import (
+    BlueprintPersistence,
+    evaluate_handoff_decision_for_blueprint,
+)
 from polaris.cells.director.execution.public.service import (
     DirectorConfig,
     DirectorService,
@@ -250,25 +254,37 @@ def extract_pm_tasks(pm_contract: dict) -> list[dict]:
     return extracted
 
 
-def _has_chief_engineer_handoff(task: dict[str, Any]) -> bool:
+def _chief_engineer_blueprint_id_from_task(task: dict[str, Any]) -> str:
     metadata_raw = task.get("metadata")
     metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
     for key in (
         "blueprint_id",
         "chief_engineer_blueprint_id",
         "chief_engineer_handoff_id",
-        "blueprint_path",
-        "runtime_blueprint_path",
     ):
-        if str(metadata.get(key) or task.get(key) or "").strip():
-            return True
-    chief_engineer = metadata.get("chief_engineer")
-    if isinstance(chief_engineer, dict) and chief_engineer:
-        return True
-    construction_plan = metadata.get("construction_plan")
-    if isinstance(construction_plan, dict) and construction_plan:
-        return True
-    return bool(metadata.get("handoff_ready") is True and str(metadata.get("handoff_source") or "").strip())
+        token = str(metadata.get(key) or task.get(key) or "").strip()
+        if token:
+            return Path(token).stem if token.endswith(".json") else token
+    for key in ("blueprint_path", "runtime_blueprint_path"):
+        token = str(metadata.get(key) or task.get(key) or "").strip()
+        if token:
+            return Path(token).stem
+    return ""
+
+
+def _has_chief_engineer_handoff(workspace: str, task: dict[str, Any]) -> bool:
+    blueprint_id = _chief_engineer_blueprint_id_from_task(task)
+    if not blueprint_id:
+        return False
+    blueprint = BlueprintPersistence(workspace, ensure_directory=False).load(blueprint_id)
+    if not isinstance(blueprint, dict):
+        return False
+    task_id = str(task.get("task_id") or task.get("id") or "").strip()
+    blueprint_task_id = str(blueprint.get("task_id") or blueprint.get("pm_task_id") or "").strip()
+    if task_id and blueprint_task_id and task_id != blueprint_task_id:
+        return False
+    decision = evaluate_handoff_decision_for_blueprint(workspace, blueprint_id)
+    return bool(decision and decision.allowed)
 
 
 def _normalize_dependency_ids(value: Any) -> list[str]:
@@ -497,7 +513,7 @@ class DirectorV2Runner:
             missing_handoff = [
                 str(task.get("task_id") or task.get("subject") or "<unknown>").strip()
                 for task in tasks
-                if not _has_chief_engineer_handoff(task)
+                if not _has_chief_engineer_handoff(self.workspace, task)
             ]
             if missing_handoff:
                 error = (

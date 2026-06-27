@@ -61,6 +61,8 @@ def _copy_batch_receipt_metadata(receipt: Any) -> dict[str, Any] | None:
 
 def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     metadata = _copy_result_metadata(result.metadata)
+    if isinstance(result.structured_output, Mapping) and "structured_output" not in metadata:
+        metadata["structured_output"] = dict(result.structured_output)
     tool_results = _copy_tool_result_metadata(result.tool_results)
     if tool_results and "tool_results" not in metadata:
         metadata["tool_results"] = tool_results

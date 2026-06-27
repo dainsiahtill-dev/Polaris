@@ -855,7 +855,9 @@ async def test_export_audit_log_uses_stored_session_workspace(
         mock_audit_service = MagicMock()
         mock_audit_cls.return_value = mock_audit_service
         mock_audit_service.get_event_count.return_value = 3
-        mock_audit_service.export_audit_log.return_value = Path("C:/Temp/Product/.polaris/exports/role_sessions/sess_abc.audit.json")
+        mock_audit_service.export_audit_log.return_value = Path(
+            "C:/Temp/Product/.polaris/exports/role_sessions/sess_abc.audit.json"
+        )
 
         response = await client.post("/v2/roles/sessions/sess_abc/audit/export")
 
@@ -986,7 +988,9 @@ async def test_export_to_director_workflow_includes_role_session_messages(
         mock_kernel_fs.to_workspace_relative_path.return_value = ".polaris/exports/export.json"
 
         mock_command = MagicMock()
-        mock_command.execute_director_run = AsyncMock(return_value=SimpleNamespace(run_id="director-run-1"))
+        mock_command.execute_director_run = AsyncMock(
+            return_value=SimpleNamespace(run_id="director-run-1", status="pending")
+        )
         mock_command_cls.return_value = mock_command
 
         response = await client.post(
@@ -1017,6 +1021,69 @@ async def test_export_to_director_workflow_includes_role_session_messages(
     assert export_payload["messages"][0]["content"] == "Review PM-7 and hand off the backend cache repair."
     assert export_payload["event_count"] == 1
     assert export_payload["audit_events"][0]["event_type"] == "message_sent"
+
+
+@pytest.mark.asyncio
+async def test_export_to_director_workflow_surfaces_handoff_block(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace_path = "C:/Active/Workspace"
+    mock_session = _make_mock_session("sess_ce_blocked", "chief_engineer")
+    mock_session.workspace = "C:/Temp/Product"
+
+    with (
+        patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls,
+        patch("polaris.delivery.http.routers.role_session.RoleSessionArtifactService") as mock_artifact_cls,
+        patch("polaris.delivery.http.routers.role_session.RoleSessionAuditService") as mock_audit_cls,
+        patch("polaris.infrastructure.storage.LocalFileSystemAdapter"),
+        patch("polaris.kernelone.fs.KernelFileSystem") as mock_kernel_fs_cls,
+        patch("polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService") as mock_command_cls,
+        patch("polaris.delivery.http.routers.role_session.ensure_required_roles_ready"),
+    ):
+        mock_service = MagicMock()
+        mock_service_cls.return_value.__enter__.return_value = mock_service
+        mock_service.get_session.return_value = mock_session
+        mock_service.get_messages.return_value = []
+
+        mock_artifact_service = MagicMock()
+        mock_artifact_cls.return_value = mock_artifact_service
+        mock_artifact_service.list_artifacts.return_value = []
+
+        mock_audit_service = MagicMock()
+        mock_audit_cls.return_value = mock_audit_service
+        mock_audit_service.get_events.return_value = []
+
+        mock_kernel_fs = MagicMock()
+        mock_kernel_fs_cls.return_value = mock_kernel_fs
+        mock_kernel_fs.to_workspace_relative_path.return_value = ".polaris/exports/export.json"
+
+        mock_command = MagicMock()
+        mock_command.execute_director_run = AsyncMock(
+            return_value=SimpleNamespace(
+                run_id="director-run-blocked",
+                status="failed",
+                reason_code="CHIEF_ENGINEER_HANDOFF_REQUIRED",
+                message="Director run requires valid Chief Engineer blueprint/handoff evidence",
+            )
+        )
+        mock_command_cls.return_value = mock_command
+
+        response = await client.post(
+            "/v2/roles/sessions/sess_ce_blocked/actions/export-to-workflow",
+            json={
+                "target": "director",
+                "export_kind": "session_bundle",
+                "include_audit_log": False,
+            },
+        )
+
+    assert response.status_code == 409
+    data = response.json()
+    assert data["error"]["code"] == "CHIEF_ENGINEER_HANDOFF_REQUIRED"
+    assert "valid Chief Engineer blueprint/handoff evidence" in data["error"]["message"]
+    assert data["error"]["details"]["status"] == "failed"
 
 
 @pytest.mark.asyncio

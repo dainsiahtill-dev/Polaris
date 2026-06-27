@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from polaris.cells.chief_engineer.blueprint.public import GenerateTaskBlueprintCommandV1, generate_task_blueprint
 from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import (
     OrchestrationCommandService,
     _canonical_factory_stage_sequence,
@@ -18,6 +19,31 @@ from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts imp
     TaskSnapshot,
 )
 from polaris.kernelone.storage import resolve_runtime_path
+
+
+def _generate_valid_ce_blueprint(
+    workspace: Path,
+    *,
+    task_id: str,
+    objective: str,
+    target_files: list[str] | None = None,
+) -> str:
+    result = generate_task_blueprint(
+        GenerateTaskBlueprintCommandV1(
+            task_id=task_id,
+            workspace=str(workspace),
+            objective=objective,
+            context={
+                "task_title": objective,
+                "target_files": target_files or ["src/app.py"],
+                "acceptance_criteria": ["source behavior is implemented", "tests pass"],
+                "execution_checklist": ["Implement source behavior", "Run tests"],
+            },
+        )
+    )
+    assert result.ok is True
+    assert result.blueprint_id is not None
+    return result.blueprint_id
 
 
 class _StubOrchestrationService:
@@ -255,9 +281,13 @@ def test_select_pm_task_payloads_discovers_chief_engineer_blueprint_file(tmp_pat
         ('{"tasks": [{"id": "TASK-1", "title": "Create app", "goal": "Write source", "metadata": {}}]}\n'),
         encoding="utf-8",
     )
-    blueprint_path = Path(resolve_runtime_path(str(tmp_path), "runtime/blueprints/ce_TASK-1_20260621.json"))
-    blueprint_path.parent.mkdir(parents=True, exist_ok=True)
-    blueprint_path.write_text('{"pm_task_id": "TASK-1", "construction_plan": {}}\n', encoding="utf-8")
+    blueprint_id = _generate_valid_ce_blueprint(
+        tmp_path,
+        task_id="TASK-1",
+        objective="Write source for TASK-1",
+        target_files=["src/app.py"],
+    )
+    blueprint_path = Path(resolve_runtime_path(str(tmp_path), f"runtime/blueprints/{blueprint_id}.json")).resolve()
 
     payloads = _select_pm_task_payloads(str(tmp_path), ["TASK-1"])
 
@@ -265,8 +295,29 @@ def test_select_pm_task_payloads_discovers_chief_engineer_blueprint_file(tmp_pat
     metadata = payloads[0]["metadata"]
     assert metadata["handoff_ready"] is True
     assert metadata["handoff_source"] == "chief_engineer_blueprint_file"
-    assert metadata["chief_engineer_blueprint_id"] == "ce_TASK-1_20260621"
+    assert metadata["chief_engineer_blueprint_id"] == blueprint_id
     assert metadata["runtime_blueprint_path"] == str(blueprint_path)
+    assert metadata["handoff_decision"]["allowed"] is True
+
+
+def test_select_pm_task_payloads_ignores_stale_or_malformed_blueprint_file(tmp_path: Path) -> None:
+    contract_path = Path(resolve_runtime_path(str(tmp_path), "runtime/contracts/pm_tasks.contract.json"))
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(
+        ('{"tasks": [{"id": "TASK-1", "title": "Create app", "goal": "Write source", "metadata": {}}]}\n'),
+        encoding="utf-8",
+    )
+    blueprint_path = Path(resolve_runtime_path(str(tmp_path), "runtime/blueprints/ce_TASK-1_20260621.json"))
+    blueprint_path.parent.mkdir(parents=True, exist_ok=True)
+    blueprint_path.write_text(
+        '{"task_id": "OTHER", "target_files": [], "acceptance_criteria": [], "construction_plan": {}}\n',
+        encoding="utf-8",
+    )
+
+    payloads = _select_pm_task_payloads(str(tmp_path), ["TASK-1"])
+
+    assert len(payloads) == 1
+    assert payloads[0]["metadata"] == {}
 
 
 def test_select_pm_task_payloads_adds_explicit_task_file_tokens_to_delivery_scope(tmp_path: Path) -> None:
@@ -310,9 +361,13 @@ def test_select_pm_task_payloads_discovers_factory_pm_plan_mirror_and_workspace_
         ),
         encoding="utf-8",
     )
-    blueprint_path = tmp_path / ".polaris" / "blueprints" / "ce_TASK-2_20260621.json"
-    blueprint_path.parent.mkdir(parents=True, exist_ok=True)
-    blueprint_path.write_text('{"task_id": "TASK-2", "construction_plan": {}}\n', encoding="utf-8")
+    blueprint_id = _generate_valid_ce_blueprint(
+        tmp_path,
+        task_id="TASK-2",
+        objective="Run gate for TASK-2",
+        target_files=["tests/test_app.py"],
+    )
+    blueprint_path = Path(resolve_runtime_path(str(tmp_path), f"runtime/blueprints/{blueprint_id}.json")).resolve()
 
     payloads = _select_pm_task_payloads(str(tmp_path), ["TASK-2"])
 
@@ -321,8 +376,9 @@ def test_select_pm_task_payloads_discovers_factory_pm_plan_mirror_and_workspace_
     metadata = payloads[0]["metadata"]
     assert metadata["handoff_ready"] is True
     assert metadata["handoff_source"] == "chief_engineer_blueprint_file"
-    assert metadata["chief_engineer_blueprint_id"] == "ce_TASK-2_20260621"
+    assert metadata["chief_engineer_blueprint_id"] == blueprint_id
     assert metadata["runtime_blueprint_path"] == str(blueprint_path.resolve())
+    assert metadata["handoff_decision"]["allowed"] is True
 
 
 @pytest.mark.asyncio
@@ -343,6 +399,12 @@ async def test_execute_director_run_propagates_metadata_to_role_entry_and_reques
         "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service.register_all_adapters",
         lambda _: None,
     )
+    blueprint_id = _generate_valid_ce_blueprint(
+        tmp_path,
+        task_id="task-1",
+        objective="Execute projection reproject task",
+        target_files=["src/projection.py"],
+    )
 
     service = OrchestrationCommandService(settings={})
     result = await service.execute_director_run(
@@ -351,7 +413,7 @@ async def test_execute_director_run_propagates_metadata_to_role_entry_and_reques
         options={
             "execution_mode": "parallel",
             "metadata": {
-                "blueprint_id": "ce-task-1",
+                "blueprint_id": blueprint_id,
                 "execution_backend": "projection_reproject",
                 "projection": {
                     "scenario_id": "scenario_alpha",
@@ -367,7 +429,7 @@ async def test_execute_director_run_propagates_metadata_to_role_entry_and_reques
     assert result.metadata["requested_task_ids"] == ["task-1"]
     assert stub.request is not None
     assert stub.request.role_entries[0].metadata["execution_backend"] == "projection_reproject"
-    assert stub.request.role_entries[0].metadata["blueprint_id"] == "ce-task-1"
+    assert stub.request.role_entries[0].metadata["blueprint_id"] == blueprint_id
     assert stub.request.role_entries[0].input == "Execute tasks: task-1"
     assert stub.request.metadata["tasks"] == ["task-1"]
     assert stub.request.metadata["execution_backend"] == "projection_reproject"
@@ -386,7 +448,7 @@ async def test_execute_director_run_requires_chief_engineer_handoff(tmp_path: Pa
 
     assert result.status == "failed"
     assert result.reason_code == "CHIEF_ENGINEER_HANDOFF_REQUIRED"
-    assert "Chief Engineer blueprint/handoff evidence" in result.message
+    assert "valid Chief Engineer blueprint/handoff evidence" in result.message
 
 
 @pytest.mark.asyncio
@@ -407,6 +469,12 @@ async def test_execute_director_run_materializes_pm_task_payloads(
         "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service.register_all_adapters",
         lambda _: None,
     )
+    blueprint_id = _generate_valid_ce_blueprint(
+        tmp_path,
+        task_id="T01-001",
+        objective="Bootstrap TypeScript foundation",
+        target_files=["package.json", "src/index.ts"],
+    )
     monkeypatch.setattr(
         "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service._select_pm_task_payloads",
         lambda _workspace, _task_ids: [
@@ -416,7 +484,7 @@ async def test_execute_director_run_materializes_pm_task_payloads(
                 "goal": "Create the TypeScript foundation",
                 "target_files": ["package.json", "src/index.ts"],
                 "scope_paths": ["src/config"],
-                "metadata": {"blueprint_id": "ce_T01-001"},
+                "metadata": {"blueprint_id": blueprint_id},
             }
         ],
     )
@@ -436,7 +504,7 @@ async def test_execute_director_run_materializes_pm_task_payloads(
     assert "Bootstrap project" in role_entry.input
     assert role_entry.metadata["task_id"] == "T01-001"
     assert role_entry.metadata["pm_task_id"] == "T01-001"
-    assert role_entry.metadata["blueprint_id"] == "ce_T01-001"
+    assert role_entry.metadata["blueprint_id"] == blueprint_id
     assert role_entry.metadata["target_files"] == ["package.json", "src/index.ts"]
     assert role_entry.metadata["scope_paths"] == ["src/config"]
     assert stub.request.metadata["pm_task_payloads"][0]["id"] == "T01-001"

@@ -945,6 +945,11 @@ class TestDeterministicContractsFlag:
         assert calls[0]["context"]["task_id"] == "pm-route-probe"
         assert calls[0]["context"]["pm_task_id"] == "pm-route-probe"
         assert calls[0]["context"]["disable_internal_tool_rounds"] is True
+        assert calls[0]["context"]["tool_contract_require_no_tool_calls"] is True
+        assert calls[0]["context"]["require_no_tool_calls"] is True
+        assert calls[0]["context"]["no_tool_calls"] is True
+        assert calls[0]["context"]["tool_contract"]["require_no_tool_calls"] is True
+        assert calls[0]["context"]["tool_contract"]["execution_mode"] == "text_only_probe"
         assert calls[0]["context"]["_transaction_kernel_forced_tool_definitions"] == []
         assert calls[0]["context"]["_transaction_kernel_forced_tool_choice"] == "none"
         assert calls[0]["context"]["suppress_tool_policy_prompt"] is True
