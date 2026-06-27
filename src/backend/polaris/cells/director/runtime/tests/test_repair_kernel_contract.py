@@ -2362,6 +2362,38 @@ def test_public_runtime_dependency_repair_plans_node_types_dev_dependency() -> N
     assert '"@types/node"' in payload["composition_summary"]["patches"][0]["content_after"]
 
 
+def test_public_runtime_dependency_repair_covers_node_scheme_ts2307() -> None:
+    source_tool = "deterministic_runtime_dependency_repair"
+    diagnostic = (
+        "src/main.ts(7,31): error TS2307: Cannot find module 'node:url' or its corresponding type declarations."
+    )
+
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(
+            artifact_quality_errors=(diagnostic,),
+        )
+    )
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={"package.json": '{"name":"node-ts-app","private":true,"devDependencies":{}}\n'},
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    )
+    coverage_payload = coverage.to_dict()
+    planning_payload = planning_result.to_dict()
+
+    assert coverage_payload["covered_diagnostic_count"] == 1
+    assert coverage_payload["uncovered_diagnostic_count"] == 0
+    assert coverage_payload["items"][0]["matched_source_tools"] == [source_tool]
+    assert planning_payload["ok"] is True
+    assert planning_payload["planned"] is True
+    assert planning_payload["plan_summary"]["rule_id"] == "generic.runtime_dependency"
+    assert planning_payload["plan_summary"]["operation_count"] == 1
+    assert '"@types/node"' in planning_payload["composition_summary"]["patches"][0]["content_after"]
+
+
 def test_public_typescript_tsconfig_repair_plans_import_meta_module_option() -> None:
     source_tool = "deterministic_typescript_tsconfig_lib_repair"
 
@@ -7691,6 +7723,7 @@ def test_public_materialization_quality_schedule_is_runtime_owned_and_read_only(
         "materialization.hygiene_scaffold",
         "materialization.typescript_scaffold",
         "materialization.typescript_compiler",
+        "materialization.html_entrypoint",
         "materialization.node_manifest",
         "materialization.rust_compiler",
         "materialization.target_runtime",
@@ -7710,10 +7743,12 @@ def test_public_materialization_quality_schedule_is_runtime_owned_and_read_only(
     assert payload["agi_execution_authority"] is False
     assert [item["step_id"] for item in payload["items"]] == expected_step_ids
     assert payload["items"][0]["phase"] == "hygiene"
+    assert payload["items"][3]["source_tool"] == "deterministic_html_typescript_module_script_repair"
+    assert payload["items"][4]["depends_on"] == ["materialization.html_entrypoint"]
     assert payload["items"][-1]["depends_on"] == ["materialization.python_import"]
     assert payload["summary"]["step_count"] == len(expected_step_ids)
     assert payload["summary"]["ordered_step_ids"] == expected_step_ids
-    assert payload["summary"]["languages"] == ["go", "javascript", "multi", "python", "rust", "typescript"]
+    assert payload["summary"]["languages"] == ["go", "html", "javascript", "multi", "python", "rust", "typescript"]
     assert payload["summary"]["runtime_schedule_authoritative"] is True
     assert payload["summary"]["runner_binding_owner"] == "roles.adapters"
     assert payload["summary"]["target_scheduler"] == "director.runtime.repair_kernel.scheduler"
@@ -7728,6 +7763,7 @@ def test_runtime_materialization_quality_schedule_runs_callbacks_and_injects_ste
         "materialization.hygiene_scaffold",
         "materialization.typescript_scaffold",
         "materialization.typescript_compiler",
+        "materialization.html_entrypoint",
         "materialization.node_manifest",
         "materialization.rust_compiler",
         "materialization.target_runtime",

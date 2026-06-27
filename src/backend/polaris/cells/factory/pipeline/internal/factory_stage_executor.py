@@ -628,7 +628,9 @@ class OrchestrationStageExecutor:
         for index, task in enumerate(tasks):
             task_id = task_ids[index]
             copied = dict(task)
-            acceptance_key = "acceptance" if "acceptance" in copied else "acceptance_criteria"
+            acceptance_keys = [key for key in ("acceptance", "acceptance_criteria") if key in copied]
+            if not acceptance_keys:
+                acceptance_keys = ["acceptance"]
             acceptance = OrchestrationStageExecutor._task_string_list(copied, "acceptance", "acceptance_criteria")
             has_local_validation_target = any(
                 OrchestrationStageExecutor._is_pm_validation_target_path(path)
@@ -638,14 +640,16 @@ class OrchestrationStageExecutor:
             if acceptance and not has_local_validation_target and downstream_validation_targets:
                 rewritten, removed = OrchestrationStageExecutor._acceptance_without_test_commands(acceptance)
                 if removed:
-                    copied[acceptance_key] = rewritten or [
+                    normalized_acceptance = rewritten or [
                         "Build/start checks for this task's declared implementation targets pass."
                     ]
+                    for acceptance_key in acceptance_keys:
+                        copied[acceptance_key] = list(normalized_acceptance)
                     metadata_raw = copied.get("metadata")
                     metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
                     metadata["validation_contract_hygiene"] = {
                         "reason": "test_acceptance_deferred_to_downstream_validation_task",
-                        "removed_acceptance_items": removed,
+                        "removed_acceptance_items": list(dict.fromkeys(removed)),
                         "downstream_validation_targets": list(dict.fromkeys(downstream_validation_targets)),
                     }
                     copied["metadata"] = metadata

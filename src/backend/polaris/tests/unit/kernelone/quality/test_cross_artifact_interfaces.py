@@ -74,6 +74,28 @@ class TestTypescriptNamespaceExports:
 
         assert any("unresolved import symbol 'WeatherReport' from './index'" in error for error in errors)
 
+    def test_typescript_js_specifier_resolves_sibling_ts_for_contract_amendment(self, tmp_path: Path) -> None:
+        _write(tmp_path / "src/engine/renderer.ts", "export interface RenderContext { canvas: unknown }\n")
+        _write(
+            tmp_path / "src/web.ts",
+            "import { drawMarket, updateHud, type HudRefs } from './engine/renderer.js';\n",
+        )
+
+        evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), task_id="TASK-HTML")
+
+        assert [issue.code for issue in evidence.cross_artifact_issues] == [
+            "unresolved_import_symbol",
+            "unresolved_import_symbol",
+        ]
+        assert {issue.symbol for issue in evidence.cross_artifact_issues} == {"drawMarket", "updateHud"}
+        assert [plan.strategy for plan in evidence.cross_artifact_repair_plans] == [
+            "contract_amendment_required",
+            "contract_amendment_required",
+        ]
+        assert evidence.contract_amendment_request is not None
+        assert evidence.contract_amendment_request.task_id == "TASK-HTML"
+        assert any("drawMarket" in item for item in evidence.contract_amendment_request.evidence)
+
     def test_artifact_quality_consumes_ce_interface_ledger(self, tmp_path: Path) -> None:
         _write(tmp_path / "src/weather.ts", "export interface WeatherSnapshot { condition: string }\n")
         record_declared_interfaces(

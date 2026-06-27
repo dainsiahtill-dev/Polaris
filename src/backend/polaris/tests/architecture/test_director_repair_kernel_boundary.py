@@ -599,6 +599,23 @@ def test_execute_method_does_not_import_specific_deterministic_repair_modules() 
     )
 
 
+def test_execute_method_does_not_own_repair_tool_execution() -> None:
+    execute_calls = _called_function_names(EXECUTE_METHOD_PATH)
+    forbidden_calls = {
+        "DirectorToolExecutor",
+        "execute_tool",
+        "plan_director_repair",
+        "run_director_repair",
+        "run_director_repair_convergence",
+    }
+
+    assert execute_calls.isdisjoint(forbidden_calls), (
+        f"{REPAIR_BOUNDARY_FAILURE_HINT} execute_method.py may orchestrate phases, but repair planning, "
+        f"tool execution, convergence, and revalidation must stay behind director.runtime.public and "
+        f"the controlled repair bridge. Violations: {sorted(execute_calls & forbidden_calls)}"
+    )
+
+
 def test_execute_factory_qa_and_bench_never_direct_call_legacy_deterministic_repairs() -> None:
     disallowed_paths = [EXECUTE_METHOD_PATH, *_factory_qa_bench_source_files()]
     violations: list[str] = []
@@ -1008,6 +1025,7 @@ def test_materialization_quality_bridge_consumes_runtime_owned_schedule() -> Non
         "materialization.hygiene_scaffold",
         "materialization.typescript_scaffold",
         "materialization.typescript_compiler",
+        "materialization.html_entrypoint",
         "materialization.node_manifest",
         "materialization.rust_compiler",
         "materialization.target_runtime",

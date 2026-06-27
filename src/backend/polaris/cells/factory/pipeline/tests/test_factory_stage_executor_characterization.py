@@ -51,6 +51,7 @@ def test_pm_plan_validation_contract_hygiene_defers_test_acceptance_to_validatio
                 "target_files": ["package.json", "tsconfig.json", "src/index.ts"],
                 "steps": ["Create implementation files"],
                 "acceptance": ["`npm run build` and `npm run test` pass for the implementation."],
+                "acceptance_criteria": ["`npm run build` and `npm run test` pass for the implementation."],
             },
             {
                 "id": "TASK-2",
@@ -67,8 +68,11 @@ def test_pm_plan_validation_contract_hygiene_defers_test_acceptance_to_validatio
     tasks = OrchestrationStageExecutor._pm_plan_tasks_from_payload(payload)
 
     first_acceptance = " ".join(tasks[0]["acceptance"]).lower()
+    first_acceptance_criteria = " ".join(tasks[0]["acceptance_criteria"]).lower()
     assert "npm run test" not in first_acceptance
+    assert "npm run test" not in first_acceptance_criteria
     assert "build/start checks" in first_acceptance
+    assert "build/start checks" in first_acceptance_criteria
     assert tasks[0]["metadata"]["validation_contract_hygiene"]["downstream_validation_targets"] == [
         "src/verify.ts",
         "tests/verify.test.ts",

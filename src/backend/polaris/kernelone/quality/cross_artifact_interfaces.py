@@ -944,6 +944,8 @@ def _resolve_ts_relative_path(root: Path, importer_path: str, specifier: str) ->
     candidates: list[Path] = []
     if base.suffix:
         candidates.append(base)
+        if base.suffix in {".js", ".jsx", ".mjs", ".cjs"}:
+            candidates.extend(base.with_suffix(ext) for ext in _TS_JS_RESOLUTION_EXTS if ext != base.suffix)
     else:
         candidates.extend(base.with_suffix(ext) for ext in _TS_JS_RESOLUTION_EXTS)
         candidates.extend(base / f"index{ext}" for ext in _TS_JS_RESOLUTION_EXTS)

@@ -108,7 +108,9 @@ def build_npm_script_contract_plan(
     if has_node_test_runner_contract:
         updates[("scripts", "test")] = _node_test_runner_script(normalized_base)
     elif has_typescript_context and _has_repairable_test_script_error(raw_errors):
-        updates[("scripts", "test")] = "npm run build"
+        updates[("scripts", "test")] = (
+            _fallback_script_for_recursive_script("test", normalized_base, package_payload) or "npm run build"
+        )
 
     if has_typescript_context and _missing_entrypoint(raw_errors, script_name="verify"):
         updates[("scripts", "verify")] = "npm run build"
@@ -569,6 +571,7 @@ def _is_npm_script_contract_diagnostic(diagnostic: RepairDiagnostic) -> bool:
         or "test script must use node --test" in raw
         or "cannot find module './src/" in raw
         or "node --import tsx/esm" in raw
+        or ("npm run test" in raw and "strip-types" in raw)
     )
 
 
@@ -611,6 +614,7 @@ def _has_repairable_test_script_error(errors: Sequence[str]) -> bool:
         "npm package manifest script 'test' is a placeholder command",
         "npm package manifest script 'test' swallows command failures",
         "cannot find module './src/",
+        "strip-types",
     )
     return any(marker in joined for marker in markers)
 

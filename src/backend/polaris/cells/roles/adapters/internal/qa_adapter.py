@@ -1523,6 +1523,19 @@ def _has_unfinished_placeholder_match(content: str, pattern: re.Pattern[str]) ->
             continue
         if re.search(r"\bplaceholder\s*=", line, flags=re.IGNORECASE):
             continue
+        # Suppress the "placeholder" WORD when it appears in a COMMENT (whole-line
+        # or inline ``//`` / ``#``) — comment prose like a C++ ``// placeholder
+        # replaced below`` (L1-06) describes behaviour, it is not unfinished code.
+        # A string-literal VALUE such as ``value = 'placeholder'`` IS a real
+        # placeholder fill-in and stays flagged (string literals are NOT suppressed).
+        if line.lstrip().startswith(_COMMENT_MARKERS):
+            continue
+        slash = line.find("//")
+        if 0 <= slash <= relative_start:
+            continue
+        hash_idx = line.find("#")
+        if 0 < hash_idx <= relative_start and line[:hash_idx].strip():
+            continue
         return True
     return False
 

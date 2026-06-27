@@ -44,7 +44,8 @@ _UNDECLARED_RUNTIME_IMPORT_ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 _TS_NODE_BUILTIN_TYPES_ERROR_RE = re.compile(
-    r"TypeScript node builtin import ['\"][^'\"]+['\"] requires ['\"]@types/node['\"] in (?P<path>\S+)",
+    r"(?:TypeScript node builtin import ['\"][^'\"]+['\"] requires ['\"]@types/node['\"] in (?P<path>\S+)|"
+    r"Cannot find module ['\"]node:[^'\"]+['\"] or its corresponding type declarations)",
     re.IGNORECASE,
 )
 _TS_NODE_GLOBAL_TYPES_ERROR_RE = re.compile(

@@ -165,6 +165,7 @@ def _materialization_runtime_schedule_steps() -> tuple[Any, ...]:
         "materialization.hygiene_scaffold": "deterministic_patch_residue_cleanup",
         "materialization.typescript_scaffold": "deterministic_typescript_scaffold_repair",
         "materialization.typescript_compiler": "deterministic_typescript_return_object_semicolon_repair",
+        "materialization.html_entrypoint": "deterministic_html_typescript_module_script_repair",
         "materialization.node_manifest": "deterministic_runtime_dependency_repair",
         "materialization.rust_compiler": "deterministic_rust_crate_import_rewrite_repair",
         "materialization.target_runtime": "deterministic_javascript_missing_export_repair",
@@ -173,6 +174,8 @@ def _materialization_runtime_schedule_steps() -> tuple[Any, ...]:
     }
     dependencies_by_step_id = {
         "materialization.typescript_compiler": ("materialization.typescript_scaffold",),
+        "materialization.html_entrypoint": ("materialization.typescript_compiler",),
+        "materialization.node_manifest": ("materialization.html_entrypoint",),
         "materialization.rust_compiler": ("materialization.node_manifest",),
         "materialization.go_import": ("materialization.target_runtime",),
     }
@@ -1477,13 +1480,16 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
         "_run_materialization_hygiene_scaffold",
         "_run_materialization_typescript_scaffold",
         "_run_materialization_typescript_compiler",
+        "_run_materialization_html_entrypoint",
         "_run_materialization_node_manifest",
         "_run_materialization_rust_compiler",
         "_run_materialization_target_runtime",
         "_run_materialization_python_import",
     ):
         monkeypatch.setattr(materialization_quality_repair_bridge, runner_name, lambda *args, **kwargs: [])
-    monkeypatch.setattr(materialization_quality_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge
+    )
     assert not hasattr(materialization_quality_repair_bridge, "repair_go_nested_import_keyword")
     assert not hasattr(materialization_quality_repair_bridge, "repair_go_import_subpaths")
     assert not hasattr(materialization_quality_repair_bridge, "repair_go_duplicate_declarations")
@@ -1586,7 +1592,9 @@ def test_materialization_python_import_runs_through_runtime_bridge(
             }
         ]
 
-    monkeypatch.setattr(materialization_quality_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge
+    )
 
     results = materialization_quality_repair_bridge._run_materialization_python_import(
         _FakeAdapter(tmp_path),
@@ -1682,7 +1690,9 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
         )
         return []
 
-    monkeypatch.setattr(materialization_quality_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge
+    )
     task = {
         "target_files": ["src/app.ts"],
         "metadata": {"autofix_reason": "deterministic_scaffold_residue_cleanup"},
@@ -1820,6 +1830,7 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
         "_run_materialization_hygiene_scaffold",
         "_run_materialization_typescript_scaffold",
         "_run_materialization_typescript_compiler",
+        "_run_materialization_html_entrypoint",
         "_run_materialization_node_manifest",
         "_run_materialization_target_runtime",
         "_run_materialization_python_import",
@@ -3119,9 +3130,7 @@ def test_materialization_scheduler_bridge_keeps_callback_projection_non_authorit
     assert migration_debt["remaining_callback_only_step_ids"] == ["materialization.go_import"]
     assert migration_debt["adapter_projection_only_step_count"] == 1
     assert migration_debt["callback_only_step_count"] == 1
-    go_debt = {item["step_id"]: item for item in migration_debt["adapter_projection_debt"]}[
-        "materialization.go_import"
-    ]
+    go_debt = {item["step_id"]: item for item in migration_debt["adapter_projection_debt"]}["materialization.go_import"]
     assert go_debt["native_receipt_present"] is False
     assert go_debt["adapter_projection_present"] is True
     assert go_debt["callback_projection_present"] is True

@@ -3695,7 +3695,7 @@ def test_materialization_quality_scheduler_bridge_projects_callback_receipts_wit
 
     scheduler_bridge = summary["scheduler_bridge"]
     assert scheduler_bridge["schema_version"] == "director.materialization_quality_scheduler_bridge.v1"
-    assert scheduler_bridge["mode"] == "legacy_callback_bridge"
+    assert scheduler_bridge["mode"] == "adapter_projection_bridge"
     assert scheduler_bridge["target_scheduler"] == "director.runtime.repair_kernel.scheduler"
     assert (
         scheduler_bridge["schedule_source"]
@@ -3736,7 +3736,8 @@ def test_materialization_quality_scheduler_bridge_projects_callback_receipts_wit
     assert scheduler_bridge["callback_projection_claimed_typed_receipt_path_count"] == 2
     assert scheduler_bridge["typed_receipt_path_available"] is False
     assert (
-        scheduler_bridge["migration_blocker"] == "callback runners still return tool_results instead of RepairReceipt"
+        scheduler_bridge["migration_blocker"]
+        == "adapter schedule runners still return tool_results instead of RepairReceipt"
     )
     assert scheduler_bridge["repair_kernel_migration_debt"] == summary["repair_kernel_migration_debt"]
     assert scheduler_bridge["legacy_callback_debt"] == summary["legacy_callback_debt"]

@@ -1201,10 +1201,17 @@ def _smoke_cpp_cli(workspace: Path, code_files: list[str], *, timeout_s: int) ->
     if main_rel in compile_sources:
         compile_sources.remove(main_rel)
     compile_sources.insert(0, main_rel)
+    # Conventional C++ include roots (workspace root + src/ + include/) as -I so
+    # headers included as <models/foo.hpp> (CMake target_include_directories)
+    # resolve without reading CMakeLists.txt (factory_bench L1-06).
+    include_flags: list[str] = []
+    for inc in (".", "src", "include"):
+        if (workspace / inc).is_dir():
+            include_flags += ["-I", str(workspace / inc)]
     with tempfile.TemporaryDirectory(prefix="polaris-factory-cpp-") as out_dir:
         binary = str(Path(out_dir) / "app")
         compile_result = _run_command(
-            [compiler, "-std=c++17", *compile_sources, "-o", binary],
+            [compiler, "-std=c++17", *include_flags, *compile_sources, "-o", binary],
             workspace,
             timeout_s=max(10, int(timeout_s)),
         )

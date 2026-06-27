@@ -258,12 +258,20 @@ _MATERIALIZATION_QUALITY_REPAIR_SCHEDULE: tuple[MaterializationQualityRepairSche
         depends_on=("materialization.typescript_scaffold",),
     ),
     MaterializationQualityRepairScheduleStep(
+        step_id="materialization.html_entrypoint",
+        language="html",
+        phase="entrypoint",
+        priority=25,
+        source_tool="deterministic_html_typescript_module_script_repair",
+        depends_on=("materialization.typescript_compiler",),
+    ),
+    MaterializationQualityRepairScheduleStep(
         step_id="materialization.node_manifest",
         language="javascript",
         phase="manifest",
         priority=30,
         source_tool="deterministic_node_manifest_materialization_repair",
-        depends_on=("materialization.typescript_compiler",),
+        depends_on=("materialization.html_entrypoint",),
     ),
     MaterializationQualityRepairScheduleStep(
         step_id="materialization.rust_compiler",

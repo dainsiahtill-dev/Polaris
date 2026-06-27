@@ -102,11 +102,7 @@ def _imported_modules(path: Path) -> list[str]:
 
 def _function_definitions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    return {
-        node.name: node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-    }
+    return {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)}
 
 
 def _attribute_chain(node: ast.AST) -> str:
@@ -192,9 +188,10 @@ def test_execute_method_file_mutating_repair_wrappers_are_runtime_hard_cut() -> 
         for node in ast.walk(wrapper):
             if isinstance(node, ast.Call):
                 callee = _attribute_chain(node.func)
-                if callee in {"_runtime_repair_tool_results", "run_runtime_repair_with_director_tools"} or callee.endswith(
-                    "run_runtime_repair_with_director_tools"
-                ):
+                if callee in {
+                    "_runtime_repair_tool_results",
+                    "run_runtime_repair_with_director_tools",
+                } or callee.endswith("run_runtime_repair_with_director_tools"):
                     calls_runtime_bridge = True
                 if callee.startswith("_legacy_deterministic_repairs._apply_deterministic_"):
                     violations.append(f"{wrapper_name}: {callee}")
@@ -534,6 +531,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         "materialization.hygiene_scaffold",
         "materialization.typescript_scaffold",
         "materialization.typescript_compiler",
+        "materialization.html_entrypoint",
         "materialization.node_manifest",
         "materialization.rust_compiler",
         "materialization.target_runtime",
@@ -762,7 +760,7 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
     assert summary["materialization_quality_bridge"]["convergence_verifier_present"] is True
     assert summary["repair_kernel_migration_debt"]["convergence_verifier_present"] is True
     debt_by_step = {item["step_id"]: item for item in summary["repair_kernel_migration_debt"]["legacy_callback_debt"]}
-    assert len(debt_by_step) == 8
+    assert len(debt_by_step) == 9
     node_manifest_debt = debt_by_step["materialization.node_manifest"]
     assert node_manifest_debt["declared_source_tool"] == "deterministic_node_manifest_materialization_repair"
     assert node_manifest_debt["actual_source_tools"] == ["deterministic_runtime_dependency_repair"]

@@ -206,6 +206,15 @@ import subprocess
 import sys
 
 root = pathlib.Path(".")
+# C++ projects set an include root (CMake target_include_directories, e.g. src/);
+# headers are then included as <models/foo.hpp>. g++ -fsyntax-only does NOT read
+# CMakeLists.txt, so add the conventional include roots (workspace root + src/ +
+# include/ when present) as -I so the syntax check matches the project's real
+# CMake build instead of failing on a missing header (factory_bench L1-06).
+include_flags = []
+for inc in (".", "src", "include"):
+    if (root / inc).is_dir():
+        include_flags += ["-I", str(root / inc)]
 files = sorted(
     path for ext in ("*.cpp", "*.cc", "*.cxx", "*.c")
     for path in root.rglob(ext)
@@ -217,7 +226,7 @@ if not files:
 failed = []
 for path in files:
     completed = subprocess.run(
-        ["g++", "-std=c++17", "-fsyntax-only", str(path)],
+        ["g++", "-std=c++17", "-fsyntax-only", *include_flags, str(path)],
         check=False,
         capture_output=True,
         text=True,

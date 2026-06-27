@@ -34,6 +34,7 @@ _MATERIALIZATION_QUALITY_REPAIR_RUNNERS = {
     "materialization.hygiene_scaffold": "_run_materialization_hygiene_scaffold",
     "materialization.typescript_scaffold": "_run_materialization_typescript_scaffold",
     "materialization.typescript_compiler": "_run_materialization_typescript_compiler",
+    "materialization.html_entrypoint": "_run_materialization_html_entrypoint",
     "materialization.node_manifest": "_run_materialization_node_manifest",
     "materialization.rust_compiler": "_run_materialization_rust_compiler",
     "materialization.target_runtime": "_run_materialization_target_runtime",
@@ -86,6 +87,7 @@ _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
     "deterministic_typescript_vitest_globals_repair",
     "deterministic_typescript_zod_type_class_collision_repair",
 )
+_MATERIALIZATION_HTML_RUNTIME_SOURCE_TOOLS = ("deterministic_html_typescript_module_script_repair",)
 _SEMANTIC_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
     "deterministic_typescript_missing_export_repair",
     "deterministic_typescript_hyphenated_identifier_repair",
@@ -301,6 +303,14 @@ def _run_legacy_materialization_quality_repair_step(
             artifact_quality_errors=artifact_quality_errors,
             convergence_verifier=convergence_verifier,
         )
+    if step_id == "materialization.html_entrypoint":
+        return _run_materialization_html_entrypoint(
+            adapter,
+            task=task,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+            convergence_verifier=convergence_verifier,
+        )
     if step_id == "materialization.node_manifest":
         return _run_materialization_node_manifest(
             adapter,
@@ -441,6 +451,29 @@ def _run_materialization_typescript_compiler(
 
 def _materialization_typescript_compiler_runtime_source_tools() -> tuple[str, ...]:
     return _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS
+
+
+def _run_materialization_html_entrypoint(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    task_id: str,
+    artifact_quality_errors: list[str],
+    convergence_verifier: Callable[[Any], Any] | None = None,
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for source_tool in _MATERIALIZATION_HTML_RUNTIME_SOURCE_TOOLS:
+        results.extend(
+            _run_materialization_typescript_runtime_repair(
+                adapter,
+                task=task,
+                task_id=task_id,
+                artifact_quality_errors=artifact_quality_errors,
+                source_tool=source_tool,
+                convergence_verifier=convergence_verifier,
+            )
+        )
+    return results
 
 
 def _semantic_typescript_compiler_runtime_source_tools() -> tuple[str, ...]:

@@ -69,7 +69,25 @@ _SCAFFOLD_EXTENSIONS = {".json", ".html", ".css", ".sh", ".sql"}
 _DOC_EXTENSIONS = {".md", ".rst", ".txt"}
 # "runtime" excluded: the chain mirrors traceability json INTO the workspace,
 # which inflated code_file_count (L1-02 min_files passed on a matrix json).
-_SKIP_DIRS = {".git", ".polaris", "__pycache__", "node_modules", ".venv", "venv", "runtime"}
+# Build-output dirs excluded (mirrors _DEPTH_EXCLUDED_DIRS): CMake/cargo/webpack
+# write generated files into build/target/dist that pollute the inventory and its
+# language detection — a C++ project's CMake build dir leaked
+# build/CMakeFiles/.../compiler_depend.ts, counted as a TypeScript file and falsely
+# flagging the C++ project as TS missing package.json/tsconfig.json (L1-06).
+_SKIP_DIRS = {
+    ".git",
+    ".polaris",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "venv",
+    "runtime",
+    "build",
+    "cmake-build",
+    "target",
+    "dist",
+    "out",
+}
 _MAX_SCAN_FILES = 20000
 _SCRIPT_INTERPRETERS = {"node", "python", "python3", "bash", "sh"}
 _SCRIPT_PATH_EXTENSIONS = {".cjs", ".js", ".mjs", ".py", ".sh", ".ts", ".tsx"}
@@ -127,12 +145,28 @@ _STRING_LITERAL_RE = re.compile(
 
 
 def _has_unfinished_placeholder(text: str) -> bool:
-    """Return True if a placeholder/stub marker appears outside comments and string literals."""
+    """Return True if a placeholder/stub marker appears in real code (not comments/strings).
+
+    Suppresses placeholder WORDS occurring only inside string literals, whole-line
+    comments, OR inline comments (e.g. a C++ line ``"...",  // ...placeholder...``
+    where the comment, not the code, names the word). Bare ``pass`` bodies stay
+    flagged. String literals are stripped first so ``//`` inside a URL string is not
+    mistaken for a comment; a leading-``#`` line (Python comment or C preprocessor)
+    is dropped whole, while an inline ``#`` after code is treated as a comment.
+    """
     without_strings = _STRING_LITERAL_RE.sub('""', text)
-    scan = "\n".join(
-        line for line in without_strings.splitlines() if not line.lstrip().startswith(_COMMENT_LINE_PREFIXES)
-    )
-    return bool(_PLACEHOLDER_SOURCE_RE.search(scan))
+    scan_lines: list[str] = []
+    for line in without_strings.splitlines():
+        if line.lstrip().startswith(_COMMENT_LINE_PREFIXES):
+            continue
+        slash = line.find("//")
+        if slash != -1:
+            line = line[:slash]
+        hash_idx = line.find("#")
+        if hash_idx > 0 and line[:hash_idx].strip():
+            line = line[:hash_idx]
+        scan_lines.append(line)
+    return bool(_PLACEHOLDER_SOURCE_RE.search("\n".join(scan_lines)))
 
 
 _STRUCTURAL_SYMBOL_LINE_RE = re.compile(

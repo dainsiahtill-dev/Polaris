@@ -1259,6 +1259,20 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 metadata=_executable_runtime_metadata(scope="package_json_dev_dependency_json_set"),
             ),
             RepairRuleDefinition(
+                rule_id="typescript.node_scheme_module_types_dependency",
+                source_tool=RUNTIME_DEPENDENCY_SOURCE_TOOL,
+                language="typescript",
+                phase="dependency_resolution",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                diagnostic_codes=("typescript_ts2307",),
+                raw_terms=("node:", "type declarations"),
+                risk_level="medium",
+                description="Adds @types/node when TypeScript cannot resolve a node: builtin module.",
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="package_json_dev_dependency_json_set"),
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.node_global_types_dependency",
                 source_tool=RUNTIME_DEPENDENCY_SOURCE_TOOL,
                 language="typescript",
@@ -1591,6 +1605,22 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 raw_terms=("npm package manifest script",),
                 risk_level="low",
                 description="Repairs package.json script contracts through structured JSON operations.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="javascript.typescript_test_runner_script_contract",
+                source_tool=NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
+                language="javascript",
+                phase="test_contract",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                diagnostic_codes=("artifact_quality_error",),
+                raw_terms=("npm run test", "strip-types"),
+                risk_level="low",
+                description=(
+                    "Repairs generated TypeScript npm test scripts that depend on an unstable "
+                    "direct .ts loader instead of the compiled verifier."
+                ),
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(

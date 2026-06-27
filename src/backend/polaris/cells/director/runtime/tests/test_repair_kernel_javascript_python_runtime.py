@@ -181,6 +181,62 @@ def test_npm_script_contract_repairs_recursive_build_script_with_structured_json
     assert repaired["scripts"]["test"] == "npm run verify"
 
 
+def test_npm_script_contract_repairs_strip_types_test_runner_to_compiled_verifier() -> None:
+    package_text = json.dumps(
+        {
+            "name": "sample",
+            "version": "1.0.0",
+            "devDependencies": {"typescript": "^5.0.0"},
+            "scripts": {
+                "build": "tsc -p tsconfig.json",
+                "test": "node --experimental-strip-types tests/verify.test.ts",
+                "verify": "node --experimental-strip-types src/verify.ts",
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    raw_error = (
+        "step verify failed (exit 1): npm run test :: "
+        "node --experimental-strip-types tests/verify.test.ts\n\n"
+        "FAIL: verifier must exit 0; verifier exit=1; stdoutTail=4\n"
+        "[OK  ] source_target_coverage: src/**/*.ts covered with 10 file(s)\n"
+        "FAIL - 5/6 checks passed; failed: ts_syntax"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw_error])
+    base_files = {
+        "package.json": package_text,
+        "tsconfig.json": "{}\n",
+        "src/index.ts": "export {};\n",
+        "src/verify.ts": "export {};\n",
+        "tests/verify.test.ts": "export {};\n",
+    }
+
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(artifact_quality_errors=(raw_error,))
+    ).to_dict()
+    assert coverage["covered_diagnostic_count"] == 1
+    assert coverage["items"][0]["known_rule_matched"] is True
+    assert coverage["items"][0]["executable_runtime_plan_matched"] is True
+    assert coverage["items"][0]["matched_source_tools"] == ["deterministic_npm_script_contract_repair"]
+
+    plan = build_npm_script_contract_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.source_tool == "deterministic_npm_script_contract_repair"
+    assert [operation.kind for operation in plan.operations] == ["json_set"]
+    assert plan.operations[0].json_path == ("scripts", "test")
+    assert plan.operations[0].value == "npm run build && node dist/verify.js"
+    composition = PatchComposer().compose(base_files, plan.operations)
+    assert composition.ok
+    repaired = json.loads(composition.patches[0].content_after)
+    assert repaired["scripts"]["test"] == "npm run build && node dist/verify.js"
+
+
 def test_npm_script_contract_public_run_records_receipt_revalidation_evidence(tmp_path: Path) -> None:
     package_path = tmp_path / "package.json"
     tsconfig_path = tmp_path / "tsconfig.json"
