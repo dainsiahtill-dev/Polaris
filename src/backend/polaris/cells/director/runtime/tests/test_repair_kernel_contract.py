@@ -38,6 +38,7 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     build_java_accessor_alias_plan,
     build_patch_residue_cleanup_plan,
     build_python_readme_required_token_plan,
+    build_repair_coverage_report,
     build_repair_receipt_context,
     build_rust_dependency_plan,
     build_rust_missing_binary_entrypoint_plan,
@@ -49,6 +50,7 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     build_typescript_nullable_canvas_context_plan,
     build_typescript_number_to_string_argument_plan,
     build_typescript_object_literal_comma_plan,
+    build_typescript_readonly_assignment_plan,
     default_repair_rule_registry,
     deterministic_repair_source_tool_known,
     normalize_artifact_quality_errors,
@@ -1389,6 +1391,120 @@ def test_typescript_number_to_string_argument_runtime_uses_editor_without_write_
     assert result.execution_result.receipt.metadata["write_file_reasons_by_path"] == {}
 
 
+def test_typescript_readonly_assignment_rule_covers_ts2540_and_removes_single_modifier() -> None:
+    content = (
+        "export interface InventoryItem {\n"
+        "  readonly id: string;\n"
+        "  readonly quantity: number;\n"
+        "  readonly unitPrice: number;\n"
+        "}\n"
+        "\n"
+        "export function add(existing: InventoryItem, delta: InventoryItem): void {\n"
+        "  existing.quantity += delta.quantity;\n"
+        "}\n"
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        ["src/models/Inventory.ts(8,12): error TS2540: Cannot assign to 'quantity' because it is a read-only property."]
+    )
+
+    coverage = build_repair_coverage_report(diagnostics)
+    assert coverage.covered_diagnostic_count == 1
+    assert coverage.executable_runtime_plan_diagnostic_count == 1
+    assert coverage.items[0].matched_rules[0].rule_id == "typescript.readonly_assignment"
+    assert coverage.items[0].matched_rules[0].source_tool == "deterministic_typescript_readonly_assignment_repair"
+
+    plan = build_typescript_readonly_assignment_plan(
+        base_files={"src/models/Inventory.ts": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "typescript.readonly_assignment"
+    assert plan.source_tool == "deterministic_typescript_readonly_assignment_repair"
+    assert {operation.kind for operation in plan.operations} == {"text_replace"}
+    assert plan.operations[0].expected == "readonly "
+    assert plan.operations[0].replacement == ""
+    composition = PatchComposer().compose({"src/models/Inventory.ts": content}, plan.operations)
+    assert composition.ok
+    assert "  quantity: number;" in composition.patches[0].content_after
+    assert "readonly id: string" in composition.patches[0].content_after
+    assert "readonly unitPrice: number" in composition.patches[0].content_after
+
+
+def test_typescript_readonly_assignment_rule_fails_closed_for_ambiguous_declarations() -> None:
+    content = (
+        "export interface A {\n"
+        "  readonly quantity: number;\n"
+        "}\n"
+        "export interface B {\n"
+        "  readonly quantity: number;\n"
+        "}\n"
+        "declare const existing: A;\n"
+        "existing.quantity += 1;\n"
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        ["src/models/Inventory.ts(8,10): error TS2540: Cannot assign to 'quantity' because it is a read-only property."]
+    )
+
+    plan = build_typescript_readonly_assignment_plan(
+        base_files={"src/models/Inventory.ts": content},
+        diagnostics=diagnostics,
+    )
+
+    assert plan is None
+
+
+def test_typescript_readonly_assignment_runtime_uses_editor_without_write_file(tmp_path: Path) -> None:
+    relative_path = "src/models/Inventory.ts"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    content = (
+        "export interface InventoryItem {\n"
+        "  readonly id: string;\n"
+        "  readonly quantity: number;\n"
+        "}\n"
+        "declare const existing: InventoryItem;\n"
+        "existing.quantity -= 1;\n"
+    )
+    target.write_text(content, encoding="utf-8")
+    writes: list[str] = []
+    edits: list[str] = []
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        writes.append(path)
+        raise AssertionError("readonly assignment repair must prefer edit_file over write_file")
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        current = target.read_text(encoding="utf-8")
+        assert operation.span_start is not None
+        assert operation.span_end is not None
+        target.write_text(
+            current[: operation.span_start] + str(operation.replacement or "") + current[operation.span_end :],
+            encoding="utf-8",
+        )
+        edits.append(operation.operation_id)
+        return {"ok": True}
+
+    result = run_runtime_repair(
+        source_tool="deterministic_typescript_readonly_assignment_repair",
+        workspace=tmp_path,
+        base_files={relative_path: content},
+        artifact_quality_errors=(
+            "src/models/Inventory.ts(6,10): error TS2540: Cannot assign to 'quantity' "
+            "because it is a read-only property.",
+        ),
+        writer=writer,
+        editor=editor,
+        allowed_paths=(relative_path,),
+    )
+
+    assert result.ok is True
+    assert writes == []
+    assert edits
+    assert "  quantity: number;" in target.read_text(encoding="utf-8")
+
+
 def test_typescript_canvas_scale_return_type_rule_plans_precise_type_replace_and_coverage() -> None:
     content = (
         "export function scaleToCanvas(state: unknown, width: number, height: number): "
@@ -1967,7 +2083,7 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
     assert "deterministic_rust_post_repair" in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert len(runtime_repair_source_tools()) == len(bindings)
-    assert len(runtime_repair_source_tools()) == 89
+    assert len(runtime_repair_source_tools()) == 90
     assert sum(1 for binding in bindings if binding["language"] == "rust") == 21
     assert runtime_repair_source_tools() == tuple(binding["source_tool"] for binding in bindings)
     assert all(set(binding) == {"source_tool", "language", "rule_id"} for binding in bindings)
@@ -7650,7 +7766,7 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         or source_tool == "deterministic_javascript_typescript_annotation_repair"
     ]
     catalog_failure_message = (
-        "expected public strategy catalog ledger total=89 executable_runtime=89 legacy_strategy_host=0; "
+        "expected public strategy catalog ledger total=90 executable_runtime=90 legacy_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
         "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
     )
@@ -7659,14 +7775,14 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
-    assert catalog_summary["total"] == 89
+    assert catalog_summary["total"] == 90
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert legacy_source_tools == [], catalog_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 89, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 90, catalog_failure_message
     assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, catalog_failure_message
-    assert catalog_summary["executable_runtime_binding_count"] == 89, catalog_failure_message
+    assert catalog_summary["executable_runtime_binding_count"] == 90, catalog_failure_message
     assert catalog_summary["legacy_strategy_host_count"] == 0, catalog_failure_message
-    assert len(catalog_summary["executable_runtime_source_tools"]) == 89, catalog_failure_message
+    assert len(catalog_summary["executable_runtime_source_tools"]) == 90, catalog_failure_message
     assert set(catalog_summary["implementation_status_counts"]).issubset({"executable_runtime", "legacy_strategy_host"})
     assert "reserved_only" not in catalog_summary["implementation_status_counts"]
     assert "metadata_rule_registered" not in catalog_summary["implementation_status_counts"]

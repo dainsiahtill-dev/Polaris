@@ -295,6 +295,8 @@ from .typescript_runtime import (
     TypeScriptNumberToStringArgumentRun,
     TypeScriptObjectLiteralCommaPlanning,
     TypeScriptObjectLiteralCommaRun,
+    TypeScriptReadonlyAssignmentPlanning,
+    TypeScriptReadonlyAssignmentRun,
     TypeScriptRuntimePlanning,
     TypeScriptRuntimeRun,
     plan_typescript_canvas_scale_return_type_repair,
@@ -304,6 +306,7 @@ from .typescript_runtime import (
     plan_typescript_nullable_canvas_context_repair,
     plan_typescript_number_to_string_argument_repair,
     plan_typescript_object_literal_comma_repair,
+    plan_typescript_readonly_assignment_repair,
     plan_typescript_runtime_repair_for_source_tool,
     run_typescript_canvas_scale_return_type_repair,
     run_typescript_duplicate_object_property_repair,
@@ -312,6 +315,7 @@ from .typescript_runtime import (
     run_typescript_nullable_canvas_context_repair,
     run_typescript_number_to_string_argument_repair,
     run_typescript_object_literal_comma_repair,
+    run_typescript_readonly_assignment_repair,
     run_typescript_runtime_repair_for_source_tool,
 )
 from .typescript_syntax import (
@@ -331,6 +335,7 @@ from .typescript_syntax import (
     TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
     TYPESCRIPT_NULLABLE_CANVAS_CONTEXT_SOURCE_TOOL,
     TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL,
+    TYPESCRIPT_READONLY_ASSIGNMENT_SOURCE_TOOL,
     TYPESCRIPT_REEXPORT_SOURCE_TOOL,
     TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL,
     TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL,
@@ -988,6 +993,21 @@ def _plan_typescript_number_to_string_argument(
     mode: str,
 ) -> RuntimeRepairPlanning:
     planning = plan_typescript_number_to_string_argument_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_typescript(planning)
+
+
+def _plan_typescript_readonly_assignment(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_typescript_readonly_assignment_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         advisor_notes=advisor_notes,
@@ -1947,6 +1967,31 @@ def _run_typescript_number_to_string_argument(
     mode: str,
 ) -> RuntimeRepairRun:
     run = run_typescript_number_to_string_argument_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_typescript(run)
+
+
+def _run_typescript_readonly_assignment(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    del deleter
+    run = run_typescript_readonly_assignment_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
@@ -3519,7 +3564,8 @@ def _runtime_planning_from_typescript(
     | TypeScriptMissingClosingBracePlanning
     | TypeScriptNullableCanvasContextPlanning
     | TypeScriptNumberToStringArgumentPlanning
-    | TypeScriptObjectLiteralCommaPlanning,
+    | TypeScriptObjectLiteralCommaPlanning
+    | TypeScriptReadonlyAssignmentPlanning,
 ) -> RuntimeRepairPlanning:
     return RuntimeRepairPlanning(
         source_tool=planning.source_tool,
@@ -3537,7 +3583,8 @@ def _runtime_run_from_typescript(
     | TypeScriptMissingClosingBraceRun
     | TypeScriptNullableCanvasContextRun
     | TypeScriptNumberToStringArgumentRun
-    | TypeScriptObjectLiteralCommaRun,
+    | TypeScriptObjectLiteralCommaRun
+    | TypeScriptReadonlyAssignmentRun,
 ) -> RuntimeRepairRun:
     return RuntimeRepairRun(
         planning=_runtime_planning_from_typescript(run.planning),
@@ -4130,6 +4177,13 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="typescript.number_to_string_argument",
         planner=_plan_typescript_number_to_string_argument,
         runner=_run_typescript_number_to_string_argument,
+    ),
+    TYPESCRIPT_READONLY_ASSIGNMENT_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=TYPESCRIPT_READONLY_ASSIGNMENT_SOURCE_TOOL,
+        language="typescript",
+        rule_id="typescript.readonly_assignment",
+        planner=_plan_typescript_readonly_assignment,
+        runner=_run_typescript_readonly_assignment,
     ),
 }
 

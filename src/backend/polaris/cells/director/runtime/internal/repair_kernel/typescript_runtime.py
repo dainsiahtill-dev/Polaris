@@ -953,6 +953,77 @@ def run_typescript_number_to_string_argument_repair(
     )
 
 
+def run_typescript_readonly_assignment_repair(
+    *,
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> TypeScriptReadonlyAssignmentRun:
+    """Run TS2540 readonly assignment repair through Plan->Compose->Policy->Execute."""
+
+    normalized_base = _normalize_base_files(base_files)
+    planning = plan_typescript_readonly_assignment_repair(
+        base_files=normalized_base,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    if planning.plan is None:
+        return TypeScriptReadonlyAssignmentRun(
+            planning=planning,
+            ok=False,
+            error_code="repair_not_planned",
+            error_message="No matching TypeScript readonly assignment repair plan.",
+        )
+    if planning.composition is None:
+        return TypeScriptReadonlyAssignmentRun(
+            planning=planning,
+            ok=False,
+            error_code="repair_composition_missing",
+            error_message="TypeScript readonly assignment repair composition was not produced.",
+        )
+
+    policy = RepairPolicyGate()
+    policy_context = RepairPolicyContext(
+        allowed_paths=tuple(
+            str(path or "").strip().replace("\\", "/") for path in (allowed_paths or normalized_base.keys())
+        )
+    )
+    plan_decision = policy.evaluate_plan(planning.plan, policy_context)
+    composition_decision = policy.evaluate_composition(planning.plan, planning.composition)
+    if not plan_decision.allowed or not composition_decision.allowed:
+        return TypeScriptReadonlyAssignmentRun(
+            planning=planning,
+            ok=False,
+            plan_decision=plan_decision,
+            composition_decision=composition_decision,
+            error_code="repair_policy_denied",
+            error_message="Director Runtime repair policy denied the plan or composition.",
+        )
+
+    execution_result = TransactionalRepairExecutor().execute(
+        workspace=Path(str(workspace)).resolve(),
+        plan=planning.plan,
+        composition=planning.composition,
+        writer=writer,
+        editor=editor,
+    )
+    return TypeScriptReadonlyAssignmentRun(
+        planning=planning,
+        ok=execution_result.ok,
+        execution_result=execution_result,
+        plan_decision=plan_decision,
+        composition_decision=composition_decision,
+        error_code=None if execution_result.ok else "repair_execution_failed",
+        error_message=None if execution_result.ok else execution_result.error,
+    )
+
+
 def run_typescript_canvas_scale_return_type_repair(
     *,
     workspace: str | Path,

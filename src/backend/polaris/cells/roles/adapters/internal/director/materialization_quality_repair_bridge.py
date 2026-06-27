@@ -68,6 +68,7 @@ _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS = (
     "deterministic_typescript_missing_member_repair",
     "deterministic_typescript_nullable_canvas_context_repair",
     "deterministic_typescript_number_to_string_argument_repair",
+    "deterministic_typescript_readonly_assignment_repair",
     "deterministic_typescript_reexport_repair",
     "deterministic_typescript_reexported_type_binding_repair",
     "deterministic_typescript_relative_import_case_repair",

@@ -3646,7 +3646,6 @@ def _readonly_assignment_operations(
         return ()
     before_hash = sha256_text(content)
     lines = str(content or "").splitlines(keepends=True)
-    offsets = _line_start_offsets(lines)
     operations: list[RepairOperation] = []
     for prop in sorted(by_property):
         declaration_spans = _readonly_property_declaration_spans(content, prop)
