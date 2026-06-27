@@ -733,6 +733,46 @@ class TestExecuteCommandGuards:
         assert isinstance(receipt, dict)
         assert receipt.get("operation") == "execute_command"
 
+    def test_execute_command_capability_token_blocks_unlisted_command(self, temp_workspace) -> None:
+        """allowed_commands in the capability token narrows execute_command."""
+        executor = AgentAccelToolExecutor(
+            workspace=temp_workspace,
+            capability_token={
+                "token_id": "job-1",
+                "execution_envelope_hash": "env-hash",
+                "allowed_commands": ["python --version"],
+            },
+        )
+
+        result = executor.execute("execute_command", {"command": "echo hello"})
+
+        assert result["ok"] is False
+        assert result["error_type"] == "command_capability_denied"
+        assert result["blocked"] is True
+        receipt = result.get("effect_receipt")
+        assert isinstance(receipt, dict)
+        assert receipt["capability_token"]["token_id"] == "job-1"
+        assert receipt["capability_token"]["execution_envelope_hash"] == "env-hash"
+        assert receipt["capability_token"]["allowed_commands"] == ["python --version"]
+
+    def test_execute_command_capability_token_allows_listed_command(self, temp_workspace) -> None:
+        """A listed command still goes through the normal command safety gates."""
+        executor = AgentAccelToolExecutor(
+            workspace=temp_workspace,
+            capability_token={
+                "token_id": "job-1",
+                "execution_envelope_hash": "env-hash",
+                "allowed_commands": ["python --version"],
+            },
+        )
+
+        result = executor.execute("execute_command", {"command": "python --version"})
+
+        assert result["ok"] is True
+        receipt = result["result"].get("effect_receipt")
+        assert isinstance(receipt, dict)
+        assert receipt["capability_token"]["allowed_commands"] == ["python --version"]
+
     @pytest.mark.skipif(os.name != "nt", reason="Windows-specific shell wrapping behavior")
     def test_execute_command_windows_wraps_via_cmd(self, temp_workspace, monkeypatch) -> None:
         """npm-like commands should execute through cmd /c on Windows."""

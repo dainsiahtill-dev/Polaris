@@ -241,6 +241,7 @@ envelope_hash: ...
 - `ce_handoff_decision.v1.bindings` 是 `pm_contract`、`ce_blueprint`、`execution_profile` hash/ref 的首选权威来源；只有不存在 strict decision binding 时才允许使用运行时 metadata 或 payload fallback。
 - `handoff_decision.hash` 必须优先使用 `ce_handoff_decision.v1.decision_hash`，不得因为调用方没有重复传 `ce_handoff_decision_hash` 就重新计算另一套 hash。
 - `handoff_decision.allowed=false` 或任一 required binding 缺失时，envelope 可以保留证据用于复盘，但不得被下游解释成可执行授权。
+- `authorization.allowed_commands` 进入 Job Token 后必须收窄 `execute_command`；未提供该字段时只适用既有全局命令白名单，提供后不得由工具参数扩权。
 - `tool_receipt.execution_envelope_hash` 必须等于当前 `envelope_hash`。
 - 执行期间不得按 `blueprint_id` 重新读取可变蓝图作为授权依据。
 

@@ -92,7 +92,7 @@ class _LRUHandlerCache:
 
 def _copy_handler_failure_evidence(payload: dict[str, Any], handler_result: dict[str, Any]) -> None:
     """Preserve structured handler evidence when executor wraps a failed result."""
-    for key in ("director_policy", "director_policy_denials"):
+    for key in ("director_policy", "director_policy_denials", "effect_receipt"):
         if key in handler_result:
             payload[key] = handler_result[key]
     if "blocked" in handler_result:
@@ -100,8 +100,7 @@ def _copy_handler_failure_evidence(payload: dict[str, Any], handler_result: dict
     handler_error_type = str(handler_result.get("error_type") or "").strip()
     if handler_error_type:
         payload["handler_error_type"] = handler_error_type
-        if handler_error_type in {"director_write_policy_denied", "invalid_path"}:
-            payload["error_type"] = handler_error_type
+        payload["error_type"] = handler_error_type
 
 
 class AgentAccelToolExecutor:

@@ -121,6 +121,10 @@ def _handle_execute_command(self: AgentAccelToolExecutor, **kwargs) -> dict[str,
 
     timeout_seconds = max(1, min(int(timeout), 120))
 
+    capability_denial = _validate_command_capability(self, command_text)
+    if capability_denial is not None:
+        return _attach_command_effect_receipt(capability_denial, self)
+
     # Validate command against whitelist before execution
     validation_result = _validate_command_whitelist(command_text)
     if not validation_result.allowed:
@@ -152,6 +156,60 @@ def _handle_execute_command(self: AgentAccelToolExecutor, **kwargs) -> dict[str,
 def _command_capability_token(self: AgentAccelToolExecutor | None) -> dict[str, Any]:
     token = getattr(self, "_capability_token", {}) if self is not None else {}
     return dict(token) if isinstance(token, dict) else {}
+
+
+def _coerce_command_allowlist(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        token = value.strip()
+        return [token] if token else []
+    if isinstance(value, (list, tuple, set)):
+        result: list[str] = []
+        for item in value:
+            result.extend(_coerce_command_allowlist(item))
+        return result
+    return []
+
+
+def _capability_allowed_commands(self: AgentAccelToolExecutor | None) -> list[str]:
+    token = _command_capability_token(self)
+    for key in ("allowed_commands", "authorized_commands", "commands"):
+        commands = _coerce_command_allowlist(token.get(key))
+        if commands:
+            return commands
+    return []
+
+
+def _command_matches_capability(command_text: str, allowed_commands: list[str]) -> bool:
+    command = _sanitize_llm_command_text(command_text)
+    has_shell_operator = _contains_shell_operators(command)
+    for allowed in allowed_commands:
+        allowed_command = _sanitize_llm_command_text(allowed)
+        if not allowed_command:
+            continue
+        if command == allowed_command:
+            return True
+        if not has_shell_operator and command.startswith(f"{allowed_command} "):
+            return True
+    return False
+
+
+def _validate_command_capability(
+    self: AgentAccelToolExecutor,
+    command_text: str,
+) -> dict[str, Any] | None:
+    allowed_commands = _capability_allowed_commands(self)
+    if not allowed_commands or _command_matches_capability(command_text, allowed_commands):
+        return None
+    return {
+        "ok": False,
+        "error": "Command blocked by capability token: command is outside allowed_commands",
+        "blocked": True,
+        "command": command_text,
+        "error_type": "command_capability_denied",
+        "allowed_commands": allowed_commands,
+    }
 
 
 def _attach_command_effect_receipt(

@@ -7,7 +7,12 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from polaris.cells.control_plane.run_ledger.public.ledger import RunLedger
+from polaris.cells.roles.kernel.internal.kernel.tool_executor import (
+    derive_role_turn_capability_scope,
+    derive_role_turn_capability_token,
+)
 from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
+from polaris.cells.roles.profile.internal.schema import RoleTurnRequest
 
 
 def _make_profile(tool_policy: dict[str, Any] | None = None) -> MagicMock:
@@ -137,3 +142,29 @@ class TestAppendToolReceiptToRunLedger:
             effect_receipt=None,
             normalized_success=True,
         )
+
+
+class TestRoleTurnCapabilityToken:
+    """Verify role-turn Job Token evidence carries envelope command scope."""
+
+    def test_derives_allowed_commands_from_job_token(self) -> None:
+        request = RoleTurnRequest(
+            message="run verification",
+            metadata={
+                "execution_envelope_hash": "env-hash",
+                "job_token": {
+                    "token_id": "job-1",
+                    "allowed_paths": ["src/main.py"],
+                    "allowed_commands": ["python --version"],
+                    "execution_envelope_hash": "env-hash",
+                },
+            },
+        )
+
+        capability_scope = derive_role_turn_capability_scope(request)
+        capability_token = derive_role_turn_capability_token(request, capability_scope)
+
+        assert capability_scope == ("src/main.py",)
+        assert capability_token["token_id"] == "job-1"
+        assert capability_token["execution_envelope_hash"] == "env-hash"
+        assert capability_token["allowed_commands"] == ["python --version"]

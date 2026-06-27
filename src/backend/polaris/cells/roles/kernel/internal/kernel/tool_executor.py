@@ -48,6 +48,7 @@ _SCOPE_CONTAINER_KEYS: tuple[str, ...] = (
 
 _NO_AUTHORIZED_SCOPE_SENTINEL = "__polaris_no_authorized_paths__"
 _CAPABILITY_TOKEN_KEYS: tuple[str, ...] = ("job_token", "control_plane_job_token", "capability_token")
+_DIRECT_COMMAND_KEYS: tuple[str, ...] = ("allowed_commands", "authorized_commands", "commands")
 
 
 def _scope_items(value: Any) -> list[str]:
@@ -70,6 +71,26 @@ def _scope_items(value: Any) -> list[str]:
         items = []
         for entry in value:
             items.extend(_scope_items(entry))
+        return items
+    return []
+
+
+def _command_items(value: Any) -> list[str]:
+    """Coerce a command allowlist-like value into string candidates."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, dict):
+        items: list[str] = []
+        for key in _DIRECT_COMMAND_KEYS:
+            items.extend(_command_items(value.get(key)))
+        return items
+    if isinstance(value, (list, tuple, set)):
+        items = []
+        for entry in value:
+            items.extend(_command_items(entry))
         return items
     return []
 
@@ -168,7 +189,7 @@ def _job_token_evidence(value: dict[str, Any], scope: tuple[str, ...] | None) ->
         return {}
     capability_audit = value.get("capability_audit")
     capability_audit_map = capability_audit if isinstance(capability_audit, dict) else {}
-    return {
+    evidence = {
         "source": str(value.get("source") or "control_plane.job_token"),
         "token_id": token_id,
         "run_id": str(value.get("run_id") or ""),
@@ -180,6 +201,10 @@ def _job_token_evidence(value: dict[str, Any], scope: tuple[str, ...] | None) ->
         "capability_audit_ok": bool(capability_audit_map.get("ok")),
         "allowed_scope": list(scope or ()),
     }
+    allowed_commands = _command_items(value)
+    if allowed_commands:
+        evidence["allowed_commands"] = allowed_commands
+    return evidence
 
 
 def derive_role_turn_capability_token(
