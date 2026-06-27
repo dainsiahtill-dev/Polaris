@@ -113,11 +113,25 @@ _PLACEHOLDER_SOURCE_RE = re.compile(
 # museum.go false positive). Bare ``pass`` bodies and code-level markers stay
 # flagged because their lines are not pure comments.
 _COMMENT_LINE_PREFIXES: tuple[str, ...] = ("//", "#", "*", "/*", "--", "<!--")
+# String/docstring literals also legitimately contain placeholder WORDS as prose
+# (e.g. a module docstring "...never falls back to static placeholder text...", or an
+# anti-placeholder test naming forbidden tokens). Strip string literals so their words
+# don't false-trigger; bare ``pass`` (never inside a string) and code-level markers stay
+# flagged. Triple-quoted (docstring) literals are matched before single-line ones.
+_STRING_LITERAL_RE = re.compile(
+    r'"""[\s\S]*?"""'
+    r"|'''[\s\S]*?'''"
+    r'|"(?:[^"\\]|\\.)*"'
+    r"|'(?:[^'\\]|\\.)*'"
+)
 
 
 def _has_unfinished_placeholder(text: str) -> bool:
-    """Return True if a placeholder/stub marker appears outside pure-comment lines."""
-    scan = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(_COMMENT_LINE_PREFIXES))
+    """Return True if a placeholder/stub marker appears outside comments and string literals."""
+    without_strings = _STRING_LITERAL_RE.sub('""', text)
+    scan = "\n".join(
+        line for line in without_strings.splitlines() if not line.lstrip().startswith(_COMMENT_LINE_PREFIXES)
+    )
     return bool(_PLACEHOLDER_SOURCE_RE.search(scan))
 
 
