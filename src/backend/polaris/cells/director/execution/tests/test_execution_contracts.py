@@ -198,6 +198,63 @@ class TestExecuteDirectorTaskPublicService:
         assert audit["missing_required_refs"] == []
         assert service.executed_tasks[0].metadata["execution_contract_audit"] == audit
 
+    def test_execute_director_task_strict_contract_refs_block_missing_refs(self) -> None:
+        from polaris.cells.director.execution.public.service import execute_director_task
+
+        service = FakeDirectorExecutionService()
+        result = execute_director_task(
+            ExecuteDirectorTaskCommandV1(
+                task_id="task-strict",
+                workspace="/repo",
+                instruction="Execute approved task",
+                metadata={"require_execution_contract_refs": True},
+            ),
+            director_service=service,
+        )
+
+        assert result.ok is False
+        assert result.error_code == "director_execution_contract_refs_missing"
+        assert "handoff_decision_hash" in str(result.error_message)
+        assert service.executed_tasks == []
+        audit = result.metadata["execution_contract_audit"]
+        assert audit["enforcement"] == "strict"
+        assert audit["has_execution_envelope"] is True
+
+    def test_execute_director_task_strict_contract_refs_allow_complete_envelope(self) -> None:
+        from polaris.cells.director.execution.public.service import execute_director_task
+
+        envelope = {
+            "schema_version": "polaris.execution_envelope.v1",
+            "envelope_hash": "env-hash-2",
+            "pm_contract": {"ref": "runtime/contracts/task.json", "hash": "pm-hash-2"},
+            "ce_blueprint": {"ref": "runtime/contracts/ce.json", "hash": "ce-hash-2"},
+            "handoff_decision": {
+                "ref": "runtime/contracts/handoff.json",
+                "hash": "handoff-hash-2",
+                "allowed": True,
+            },
+            "execution_profile": {"ref": "runtime/contracts/profile.json", "hash": "profile-hash-2"},
+        }
+        service = FakeDirectorExecutionService()
+        result = execute_director_task(
+            ExecuteDirectorTaskCommandV1(
+                task_id="task-strict-ok",
+                workspace="/repo",
+                instruction="Execute approved task",
+                metadata={
+                    "director_execution_envelope": envelope,
+                    "require_execution_contract_refs": True,
+                },
+            ),
+            director_service=service,
+        )
+
+        assert result.ok is True
+        assert len(service.executed_tasks) == 1
+        audit = result.metadata["execution_contract_audit"]
+        assert audit["enforcement"] == "strict"
+        assert audit["missing_required_refs"] == []
+
 
 class TestRetryDirectorTaskCommandV1:
     """Tests for RetryDirectorTaskCommandV1 contract."""

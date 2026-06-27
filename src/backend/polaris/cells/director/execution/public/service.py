@@ -140,6 +140,27 @@ def _optional_bool(value: Any) -> bool | None:
     return None
 
 
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on", "strict", "required"}
+    return False
+
+
+def _execution_contract_refs_required(metadata: Mapping[str, Any]) -> bool:
+    return any(
+        _truthy(metadata.get(key))
+        for key in (
+            "require_execution_contract_refs",
+            "execution_contract_refs_required",
+            "execution_envelope_strict",
+        )
+    )
+
+
 def _build_execution_contract_audit(metadata: Mapping[str, Any]) -> dict[str, Any]:
     envelope = _mapping_value(metadata, "director_execution_envelope", "task_execution_envelope", "execution_envelope")
     handoff = _mapping_value(metadata, "ce_handoff_decision", "handoff_decision")
@@ -197,7 +218,7 @@ def _build_execution_contract_audit(metadata: Mapping[str, Any]) -> dict[str, An
         "ce_blueprint_hash": ce_blueprint_hash,
         "execution_profile_hash": execution_profile_hash,
         "missing_required_refs": missing_required_refs,
-        "enforcement": "audit_only",
+        "enforcement": "strict" if _execution_contract_refs_required(metadata) else "audit_only",
     }
 
 
@@ -280,6 +301,21 @@ def execute_director_task(
     try:
         task = _build_director_task(command)
         execution_contract_audit = dict(task.metadata.get("execution_contract_audit") or {})
+        missing_required_refs = [
+            str(item) for item in execution_contract_audit.get("missing_required_refs") or [] if str(item).strip()
+        ]
+        if execution_contract_audit.get("enforcement") == "strict" and missing_required_refs:
+            return DirectorExecutionResultV1(
+                ok=False,
+                task_id=command.task_id,
+                workspace=command.workspace,
+                status="failed",
+                run_id=command.run_id,
+                error_code="director_execution_contract_refs_missing",
+                error_message="Director execution contract is missing required refs: "
+                + ", ".join(missing_required_refs),
+                metadata={"execution_contract_audit": execution_contract_audit},
+            )
         service = director_service or DirectorService(DirectorConfig(workspace=command.workspace))
         maybe_result = service._execute_task_work(task)
         task_result = _run_director_awaitable(maybe_result) if inspect.isawaitable(maybe_result) else maybe_result
