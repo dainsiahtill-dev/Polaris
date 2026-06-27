@@ -233,6 +233,34 @@ def _extract_content_any_keywords_from_directive(directive: str, *, limit: int =
     return _dedupe_limited_texts(values, limit=limit)
 
 
+def _contract_keyword_tokens(
+    keywords: list[str],
+    *,
+    fallback: tuple[str, ...] = ("entity", "rule", "result", "sample"),
+    limit: int = 4,
+) -> list[str]:
+    tokens: list[str] = []
+    for keyword in keywords:
+        cleaned = re.sub(r"[^a-z0-9_]+", "_", str(keyword or "").strip().lower()).strip("_")
+        if cleaned and not cleaned[0].isdigit():
+            tokens.append(cleaned)
+    tokens.extend(fallback)
+    return _dedupe_limited_texts(tokens, limit=limit)
+
+
+def _pascal_case_token(token: str, *, fallback: str) -> str:
+    parts = [part for part in re.split(r"[^A-Za-z0-9]+", str(token or "")) if part]
+    if not parts:
+        return fallback
+    value = "".join(part[:1].upper() + part[1:].lower() for part in parts)
+    return value if value[:1].isalpha() else fallback
+
+
+def _domain_module_name(tokens: list[str], *, suffix: str) -> str:
+    head = tokens[0] if tokens else "domain"
+    return f"{head}_{suffix}"
+
+
 def _delivery_depth_contract(
     *,
     domain_label: str,
@@ -1413,21 +1441,22 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         content_keywords = _extract_content_any_keywords_from_directive(directive)
         if not content_keywords:
             content_keywords = self._extract_domain_keywords(directive, limit=6)
+        keyword_tokens = _contract_keyword_tokens(content_keywords)
         keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
         check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "rust_compile; cargo build"
+        model_files = [f"src/models/{token}.rs" for token in keyword_tokens]
         model_targets = [
             "Cargo.toml",
             "src/lib.rs",
             "src/models/mod.rs",
-            "src/models/flavor.rs",
-            "src/models/ingredient.rs",
-            "src/models/recipe.rs",
-            "src/models/palette.rs",
+            *model_files,
         ]
+        rules_module = _domain_module_name(keyword_tokens, suffix="rules")
+        runner_module = _domain_module_name(keyword_tokens, suffix="runner")
         engine_targets = [
             "src/engine/mod.rs",
-            "src/engine/mapper.rs",
-            "src/engine/plating.rs",
+            f"src/engine/{rules_module}.rs",
+            f"src/engine/{runner_module}.rs",
             "src/main.rs",
         ]
         verification_targets = [
@@ -1463,7 +1492,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "steps": [
                         "创建 Cargo.toml，声明 package、edition 和可构建的 lib/bin 目标",
                         "创建 src/lib.rs，公开 models 与 engine 模块入口",
-                        "实现 src/models/ 下的 flavor、palette、ingredient、recipe 数据结构",
+                        f"实现 src/models/ 下与 {keyword_summary} 对齐的领域数据结构",
                         f"在 Rust 源码中保留验收关键词：{keyword_summary}",
                     ],
                     "acceptance": [
@@ -1479,22 +1508,22 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 {
                     "id": "TASK-2",
                     "title": f"实现 {domain_label} Rust 映射引擎与 CLI 入口",
-                    "goal": f"实现 {domain_label} 的味觉到色板/摆盘规则核心引擎和可执行入口。",
+                    "goal": f"实现 {domain_label} 的核心规则引擎和可执行入口。",
                     "description": (
-                        "补齐 src/engine/ 下的映射和摆盘逻辑，并创建 src/main.rs 调用公开 API 输出可验证结果。"
+                        "补齐 src/engine/ 下的领域规则和运行器，并创建 src/main.rs 调用公开 API 输出可验证结果。"
                     ),
                     "scope": engine_targets,
                     "target_files": engine_targets,
                     "steps": [
-                        "实现 src/engine/mapper.rs，将 flavor/taste 映射为 palette/color 结果",
-                        "实现 src/engine/plating.rs，根据 ingredient/recipe 生成摆盘规则",
-                        "实现 src/engine/mod.rs，导出 generate_palette_and_plating 或等价公开 API",
-                        "实现 src/main.rs，构造示例 recipe 并打印 palette 与 plating 输出",
+                        f"实现 src/engine/{rules_module}.rs，将 {keyword_summary} 输入映射为可解释规则结果",
+                        f"实现 src/engine/{runner_module}.rs，组织样例数据、边界情况和错误路径",
+                        "实现 src/engine/mod.rs，导出 run_domain_rules 或等价公开 API",
+                        f"实现 src/main.rs，构造 {keyword_summary} 代表性样例并打印规则输出",
                         "执行 `cargo build` 或 `cargo check` 验证 Rust 编译通过",
                     ],
                     "acceptance": [
                         "`src/main.rs` 可通过 `cargo run` 执行",
-                        "`src/engine/` 源码实现 flavor -> palette 和 ingredient/recipe -> plating 规则",
+                        f"`src/engine/` 源码实现与 {keyword_summary} 对齐的领域规则",
                         "`cargo build` 或 `cargo check` 返回成功",
                     ],
                     "phase": "implementation",
@@ -1541,14 +1570,15 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         content_keywords = _extract_content_any_keywords_from_directive(directive)
         if not content_keywords:
             content_keywords = self._extract_domain_keywords(directive, limit=6)
+        keyword_tokens = _contract_keyword_tokens(content_keywords)
         keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
         check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "cpp_compile; C++17"
+        model_targets = [
+            item for token in keyword_tokens for item in (f"src/models/{token}.hpp", f"src/models/{token}.cpp")
+        ]
         delivery_targets = [
             "CMakeLists.txt",
-            "src/models/postcard.hpp",
-            "src/models/postcard.cpp",
-            "src/models/stamp.hpp",
-            "src/models/stamp.cpp",
+            *model_targets,
             "src/engine/generator.hpp",
             "src/engine/generator.cpp",
             "src/main.cpp",
@@ -1583,11 +1613,10 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "target_files": delivery_targets,
                     "steps": [
                         "创建 CMakeLists.txt，声明 C++17 标准、可执行目标和所有 src/**/*.cpp 源文件",
-                        "实现 src/models/postcard.hpp 与 src/models/postcard.cpp 的明信片领域对象",
-                        "实现 src/models/stamp.hpp 与 src/models/stamp.cpp 的邮票或邮戳领域对象",
-                        "实现 src/engine/generator.hpp，声明 postcard generation 公开 API",
-                        "实现 src/engine/generator.cpp，将 moon/postcard/stamp/poem 等需求元素组合为输出文本",
-                        "实现 src/main.cpp，构造示例输入并打印生成的 postcard 或 poem 结果",
+                        f"实现 src/models/ 下与 {keyword_summary} 对齐的领域对象头文件和实现文件",
+                        "实现 src/engine/generator.hpp，声明领域规则生成公开 API",
+                        f"实现 src/engine/generator.cpp，将 {keyword_summary} 等需求元素组合为可解释输出",
+                        f"实现 src/main.cpp，构造示例输入并打印 {keyword_summary} 相关结果",
                         "创建 tests/test_product.py，使用 Python unittest 调用 CMake/g++ 或检查 C++ 产物结构",
                         "编写 README，说明 cmake build、直接 g++ 编译、运行和测试命令",
                         f"验证脚本覆盖确定性检查：{check_summary}",
@@ -1595,7 +1624,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "acceptance": [
                         "`CMakeLists.txt`、`src/models/`、`src/engine/`、`src/main.cpp`、`tests/test_product.py` 与 `README.md` 存在且非空",
                         "`src/main.cpp` 存在并可作为 C++17 CLI 入口编译运行",
-                        "`src/engine/` 源码实现 moon -> postcard/stamp/poem 生成规则",
+                        f"`src/engine/` 源码实现与 {keyword_summary} 对齐的领域规则",
                         f"源码包含需求关键词：{keyword_summary}",
                         "`cmake --build build` 或 `g++ -std=c++17` 返回成功",
                         "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",
@@ -1623,15 +1652,21 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         content_keywords = _extract_content_any_keywords_from_directive(directive)
         if not content_keywords:
             content_keywords = self._extract_domain_keywords(directive, limit=6)
+        keyword_tokens = _contract_keyword_tokens(content_keywords)
         keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
         check_summary = "; ".join(deterministic_checks[:8]) if deterministic_checks else "java_compile; javac"
+        engine_class = f"{_pascal_case_token(keyword_tokens[0] if keyword_tokens else '', fallback='Domain')}Engine"
+        test_class = f"{engine_class}Test"
+        domain_targets = [
+            f"src/main/java/polaris/factory/domain/{_pascal_case_token(token, fallback=f'Domain{idx + 1}')}Model.java"
+            for idx, token in enumerate(keyword_tokens[:3])
+        ]
         delivery_targets = [
             "pom.xml",
             "src/main/java/polaris/factory/Main.java",
-            "src/main/java/polaris/factory/domain/RhythmMonster.java",
-            "src/main/java/polaris/factory/domain/BeatPattern.java",
-            "src/main/java/polaris/factory/engine/RhythmEngine.java",
-            "src/test/java/polaris/factory/RhythmEngineTest.java",
+            *domain_targets,
+            f"src/main/java/polaris/factory/engine/{engine_class}.java",
+            f"src/test/java/polaris/factory/{test_class}.java",
             "tests/test_product.py",
             "README.md",
         ]
@@ -1664,9 +1699,9 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "steps": [
                         "创建 pom.xml 或等价 Java 项目元数据，但 java_compile 必须不依赖 Maven/Gradle 才能通过 javac",
                         "实现 src/main/java/polaris/factory/Main.java，作为可直接 java 运行的 CLI 入口",
-                        "实现 src/main/java/polaris/factory/domain/ 下的领域模型，表达 rhythm、monster、beat、pattern 规则",
-                        "实现 src/main/java/polaris/factory/engine/RhythmEngine.java，计算节奏正确性对怪兽性格和鼓机 pattern 的影响",
-                        "实现 src/test/java/polaris/factory/RhythmEngineTest.java，使用 main/assert 或标准库自包含验证，禁止依赖未声明 JUnit",
+                        f"实现 src/main/java/polaris/factory/domain/ 下的领域模型，表达 {keyword_summary} 规则",
+                        f"实现 src/main/java/polaris/factory/engine/{engine_class}.java，计算 {keyword_summary} 相关状态、评分或匹配结果",
+                        f"实现 src/test/java/polaris/factory/{test_class}.java，使用 main/assert 或标准库自包含验证，禁止依赖未声明 JUnit",
                         "创建 tests/test_product.py，使用 Python unittest 调用 javac/java 或检查 Java 产物结构",
                         "编写 README，说明 javac 编译、java 运行和测试命令",
                         f"验证脚本覆盖确定性检查：{check_summary}",
@@ -1674,7 +1709,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "acceptance": [
                         "`src/main/java/`、`src/test/java/`、`tests/test_product.py` 与 `README.md` 存在且非空",
                         "`src/main/java/polaris/factory/Main.java` 存在并可作为 Java CLI 入口编译运行",
-                        "`src/main/java/` 源码实现 rhythm -> monster/beat/pattern 领域规则",
+                        f"`src/main/java/` 源码实现与 {keyword_summary} 对齐的领域规则",
                         f"源码包含需求关键词：{keyword_summary}",
                         "`javac -encoding UTF-8` 对所有 `.java` 文件返回成功",
                         "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS",

@@ -110,6 +110,7 @@ _WORKSPACE_QUALITY_REPAIR_SOURCE_SUFFIXES = frozenset(
 _DIRECTOR_BINDING_TIMEOUT_QUARANTINE_ENV = "KERNELONE_FACTORY_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT"
 _DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT = 4
 _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS = 60
+_QUALITY_GATE_MIN_PASS_SCORE = 70
 _PRE_DIRECTOR_SNAPSHOT_RELATIVE_DIR = ".polaris/factory_snapshots/pre_director"
 _PRE_DIRECTOR_SNAPSHOT_KIND = "pre_director_workspace"
 _PRE_DIRECTOR_PLATFORM_PREFIXES = (
@@ -4689,8 +4690,14 @@ class OrchestrationStageExecutor:
         qa_payload: dict[str, Any] = loaded
 
         qa_passed = bool(qa_payload.get("passed"))
-        qa_score = int(qa_payload.get("score") or 0)
-        qa_critical = int(qa_payload.get("critical_issue_count") or 0)
+        try:
+            qa_score = int(qa_payload.get("score") or 0)
+        except (TypeError, ValueError):
+            qa_score = 0
+        try:
+            qa_critical = int(qa_payload.get("critical_issue_count") or 0)
+        except (TypeError, ValueError):
+            qa_critical = 0
         qa_llm_required = self._bool_from_context_or_env(
             context,
             "qa_require_llm_judgement",
@@ -4703,14 +4710,21 @@ class OrchestrationStageExecutor:
         is_success = (
             final_result.status in {"completed", "success"}
             and qa_passed
+            and qa_score >= _QUALITY_GATE_MIN_PASS_SCORE
+            and qa_critical == 0
             and workspace_checks_passed
             and (qa_llm_judgement_ready or not qa_llm_required)
         )
         output_suffix = (
             f"qa_passed={qa_passed}; qa_score={qa_score}; qa_critical={qa_critical}; "
+            f"qa_score_threshold={_QUALITY_GATE_MIN_PASS_SCORE}; "
             f"workspace_checks_passed={workspace_checks_passed}; "
             f"qa_llm_required={qa_llm_required}; qa_llm_judgement_ready={qa_llm_judgement_ready}"
         )
+        if qa_score < _QUALITY_GATE_MIN_PASS_SCORE:
+            output_suffix = f"{output_suffix}; qa_gate_blocker=qa_score_below_threshold"
+        if qa_critical > 0:
+            output_suffix = f"{output_suffix}; qa_gate_blocker=qa_critical_issues_present"
         if qa_llm_required and not qa_llm_judgement_ready:
             output_suffix = f"{output_suffix}; qa_gate_blocker={_QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING}"
         artifacts = ["runtime/qa/report.json"]

@@ -74,6 +74,7 @@ _FEATURE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 _DOMAIN_STOPWORDS = {"project", "quality", "gate", "feature", "module", "system", "task", "tasks"}
 _DEFAULT_DIRECTOR_TASK_REWORK_MAX_RETRIES = 3
 _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING = "qa_llm_judgement_unavailable"
+_QA_MIN_PASS_SCORE = 70
 _FACTORY_RUNTIME_HARD_GATE_EVIDENCE = "factory_runtime_hard_gate_passed=True"
 _FACTORY_WORKSPACE_QUALITY_EVIDENCE = "factory_workspace_quality_passed=True"
 
@@ -917,10 +918,21 @@ class QAAdapter(BaseRoleAdapter):
         suggestions = self._dedupe_list(review.get("suggestions"))
 
         computed_score = max(0, 100 - len(critical) * 30 - len(major) * 10 - len(warnings) * 4)
-        raw_score = int(review.get("score") or 100)
+        try:
+            raw_score = int(review.get("score") or 100)
+        except (TypeError, ValueError):
+            raw_score = 100
         score = min(raw_score, computed_score)
         if critical or merged_verdict in {"FAIL", "BLOCKED", "CONDITIONAL"}:
             passed = False
+        elif score < _QA_MIN_PASS_SCORE:
+            passed = False
+            warnings = self._dedupe_list(
+                [
+                    *warnings,
+                    f"qa_score_below_pass_threshold={score}<{_QA_MIN_PASS_SCORE}",
+                ]
+            )
         elif merged_verdict == "PASS":
             passed = True
         else:

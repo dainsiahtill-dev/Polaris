@@ -212,6 +212,50 @@ def test_prompt_construction_hints_none_when_empty() -> None:
     assert "- no explicit file hints" in prompt
 
 
+def test_prompt_includes_shared_execution_contract() -> None:
+    executor = WorkerExecutor(workspace="/tmp")
+    task = _task(
+        {
+            "target_files": ["src/models/treasure.rs", "src/engine/budget_rules.rs"],
+            "scope_paths": ["src"],
+            "quality_gates": ["cargo test"],
+            "verification_commands": ["cargo test --all"],
+            "delivery_depth_contract": {
+                "schema_version": "polaris.delivery_depth_contract.v1",
+                "product_intent": {
+                    "subject": "pirate treasure budget planner",
+                    "primary_entities": ["treasure", "budget", "port", "reef"],
+                },
+                "behavior_contract": {
+                    "rule_matrix": [
+                        "treasure cargo affects route budget",
+                        "port fee changes unlock decision",
+                        "reef danger changes recommendation",
+                    ],
+                    "edge_cases": ["empty treasure list", "unknown port"],
+                },
+                "acceptance_contract": {
+                    "deterministic_checks": ["cargo_test", "source_target_coverage"],
+                },
+            },
+        },
+        subject="Build pirate treasure budget planner",
+        description="Implement treasure, budget, port, and reef rules.",
+    )
+
+    prompt = executor._build_code_generation_prompt(task)
+
+    assert "=== Shared Execution Contract ===" in prompt
+    assert "- schema: task.execution_contract.v1" in prompt
+    assert "- contract_hash: " in prompt
+    assert "- primary_entities: treasure, budget, port, reef" in prompt
+    assert "- rule_count: 3" in prompt
+    assert "- edge_case_count: 2" in prompt
+    assert "- quality_gates: cargo test" in prompt
+    assert "- verification_commands: cargo test --all" in prompt
+    assert "- deterministic_checks: cargo_test, source_target_coverage" in prompt
+
+
 # --------------------------------------------------------------------------
 # target_scope_rule three-way branch
 # --------------------------------------------------------------------------

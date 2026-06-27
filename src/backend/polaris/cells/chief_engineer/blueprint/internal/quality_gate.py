@@ -86,6 +86,25 @@ def _coerce_risks(risks: Iterable[Any]) -> list[RiskRecordV1]:
     return out
 
 
+def _semantic_blockers_from_blueprint(blueprint: Mapping[str, Any]) -> list[str]:
+    contract = blueprint.get("contract_completeness")
+    if not isinstance(contract, Mapping):
+        return []
+
+    blockers: list[str] = []
+    semantic_blockers = contract.get("semantic_blockers")
+    if isinstance(semantic_blockers, (list, tuple)):
+        for item in semantic_blockers:
+            token = str(item or "").strip()
+            if token:
+                blockers.append(token)
+
+    alignment = contract.get("semantic_alignment")
+    if isinstance(alignment, Mapping) and alignment.get("ready") is False and not blockers:
+        blockers.append("semantic_alignment: delivery contract terms do not match CE blueprint handoff fields")
+    return blockers
+
+
 def evaluate_quality_gate(
     blueprint: Mapping[str, Any],
     *,
@@ -134,6 +153,9 @@ def evaluate_quality_gate(
 
     if len(recommendations) < 2:
         info.append("recommendations is short; consider adding a release-readiness and a risk-mitigation note.")
+
+    for blocker in _semantic_blockers_from_blueprint(blueprint):
+        blockers.append(f"contract semantic blocker: {blocker}")
 
     # Risks: merge caller-supplied + blueprint-embedded risk register.
     all_risks: list[RiskRecordV1] = []

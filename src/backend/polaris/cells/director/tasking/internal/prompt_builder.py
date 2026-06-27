@@ -545,6 +545,7 @@ class PromptBuilder:
         metadata = task.metadata if isinstance(task.metadata, dict) else {}
 
         # Language-specific role identity + expert guidance
+        from .execution_contract import build_task_execution_contract
         from .execution_profile import resolve_director_execution_profile
         from .execution_strategy import resolve_director_execution_strategy
         from .language_guidance import build_language_section
@@ -590,6 +591,15 @@ class PromptBuilder:
             execution_profile,
             metadata=metadata,
         )
+        execution_contract = build_task_execution_contract(
+            execution_profile,
+            execution_strategy,
+            metadata=metadata,
+        )
+        execution_contract_payload = execution_contract.to_dict()
+        delivery_contract = execution_contract_payload["delivery_contract"]
+        quality_contract = execution_contract_payload["quality_contract"]
+        audit_contract = execution_contract_payload["audit_contract"]
         execution_strategy_section = "\n".join(
             [
                 f"- schema: {execution_strategy.schema_version}",
@@ -599,6 +609,21 @@ class PromptBuilder:
                 f"- min_context_utilization: {execution_strategy.min_context_utilization:.2f}",
                 f"- underutilized_policy: {execution_strategy.context_underutilized_policy}",
                 "- evidence_requirements: " + ", ".join(execution_strategy.evidence_requirements),
+            ]
+        )
+        execution_contract_section = "\n".join(
+            [
+                f"- schema: {execution_contract.schema_version}",
+                f"- contract_hash: {audit_contract.get('contract_hash', '')}",
+                "- primary_entities: " + ", ".join(delivery_contract.get("primary_entities") or ["(not declared)"]),
+                f"- rule_count: {delivery_contract.get('rule_count', 0)}",
+                f"- edge_case_count: {delivery_contract.get('edge_case_count', 0)}",
+                f"- level: {delivery_contract.get('level') or '(not declared)'}",
+                "- quality_gates: " + ", ".join(quality_contract.get("quality_gates") or ["(not declared)"]),
+                "- verification_commands: "
+                + ", ".join(quality_contract.get("verification_commands") or ["(not declared)"]),
+                "- deterministic_checks: "
+                + ", ".join(quality_contract.get("deterministic_checks") or ["(not declared)"]),
             ]
         )
 
@@ -612,6 +637,9 @@ class PromptBuilder:
 
 === Director Execution Strategy ===
 {execution_strategy_section}
+
+=== Shared Execution Contract ===
+{execution_contract_section}
 
 Task: {task_subject}
 Description: {task_description}

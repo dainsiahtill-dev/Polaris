@@ -106,11 +106,14 @@ def _resolve_context_max_tokens_override(context_override: Any) -> int | None:
         if max_tokens is not None:
             return max_tokens
     for payload_key in (
+        "task_execution_contract",
+        "director_execution_contract",
         "task_execution_strategy",
         "director_execution_strategy",
         "execution_strategy",
     ):
         payload = _mapping_payload(context_override.get(payload_key))
+        context_budget = _mapping_payload(payload.get("context_budget"))
         for nested_key in (
             "output_budget_tokens",
             "llm_max_tokens",
@@ -118,6 +121,8 @@ def _resolve_context_max_tokens_override(context_override: Any) -> int | None:
             "max_tokens",
         ):
             max_tokens = _coerce_context_max_tokens_override(payload.get(nested_key))
+            if max_tokens is None:
+                max_tokens = _coerce_context_max_tokens_override(context_budget.get(nested_key))
             if max_tokens is not None:
                 return max_tokens
     return None
@@ -194,13 +199,18 @@ def resolve_temperature(requested: float, context_override: Any | None = None) -
         if override is not None:
             return override
         for payload_key in (
+            "task_execution_contract",
+            "director_execution_contract",
             "task_execution_strategy",
             "director_execution_strategy",
             "director_execution_profile",
             "task_execution_profile",
         ):
             payload = _mapping_payload(context_override.get(payload_key))
+            sampling = _mapping_payload(payload.get("sampling"))
             override = _coerce_context_temperature_override(payload.get("temperature"))
+            if override is None:
+                override = _coerce_context_temperature_override(sampling.get("temperature"))
             if override is not None:
                 return override
     return requested

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from polaris.cells.director.tasking.internal.execution_contract import build_task_execution_contract
 from polaris.cells.director.tasking.public.contracts import (
     TaskExecutionProfileV1,
     TaskExecutionStrategyV1,
@@ -242,10 +243,17 @@ def apply_execution_strategy_overrides(
 
     profile_payload = profile.to_dict()
     strategy_payload = strategy.to_dict()
+    execution_contract_payload = build_task_execution_contract(
+        profile,
+        strategy,
+        metadata=metadata,
+    ).to_dict()
     context["director_execution_profile"] = profile_payload
     context.setdefault("task_execution_profile", profile_payload)
     context["director_execution_strategy"] = strategy_payload
     context["task_execution_strategy"] = strategy_payload
+    context["task_execution_contract"] = execution_contract_payload
+    context["director_execution_contract"] = execution_contract_payload
     context["_transaction_kernel_temperature_override"] = strategy.temperature
     context["llm_max_tokens"] = strategy.output_budget_tokens
     context["max_output_tokens"] = strategy.output_budget_tokens
@@ -258,6 +266,8 @@ def apply_execution_strategy_overrides(
     metadata.setdefault("task_execution_profile", profile_payload)
     metadata["director_execution_strategy"] = strategy_payload
     metadata["task_execution_strategy"] = strategy_payload
+    metadata["task_execution_contract"] = execution_contract_payload
+    metadata["director_execution_contract"] = execution_contract_payload
     metadata["temperature"] = strategy.temperature
     metadata["temperature_phase"] = strategy.temperature_phase
     metadata["temperature_source"] = strategy.source

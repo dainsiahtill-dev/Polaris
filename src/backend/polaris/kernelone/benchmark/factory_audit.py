@@ -25,6 +25,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.benchmark.factory_depth_contract import (
+    build_factory_bench_level_contract,
+    extract_level_contract_minimums,
+)
+
 FACTORY_AUDIT_SCHEMA_VERSION = "factory-audit/1"
 
 _CODE_EXTENSIONS = {
@@ -99,6 +104,11 @@ _TEST_ASSERTION_RE = re.compile(
 _PLACEHOLDER_SOURCE_RE = re.compile(
     r"\b(todo|fixme|notimplemented|not implemented|placeholder|stub)\b|^\s*pass\s*(?:#.*)?$",
     re.IGNORECASE | re.MULTILINE,
+)
+_STRUCTURAL_SYMBOL_LINE_RE = re.compile(
+    r"\b(function|func|def|fn|class|struct|enum|interface|record|mod)\b|"
+    r"\b(public|private|protected)\s+[\w<>, ?\[\]]+\s+\w+\s*\(",
+    re.IGNORECASE,
 )
 _SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(
     r"(?:npm\s+run\s+(?:build|compile)|pnpm\s+(?:build|compile)|yarn\s+(?:build|compile)|\btsc\b)",
@@ -299,22 +309,62 @@ def _implementation_depth_metrics(workspace: str, inventory: dict[str, Any]) -> 
     }
 
 
-def _check_implementation_depth(workspace: str, inventory: dict[str, Any]) -> tuple[bool, str]:
+def _load_workspace_catalog_contract(workspace: str) -> dict[str, Any]:
+    path = Path(workspace) / ".polaris" / "catalog_contract.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _resolve_level_contract(
+    *,
+    workspace: str,
+    project: dict[str, Any] | None = None,
+    level_contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    project_payload = project or {}
+    catalog_contract = _load_workspace_catalog_contract(workspace)
+    level = project_payload.get("level") or catalog_contract.get("level") or 1
+
+    for candidate in (
+        level_contract,
+        project_payload.get("level_contract"),
+        project_payload.get("factory_bench_level_contract"),
+        catalog_contract.get("level_contract"),
+    ):
+        if isinstance(candidate, dict) and candidate.get("minimums"):
+            return candidate
+
+    return build_factory_bench_level_contract(level, project=project_payload or catalog_contract)
+
+
+def _check_implementation_depth(
+    workspace: str,
+    inventory: dict[str, Any],
+    *,
+    level_contract: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
     metrics = _implementation_depth_metrics(workspace, inventory)
+    resolved_contract = _resolve_level_contract(workspace=workspace, level_contract=level_contract)
+    minimums = extract_level_contract_minimums(resolved_contract, level=resolved_contract.get("level"))
     failures: list[str] = []
 
-    if int(metrics["production_source_files"]) < 3:
-        failures.append(f"production_source_files={metrics['production_source_files']} < 3")
-    if int(metrics["production_source_lines"]) < 120:
-        failures.append(f"production_source_lines={metrics['production_source_lines']} < 120")
-    if int(metrics["behavior_symbol_count"]) < 6:
-        failures.append(f"behavior_symbol_count={metrics['behavior_symbol_count']} < 6")
-    if int(metrics["branch_count"]) < 3:
-        failures.append(f"branch_count={metrics['branch_count']} < 3")
-    if int(metrics["test_source_files"]) < 1:
-        failures.append("test_source_files=0 < 1")
-    if int(metrics["test_assertion_count"]) < 2:
-        failures.append(f"test_assertion_count={metrics['test_assertion_count']} < 2")
+    if int(metrics["production_source_files"]) < minimums["min_prod_files"]:
+        failures.append(f"production_source_files={metrics['production_source_files']} < {minimums['min_prod_files']}")
+    if int(metrics["production_source_lines"]) < minimums["min_prod_lines"]:
+        failures.append(f"production_source_lines={metrics['production_source_lines']} < {minimums['min_prod_lines']}")
+    if int(metrics["behavior_symbol_count"]) < minimums["min_behavior_symbols"]:
+        failures.append(
+            f"behavior_symbol_count={metrics['behavior_symbol_count']} < {minimums['min_behavior_symbols']}"
+        )
+    if int(metrics["branch_count"]) < minimums["min_branch_count"]:
+        failures.append(f"branch_count={metrics['branch_count']} < {minimums['min_branch_count']}")
+    if int(metrics["test_source_files"]) < minimums["min_test_files"]:
+        failures.append(f"test_source_files={metrics['test_source_files']} < {minimums['min_test_files']}")
+    if int(metrics["test_assertion_count"]) < minimums["min_test_assertions"]:
+        failures.append(f"test_assertion_count={metrics['test_assertion_count']} < {minimums['min_test_assertions']}")
     placeholder_hits = metrics["placeholder_hits"]
     if placeholder_hits:
         failures.append("placeholder_or_stub_markers=" + ",".join(str(item) for item in placeholder_hits[:3]))
@@ -332,7 +382,9 @@ def _check_implementation_depth(workspace: str, inventory: dict[str, Any]) -> tu
         f"test_files={metrics['test_source_files']}, "
         f"test_assertions={metrics['test_assertion_count']}, "
         f"behavior_symbols={metrics['behavior_symbol_count']}, "
-        f"branches={metrics['branch_count']}"
+        f"branches={metrics['branch_count']}, "
+        f"level={resolved_contract.get('level')}, "
+        f"minimums={minimums}"
     )
     if failures:
         return False, detail + "; failures: " + "; ".join(failures[:8])
@@ -344,6 +396,69 @@ def _should_add_implementation_depth_check(configured_checks: list[str]) -> bool
     if "implementation_depth" in normalized:
         return False
     return any(item.startswith(("source_target_coverage:", "content_any:")) for item in normalized)
+
+
+def _content_keywords_from_checks(configured_checks: list[str]) -> list[str]:
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for check in configured_checks:
+        normalized = str(check or "").strip()
+        if not normalized.lower().startswith("content_any:"):
+            continue
+        for raw in normalized.split(":", 1)[1].split("|"):
+            token = re.sub(r"[^a-z0-9_]+", "_", raw.strip().lower()).strip("_")
+            if token and token not in seen:
+                keywords.append(token)
+                seen.add(token)
+    return keywords
+
+
+def _check_feature_keyword_structure(
+    workspace: str,
+    inventory: dict[str, Any],
+    *,
+    configured_checks: list[str],
+    level_contract: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
+    keywords = _content_keywords_from_checks(configured_checks)
+    if not keywords:
+        return True, "feature keyword structure skipped: no content_any keywords"
+
+    resolved_contract = _resolve_level_contract(workspace=workspace, level_contract=level_contract)
+    minimums = extract_level_contract_minimums(resolved_contract, level=resolved_contract.get("level"))
+    required = min(len(keywords), max(1, min(3, int(minimums.get("min_primary_entities", 1)))))
+    structural_texts: list[str] = []
+    production_files = []
+    for rel in inventory.get("source_files", []):
+        if not isinstance(rel, str) or _is_depth_excluded_path(rel) or _is_test_source_path(rel):
+            continue
+        production_files.append(rel)
+        structural_texts.append(rel.lower())
+        try:
+            text = _read_workspace_file(workspace, rel)
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if _STRUCTURAL_SYMBOL_LINE_RE.search(line):
+                structural_texts.append(line.lower())
+
+    structural_haystack = "\n".join(structural_texts)
+    matched = [keyword for keyword in keywords if keyword in structural_haystack]
+    ok = len(matched) >= required
+    detail = (
+        "feature keyword structure: "
+        f"matched={matched}, required>={required}, keywords={keywords}, prod_files={len(production_files)}"
+    )
+    if ok:
+        return True, detail
+    return False, detail + "; feature keywords must appear in production file/module/type/function names"
+
+
+def _should_add_feature_keyword_structure_check(configured_checks: list[str]) -> bool:
+    normalized = [str(item or "").strip().lower() for item in configured_checks]
+    if "feature_keyword_structure" in normalized:
+        return False
+    return bool(_content_keywords_from_checks(configured_checks))
 
 
 def _iter_files(workspace: str, suffix: str) -> list[str]:
@@ -753,7 +868,12 @@ def _check_package_scripts(workspace: str) -> tuple[bool, str]:
     return result.ok, result.detail
 
 
-def run_checks(workspace: str, checks: list[str]) -> list[dict[str, Any]]:
+def run_checks(
+    workspace: str,
+    checks: list[str],
+    *,
+    level_contract: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Run the project's deterministic check list; unknown kinds fail closed."""
     inventory = collect_workspace_inventory(workspace)
     results: list[dict[str, Any]] = []
@@ -780,7 +900,14 @@ def run_checks(workspace: str, checks: list[str]) -> list[dict[str, Any]]:
         elif kind == "package_scripts":
             ok, detail = _check_package_scripts(workspace)
         elif kind == "implementation_depth":
-            ok, detail = _check_implementation_depth(workspace, inventory)
+            ok, detail = _check_implementation_depth(workspace, inventory, level_contract=level_contract)
+        elif kind == "feature_keyword_structure":
+            ok, detail = _check_feature_keyword_structure(
+                workspace,
+                inventory,
+                configured_checks=checks,
+                level_contract=level_contract,
+            )
         elif kind == "runnable_any":
             # Shape-neutral runnability: briefs like "typing tester with live
             # highlighting" are legitimately delivered as either a Python
@@ -886,12 +1013,15 @@ def build_factory_audit_record(
     """
     inventory = collect_workspace_inventory(workspace)
     configured_checks = list(project.get("checks") or [])
+    level_contract = _resolve_level_contract(workspace=workspace, project=project)
     supplemental_checks = []
     if os.path.exists(os.path.join(workspace, "package.json")) and "package_scripts" not in configured_checks:
         supplemental_checks.append("package_scripts")
     if _should_add_implementation_depth_check(configured_checks):
         supplemental_checks.append("implementation_depth")
-    checks = run_checks(workspace, configured_checks + supplemental_checks)
+    if _should_add_feature_keyword_structure_check(configured_checks):
+        supplemental_checks.append("feature_keyword_structure")
+    checks = run_checks(workspace, configured_checks + supplemental_checks, level_contract=level_contract)
     artifacts = artifact_globs or {}
 
     # Read PM plan and extract declared source targets
@@ -908,6 +1038,7 @@ def build_factory_audit_record(
         "schema_version": FACTORY_AUDIT_SCHEMA_VERSION,
         "project_id": str(project.get("id") or ""),
         "level": int(project.get("level") or 0),
+        "level_contract": level_contract,
         "domain": str(project.get("domain") or ""),
         "title": str(project.get("title") or ""),
         "code_file_count": len(inventory["code_files"]),

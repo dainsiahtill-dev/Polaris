@@ -726,7 +726,9 @@ class TestMergeReviewResult:
         assert "No evidence of behavioral test execution: npm test invokes tsc --noEmit" in merged["major_issues"]
         assert "qa_llm_quality_risk_not_runtime_blocker" in merged["warnings"]
         assert "qa_llm_verdict_downgraded=FAIL:factory_runtime_hard_gate_passed" in merged["evidence"]
-        assert finalized["passed"] is True
+        assert finalized["passed"] is False
+        assert finalized["verdict"] == "FAIL"
+        assert "qa_score_below_pass_threshold=55<70" in finalized["warnings"]
 
     def test_factory_runtime_hard_gate_keeps_placeholder_test_critical(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

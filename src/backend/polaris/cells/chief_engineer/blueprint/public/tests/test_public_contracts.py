@@ -453,6 +453,124 @@ class TestChiefEngineerBlueprintPublicService:
         assert persisted["target_files"] == list(result.target_files)
         assert persisted["contract_completeness"]["handoff_ready"] is True
 
+    def test_generate_task_blueprint_blocks_domain_mismatched_handoff(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-L2-RUST",
+            workspace=str(tmp_path),
+            objective="Build pirate treasure budget planner",
+            context={
+                "task_title": "Pirate treasure budget planner",
+                "target_files": [
+                    "src/models/flavor.rs",
+                    "src/models/recipe.rs",
+                    "src/engine/palette_rules.rs",
+                    "src/engine/plating_runner.rs",
+                ],
+                "acceptance_criteria": [
+                    "deterministic checks cover content_any: treasure|budget|port|reef",
+                    "cargo test passes",
+                ],
+                "execution_checklist": [
+                    "Implement flavor and recipe models",
+                    "Implement palette rules and plating runner",
+                ],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "product_summary": {
+                        "intent": "Deliver a pirate treasure budget planner.",
+                        "core_terms": ["treasure", "budget", "port", "reef"],
+                    },
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "product_intent": {
+                        "subject": "pirate treasure budget planner",
+                        "primary_entities": ["treasure", "budget", "port", "reef"],
+                    },
+                    "behavior_contract": {
+                        "rule_matrix": [
+                            "treasure cargo affects route budget",
+                            "port fees affect unlock decisions",
+                            "reef danger changes final recommendation",
+                        ],
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["contract_completeness"]["handoff_ready"] is False
+        assert persisted["handoff_ready"] is False
+        semantic_alignment = persisted["contract_completeness"]["semantic_alignment"]
+        assert semantic_alignment["expected_terms"] == ["budget", "port", "reef", "treasure"]
+        assert semantic_alignment["target_file_matches"] == []
+        assert persisted["contract_completeness"]["semantic_blockers"]
+        governance = persisted["governance"]["quality_gate"]
+        assert governance["passed"] is False
+        assert any("contract semantic blocker" in item for item in governance["blockers"])
+
+    def test_generate_task_blueprint_allows_domain_aligned_handoff(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-L2-RUST-OK",
+            workspace=str(tmp_path),
+            objective="Build pirate treasure budget planner",
+            context={
+                "task_title": "Pirate treasure budget planner",
+                "target_files": [
+                    "src/models/treasure.rs",
+                    "src/models/budget.rs",
+                    "src/models/port.rs",
+                    "src/engine/treasure_rules.rs",
+                    "src/engine/reef_runner.rs",
+                ],
+                "acceptance_criteria": [
+                    "treasure, budget, port, and reef behavior tests pass",
+                    "cargo test passes",
+                ],
+                "execution_checklist": [
+                    "Implement treasure and budget models",
+                    "Implement port fee and reef risk rules",
+                    "Add normal, boundary, and invalid input tests",
+                ],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "product_summary": {
+                        "intent": "Deliver a pirate treasure budget planner.",
+                        "core_terms": ["treasure", "budget", "port", "reef"],
+                    },
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "product_intent": {
+                        "subject": "pirate treasure budget planner",
+                        "primary_entities": ["treasure", "budget", "port", "reef"],
+                    },
+                    "behavior_contract": {
+                        "rule_matrix": [
+                            "treasure cargo affects route budget",
+                            "port fees affect unlock decisions",
+                            "reef danger changes final recommendation",
+                        ],
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["contract_completeness"]["handoff_ready"] is True
+        assert persisted["handoff_ready"] is True
+        semantic_alignment = persisted["contract_completeness"]["semantic_alignment"]
+        assert semantic_alignment["ready"] is True
+        assert set(semantic_alignment["target_file_matches"]) >= {"budget", "port", "reef", "treasure"}
+
     def test_query_missing_task_blueprint(self, tmp_path) -> None:
         status = get_blueprint_status(
             GetBlueprintStatusQueryV1(

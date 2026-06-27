@@ -32,6 +32,35 @@ def test_final_request_context_audit_includes_sampling_profile() -> None:
                 "temperature_phase": "repair",
                 "temperature_source": "task.execution_profile.v1",
             },
+            "task_execution_contract": {
+                "schema_version": "task.execution_contract.v1",
+                "source": "director.tasking",
+                "task_type": "bugfix",
+                "phase": "repair",
+                "language": "python",
+                "output_contract_id": "director.patch_file.v1",
+                "sampling": {
+                    "temperature": 0.05,
+                    "temperature_phase": "repair",
+                    "sampling_mode": "deterministic_precise",
+                },
+                "context_budget": {
+                    "output_budget_tokens": 64000,
+                    "input_budget_tokens": 96000,
+                    "prompt_max_chars": 384000,
+                },
+                "delivery_contract": {
+                    "primary_entities": ["planet", "weather"],
+                    "rule_count": 3,
+                    "edge_case_count": 2,
+                    "level": 2,
+                },
+                "quality_contract": {
+                    "quality_gates": ["pytest"],
+                    "deterministic_checks": ["python_compile"],
+                },
+                "audit_contract": {"contract_hash": "contract-123"},
+            },
         },
     )
     prepared = PreparedLLMRequest(
@@ -62,7 +91,14 @@ def test_final_request_context_audit_includes_sampling_profile() -> None:
         "phase": "repair",
         "execution_profile_schema": "task.execution_profile.v1",
         "execution_profile_source": "director.tasking",
+        "execution_contract_schema": "task.execution_contract.v1",
+        "execution_contract_source": "director.tasking",
     }
+    assert audit["has_execution_contract"] is True
+    assert audit["execution_contract_summary"]["schema_version"] == "task.execution_contract.v1"
+    assert audit["execution_contract_summary"]["delivery_contract"]["primary_entities"] == ["planet", "weather"]
+    assert audit["execution_contract_summary"]["audit_contract"]["contract_hash"] == "contract-123"
+    assert audit["execution_contract_hash"]
 
 
 def test_final_request_context_audit_flags_empty_run_card_message() -> None:
@@ -244,3 +280,62 @@ def test_final_request_context_audit_flags_under_applied_execution_strategy() ->
     assert "execution_strategy_output_budget_under_applied" in finding_codes
     assert findings_by_code["execution_strategy_output_budget_under_applied"]["severity"] == "error"
     assert findings_by_code["execution_strategy_output_budget_under_applied"]["budget_ratio"] < 0.05
+
+
+def test_final_request_context_audit_checks_execution_contract_when_strategy_missing() -> None:
+    execution_contract = {
+        "schema_version": "task.execution_contract.v1",
+        "source": "director.tasking",
+        "task_type": "bugfix",
+        "phase": "repair",
+        "sampling": {
+            "temperature": 0.05,
+            "temperature_phase": "repair",
+            "sampling_mode": "deterministic_precise",
+        },
+        "context_budget": {
+            "output_budget_tokens": 96_000,
+            "input_budget_tokens": 128_000,
+            "prompt_max_chars": 512_000,
+        },
+    }
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.7, "max_tokens": 4000},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "You are Director."},
+                {"role": "user", "content": "Fix src/app.py."},
+            ],
+            "task_execution_contract": execution_contract,
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are Director."},
+            {"role": "user", "content": "Fix src/app.py."},
+        ],
+        input_text="You are Director.\nFix src/app.py.",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=1_000_000),
+    )
+
+    finding_codes = {item["code"] for item in audit["context_quality"]["findings"]}
+    findings_by_code = {item["code"]: item for item in audit["context_quality"]["findings"]}
+    assert audit["has_execution_contract"] is True
+    assert audit["has_execution_strategy"] is False
+    assert "execution_profile_temperature_mismatch" in finding_codes
+    assert "execution_strategy_output_budget_under_applied" in finding_codes
+    assert findings_by_code["execution_strategy_output_budget_under_applied"]["contract_schema"] == (
+        "task.execution_contract.v1"
+    )

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from polaris.kernelone.benchmark.factory_depth_contract import build_factory_bench_level_contract
 
 _FIXTURE = Path(__file__).resolve().parent / "projects_v2.json"
 
@@ -93,6 +94,16 @@ def test_all_levels_covered(projects: list[dict[str, Any]]) -> None:
     levels = {int(p["level"]) for p in projects}
     missing = VALID_LEVELS - levels
     assert not missing, f"Missing levels: {sorted(missing)}"
+
+
+def test_level_contracts_raise_depth_beyond_min_files() -> None:
+    l1 = build_factory_bench_level_contract(1)
+    l2 = build_factory_bench_level_contract(2)
+
+    assert l1["minimums"]["min_prod_files"] == 3
+    assert l2["minimums"]["min_prod_files"] >= 6
+    assert l2["minimums"]["min_prod_lines"] > l1["minimums"]["min_prod_lines"]
+    assert l2["minimums"]["min_test_assertions"] > l1["minimums"]["min_test_assertions"]
 
 
 def test_10_projects_per_level(projects: list[dict[str, Any]]) -> None:

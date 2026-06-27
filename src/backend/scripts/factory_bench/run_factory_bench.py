@@ -55,6 +55,10 @@ from polaris.kernelone.benchmark.factory_audit import (
     aggregate_factory_audits,
     build_factory_audit_record,
 )
+from polaris.kernelone.benchmark.factory_depth_contract import (
+    build_factory_bench_level_contract,
+    format_level_contract_for_requirements,
+)
 from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_roots
 from scripts.factory_bench.backend_fingerprint import (
     build_run_backend_metadata,
@@ -2039,6 +2043,17 @@ def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
         )
     else:
         gates.append(_bench_gate("llm_route_audit", False, "LLM route audit missing"))
+    implementation_depth = record.get("implementation_depth")
+    if isinstance(implementation_depth, dict) and implementation_depth:
+        gates.append(
+            _bench_gate(
+                "delivery_depth_gate",
+                bool(implementation_depth.get("ok")),
+                str(implementation_depth.get("detail") or "implementation depth missing detail"),
+            )
+        )
+    else:
+        gates.append(_bench_gate("delivery_depth_gate", False, "implementation depth evidence missing"))
     return gates
 
 
@@ -2415,6 +2430,8 @@ def build_requirements_doc(project: dict[str, Any]) -> str:
     lang_contract = _build_language_runnable_contract(primary_language)
     source_tree_contract = _build_source_tree_contract(primary_language, project_type)
     feature_contract = _build_feature_keywords_contract(feature_keywords)
+    level_contract = build_factory_bench_level_contract(project.get("level"), project=project)
+    level_contract_block = format_level_contract_for_requirements(level_contract)
 
     domain_line = f"- 领域: {domain}\n" if domain else ""
     type_line = f"- 项目类型: {project_type}\n" if project_type else ""
@@ -2443,6 +2460,8 @@ def build_requirements_doc(project: dict[str, Any]) -> str:
         "\n## Deterministic Checks\n"
         "PM -> Chief Engineer -> Director -> QA 必须把以下检查转成任务目标和验收标准, 缺失任一项应视为未完成:\n"
         f"{checks_block}\n"
+        "\n"
+        f"{level_contract_block}"
         "\n"
         f"{source_tree_contract}\n"
         f"{feature_contract}\n"
@@ -2633,6 +2652,7 @@ def run_factory_chain(
 
     feature_keywords = _extract_feature_keywords(project)
     requirements_doc = build_requirements_doc(project)
+    level_contract = build_factory_bench_level_contract(project.get("level"), project=project)
     if normalized_start_from != "director":
         requirements_path = workspace / "requirements.md"
         requirements_path.write_text(requirements_doc, encoding="utf-8")
@@ -2652,6 +2672,8 @@ def run_factory_chain(
             "feature_keywords": feature_keywords,
             "checks": list(project.get("checks") or []),
             "test_focus": str(project.get("test_focus") or "").strip(),
+            "level": int(project.get("level") or 0),
+            "level_contract": level_contract,
             "source_tree_mandate": (
                 "PM -> Chief Engineer -> Director must create src/ with core source files, not just scaffolding"
             ),

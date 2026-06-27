@@ -150,6 +150,7 @@ def _record(**overrides: Any) -> dict[str, Any]:
         "chain_state": "clean",
         "chain_results": {"qa_ran": True, "qa_passed": True},
         "wrong_product_suspect": False,
+        "implementation_depth": {"ok": True, "detail": "implementation depth passed"},
         "backend_freshness": {"ok": True, "detail": "backend fresh"},
         "run_ledger": {
             "ledger_path": __file__,
@@ -184,6 +185,7 @@ def _successful_audit_record(**overrides: Any) -> dict[str, Any]:
         "has_qa_verdict": True,
         "code_file_count": 1,
         "source_file_count": 1,
+        "implementation_depth": {"ok": True, "detail": "implementation depth passed"},
         "code_files": ["src/index.js"],
         "target_files": ["src/index.js"],
         "allowed_paths": ["src/index.js"],
@@ -2116,6 +2118,9 @@ def test_l1_01_requirements_doc_contains_source_tree_contract() -> None:
     assert "science_creative" in doc
     assert "simulation_toy" in doc
     assert "萤火虫根据花朵情绪和月相组成实时灯光舞蹈" in doc
+    assert "Bench Level Contract (Mandatory)" in doc
+    assert "level: 1" in doc
+    assert "min_prod_files: 3" in doc
 
 
 def test_l1_01_requirements_doc_director_target_files_mandate() -> None:
@@ -2188,6 +2193,32 @@ def test_build_requirements_doc_python_includes_source_tree() -> None:
     assert "tests/" in doc
     assert "Feature Keywords Contract" in doc
     assert "planet" in doc
+    assert "Bench Level Contract (Mandatory)" in doc
+
+
+def test_l2_requirements_doc_uses_stronger_depth_contract() -> None:
+    """L2 requirements must carry an explicit depth floor beyond L1 shape checks."""
+    project = {
+        "id": "L2-03",
+        "level": 2,
+        "domain": "creative",
+        "project_type": "go_module",
+        "primary_language": "go",
+        "title": "时间胶囊博物馆",
+        "creative_hook": "访客通过谜语解锁不同年代的展柜",
+        "brief": "用 Go 实现时间胶囊博物馆",
+        "test_focus": "capsule, museum, riddle, unlock",
+        "checks": ["go_compile", "min_files:4", "content_any:capsule|museum|riddle|unlock"],
+    }
+
+    doc = build_requirements_doc(project)
+
+    assert "Bench Level Contract (Mandatory)" in doc
+    assert "level: 2" in doc
+    assert "min_prod_files: 6" in doc
+    assert "min_prod_lines: 500" in doc
+    assert "min_test_assertions: 8" in doc
+    assert "Do not satisfy content checks by keyword stuffing" in doc
 
 
 def test_factory_chain_catalog_contract_writes_metadata(tmp_path: Path) -> None:
@@ -2220,6 +2251,8 @@ def test_factory_chain_catalog_contract_writes_metadata(tmp_path: Path) -> None:
         "feature_keywords": feature_keywords,
         "checks": list(project.get("checks") or []),  # type: ignore[call-overload]
         "test_focus": str(project.get("test_focus") or "").strip(),
+        "level": int(project.get("level") or 0),
+        "level_contract": bench.build_factory_bench_level_contract(project.get("level"), project=project),
         "source_tree_mandate": "PM/CE/Director must create src/ with core source files, not just scaffolding",
     }
     catalog_path = workspace / ".polaris" / "catalog_contract.json"
@@ -2234,6 +2267,8 @@ def test_factory_chain_catalog_contract_writes_metadata(tmp_path: Path) -> None:
     assert written["primary_language"] == "typescript"
     assert written["creative_hook"] == "萤火虫根据花朵情绪和月相组成实时灯光舞蹈"
     assert written["feature_keywords"] == ["firefly", "flower", "moon", "humidity"]
+    assert written["level"] == 1
+    assert written["level_contract"]["minimums"]["min_prod_files"] == 3
     assert written["source_tree_mandate"] != ""
 
 

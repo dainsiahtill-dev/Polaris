@@ -238,6 +238,19 @@ def test_execution_strategy_overrides_project_to_context_gateway_controls() -> N
 
     assert context["llm_max_tokens"] == strategy.output_budget_tokens
     assert context["_transaction_kernel_temperature_override"] == profile.temperature
+    assert context["task_execution_contract"]["schema_version"] == "task.execution_contract.v1"
+    assert context["task_execution_contract"]["task_type"] == profile.task_type
+    assert context["task_execution_contract"]["sampling"]["temperature"] == strategy.temperature
+    assert context["task_execution_contract"]["context_budget"]["output_budget_tokens"] == strategy.output_budget_tokens
+    assert (
+        context["task_execution_contract"]["prompt_protocol"]["language_guidance_source"]
+        == "director.tasking.language_guidance.select_guidance"
+    )
+    assert context["task_execution_contract"]["prompt_protocol"]["language"] == profile.language
+    assert context["task_execution_contract"]["quality_contract"]["evidence_requirements"] == list(
+        strategy.evidence_requirements
+    )
+    assert metadata["task_execution_contract"] == context["task_execution_contract"]
     assert context["cognitive_strategy_override"]["cognitive_runtime"]["applied"] is True
     assert context["cognitive_strategy_override"]["read_escalation"]["full_read_allowed"] is True
     assert metadata["cognitive_strategy_override"]["task_execution"]["schema_version"] == strategy.schema_version

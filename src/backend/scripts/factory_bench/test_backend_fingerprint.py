@@ -472,6 +472,31 @@ class TestStaleGateIntegration(unittest.TestCase):
         self.assertFalse(fp_gate["ok"])
         self.assertIn("missing", fp_gate["detail"])
 
+    def test_delivery_depth_gate_reflects_implementation_depth(self) -> None:
+        build_factory_bench_gates = self._import_gate_builder()
+        record: dict[str, Any] = {
+            "has_plan_doc": True,
+            "has_blueprint_doc": True,
+            "has_qa_verdict": True,
+            "wrong_product_suspect": False,
+            "real_run_gate": {"ok": True},
+            "llm_route_audit": {"ok": True},
+            "backend_freshness": {"ok": True, "detail": "fresh"},
+            "chain_results": {"qa_ran": True, "qa_passed": True},
+            "chain_state": "clean",
+            "implementation_depth": {
+                "ok": False,
+                "detail": "production_source_lines=120 < 500",
+            },
+        }
+        chain: dict[str, Any] = {"exit_code": 0}
+
+        gates = build_factory_bench_gates(record, chain)
+
+        depth_gate = next(g for g in gates if g["gate"] == "delivery_depth_gate")
+        self.assertFalse(depth_gate["ok"])
+        self.assertIn("production_source_lines=120 < 500", depth_gate["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -447,7 +447,7 @@ class TestFrontendTestRepairContracts:
         assert "Cargo.toml" in targets
         assert "src/lib.rs" in targets
         assert "src/main.rs" in targets
-        assert "src/engine/mapper.rs" in targets
+        assert "src/engine/flavor_rules.rs" in targets
         assert "src/models/flavor.rs" in targets
         assert "tests/test_product.py" in targets
         assert "README.md" in targets
@@ -458,6 +458,76 @@ class TestFrontendTestRepairContracts:
         assert "palette" in serialized
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
+
+    def test_deterministic_language_templates_follow_feature_keywords(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        rust_directive = """
+# Product Requirements — 海盗藏宝图预算器
+
+## Project Metadata
+- 主语言: rust
+- 项目类型: cli
+
+## Deterministic Checks
+- rust_compile
+- content_any:treasure|budget|port|reef
+- source_target_coverage:src/**/*.rs
+""".strip()
+        cpp_directive = """
+# Product Requirements — 微型机器人巡逻棋
+
+## Project Metadata
+- 主语言: cpp
+- 项目类型: cli
+
+## Deterministic Checks
+- cpp_compile
+- content_any:robot|patrol|queue|energy
+- source_target_coverage:src/**/*.cpp
+""".strip()
+        java_directive = """
+# Product Requirements — 会唱歌的植物图鉴
+
+## Project Metadata
+- 主语言: java
+- 项目类型: cli
+
+## Deterministic Checks
+- java_compile
+- content_any:plant|melody|season|growth
+""".strip()
+
+        rust_contracts = adapter._synthesize_task_contracts_from_directive(directive=rust_directive)
+        cpp_contracts = adapter._synthesize_task_contracts_from_directive(directive=cpp_directive)
+        java_contracts = adapter._synthesize_task_contracts_from_directive(directive=java_directive)
+
+        rust_serialized = json.dumps(rust_contracts, ensure_ascii=False)
+        cpp_serialized = json.dumps(cpp_contracts, ensure_ascii=False)
+        java_serialized = json.dumps(java_contracts, ensure_ascii=False)
+        rust_targets = [target for item in rust_contracts for target in item.get("target_files", [])]
+        cpp_targets = [target for item in cpp_contracts for target in item.get("target_files", [])]
+        java_targets = [target for item in java_contracts for target in item.get("target_files", [])]
+
+        assert "src/models/treasure.rs" in rust_targets
+        assert "src/models/budget.rs" in rust_targets
+        assert "src/engine/treasure_rules.rs" in rust_targets
+        assert "flavor" not in rust_serialized
+        assert "palette" not in rust_serialized
+        assert "recipe" not in rust_serialized
+
+        assert "src/models/robot.hpp" in cpp_targets
+        assert "src/models/patrol.cpp" in cpp_targets
+        assert "robot, patrol, queue, energy" in cpp_serialized
+        assert "postcard" not in cpp_serialized
+        assert "stamp" not in cpp_serialized
+        assert "poem" not in cpp_serialized
+
+        assert "src/main/java/polaris/factory/engine/PlantEngine.java" in java_targets
+        assert "src/test/java/polaris/factory/PlantEngineTest.java" in java_targets
+        assert "plant, melody, season, growth" in java_serialized
+        assert "RhythmEngine" not in java_serialized
+        assert "RhythmMonster" not in java_serialized
+        assert "BeatPattern" not in java_serialized
 
     def test_cpp_root_workspace_directive_prefers_cpp_contracts(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

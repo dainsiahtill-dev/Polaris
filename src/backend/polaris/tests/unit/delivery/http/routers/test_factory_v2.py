@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 from polaris.bootstrap.config import Settings
+from polaris.cells.factory.pipeline.public.types import RunPhase
 from polaris.cells.runtime.state_owner.public.service import AppState
 
 # ---------------------------------------------------------------------------
@@ -316,6 +317,34 @@ def test_director_resume_evidence_resets_current_dirty_taskboard(
     assert "runtime_execution" not in task_1["metadata"]
     evidence = json.loads((task_dir / "director_resume_reset.json").read_text(encoding="utf-8"))
     assert evidence["reset_statuses"] == "all_task_records"
+
+
+def test_build_gates_uses_recorded_quality_gate_score() -> None:
+    from polaris.delivery.http.routers.factory import _build_gates
+
+    run = _make_factory_run(
+        status="completed",
+        stages_completed=["quality_gate"],
+        metadata={
+            "current_stage": "quality_gate",
+            "last_successful_stage": "quality_gate",
+            "stage_results": {
+                "quality_gate": {
+                    "status": "success",
+                    "output": "Quality gate completed; qa_passed=True; qa_score=46; qa_critical=0",
+                    "artifacts": ["runtime/qa/report.json", "workspace/roles/qa/run/report.json"],
+                }
+            },
+        },
+    )
+
+    gates = _build_gates(run, RunPhase.COMPLETED)
+
+    assert len(gates) == 1
+    assert gates[0].passed is True
+    assert gates[0].score == 46.0
+    assert "qa_score=46" in gates[0].message
+    assert gates[0].artifacts == ["runtime/qa/report.json", "workspace/roles/qa/run/report.json"]
 
 
 def test_execution_stages_for_recovery_after_checkpoint() -> None:

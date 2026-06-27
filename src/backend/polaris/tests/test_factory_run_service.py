@@ -1323,6 +1323,11 @@ class TestOrchestrationStageExecutor:
                         "provider": "test-provider",
                         "model": "test-model",
                         "cache_hit": False,
+                        "final_request_context_audit": {
+                            "final_request_token_estimate": 2048,
+                            "context_window_utilization": 0.08,
+                        },
+                        "context_snapshot_ref": "test-ce-context-snapshot",
                     },
                 )
 
@@ -1804,6 +1809,37 @@ class TestOrchestrationStageExecutor:
         assert "qa_passed=False" in str(result.output)
         assert "runtime/qa/report.json" in result.artifacts
         assert f"workspace/roles/qa/{run.id}/report.json" in result.artifacts
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_fails_when_report_passed_but_score_is_low(self, temp_workspace):
+        command_service = _CompletedCommandService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        run = FactoryRun(
+            id="factory_test_quality_gate_low_score",
+            config=FactoryConfig(name="test-run", stages=["quality_gate"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        report_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/report.json"))
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(
+                {
+                    "passed": True,
+                    "score": 52,
+                    "critical_issue_count": 0,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
+
+        assert result.status == "failed"
+        assert "qa_passed=True" in str(result.output)
+        assert "qa_score=52" in str(result.output)
+        assert "qa_gate_blocker=qa_score_below_threshold" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_quality_gate_offloads_report_read_off_event_loop(self, temp_workspace, monkeypatch):
@@ -2574,6 +2610,11 @@ class TestCEProviderModelPropagationR15A:
                     metadata={
                         "provider_id": "kimi",
                         "model": "kimi-k2-thinking-turbo",
+                        "final_request_context_audit": {
+                            "final_request_token_estimate": 2048,
+                            "context_window_utilization": 0.08,
+                        },
+                        "context_snapshot_ref": "test-ce-context-snapshot",
                     },
                 )
 

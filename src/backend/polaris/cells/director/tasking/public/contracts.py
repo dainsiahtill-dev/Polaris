@@ -304,6 +304,96 @@ class TaskExecutionStrategyV1:
         }
 
 
+@dataclass(frozen=True)
+class TaskExecutionContractV1:
+    """Shared contract for prompt, runtime controls, gates, and audit evidence."""
+
+    schema_version: str = "task.execution_contract.v1"
+    source: str = "director.tasking"
+    profile_schema_version: str = "task.execution_profile.v1"
+    strategy_schema_version: str = "task.execution_strategy.v1"
+    task_type: str = "generic"
+    phase: str = "implementation"
+    project_type: str = "generic"
+    language: str = "generic"
+    language_display_name: str = "generic/unknown"
+    framework: str = ""
+    output_contract_id: str = "director.patch_file.v1"
+    generation_mode: str = "proposal_then_apply"
+    sampling: Mapping[str, Any] = field(default_factory=dict)
+    context_budget: Mapping[str, Any] = field(default_factory=dict)
+    prompt_protocol: Mapping[str, Any] = field(default_factory=dict)
+    delivery_contract: Mapping[str, Any] = field(default_factory=dict)
+    architecture_contract: Mapping[str, Any] = field(default_factory=dict)
+    quality_contract: Mapping[str, Any] = field(default_factory=dict)
+    audit_contract: Mapping[str, Any] = field(default_factory=dict)
+    target_files: tuple[str, ...] = ()
+    scope_paths: tuple[str, ...] = ()
+    evidence_requirements: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        object.__setattr__(
+            self,
+            "profile_schema_version",
+            _require_non_empty("profile_schema_version", self.profile_schema_version),
+        )
+        object.__setattr__(
+            self,
+            "strategy_schema_version",
+            _require_non_empty("strategy_schema_version", self.strategy_schema_version),
+        )
+        object.__setattr__(self, "task_type", _require_non_empty("task_type", self.task_type))
+        object.__setattr__(self, "phase", _require_non_empty("phase", self.phase))
+        object.__setattr__(self, "project_type", _require_non_empty("project_type", self.project_type))
+        object.__setattr__(self, "language", _require_non_empty("language", self.language))
+        object.__setattr__(self, "language_display_name", str(self.language_display_name or "generic/unknown"))
+        object.__setattr__(self, "framework", str(self.framework or "").strip())
+        object.__setattr__(
+            self, "output_contract_id", _require_non_empty("output_contract_id", self.output_contract_id)
+        )
+        object.__setattr__(self, "generation_mode", _require_non_empty("generation_mode", self.generation_mode))
+        object.__setattr__(self, "sampling", _to_dict_copy(self.sampling))
+        object.__setattr__(self, "context_budget", _to_dict_copy(self.context_budget))
+        object.__setattr__(self, "prompt_protocol", _to_dict_copy(self.prompt_protocol))
+        object.__setattr__(self, "delivery_contract", _to_dict_copy(self.delivery_contract))
+        object.__setattr__(self, "architecture_contract", _to_dict_copy(self.architecture_contract))
+        object.__setattr__(self, "quality_contract", _to_dict_copy(self.quality_contract))
+        object.__setattr__(self, "audit_contract", _to_dict_copy(self.audit_contract))
+        object.__setattr__(self, "target_files", _to_str_tuple(self.target_files))
+        object.__setattr__(self, "scope_paths", _to_str_tuple(self.scope_paths))
+        object.__setattr__(self, "evidence_requirements", _to_str_tuple(self.evidence_requirements))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe execution contract payload."""
+
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "profile_schema_version": self.profile_schema_version,
+            "strategy_schema_version": self.strategy_schema_version,
+            "task_type": self.task_type,
+            "phase": self.phase,
+            "project_type": self.project_type,
+            "language": self.language,
+            "language_display_name": self.language_display_name,
+            "framework": self.framework,
+            "output_contract_id": self.output_contract_id,
+            "generation_mode": self.generation_mode,
+            "sampling": dict(self.sampling),
+            "context_budget": dict(self.context_budget),
+            "prompt_protocol": dict(self.prompt_protocol),
+            "delivery_contract": dict(self.delivery_contract),
+            "architecture_contract": dict(self.architecture_contract),
+            "quality_contract": dict(self.quality_contract),
+            "audit_contract": dict(self.audit_contract),
+            "target_files": list(self.target_files),
+            "scope_paths": list(self.scope_paths),
+            "evidence_requirements": list(self.evidence_requirements),
+        }
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -461,6 +551,7 @@ __all__ = [
     "DirectorExecutionProfileV1",
     "DirectorTaskingError",
     "TaskCreatedResultV1",
+    "TaskExecutionContractV1",
     "TaskExecutionProfileV1",
     "TaskExecutionStrategyV1",
     "TaskResultQueryV1",

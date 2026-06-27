@@ -216,6 +216,20 @@ class TestResolveMaxTokens:
             == 96_000
         )
 
+    def test_execution_contract_output_budget_wins_over_requested(self) -> None:
+        assert (
+            resolve_max_tokens(
+                4000,
+                {
+                    "task_execution_contract": {
+                        "schema_version": "task.execution_contract.v1",
+                        "context_budget": {"output_budget_tokens": 112_000},
+                    }
+                },
+            )
+            == 112_000
+        )
+
 
 class TestResolveTemperature:
     """resolve_temperature consumes execution profile and strategy controls."""
@@ -232,6 +246,20 @@ class TestResolveTemperature:
                 },
             )
             == 0.05
+        )
+
+    def test_execution_contract_temperature_wins_over_requested(self) -> None:
+        assert (
+            resolve_temperature(
+                0.7,
+                {
+                    "task_execution_contract": {
+                        "schema_version": "task.execution_contract.v1",
+                        "sampling": {"temperature": 0.03},
+                    }
+                },
+            )
+            == 0.03
         )
 
     def test_execution_profile_temperature_is_backstop(self) -> None:

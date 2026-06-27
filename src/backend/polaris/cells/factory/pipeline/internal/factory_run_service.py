@@ -696,6 +696,11 @@ class FactoryRunService:
 
         target_run.metadata["last_stage"] = result.stage
         target_run.metadata["current_stage_completed_at"] = completed_at
+        stage_results = target_run.metadata.get("stage_results")
+        if not isinstance(stage_results, dict):
+            stage_results = {}
+        stage_results[result.stage] = result.to_dict()
+        target_run.metadata["stage_results"] = stage_results
 
         cancelled_externally = (
             target_run.status == FactoryRunStatus.CANCELLED or str(result.status or "").strip().lower() == "cancelled"

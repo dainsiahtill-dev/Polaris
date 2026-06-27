@@ -338,17 +338,39 @@ def _build_roles(run: FactoryRun, phase: RunPhase) -> dict[str, RoleStatus]:
     return roles
 
 
+def _quality_gate_result_from_metadata(run: FactoryRun) -> dict[str, Any]:
+    stage_results = run.metadata.get("stage_results")
+    if not isinstance(stage_results, dict):
+        return {}
+    quality_gate = stage_results.get("quality_gate")
+    return quality_gate if isinstance(quality_gate, dict) else {}
+
+
+def _quality_gate_score_from_output(output: Any) -> float | None:
+    match = re.search(r"\bqa_score=(\d+(?:\.\d+)?)\b", str(output or ""))
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
 def _build_gates(run: FactoryRun, phase: RunPhase) -> list[GateResult]:
     if "quality_gate" in run.stages_completed:
+        quality_result = _quality_gate_result_from_metadata(run)
+        score = _quality_gate_score_from_output(quality_result.get("output"))
+        raw_artifacts = quality_result.get("artifacts")
+        artifacts = raw_artifacts if isinstance(raw_artifacts, list) else ["runtime/qa/report.json"]
         return [
             GateResult(
                 gate_name="quality_gate",
                 status=GateStatus.PASSED,
-                score=100.0,
+                score=score if score is not None else 100.0,
                 passed=True,
-                message="Quality gate passed",
-                details={},
-                artifacts=["runtime/qa/report.json"],
+                message=str(quality_result.get("output") or "Quality gate passed"),
+                details={"stage_result": quality_result} if quality_result else {},
+                artifacts=[str(item) for item in artifacts],
             )
         ]
     if (

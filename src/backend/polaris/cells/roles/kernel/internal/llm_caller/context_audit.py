@@ -328,6 +328,7 @@ def _context_quality_findings(
     sampling: dict[str, Any],
     execution_profile: dict[str, Any],
     execution_strategy: dict[str, Any],
+    execution_contract: dict[str, Any],
     message_projection_findings: list[dict[str, Any]],
 ) -> dict[str, Any]:
     missing = [key for key, ok in coverage.items() if not ok]
@@ -356,6 +357,7 @@ def _context_quality_findings(
             sampling=sampling,
             execution_profile=execution_profile,
             execution_strategy=execution_strategy,
+            execution_contract=execution_contract,
         )
     )
     return {
@@ -407,15 +409,22 @@ def _execution_strategy_consistency_findings(
     sampling: dict[str, Any],
     execution_profile: dict[str, Any],
     execution_strategy: dict[str, Any],
+    execution_contract: dict[str, Any],
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
-    if not execution_profile and not execution_strategy:
+    if not execution_profile and not execution_strategy and not execution_contract:
         return findings
+    raw_contract_sampling = execution_contract.get("sampling")
+    contract_sampling = dict(raw_contract_sampling) if isinstance(raw_contract_sampling, dict) else {}
+    raw_contract_context_budget = execution_contract.get("context_budget")
+    contract_context_budget = dict(raw_contract_context_budget) if isinstance(raw_contract_context_budget, dict) else {}
 
     actual_temperature = _coerce_float(sampling.get("temperature"))
     expected_temperature = _coerce_float(execution_strategy.get("temperature"))
     if expected_temperature is None:
         expected_temperature = _coerce_float(execution_profile.get("temperature"))
+    if expected_temperature is None:
+        expected_temperature = _coerce_float(contract_sampling.get("temperature"))
     if (
         actual_temperature is not None
         and expected_temperature is not None
@@ -429,11 +438,14 @@ def _execution_strategy_consistency_findings(
                 "actual_temperature": actual_temperature,
                 "profile_schema": str(execution_profile.get("schema_version") or ""),
                 "strategy_schema": str(execution_strategy.get("schema_version") or ""),
+                "contract_schema": str(execution_contract.get("schema_version") or ""),
             }
         )
 
     actual_max_tokens = _coerce_int(sampling.get("max_tokens"))
     expected_max_tokens = _coerce_int(execution_strategy.get("output_budget_tokens"))
+    if expected_max_tokens is None:
+        expected_max_tokens = _coerce_int(contract_context_budget.get("output_budget_tokens"))
     if actual_max_tokens is not None and expected_max_tokens is not None and actual_max_tokens < expected_max_tokens:
         budget_ratio = actual_max_tokens / expected_max_tokens if expected_max_tokens > 0 else 0.0
         findings.append(
@@ -445,6 +457,7 @@ def _execution_strategy_consistency_findings(
                 "budget_ratio": round(budget_ratio, 4),
                 "remediation": "select a model/provider binding whose max output budget can satisfy the task execution strategy",
                 "strategy_schema": str(execution_strategy.get("schema_version") or ""),
+                "contract_schema": str(execution_contract.get("schema_version") or ""),
             }
         )
     return findings
@@ -512,6 +525,19 @@ def _execution_strategy(ai_request: Any) -> dict[str, Any]:
     return {}
 
 
+def _execution_contract(ai_request: Any) -> dict[str, Any]:
+    context_payload = _request_context(ai_request)
+    for key in (
+        "director_execution_contract",
+        "task_execution_contract",
+        "execution_contract",
+    ):
+        raw_contract = context_payload.get(key)
+        if isinstance(raw_contract, dict):
+            return dict(raw_contract)
+    return {}
+
+
 _EXECUTION_PROFILE_SUMMARY_KEYS = (
     "schema_version",
     "source",
@@ -546,6 +572,51 @@ def _execution_profile_summary(ai_request: Any) -> dict[str, Any]:
         value = profile.get(key)
         if isinstance(value, list):
             summary[f"{key}_count"] = len(value)
+    return summary
+
+
+def _execution_contract_summary(ai_request: Any) -> dict[str, Any]:
+    contract = _execution_contract(ai_request)
+    if not contract:
+        return {}
+    summary: dict[str, Any] = {
+        key: contract.get(key)
+        for key in (
+            "schema_version",
+            "source",
+            "task_type",
+            "phase",
+            "project_type",
+            "language",
+            "framework",
+            "output_contract_id",
+            "generation_mode",
+        )
+        if contract.get(key) not in (None, "")
+    }
+    for nested_key in ("sampling", "context_budget", "delivery_contract", "quality_contract", "audit_contract"):
+        payload = contract.get(nested_key)
+        if isinstance(payload, dict):
+            summary[nested_key] = {
+                key: payload.get(key)
+                for key in (
+                    "temperature",
+                    "temperature_phase",
+                    "sampling_mode",
+                    "output_budget_tokens",
+                    "input_budget_tokens",
+                    "prompt_max_chars",
+                    "primary_entities",
+                    "rule_count",
+                    "edge_case_count",
+                    "level",
+                    "quality_gates",
+                    "verification_commands",
+                    "deterministic_checks",
+                    "contract_hash",
+                )
+                if payload.get(key) not in (None, "", [])
+            }
     return summary
 
 
@@ -584,7 +655,9 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
     options = _request_options(ai_request, prepared)
     execution_profile = _execution_profile(ai_request)
     execution_strategy = _execution_strategy(ai_request)
+    execution_contract = _execution_contract(ai_request)
     execution_profile_summary = _execution_profile_summary(ai_request)
+    execution_contract_summary = _execution_contract_summary(ai_request)
     task_metadata = _task_metadata(ai_request)
     resident_agi_audit_context = _resident_agi_audit_context_summary(ai_request)
     summary: dict[str, Any] = {
@@ -618,6 +691,9 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
             if execution_strategy.get(key) not in (None, "")
         },
         "execution_strategy_hash": _stable_digest(execution_strategy) if execution_strategy else "",
+        "has_execution_contract": bool(execution_contract),
+        "execution_contract_summary": execution_contract_summary,
+        "execution_contract_hash": _stable_digest(execution_contract) if execution_contract else "",
         "has_task_metadata": bool(task_metadata),
         "task_metadata_keys": sorted(str(key) for key in task_metadata),
         "task_metadata_hash": _stable_digest(task_metadata) if task_metadata else "",
@@ -643,18 +719,25 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
 def _request_sampling_audit(ai_request: Any, prepared: PreparedLLMRequest) -> dict[str, Any]:
     options = _request_options(ai_request, prepared)
     profile = _execution_profile(ai_request)
+    contract = _execution_contract(ai_request)
+    raw_contract_sampling = contract.get("sampling")
+    contract_sampling: dict[str, Any] = dict(raw_contract_sampling) if isinstance(raw_contract_sampling, dict) else {}
     temperature = options.get("temperature")
     max_tokens = options.get("max_tokens")
     return {
         "temperature": temperature if isinstance(temperature, (int, float)) else None,
         "max_tokens": max_tokens if isinstance(max_tokens, int) else None,
-        "temperature_source": str(profile.get("temperature_source") or "request_options"),
-        "temperature_phase": str(profile.get("temperature_phase") or ""),
-        "sampling_mode": str(profile.get("sampling_mode") or ""),
-        "task_type": str(profile.get("task_type") or _task_type_value(ai_request)),
-        "phase": str(profile.get("phase") or ""),
+        "temperature_source": str(
+            profile.get("temperature_source") or contract_sampling.get("temperature_source") or "request_options"
+        ),
+        "temperature_phase": str(profile.get("temperature_phase") or contract_sampling.get("temperature_phase") or ""),
+        "sampling_mode": str(profile.get("sampling_mode") or contract_sampling.get("sampling_mode") or ""),
+        "task_type": str(profile.get("task_type") or contract.get("task_type") or _task_type_value(ai_request)),
+        "phase": str(profile.get("phase") or contract.get("phase") or ""),
         "execution_profile_schema": str(profile.get("schema_version") or ""),
         "execution_profile_source": str(profile.get("source") or ""),
+        "execution_contract_schema": str(contract.get("schema_version") or ""),
+        "execution_contract_source": str(contract.get("source") or ""),
     }
 
 
@@ -819,8 +902,10 @@ def build_final_request_context_audit_for_request(
     sampling = _request_sampling_audit(ai_request, prepared)
     request_metadata_summary = _request_metadata_summary(ai_request, prepared)
     execution_profile_summary = request_metadata_summary.get("execution_profile_summary", {})
+    execution_contract_summary = request_metadata_summary.get("execution_contract_summary", {})
     execution_profile = _execution_profile(ai_request)
     execution_strategy = _execution_strategy(ai_request)
+    execution_contract = _execution_contract(ai_request)
     quality = _context_quality_findings(
         coverage=coverage,
         context_underutilized=context_underutilized,
@@ -829,6 +914,7 @@ def build_final_request_context_audit_for_request(
         sampling=sampling,
         execution_profile=execution_profile,
         execution_strategy=execution_strategy,
+        execution_contract=execution_contract,
         message_projection_findings=_message_projection_findings(messages),
     )
 
@@ -852,10 +938,15 @@ def build_final_request_context_audit_for_request(
         "sampling": sampling,
         "request_metadata_summary": request_metadata_summary,
         "execution_profile_summary": execution_profile_summary if isinstance(execution_profile_summary, dict) else {},
+        "execution_contract_summary": execution_contract_summary
+        if isinstance(execution_contract_summary, dict)
+        else {},
         "execution_profile_hash": request_metadata_summary.get("execution_profile_hash", ""),
+        "execution_contract_hash": request_metadata_summary.get("execution_contract_hash", ""),
         "task_metadata_hash": request_metadata_summary.get("task_metadata_hash", ""),
         "has_execution_profile": bool(request_metadata_summary.get("has_execution_profile")),
         "has_execution_strategy": bool(request_metadata_summary.get("has_execution_strategy")),
+        "has_execution_contract": bool(request_metadata_summary.get("has_execution_contract")),
         "has_language_guidance": bool(request_metadata_summary.get("has_language_guidance")),
         "has_output_contract": bool(request_metadata_summary.get("has_output_contract")),
         "prompt_profile_selection": prompt_profile_selection,

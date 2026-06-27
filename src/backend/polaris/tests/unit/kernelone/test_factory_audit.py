@@ -578,6 +578,112 @@ def test_implementation_depth_fails_hollow_source(tmp_path: Path) -> None:
     assert "production_source_lines" in depth["detail"]
 
 
+def test_l2_level_contract_rejects_l1_sized_depth(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    tests = tmp_path / "tests"
+    src.mkdir()
+    tests.mkdir()
+    module_text = "\n".join(
+        [
+            "function classifySignal(item) {",
+            "  if (item.score > 80) { return 'high'; }",
+            "  if (item.score > 40) { return 'medium'; }",
+            "  return 'low';",
+            "}",
+            "module.exports = { classifySignal };",
+        ]
+        * 8
+    )
+    for name in ("engine.js", "rules.js", "index.js"):
+        (src / name).write_text(module_text + "\n", encoding="utf-8")
+    (tests / "test_product.py").write_text(
+        "\n".join(
+            [
+                "import unittest",
+                "",
+                "class ProductTest(unittest.TestCase):",
+                "    def test_normal(self):",
+                "        self.assertEqual('high', 'high')",
+                "    def test_boundary(self):",
+                "        self.assertIn('medium', 'medium signal')",
+                "",
+                "if __name__ == '__main__':",
+                "    unittest.main()",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    record = build_factory_audit_record(
+        project={
+            "id": "L2-99",
+            "level": 2,
+            "checks": ["min_files:3", "content_any:signal|score", "source_target_coverage:src/**/*.js"],
+        },
+        workspace=str(tmp_path),
+    )
+
+    assert record["all_checks_passed"] is False
+    assert record["level_contract"]["level"] == 2
+    depth = record["implementation_depth"]
+    assert depth["ok"] is False
+    assert "production_source_files=3 < 6" in depth["detail"]
+
+
+def test_feature_keyword_structure_rejects_keyword_stuffing(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    tests = tmp_path / "tests"
+    src.mkdir()
+    tests.mkdir()
+    wrong_domain = "\n".join(
+        [
+            "pub struct Flavor { pub name: String }",
+            "pub struct Recipe { pub name: String }",
+            "pub fn generate_palette(recipe: &Recipe) -> String {",
+            '    let note = "treasure budget port reef";',
+            "    if recipe.name.is_empty() { return note.to_string(); }",
+            "    if recipe.name.len() > 4 { return note.to_string(); }",
+            "    return note.to_string();",
+            "}",
+        ]
+        * 80
+    )
+    for name in ("flavor.rs", "recipe.rs", "palette.rs", "ingredient.rs", "mapper.rs", "plating.rs"):
+        (src / name).write_text(wrong_domain + "\n", encoding="utf-8")
+    (tests / "test_product.py").write_text(
+        "\n".join(
+            [
+                "import unittest",
+                "",
+                "class ProductTest(unittest.TestCase):",
+                "    def test_a(self): self.assertEqual(1, 1)",
+                "    def test_b(self): self.assertEqual(2, 2)",
+                "    def test_c(self): self.assertEqual(3, 3)",
+                "    def test_d(self): self.assertEqual(4, 4)",
+                "    def test_e(self): self.assertEqual(5, 5)",
+                "    def test_f(self): self.assertEqual(6, 6)",
+                "    def test_g(self): self.assertEqual(7, 7)",
+                "    def test_h(self): self.assertEqual(8, 8)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    record = build_factory_audit_record(
+        project={
+            "id": "L2-14",
+            "level": 2,
+            "checks": ["rust_compile", "content_any:treasure|budget|port|reef", "source_target_coverage:src/**/*.rs"],
+        },
+        workspace=str(tmp_path),
+    )
+
+    structure = next(item for item in record["checks"] if item["check"] == "feature_keyword_structure")
+    assert structure["ok"] is False
+    assert record["all_checks_passed"] is False
+    assert "feature keywords must appear" in structure["detail"]
+
+
 def test_implementation_depth_passes_representative_project(tmp_path: Path) -> None:
     src = tmp_path / "src"
     tests = tmp_path / "tests"
@@ -602,40 +708,9 @@ def test_implementation_depth_passes_representative_project(tmp_path: Path) -> N
         "function buildLostRecord(name, clue) { return { name, clue: normalizeClue(clue), energy: 88, galaxy: 'orion' }; }",
         "module.exports = { scoreLostAlienClue, matchOwner, explainMatch, normalizeClue, buildLostRecord };",
     ]
-    (src / "engine.js").write_text(
-        "\n".join([*engine_lines, *engine_lines, *engine_lines]) + "\n",
-        encoding="utf-8",
-    )
-    (src / "model.js").write_text(
-        "\n".join(
-            [
-                "class LostItem { constructor(name, energy, clue) { this.name = name; this.energy = energy; this.clue = clue; } }",
-                "class AlienReport { constructor(galaxy, message) { this.galaxy = galaxy; this.message = message; } }",
-                "function createGalaxyClue(text) { if (!text) { throw new Error('clue required'); } return { clue: text }; }",
-            ]
-            * 8
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (src / "index.js").write_text(
-        "\n".join(
-            [
-                "const engine = require('./engine');",
-                "function main() {",
-                "  const record = engine.buildLostRecord('star compass', 'signal clue');",
-                "  const result = engine.matchOwner(record);",
-                "  if (!result.owner) { throw new Error('owner missing'); }",
-                "  console.log(engine.explainMatch(record));",
-                "}",
-                "if (require.main === module) { main(); }",
-                "module.exports = { main };",
-            ]
-            * 5
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    for index, name in enumerate(("engine.js", "model.js", "index.js", "rules.js", "repository.js", "cli.js")):
+        prefix = [f"const moduleIndex{index} = {index};", ""]
+        (src / name).write_text("\n".join([*prefix, *(engine_lines * 8)]) + "\n", encoding="utf-8")
     (tests / "test_product.py").write_text(
         "\n".join(
             [
@@ -644,9 +719,18 @@ def test_implementation_depth_passes_representative_project(tmp_path: Path) -> N
                 "class ProductTest(unittest.TestCase):",
                 "    def test_normal_match(self):",
                 "        self.assertEqual('lost alien captain', 'lost alien captain')",
+                "        self.assertIn('captain', 'lost alien captain')",
+                "        self.assertEqual('galaxy clerk', 'galaxy clerk')",
                 "",
                 "    def test_boundary_match(self):",
                 "        self.assertIn('alien', 'lost alien captain')",
+                "        self.assertEqual(80, 80)",
+                "        self.assertIn('signal', 'signal clue')",
+                "",
+                "    def test_invalid_match(self):",
+                "        self.assertEqual('not-a-number', 'not-a-number')",
+                "        self.assertIn('clue', 'signal clue')",
+                "        self.assertEqual(1, 1)",
                 "",
                 "if __name__ == '__main__':",
                 "    unittest.main()",
@@ -659,13 +743,14 @@ def test_implementation_depth_passes_representative_project(tmp_path: Path) -> N
         project={
             "id": "L2-01",
             "level": 2,
-            "checks": ["min_files:3", "content_any:lost|alien|galaxy|clue", "source_target_coverage:src/**/*.js"],
+            "checks": ["min_files:6", "content_any:lost|alien|galaxy|clue", "source_target_coverage:src/**/*.js"],
         },
         workspace=str(tmp_path),
     )
 
     assert record["all_checks_passed"] is True
     assert record["implementation_depth"]["ok"] is True
+    assert record["level_contract"]["minimums"]["min_prod_files"] == 6
 
 
 def test_implementation_depth_counts_language_native_test_files(tmp_path: Path) -> None:

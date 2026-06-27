@@ -60,6 +60,53 @@ from .contracts import (
 )
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+_SEMANTIC_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
+_CAMEL_TOKEN_RE = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|[0-9]+")
+_GENERIC_SEMANTIC_TOKENS = frozenset(
+    {
+        "api",
+        "app",
+        "build",
+        "cli",
+        "code",
+        "component",
+        "config",
+        "core",
+        "data",
+        "engine",
+        "entry",
+        "file",
+        "files",
+        "handler",
+        "helper",
+        "input",
+        "integration",
+        "lib",
+        "main",
+        "model",
+        "models",
+        "module",
+        "output",
+        "package",
+        "product",
+        "readme",
+        "rule",
+        "rules",
+        "runner",
+        "script",
+        "service",
+        "src",
+        "system",
+        "test",
+        "tests",
+        "tool",
+        "user",
+        "util",
+        "utils",
+        "validation",
+        "web",
+    }
+)
 
 
 def _utc_now() -> str:
@@ -121,8 +168,107 @@ def _string_list(value: Any) -> list[str]:
     return rows
 
 
+def _semantic_tokens_from_text(value: Any) -> set[str]:
+    tokens: set[str] = set()
+    text = str(value or "")
+    for raw in _SEMANTIC_TOKEN_RE.findall(text):
+        for part in _CAMEL_TOKEN_RE.findall(raw):
+            token = part.casefold()
+            if len(token) < 3 or token in _GENERIC_SEMANTIC_TOKENS:
+                continue
+            tokens.add(token)
+    return tokens
+
+
+def _semantic_tokens_from_values(*values: Any) -> set[str]:
+    tokens: set[str] = set()
+    for value in values:
+        if isinstance(value, dict):
+            tokens.update(_semantic_tokens_from_values(*value.values()))
+        elif isinstance(value, (list, tuple, set)):
+            tokens.update(_semantic_tokens_from_values(*value))
+        else:
+            tokens.update(_semantic_tokens_from_text(value))
+    return tokens
+
+
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _semantic_terms_from_delivery_contracts(
+    *,
+    delivery_depth_contract: dict[str, Any] | None,
+    delivery_plan_document: dict[str, Any] | None,
+) -> list[str]:
+    depth_contract = _mapping(delivery_depth_contract)
+    plan_document = _mapping(delivery_plan_document)
+    product_intent = _mapping(depth_contract.get("product_intent"))
+    product_summary = _mapping(plan_document.get("product_summary"))
+
+    candidates: list[Any] = [
+        product_intent.get("primary_entities"),
+        product_summary.get("core_terms"),
+    ]
+    terms = _semantic_tokens_from_values(*candidates)
+    if not terms:
+        terms = _semantic_tokens_from_values(product_intent.get("subject"))
+    ordered = sorted(terms)
+    return ordered
+
+
+def _semantic_alignment_audit(
+    *,
+    objective: str,
+    title: str,
+    target_files: list[str],
+    scope_paths: list[str],
+    acceptance_criteria: list[str],
+    execution_checklist: list[str],
+    delivery_depth_contract: dict[str, Any] | None,
+    delivery_plan_document: dict[str, Any] | None,
+) -> dict[str, Any]:
+    expected_terms = _semantic_terms_from_delivery_contracts(
+        delivery_depth_contract=delivery_depth_contract,
+        delivery_plan_document=delivery_plan_document,
+    )
+    if not expected_terms:
+        return {
+            "ready": True,
+            "expected_terms": [],
+            "required_term_count": 0,
+            "target_file_matches": [],
+            "planning_text_matches": [],
+            "blockers": [],
+        }
+
+    required_term_count = min(len(expected_terms), 3)
+    target_tokens = _semantic_tokens_from_values(target_files, scope_paths)
+    planning_tokens = _semantic_tokens_from_values(objective, title, acceptance_criteria, execution_checklist)
+    expected_set = set(expected_terms)
+    target_matches = sorted(expected_set & target_tokens)
+    planning_matches = sorted(expected_set & planning_tokens)
+
+    blockers: list[str] = []
+    minimum_target_matches = min(required_term_count, 2)
+    if len(target_matches) < minimum_target_matches:
+        blockers.append(
+            "semantic_alignment.target_files: "
+            f"matched {len(target_matches)}/{minimum_target_matches} required domain terms"
+        )
+    if len(planning_matches) < required_term_count:
+        blockers.append(
+            f"semantic_alignment.plan_text: matched {len(planning_matches)}/{required_term_count} required domain terms"
+        )
+
+    return {
+        "ready": not blockers,
+        "expected_terms": expected_terms,
+        "required_term_count": required_term_count,
+        "target_file_matches": target_matches,
+        "planning_text_matches": planning_matches,
+        "blockers": blockers,
+    }
 
 
 def _first_string_list(*values: Any) -> list[str]:
@@ -289,7 +435,10 @@ def _blueprint_contract_fields(context: dict[str, Any]) -> dict[str, Any]:
 
 def _contract_completeness(
     *,
+    objective: str = "",
+    title: str = "",
     target_files: list[str],
+    scope_paths: list[str] | None = None,
     acceptance_criteria: list[str],
     execution_checklist: list[str],
     delivery_depth_contract: dict[str, Any] | None = None,
@@ -307,10 +456,23 @@ def _contract_completeness(
         advisory_missing_fields.append("delivery_depth_contract")
     if not delivery_plan_document:
         advisory_missing_fields.append("delivery_plan_document")
+    semantic_alignment = _semantic_alignment_audit(
+        objective=objective,
+        title=title,
+        target_files=target_files,
+        scope_paths=list(scope_paths or []),
+        acceptance_criteria=acceptance_criteria,
+        execution_checklist=execution_checklist,
+        delivery_depth_contract=delivery_depth_contract,
+        delivery_plan_document=delivery_plan_document,
+    )
+    semantic_blockers = list(semantic_alignment["blockers"])
     return {
-        "handoff_ready": not missing_fields,
+        "handoff_ready": not missing_fields and not semantic_blockers,
         "missing_fields": missing_fields,
         "advisory_missing_fields": advisory_missing_fields,
+        "semantic_alignment": semantic_alignment,
+        "semantic_blockers": semantic_blockers,
         "depth_contract_ready": not advisory_missing_fields,
         "requires": ["target_files", "acceptance_criteria", "execution_checklist"],
         "advisory_requires": ["delivery_plan_document", "delivery_depth_contract"],
@@ -394,7 +556,10 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     architecture_decision_payloads = [decision.to_dict() for decision in architecture_decisions]
     selected_libraries = list(selected_libraries_from_decisions(architecture_decisions))
     contract_completeness = _contract_completeness(
+        objective=command.objective,
+        title=title,
         target_files=target_files,
+        scope_paths=scope_paths,
         acceptance_criteria=acceptance_criteria,
         execution_checklist=execution_checklist,
         delivery_depth_contract=delivery_depth_contract,
