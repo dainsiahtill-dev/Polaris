@@ -5,12 +5,14 @@ from __future__ import annotations
 import ast
 import json
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, cast
 
 from polaris.cells.director.runtime.public import (
     DirectorRepairConvergenceVerifierRequestV1,
+    DirectorRepairEnvironmentPrepPlanV1,
     DirectorRepairVerifierSnapshotInputV1,
 )
 from polaris.cells.roles.adapters.internal.director import repair_convergence_verifier as verifier_module
@@ -23,7 +25,13 @@ _EVIDENCE_SOURCE = "adapter_convergence_verifier_factory"
 _FORBIDDEN_IMPORT_PREFIX = "polaris.cells.director.runtime.internal.repair_kernel"
 
 
-def _request(workspace: Path, *, task_id: str = "task-verifier", round_number: int = 0) -> (
+def _request(
+    workspace: Path,
+    *,
+    task_id: str = "task-verifier",
+    round_number: int = 0,
+    environment_prep_plans: tuple[DirectorRepairEnvironmentPrepPlanV1, ...] = (),
+) -> (
     DirectorRepairConvergenceVerifierRequestV1
 ):
     return DirectorRepairConvergenceVerifierRequestV1(
@@ -31,6 +39,7 @@ def _request(workspace: Path, *, task_id: str = "task-verifier", round_number: i
         workspace=str(workspace),
         round_number=round_number,
         source_tools=("deterministic_patch_residue_cleanup",),
+        environment_prep_plans=environment_prep_plans,
     )
 
 
@@ -113,6 +122,69 @@ def test_step_verify_convergence_verifier_success_writes_verified_raw_output(
     assert payload["residual_artifact_quality_errors"] == []
     assert payload["metadata"]["command_safety_allowed"] is True
     assert payload["metadata"]["step_verify_safety_policy_source"] == "kernelone_policy_safe_fixture"
+
+
+def test_step_verify_convergence_verifier_runs_environment_prep_before_verify(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    (tmp_path / "package.json").write_text('{"dependencies":{"left-pad":"1.3.0"}}\n', encoding="utf-8")
+    command = "test -f ./package.json"
+    plan = DirectorRepairEnvironmentPrepPlanV1(
+        plan_id="environment-prep-plan",
+        ecosystem="node",
+        package_manager="npm",
+        manifest="package.json",
+        command=("npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"),
+        freshness_key="fresh-node-key",
+        source_receipt_id="repair-receipt",
+        policy={
+            "command_source": "director.runtime.environment_prep_catalog",
+            "command_template_version": "director.environment_prep.command_templates.v1",
+            "llm_generated_command_allowed": False,
+            "agi_execution_authority": False,
+            "authoritative_repair": False,
+            "global_writes_allowed": False,
+        },
+        requirement={"manifest": "package.json"},
+    )
+    calls: list[tuple[str, object]] = []
+
+    def fake_subprocess_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(("prep", args[0]))
+        assert args[0] == list(plan.command)
+        assert kwargs["cwd"] == str(tmp_path.resolve())
+        return subprocess.CompletedProcess(args[0], 0, stdout="installed\n", stderr="")
+
+    def fake_run_step_verify(verify: str, *, cwd: str) -> tuple[int, str]:
+        calls.append(("verify", verify))
+        assert cwd == str(tmp_path.resolve())
+        return (0, "")
+
+    monkeypatch.setattr(verifier_module.subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(verifier_module, "run_step_verify", fake_run_step_verify)
+    verifier = build_step_verify_convergence_verifier(
+        tmp_path,
+        task_id="task-verifier",
+        verify_command=command,
+        log_root=tmp_path / "logs",
+    )
+
+    snapshot = verifier(_request(tmp_path, round_number=1, environment_prep_plans=(plan,)))
+
+    assert calls == [("prep", list(plan.command)), ("verify", command)]
+    assert snapshot.exit_code == 0
+    assert snapshot.residual_artifact_quality_errors == ()
+    assert snapshot.metadata["environment_prep_required"] is True
+    assert snapshot.metadata["environment_prep_plan_count"] == 1
+    assert snapshot.metadata["environment_prep_failed"] is False
+    prep_receipt = snapshot.metadata["environment_prep_receipts"][0]
+    assert prep_receipt["schema_version"] == "director.environment_prep_receipt.v1"
+    assert prep_receipt["status"] == "succeeded"
+    assert prep_receipt["command"] == list(plan.command)
+    assert prep_receipt["freshness_key"] == "fresh-node-key"
+    payload = _raw_output_payload(snapshot)
+    assert payload["environment_prep_receipts"][0]["status"] == "succeeded"
 
 
 def test_step_verify_convergence_verifier_missing_raw_output_marks_missing_evidence(

@@ -253,6 +253,102 @@ def test_public_convergence_success_uses_typed_receipts_and_revalidation_evidenc
     assert "flightTime, landed:" in target.read_text(encoding="utf-8")
 
 
+def test_public_convergence_projects_environment_prep_plan_before_revalidation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_path = tmp_path / "package.json"
+    package_path.write_text('{"scripts":{}}\n', encoding="utf-8")
+    source_tool = "deterministic_test_package_manifest_repair"
+    diagnostic = "package.json: missing dependency"
+    plan = RepairPlan(
+        rule_id="test.package_manifest",
+        source_tool=source_tool,
+        diagnostics=(),
+        operations=(
+            RepairOperation(
+                kind="write_file",
+                path="package.json",
+                content='{"dependencies":{"left-pad":"1.3.0"}}\n',
+            ),
+        ),
+    )
+
+    def planner(current_diagnostics: tuple[Any, ...], round_number: int) -> tuple[RepairPlan, ...]:
+        del round_number
+        return (plan,) if current_diagnostics else ()
+
+    def binding_planner(
+        base_files: dict[str, str],
+        artifact_quality_errors: tuple[str, ...],
+        advisor_notes: tuple[Any, ...] | None,
+        mode: str,
+    ) -> runtime_dispatch_module.RuntimeRepairPlanning:
+        del artifact_quality_errors, advisor_notes, mode
+        return runtime_dispatch_module.RuntimeRepairPlanning(
+            source_tool=source_tool,
+            diagnostics=(),
+            plan=plan,
+            composition=PatchComposer().compose(base_files, plan.operations),
+        )
+
+    bindings = dict(runtime_dispatch_module._RUNTIME_REPAIR_BINDINGS)
+    bindings[source_tool] = runtime_dispatch_module.RuntimeRepairBinding(
+        source_tool=source_tool,
+        language="test",
+        rule_id="test.package_manifest",
+        planner=binding_planner,  # type: ignore[arg-type]
+        runner=lambda *_args, **_kwargs: None,  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(runtime_dispatch_module, "_RUNTIME_REPAIR_BINDINGS", bindings)
+    monkeypatch.setattr(runtime_dispatch_module, "_native_coverage_gate_status", lambda _report, _tools: None)
+    monkeypatch.setattr(
+        runtime_dispatch_module,
+        "build_runtime_repair_convergence_planner",
+        lambda **_kwargs: planner,
+    )
+    requests: list[DirectorRepairConvergenceVerifierRequestV1] = []
+
+    def writer(path: str, updated: str) -> dict[str, object]:
+        (tmp_path / path).write_text(updated, encoding="utf-8")
+        return {"ok": True, "file": path}
+
+    def verifier(request: DirectorRepairConvergenceVerifierRequestV1) -> DirectorRepairVerifierSnapshotInputV1:
+        requests.append(request)
+        residual_errors = () if request.round_number > 0 else (diagnostic,)
+        return DirectorRepairVerifierSnapshotInputV1(
+            residual_artifact_quality_errors=residual_errors,
+            command=("rtk", "test", "package-verify"),
+            exit_code=0 if not residual_errors else 1,
+            raw_output_ref=f"runtime/verifier/package-round-{request.round_number}.log",
+            metadata=_valid_verifier_metadata(),
+        )
+
+    result = run_director_repair_convergence(
+        RunDirectorRepairConvergenceCommandV1(
+            task_id="task-public-package-env",
+            workspace=str(tmp_path),
+            source_tools=(source_tool,),
+            artifact_quality_errors=(diagnostic,),
+            base_files={"package.json": package_path.read_text(encoding="utf-8")},
+            allowed_paths=("package.json",),
+            max_rounds=2,
+        ),
+        writer=writer,
+        verifier=verifier,
+    )
+
+    assert result.ok is True
+    assert [request.round_number for request in requests] == [0, 1]
+    assert requests[0].environment_prep_plans == ()
+    assert len(requests[1].environment_prep_plans) == 1
+    env_plan = requests[1].environment_prep_plans[0]
+    assert env_plan.manifest == "package.json"
+    assert env_plan.command == ("npm", "install", "--ignore-scripts", "--no-audit", "--no-fund")
+    assert env_plan.policy["command_source"] == "director.runtime.environment_prep_catalog"
+    assert result.receipts[0].metadata["environment_refresh_required"] is True
+
+
 def test_public_convergence_delete_file_uses_policy_gated_deleter(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

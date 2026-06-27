@@ -21,6 +21,11 @@ from polaris.cells.director.runtime.internal.repair_kernel.contracts import (
     sha256_text,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.diagnostics import normalize_artifact_quality_errors
+from polaris.cells.director.runtime.internal.repair_kernel.environment import (
+    environment_prep_catalog_summary,
+    environment_prep_plans_from_requirements,
+    environment_refresh_requirements_from_receipts,
+)
 from polaris.cells.director.runtime.internal.repair_kernel.legacy_bridge import (
     build_legacy_repair_kernel_summary as _build_legacy_repair_kernel_summary,
     summarize_repair_revalidation_coverage,
@@ -66,6 +71,10 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairCoverageReportV1,
     DirectorRepairCutoverReadinessResultV1,
     DirectorRepairDiagnosticCoverageV1,
+    DirectorRepairEnvironmentPrepCatalogResultV1,
+    DirectorRepairEnvironmentPrepPlanV1,
+    DirectorRepairEnvironmentRefreshRequirementsResultV1,
+    DirectorRepairEnvironmentRefreshRequirementV1,
     DirectorRepairKernelSummaryProjectionResultV1,
     DirectorRepairLanguageSlotsResultV1,
     DirectorRepairLanguageSlotV1,
@@ -93,6 +102,8 @@ from polaris.cells.director.runtime.public.contracts import (
     QueryDirectorRepairAdvisoryPolicyV1,
     QueryDirectorRepairAdvisoryValidationV1,
     QueryDirectorRepairCoverageV1,
+    QueryDirectorRepairEnvironmentPrepCatalogV1,
+    QueryDirectorRepairEnvironmentRefreshRequirementsV1,
     QueryDirectorRepairLanguageSlotsV1,
     QueryDirectorRepairMaterializationQualityScheduleV1,
     QueryDirectorRepairPostExecutionScheduleV1,
@@ -277,6 +288,42 @@ def query_director_repair_strategy_catalog(
         director_tool_execution_required=True,
         items=tuple(visible_items),
         summary=summary,
+    )
+
+
+def query_director_repair_environment_prep_catalog(
+    query: QueryDirectorRepairEnvironmentPrepCatalogV1 | None = None,
+) -> DirectorRepairEnvironmentPrepCatalogResultV1:
+    """Return the read-only runtime-owned environment prep command catalog."""
+
+    request = query or QueryDirectorRepairEnvironmentPrepCatalogV1()
+    summary = environment_prep_catalog_summary()
+    items = tuple(dict(item) for item in summary.get("items") or ()) if request.include_items else ()
+    summary_without_items = {key: value for key, value in summary.items() if key != "items"}
+    return DirectorRepairEnvironmentPrepCatalogResultV1(
+        items=items,
+        summary=summary_without_items,
+    )
+
+
+def query_director_repair_environment_refresh_requirements(
+    query: QueryDirectorRepairEnvironmentRefreshRequirementsV1,
+) -> DirectorRepairEnvironmentRefreshRequirementsResultV1:
+    """Return environment refresh requirements and plans derived from repair receipts."""
+
+    requirements = environment_refresh_requirements_from_receipts(
+        tuple(receipt.to_dict() for receipt in query.receipts),
+        workspace=query.workspace or None,
+    )
+    previous_prep_receipts = _environment_prep_receipts_from_public_repair_receipts(query.receipts)
+    plans = environment_prep_plans_from_requirements(
+        requirements,
+        workspace=query.workspace or None,
+        previous_prep_receipts=previous_prep_receipts,
+    )
+    return DirectorRepairEnvironmentRefreshRequirementsResultV1(
+        items=tuple(_to_public_environment_refresh_requirement(item) for item in requirements),
+        plans=tuple(_to_public_environment_prep_plan(plan.to_dict()) for plan in plans),
     )
 
 
@@ -1401,17 +1448,33 @@ def run_director_repair_convergence(
 
     def _verifier(round_number: int, receipts: tuple[RepairReceipt, ...]) -> RepairVerifierSnapshot:
         public_receipts = tuple(_to_public_repair_receipt(receipt) for receipt in receipts)
+        environment_requirements = environment_refresh_requirements_from_receipts(
+            tuple(receipt.to_dict() for receipt in public_receipts),
+            workspace=command.workspace,
+        )
+        environment_plans = environment_prep_plans_from_requirements(
+            environment_requirements,
+            workspace=command.workspace,
+            previous_prep_receipts=_environment_prep_receipts_from_public_repair_receipts(public_receipts),
+        )
+        public_environment_plans = tuple(
+            _to_public_environment_prep_plan(plan.to_dict()) for plan in environment_plans
+        )
         request = DirectorRepairConvergenceVerifierRequestV1(
             task_id=command.task_id,
             workspace=command.workspace,
             round_number=round_number,
             source_tools=command.source_tools,
             receipts=public_receipts,
+            environment_prep_plans=public_environment_plans,
             max_rounds=command.max_rounds,
             metadata={
                 "public_entrypoint": "run_director_repair_convergence",
                 "effect_boundary": "adapter_supplied_verifier_callback_no_command_execution",
                 "command_metadata": dict(command.metadata),
+                "environment_prep_required": bool(public_environment_plans),
+                "environment_refresh_requirement_count": len(environment_requirements),
+                "environment_prep_plan_count": len(public_environment_plans),
             },
         )
         try:
@@ -1448,6 +1511,9 @@ def run_director_repair_convergence(
                 **dict(verifier_input.metadata),
                 "public_entrypoint": "run_director_repair_convergence",
                 "effect_boundary": "adapter_supplied_verifier_callback_no_command_execution",
+                "environment_prep_required": bool(public_environment_plans),
+                "environment_refresh_requirement_count": len(environment_requirements),
+                "environment_prep_plan_count": len(public_environment_plans),
                 "round_number": round_number,
             },
         )
@@ -1999,6 +2065,55 @@ def _to_public_repair_receipt(receipt: RepairReceipt) -> RepairReceiptV1:
     )
 
 
+def _to_public_environment_refresh_requirement(
+    requirement: Mapping[str, Any],
+) -> DirectorRepairEnvironmentRefreshRequirementV1:
+    return DirectorRepairEnvironmentRefreshRequirementV1(
+        ecosystem=str(requirement.get("ecosystem") or ""),
+        package_manager=str(requirement.get("package_manager") or ""),
+        manifest=str(requirement.get("manifest") or ""),
+        lockfile=str(requirement.get("lockfile") or ""),
+        command=tuple(str(item) for item in requirement.get("command") or ()),
+        reason=str(requirement.get("reason") or "manifest_changed_before_revalidation"),
+        receipt_id=str(requirement.get("receipt_id") or ""),
+        manifest_after_hash=str(requirement.get("manifest_after_hash") or ""),
+        lockfile_after_hash=str(requirement.get("lockfile_after_hash") or ""),
+        freshness_key=str(requirement.get("freshness_key") or ""),
+    )
+
+
+def _to_public_environment_prep_plan(plan: Mapping[str, Any]) -> DirectorRepairEnvironmentPrepPlanV1:
+    return DirectorRepairEnvironmentPrepPlanV1(
+        plan_id=str(plan.get("plan_id") or ""),
+        ecosystem=str(plan.get("ecosystem") or ""),
+        package_manager=str(plan.get("package_manager") or ""),
+        manifest=str(plan.get("manifest") or ""),
+        lockfile=str(plan.get("lockfile") or ""),
+        command=tuple(str(item) for item in plan.get("command") or ()),
+        cwd=str(plan.get("cwd") or "."),
+        timeout_seconds=int(plan.get("timeout_seconds") or 120),
+        freshness_key=str(plan.get("freshness_key") or ""),
+        source_receipt_id=str(plan.get("source_receipt_id") or ""),
+        policy=dict(plan.get("policy") or {}),
+        metadata=dict(plan.get("metadata") or {}),
+        requirement=dict(plan.get("requirement") or {}),
+    )
+
+
+def _environment_prep_receipts_from_public_repair_receipts(
+    receipts: Sequence[RepairReceiptV1],
+) -> tuple[Mapping[str, Any], ...]:
+    prep_receipts: list[Mapping[str, Any]] = []
+    for receipt in receipts:
+        evidence = dict(receipt.revalidation_evidence or {})
+        metadata = dict(evidence.get("metadata") or {})
+        raw_receipts = metadata.get("environment_prep_receipts") or ()
+        if not isinstance(raw_receipts, Sequence) or isinstance(raw_receipts, str | bytes):
+            continue
+        prep_receipts.extend(dict(item) for item in raw_receipts if isinstance(item, Mapping))
+    return tuple(prep_receipts)
+
+
 __all__ = [
     "AttachDirectorRepairRevalidationEvidenceV1",
     "DirectorRepairConvergenceResultV1",
@@ -2006,6 +2121,10 @@ __all__ = [
     "DirectorRepairConvergenceVerifierFn",
     "DirectorRepairConvergenceVerifierRequestV1",
     "DirectorRepairCutoverReadinessResultV1",
+    "DirectorRepairEnvironmentPrepCatalogResultV1",
+    "DirectorRepairEnvironmentPrepPlanV1",
+    "DirectorRepairEnvironmentRefreshRequirementV1",
+    "DirectorRepairEnvironmentRefreshRequirementsResultV1",
     "DirectorRepairKernelSummaryProjectionResultV1",
     "DirectorRepairMaterializationQualityScheduleResultV1",
     "DirectorRepairMaterializationQualityStepV1",
@@ -2020,6 +2139,8 @@ __all__ = [
     "EvaluateDirectorRepairCutoverReadinessV1",
     "ProjectDirectorRepairKernelSummaryV1",
     "ProjectDirectorRepairMetricsV1",
+    "QueryDirectorRepairEnvironmentPrepCatalogV1",
+    "QueryDirectorRepairEnvironmentRefreshRequirementsV1",
     "RunDirectorRepairConvergenceCommandV1",
     "attach_director_repair_revalidation_evidence",
     "build_director_repair_kernel_summary",
@@ -2031,6 +2152,8 @@ __all__ = [
     "project_director_repair_revalidation_evidence",
     "query_director_repair_advisory_policy",
     "query_director_repair_coverage",
+    "query_director_repair_environment_prep_catalog",
+    "query_director_repair_environment_refresh_requirements",
     "query_director_repair_language_slots",
     "query_director_repair_materialization_quality_schedule",
     "query_director_repair_post_execution_schedule",

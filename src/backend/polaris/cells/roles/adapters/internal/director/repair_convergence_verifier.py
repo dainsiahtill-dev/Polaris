@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shlex
+import subprocess
+import time
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -95,11 +98,26 @@ def build_step_verify_convergence_verifier(
         )
         metadata["verify_command"] = command_text
         metadata["input_command"] = list(input_command)
+        environment_prep_receipts, environment_prep_residuals = _execute_environment_prep_plans(
+            request,
+            workspace_path=workspace_path,
+            log_root=log_root,
+            task_id=task_id,
+        )
+        metadata["environment_prep_receipts"] = list(environment_prep_receipts)
+        metadata["environment_prep_required"] = bool(request.environment_prep_plans)
+        metadata["environment_prep_plan_count"] = len(request.environment_prep_plans)
+        metadata["environment_prep_failed"] = bool(environment_prep_residuals)
 
         exit_code = 1
         output = ""
         residuals: tuple[str, ...]
-        if not command_text:
+        if environment_prep_residuals:
+            metadata["failure_reason"] = "environment_prep_failed_before_revalidation"
+            metadata["revalidation_failure_reason"] = "environment_prep_failed"
+            output = "\n".join(environment_prep_residuals)
+            residuals = environment_prep_residuals
+        elif not command_text:
             metadata["failure_reason"] = "empty_verify_command"
             metadata.update(
                 _step_verify_safety_metadata(
@@ -161,6 +179,7 @@ def build_step_verify_convergence_verifier(
                 "input_command": list(input_command),
                 "exit_code": exit_code,
                 "residual_artifact_quality_errors": list(residuals),
+                "environment_prep_receipts": list(environment_prep_receipts),
                 "output": output,
                 "metadata": metadata,
             },
@@ -215,28 +234,44 @@ def build_artifact_quality_convergence_verifier(
         )
         metadata["relative_paths"] = list(normalized_paths) if normalized_paths is not None else None
         metadata["dropped_unsafe_relative_paths"] = list(dropped_paths)
+        environment_prep_receipts, environment_prep_residuals = _execute_environment_prep_plans(
+            request,
+            workspace_path=workspace_path,
+            log_root=log_root,
+            task_id=task_id,
+        )
+        metadata["environment_prep_receipts"] = list(environment_prep_receipts)
+        metadata["environment_prep_required"] = bool(request.environment_prep_plans)
+        metadata["environment_prep_plan_count"] = len(request.environment_prep_plans)
+        metadata["environment_prep_failed"] = bool(environment_prep_residuals)
 
         residuals: tuple[str, ...]
-        try:
-            scan_errors = scan_workspace_artifact_quality(
-                str(workspace_path),
-                relative_paths=normalized_paths,
-            )
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            metadata["failure_reason"] = "artifact_quality_scan_exception"
-            metadata["verifier_error_type"] = type(exc).__name__
-            metadata["verifier_error"] = str(exc)
-            scan_errors = [f"Artifact quality scan failed: {type(exc).__name__}: {exc}"]
-        residuals = tuple(str(item) for item in scan_errors)
-        if dropped_paths:
-            residuals = (
-                *residuals,
-                *(
-                    f"Artifact quality scan failed: unsafe relative path ignored: {path}"
-                    for path in dropped_paths
-                ),
-            )
-        exit_code = 0 if not residuals else 1
+        if environment_prep_residuals:
+            metadata["failure_reason"] = "environment_prep_failed_before_revalidation"
+            metadata["revalidation_failure_reason"] = "environment_prep_failed"
+            residuals = environment_prep_residuals
+            exit_code = 1
+        else:
+            try:
+                scan_errors = scan_workspace_artifact_quality(
+                    str(workspace_path),
+                    relative_paths=normalized_paths,
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                metadata["failure_reason"] = "artifact_quality_scan_exception"
+                metadata["verifier_error_type"] = type(exc).__name__
+                metadata["verifier_error"] = str(exc)
+                scan_errors = [f"Artifact quality scan failed: {type(exc).__name__}: {exc}"]
+            residuals = tuple(str(item) for item in scan_errors)
+            if dropped_paths:
+                residuals = (
+                    *residuals,
+                    *(
+                        f"Artifact quality scan failed: unsafe relative path ignored: {path}"
+                        for path in dropped_paths
+                    ),
+                )
+            exit_code = 0 if not residuals else 1
 
         raw_output_ref, log_metadata = _write_raw_output_log(
             workspace_path,
@@ -256,6 +291,7 @@ def build_artifact_quality_convergence_verifier(
                 "relative_paths": list(normalized_paths) if normalized_paths is not None else None,
                 "dropped_unsafe_relative_paths": list(dropped_paths),
                 "residual_artifact_quality_errors": list(residuals),
+                "environment_prep_receipts": list(environment_prep_receipts),
                 "metadata": metadata,
             },
         )
@@ -285,6 +321,188 @@ def build_artifact_quality_convergence_verifier(
     return _verifier
 
 
+def _execute_environment_prep_plans(
+    request: DirectorRepairConvergenceVerifierRequestV1,
+    *,
+    workspace_path: Path,
+    log_root: str | Path | None,
+    task_id: str,
+) -> tuple[tuple[dict[str, Any], ...], tuple[str, ...]]:
+    receipts: list[dict[str, Any]] = []
+    residuals: list[str] = []
+    for plan in request.environment_prep_plans:
+        receipt = _execute_environment_prep_plan(
+            plan.to_dict(),
+            workspace_path=workspace_path,
+            log_root=log_root,
+            task_id=task_id,
+            round_number=request.round_number,
+        )
+        receipts.append(receipt)
+        if receipt.get("status") not in {"succeeded", "skipped_fresh"}:
+            command = " ".join(str(part) for part in receipt.get("command") or ())
+            error_code = str(receipt.get("error_code") or "environment_prep_failed")
+            residuals.append(f"Environment prep failed before revalidation: {error_code}: {command}")
+    return tuple(receipts), tuple(residuals)
+
+
+def _execute_environment_prep_plan(
+    plan: Mapping[str, Any],
+    *,
+    workspace_path: Path,
+    log_root: str | Path | None,
+    task_id: str,
+    round_number: int,
+) -> dict[str, Any]:
+    command = tuple(str(part) for part in plan.get("command") or () if str(part or "").strip())
+    manifest = str(plan.get("manifest") or "").strip().replace("\\", "/")
+    lockfile = str(plan.get("lockfile") or "").strip().replace("\\", "/")
+    plan_id = str(plan.get("plan_id") or "").strip()
+    ecosystem = str(plan.get("ecosystem") or "").strip()
+    package_manager = str(plan.get("package_manager") or "").strip()
+    freshness_key = str(plan.get("freshness_key") or "").strip()
+    started = time.monotonic()
+    manifest_before = _hash_workspace_file(workspace_path, manifest)
+    lockfile_before = _hash_workspace_file(workspace_path, lockfile)
+    validation_error = _environment_prep_plan_validation_error(plan)
+    output = ""
+    stdout = ""
+    stderr = ""
+    exit_code: int | None = None
+    status = "failed"
+    error_code = validation_error or ""
+    cwd = workspace_path
+
+    if validation_error is None:
+        try:
+            cwd = _environment_prep_cwd(workspace_path, str(plan.get("cwd") or "."))
+            completed = subprocess.run(
+                list(command),
+                cwd=str(cwd),
+                text=True,
+                capture_output=True,
+                timeout=max(1, int(plan.get("timeout_seconds") or 120)),
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = str(exc.stdout or "")
+            stderr = str(exc.stderr or "")
+            output = f"Environment prep timed out: {' '.join(command)}"
+            exit_code = 124
+            error_code = "environment_prep_timeout"
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            stderr = f"{type(exc).__name__}: {exc}"
+            output = f"Environment prep could not execute: {stderr}"
+            error_code = "environment_prep_execution_error"
+        else:
+            stdout = str(completed.stdout or "")
+            stderr = str(completed.stderr or "")
+            output = stdout + ("\n" if stdout and stderr else "") + stderr
+            exit_code = int(completed.returncode)
+            status = "succeeded" if exit_code == 0 else "failed"
+            error_code = "" if exit_code == 0 else "environment_prep_command_failed"
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    manifest_after = _hash_workspace_file(workspace_path, manifest)
+    lockfile_after = _hash_workspace_file(workspace_path, lockfile)
+    raw_output_ref, log_metadata = _write_raw_output_log(
+        workspace_path,
+        log_root=log_root,
+        task_id=task_id,
+        round_number=round_number,
+        verifier_name="environment-prep",
+        payload={
+            "schema_version": "roles.adapters.environment_prep.raw_output.v1",
+            "plan": dict(plan),
+            "workspace": str(workspace_path),
+            "cwd": str(cwd),
+            "command": list(command),
+            "exit_code": exit_code,
+            "status": status,
+            "stdout": stdout,
+            "stderr": stderr,
+            "output": output,
+            "duration_ms": duration_ms,
+            "error_code": error_code,
+        },
+    )
+    return {
+        "schema_version": "director.environment_prep_receipt.v1",
+        "plan_id": plan_id,
+        "ecosystem": ecosystem,
+        "package_manager": package_manager,
+        "command": list(command),
+        "exit_code": exit_code,
+        "status": status,
+        "duration_ms": duration_ms,
+        "manifest": manifest,
+        "lockfile": lockfile,
+        "manifest_hash_before": manifest_before,
+        "manifest_hash_after": manifest_after,
+        "lockfile_hash_before": lockfile_before,
+        "lockfile_hash_after": lockfile_after,
+        "stdout_ref": raw_output_ref or "",
+        "stderr_ref": raw_output_ref or "",
+        "freshness_key": freshness_key,
+        "error_code": error_code,
+        "authoritative_repair": False,
+        "metadata": {
+            **log_metadata,
+            "adapter_module": "polaris.cells.roles.adapters.internal.director.repair_convergence_verifier",
+            "effect_boundary": "adapter_environment_prep_runner_binding",
+            "command_source": "director.runtime.environment_prep_catalog",
+            "llm_generated_command_allowed": False,
+            "agi_execution_authority": False,
+        },
+    }
+
+
+def _environment_prep_plan_validation_error(plan: Mapping[str, Any]) -> str | None:
+    policy = dict(plan.get("policy") or {})
+    command = tuple(str(part) for part in plan.get("command") or () if str(part or "").strip())
+    if str(plan.get("schema_version") or "") != "director.environment_prep_plan.v1":
+        return "invalid_environment_prep_plan_schema"
+    if not command:
+        return "environment_prep_command_missing"
+    if str(policy.get("command_source") or "") != "director.runtime.environment_prep_catalog":
+        return "environment_prep_command_not_from_runtime_catalog"
+    if bool(policy.get("llm_generated_command_allowed")):
+        return "environment_prep_llm_generated_command_not_allowed"
+    if bool(policy.get("agi_execution_authority")):
+        return "environment_prep_agi_execution_not_allowed"
+    if bool(policy.get("authoritative_repair")):
+        return "environment_prep_cannot_be_authoritative_repair"
+    if bool(policy.get("global_writes_allowed")):
+        return "environment_prep_global_writes_not_allowed"
+    return None
+
+
+def _environment_prep_cwd(workspace_path: Path, cwd: str) -> Path:
+    normalized = str(cwd or ".").strip()
+    candidate = Path(normalized)
+    if candidate.is_absolute():
+        raise ValueError("environment prep cwd must be workspace-relative")
+    resolved = (workspace_path / candidate).resolve()
+    resolved.relative_to(workspace_path)
+    return resolved
+
+
+def _hash_workspace_file(workspace_path: Path, rel_path: str) -> str:
+    normalized = str(rel_path or "").strip().replace("\\", "/")
+    if not normalized:
+        return ""
+    target = (workspace_path / normalized).resolve()
+    try:
+        target.relative_to(workspace_path)
+        return _sha256_text(target.read_text(encoding="utf-8")) if target.is_file() else ""
+    except (OSError, RuntimeError, UnicodeError, ValueError):
+        return ""
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def _base_metadata(
     request: DirectorRepairConvergenceVerifierRequestV1,
     *,
@@ -308,6 +526,7 @@ def _base_metadata(
         "max_rounds": request.max_rounds,
         "source_tools": list(request.source_tools),
         "receipt_count": len(request.receipts),
+        "environment_prep_plan_count": len(request.environment_prep_plans),
         "workspace": str(workspace_path),
         "request_workspace": request_workspace,
         "workspace_match": request_workspace == str(workspace_path),

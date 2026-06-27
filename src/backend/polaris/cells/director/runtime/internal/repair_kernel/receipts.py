@@ -14,6 +14,7 @@ from .contracts import (
     RepairRevalidationEvidence,
     stable_id,
 )
+from .environment import environment_refresh_metadata_for_files
 
 
 def build_receipt(
@@ -38,6 +39,16 @@ def build_receipt(
         mode == "commit" and status == "applied" and revalidation_evidence is not None and not revalidation_failed
     )
     receipt_metadata = dict(metadata or {})
+    receipt_metadata.update(
+        {
+            key: value
+            for key, value in environment_refresh_metadata_for_files(
+                files_changed=files_changed,
+                after_hashes=after_hashes,
+            ).items()
+            if key not in receipt_metadata
+        }
+    )
     receipt_metadata.setdefault(
         "requires_revalidation",
         mode == "commit" and status == "applied" and revalidation_evidence is None,
