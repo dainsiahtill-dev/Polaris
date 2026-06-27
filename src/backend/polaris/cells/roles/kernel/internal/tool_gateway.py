@@ -798,6 +798,9 @@ class RoleToolGateway:
                 event["task_id"] = self._task_id
             if self._capability_token:
                 event["job_token_id"] = str(self._capability_token.get("token_id") or "").strip()
+                envelope_hash = str(self._capability_token.get("execution_envelope_hash") or "").strip()
+                if envelope_hash:
+                    event["execution_envelope_hash"] = envelope_hash
             if isinstance(effect_receipt, dict) and effect_receipt:
                 event["effect_receipt"] = effect_receipt
                 # Compute content hash delta if effect_receipt contains file info

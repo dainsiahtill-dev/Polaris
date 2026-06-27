@@ -394,6 +394,77 @@ class TaskExecutionContractV1:
         }
 
 
+@dataclass(frozen=True)
+class ExecutionEnvelopeV1:
+    """Immutable Director execution envelope.
+
+    This object binds the PM contract, CE blueprint, CE handoff decision,
+    execution profile, strategy, authorization scope, model policy, budget
+    policy, and audit policy into one hashable contract. It is the target
+    authority object for Director dispatch and tool/effect receipts.
+    """
+
+    envelope_id: str
+    run_id: str
+    task_id: str
+    workspace: str
+    trace_id: str
+    pm_contract: Mapping[str, Any]
+    ce_blueprint: Mapping[str, Any]
+    handoff_decision: Mapping[str, Any]
+    execution_profile: Mapping[str, Any]
+    authorization: Mapping[str, Any]
+    model_policy: Mapping[str, Any]
+    budget_policy: Mapping[str, Any]
+    audit_policy: Mapping[str, Any]
+    validity: Mapping[str, Any]
+    envelope_hash: str
+    created_at: str
+    schema_version: str = "polaris.execution_envelope.v1"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "envelope_id", _require_non_empty("envelope_id", self.envelope_id))
+        object.__setattr__(self, "run_id", _require_non_empty("run_id", self.run_id))
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "trace_id", _require_non_empty("trace_id", self.trace_id))
+        object.__setattr__(self, "pm_contract", _to_dict_copy(self.pm_contract))
+        object.__setattr__(self, "ce_blueprint", _to_dict_copy(self.ce_blueprint))
+        object.__setattr__(self, "handoff_decision", _to_dict_copy(self.handoff_decision))
+        object.__setattr__(self, "execution_profile", _to_dict_copy(self.execution_profile))
+        object.__setattr__(self, "authorization", _to_dict_copy(self.authorization))
+        object.__setattr__(self, "model_policy", _to_dict_copy(self.model_policy))
+        object.__setattr__(self, "budget_policy", _to_dict_copy(self.budget_policy))
+        object.__setattr__(self, "audit_policy", _to_dict_copy(self.audit_policy))
+        object.__setattr__(self, "validity", _to_dict_copy(self.validity))
+        object.__setattr__(self, "envelope_hash", _require_non_empty("envelope_hash", self.envelope_hash))
+        object.__setattr__(self, "created_at", _require_non_empty("created_at", self.created_at))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe execution envelope payload."""
+
+        return {
+            "schema_version": self.schema_version,
+            "envelope_id": self.envelope_id,
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "workspace": self.workspace,
+            "trace_id": self.trace_id,
+            "pm_contract": dict(self.pm_contract),
+            "ce_blueprint": dict(self.ce_blueprint),
+            "handoff_decision": dict(self.handoff_decision),
+            "execution_profile": dict(self.execution_profile),
+            "authorization": dict(self.authorization),
+            "model_policy": dict(self.model_policy),
+            "budget_policy": dict(self.budget_policy),
+            "audit_policy": dict(self.audit_policy),
+            "validity": dict(self.validity),
+            "envelope_hash": self.envelope_hash,
+            "created_at": self.created_at,
+        }
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -550,6 +621,7 @@ __all__ = [
     "CreateTaskCommandV1",
     "DirectorExecutionProfileV1",
     "DirectorTaskingError",
+    "ExecutionEnvelopeV1",
     "TaskCreatedResultV1",
     "TaskExecutionContractV1",
     "TaskExecutionProfileV1",

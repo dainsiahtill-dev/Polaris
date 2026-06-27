@@ -1310,11 +1310,112 @@ class HandoffDecisionV1:
         }
 
 
+@dataclass(frozen=True)
+class CeHandoffDecisionBindingsV1:
+    """Immutable hash bindings for `ce_handoff_decision.v1`."""
+
+    pm_contract_hash: str
+    blueprint_hash: str
+    execution_profile_hash: str
+    pm_contract_ref: str = ""
+    blueprint_ref: str = ""
+    execution_profile_ref: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "pm_contract_hash",
+            _require_non_empty("pm_contract_hash", self.pm_contract_hash),
+        )
+        object.__setattr__(
+            self,
+            "blueprint_hash",
+            _require_non_empty("blueprint_hash", self.blueprint_hash),
+        )
+        object.__setattr__(
+            self,
+            "execution_profile_hash",
+            _require_non_empty("execution_profile_hash", self.execution_profile_hash),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pm_contract_ref": self.pm_contract_ref,
+            "pm_contract_hash": self.pm_contract_hash,
+            "blueprint_ref": self.blueprint_ref,
+            "blueprint_hash": self.blueprint_hash,
+            "execution_profile_ref": self.execution_profile_ref,
+            "execution_profile_hash": self.execution_profile_hash,
+        }
+
+
+@dataclass(frozen=True)
+class CeHandoffDecisionV1:
+    """Schema-compatible Chief Engineer handoff authority object.
+
+    This strict object complements the legacy `HandoffDecisionV1`. It binds
+    the Director handoff verdict to PM contract, blueprint, and execution
+    profile hashes so downstream execution can fail closed on stale or
+    incomplete evidence.
+    """
+
+    decision_id: str
+    task_id: str
+    blueprint_id: str
+    allowed: bool
+    blockers: tuple[str, ...]
+    warnings: tuple[str, ...]
+    evaluated_at: str
+    evaluator: str
+    policy_version: str
+    bindings: CeHandoffDecisionBindingsV1
+    decision_hash: str
+    reason: str = ""
+    risk_assessment: Mapping[str, Any] = field(default_factory=dict)
+    evidence_refs: tuple[str, ...] = field(default_factory=tuple)
+    schema_version: str = "polaris.ce_handoff_decision.v1"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "decision_id", _require_non_empty("decision_id", self.decision_id))
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "blueprint_id", _require_non_empty("blueprint_id", self.blueprint_id))
+        object.__setattr__(self, "allowed", bool(self.allowed))
+        object.__setattr__(self, "blockers", _string_tuple(self.blockers))
+        object.__setattr__(self, "warnings", _string_tuple(self.warnings))
+        object.__setattr__(self, "evaluated_at", _require_non_empty("evaluated_at", self.evaluated_at))
+        object.__setattr__(self, "evaluator", _require_non_empty("evaluator", self.evaluator))
+        object.__setattr__(self, "policy_version", _require_non_empty("policy_version", self.policy_version))
+        object.__setattr__(self, "decision_hash", _require_non_empty("decision_hash", self.decision_hash))
+        object.__setattr__(self, "risk_assessment", _json_safe_mapping(self.risk_assessment))
+        object.__setattr__(self, "evidence_refs", _string_tuple(self.evidence_refs))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "decision_id": self.decision_id,
+            "task_id": self.task_id,
+            "blueprint_id": self.blueprint_id,
+            "allowed": self.allowed,
+            "reason": self.reason,
+            "blockers": list(self.blockers),
+            "warnings": list(self.warnings),
+            "risk_assessment": dict(self.risk_assessment),
+            "evaluated_at": self.evaluated_at,
+            "evaluator": self.evaluator,
+            "policy_version": self.policy_version,
+            "bindings": self.bindings.to_dict(),
+            "evidence_refs": list(self.evidence_refs),
+            "decision_hash": self.decision_hash,
+        }
+
+
 __all__ = [
     "ADREventV1",
     "ADRRecordV1",
     "ADRStatus",
     "ArchitectureDecisionV1",
+    "CeHandoffDecisionBindingsV1",
+    "CeHandoffDecisionV1",
     "ChiefEngineerBlueprintError",
     "ChiefEngineerBlueprintErrorV1",
     "GenerateTaskBlueprintCommandV1",

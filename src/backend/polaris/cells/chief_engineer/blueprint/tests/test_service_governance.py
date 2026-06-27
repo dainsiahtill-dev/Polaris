@@ -29,6 +29,7 @@ from polaris.cells.chief_engineer.blueprint.public.service import (
     assert_handoff_ready,
     attach_governance_to_blueprint,
     build_blueprint_governance,
+    build_ce_handoff_decision,
     evaluate_handoff_decision,
     evaluate_handoff_decision_for_blueprint,
     generate_task_blueprint,
@@ -294,6 +295,45 @@ class TestServiceGovernance(unittest.TestCase):
         self.assertTrue(decision.allowed)
         self.assertEqual(decision.reason, "handoff_ready")
         self.assertEqual(decision.blocker_count, 0)
+
+    def test_strict_ce_handoff_decision_requires_hash_bindings(self) -> None:
+        decision = build_ce_handoff_decision(
+            self.workspace,
+            blueprint={
+                "blueprint_id": "ce_strict_missing",
+                "task_id": "task-strict",
+                "target_files": ["a.py"],
+                "acceptance_criteria": ["a"],
+            },
+        )
+        payload = decision.to_dict()
+        self.assertEqual(payload["schema_version"], "polaris.ce_handoff_decision.v1")
+        self.assertFalse(payload["allowed"])
+        self.assertTrue(
+            any("execution_profile_hash" in blocker for blocker in payload["blockers"]),
+            payload["blockers"],
+        )
+        self.assertTrue(payload["decision_hash"])
+
+    def test_strict_ce_handoff_decision_allows_complete_bindings(self) -> None:
+        decision = build_ce_handoff_decision(
+            self.workspace,
+            blueprint={
+                "blueprint_id": "ce_strict_ok",
+                "task_id": "task-strict-ok",
+                "target_files": ["a.py"],
+                "acceptance_criteria": ["a"],
+                "pm_contract_hash": "contract-hash",
+                "blueprint_hash": "blueprint-hash",
+                "execution_profile_hash": "profile-hash",
+            },
+        )
+        payload = decision.to_dict()
+        self.assertTrue(payload["allowed"])
+        self.assertEqual(payload["bindings"]["pm_contract_hash"], "contract-hash")
+        self.assertEqual(payload["bindings"]["blueprint_hash"], "blueprint-hash")
+        self.assertEqual(payload["bindings"]["execution_profile_hash"], "profile-hash")
+        self.assertTrue(payload["decision_id"].startswith("ce-handoff-"))
 
     def test_handoff_decision_blocks_on_missing_contract(self) -> None:
         decision = evaluate_handoff_decision(

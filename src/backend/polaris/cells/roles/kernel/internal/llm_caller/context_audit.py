@@ -12,6 +12,34 @@ from .response_types import PreparedLLMRequest
 
 _UNDERUTILIZED_WINDOW_THRESHOLD = 8192
 _UNDERUTILIZED_RATIO = 0.15
+_COVERAGE_FLAG_TO_REF = {
+    "has_pm_contract": "pm_contract",
+    "has_chief_engineer_blueprint": "ce_blueprint",
+    "has_target_files": "target_files",
+    "has_failure_feedback": "failed_gate_evidence",
+    "has_workspace_quality_evidence": "workspace_quality_evidence",
+    "has_resident_agi_decision_trace": "resident_agi_decision_trace",
+    "has_resident_agi_capability_surface": "resident_agi_capability_surface",
+    "has_resident_agi_decision_boundary": "resident_agi_decision_boundary",
+}
+_EVIDENCE_REQUIREMENT_TO_REF = {
+    "pm_task_contract": "pm_contract",
+    "pm_contract": "pm_contract",
+    "chief_engineer_blueprint": "ce_blueprint",
+    "ce_blueprint": "ce_blueprint",
+    "target_files_or_declared_scopes": "target_files",
+    "target_files": "target_files",
+    "declared_scopes": "target_files",
+    "language_best_practices": "language_guidance",
+    "execution_profile": "execution_profile",
+    "execution_strategy": "execution_strategy",
+    "execution_envelope": "execution_envelope",
+    "final_provider_request": "final_provider_request",
+    "final_provider_request_audit": "final_provider_request",
+    "run_ledger": "run_ledger",
+    "workspace_quality_evidence": "workspace_quality_evidence",
+    "failed_gate_evidence": "failed_gate_evidence",
+}
 
 
 def _json_chars(value: Any) -> int:
@@ -147,6 +175,16 @@ def _string_list(value: Any) -> list[str]:
         token = str(item or "").strip()
         if token:
             result.append(token)
+    return result
+
+def _unique_strings(values: Any) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in _string_list(values):
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
     return result
 
 
@@ -538,6 +576,57 @@ def _execution_contract(ai_request: Any) -> dict[str, Any]:
     return {}
 
 
+def _execution_envelope(ai_request: Any) -> dict[str, Any]:
+    context_payload = _request_context(ai_request)
+    for key in (
+        "director_execution_envelope",
+        "task_execution_envelope",
+        "execution_envelope",
+    ):
+        raw_envelope = context_payload.get(key)
+        if isinstance(raw_envelope, dict):
+            return dict(raw_envelope)
+    return {}
+
+
+def _execution_envelope_hash(ai_request: Any, envelope: dict[str, Any] | None = None) -> str:
+    context_payload = _request_context(ai_request)
+    for key in (
+        "execution_envelope_hash",
+        "director_execution_envelope_hash",
+        "task_execution_envelope_hash",
+    ):
+        raw_hash = context_payload.get(key)
+        if isinstance(raw_hash, str) and raw_hash.strip():
+            return raw_hash.strip()
+    payload = envelope if envelope is not None else _execution_envelope(ai_request)
+    raw_hash = payload.get("envelope_hash") if isinstance(payload, dict) else None
+    if isinstance(raw_hash, str) and raw_hash.strip():
+        return raw_hash.strip()
+    return _stable_digest(payload) if payload else ""
+
+
+def _execution_envelope_summary(ai_request: Any) -> dict[str, Any]:
+    envelope = _execution_envelope(ai_request)
+    if not envelope:
+        return {}
+    authorization = _mapping(envelope.get("authorization"))
+    audit_policy = _mapping(envelope.get("audit_policy"))
+    budget_policy = _mapping(envelope.get("budget_policy"))
+    return {
+        "schema_version": str(envelope.get("schema_version") or ""),
+        "run_id": str(envelope.get("run_id") or ""),
+        "task_id": str(envelope.get("task_id") or ""),
+        "trace_id": str(envelope.get("trace_id") or ""),
+        "envelope_hash": _execution_envelope_hash(ai_request, envelope),
+        "target_files_count": len(_string_list(authorization.get("target_files"))),
+        "scope_paths_count": len(_string_list(authorization.get("scope_paths"))),
+        "allowed_write_paths_count": len(_string_list(authorization.get("allowed_write_paths"))),
+        "required_evidence_count": len(_string_list(audit_policy.get("required_evidence"))),
+        "output_budget_tokens": budget_policy.get("output_budget_tokens"),
+    }
+
+
 _EXECUTION_PROFILE_SUMMARY_KEYS = (
     "schema_version",
     "source",
@@ -656,8 +745,10 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
     execution_profile = _execution_profile(ai_request)
     execution_strategy = _execution_strategy(ai_request)
     execution_contract = _execution_contract(ai_request)
+    execution_envelope = _execution_envelope(ai_request)
     execution_profile_summary = _execution_profile_summary(ai_request)
     execution_contract_summary = _execution_contract_summary(ai_request)
+    execution_envelope_summary = _execution_envelope_summary(ai_request)
     task_metadata = _task_metadata(ai_request)
     resident_agi_audit_context = _resident_agi_audit_context_summary(ai_request)
     summary: dict[str, Any] = {
@@ -694,6 +785,9 @@ def _request_metadata_summary(ai_request: Any, prepared: PreparedLLMRequest) -> 
         "has_execution_contract": bool(execution_contract),
         "execution_contract_summary": execution_contract_summary,
         "execution_contract_hash": _stable_digest(execution_contract) if execution_contract else "",
+        "has_execution_envelope": bool(execution_envelope),
+        "execution_envelope_summary": execution_envelope_summary,
+        "execution_envelope_hash": _execution_envelope_hash(ai_request, execution_envelope),
         "has_task_metadata": bool(task_metadata),
         "task_metadata_keys": sorted(str(key) for key in task_metadata),
         "task_metadata_hash": _stable_digest(task_metadata) if task_metadata else "",
@@ -784,6 +878,378 @@ def _summarize_response_format(response_format: Any) -> Any:
     return _json_safe(summary)
 
 
+def _tool_name_from_schema(tool: Any) -> str:
+    if not isinstance(tool, dict):
+        return ""
+    function_payload = tool.get("function")
+    function = function_payload if isinstance(function_payload, dict) else tool
+    return str(function.get("name") or "").strip()
+
+
+def _tool_names_from_payload(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return _unique_strings(value)
+    if isinstance(value, dict):
+        direct_name = str(value.get("name") or "").strip()
+        if direct_name:
+            return [direct_name]
+        function_payload = value.get("function")
+        if isinstance(function_payload, dict):
+            function_name = str(function_payload.get("name") or "").strip()
+            if function_name:
+                return [function_name]
+        names: list[str] = []
+        for key in ("required_tools", "tools", "allowed_tools", "available_tools"):
+            names.extend(_tool_names_from_payload(value.get(key)))
+        return _unique_strings(names)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        item_names: list[str] = []
+        for item in value:
+            item_names.extend(_tool_names_from_payload(item))
+        return _unique_strings(item_names)
+    return []
+
+
+def _available_tool_names(tool_schema_payload: Any) -> list[str]:
+    if not isinstance(tool_schema_payload, list):
+        return []
+    return _unique_strings([name for tool in tool_schema_payload if (name := _tool_name_from_schema(tool))])
+
+
+def _required_tool_names(ai_request: Any) -> list[str]:
+    context_payload = _request_context(ai_request)
+    names: list[str] = []
+    for key in (
+        "required_tools",
+        "task_required_tools",
+        "tool_requirements",
+        "allowed_tools",
+        "tool_policy",
+        "tool_contract",
+    ):
+        names.extend(_tool_names_from_payload(context_payload.get(key)))
+    return _unique_strings(names)
+
+
+def _envelope_hash_for_ref(envelope: dict[str, Any], section: str) -> str:
+    payload = _mapping(envelope.get(section))
+    raw_hash = payload.get("hash")
+    return str(raw_hash or "").strip()
+
+
+def _workflow_chain(
+    *,
+    ai_request: Any,
+    request_metadata_summary: dict[str, Any],
+    envelope: dict[str, Any],
+) -> dict[str, str]:
+    context_payload = _request_context(ai_request)
+    return {
+        "pm_contract_hash": str(
+            context_payload.get("pm_contract_hash")
+            or context_payload.get("contract_hash")
+            or _envelope_hash_for_ref(envelope, "pm_contract")
+            or ""
+        ),
+        "ce_blueprint_hash": str(
+            context_payload.get("ce_blueprint_hash")
+            or context_payload.get("blueprint_hash")
+            or _envelope_hash_for_ref(envelope, "ce_blueprint")
+            or ""
+        ),
+        "handoff_decision_hash": str(
+            context_payload.get("handoff_decision_hash")
+            or context_payload.get("ce_handoff_decision_hash")
+            or _envelope_hash_for_ref(envelope, "handoff_decision")
+            or ""
+        ),
+        "execution_profile_hash": str(request_metadata_summary.get("execution_profile_hash") or ""),
+        "execution_envelope_hash": str(request_metadata_summary.get("execution_envelope_hash") or ""),
+    }
+
+
+def _mapped_evidence_requirements(raw_requirements: Any) -> list[str]:
+    refs: list[str] = []
+    for item in _string_list(raw_requirements):
+        key = item.strip().lower()
+        refs.append(_EVIDENCE_REQUIREMENT_TO_REF.get(key, key))
+    return _unique_strings(refs)
+
+
+def _required_evidence_refs(
+    *,
+    ai_request: Any,
+    role_id: str,
+    coverage: dict[str, bool],
+    request_metadata_summary: dict[str, Any],
+    execution_strategy: dict[str, Any],
+    envelope: dict[str, Any],
+) -> list[str]:
+    envelope_audit_policy = _mapping(envelope.get("audit_policy"))
+    refs = _mapped_evidence_requirements(execution_strategy.get("evidence_requirements"))
+    refs.extend(_mapped_evidence_requirements(envelope_audit_policy.get("required_evidence")))
+    if not refs:
+        normalized_role = role_id.strip().lower()
+        if normalized_role == "director":
+            refs.extend(["pm_contract", "ce_blueprint", "target_files"])
+        elif normalized_role == "chief_engineer":
+            refs.extend(["pm_contract", "target_files"])
+        elif normalized_role == "pm":
+            refs.extend(["pm_raw_intent"])
+        else:
+            refs.extend(ref for flag, ref in _COVERAGE_FLAG_TO_REF.items() if flag in coverage)
+    if request_metadata_summary.get("has_execution_profile"):
+        refs.append("execution_profile")
+    if request_metadata_summary.get("has_execution_strategy"):
+        refs.append("execution_strategy")
+        refs.append("execution_envelope")
+    if request_metadata_summary.get("has_execution_envelope"):
+        refs.append("execution_envelope")
+    context_payload = _request_context(ai_request)
+    refs.extend(_mapped_evidence_requirements(context_payload.get("required_evidence")))
+    return _unique_strings(refs)
+
+
+def _included_evidence_refs(
+    *,
+    coverage: dict[str, bool],
+    request_metadata_summary: dict[str, Any],
+) -> list[str]:
+    refs = [ref for flag, ref in _COVERAGE_FLAG_TO_REF.items() if coverage.get(flag)]
+    if request_metadata_summary.get("has_execution_profile"):
+        refs.append("execution_profile")
+    if request_metadata_summary.get("has_execution_strategy"):
+        refs.append("execution_strategy")
+    if request_metadata_summary.get("has_execution_contract"):
+        refs.append("execution_contract")
+    if request_metadata_summary.get("has_execution_envelope"):
+        refs.append("execution_envelope")
+    if request_metadata_summary.get("has_language_guidance"):
+        refs.append("language_guidance")
+    if request_metadata_summary.get("has_output_contract"):
+        refs.append("output_contract")
+    if request_metadata_summary.get("has_task_metadata"):
+        refs.append("task_metadata")
+    return _unique_strings(refs)
+
+
+def _coverage_source(
+    *,
+    ref_type: str,
+    present: bool,
+    workflow_chain: dict[str, str],
+    request_metadata_summary: dict[str, Any],
+) -> dict[str, Any]:
+    hash_by_ref = {
+        "pm_contract": workflow_chain.get("pm_contract_hash", ""),
+        "ce_blueprint": workflow_chain.get("ce_blueprint_hash", ""),
+        "handoff_decision": workflow_chain.get("handoff_decision_hash", ""),
+        "execution_profile": workflow_chain.get("execution_profile_hash", ""),
+        "execution_envelope": workflow_chain.get("execution_envelope_hash", ""),
+        "execution_contract": str(request_metadata_summary.get("execution_contract_hash") or ""),
+        "task_metadata": str(request_metadata_summary.get("task_metadata_hash") or ""),
+    }
+    structured_refs = {
+        "execution_profile",
+        "execution_strategy",
+        "execution_contract",
+        "execution_envelope",
+        "task_metadata",
+        "language_guidance",
+        "output_contract",
+    }
+    source = "final_provider_request"
+    confidence = "absent"
+    if present and ref_type in structured_refs:
+        confidence = "structured_metadata"
+    elif present:
+        confidence = "text_heuristic"
+    result = {
+        "ref_type": ref_type,
+        "present": present,
+        "source": source,
+        "confidence": confidence,
+        "freshness": "current_turn" if present else "unknown",
+    }
+    hash_value = hash_by_ref.get(ref_type, "")
+    if hash_value:
+        result["hash"] = hash_value
+    return result
+
+
+def _ledger_evidence(ai_request: Any) -> dict[str, Any]:
+    context_payload = _request_context(ai_request)
+    ledger = _mapping(context_payload.get("run_ledger")) or _mapping(context_payload.get("run_ledger_projection"))
+    return {
+        "run_ledger_ref": str(
+            context_payload.get("run_ledger_ref")
+            or context_payload.get("run_ledger_projection_ref")
+            or ledger.get("ref")
+            or ""
+        ),
+        "failed_required_modalities": _string_list(
+            context_payload.get("failed_required_modalities") or ledger.get("failed_required_modalities")
+        ),
+        "missing_required_modalities": _string_list(
+            context_payload.get("missing_required_modalities") or ledger.get("missing_required_modalities")
+        ),
+        "receipt_refs": _string_list(context_payload.get("receipt_refs") or ledger.get("receipt_refs")),
+    }
+
+
+def _final_request_hash(
+    *,
+    ai_request: Any,
+    prepared: PreparedLLMRequest,
+    messages: list[dict[str, Any]],
+    tool_schema_payload: Any,
+    response_format_payload: Any,
+) -> str:
+    return _stable_digest(
+        {
+            "role": _non_empty_attr(ai_request, name="role"),
+            "task_type": _task_type_value(ai_request),
+            "messages_hash": _stable_digest(messages),
+            "tool_schema_hash": _stable_digest(tool_schema_payload),
+            "response_format_hash": _stable_digest(response_format_payload),
+            "sampling": _request_sampling_audit(ai_request, prepared),
+        }
+    )
+
+
+def _final_request_evidence_coverage(
+    *,
+    ai_request: Any,
+    prepared: PreparedLLMRequest,
+    profile: Any,
+    messages: list[dict[str, Any]],
+    coverage: dict[str, bool],
+    request_metadata_summary: dict[str, Any],
+    tool_schema_payload: Any,
+    response_format_payload: Any,
+) -> dict[str, Any]:
+    envelope = _execution_envelope(ai_request)
+    execution_strategy = _execution_strategy(ai_request)
+    role_id = _non_empty_attr(ai_request, name="role") or _non_empty_attr(profile, name="role_id") or "unknown"
+    expected_role_id = _non_empty_attr(profile, name="role_id") or role_id
+    role_identity_ok = role_id.strip().lower() == expected_role_id.strip().lower()
+    included_refs = _included_evidence_refs(
+        coverage=coverage,
+        request_metadata_summary=request_metadata_summary,
+    )
+    required_refs = _required_evidence_refs(
+        ai_request=ai_request,
+        role_id=role_id,
+        coverage=coverage,
+        request_metadata_summary=request_metadata_summary,
+        execution_strategy=execution_strategy,
+        envelope=envelope,
+    )
+    missing_required_refs = [ref for ref in required_refs if ref not in included_refs]
+    available_tools = _available_tool_names(tool_schema_payload)
+    required_tools = _required_tool_names(ai_request)
+    missing_required_tools = [tool for tool in required_tools if tool not in available_tools]
+    workflow_chain = _workflow_chain(
+        ai_request=ai_request,
+        request_metadata_summary=request_metadata_summary,
+        envelope=envelope,
+    )
+    coverage_source_refs = _unique_strings([*required_refs, *included_refs])
+    total_required = len(required_refs) + len(required_tools)
+    total_missing = len(missing_required_refs) + len(missing_required_tools)
+    coverage_ratio = 1.0 if total_required == 0 else max(0.0, (total_required - total_missing) / total_required)
+    return {
+        "schema_version": "polaris.final_request_evidence_coverage.v1",
+        "request_hash": _final_request_hash(
+            ai_request=ai_request,
+            prepared=prepared,
+            messages=messages,
+            tool_schema_payload=tool_schema_payload,
+            response_format_payload=response_format_payload,
+        ),
+        "context_snapshot_ref": str(_request_context(ai_request).get("context_snapshot_ref") or ""),
+        "role_id": role_id,
+        "expected_role_id": expected_role_id,
+        "role_identity_ok": role_identity_ok,
+        "required_refs": required_refs,
+        "included_refs": included_refs,
+        "missing_required_refs": missing_required_refs,
+        "coverage_sources": [
+            _coverage_source(
+                ref_type=ref,
+                present=ref in included_refs,
+                workflow_chain=workflow_chain,
+                request_metadata_summary=request_metadata_summary,
+            )
+            for ref in coverage_source_refs
+        ],
+        "required_tools": required_tools,
+        "available_tools": available_tools,
+        "missing_required_tools": missing_required_tools,
+        "unexpected_tool_pruning": [
+            {
+                "tool": tool,
+                "reason": "required_tool_missing_from_final_provider_request",
+                "source": "final_request_evidence_coverage",
+            }
+            for tool in missing_required_tools
+        ],
+        "tool_schema_registry_coverage": {
+            "registry_source": str(_request_context(ai_request).get("tool_registry_source") or ""),
+            "aliases_present": bool(_request_context(ai_request).get("tool_aliases")),
+            "arg_aliases_present": bool(_request_context(ai_request).get("tool_arg_aliases")),
+            "schema_hash": _stable_digest(tool_schema_payload) if tool_schema_payload else "",
+            "missing_schema_tools": missing_required_tools,
+        },
+        "workflow_chain": workflow_chain,
+        "ledger_evidence": _ledger_evidence(ai_request),
+        "coverage_ratio": round(coverage_ratio, 4),
+        "pass": bool(role_identity_ok and not missing_required_refs and not missing_required_tools),
+    }
+
+
+def _add_evidence_coverage_findings(quality: dict[str, Any], evidence_coverage: dict[str, Any]) -> dict[str, Any]:
+    findings = list(quality.get("findings") or [])
+    missing_refs = evidence_coverage.get("missing_required_refs")
+    if isinstance(missing_refs, list) and missing_refs:
+        findings.append(
+            {
+                "code": "missing_required_final_request_evidence",
+                "severity": "warning",
+                "missing_required_refs": [str(item) for item in missing_refs],
+                "request_hash": evidence_coverage.get("request_hash", ""),
+            }
+        )
+    missing_tools = evidence_coverage.get("missing_required_tools")
+    if isinstance(missing_tools, list) and missing_tools:
+        findings.append(
+            {
+                "code": "missing_required_final_request_tools",
+                "severity": "error",
+                "missing_required_tools": [str(item) for item in missing_tools],
+                "request_hash": evidence_coverage.get("request_hash", ""),
+            }
+        )
+    if evidence_coverage.get("role_identity_ok") is False:
+        findings.append(
+            {
+                "code": "final_request_role_identity_mismatch",
+                "severity": "error",
+                "role_id": evidence_coverage.get("role_id", ""),
+                "expected_role_id": evidence_coverage.get("expected_role_id", ""),
+                "request_hash": evidence_coverage.get("request_hash", ""),
+            }
+        )
+    return {
+        **quality,
+        "context_needs_review": bool(findings),
+        "findings": findings,
+        "final_request_evidence_coverage_pass": bool(evidence_coverage.get("pass")),
+        "missing_required_refs": list(evidence_coverage.get("missing_required_refs") or []),
+        "missing_required_tools": list(evidence_coverage.get("missing_required_tools") or []),
+    }
+
+
 def _prompt_profile_selection(ai_request: Any) -> dict[str, Any]:
     ctx = getattr(ai_request, "context", None)
     if not isinstance(ctx, dict):
@@ -825,6 +1291,11 @@ def build_final_provider_request_snapshot(
     messages = _request_messages(ai_request, [dict(item) for item in prepared.messages if isinstance(item, dict)])
     prompt_profile_selection = _prompt_profile_selection(ai_request)
     request_metadata_summary = _request_metadata_summary(ai_request, prepared)
+    final_request_context_audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=profile,
+    )
     return {
         "schema_version": "llm.provider_request_snapshot.v1",
         "source": "roles.kernel.llm_caller.context_audit",
@@ -842,11 +1313,8 @@ def build_final_provider_request_snapshot(
         "task_type": request_metadata_summary.get("task_type", ""),
         "prompt_profile_selection": prompt_profile_selection,
         "selected_prompt_profile_ids": prompt_profile_selection.get("selected_prompt_profile_ids", []),
-        "final_request_context_audit": build_final_request_context_audit_for_request(
-            ai_request=ai_request,
-            prepared=prepared,
-            profile=profile,
-        ),
+        "final_request_evidence_coverage": final_request_context_audit.get("final_request_evidence_coverage", {}),
+        "final_request_context_audit": final_request_context_audit,
     }
 
 
@@ -917,6 +1385,17 @@ def build_final_request_context_audit_for_request(
         execution_contract=execution_contract,
         message_projection_findings=_message_projection_findings(messages),
     )
+    evidence_coverage = _final_request_evidence_coverage(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=profile,
+        messages=messages,
+        coverage=coverage,
+        request_metadata_summary=request_metadata_summary,
+        tool_schema_payload=tool_schema_payload,
+        response_format_payload=response_format_payload,
+    )
+    quality = _add_evidence_coverage_findings(quality, evidence_coverage)
 
     return {
         "schema_version": "llm.final_request_context_audit.v1",
@@ -934,6 +1413,7 @@ def build_final_request_context_audit_for_request(
         "context_underutilized": context_underutilized,
         "available_token_headroom": max(0, window_tokens - final_request_token_estimate),
         "coverage": coverage,
+        "final_request_evidence_coverage": evidence_coverage,
         "context_quality": quality,
         "sampling": sampling,
         "request_metadata_summary": request_metadata_summary,
@@ -942,11 +1422,13 @@ def build_final_request_context_audit_for_request(
         if isinstance(execution_contract_summary, dict)
         else {},
         "execution_profile_hash": request_metadata_summary.get("execution_profile_hash", ""),
+        "execution_envelope_hash": request_metadata_summary.get("execution_envelope_hash", ""),
         "execution_contract_hash": request_metadata_summary.get("execution_contract_hash", ""),
         "task_metadata_hash": request_metadata_summary.get("task_metadata_hash", ""),
         "has_execution_profile": bool(request_metadata_summary.get("has_execution_profile")),
         "has_execution_strategy": bool(request_metadata_summary.get("has_execution_strategy")),
         "has_execution_contract": bool(request_metadata_summary.get("has_execution_contract")),
+        "has_execution_envelope": bool(request_metadata_summary.get("has_execution_envelope")),
         "has_language_guidance": bool(request_metadata_summary.get("has_language_guidance")),
         "has_output_contract": bool(request_metadata_summary.get("has_output_contract")),
         "prompt_profile_selection": prompt_profile_selection,

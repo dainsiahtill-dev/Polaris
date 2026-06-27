@@ -221,6 +221,159 @@ def test_final_provider_snapshot_includes_execution_profile_summary_and_hash() -
     assert snapshot["final_request_context_audit"]["has_output_contract"] is True
 
 
+def test_final_request_context_audit_includes_execution_envelope_coverage() -> None:
+    execution_profile = {
+        "schema_version": "task.execution_profile.v1",
+        "source": "director.tasking",
+        "task_type": "implement",
+        "phase": "materialize",
+        "language": "python",
+        "target_files": ["src/main.py"],
+    }
+    execution_strategy = {
+        "schema_version": "task.execution_strategy.v1",
+        "source": "director.tasking",
+        "temperature": 0.1,
+        "temperature_phase": "implementation",
+        "output_budget_tokens": 48000,
+        "input_budget_tokens": 48000,
+        "prompt_max_chars": 192000,
+        "evidence_requirements": [
+            "pm_task_contract",
+            "chief_engineer_blueprint",
+            "target_files_or_declared_scopes",
+            "execution_envelope",
+        ],
+    }
+    execution_envelope = {
+        "schema_version": "polaris.execution_envelope.v1",
+        "run_id": "run-1",
+        "task_id": "TASK-1",
+        "trace_id": "trace-1",
+        "pm_contract": {"ref": "tasks/plan.json", "hash": "pm-hash"},
+        "ce_blueprint": {"ref": "runtime/contracts/ce.json", "hash": "ce-hash"},
+        "handoff_decision": {"ref": "runtime/contracts/handoff.json", "hash": "handoff-hash", "allowed": True},
+        "execution_profile": {"ref": "runtime/contracts/profile.json", "hash": "profile-hash"},
+        "authorization": {
+            "target_files": ["src/main.py"],
+            "scope_paths": ["src/main.py"],
+            "allowed_write_paths": ["src/main.py"],
+        },
+        "audit_policy": {
+            "required_evidence": [
+                "pm_task_contract",
+                "chief_engineer_blueprint",
+                "target_files_or_declared_scopes",
+            ]
+        },
+        "budget_policy": {"output_budget_tokens": 48000},
+        "envelope_hash": "envelope-hash",
+    }
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 48000},
+        context={
+            "chat_messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "PM Task Contract / 任务合同: TASK-1 target_files src/main.py "
+                        "Acceptance criteria / 验收标准: python src/main.py. "
+                        "Chief Engineer Blueprint / CE 蓝图交接: blueprint_id ce_TASK-1 "
+                        "construction_plan scope_for_apply."
+                    ),
+                }
+            ],
+            "director_execution_profile": execution_profile,
+            "director_execution_strategy": execution_strategy,
+            "director_execution_envelope": execution_envelope,
+            "execution_envelope_hash": "envelope-hash",
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    "PM Task Contract / 任务合同: TASK-1 target_files src/main.py "
+                    "Chief Engineer Blueprint / CE 蓝图交接: blueprint_id ce_TASK-1 construction_plan scope_for_apply."
+                ),
+            }
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert audit["has_execution_envelope"] is True
+    assert audit["execution_envelope_hash"] == "envelope-hash"
+    assert evidence_coverage["workflow_chain"] == {
+        "pm_contract_hash": "pm-hash",
+        "ce_blueprint_hash": "ce-hash",
+        "handoff_decision_hash": "handoff-hash",
+        "execution_profile_hash": audit["execution_profile_hash"],
+        "execution_envelope_hash": "envelope-hash",
+    }
+    assert evidence_coverage["missing_required_refs"] == []
+    assert evidence_coverage["pass"] is True
+
+
+def test_final_request_context_audit_flags_required_tool_pruning() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="pm",
+        input="",
+        options={"temperature": 0.2, "max_tokens": 2000, "tools": []},
+        context={
+            "chat_messages": [
+                {
+                    "role": "user",
+                    "content": "PM route audit probe for deterministic contract mode.",
+                }
+            ],
+            "required_tools": ["repo_tree", "read_file"],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "user",
+                "content": "PM route audit probe for deterministic contract mode.",
+            }
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="pm", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    finding_codes = {item["code"] for item in audit["context_quality"]["findings"]}
+    assert evidence_coverage["required_tools"] == ["repo_tree", "read_file"]
+    assert evidence_coverage["available_tools"] == []
+    assert evidence_coverage["missing_required_tools"] == ["repo_tree", "read_file"]
+    assert evidence_coverage["pass"] is False
+    assert "missing_required_final_request_tools" in finding_codes
+
+
 def test_final_request_context_audit_flags_under_applied_execution_strategy() -> None:
     execution_profile = {
         "schema_version": "task.execution_profile.v1",

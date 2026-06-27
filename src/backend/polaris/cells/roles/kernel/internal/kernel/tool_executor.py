@@ -176,6 +176,7 @@ def _job_token_evidence(value: dict[str, Any], scope: tuple[str, ...] | None) ->
         "stage": str(value.get("stage") or ""),
         "contract_hash": str(value.get("contract_hash") or ""),
         "blueprint_hash": str(value.get("blueprint_hash") or ""),
+        "execution_envelope_hash": str(value.get("execution_envelope_hash") or ""),
         "capability_audit_ok": bool(capability_audit_map.get("ok")),
         "allowed_scope": list(scope or ()),
     }
@@ -191,8 +192,13 @@ def derive_role_turn_capability_token(
         mapping = _mapping_from_value(container)
         if mapping is None:
             continue
-        evidence = _job_token_evidence(_first_capability_token_mapping(mapping), capability_scope)
+        token = _first_capability_token_mapping(mapping)
+        evidence = _job_token_evidence(token, capability_scope)
         if evidence:
+            if not evidence.get("execution_envelope_hash"):
+                envelope_hash = str(mapping.get("execution_envelope_hash") or "").strip()
+                if envelope_hash:
+                    evidence["execution_envelope_hash"] = envelope_hash
             return evidence
     return {}
 

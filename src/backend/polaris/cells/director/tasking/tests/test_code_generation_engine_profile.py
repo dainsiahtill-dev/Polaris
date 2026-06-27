@@ -60,6 +60,7 @@ async def test_director_runtime_codegen_passes_execution_profile_temperature(
     command = captured["command"]
     profile = command.context["director_execution_profile"]
     strategy = command.context["director_execution_strategy"]
+    envelope = command.context["task_execution_envelope"]
     assert command.context["_transaction_kernel_temperature_override"] == 0.05
     assert command.context["llm_max_tokens"] == strategy["output_budget_tokens"]
     assert command.context["max_output_tokens"] == strategy["output_budget_tokens"]
@@ -73,4 +74,8 @@ async def test_director_runtime_codegen_passes_execution_profile_temperature(
     assert profile["schema_version"] == "task.execution_profile.v1"
     assert profile["task_type"] == "bugfix"
     assert profile["temperature"] == 0.05
+    assert envelope["schema_version"] == "polaris.execution_envelope.v1"
+    assert envelope["execution_profile"]["hash"]
+    assert command.context["execution_envelope_hash"] == envelope["envelope_hash"]
+    assert command.metadata["execution_envelope_hash"] == envelope["envelope_hash"]
     assert command.metadata["temperature_source"] == "director.tasking"

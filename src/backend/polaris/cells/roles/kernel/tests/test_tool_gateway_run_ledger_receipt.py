@@ -6,8 +6,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
 from polaris.cells.control_plane.run_ledger.public.ledger import RunLedger
 from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
 
@@ -56,7 +54,7 @@ class TestAppendToolReceiptToRunLedger:
             workspace=workspace,
             run_id="test-run-001",
             task_id="TASK-1",
-            capability_token={"token_id": "jt-abc123"},
+            capability_token={"token_id": "jt-abc123", "execution_envelope_hash": "env-hash-123"},
         )
         gateway._append_tool_receipt_to_run_ledger(
             tool_name="write_file",
@@ -71,6 +69,7 @@ class TestAppendToolReceiptToRunLedger:
         assert event["tool"] == "write_file"
         assert event["target_path"] == "src/index.ts"
         assert event["job_token_id"] == "jt-abc123"
+        assert event["execution_envelope_hash"] == "env-hash-123"
         assert event["task_id"] == "TASK-1"
         assert event["file_hash_delta"]["old"] == "aaa"
         assert event["file_hash_delta"]["new"] == "bbb"

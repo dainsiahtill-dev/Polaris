@@ -30,6 +30,8 @@ from ..internal.tech_debt import TechDebtLedger, build_tech_debt_event
 from ..internal.tech_radar import TechRadarLedger, build_tech_radar_event
 from .contracts import (
     ADRRecordV1,
+    CeHandoffDecisionBindingsV1,
+    CeHandoffDecisionV1,
     ChiefEngineerBlueprintErrorV1,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
@@ -1218,6 +1220,145 @@ def evaluate_handoff_decision_for_blueprint(workspace: str, blueprint_id: str) -
     return evaluate_handoff_decision(workspace, blueprint=payload, blueprint_id=blueprint_id)
 
 
+_CE_HANDOFF_POLICY_VERSION = "chief_engineer.handoff.v1"
+_MISSING_HASH_PREFIX = "missing:"
+
+
+def _binding_hash_or_missing(payload: dict[str, Any], *keys: str, fallback: Any = None) -> str:
+    for key in keys:
+        value = str(payload.get(key) or "").strip()
+        if value:
+            return value
+    if fallback:
+        return stable_hash(fallback)
+    return f"{_MISSING_HASH_PREFIX}{keys[0]}"
+
+
+def _execution_profile_hash_from_blueprint(blueprint: dict[str, Any]) -> str:
+    explicit = str(
+        blueprint.get("execution_profile_hash")
+        or blueprint.get("task_execution_profile_hash")
+        or blueprint.get("director_execution_profile_hash")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit
+    for key in ("execution_profile", "task_execution_profile", "director_execution_profile"):
+        candidate = blueprint.get(key)
+        if isinstance(candidate, dict) and candidate:
+            return stable_hash(candidate)
+    return "missing:execution_profile_hash"
+
+
+def build_ce_handoff_decision(
+    workspace: str,
+    *,
+    blueprint: dict[str, Any],
+    blueprint_id: str = "",
+    task_id: str = "",
+    base_decision: HandoffDecisionV1 | None = None,
+) -> CeHandoffDecisionV1:
+    """Build the strict `ce_handoff_decision.v1` object.
+
+    This complements the legacy `HandoffDecisionV1` without changing existing
+    callers. The strict decision fails closed when required hash bindings are
+    missing, making it suitable for the future execution envelope.
+    """
+
+    legacy_decision = base_decision or evaluate_handoff_decision(
+        workspace,
+        blueprint=blueprint,
+        blueprint_id=blueprint_id,
+        task_id=task_id,
+    )
+    resolved_blueprint_id = str(blueprint_id or legacy_decision.blueprint_id or blueprint.get("blueprint_id") or "").strip()
+    resolved_task_id = str(task_id or legacy_decision.task_id or blueprint.get("task_id") or "").strip()
+    bindings = CeHandoffDecisionBindingsV1(
+        pm_contract_ref=str(blueprint.get("pm_contract_ref") or blueprint.get("pm_contract_path") or "").strip(),
+        pm_contract_hash=_binding_hash_or_missing(
+            blueprint,
+            "pm_contract_hash",
+            "contract_hash",
+            fallback=blueprint.get("pm_contract"),
+        ),
+        blueprint_ref=str(blueprint.get("blueprint_ref") or _blueprint_path(resolved_blueprint_id)).strip(),
+        blueprint_hash=_binding_hash_or_missing(
+            blueprint,
+            "blueprint_hash",
+            fallback=blueprint,
+        ),
+        execution_profile_ref=str(
+            blueprint.get("execution_profile_ref")
+            or blueprint.get("task_execution_profile_ref")
+            or blueprint.get("director_execution_profile_ref")
+            or ""
+        ).strip(),
+        execution_profile_hash=_execution_profile_hash_from_blueprint(blueprint),
+    )
+    binding_values = bindings.to_dict()
+    missing_bindings = [
+        key
+        for key in ("pm_contract_hash", "blueprint_hash", "execution_profile_hash")
+        if str(binding_values.get(key) or "").startswith(_MISSING_HASH_PREFIX)
+    ]
+    blockers = [*legacy_decision.blockers]
+    blockers.extend(f"missing required handoff binding: {key}" for key in missing_bindings)
+    allowed = bool(legacy_decision.allowed and not missing_bindings)
+    risk_assessment: dict[str, Any] = {
+        "blocking_risks": list(legacy_decision.blockers) if legacy_decision.open_blocker_risk_count else [],
+        "non_blocking_warnings": [],
+    }
+    evidence_refs = [
+        str(ref)
+        for ref in (binding_values.get("pm_contract_ref"), binding_values.get("blueprint_ref"))
+        if str(ref or "").strip()
+    ]
+    payload_without_hash: dict[str, Any] = {
+        "schema_version": "polaris.ce_handoff_decision.v1",
+        "task_id": resolved_task_id,
+        "blueprint_id": resolved_blueprint_id,
+        "allowed": allowed,
+        "reason": legacy_decision.reason,
+        "blockers": blockers,
+        "warnings": [],
+        "risk_assessment": risk_assessment,
+        "evaluated_at": legacy_decision.evaluated_at or _utc_now(),
+        "evaluator": "chief_engineer.blueprint.handoff",
+        "policy_version": _CE_HANDOFF_POLICY_VERSION,
+        "bindings": binding_values,
+        "evidence_refs": evidence_refs,
+    }
+    decision_hash = stable_hash(payload_without_hash)
+    return CeHandoffDecisionV1(
+        decision_id=f"ce-handoff-{decision_hash[:24]}",
+        task_id=resolved_task_id,
+        blueprint_id=resolved_blueprint_id,
+        allowed=allowed,
+        reason=str(legacy_decision.reason or ""),
+        blockers=tuple(blockers),
+        warnings=(),
+        risk_assessment=risk_assessment,
+        evaluated_at=str(payload_without_hash["evaluated_at"]),
+        evaluator=str(payload_without_hash["evaluator"]),
+        policy_version=_CE_HANDOFF_POLICY_VERSION,
+        bindings=bindings,
+        evidence_refs=tuple(evidence_refs),
+        decision_hash=decision_hash,
+    )
+
+
+def evaluate_ce_handoff_decision_for_blueprint(
+    workspace: str,
+    blueprint_id: str,
+) -> CeHandoffDecisionV1 | None:
+    """Load a persisted blueprint and build strict `ce_handoff_decision.v1`."""
+
+    payload = BlueprintPersistence(workspace, ensure_directory=False).load(blueprint_id)
+    if not isinstance(payload, dict):
+        return None
+    return build_ce_handoff_decision(workspace, blueprint=payload, blueprint_id=blueprint_id)
+
+
 def assert_handoff_ready(
     workspace: str,
     *,
@@ -1316,8 +1457,10 @@ __all__ = [
     "assess_release_readiness",
     "attach_governance_to_blueprint",
     "build_blueprint_governance",
+    "build_ce_handoff_decision",
     "check_stack_policy",
     "create_rollback_guard",
+    "evaluate_ce_handoff_decision_for_blueprint",
     "evaluate_handoff_decision",
     "evaluate_handoff_decision_for_blueprint",
     "generate_task_blueprint",

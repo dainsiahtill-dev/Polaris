@@ -1,0 +1,204 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Execution Envelope
+description: >
+  Immutable Director execution envelope. The prompt guides the model, this
+  envelope defines authority, the tool kernel enforces it, and receipts record
+  the evidence.
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - envelope_id
+  - run_id
+  - task_id
+  - workspace
+  - trace_id
+  - pm_contract
+  - ce_blueprint
+  - handoff_decision
+  - execution_profile
+  - authorization
+  - model_policy
+  - budget_policy
+  - audit_policy
+  - validity
+  - envelope_hash
+  - created_at
+
+properties:
+  schema_version:
+    type: string
+    const: polaris.execution_envelope.v1
+  envelope_id:
+    type: string
+    minLength: 1
+  run_id:
+    type: string
+    minLength: 1
+  task_id:
+    type: string
+    minLength: 1
+  workspace:
+    type: string
+    minLength: 1
+  trace_id:
+    type: string
+    minLength: 1
+  pm_contract:
+    $ref: "#/$defs/hash_ref"
+  ce_blueprint:
+    $ref: "#/$defs/hash_ref"
+  handoff_decision:
+    type: object
+    additionalProperties: false
+    required:
+      - ref
+      - hash
+      - allowed
+    properties:
+      ref:
+        type: string
+        minLength: 1
+      hash:
+        type: string
+        minLength: 1
+      allowed:
+        type: boolean
+        const: true
+  execution_profile:
+    $ref: "#/$defs/hash_ref"
+  authorization:
+    type: object
+    additionalProperties: false
+    required:
+      - allowed_read_paths
+      - allowed_write_paths
+      - allowed_commands
+      - target_files
+      - scope_paths
+    properties:
+      allowed_read_paths:
+        $ref: "#/$defs/string_array"
+      allowed_write_paths:
+        $ref: "#/$defs/string_array"
+      allowed_commands:
+        $ref: "#/$defs/string_array"
+      target_files:
+        $ref: "#/$defs/string_array"
+      scope_paths:
+        $ref: "#/$defs/string_array"
+      capability_token_ref:
+        type: string
+      capability_token_hash:
+        type: string
+  model_policy:
+    type: object
+    additionalProperties: false
+    required:
+      - model
+      - temperature
+      - max_tokens
+      - tool_choice
+    properties:
+      provider:
+        type: string
+      model:
+        type: string
+        minLength: 1
+      temperature:
+        type: number
+        minimum: 0
+      top_p:
+        type: number
+        minimum: 0
+        maximum: 1
+      max_tokens:
+        type: integer
+        minimum: 1
+      response_format:
+        type: object
+        additionalProperties: true
+      tool_choice:
+        type: string
+        minLength: 1
+      tool_schema_hash:
+        type: string
+  budget_policy:
+    type: object
+    additionalProperties: false
+    properties:
+      input_budget_tokens:
+        type: integer
+        minimum: 0
+      output_budget_tokens:
+        type: integer
+        minimum: 0
+      tool_call_budget:
+        type: integer
+        minimum: 0
+      command_timeout_seconds:
+        type: integer
+        minimum: 0
+      repair_attempt_budget:
+        type: integer
+        minimum: 0
+  audit_policy:
+    type: object
+    additionalProperties: false
+    required:
+      - required_evidence
+      - final_provider_request_required
+    properties:
+      required_evidence:
+        $ref: "#/$defs/string_array"
+      context_snapshot_ref:
+        type: string
+      final_provider_request_required:
+        type: boolean
+        const: true
+      receipt_required:
+        type: boolean
+      provenance_bundle_required:
+        type: boolean
+  validity:
+    type: object
+    additionalProperties: false
+    required:
+      - created_at
+      - policy_version
+    properties:
+      created_at:
+        type: string
+        format: date-time
+      expires_at:
+        type: string
+        format: date-time
+      policy_version:
+        type: string
+        minLength: 1
+  envelope_hash:
+    type: string
+    minLength: 1
+  created_at:
+    type: string
+    format: date-time
+
+$defs:
+  hash_ref:
+    type: object
+    additionalProperties: false
+    required:
+      - ref
+      - hash
+    properties:
+      ref:
+        type: string
+        minLength: 1
+      hash:
+        type: string
+        minLength: 1
+  string_array:
+    type: array
+    items:
+      type: string
+      minLength: 1

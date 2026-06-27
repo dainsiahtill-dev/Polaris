@@ -168,6 +168,8 @@
 3. Factory/角色链路调用必须同时记录覆盖度 flags：是否包含 PM 合同、Chief Engineer 蓝图/交接、目标文件/目标项目上下文、失败反馈、workspace quality evidence。
 4. ContextOS 实时视图必须优先展示最终请求上下文 token（含工具 schema 和 response format），不得继续用 messages-only 或 prompt usage 冒充最终上下文占用。
 5. 最终请求上下文明显低于预期时，先归因为上下文装配/覆盖度/预算策略问题并留下 runtime event 证据；禁止通过扩大 max_tokens 或伪造 token 数掩盖缺失上下文。
+6. Token/window utilization 只是容量指标，不是质量指标。最终请求 coverage 必须结构化记录 required evidence refs、included refs、missing refs、required tools、available tools、missing required tools、role identity、tool schema registry coverage、Run Ledger/receipt 绑定和 freshness。
+7. `docs/governance/schemas/final-request-evidence-coverage.schema.yaml` 是最终请求证据覆盖的目标契约。字符串命中可以作为低置信度线索，但不能单独证明 PM contract、CE blueprint、handoff decision、target files、workspace quality evidence 或 failed gate evidence 已被正确注入。
 
 ## 8.4 角色工具失败外部审计标准（主 Agent 专用，禁止产品化）
 
@@ -199,6 +201,20 @@
 8. 正式角色内核、transaction kernel、tool gating、prompt layer 和 tool batch executor 不得解析 `[Benchmark Tool Contract]`、`benchmark_require_*` 或类似 Bench 文本/字段；内部 evaluator 若需要表达工具数量、必选工具、单批次或 barrier 绕过，必须在进入正式内核前转换为平台级 `tool_contract` / `platform_tool_contract` metadata。
 9. Browser、视觉、多模态 QA、用户脚本、领域脚本等 verifier modality 是平台级 Control Plane 可选能力，默认关闭；设置页可以保存启用意图，但只有当前环境显式声明可用时才允许把它们设为 hard-required evidence，禁止由 Bench harness 或内部压力测试状态决定正式项目是否必须启用这些能力。
 10. Job Token 是从控制面事实源派生的 capability token，不得成为第二事实源；正式写入和命令工具执行层必须消费 Job Token 派生的授权 scope，并把 `token_id`、contract/blueprint hash、stage、project_id 等 capability evidence 写入 effect receipt，供 Run Ledger、QA 和 UI projection 只读消费。
+
+## 8.7 任务执行审计契约标准
+
+1. `docs/POLARIS_TASK_EXECUTION_AUDIT_SPEC.md` 是 PM -> Chief Engineer -> Director -> QA 执行链路的审计规范入口。它不引入第二套架构，只把现有 PM Contract、CE Blueprint、Handoff Decision、Execution Profile、Job Token、ContextOS、Run Ledger、ReceiptStore、Verifier/Gate Policy 和 Resident AGI evidence interface 收敛到同一套长期契约。
+2. Director dispatch 的授权对象必须收敛为 `ce_handoff_decision.v1`，`handoff_ready` 只能作为 UI/summary 字段，不能作为权限字段。
+3. Director execution 的目标契约必须收敛为 `execution_envelope.v1`。Prompt 只负责指导模型；envelope 定义权限、预算和审计要求；tool/write/command guard 必须消费 envelope 派生的 capability evidence。
+4. 最终 provider request 审计必须输出 `final_request_evidence_coverage`，把 required refs、included refs、missing refs、required tools、available tools、workflow hashes 与 role identity 放在同一个结构化对象中；token/window 利用率只能作为容量指标，不能替代证据覆盖判断。
+5. 每次 run 的最终追责对象必须收敛为 `run_provenance_bundle.v1`，至少绑定 PM contract hash、CE blueprint hash、handoff decision hash、execution envelope hash、final provider request hashes、tool receipt hashes、command receipt hashes 和 QA/verifier 结果。
+6. 机器可读 schema 位于：
+   - `docs/governance/schemas/ce-handoff-decision.schema.yaml`
+   - `docs/governance/schemas/execution-envelope.schema.yaml`
+   - `docs/governance/schemas/final-request-evidence-coverage.schema.yaml`
+   - `docs/governance/schemas/run-provenance-bundle.schema.yaml`
+7. 新增或修改 PM、Chief Engineer、Director、QA、Resident AGI、Run Ledger、ContextOS、ReceiptStore、tool guard、provider request audit 相关入口时，必须评估是否会破坏上述契约；若存在缺口，必须在代码、测试或审计文档中明确当前事实与目标态差距。
 
 ---
 

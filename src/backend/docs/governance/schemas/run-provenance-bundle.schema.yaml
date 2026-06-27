@@ -1,0 +1,97 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Run Provenance Bundle
+description: >
+  End-of-run provenance bundle that links PM contract, CE blueprint, handoff
+  decision, execution envelope, provider requests, tool receipts, QA verdict,
+  and final status for audit and replay.
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - bundle_id
+  - run_id
+  - task_id
+  - workspace
+  - status
+  - pm_contract_hash
+  - ce_blueprint_hash
+  - handoff_decision_hash
+  - execution_envelope_hash
+  - final_provider_request_hashes
+  - tool_receipt_hashes
+  - command_receipt_hashes
+  - final_status
+  - created_at
+
+properties:
+  schema_version:
+    type: string
+    const: polaris.run_provenance_bundle.v1
+  bundle_id:
+    type: string
+    minLength: 1
+  run_id:
+    type: string
+    minLength: 1
+  task_id:
+    type: string
+    minLength: 1
+  workspace:
+    type: string
+    minLength: 1
+  trace_id:
+    type: string
+  commit:
+    type: string
+  status:
+    type: string
+    enum:
+      - success
+      - partial
+      - blocked
+      - failed
+      - cancelled
+  pm_contract_hash:
+    type: string
+    minLength: 1
+  ce_blueprint_hash:
+    type: string
+    minLength: 1
+  handoff_decision_hash:
+    type: string
+    minLength: 1
+  execution_envelope_hash:
+    type: string
+    minLength: 1
+  final_provider_request_hashes:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  tool_receipt_hashes:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  file_diff_hash:
+    type: string
+  command_receipt_hashes:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  qa_result_hash:
+    type: string
+  verifier_logs_ref:
+    type: string
+  final_status:
+    type: string
+    minLength: 1
+  evidence_refs:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  created_at:
+    type: string
+    format: date-time

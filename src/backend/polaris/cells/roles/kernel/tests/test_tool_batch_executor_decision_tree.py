@@ -24,6 +24,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     ReadRunLedgerProjectionQueryV1,
     read_run_ledger_projection,
 )
+from polaris.cells.control_plane.run_ledger.public.ledger import RunLedger
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryContract,
     DeliveryMode,
@@ -191,6 +192,7 @@ async def test_token_scoped_effect_receipt_appends_platform_run_ledger(tmp_path)
         "stage": "director_mutation",
         "contract_hash": "contract-tool-batch",
         "blueprint_hash": "blueprint-tool-batch",
+        "execution_envelope_hash": "env-tool-batch",
         "capability_audit_ok": True,
         "allowed_scope": ["src/app.py"],
     }
@@ -244,6 +246,10 @@ async def test_token_scoped_effect_receipt_appends_platform_run_ledger(tmp_path)
     assert projection["projects"][0]["latest_token_id"] == "jt-tool-batch"
     assert projection["evidence_modalities"]["tool_receipt"]["present"] == 1
     assert projection["evidence_modalities"]["tool_receipt"]["ok"] == 1
+    events = RunLedger(tmp_path, run_id="run-tool-batch").read_events()
+    tool_receipt_event = next(event for event in events if event.get("stage") == "director_mutation")
+    assert tool_receipt_event["job_token"]["execution_envelope_hash"] == "env-tool-batch"
+    assert tool_receipt_event["physical_evidence"]["execution_envelope_hash"] == "env-tool-batch"
 
 
 @pytest.mark.asyncio

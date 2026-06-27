@@ -1,0 +1,103 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: CE Handoff Decision
+description: >
+  Authoritative Chief Engineer decision that allows or blocks Director dispatch.
+  handoff_ready is only a display summary; Director authorization must bind to
+  this decision object and its hashes.
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - decision_id
+  - task_id
+  - blueprint_id
+  - allowed
+  - blockers
+  - warnings
+  - evaluated_at
+  - evaluator
+  - policy_version
+  - bindings
+  - decision_hash
+
+properties:
+  schema_version:
+    type: string
+    const: polaris.ce_handoff_decision.v1
+  decision_id:
+    type: string
+    minLength: 1
+  task_id:
+    type: string
+    minLength: 1
+  blueprint_id:
+    type: string
+    minLength: 1
+  allowed:
+    type: boolean
+  reason:
+    type: string
+  blockers:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  warnings:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  risk_assessment:
+    type: object
+    additionalProperties: false
+    properties:
+      blocking_risks:
+        type: array
+        items:
+          type: string
+          minLength: 1
+      non_blocking_warnings:
+        type: array
+        items:
+          type: string
+          minLength: 1
+  evaluated_at:
+    type: string
+    format: date-time
+  evaluator:
+    type: string
+    minLength: 1
+  policy_version:
+    type: string
+    minLength: 1
+  bindings:
+    type: object
+    additionalProperties: false
+    required:
+      - pm_contract_hash
+      - blueprint_hash
+      - execution_profile_hash
+    properties:
+      pm_contract_ref:
+        type: string
+      pm_contract_hash:
+        type: string
+        minLength: 1
+      blueprint_ref:
+        type: string
+      blueprint_hash:
+        type: string
+        minLength: 1
+      execution_profile_ref:
+        type: string
+      execution_profile_hash:
+        type: string
+        minLength: 1
+  evidence_refs:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  decision_hash:
+    type: string
+    minLength: 1

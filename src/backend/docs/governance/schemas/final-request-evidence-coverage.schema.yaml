@@ -1,0 +1,155 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: Final Request Evidence Coverage
+description: >
+  Structured evidence coverage matrix for the final provider request. Token
+  utilization is a capacity metric only; this schema records whether required
+  contract, handoff, tool, role, and ledger evidence actually reached the
+  provider request.
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - request_hash
+  - role_id
+  - required_refs
+  - included_refs
+  - missing_required_refs
+  - required_tools
+  - available_tools
+  - missing_required_tools
+  - coverage_ratio
+  - pass
+
+properties:
+  schema_version:
+    type: string
+    const: polaris.final_request_evidence_coverage.v1
+  request_hash:
+    type: string
+    minLength: 1
+  context_snapshot_ref:
+    type: string
+  role_id:
+    type: string
+    minLength: 1
+  expected_role_id:
+    type: string
+  role_identity_ok:
+    type: boolean
+  required_refs:
+    $ref: "#/$defs/string_array"
+  included_refs:
+    $ref: "#/$defs/string_array"
+  missing_required_refs:
+    $ref: "#/$defs/string_array"
+  coverage_sources:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required:
+        - ref_type
+        - present
+        - confidence
+      properties:
+        ref_type:
+          type: string
+          minLength: 1
+        present:
+          type: boolean
+        source:
+          type: string
+        ref:
+          type: string
+        hash:
+          type: string
+        confidence:
+          type: string
+          enum:
+            - deterministic
+            - structured_metadata
+            - text_heuristic
+            - absent
+        freshness:
+          type: string
+          enum:
+            - current_turn
+            - current_run
+            - stale
+            - unknown
+  required_tools:
+    $ref: "#/$defs/string_array"
+  available_tools:
+    $ref: "#/$defs/string_array"
+  missing_required_tools:
+    $ref: "#/$defs/string_array"
+  unexpected_tool_pruning:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required:
+        - tool
+        - reason
+      properties:
+        tool:
+          type: string
+          minLength: 1
+        reason:
+          type: string
+          minLength: 1
+        source:
+          type: string
+  tool_schema_registry_coverage:
+    type: object
+    additionalProperties: false
+    properties:
+      registry_source:
+        type: string
+      aliases_present:
+        type: boolean
+      arg_aliases_present:
+        type: boolean
+      schema_hash:
+        type: string
+      missing_schema_tools:
+        $ref: "#/$defs/string_array"
+  workflow_chain:
+    type: object
+    additionalProperties: false
+    properties:
+      pm_contract_hash:
+        type: string
+      ce_blueprint_hash:
+        type: string
+      handoff_decision_hash:
+        type: string
+      execution_profile_hash:
+        type: string
+      execution_envelope_hash:
+        type: string
+  ledger_evidence:
+    type: object
+    additionalProperties: false
+    properties:
+      run_ledger_ref:
+        type: string
+      failed_required_modalities:
+        $ref: "#/$defs/string_array"
+      missing_required_modalities:
+        $ref: "#/$defs/string_array"
+      receipt_refs:
+        $ref: "#/$defs/string_array"
+  coverage_ratio:
+    type: number
+    minimum: 0
+    maximum: 1
+  pass:
+    type: boolean
+
+$defs:
+  string_array:
+    type: array
+    items:
+      type: string
+      minLength: 1

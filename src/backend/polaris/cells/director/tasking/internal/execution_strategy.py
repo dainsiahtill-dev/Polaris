@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from polaris.cells.director.tasking.internal.execution_contract import build_task_execution_contract
+from polaris.cells.director.tasking.internal.execution_envelope import build_execution_envelope
 from polaris.cells.director.tasking.public.contracts import (
     TaskExecutionProfileV1,
     TaskExecutionStrategyV1,
@@ -57,6 +58,14 @@ def _int_value(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return int(default)
+
+
+def _string_value(payload: Mapping[str, Any], *keys: str, default: str = "") -> str:
+    for key in keys:
+        value = str(payload.get(key) or "").strip()
+        if value:
+            return value
+    return default
 
 
 def _is_factory_bench(metadata: Mapping[str, Any]) -> bool:
@@ -243,17 +252,33 @@ def apply_execution_strategy_overrides(
 
     profile_payload = profile.to_dict()
     strategy_payload = strategy.to_dict()
-    execution_contract_payload = build_task_execution_contract(
+    execution_contract = build_task_execution_contract(
         profile,
         strategy,
         metadata=metadata,
-    ).to_dict()
+    )
+    execution_contract_payload = execution_contract.to_dict()
+    merged_evidence = {**context, **metadata}
+    execution_envelope = build_execution_envelope(
+        workspace=_string_value(merged_evidence, "workspace", "factory_bench_project_workspace", default="unknown-workspace"),
+        task_id=_string_value(merged_evidence, "task_id", "pm_task_id", "backlog_ref", default="unknown-task"),
+        run_id=_string_value(merged_evidence, "run_id", "factory_run_id", default="unknown-run"),
+        trace_id=_string_value(merged_evidence, "trace_id", "call_id", default="unknown-trace"),
+        profile=profile,
+        strategy=strategy,
+        contract=execution_contract,
+        metadata=merged_evidence,
+    )
+    execution_envelope_payload = execution_envelope.to_dict()
     context["director_execution_profile"] = profile_payload
     context.setdefault("task_execution_profile", profile_payload)
     context["director_execution_strategy"] = strategy_payload
     context["task_execution_strategy"] = strategy_payload
     context["task_execution_contract"] = execution_contract_payload
     context["director_execution_contract"] = execution_contract_payload
+    context["task_execution_envelope"] = execution_envelope_payload
+    context["director_execution_envelope"] = execution_envelope_payload
+    context["execution_envelope_hash"] = execution_envelope.envelope_hash
     context["_transaction_kernel_temperature_override"] = strategy.temperature
     context["llm_max_tokens"] = strategy.output_budget_tokens
     context["max_output_tokens"] = strategy.output_budget_tokens
@@ -268,6 +293,9 @@ def apply_execution_strategy_overrides(
     metadata["task_execution_strategy"] = strategy_payload
     metadata["task_execution_contract"] = execution_contract_payload
     metadata["director_execution_contract"] = execution_contract_payload
+    metadata["task_execution_envelope"] = execution_envelope_payload
+    metadata["director_execution_envelope"] = execution_envelope_payload
+    metadata["execution_envelope_hash"] = execution_envelope.envelope_hash
     metadata["temperature"] = strategy.temperature
     metadata["temperature_phase"] = strategy.temperature_phase
     metadata["temperature_source"] = strategy.source

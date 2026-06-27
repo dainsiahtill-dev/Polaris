@@ -431,6 +431,7 @@ def _job_token_from_capability_token(token: dict[str, Any], *, run_id: str, stag
         "stage": str(token.get("stage") or stage or "tool_batch"),
         "contract_hash": str(token.get("contract_hash") or ""),
         "blueprint_hash": str(token.get("blueprint_hash") or ""),
+        "execution_envelope_hash": str(token.get("execution_envelope_hash") or ""),
         "capability_audit": {
             "ok": bool(audit_ok) if audit_ok is not None else True,
             "issues": [],
@@ -472,9 +473,22 @@ def _normalize_capability_token(value: dict[str, Any]) -> dict[str, Any]:
         "stage": str(value.get("stage") or ""),
         "contract_hash": str(value.get("contract_hash") or ""),
         "blueprint_hash": str(value.get("blueprint_hash") or ""),
+        "execution_envelope_hash": str(value.get("execution_envelope_hash") or ""),
         "capability_audit_ok": bool(value.get("capability_audit_ok", capability_audit_map.get("ok", True))),
         "allowed_scope": list(dict.fromkeys(item for item in allowed_scope if item)),
     }
+
+
+def _execution_envelope_hash_from_metadata(metadata: Mapping[str, Any]) -> str:
+    direct = str(metadata.get("execution_envelope_hash") or "").strip()
+    if direct:
+        return direct
+    for key in ("task_execution_envelope", "director_execution_envelope", "execution_envelope"):
+        envelope = _mapping_value(metadata.get(key))
+        envelope_hash = str(envelope.get("envelope_hash") or "").strip()
+        if envelope_hash:
+            return envelope_hash
+    return ""
 
 
 def _capability_token_from_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
@@ -494,6 +508,7 @@ def _append_tool_batch_receipts_to_run_ledger(
     turn_id: str,
     receipts: list[dict],
     capability_token: dict[str, Any] | None = None,
+    execution_envelope_hash: str = "",
 ) -> None:
     merged_receipt = _merge_batch_receipts(receipts)
     if not merged_receipt:
@@ -516,6 +531,9 @@ def _append_tool_batch_receipts_to_run_ledger(
         token = _normalize_capability_token(capability_token or {})
     if not token:
         return
+    envelope_hash = str(execution_envelope_hash or token.get("execution_envelope_hash") or "").strip()
+    if envelope_hash and not token.get("execution_envelope_hash"):
+        token["execution_envelope_hash"] = envelope_hash
 
     resolved_run_id = str(token.get("run_id") or run_id or turn_id or "").strip()
     if not resolved_run_id:
@@ -537,6 +555,7 @@ def _append_tool_batch_receipts_to_run_ledger(
                 "physical_evidence": {
                     "batch_receipt": merged_receipt,
                     "tool_receipts": effect_receipts,
+                    "execution_envelope_hash": envelope_hash,
                     "command_count": 0,
                     "sampled_command_count": 0,
                     "commands_truncated": False,
@@ -1468,6 +1487,7 @@ class ToolBatchExecutor:
             turn_id=turn_id,
             receipts=receipts_as_dicts,
             capability_token=_capability_token_from_metadata(metadata),
+            execution_envelope_hash=_execution_envelope_hash_from_metadata(metadata),
         )
 
         # 本 turn 的工具批裁决已完成（adopt/join/replay 全部计入 metrics）；在此

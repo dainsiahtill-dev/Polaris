@@ -14,6 +14,7 @@ export interface ControlPlaneEvidencePolicy {
   enabled_modalities?: string[];
   required_modalities: string[];
   missing_required_modalities: string[];
+  failed_required_modalities?: string[];
 }
 
 export interface ControlPlaneEvidenceModalitySummary {

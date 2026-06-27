@@ -213,6 +213,10 @@ function evidencePolicySummary(projection: ControlPlaneProjection): string {
     return `可选启用 ${enabled.join(', ')} · 未作为硬门禁`;
   }
   const required = policy.required_modalities.join(', ');
+  const failed = policy.failed_required_modalities ?? [];
+  if (failed.length > 0) {
+    return `启用 ${required} · 失败 ${failed.join(', ')}`;
+  }
   if (policy.missing_required_modalities.length > 0) {
     return `启用 ${required} · 缺 ${policy.missing_required_modalities.join(', ')}`;
   }
