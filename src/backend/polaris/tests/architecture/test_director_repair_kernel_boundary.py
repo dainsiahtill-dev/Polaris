@@ -47,7 +47,7 @@ POST_EXECUTION_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "post_execution_repair_bridge
 MATERIALIZATION_QUALITY_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_repair_bridge.py"
 DETERMINISTIC_REPAIRS_INIT_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "__init__.py"
 GENERIC_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "generic_repairs.py"
-RUNTIME_REPAIR_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "_runtime_bridge.py"
+RUNTIME_REPAIR_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "runtime_repair_tool_adapter.py"
 RUST_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "rust_repairs.py"
 QUALITY_GATE_PATH = ROLES_DIRECTOR_ROOT / "quality_gate.py"
 DIRECTOR_RUNTIME_PUBLIC_SERVICE_PATH = (
@@ -103,10 +103,7 @@ DIRECTOR_RUNTIME_INTERNAL_REPAIR_KERNEL_IMPORT_ALLOWLIST = {
     DIRECTOR_RUNTIME_PUBLIC_CONTRACTS_PATH,
     DIRECTOR_RUNTIME_PUBLIC_SERVICE_PATH,
 }
-PUBLIC_MIGRATION_ONLY_REPAIR_SHIMS = {
-    "apply_deterministic_cpp_post_repairs": "run_director_cpp_post_execution_repairs",
-    "apply_deterministic_materialization_quality_repairs": ("run_director_materialization_quality_repair_schedule"),
-}
+PUBLIC_MIGRATION_ONLY_REPAIR_SHIMS: dict[str, str] = {}
 PUBLIC_MIGRATION_SHIM_TEST_REFERENCE_ALLOWLIST = {
     (
         ROLES_ADAPTERS_STRATEGY_CATALOG_TEST_PATH,
@@ -871,15 +868,8 @@ def test_execute_method_legacy_repairs_delegate_to_controlled_bridge() -> None:
     execute_calls = _called_function_names(EXECUTE_METHOD_PATH)
     bridge_calls = _called_deterministic_repair_names(EXECUTE_METHOD_REPAIR_BRIDGE_PATH)
     expected_bridge_calls = {
-        "_apply_deterministic_declared_target_contract_repairs",
-        "_apply_deterministic_node_test_script_contract_repair",
-        "_apply_deterministic_patch_residue_cleanup",
-        "_apply_deterministic_pre_materialization_declared_target_repairs",
         "_apply_deterministic_python_runtime_smoke",
         "_apply_deterministic_python_static_smoke",
-        "_apply_deterministic_python_unittest_missing_target_repair",
-        "_apply_deterministic_scaffold_marker_cleanup",
-        "_apply_deterministic_typescript_reexport_repair",
     }
 
     assert "run_declared_target_contract_repairs" in execute_calls
@@ -891,7 +881,7 @@ def test_execute_method_legacy_repairs_delegate_to_controlled_bridge() -> None:
     assert "run_python_unittest_missing_target_repair" in execute_calls
     assert "run_scaffold_marker_cleanup" in execute_calls
     assert "run_typescript_reexport_repair" in execute_calls
-    assert expected_bridge_calls <= bridge_calls
+    assert bridge_calls == expected_bridge_calls
 
 
 def test_roles_adapter_public_boundary_blocks_internal_kernel_and_direct_legacy_helpers() -> None:
@@ -1000,9 +990,9 @@ def test_post_execution_bridge_does_not_call_legacy_java_test_dependency_tail() 
     java_runner_source = _function_source(POST_EXECUTION_BRIDGE_PATH, "_run_java_post_repairs")
 
     assert "repair_java_test_dependencies" not in bridge_source
-    assert "deterministic_java_post_repair" not in java_runner_source
     assert "deterministic_java_test_dependency_repair" in bridge_source
-    assert "_run_java_test_dependency_runtime_repair" in java_runner_source
+    assert "_run_java_test_dependency_runtime_repair" in bridge_source
+    assert "repair_java_test_dependencies" not in java_runner_source
 
 
 def test_rust_post_execution_callback_does_not_own_convergence_loop() -> None:
@@ -1160,7 +1150,7 @@ def test_typescript_source_tools_do_not_return_to_legacy_strategy_host() -> None
         or source_tool in MIGRATED_TYPESCRIPT_SOURCE_TOOL_NAMES
     ]
     legacy_failure_message = (
-        "expected public strategy catalog ledger total=85 executable_runtime=85 legacy_strategy_host=0; "
+        "expected public strategy catalog ledger total=90 executable_runtime=90 legacy_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
         "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
     )
@@ -1169,10 +1159,10 @@ def test_typescript_source_tools_do_not_return_to_legacy_strategy_host() -> None
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
-    assert catalog_summary["total"] == 85, legacy_failure_message
+    assert catalog_summary["total"] == 90, legacy_failure_message
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert legacy_source_tools == [], legacy_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 85, legacy_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 90, legacy_failure_message
     assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, legacy_failure_message
     assert catalog_summary["legacy_strategy_host_count"] == 0, legacy_failure_message
 
@@ -1233,13 +1223,18 @@ def test_roles_adapters_consumes_repair_strategy_profiles_through_projection_hel
 
 
 def test_go_bare_import_string_repair_runs_through_director_runtime_kernel() -> None:
-    source = _read_text(GENERIC_REPAIRS_PATH)
+    source = (
+        _read_text(MATERIALIZATION_QUALITY_BRIDGE_PATH)
+        + "\n"
+        + _function_source(MATERIALIZATION_QUALITY_BRIDGE_PATH, "_run_materialization_go_import_repairs")
+        + "\n"
+        + _function_source(POST_EXECUTION_BRIDGE_PATH, "_run_go_post_repairs")
+    )
     bridge_source = _read_text(RUNTIME_REPAIR_BRIDGE_PATH)
 
     assert "deterministic_go_bare_import_string_repair" in source
     assert "run_runtime_repair_with_director_tools" in source
     assert "executor_factory=DirectorToolExecutor" in source
-    assert "use_editor=False" in source
     assert "run_director_repair" not in source
     assert "RunDirectorRepairCommandV1" not in source
     assert "plan_director_repair" in bridge_source
@@ -1270,29 +1265,18 @@ def test_materialization_quality_repairs_stay_behind_bridge_and_public_boundary(
     assert "run_director_cpp_post_execution_repairs" in factory_calls
 
 
-def test_roles_adapters_public_legacy_repair_wrappers_are_migration_only_shims() -> None:
+def test_roles_adapters_public_legacy_repair_wrappers_are_removed_after_hard_cut() -> None:
     public_source = _read_text(ROLES_ADAPTERS_PUBLIC_SERVICE_PATH)
-    materialization_wrapper = _function_source(
-        ROLES_ADAPTERS_PUBLIC_SERVICE_PATH,
-        "apply_deterministic_materialization_quality_repairs",
-    )
-    cpp_wrapper = _function_source(
-        ROLES_ADAPTERS_PUBLIC_SERVICE_PATH,
-        "apply_deterministic_cpp_post_repairs",
-    )
 
     assert "def run_director_materialization_quality_repair_schedule(" in public_source
     assert "def run_director_cpp_post_execution_repairs(" in public_source
-    assert "Deprecated migration-only shim" in materialization_wrapper
-    assert "Deprecated migration-only shim" in cpp_wrapper
-    assert "run_director_materialization_quality_repair_schedule(" in materialization_wrapper
-    assert "run_director_cpp_post_execution_repairs(" in cpp_wrapper
-    assert "run_materialization_quality_repairs(" not in materialization_wrapper
-    assert "run_cpp_post_repairs_as_tool_results(" not in cpp_wrapper
-    assert "migration_only_compatibility_shim" in materialization_wrapper
-    assert "__migration_only__ = True" in public_source
-    assert "__preferred_entrypoint__" in public_source
-    assert ".__deprecated__" in public_source
+    assert "def apply_deterministic_materialization_quality_repairs(" not in public_source
+    assert "def apply_deterministic_cpp_post_repairs(" not in public_source
+    assert "Deprecated migration-only shim" not in public_source
+    assert "migration_only_compatibility_shim" not in public_source
+    assert "__migration_only__ = True" not in public_source
+    assert "__preferred_entrypoint__" not in public_source
+    assert ".__deprecated__" not in public_source
 
 
 def test_quality_gate_semantic_repairs_stay_behind_bridge() -> None:
@@ -1303,8 +1287,10 @@ def test_quality_gate_semantic_repairs_stay_behind_bridge() -> None:
     assert "_apply_deterministic_typescript_missing_export_repair" not in quality_source
     assert "_apply_deterministic_typescript_canvas_scale_return_type_repair" not in quality_source
     assert "def run_typescript_semantic_quality_repairs(" in bridge_source
-    assert "_apply_deterministic_typescript_missing_export_repair" in bridge_source
-    assert "_apply_deterministic_typescript_canvas_scale_return_type_repair" in bridge_source
+    assert "deterministic_typescript_missing_export_repair" in bridge_source
+    assert "run_runtime_repair_with_director_tools" in bridge_source
+    assert "_apply_deterministic_typescript_missing_export_repair" not in bridge_source
+    assert "_apply_deterministic_typescript_canvas_scale_return_type_repair" not in bridge_source
 
 
 def test_roles_adapter_repair_summaries_use_runtime_typed_projection_contract() -> None:

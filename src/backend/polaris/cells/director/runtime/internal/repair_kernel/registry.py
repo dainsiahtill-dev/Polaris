@@ -119,6 +119,7 @@ class RepairArchetype(str, Enum):
     OBJECT_LITERAL_SYNTAX = "object_literal_syntax"
     INVALID_IDENTIFIER = "invalid_identifier"
     GENERATED_RESIDUE = "generated_residue"
+    MISSING_DECLARED_TARGET = "missing_declared_target"
     WRONG_IMPORT_PATH = "wrong_import_path"
 
 
@@ -1008,9 +1009,15 @@ def _coverage_recommended_route(
         return "runtime_rule"
     if metadata_only_match:
         return "runtime_rule"
-    if slot is not None:
-        if str(diagnostic_archetype or "unknown") == "unknown" and not known_rule_matched:
+    if not known_rule_matched:
+        if slot is not None:
             return "llm_repair"
+        if str(diagnostic_language or "unknown") != "unknown":
+            return "add_reserved_slot"
+        if str(diagnostic_archetype or "unknown") != "unknown":
+            return "agi_advisory"
+        return "llm_repair"
+    if slot is not None:
         return "runtime_rule"
     if str(diagnostic_language or "unknown") != "unknown":
         return "add_reserved_slot"
@@ -1191,7 +1198,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 source_tool=MISSING_DECLARED_TARGET_SOURCE_TOOL,
                 language="generic",
                 phase="target_contract",
-                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                archetype=RepairArchetype.MISSING_DECLARED_TARGET,
                 priority=1,
                 diagnostic_codes=("declared_target_missing",),
                 raw_terms=("src/",),
@@ -1204,7 +1211,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 source_tool=DECLARED_TARGET_CONTRACT_SOURCE_TOOL,
                 language="generic",
                 phase="target_contract",
-                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                archetype=RepairArchetype.MISSING_DECLARED_TARGET,
                 priority=1,
                 diagnostic_codes=("declared_target_missing",),
                 raw_terms=("src/",),
@@ -1217,7 +1224,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 source_tool=PRE_MATERIALIZATION_DECLARED_TARGET_SOURCE_TOOL,
                 language="generic",
                 phase="pre_materialization",
-                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                archetype=RepairArchetype.MISSING_DECLARED_TARGET,
                 priority=1,
                 diagnostic_codes=("declared_target_missing",),
                 raw_terms=("src/",),
@@ -2644,6 +2651,8 @@ def _suggest_rule_family(diagnostic: RepairDiagnostic) -> str:
     code = diagnostic.code.lower()
     message = f"{diagnostic.message}\n{diagnostic.raw}".lower()
     language = _infer_diagnostic_language(diagnostic)
+    if code == "declared_target_missing":
+        return RepairArchetype.MISSING_DECLARED_TARGET.value
     if code == "rust_e0277" or "derive" in message:
         return RepairArchetype.INCOMPATIBLE_DERIVE.value
     if code == "rust_e0433" or "unlinked crate" in message or "no required module" in message:
@@ -2742,6 +2751,8 @@ def _diagnostic_source_matches(*, message: str, source: str) -> bool:
 
 
 def _infer_diagnostic_phase(diagnostic: RepairDiagnostic, archetype: str) -> str:
+    if archetype == RepairArchetype.MISSING_DECLARED_TARGET.value:
+        return "target_contract"
     if archetype == RepairArchetype.MISSING_DEPENDENCY.value:
         return "dependency_resolution"
     if archetype == RepairArchetype.INCOMPATIBLE_DERIVE.value:

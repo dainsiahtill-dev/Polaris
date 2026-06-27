@@ -206,6 +206,46 @@ def test_patch_composer_requires_unique_context_for_large_file_text_replace() ->
     assert precise_result.patches[0].metadata["unique_context_checked"] is True
 
 
+def test_patch_composer_applies_large_file_multispan_replacements_descending() -> None:
+    lines = [f"export const value_{index} = {index};\n" for index in range(1400)]
+    replacements = {
+        12: ("value_12", "firstValue"),
+        701: ("value_701", "middleValue"),
+        1234: ("value_1234", "lastValue"),
+    }
+    content = "".join(lines)
+    operations: list[RepairOperation] = []
+    for line_number, (expected, replacement) in replacements.items():
+        line = lines[line_number]
+        start = content.index(expected)
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path="src/large.ts",
+                span_start=start,
+                span_end=start + len(expected),
+                expected=expected,
+                replacement=replacement,
+                metadata={"unique_context": line},
+            )
+        )
+
+    result = PatchComposer().compose({"src/large.ts": content}, tuple(operations))
+
+    assert result.ok
+    patch = result.patches[0]
+    assert "export const firstValue = 12;\n" in patch.content_after
+    assert "export const middleValue = 701;\n" in patch.content_after
+    assert "export const lastValue = 1234;\n" in patch.content_after
+    assert "export const value_12 = 12;\n" not in patch.content_after
+    assert "export const value_701 = 701;\n" not in patch.content_after
+    assert "export const value_1234 = 1234;\n" not in patch.content_after
+    assert patch.metadata["large_file_safe"] is True
+    assert patch.metadata["span_based"] is True
+    assert patch.metadata["unique_context_checked"] is True
+    assert set(patch.metadata["unique_context_operation_ids"]) == {operation.operation_id for operation in operations}
+
+
 def test_executor_prefers_policy_gated_editor_and_records_write_file_reason(tmp_path: Path) -> None:
     relative_path = "src/app.ts"
     target = tmp_path / relative_path
@@ -442,57 +482,24 @@ def test_executor_large_file_span_edit_uses_editor_and_projects_rollback_evidenc
         editor=editor,
     )
 
-    assert not result.ok
-    assert result.rolled_back is True
-    assert large_target.read_text(encoding="utf-8") == large_original
-    assert fail_target.read_text(encoding="utf-8") == fail_original
+    assert result.ok
+    assert result.rolled_back is False
+    assert "export const target_1999 = true;\n" in large_target.read_text(encoding="utf-8")
+    assert fail_target.read_text(encoding="utf-8") == "export const fail = true;\n"
     assert edit_calls == [large_path, fail_path]
-    assert write_calls == [(large_path, large_original)]
+    assert write_calls == [(fail_path, "export const fail = true;\n")]
 
     metadata = result.receipt.metadata
     assert metadata["rollback_strategy"] == "write_file_full_restore"
-    assert metadata["rollback_success_count"] == 1
-    assert metadata["rollback_failed_paths"] == []
-    assert metadata["rollback_patch"] == [
-        {
-            "path": large_path,
-            "rollback_patch_id": f"rollback:write_file_full_restore:{large_path}",
-            "rollback_strategy": "write_file_full_restore",
-            "rollback_operation": "write_file",
-            "rollback_reason": "transaction_failure",
-            "rollback_policy_decision": "allowed_rollback",
-            "before_hash": sha256_text(large_original.replace("false", "true", 1)),
-            "after_hash": sha256_text(large_original),
-            "exists_before": True,
-            "exists_after": True,
-            "operation_ids": [large_operation.operation_id],
-        }
-    ]
-    assert metadata["rollback_operations"] == [
-        {
-            "path": large_path,
-            "rollback_patch_id": f"rollback:write_file_full_restore:{large_path}",
-            "operation": "write_file",
-            "rollback_strategy": "write_file_full_restore",
-            "rollback_reason": "transaction_failure",
-            "rollback_policy_decision": "allowed_rollback",
-            "write_file_allowed_category": "rollback",
-            "write_file_reason": "rollback_full_restore",
-            "before_hash": sha256_text(large_original.replace("false", "true", 1)),
-            "after_hash": sha256_text(large_original),
-            "exists_before": True,
-            "exists_after": True,
-            "operation_ids": [large_operation.operation_id],
-            "ok": True,
-        }
-    ]
+    assert metadata["rollback_operations"] == []
 
-    record = metadata["execution_records"][0]
-    assert record["operation"] == "edit_file"
-    assert record["span_based"] is True
-    assert record["unique_context_checked"] is True
-    assert record["write_file_reason"] == ""
-    assert record["precise_edit_strategy"] == {
+    edit_record, fallback_record = metadata["execution_records"]
+    assert edit_record["path"] == large_path
+    assert edit_record["operation"] == "edit_file"
+    assert edit_record["span_based"] is True
+    assert edit_record["unique_context_checked"] is True
+    assert edit_record["write_file_reason"] == ""
+    assert edit_record["precise_edit_strategy"] == {
         "strategy": "span_based",
         "span_based": True,
         "unique_context_checked": True,
@@ -503,18 +510,26 @@ def test_executor_large_file_span_edit_uses_editor_and_projects_rollback_evidenc
         "large_file_safe": True,
         "operation_ids": [large_operation.operation_id],
     }
+    assert fallback_record["path"] == fail_path
+    assert fallback_record["operation"] == "write_file"
+    assert fallback_record["write_file_reason"] == "fallback_whole_file_repair"
+    assert fallback_record["write_file_allowed_category"] == "fallback"
+    assert fallback_record["write_file_policy_decision"] == "allowed_fallback"
+    assert fallback_record["precise_edit_strategy"]["strategy"] == "write_file_fallback"
+    assert fallback_record["precise_edit_strategy"]["write_file_used"] is True
     assert metadata["precise_edit_strategy"] == {
         "strategy": "span_based",
         "span_based": True,
-        "unique_context_checked": True,
+        "unique_context_checked": False,
         "editor_preferred": True,
-        "editor_used": True,
-        "write_file_used": False,
-        "write_file_fallback_paths": [],
+        "editor_used": False,
+        "write_file_used": True,
+        "write_file_fallback_paths": [fail_path],
         "large_file_safe": True,
-        "paths": [large_path],
+        "paths": [large_path, fail_path],
     }
     assert metadata["precise_edit_strategy_by_path"][large_path]["write_file_used"] is False
+    assert metadata["precise_edit_strategy_by_path"][fail_path]["write_file_used"] is True
 
 
 def test_executor_records_full_file_rollback_strategy_after_editor_forward_failure(tmp_path: Path) -> None:
@@ -590,17 +605,19 @@ def test_executor_records_full_file_rollback_strategy_after_editor_forward_failu
         editor=editor,
     )
 
-    assert not result.ok
-    assert result.rolled_back is True
-    assert first_target.read_text(encoding="utf-8") == first_original
-    assert second_target.read_text(encoding="utf-8") == second_original
+    assert result.ok
+    assert result.rolled_back is False
+    assert first_target.read_text(encoding="utf-8") == "export const first = true;\n"
+    assert second_target.read_text(encoding="utf-8") == "export const second = true;\n"
     assert edit_calls == [first_path, second_path]
-    assert write_calls == [(first_path, first_original)]
-    assert result.receipt.metadata["rollback_attempted"] is True
+    assert write_calls == [(second_path, "export const second = true;\n")]
     assert result.receipt.metadata["rollback_restore_strategy"] == "write_file_full_restore"
-    assert result.receipt.metadata["rollback_success_count"] == 1
+    assert result.receipt.metadata["rollback_operations"] == []
     execution_records = result.receipt.metadata["execution_records"]
     assert execution_records[0]["operation"] == "edit_file"
+    assert execution_records[1]["operation"] == "write_file"
+    assert execution_records[1]["write_file_policy_decision"] == "allowed_fallback"
+    assert execution_records[1]["precise_edit_strategy"]["strategy"] == "write_file_fallback"
     assert execution_records[0]["rollback_restore_strategy"] == "write_file_full_restore"
 
 

@@ -105,6 +105,27 @@ _MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS = (
     "deterministic_python_package_shadow_bridge_repair",
     "deterministic_unresolved_import_symbol_repair",
 )
+_MATERIALIZATION_HYGIENE_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_scaffold_marker_cleanup",
+    "deterministic_scaffold_marker_quality_cleanup",
+)
+_MATERIALIZATION_TYPESCRIPT_SCAFFOLD_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_typescript_scaffold_repair",
+    "deterministic_typeorm_model_normalization_repair",
+)
+_MATERIALIZATION_NODE_MANIFEST_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_node_test_script_contract_repair",
+    "deterministic_npm_script_contract_repair",
+    "deterministic_runtime_dependency_repair",
+)
+_MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS = (
+    "deterministic_missing_declared_target_repair",
+    "deterministic_javascript_test_missing_target_repair",
+    "deterministic_javascript_typescript_annotation_repair",
+    "deterministic_javascript_missing_export_repair",
+    "deterministic_javascript_esm_commonjs_entrypoint_repair",
+    "deterministic_javascript_missing_method_runtime_repair",
+)
 
 
 def has_materialization_quality_runtime_repair_coverage(artifact_quality_errors: list[str]) -> bool:
@@ -128,6 +149,10 @@ def _materialization_runtime_coverage_source_tools() -> frozenset[str]:
             *_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS,
             *_MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS,
             *_MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS,
+            *_MATERIALIZATION_HYGIENE_RUNTIME_SOURCE_TOOLS,
+            *_MATERIALIZATION_TYPESCRIPT_SCAFFOLD_RUNTIME_SOURCE_TOOLS,
+            *_MATERIALIZATION_NODE_MANIFEST_RUNTIME_SOURCE_TOOLS,
+            *_MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS,
         )
     )
 
@@ -257,12 +282,15 @@ def _run_legacy_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.typescript_scaffold":
         return _run_materialization_typescript_scaffold(
             adapter,
+            task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.typescript_compiler":
         return _run_materialization_typescript_compiler(
@@ -270,18 +298,22 @@ def _run_legacy_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.node_manifest":
         return _run_materialization_node_manifest(
             adapter,
+            task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.rust_compiler":
         return _run_materialization_rust_compiler(
             adapter,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.target_runtime":
         return _run_materialization_target_runtime(
@@ -289,6 +321,7 @@ def _run_legacy_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.python_import":
         return _run_materialization_python_import(
@@ -296,6 +329,7 @@ def _run_legacy_materialization_quality_repair_step(
             task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            convergence_verifier=convergence_verifier,
         )
     if step_id == "materialization.go_import":
         return _run_materialization_go_import(
@@ -313,48 +347,71 @@ def _run_materialization_hygiene_scaffold(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
-    from .deterministic_repairs.generic_repairs import (
-        _apply_deterministic_scaffold_marker_cleanup,
-        _apply_deterministic_scaffold_marker_error_cleanup,
-    )
-
     results: list[dict[str, Any]] = []
-    results.extend(_apply_deterministic_scaffold_marker_cleanup(adapter, task=task, task_id=task_id))
-    results.extend(
-        _apply_deterministic_scaffold_marker_error_cleanup(
-            adapter,
-            task_id=task_id,
+    for source_tool in _MATERIALIZATION_HYGIENE_RUNTIME_SOURCE_TOOLS:
+        workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+        base_files = _collect_materialization_hygiene_base_files(
+            workspace_path,
+            task=task,
             artifact_quality_errors=artifact_quality_errors,
+            source_tool=source_tool,
         )
-    )
+        if not base_files:
+            continue
+        results.extend(
+            run_runtime_repair_with_director_tools(
+                adapter,
+                workspace_path=workspace_path,
+                task_id=task_id,
+                source_tool=source_tool,
+                executor_factory=DirectorToolExecutor,
+                base_files=base_files,
+                artifact_quality_errors=artifact_quality_errors,
+                allowed_paths=tuple(base_files.keys()),
+                use_editor=True,
+                convergence_verifier=convergence_verifier,
+            )
+        )
     return results
 
 
 def _run_materialization_typescript_scaffold(
     adapter: Any,
     *,
+    task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
-    from .deterministic_repairs.npm_repairs import _apply_deterministic_typescript_scaffold_repair
-    from .deterministic_repairs.typeorm_repairs import _apply_deterministic_typeorm_model_normalization_repair
-
     results: list[dict[str, Any]] = []
-    results.extend(
-        _apply_deterministic_typescript_scaffold_repair(
-            adapter,
-            task_id=task_id,
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    for source_tool in _MATERIALIZATION_TYPESCRIPT_SCAFFOLD_RUNTIME_SOURCE_TOOLS:
+        base_files = _collect_materialization_runtime_base_files(
+            workspace_path,
             artifact_quality_errors=artifact_quality_errors,
+            source_tool=source_tool,
+            allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"),
+            collect_unmatched_diagnostic_paths=True,
+            task=task,
         )
-    )
-    results.extend(
-        _apply_deterministic_typeorm_model_normalization_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
+        if not base_files:
+            continue
+        results.extend(
+            run_runtime_repair_with_director_tools(
+                adapter,
+                workspace_path=workspace_path,
+                task_id=task_id,
+                source_tool=source_tool,
+                executor_factory=DirectorToolExecutor,
+                base_files=base_files,
+                artifact_quality_errors=artifact_quality_errors,
+                allowed_paths=tuple(base_files.keys()),
+                use_editor=True,
+                convergence_verifier=convergence_verifier,
+            )
         )
-    )
     return results
 
 
@@ -364,6 +421,7 @@ def _run_materialization_typescript_compiler(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for source_tool in _materialization_typescript_compiler_runtime_source_tools():
@@ -374,6 +432,7 @@ def _run_materialization_typescript_compiler(
                 task_id=task_id,
                 artifact_quality_errors=artifact_quality_errors,
                 source_tool=source_tool,
+                convergence_verifier=convergence_verifier,
             )
         )
     return results
@@ -395,6 +454,7 @@ def _run_materialization_typescript_runtime_repair(
     artifact_quality_errors: list[str],
     source_tool: str,
     collect_unmatched_diagnostic_paths: bool = False,
+    convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
     base_files = _collect_materialization_runtime_base_files(
@@ -417,35 +477,43 @@ def _run_materialization_typescript_runtime_repair(
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
+        convergence_verifier=convergence_verifier,
     )
 
 
 def _run_materialization_node_manifest(
     adapter: Any,
     *,
+    task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
-    from .deterministic_repairs.npm_repairs import (
-        _apply_deterministic_npm_test_script_repair,
-        _apply_deterministic_runtime_dependency_repair,
-    )
-
     results: list[dict[str, Any]] = []
-    results.extend(
-        _apply_deterministic_npm_test_script_repair(
-            adapter,
-            task_id=task_id,
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    for source_tool in _MATERIALIZATION_NODE_MANIFEST_RUNTIME_SOURCE_TOOLS:
+        base_files = _collect_materialization_node_manifest_base_files(
+            workspace_path,
+            task=task,
             artifact_quality_errors=artifact_quality_errors,
+            source_tool=source_tool,
         )
-    )
-    results.extend(
-        _apply_deterministic_runtime_dependency_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
+        if not base_files:
+            continue
+        results.extend(
+            run_runtime_repair_with_director_tools(
+                adapter,
+                workspace_path=workspace_path,
+                task_id=task_id,
+                source_tool=source_tool,
+                executor_factory=DirectorToolExecutor,
+                base_files=base_files,
+                artifact_quality_errors=artifact_quality_errors,
+                allowed_paths=tuple(base_files.keys()),
+                use_editor=True,
+                convergence_verifier=convergence_verifier,
+            )
         )
-    )
     return results
 
 
@@ -454,6 +522,7 @@ def _run_materialization_rust_compiler(
     *,
     task_id: str,
     artifact_quality_errors: list[str],
+    convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for source_tool in _MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS:
@@ -463,6 +532,7 @@ def _run_materialization_rust_compiler(
                 task_id=task_id,
                 artifact_quality_errors=artifact_quality_errors,
                 source_tool=source_tool,
+                convergence_verifier=convergence_verifier,
             )
         )
     return results
@@ -523,6 +593,136 @@ def _collect_materialization_runtime_base_files(
     return base_files
 
 
+def _collect_materialization_hygiene_base_files(
+    workspace_path: Path,
+    *,
+    task: Mapping[str, Any] | None,
+    artifact_quality_errors: list[str],
+    source_tool: str,
+) -> dict[str, str]:
+    if not workspace_path.is_dir():
+        return {}
+    if source_tool == "deterministic_scaffold_marker_cleanup" and not _task_allows_materialization_scaffold_cleanup(
+        task
+    ):
+        return {}
+    return _collect_materialization_runtime_base_files(
+        workspace_path,
+        artifact_quality_errors=artifact_quality_errors,
+        source_tool=source_tool,
+        allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".html", ".css", ".json"),
+        collect_unmatched_diagnostic_paths=True,
+        task=task,
+    )
+
+
+def _collect_materialization_node_manifest_base_files(
+    workspace_path: Path,
+    *,
+    task: Mapping[str, Any] | None,
+    artifact_quality_errors: list[str],
+    source_tool: str,
+) -> dict[str, str]:
+    base_files = _collect_materialization_runtime_base_files(
+        workspace_path,
+        artifact_quality_errors=artifact_quality_errors,
+        source_tool=source_tool,
+        allowed_suffixes=(".json", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"),
+        collect_unmatched_diagnostic_paths=True,
+        task=task,
+    )
+    for relative_path in ("package.json", "scripts/test.mjs", "scripts/test.js", "scripts/test.cjs"):
+        _add_existing_materialization_base_file(base_files, workspace_path, relative_path)
+    return base_files
+
+
+def _collect_materialization_target_runtime_base_files(
+    workspace_path: Path,
+    *,
+    task: Mapping[str, Any] | None,
+    artifact_quality_errors: list[str],
+    source_tool: str,
+) -> dict[str, str]:
+    base_files = _collect_materialization_runtime_base_files(
+        workspace_path,
+        artifact_quality_errors=artifact_quality_errors,
+        source_tool=source_tool,
+        allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"),
+        collect_unmatched_diagnostic_paths=True,
+        task=task,
+    )
+    if source_tool == "deterministic_missing_declared_target_repair":
+        _add_bounded_workspace_materialization_base_files(
+            base_files,
+            workspace_path,
+            allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"),
+            max_files=512,
+        )
+    return base_files
+
+
+def _add_bounded_workspace_materialization_base_files(
+    base_files: dict[str, str],
+    workspace_path: Path,
+    *,
+    allowed_suffixes: tuple[str, ...],
+    max_files: int,
+) -> None:
+    if not workspace_path.is_dir():
+        return
+    ignored_parts = {"node_modules", "dist", "build", "coverage", ".git", ".venv", "venv", "__pycache__"}
+    for candidate in sorted(workspace_path.rglob("*")):
+        if len(base_files) >= max_files:
+            return
+        if not candidate.is_file() or not candidate.name.lower().endswith(allowed_suffixes):
+            continue
+        try:
+            relative = candidate.relative_to(workspace_path).as_posix()
+        except ValueError:
+            continue
+        if any(part in ignored_parts for part in relative.split("/")):
+            continue
+        _add_existing_materialization_base_file(base_files, workspace_path, relative)
+
+
+def _add_existing_materialization_base_file(
+    base_files: dict[str, str],
+    workspace_path: Path,
+    relative_path: str,
+) -> None:
+    normalized = str(relative_path or "").strip().replace("\\", "/")
+    if not normalized or normalized in base_files:
+        return
+    full_path = (workspace_path / normalized).resolve()
+    try:
+        full_path.relative_to(workspace_path)
+    except ValueError:
+        return
+    if not full_path.is_file():
+        return
+    with suppress(OSError, UnicodeDecodeError):
+        base_files[normalized] = full_path.read_text(encoding="utf-8")
+
+
+def _task_allows_materialization_scaffold_cleanup(task: Mapping[str, Any] | None) -> bool:
+    if not isinstance(task, Mapping):
+        return False
+    metadata_raw = task.get("metadata")
+    metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+    if str(metadata.get("autofix_reason") or "").strip() == "deterministic_scaffold_residue_cleanup":
+        return True
+    task_text = _materialization_task_text_blob(task).lower()
+    return "scaffold" in task_text and "residue" in task_text and "audit-seed" in task_text
+
+
+def _materialization_task_text_blob(value: Any) -> str:
+    if isinstance(value, Mapping):
+        return "\n".join(_materialization_task_text_blob(item) for item in value.values())
+    if isinstance(value, list | tuple | set):
+        return "\n".join(_materialization_task_text_blob(item) for item in value)
+    return str(value or "")
+
+
 def _materialization_task_candidate_paths(
     task: Mapping[str, Any] | None,
     *,
@@ -559,6 +759,7 @@ def _run_materialization_rust_runtime_repair(
     task_id: str,
     artifact_quality_errors: list[str],
     source_tool: str,
+    convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     from .execution_tools import DirectorToolExecutor
     from .runtime_repair_tool_adapter import run_runtime_repair_with_director_tools
@@ -577,6 +778,7 @@ def _run_materialization_rust_runtime_repair(
         artifact_quality_errors=artifact_quality_errors,
         allowed_paths=tuple(base_files.keys()),
         use_editor=True,
+        convergence_verifier=convergence_verifier,
     )
 
 
@@ -608,61 +810,33 @@ def _run_materialization_target_runtime(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
-    from .deterministic_repairs.generic_repairs import _apply_deterministic_missing_declared_target_repair
-    from .deterministic_repairs.javascript_repairs import (
-        _apply_deterministic_javascript_esm_commonjs_entrypoint_repair,
-        _apply_deterministic_javascript_missing_export_repair,
-        _apply_deterministic_javascript_missing_method_runtime_repair,
-        _apply_deterministic_javascript_test_missing_target_repair,
-        _apply_deterministic_javascript_typescript_annotation_repair,
-    )
-
     results: list[dict[str, Any]] = []
-    results.extend(
-        _apply_deterministic_missing_declared_target_repair(
-            adapter,
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    for source_tool in _MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS:
+        base_files = _collect_materialization_target_runtime_base_files(
+            workspace_path,
             task=task,
-            task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
+            source_tool=source_tool,
         )
-    )
-    results.extend(
-        _apply_deterministic_javascript_test_missing_target_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
+        if not base_files:
+            continue
+        results.extend(
+            run_runtime_repair_with_director_tools(
+                adapter,
+                workspace_path=workspace_path,
+                task_id=task_id,
+                source_tool=source_tool,
+                executor_factory=DirectorToolExecutor,
+                base_files=base_files,
+                artifact_quality_errors=artifact_quality_errors,
+                allowed_paths=tuple(base_files.keys()),
+                use_editor=True,
+                convergence_verifier=convergence_verifier,
+            )
         )
-    )
-    results.extend(
-        _apply_deterministic_javascript_typescript_annotation_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_javascript_missing_export_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_javascript_esm_commonjs_entrypoint_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
-    results.extend(
-        _apply_deterministic_javascript_missing_method_runtime_repair(
-            adapter,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
-        )
-    )
     return results
 
 
@@ -672,6 +846,7 @@ def _run_materialization_python_import(
     task: dict[str, Any],
     task_id: str,
     artifact_quality_errors: list[str],
+    convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     del task
     workspace = Path(getattr(adapter, "workspace", "") or "")
@@ -696,6 +871,7 @@ def _run_materialization_python_import(
             artifact_quality_errors=artifact_quality_errors,
             allowed_paths=tuple(base_files.keys()),
             use_editor=True,
+            convergence_verifier=convergence_verifier,
         )
         if any(not bool(item.get("success", False)) for item in runtime_results):
             return [*results, *runtime_results]

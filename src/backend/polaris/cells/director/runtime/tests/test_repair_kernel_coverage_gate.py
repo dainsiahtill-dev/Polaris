@@ -64,6 +64,29 @@ def test_convergence_gate_records_report_and_fails_all_uncovered_diagnostics(tmp
     assert gap["audit_reason"] == "known_rule_matched=false"
 
 
+def test_public_coverage_projects_top_level_gap_report_for_audit_consumers() -> None:
+    raw_error = "declared target file missing app/models/widget.rb is missing"
+
+    payload = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(artifact_quality_errors=(raw_error,))
+    ).to_dict()
+
+    assert payload["coverage_gap_count"] == 1
+    assert payload["rule_discovery_required"] is True
+    assert payload["coverage_gap_languages"] == ["ruby"]
+    assert payload["coverage_gap_archetypes"] == ["missing_declared_target"]
+    assert payload["coverage_gap_diagnostic_codes"] == ["declared_target_missing"]
+    assert payload["coverage_gap_recommended_routes"] == ["llm_repair"]
+    assert payload["coverage_gap_slot_statuses"] == ["reserved_slot_available"]
+    assert payload["uncovered_diagnostics"][0]["code"] == "declared_target_missing"
+    gap = payload["coverage_gaps"][0]
+    assert gap["known_rule_matched"] is False
+    assert gap["audit_reason"] == "known_rule_matched=false"
+    assert gap["reserved_language_slot_matched"] is True
+    assert gap["reserved_language_slot"]["language"] == "ruby"
+    assert gap["recommended_next_owner"] == "runtime_rule"
+
+
 def test_convergence_gate_distinguishes_unselected_executable_runtime_match_from_metadata_only(
     tmp_path: Path,
 ) -> None:
@@ -341,16 +364,16 @@ def test_public_coverage_gap_projects_reserved_slot_and_recommended_owner_fields
     item = payload["items"][0]
 
     assert payload["agi_execution_authority"] is False
-    assert payload["coverage_gap_archetypes"] == ["unknown"]
+    assert payload["coverage_gap_archetypes"] == ["missing_declared_target"]
     assert payload["coverage_gap_diagnostic_codes"] == ["declared_target_missing"]
-    assert payload["coverage_gap_handoff_recommendations"] == ["llm_triage_then_runtime_rule"]
+    assert payload["coverage_gap_handoff_recommendations"] == ["runtime_rule_backlog"]
     assert payload["coverage_gap_recommended_routes"] == ["llm_repair"]
     assert payload["coverage_gap_slot_statuses"] == ["reserved_slot_available"]
     assert gap["language"] == "ruby"
     assert gap["diagnostic_language"] == "ruby"
     assert gap["diagnostic_code"] == "declared_target_missing"
     assert gap["phase_suggestion"] == "target_contract"
-    assert gap["archetype_suggestion"] == "unknown"
+    assert gap["archetype_suggestion"] == "missing_declared_target"
     assert gap["reserved_slot_available"] is True
     assert gap["slot_status"] == "reserved_slot_available"
     assert gap["reserved_language_slot_matched"] is True
@@ -359,8 +382,8 @@ def test_public_coverage_gap_projects_reserved_slot_and_recommended_owner_fields
     assert gap["reserved_slot_registration_policy"] == "bench_verified_rule_required"
     assert gap["recommended_next_owner"] == "runtime_rule"
     assert gap["recommended_route"] == "llm_repair"
-    assert gap["handoff_recommendation"] == "llm_triage_then_runtime_rule"
-    assert gap["llm_advisory_recommended"] is True
+    assert gap["handoff_recommendation"] == "runtime_rule_backlog"
+    assert gap["llm_advisory_recommended"] is False
     assert gap["agi_advisory_recommended"] is False
     assert gap["authoritative_rule_registration_allowed"] is False
     assert gap["recommended_registration_path"] == "bench_verified_rule_required"
@@ -370,7 +393,7 @@ def test_public_coverage_gap_projects_reserved_slot_and_recommended_owner_fields
     assert item["reserved_language_slot"]["language"] == "ruby"
     assert item["recommended_next_owner"] == "runtime_rule"
     assert item["recommended_route"] == "llm_repair"
-    assert item["handoff_recommendation"] == "llm_triage_then_runtime_rule"
+    assert item["handoff_recommendation"] == "runtime_rule_backlog"
     assert item["coverage_status"] == "coverage_gap"
     assert item["authoritative_rule_registration_allowed"] is False
 

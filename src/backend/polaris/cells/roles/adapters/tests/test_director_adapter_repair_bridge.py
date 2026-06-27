@@ -1607,6 +1607,135 @@ def test_materialization_python_import_runs_through_runtime_bridge(
     assert results[0]["result"]["source_tool"] == "deterministic_unresolved_import_symbol_repair"
 
 
+def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs import (
+        generic_repairs,
+        javascript_repairs,
+        npm_repairs,
+        typeorm_repairs,
+    )
+
+    source = tmp_path / "src" / "app.ts"
+    source.parent.mkdir(parents=True)
+    source.write_text("export const label = 'audit-seed scaffold residue';\n", encoding="utf-8")
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "test.mjs").write_text("console.log('test');\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node scripts/test.mjs"},"dependencies":{}}\n',
+        encoding="utf-8",
+    )
+
+    legacy_helpers = (
+        (generic_repairs, "_apply_deterministic_scaffold_marker_cleanup"),
+        (generic_repairs, "_apply_deterministic_scaffold_marker_error_cleanup"),
+        (generic_repairs, "_apply_deterministic_missing_declared_target_repair"),
+        (npm_repairs, "_apply_deterministic_npm_test_script_repair"),
+        (npm_repairs, "_apply_deterministic_runtime_dependency_repair"),
+        (npm_repairs, "_apply_deterministic_typescript_scaffold_repair"),
+        (typeorm_repairs, "_apply_deterministic_typeorm_model_normalization_repair"),
+        (javascript_repairs, "_apply_deterministic_javascript_test_missing_target_repair"),
+        (javascript_repairs, "_apply_deterministic_javascript_typescript_annotation_repair"),
+        (javascript_repairs, "_apply_deterministic_javascript_missing_export_repair"),
+        (javascript_repairs, "_apply_deterministic_javascript_esm_commonjs_entrypoint_repair"),
+        (javascript_repairs, "_apply_deterministic_javascript_missing_method_runtime_repair"),
+    )
+
+    def fail_if_legacy_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise AssertionError("materialization migrated step called a legacy direct helper")
+
+    for module, helper_name in legacy_helpers:
+        monkeypatch.setattr(module, helper_name, fail_if_legacy_called)
+
+    runtime_calls: list[dict[str, Any]] = []
+    sentinel_verifier = object()
+
+    def fake_runtime_bridge(
+        adapter: Any,
+        *,
+        workspace_path: Path,
+        task_id: str,
+        source_tool: str,
+        executor_factory: Any,
+        base_files: dict[str, str],
+        artifact_quality_errors: list[str],
+        allowed_paths: tuple[str, ...],
+        use_editor: bool,
+        convergence_verifier: Any = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        del adapter, executor_factory, artifact_quality_errors, kwargs
+        runtime_calls.append(
+            {
+                "workspace_path": workspace_path,
+                "task_id": task_id,
+                "source_tool": source_tool,
+                "base_files": dict(base_files),
+                "allowed_paths": tuple(allowed_paths),
+                "use_editor": use_editor,
+                "convergence_verifier": convergence_verifier,
+            }
+        )
+        return []
+
+    monkeypatch.setattr(materialization_quality_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
+    task = {
+        "target_files": ["src/app.ts"],
+        "metadata": {"autofix_reason": "deterministic_scaffold_residue_cleanup"},
+    }
+    artifact_quality_errors = [
+        "deterministic scaffold marker 'audit-seed' in src/app.ts",
+        "package.json missing",
+        "tsconfig.json missing",
+        "undeclared runtime import 'express' in src/app.ts",
+        "declared target file src/app.model.ts is missing",
+        "Node test runner contract failed: scripts/test.mjs",
+    ]
+
+    adapter = _FakeAdapter(tmp_path)
+    materialization_quality_repair_bridge._run_materialization_hygiene_scaffold(
+        adapter,
+        task=task,
+        task_id="task-materialization-hard-cut",
+        artifact_quality_errors=artifact_quality_errors,
+        convergence_verifier=sentinel_verifier,
+    )
+    materialization_quality_repair_bridge._run_materialization_typescript_scaffold(
+        adapter,
+        task=task,
+        task_id="task-materialization-hard-cut",
+        artifact_quality_errors=artifact_quality_errors,
+        convergence_verifier=sentinel_verifier,
+    )
+    materialization_quality_repair_bridge._run_materialization_node_manifest(
+        adapter,
+        task=task,
+        task_id="task-materialization-hard-cut",
+        artifact_quality_errors=artifact_quality_errors,
+        convergence_verifier=sentinel_verifier,
+    )
+    materialization_quality_repair_bridge._run_materialization_target_runtime(
+        adapter,
+        task=task,
+        task_id="task-materialization-hard-cut",
+        artifact_quality_errors=artifact_quality_errors,
+        convergence_verifier=sentinel_verifier,
+    )
+
+    assert [call["source_tool"] for call in runtime_calls] == [
+        *materialization_quality_repair_bridge._MATERIALIZATION_HYGIENE_RUNTIME_SOURCE_TOOLS,
+        *materialization_quality_repair_bridge._MATERIALIZATION_TYPESCRIPT_SCAFFOLD_RUNTIME_SOURCE_TOOLS,
+        *materialization_quality_repair_bridge._MATERIALIZATION_NODE_MANIFEST_RUNTIME_SOURCE_TOOLS,
+        *materialization_quality_repair_bridge._MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS,
+    ]
+    assert all(call["workspace_path"] == tmp_path.resolve() for call in runtime_calls)
+    assert all(call["task_id"] == "task-materialization-hard-cut" for call in runtime_calls)
+    assert all(call["use_editor"] is True for call in runtime_calls)
+    assert all(call["convergence_verifier"] is sentinel_verifier for call in runtime_calls)
+
+
 def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     tmp_path: Path,
     monkeypatch: Any,
