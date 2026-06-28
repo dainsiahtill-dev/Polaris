@@ -368,6 +368,57 @@ def _merge_ce_blueprint_contract_payload(
     return merged
 
 
+def _director_actual_interface_injection_enabled() -> bool:
+    """Default OFF -> byte-identical legacy prompt. Opt in to inject the actual
+    exported symbols of already-generated workspace files into the Director prompt."""
+    raw = str(os.environ.get("KERNELONE_DIRECTOR_INJECT_WORKSPACE_INTERFACE", "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _build_director_workspace_interface_lines(workspace: str) -> list[str]:
+    """Inject the ACTUAL exported symbols of already-generated workspace files.
+
+    A consumer task (e.g. the CLI/engine that imports the models a prior task
+    generated) otherwise only receives the CE's PREDICTED interface or a generic
+    "read the existing files first" hint, so the model guesses symbol names
+    (root#4 cross-file incoherence) or read-explores siblings at runtime (no-write
+    retry batches). Bounded to names + kinds + signatures, never file bodies.
+    Inert on error or empty workspace.
+    """
+    try:
+        from polaris.kernelone.quality.cross_artifact_interfaces import build_symbol_index_snapshot
+
+        snapshot = build_symbol_index_snapshot(workspace)
+    except (OSError, RuntimeError, ValueError, TypeError, ImportError):
+        return []
+    exports = getattr(snapshot, "physical_exports", {}) or {}
+    if not exports:
+        return []
+    lines: list[str] = [
+        "已生成文件的实际导出接口 / Actual exported interface of already-generated sibling files:",
+        "(消费或引用这些文件时必须使用下列真实符号名与签名，禁止臆造；这些即真实接口，无需先 read_file 探索)",
+    ]
+    file_count = 0
+    for path in sorted(exports):
+        symbols = exports[path]
+        if not symbols:
+            continue
+        rendered: list[str] = []
+        for sym in symbols[:14]:
+            name = str(getattr(sym, "name", "") or "")
+            if not name:
+                continue
+            sig = str(getattr(sym, "signature", "") or "")
+            kind = str(getattr(sym, "symbol_kind", "") or "")
+            rendered.append(name + (f"({sig})" if sig else "") + (f" [{kind}]" if kind else ""))
+        if rendered:
+            lines.append(f"- {path}: " + ", ".join(rendered))
+            file_count += 1
+        if file_count >= 24:
+            break
+    return lines if file_count else []
+
+
 def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -> list[str]:
     resolved_blueprint_id = str(blueprint_id or "").strip()
     if not resolved_blueprint_id:
@@ -1690,6 +1741,12 @@ class DirectorAdapter(BaseRoleAdapter):
                 f"- factory bench project: {factory_project}" + (f" - {factory_title}" if factory_title else "")
                 if factory_project or factory_title
                 else ""
+            ),
+            "",
+            *(
+                _build_director_workspace_interface_lines(self.workspace)
+                if _director_actual_interface_injection_enabled()
+                else []
             ),
             "",
             "QA 返工要求:" if qa_rework_reason else "",
