@@ -1757,14 +1757,23 @@ async def _run_materialization_quality_repair_retry(
             # content -> single_batch_contract_violation (no write tool invocation,
             # factory_bench L3-01). Force a write/edit tool call (model still picks
             # edit_file vs write_file) and drop execute_command.
+            # Use the dict tool_choice format the provider actually honors (the
+            # missing-target branch above and the main path both force via dict and
+            # get content; a bare "required" string was NOT honored by the bound
+            # provider -> empty response, L3-01). Force edit_file (targeted, non-
+            # destructive for an existing file) with force_exact_tools so the model
+            # must emit a real edit instead of exploring or returning empty.
             repair_context["_transaction_kernel_forced_tool_definitions"] = [
                 _quality_repair_edit_file_tool_definition(),
-                _quality_repair_write_file_tool_definition(),
             ]
-            repair_context["_transaction_kernel_forced_tool_choice"] = "required"
+            repair_context["_transaction_kernel_forced_tool_choice"] = {
+                "type": "function",
+                "function": {"name": "edit_file"},
+            }
+            repair_context["_transaction_kernel_force_exact_tools"] = True
             repair_metadata["tool_contract"] = {
                 **dict(repair_metadata.get("tool_contract") or {}),
-                "required_tools": ["edit_file", "write_file"],
+                "required_tools": ["edit_file"],
             }
             repair_context["director_quality_repair"]["edit_preferred_target_files"] = existing_repair_target_files[:12]
         else:
