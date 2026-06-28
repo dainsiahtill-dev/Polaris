@@ -155,6 +155,20 @@ def _quality_repair_execute_command_tool_definition() -> dict[str, Any]:
     }
 
 
+def _director_repair_force_existing_write_enabled() -> bool:
+    """Default OFF -> byte-identical. Opt in so an existing-file quality repair forces
+    a write/edit tool call (tool_choice=required, execute_command dropped) instead of
+    leaving tool_choice auto with execute_command available -- which let weak models
+    explore or return empty content, producing single_batch_contract_violation: no
+    write tool invocation (factory_bench L3-01 repair could not materialize the fix)."""
+    return str(os.environ.get("KERNELONE_DIRECTOR_REPAIR_FORCE_EXISTING_WRITE", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _quality_repair_existing_target_tool_definitions() -> list[dict[str, Any]]:
     return [
         _quality_repair_edit_file_tool_definition(),
@@ -1737,6 +1751,22 @@ async def _run_materialization_quality_repair_retry(
                 _quality_repair_write_file_tool_definition()
             ]
             repair_context["_transaction_kernel_force_exact_tools"] = True
+        elif _director_repair_force_existing_write_enabled():
+            # Existing-file repair must MUTATE, not explore. Auto tool_choice plus an
+            # available execute_command let weak models run a command or return empty
+            # content -> single_batch_contract_violation (no write tool invocation,
+            # factory_bench L3-01). Force a write/edit tool call (model still picks
+            # edit_file vs write_file) and drop execute_command.
+            repair_context["_transaction_kernel_forced_tool_definitions"] = [
+                _quality_repair_edit_file_tool_definition(),
+                _quality_repair_write_file_tool_definition(),
+            ]
+            repair_context["_transaction_kernel_forced_tool_choice"] = "required"
+            repair_metadata["tool_contract"] = {
+                **dict(repair_metadata.get("tool_contract") or {}),
+                "required_tools": ["edit_file", "write_file"],
+            }
+            repair_context["director_quality_repair"]["edit_preferred_target_files"] = existing_repair_target_files[:12]
         else:
             repair_context["_transaction_kernel_forced_tool_definitions"] = (
                 _quality_repair_existing_target_tool_definitions()
