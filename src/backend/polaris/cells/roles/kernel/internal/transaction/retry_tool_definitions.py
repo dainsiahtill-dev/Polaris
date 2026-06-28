@@ -358,6 +358,14 @@ def select_bootstrap_followup_write_tool_name(
     return default_write_tool_name
 
 
+def _forced_write_allow_read_companions_enabled() -> bool:
+    """Default OFF -> byte-identical write-only forced retry. Opt in via env to
+    add read companions so a strong model can read-then-write a cross-file repair
+    in the single forced-write batch (the batch contract still requires a write)."""
+    raw = str(os.environ.get("KERNELONE_DIRECTOR_FORCED_WRITE_ALLOW_READ", "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def build_forced_write_only_retry_tool_definitions(
     tool_definitions: list[dict],
     forced_write_tool_name: str | None,
@@ -377,6 +385,15 @@ def build_forced_write_only_retry_tool_definitions(
     companion_tool_names: set[str] = {forced_write_tool_name}
     if forced_write_tool_name in {"repo_apply_diff"}:
         companion_tool_names.update({"read_file", "repo_read_head"})
+    elif _forced_write_allow_read_companions_enabled():
+        # MiniMax-M3 / strong models legitimately read the current file before
+        # editing it for a cross-file REPAIR; a write-only narrowed set rejects
+        # that read ("tools outside narrowed set", 27x on factory-bench L1-04/05,
+        # 2026-06-28) and burns the retry budget without a write. Offer read
+        # companions so the model can read-then-write inside the single batch;
+        # the batch contract guard still requires a write, so a read-only batch
+        # is still rejected. Default OFF -> byte-identical legacy behaviour.
+        companion_tool_names.update({"read_file", "repo_read_head", "repo_read_slice", "repo_read_around"})
     if forced_write_tool_name == "edit_blocks" and allow_write_file_companion_for_edit_blocks:
         # New-file deadlock fix (factory-bench L1-03/L1-02 live, 2026-06-12):
         # edit_blocks cannot create files and its teaching error tells the
