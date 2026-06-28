@@ -436,6 +436,19 @@ def build_tool_filter_audit(
     }
 
 
+def _multi_target_first_turn_write_enabled() -> bool:
+    """Default OFF -> byte-identical single-target behaviour. Opt in so a multi-new-
+    file task (no single construction_step target, e.g. a validation+README task)
+    still injects a first-turn write_file for the first missing declared target,
+    avoiding ``no_write_tool_available`` (factory_bench L1-03 TASK-3, 2026-06-29)."""
+    return str(os.environ.get("KERNELONE_DIRECTOR_MULTI_TARGET_FIRST_WRITE", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def resolve_from_scratch_write_target(context_override: Any, workspace: str) -> str | None:
     """Return the single target of a FROM-SCRATCH leaf step, else None (I3-r23).
 
@@ -455,23 +468,48 @@ def resolve_from_scratch_write_target(context_override: Any, workspace: str) -> 
         return None
     if not isinstance(context_override, dict):
         return None
-    step = context_override.get("construction_step")
-    if not isinstance(step, dict) or not step:
-        return None
-    if step.get("edit_on_prior"):
-        return None
-    target = str(step.get("target_file") or "").strip().replace("\\", "/")
-    while target.startswith("./"):
-        target = target[2:]
-    if not target:
-        return None
     ws = str(workspace or ".").strip() or "."
-    try:
-        if os.path.exists(os.path.join(ws, target)):
-            return None  # existing file → edit mode, keep read-first
-    except OSError:
+    step = context_override.get("construction_step")
+    if isinstance(step, dict) and step and not step.get("edit_on_prior"):
+        target = str(step.get("target_file") or "").strip().replace("\\", "/")
+        while target.startswith("./"):
+            target = target[2:]
+        if target:
+            try:
+                if not os.path.exists(os.path.join(ws, target)):
+                    return target  # single from-scratch leaf step
+            except OSError:
+                return None
+    # FALLBACK (flag-gated, default OFF): a multi-new-file task (e.g. a validation +
+    # README task declaring several NEW files) has no single from-scratch
+    # construction_step target, so the single-step path above yields None and the
+    # turn is left with no write tool (no_write_tool_available, L1-03 TASK-3). When
+    # ANY declared target file is still missing, return the first missing one so a
+    # scoped first-turn write_file is injected. No-op when no declared targets exist.
+    if not _multi_target_first_turn_write_enabled():
         return None
-    return target
+    declared: list[str] = []
+    for _key in ("target_files", "scope_paths"):
+        _value = context_override.get(_key)
+        if isinstance(_value, (list, tuple)):
+            declared.extend(str(_item) for _item in _value)
+    _task_obj = context_override.get("task")
+    if isinstance(_task_obj, dict):
+        _value = _task_obj.get("target_files")
+        if isinstance(_value, (list, tuple)):
+            declared.extend(str(_item) for _item in _value)
+    for _raw in declared:
+        _candidate = _raw.strip().replace("\\", "/")
+        while _candidate.startswith("./"):
+            _candidate = _candidate[2:]
+        if not _candidate or _candidate.endswith("/"):
+            continue
+        try:
+            if not os.path.exists(os.path.join(ws, _candidate)):
+                return _candidate
+        except OSError:
+            continue
+    return None
 
 
 def restrict_tool_definitions_to_write(tool_definitions: list[dict[str, Any]]) -> list[dict[str, Any]]:
