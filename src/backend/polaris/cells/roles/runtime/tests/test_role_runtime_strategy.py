@@ -756,7 +756,15 @@ class TestRoleRuntimeServiceStrategy:
                     "ok": True,
                     "llm_call_count": 1,
                     "latest": {"prompt_digest": "receipt123"},
-                }
+                },
+                "final_request_context_audit": {
+                    "schema_version": "llm.final_request_context_audit.v1",
+                    "message_count": 2,
+                    "tool_schema_count": 3,
+                    "final_request_token_estimate": 456,
+                },
+                "context_snapshot_ref": "abc123abc123abc123abc123",
+                "transaction_kernel_error_audit_available": True,
             },
         )
 
@@ -777,6 +785,7 @@ class TestRoleRuntimeServiceStrategy:
         assert evidence["receipt_recorded"] is True
         assert evidence["handoff_exported"] is True
         assert evidence["context_os_audit_recorded"] is True
+        assert evidence["final_request_context_audit_recorded"] is True
         assert evidence["receipt_id"] == "receipt-1"
         assert evidence["handoff_id"] == "handoff-1"
         assert patched.metadata["cognitive_runtime_evidence"]["receipt_id"] == "receipt-1"
@@ -785,6 +794,12 @@ class TestRoleRuntimeServiceStrategy:
         assert fake_service.handoff_command is not None
         assert fake_service.receipt_command.payload["role"] == "director"
         assert fake_service.receipt_command.payload["context_os_audit"]["latest"]["prompt_digest"] == "receipt123"
+        assert (
+            fake_service.receipt_command.payload["final_request_context_audit"]["schema_version"]
+            == "llm.final_request_context_audit.v1"
+        )
+        assert fake_service.receipt_command.payload["context_snapshot_ref"] == "abc123abc123abc123abc123"
+        assert fake_service.receipt_command.payload["transaction_kernel_error_audit_available"] is True
         assert fake_service.handoff_command.turn_envelope["receipt_ids"] == ["receipt-1"]
 
     def test_required_cognitive_runtime_evidence_fails_closed_when_disabled(self) -> None:

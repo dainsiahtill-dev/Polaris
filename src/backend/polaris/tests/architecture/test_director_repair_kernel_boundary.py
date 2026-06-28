@@ -1149,7 +1149,7 @@ def test_typescript_source_tools_do_not_return_to_legacy_strategy_host() -> None
         or source_tool in MIGRATED_TYPESCRIPT_SOURCE_TOOL_NAMES
     ]
     legacy_failure_message = (
-        "expected public strategy catalog ledger total=90 executable_runtime=90 legacy_strategy_host=0; "
+        "expected public strategy catalog ledger total=93 executable_runtime=93 legacy_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
         "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
     )
@@ -1158,10 +1158,10 @@ def test_typescript_source_tools_do_not_return_to_legacy_strategy_host() -> None
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
-    assert catalog_summary["total"] == 90, legacy_failure_message
+    assert catalog_summary["total"] == 93, legacy_failure_message
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert legacy_source_tools == [], legacy_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 90, legacy_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 93, legacy_failure_message
     assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, legacy_failure_message
     assert catalog_summary["legacy_strategy_host_count"] == 0, legacy_failure_message
 

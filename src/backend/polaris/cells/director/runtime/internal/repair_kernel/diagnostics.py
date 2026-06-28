@@ -10,6 +10,11 @@ _TS_ERROR_RE = re.compile(
     r"(?P<path>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<column>\d+)\):\s*error\s+(?P<code>TS\d+):\s*(?P<message>[^\n]+)",
     re.IGNORECASE,
 )
+_TS_ROOTDIR_FILE_ERROR_RE = re.compile(
+    r"error\s+TS6059:\s*File\s+['\"](?P<path>[^'\"]+\.tsx?)['\"]\s+is\s+not\s+under\s+"
+    r"['\"]rootDir['\"]\s+['\"](?P<root_dir>[^'\"]+)['\"]",
+    re.IGNORECASE,
+)
 _TS_RETURN_OBJECT_SEMICOLON_RE = re.compile(
     r"TypeScript return object contains semicolon-terminated property in (?P<path>\S+)",
     re.IGNORECASE,
@@ -46,7 +51,23 @@ _PYTHON_EXCEPTION_RE = re.compile(
 )
 _JAVASCRIPT_MODULE_ERROR_RE = re.compile(
     r"(?P<message>Cannot find module ['\"][^'\"]+['\"]|does not provide an export named ['\"][^'\"]+['\"]|"
-    r"require is not defined in ES module scope|Cannot use import statement outside a module)",
+    r"require is not defined in ES module scope|exports is not defined in ES module scope|"
+    r"Cannot use import statement outside a module|"
+    r"[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\s+is not a function)",
+    re.IGNORECASE,
+)
+_JAVASCRIPT_DOM_GLOBAL_RUNTIME_RE = re.compile(
+    r"(?P<file>(?:file://)?/[^\s:]+\.js):(?P<line>\d+).*?"
+    r"ReferenceError:\s+(?P<global>document|window)\s+is not defined",
+    re.IGNORECASE | re.DOTALL,
+)
+_TYPESCRIPT_COMMONJS_PACKAGE_TYPE_RUNTIME_RE = re.compile(
+    r"exports is not defined in ES module scope.*?package\.json.*?contains\s+['\"]type['\"]:\s*['\"]module['\"]"
+    r".*?CommonJS",
+    re.IGNORECASE | re.DOTALL,
+)
+_HTML_CONTAINER_VALIDATION_RE = re.compile(
+    r"htmlTag\s*=\s*true\s+canvas\s*=\s*true\s+container\s*=\s*false",
     re.IGNORECASE,
 )
 _DECLARED_TARGET_MISSING_RE = re.compile(
@@ -80,8 +101,44 @@ def normalize_artifact_quality_errors(errors: list[str]) -> tuple[RepairDiagnost
         text = str(raw or "").strip()
         if not text:
             continue
+        expanded = _normalize_typescript_errors(text)
+        if expanded:
+            diagnostics.extend(expanded)
+            continue
         diagnostics.append(_normalize_one_error(text))
     return tuple(diagnostics)
+
+
+def _normalize_typescript_errors(text: str) -> list[RepairDiagnostic]:
+    diagnostics: list[RepairDiagnostic] = []
+    for match in _TS_ERROR_RE.finditer(text):
+        code = str(match.group("code") or "typescript_error").lower()
+        diagnostics.append(
+            RepairDiagnostic(
+                source="artifact_quality",
+                code=f"typescript_{code}",
+                message=str(match.group("message") or text).strip(),
+                path=str(match.group("path") or "").strip(),
+                line=_to_int(match.group("line")),
+                column=_to_int(match.group("column")),
+                raw=str(match.group(0) or text).strip(),
+            )
+        )
+    for match in _TS_ROOTDIR_FILE_ERROR_RE.finditer(text):
+        raw_path = str(match.group("path") or "").strip()
+        root_dir = str(match.group("root_dir") or "").strip()
+        rel_path = _typescript_rootdir_relative_path(raw_path)
+        diagnostics.append(
+            RepairDiagnostic(
+                source="compiler",
+                code="typescript_ts6059",
+                message=f"TypeScript source file is outside rootDir: {rel_path or raw_path}",
+                path=rel_path or None,
+                raw=str(match.group(0) or text).strip(),
+                metadata={"raw_path": raw_path, "root_dir": root_dir},
+            )
+        )
+    return diagnostics
 
 
 def _normalize_one_error(text: str) -> RepairDiagnostic:
@@ -96,6 +153,20 @@ def _normalize_one_error(text: str) -> RepairDiagnostic:
             line=_to_int(match.group("line")),
             column=_to_int(match.group("column")),
             raw=text,
+        )
+
+    match = _TS_ROOTDIR_FILE_ERROR_RE.search(text)
+    if match:
+        raw_path = str(match.group("path") or "").strip()
+        root_dir = str(match.group("root_dir") or "").strip()
+        rel_path = _typescript_rootdir_relative_path(raw_path)
+        return RepairDiagnostic(
+            source="compiler",
+            code="typescript_ts6059",
+            message=f"TypeScript source file is outside rootDir: {rel_path or raw_path}",
+            path=rel_path or None,
+            raw=text,
+            metadata={"raw_path": raw_path, "root_dir": root_dir},
         )
 
     match = _TS_RETURN_OBJECT_SEMICOLON_RE.search(text)
@@ -156,6 +227,40 @@ def _normalize_one_error(text: str) -> RepairDiagnostic:
             path=str(match.group("path") or "").strip(),
             line=_to_int(match.group("line")),
             raw=text,
+        )
+
+    match = _TYPESCRIPT_COMMONJS_PACKAGE_TYPE_RUNTIME_RE.search(text)
+    if match:
+        return RepairDiagnostic(
+            source="runtime_smoke",
+            code="typescript_commonjs_package_type",
+            message="TypeScript CommonJS module output requires package type commonjs, not module.",
+            raw=text,
+            metadata={"language": "typescript"},
+        )
+
+    match = _JAVASCRIPT_DOM_GLOBAL_RUNTIME_RE.search(text)
+    if match:
+        return RepairDiagnostic(
+            source="runtime_smoke",
+            code="javascript_dom_global_in_node_runtime",
+            message=f"Browser DOM global {str(match.group('global') or '').strip()} is not available in Node.",
+            path=str(match.group("file") or "").removeprefix("file://"),
+            line=_to_int(match.group("line")),
+            raw=text,
+            metadata={
+                "language": "javascript",
+                "runtime_global": str(match.group("global") or "").strip(),
+            },
+        )
+
+    if _HTML_CONTAINER_VALIDATION_RE.search(text):
+        return RepairDiagnostic(
+            source="verifier",
+            code="html_container_contract_failed",
+            message="HTML verification found a canvas page but no recognized container id.",
+            raw=text,
+            metadata={"language": "html", "contract": "html_container"},
         )
 
     javascript_module_error = _JAVASCRIPT_MODULE_ERROR_RE.search(text)
@@ -249,3 +354,18 @@ def _to_int(value: object) -> int | None:
         return int(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def _typescript_rootdir_relative_path(path: str) -> str:
+    normalized = str(path or "").strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if not normalized:
+        return ""
+    for marker in ("/tests/", "/test/", "/src/"):
+        index = normalized.find(marker)
+        if index >= 0:
+            return normalized[index + 1 :]
+    if normalized.startswith(("tests/", "test/", "src/")):
+        return normalized
+    return ""

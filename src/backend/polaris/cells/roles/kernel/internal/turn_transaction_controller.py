@@ -52,6 +52,7 @@ TurnTransactionController 是**新架构**的事务化执行器，与 TurnEngine
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -799,6 +800,8 @@ class TurnTransactionController:
                 )
 
                 ledger.finalize()
+                with contextlib.suppress(TypeError):
+                    vars(e)["turn_ledger"] = ledger
                 self._emit_phase_event(
                     ErrorEvent(
                         turn_id=turn_id,

@@ -1524,6 +1524,156 @@ async def test_retry_bootstrap_scaffold_followup_forces_write_file(monkeypatch) 
 
 
 @pytest.mark.asyncio
+async def test_retry_bootstrap_existing_edit_blocks_followup_keeps_write_file_companion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    workspace = tmp_path
+    (workspace / "src").mkdir()
+    (workspace / "src/existing.ts").write_text("export const oldValue = true;\n", encoding="utf-8")
+    monkeypatch.setenv("KERNELONE_WORKSPACE", str(workspace))
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+    )
+    state_machine = TurnStateMachine(turn_id="turn_retry_existing_edit_blocks")
+    ledger = TurnLedger(turn_id="turn_retry_existing_edit_blocks")
+    context = [
+        {
+            "role": "user",
+            "content": "请修复 src/existing.ts，必须修改该文件并验证。",
+        }
+    ]
+    captured: dict[str, object] = {
+        "tool_choice_overrides": [],
+        "llm_tool_definition_names": [],
+        "execute_allowed_names": [],
+    }
+
+    async def _fake_call_llm_for_decision(
+        ctx: Any,
+        tool_definitions: Any,
+        llm_ledger: Any,
+        *,
+        tool_choice_override: Any = None,
+        model_override: Any = None,
+        temperature_override: Any = None,
+        max_tokens_floor: Any = None,
+    ) -> RawLLMResponse:
+        del ctx, llm_ledger, model_override, temperature_override, max_tokens_floor
+        cast(list[object], captured["tool_choice_overrides"]).append(tool_choice_override)
+        cast(list[set[str]], captured["llm_tool_definition_names"]).append(
+            extract_allowed_tool_names_from_definitions(list(tool_definitions))
+        )
+        return RawLLMResponse(content="", native_tool_calls=[])
+
+    def _fake_decode(_response: Any, _turn_id: Any) -> dict[str, Any]:
+        return {
+            "kind": TurnDecisionKind.TOOL_BATCH,
+            "turn_id": "turn_retry_existing_edit_blocks",
+            "metadata": {"workspace": str(workspace)},
+            "tool_batch": {
+                "invocations": [
+                    {
+                        "tool_name": "write_file",
+                        "arguments": {
+                            "file": "src/existing.ts",
+                            "content": "export const oldValue = false;\n",
+                        },
+                    }
+                ]
+            },
+        }
+
+    async def _fake_execute_tool_batch(
+        decision: Mapping[str, object],
+        sm: Any,
+        lg: Any,
+        exec_context: Any,
+        *,
+        stream: bool,
+        shadow_engine: Any,
+        allowed_tool_names: set[str] | None = None,
+        count_towards_batch_limit: bool = True,
+    ) -> dict[str, object]:
+        del sm, lg, exec_context, stream, shadow_engine, count_towards_batch_limit
+        cast(list[set[str]], captured["execute_allowed_names"]).append(set(allowed_tool_names or set()))
+        tool_batch = cast(Mapping[str, object], decision.get("tool_batch") or {})
+        invocations = cast(list[Mapping[str, object]], tool_batch.get("invocations") or [])
+        assert invocations
+        assert invocations[0].get("tool_name") == "write_file"
+        return {"kind": "tool_batch_with_receipt", "batch_receipt": None}
+
+    async def _fake_execute_read_bootstrap_batch(
+        *,
+        turn_id: str,
+        workspace: str,
+        tool_batch: Any,
+        ledger: Any,
+    ) -> dict[str, object]:
+        del turn_id, workspace, tool_batch, ledger
+        return {
+            "results": [
+                {
+                    "tool_name": "read_file",
+                    "status": "success",
+                    "result": {
+                        "file": "src/existing.ts",
+                        "content": "export const oldValue = true;\n",
+                    },
+                }
+            ]
+        }
+
+    original_decision = {
+        "kind": TurnDecisionKind.TOOL_BATCH,
+        "turn_id": "turn_retry_existing_edit_blocks",
+        "metadata": {"workspace": str(workspace)},
+        "tool_batch": {
+            "invocations": [
+                {
+                    "tool_name": "read_file",
+                    "arguments": {"file": "src/existing.ts"},
+                }
+            ]
+        },
+    }
+    monkeypatch.setattr(controller, "_call_llm_for_decision", _fake_call_llm_for_decision)
+    monkeypatch.setattr(controller.decoder, "decode", _fake_decode)
+    monkeypatch.setattr(controller._retry_orchestrator, "execute_tool_batch", _fake_execute_tool_batch)
+    monkeypatch.setattr(
+        controller._retry_orchestrator,
+        "execute_read_bootstrap_batch",
+        _fake_execute_read_bootstrap_batch,
+    )
+
+    result = await controller._retry_tool_batch_after_contract_violation(
+        turn_id="turn_retry_existing_edit_blocks",
+        context=context,
+        tool_definitions=[
+            {"type": "function", "function": {"name": "read_file"}},
+            {"type": "function", "function": {"name": "edit_blocks"}},
+            {"type": "function", "function": {"name": "write_file"}},
+            {"type": "function", "function": {"name": "edit_file"}},
+            {"type": "function", "function": {"name": "execute_command"}},
+        ],
+        state_machine=state_machine,
+        ledger=ledger,
+        stream=False,
+        shadow_engine=None,
+        original_decision=original_decision,
+    )
+
+    assert result["kind"] == "tool_batch_with_receipt"
+    assert cast(list[object], captured["tool_choice_overrides"]) == [None]
+    assert cast(list[set[str]], captured["llm_tool_definition_names"]) == [
+        {"edit_blocks", "write_file", "execute_command"}
+    ]
+    assert cast(list[set[str]], captured["execute_allowed_names"]) == [{"edit_blocks", "write_file", "execute_command"}]
+
+
+@pytest.mark.asyncio
 async def test_retry_known_target_requires_read_switches_to_context_bootstrap(monkeypatch) -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),

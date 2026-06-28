@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 from typing import Any
@@ -13,12 +14,21 @@ from .contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_tex
 JAVASCRIPT_ESM_COMMONJS_ENTRYPOINT_SOURCE_TOOL = "deterministic_javascript_esm_commonjs_entrypoint_repair"
 JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL = "deterministic_javascript_missing_export_repair"
 JAVASCRIPT_MISSING_METHOD_RUNTIME_SOURCE_TOOL = "deterministic_javascript_missing_method_runtime_repair"
+JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL = "deterministic_javascript_dom_global_runtime_guard_repair"
 JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL = "deterministic_javascript_test_missing_target_repair"
 NODE_TEST_SCRIPT_CONTRACT_SOURCE_TOOL = "deterministic_node_test_script_contract_repair"
 NPM_SCRIPT_CONTRACT_SOURCE_TOOL = "deterministic_npm_script_contract_repair"
 
 _MISSING_NPM_SCRIPT_ENTRYPOINT_RE = re.compile(
     r"npm package manifest script '([^']+)' references missing local entrypoint '([^']+)'",
+    re.IGNORECASE,
+)
+_NODE_CANNOT_FIND_MODULE_DIST_RE = re.compile(
+    r"Cannot find module ['\"](?P<path>[^'\"]*/dist/[^'\"]+\.js)['\"]",
+    re.IGNORECASE,
+)
+_HTTP_SERVER_FIXED_PORT_RE = re.compile(
+    r"(?P<flag>\s(?:-p|--port)\s+)(?P<port>\d{2,5})(?=$|\s)",
     re.IGNORECASE,
 )
 _RECURSIVE_NPM_SCRIPT_RE = re.compile(
@@ -34,10 +44,20 @@ _MISSING_NAMED_EXPORT_RE = re.compile(
     r"The requested module ['\"](?P<module>\.[^'\"]+)['\"] does not provide an export named "
     r"['\"](?P<symbol>[A-Za-z_$][\w$]*)['\"]",
 )
-_NODE_LOCAL_TEST_TARGET_RE = re.compile(
-    r"(?:^|[;&|]\s*)node\s+(?!-)(?P<target>(?:\./)?(?:tests?|scripts?)/[^\s;&|]+)",
-    re.IGNORECASE,
+_NODE_SCRIPT_SEGMENT_RE = re.compile(r"\s*(?:&&|\|\||[;|])\s*")
+_NODE_FLAGS_WITH_VALUE = frozenset(
+    {
+        "--experimental-loader",
+        "--import",
+        "--loader",
+        "--require",
+        "--test-name-pattern",
+        "--test-reporter",
+        "--test-reporter-destination",
+        "-r",
+    }
 )
+_NODE_FLAGS_WITH_VALUE_PREFIXES = ("--experimental-loader=", "--import=", "--loader=", "--require=")
 _JS_RUNTIME_FILE_RE = re.compile(r"(?:file://)?(?P<path>/[^\s:]+\.js):(?P<line>\d+)")
 _JS_MISSING_METHOD_RUNTIME_RE = re.compile(
     r"(?P<file>(?:file://)?/[^\s:]+\.js):(?P<line>\d+).*?"
@@ -48,6 +68,14 @@ _JS_MISSING_METHOD_RUNTIME_STACK_RE = re.compile(
     r"TypeError:\s+(?P<object>[A-Za-z_$][\w$]*)\.(?P<member>[A-Za-z_$][\w$]*)\s+is not a function"
     r".*?\((?:file://)?(?P<file>/[^\s:]+\.js):(?P<line>\d+):\d+\)",
     re.DOTALL,
+)
+_JS_DOM_GLOBAL_RUNTIME_RE = re.compile(
+    r"(?P<file>(?:file://)?/[^\s:]+\.js):(?P<line>\d+).*?"
+    r"ReferenceError:\s+(?P<global>document|window)\s+is not defined",
+    re.IGNORECASE | re.DOTALL,
+)
+_BROWSER_BOOTSTRAP_CALL_RE = re.compile(
+    r"(?m)^(?P<indent>[ \t]*)(?P<call>(?:whenReady|bootstrap|initApp|startApp)\s*\(\s*\)\s*;)\s*$"
 )
 _COMMONJS_REQUIRE_BINDING_RE = re.compile(
     r"^(?P<indent>\s*)(?:const|let|var)\s+(?P<binding>[A-Za-z_$][\w$]*)\s*=\s*"
@@ -63,11 +91,15 @@ _COMMONJS_MODULE_EXPORTS_DEFAULT_RE = re.compile(
 _COMMONJS_MODULE_EXPORTS_OBJECT_RE = re.compile(
     r"^(?P<indent>\s*)module\.exports\s*=\s*\{(?P<bindings>[^}]+)\}\s*;?\s*$"
 )
+_COMMONJS_REQUIRE_MAIN_GUARD_RE = re.compile(
+    r"^(?P<indent>\s*)if\s*\(\s*require\.main\s*===\s*module\s*\)\s*\{\s*"
+    r"(?P<call>[A-Za-z_$][\w$]*\s*\(\s*\)\s*;?)\s*\}\s*$"
+)
 _JS_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][\w$]*$")
 _JS_DECLARATION_RE_TEMPLATE = (
     r"(?m)^(?P<indent>\s*)(?P<decl>(?:async\s+)?(?:class|function)\s+{symbol}\b|(?:const|let|var)\s+{symbol}\b)"
 )
-_JS_CLASS_RE_TEMPLATE = r"(?m)^(?P<indent>\s*)class\s+{class_name}\b[^\n]*\{{"
+_JS_CLASS_RE_TEMPLATE = r"(?m)^(?P<indent>\s*)(?:export\s+)?class\s+{class_name}\b[^\n]*\{{"
 _JS_METHOD_RE = re.compile(r"(?m)^\s{2,}(?P<name>[A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{")
 
 
@@ -109,12 +141,32 @@ def build_npm_script_contract_plan(
         compile_script = str(scripts.get("compile") or "").strip()
         updates[("scripts", "build")] = "npm run compile" if compile_script else "tsc"
 
+    for missing_entrypoint in _missing_node_dist_entrypoints(raw_errors):
+        replacement_entrypoint = _compiled_typescript_entrypoint_for_missing(
+            normalized_base,
+            package_payload,
+            missing_entrypoint=missing_entrypoint,
+        )
+        if not replacement_entrypoint or replacement_entrypoint == missing_entrypoint:
+            continue
+        for script_name, script_value in scripts.items():
+            script_text = str(script_value or "")
+            if missing_entrypoint in script_text:
+                updates[("scripts", str(script_name))] = script_text.replace(missing_entrypoint, replacement_entrypoint)
+
     if has_node_test_runner_contract:
         updates[("scripts", "test")] = _node_test_runner_script(normalized_base)
     elif has_typescript_context and _has_repairable_test_script_error(raw_errors):
         updates[("scripts", "test")] = (
             _fallback_script_for_recursive_script("test", normalized_base, package_payload) or "npm run build"
         )
+
+    if _has_fixed_port_start_script_error(raw_errors):
+        for script_name in ("start", "serve", "dev", "preview"):
+            script_text = str(scripts.get(script_name) or "").strip()
+            replacement = _http_server_dynamic_port_script(script_text)
+            if replacement and replacement != script_text:
+                updates[("scripts", script_name)] = replacement
 
     if has_typescript_context and _missing_entrypoint(raw_errors, script_name="verify"):
         updates[("scripts", "verify")] = "npm run build"
@@ -229,6 +281,7 @@ def build_javascript_test_missing_target_plan(
         diagnostic for diagnostic in diagnostics if _is_javascript_test_missing_target_diagnostic(diagnostic)
     )
     operations: list[RepairOperation] = []
+    package_payload = _parse_package_json(normalized_base.get("package.json", ""))
     for diagnostic, target in _missing_javascript_test_targets(
         base_files=normalized_base,
         diagnostics=matched_diagnostics,
@@ -249,6 +302,23 @@ def build_javascript_test_missing_target_plan(
                     "declared_files": list(declared_paths),
                     "write_file_reason": "new_javascript_smoke_target",
                     "diagnostic_id": diagnostic.diagnostic_id,
+                },
+            )
+        )
+    script_update = _node_test_script_directory_update(package_payload)
+    package_text = normalized_base.get("package.json")
+    if script_update and package_text:
+        operations.append(
+            RepairOperation(
+                kind="json_set",
+                path="package.json",
+                json_path=("scripts", "test"),
+                value=script_update,
+                before_hash=sha256_text(package_text),
+                metadata={
+                    "repair_kind": "javascript_test_missing_target_script_contract",
+                    "structured_operation": "json",
+                    "diagnostic_ids": [diagnostic.diagnostic_id for diagnostic in matched_diagnostics],
                 },
             )
         )
@@ -305,7 +375,7 @@ def build_javascript_missing_export_plan(
         rule_id="javascript.missing_named_export",
         source_tool=JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
         operations=tuple(operations),
-        diagnostics=tuple(dict.fromkeys(matched)),
+        diagnostics=_dedupe_diagnostics(matched),
         mode=mode,
         risk_level="low",
         priority=1,
@@ -334,7 +404,12 @@ def build_javascript_esm_commonjs_entrypoint_plan(
         text = normalized_base.get(path)
         if text is None:
             continue
-        path_operations, repaired = _commonjs_to_esm_operations(path=path, text=text, diagnostics=matched_diagnostics)
+        path_operations, repaired = _commonjs_to_esm_operations(
+            path=path,
+            text=text,
+            base_files=normalized_base,
+            diagnostics=matched_diagnostics,
+        )
         if not path_operations:
             continue
         if "require(" in repaired or "module.exports" in repaired or "require.main" in repaired:
@@ -352,6 +427,56 @@ def build_javascript_esm_commonjs_entrypoint_plan(
         priority=1,
         metadata={
             "runtime_plan_scope": "line_based_commonjs_require_and_module_exports_only",
+            "unsafe_cases_fail_closed": True,
+        },
+    )
+
+
+def build_javascript_dom_global_runtime_guard_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Guard browser-only bootstrap calls when Node executes a browser bundle."""
+
+    normalized_base = _normalize_base_files(base_files)
+    operations: list[RepairOperation] = []
+    matched: list[RepairDiagnostic] = []
+    seen: set[str] = set()
+    for diagnostic in diagnostics:
+        for failure in _dom_global_runtime_failures(diagnostic, normalized_base):
+            runtime_global = failure["global"]
+            for path in _dom_global_source_candidates(failure["file"], normalized_base):
+                if path in seen:
+                    continue
+                text = normalized_base.get(path)
+                if text is None:
+                    continue
+                operation = _dom_global_guard_operation(
+                    path=path,
+                    text=text,
+                    runtime_global=runtime_global,
+                    diagnostic=diagnostic,
+                )
+                if operation is None:
+                    continue
+                operations.append(operation)
+                matched.append(diagnostic)
+                seen.add(path)
+                break
+    if not operations:
+        return None
+    return RepairPlan(
+        rule_id="javascript.dom_global_runtime_guard",
+        source_tool=JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL,
+        operations=tuple(operations),
+        diagnostics=_dedupe_diagnostics(matched),
+        mode=mode,
+        risk_level="low",
+        priority=1,
+        metadata={
+            "runtime_plan_scope": "browser_bootstrap_top_level_call_guard_only",
             "unsafe_cases_fail_closed": True,
         },
     )
@@ -405,7 +530,7 @@ def build_javascript_missing_method_runtime_plan(
         rule_id="javascript.missing_method_runtime",
         source_tool=JAVASCRIPT_MISSING_METHOD_RUNTIME_SOURCE_TOOL,
         operations=tuple(operations),
-        diagnostics=tuple(dict.fromkeys(matched)),
+        diagnostics=_dedupe_diagnostics(matched),
         mode=mode,
         risk_level="medium",
         priority=1,
@@ -543,7 +668,7 @@ console.log(`frontend smoke checks passed for ${{declaredFiles.length}} declared
 
 
 def build_javascript_node_smoke_test_content(test_rel_path: str, base_files: Mapping[str, str]) -> str:
-    """Return a deterministic CommonJS smoke test for a generated Node package."""
+    """Return a deterministic smoke test for a generated Node package."""
 
     package_payload = _parse_package_json(str(base_files.get("package.json") or "")) or {}
     entrypoint = _compiled_typescript_entrypoint(base_files, package_payload)
@@ -557,6 +682,46 @@ def build_javascript_node_smoke_test_content(test_rel_path: str, base_files: Map
     root_expr = f"path.resolve(__dirname, {root_args})" if root_args else "path.resolve(__dirname)"
     source_json = json.dumps(source_files[:12], ensure_ascii=True)
     entrypoint_json = json.dumps(entrypoint, ensure_ascii=True)
+    if _javascript_node_smoke_test_uses_esm(test_rel_path, base_files, package_payload):
+        return f"""import assert from 'node:assert';
+import childProcess from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import {{ fileURLToPath }} from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = {root_expr};
+const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
+const entrypoint = {entrypoint_json};
+const sourceFiles = {source_json};
+const entrypointPath = path.join(projectRoot, entrypoint);
+
+assert.ok(packageJson.name, 'package name is required');
+assert.ok(packageJson.scripts && packageJson.scripts.build, 'build script is required');
+assert.ok(packageJson.scripts && packageJson.scripts.test, 'test script is required');
+assert.ok(entrypoint.endsWith('.js'), 'compiled Node entrypoint must be JavaScript');
+assert.ok(fs.existsSync(entrypointPath), `compiled entrypoint missing: ${{entrypoint}}`);
+assert.ok(sourceFiles.length > 0, 'at least one source file is required');
+
+for (const file of sourceFiles) {{
+  const absolutePath = path.join(projectRoot, file);
+  assert.ok(fs.existsSync(absolutePath), `missing source file ${{file}}`);
+  assert.ok(fs.readFileSync(absolutePath, 'utf8').trim().length > 0, `empty source file ${{file}}`);
+}}
+
+let output = '';
+assert.doesNotThrow(() => {{
+  output = childProcess.execFileSync(process.execPath, [entrypointPath], {{
+    cwd: projectRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }});
+}}, 'compiled entrypoint should execute');
+assert.strictEqual(typeof output, 'string', 'entrypoint output must be string');
+
+console.log(`node smoke checks passed for ${{sourceFiles.length}} source files`);
+"""
     return f"""const assert = require('assert');
 const childProcess = require('child_process');
 const fs = require('fs');
@@ -595,6 +760,29 @@ console.log(`node smoke checks passed for ${{sourceFiles.length}} source files`)
 """
 
 
+def _javascript_node_smoke_test_uses_esm(
+    test_rel_path: str,
+    base_files: Mapping[str, str],
+    package_payload: Mapping[str, Any],
+) -> bool:
+    suffix = PurePosixPath(test_rel_path).suffix.lower()
+    if suffix in {".mts", ".mjs"}:
+        return True
+    if suffix in {".cts", ".cjs"}:
+        return False
+    if suffix in {".ts", ".tsx"}:
+        scripts = package_payload.get("scripts")
+        test_script = str(scripts.get("test") or "") if isinstance(scripts, Mapping) else ""
+        if "--import tsx" in test_script or "--loader tsx" in test_script:
+            return True
+        module_kind = _typescript_compiler_option(base_files, "module").lower()
+        if module_kind in {"commonjs", "cjs"}:
+            return False
+        if module_kind in {"es2020", "es2022", "esnext", "system", "node16", "node18", "node20", "nodenext"}:
+            return True
+    return str(package_payload.get("type") or "").strip().lower() == "module"
+
+
 def _normalize_base_files(base_files: Mapping[str, str]) -> dict[str, str]:
     return {
         normalized: str(content or "")
@@ -629,8 +817,10 @@ def _is_npm_script_contract_diagnostic(diagnostic: RepairDiagnostic) -> bool:
         or "npm package manifest script" in raw
         or "test script must use node --test" in raw
         or "cannot find module './src/" in raw
+        or ("cannot find module" in raw and "/dist/" in raw)
         or "node --import tsx/esm" in raw
         or ("npm run test" in raw and "strip-types" in raw)
+        or _has_fixed_port_start_script_error((raw,))
     )
 
 
@@ -658,6 +848,21 @@ def _has_typescript_context(base_files: Mapping[str, str], package_payload: Mapp
 def _has_node_test_runner_contract_error(errors: Sequence[str]) -> bool:
     joined = "\n".join(str(error or "") for error in errors).lower()
     return "test script must use node --test" in joined
+
+
+def _has_fixed_port_start_script_error(errors: Sequence[str]) -> bool:
+    joined = "\n".join(str(error or "") for error in errors).lower()
+    start_invoked = "npm run start" in joined or "npm start" in joined or "npm run serve" in joined
+    port_conflict = "eaddrinuse" in joined or "address already in use" in joined
+    return start_invoked and port_conflict
+
+
+def _http_server_dynamic_port_script(script_text: str) -> str:
+    script = str(script_text or "").strip()
+    if "http-server" not in script or "PORT" in script:
+        return ""
+    replaced = _HTTP_SERVER_FIXED_PORT_RE.sub(r"\g<flag>${PORT:-0}", script, count=1)
+    return replaced if replaced != script else ""
 
 
 def _has_repairable_test_script_error(errors: Sequence[str]) -> bool:
@@ -712,6 +917,19 @@ def _missing_entrypoints(errors: Sequence[str]) -> dict[str, str]:
     return entrypoints
 
 
+def _missing_node_dist_entrypoints(errors: Sequence[str]) -> tuple[str, ...]:
+    entrypoints: list[str] = []
+    for error in errors:
+        for match in _NODE_CANNOT_FIND_MODULE_DIST_RE.finditer(str(error or "")):
+            raw_path = str(match.group("path") or "").replace("\\", "/")
+            dist_index = raw_path.rfind("/dist/")
+            if dist_index >= 0:
+                entrypoints.append(raw_path[dist_index + 1 :])
+            elif raw_path.startswith("dist/"):
+                entrypoints.append(raw_path)
+    return tuple(dict.fromkeys(entrypoints))
+
+
 def _recursive_scripts(errors: Sequence[str]) -> tuple[str, ...]:
     scripts: list[str] = []
     for error in errors:
@@ -751,13 +969,59 @@ def _fallback_script_for_recursive_script(
 def _compiled_typescript_entrypoint(base_files: Mapping[str, str], package_payload: Mapping[str, Any]) -> str:
     entrypoint = str(package_payload.get("main") or "").strip().replace("\\", "/")
     if entrypoint.startswith("src/") and entrypoint.endswith(".ts"):
-        return f"dist/{entrypoint.removeprefix('src/').removesuffix('.ts')}.js"
+        return _compiled_typescript_output_path(base_files, entrypoint)
     if entrypoint.startswith("dist/") and entrypoint.endswith((".js", ".mjs", ".cjs")):
         return entrypoint
     for source_entry in ("src/main.ts", "src/index.ts", "src/verify.ts"):
         if source_entry in base_files:
-            return f"dist/{source_entry.removeprefix('src/').removesuffix('.ts')}.js"
+            return _compiled_typescript_output_path(base_files, source_entry)
     return "dist/index.js"
+
+
+def _compiled_typescript_entrypoint_for_missing(
+    base_files: Mapping[str, str],
+    package_payload: Mapping[str, Any],
+    *,
+    missing_entrypoint: str,
+) -> str:
+    missing_path = PurePosixPath(str(missing_entrypoint or "").replace("\\", "/"))
+    stem = missing_path.stem
+    candidates = [
+        f"src/{stem}.ts",
+        f"src/{stem}.tsx",
+        f"{stem}.ts",
+        f"{stem}.tsx",
+    ]
+    for candidate in candidates:
+        if candidate in base_files:
+            return _compiled_typescript_output_path(base_files, candidate)
+    return _compiled_typescript_entrypoint(base_files, package_payload)
+
+
+def _compiled_typescript_output_path(base_files: Mapping[str, str], source_entry: str) -> str:
+    source_path = _normalize_repair_path(source_entry)
+    out_dir = _typescript_compiler_option(base_files, "outDir") or "dist"
+    root_dir = _typescript_compiler_option(base_files, "rootDir")
+    normalized_out = _normalize_repair_path(out_dir) or "dist"
+    normalized_root = _normalize_repair_path(root_dir or "")
+    relative_source = source_path
+    if normalized_root and normalized_root not in {".", "./"}:
+        prefix = f"{normalized_root.rstrip('/')}/"
+        if source_path.startswith(prefix):
+            relative_source = source_path.removeprefix(prefix)
+    elif not normalized_root and source_path.startswith("src/"):
+        relative_source = source_path.removeprefix("src/")
+    return f"{normalized_out.rstrip('/')}/{PurePosixPath(relative_source).with_suffix('.js').as_posix()}"
+
+
+def _typescript_compiler_option(base_files: Mapping[str, str], key: str) -> str:
+    tsconfig = _parse_package_json(str(base_files.get("tsconfig.json") or ""))
+    if tsconfig is None:
+        return ""
+    compiler_options = tsconfig.get("compilerOptions")
+    if not isinstance(compiler_options, Mapping):
+        return ""
+    return str(compiler_options.get(key) or "").strip().replace("\\", "/")
 
 
 def _fallback_script_for_missing_entrypoint(script_name: str) -> str:
@@ -786,10 +1050,15 @@ def _can_build_frontend_smoke_test(declared_paths: Sequence[str]) -> bool:
 def _is_javascript_test_missing_target_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     if diagnostic.code == "declared_target_missing":
         return _is_javascript_test_target_path(str(diagnostic.path or ""))
-    if diagnostic.code != "artifact_quality_error":
+    if diagnostic.code not in {"artifact_quality_error", "workspace_validation_failed"}:
         return False
     raw = str(diagnostic.raw or diagnostic.message or "").lower()
-    return "npm run test" in raw and ("module_not_found" in raw or "cannot find module" in raw)
+    npm_test_invoked = "npm run test" in raw or "npm test" in raw
+    return npm_test_invoked and (
+        "module_not_found" in raw
+        or "cannot find module" in raw
+        or ("could not find" in raw and ("tests" in raw or "test" in raw))
+    )
 
 
 def _missing_javascript_test_targets(
@@ -817,11 +1086,99 @@ def _node_test_targets_from_package(base_files: Mapping[str, str]) -> tuple[str,
         return ()
     test_script = str(scripts.get("test") or "")
     targets: list[str] = []
-    for match in _NODE_LOCAL_TEST_TARGET_RE.finditer(test_script):
-        target = _normalize_repair_path(str(match.group("target") or ""))
-        if target:
-            targets.append(target)
+    for segment in _NODE_SCRIPT_SEGMENT_RE.split(test_script):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            tokens = segment.split()
+        for index, token in enumerate(tokens):
+            if token != "node" and not token.endswith("/node"):
+                continue
+            targets.extend(_node_test_targets_from_tokens(tokens[index + 1 :], base_files, package_payload))
     return tuple(dict.fromkeys(targets))
+
+
+def _node_test_targets_from_tokens(
+    tokens: Sequence[str],
+    base_files: Mapping[str, str],
+    package_payload: Mapping[str, Any],
+) -> tuple[str, ...]:
+    targets: list[str] = []
+    has_node_test_runner = False
+    skip_next = False
+    for token in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        token_text = str(token or "").strip()
+        if not token_text:
+            continue
+        if token_text == "--test" or token_text.startswith("--test="):
+            has_node_test_runner = True
+            continue
+        if token_text in _NODE_FLAGS_WITH_VALUE:
+            skip_next = True
+            continue
+        if token_text.startswith(_NODE_FLAGS_WITH_VALUE_PREFIXES):
+            continue
+        if token_text.startswith("-"):
+            continue
+        target = _normalize_node_test_target(token_text, base_files, package_payload)
+        if target and (has_node_test_runner or _is_javascript_test_target_path(target)):
+            targets.append(target)
+    return tuple(targets)
+
+
+def _normalize_node_test_target(
+    target: str,
+    base_files: Mapping[str, str],
+    package_payload: Mapping[str, Any],
+) -> str:
+    normalized = _normalize_repair_path(target).rstrip("/")
+    if not normalized:
+        return ""
+    if normalized == "test":
+        normalized = "tests"
+    elif normalized.startswith("test/"):
+        normalized = f"tests/{normalized.removeprefix('test/')}"
+    target_path = PurePosixPath(normalized)
+    if target_path.suffix:
+        return normalized
+    if normalized.startswith("dist/") and "__tests__" in normalized:
+        extension = "ts" if _has_typescript_context(base_files, package_payload) else "js"
+        if extension == "ts":
+            return f"src/{normalized.removeprefix('dist/')}/smoke.test.ts"
+        return f"{normalized}/smoke.test.js"
+    if normalized == "tests" or normalized.startswith("tests/"):
+        extension = "ts" if _has_typescript_context(base_files, package_payload) else "js"
+        return f"{normalized}/smoke.test.{extension}"
+    return normalized
+
+
+def _node_test_script_directory_update(package_payload: Mapping[str, Any] | None) -> str:
+    if not isinstance(package_payload, Mapping):
+        return ""
+    scripts = package_payload.get("scripts")
+    if not isinstance(scripts, Mapping):
+        return ""
+    test_script = str(scripts.get("test") or "")
+    if not test_script:
+        return ""
+    pattern = re.compile(
+        r"(?P<prefix>\bnode\b(?:(?![;&|]).)*?--test(?:(?![;&|]).)*?\s)"
+        r"(?P<target>\./dist/__tests__|dist/__tests__|\./test|test)(?P<suffix>(?=\s|$|[;&|]))"
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        target = str(match.group("target") or "")
+        if target.rstrip("/").endswith("dist/__tests__"):
+            replacement = f"{target.rstrip('/')}/smoke.test.js"
+        else:
+            replacement = "./tests/smoke.test.ts" if target.startswith("./") else "tests/smoke.test.ts"
+        return f"{match.group('prefix')}{replacement}{match.group('suffix')}"
+
+    updated = pattern.sub(replace, test_script, count=1)
+    return updated if updated != test_script else ""
 
 
 def _is_javascript_test_target_path(path: str) -> bool:
@@ -830,7 +1187,7 @@ def _is_javascript_test_target_path(path: str) -> bool:
         return False
     suffix = PurePosixPath(normalized).suffix
     name = PurePosixPath(normalized).name
-    return suffix in {".js", ".mjs", ".cjs"} and (
+    return suffix in {".js", ".mjs", ".cjs", ".ts", ".tsx"} and (
         normalized.startswith("tests/") or ".test." in name or ".spec." in name
     )
 
@@ -960,20 +1317,110 @@ def _first_runtime_file(raw: str, base_files: Mapping[str, str]) -> str:
 
 
 def _base_file_from_runtime_path(raw_path: str, base_files: Mapping[str, str]) -> str:
-    normalized = str(raw_path or "").removeprefix("file://").replace("\\", "/")
-    normalized = _normalize_repair_path(normalized)
-    if normalized in base_files:
+    raw_normalized = str(raw_path or "").removeprefix("file://").replace("\\", "/")
+    normalized = _normalize_repair_path(raw_normalized)
+    if normalized and normalized in base_files:
         return normalized
     for path in sorted(base_files, key=len, reverse=True):
-        if normalized.endswith("/" + path) or normalized == path:
+        if raw_normalized.endswith("/" + path) or raw_normalized == path:
             return path
     return ""
+
+
+def _dom_global_runtime_failures(
+    diagnostic: RepairDiagnostic,
+    base_files: Mapping[str, str],
+) -> tuple[dict[str, str], ...]:
+    raw = str(diagnostic.raw or diagnostic.message or "")
+    failures: list[dict[str, str]] = []
+    if diagnostic.code == "javascript_dom_global_in_node_runtime":
+        raw_path = str(diagnostic.path or "")
+        runtime_global = str(diagnostic.metadata.get("runtime_global") or "").strip() or "document"
+        rel_file = _base_file_from_runtime_path(raw_path, base_files)
+        if raw_path or rel_file:
+            failures.append({"file": rel_file or raw_path, "global": runtime_global})
+    for match in _JS_DOM_GLOBAL_RUNTIME_RE.finditer(raw):
+        raw_path = str(match.group("file") or "")
+        rel_file = _base_file_from_runtime_path(raw_path, base_files)
+        runtime_global = str(match.group("global") or "").strip() or "document"
+        failures.append({"file": rel_file or raw_path, "global": runtime_global})
+    deduped: dict[tuple[str, str], dict[str, str]] = {}
+    for failure in failures:
+        deduped[(failure["file"], failure["global"])] = failure
+    return tuple(deduped.values())
+
+
+def _dom_global_source_candidates(runtime_file: str, base_files: Mapping[str, str]) -> tuple[str, ...]:
+    normalized_runtime = _normalize_repair_path(str(runtime_file or "").removeprefix("file://").replace("\\", "/"))
+    candidates: list[str] = []
+    if normalized_runtime.startswith("dist/") and normalized_runtime.endswith(".js"):
+        stem = normalized_runtime.removeprefix("dist/").removesuffix(".js")
+        candidates.extend(
+            [
+                f"src/{stem}.ts",
+                f"src/{stem}.tsx",
+                f"src/{stem}.js",
+                f"src/{stem}.mjs",
+                f"{stem}.ts",
+                f"{stem}.js",
+            ]
+        )
+    if normalized_runtime:
+        candidates.append(normalized_runtime)
+    candidates.extend(("src/web.ts", "src/web.js", "web.ts", "web.js", "src/main.ts", "src/main.js"))
+    for path, text in base_files.items():
+        if path in candidates:
+            continue
+        if not path.endswith((".ts", ".tsx", ".js", ".mjs")):
+            continue
+        if ("document" in text or "window" in text) and _BROWSER_BOOTSTRAP_CALL_RE.search(text):
+            candidates.append(path)
+    return tuple(dict.fromkeys(path for path in candidates if path in base_files))
+
+
+def _dom_global_guard_operation(
+    *,
+    path: str,
+    text: str,
+    runtime_global: str,
+    diagnostic: RepairDiagnostic,
+) -> RepairOperation | None:
+    if "document" not in text and "window" not in text:
+        return None
+    for match in reversed(tuple(_BROWSER_BOOTSTRAP_CALL_RE.finditer(text))):
+        context_before = text[max(0, match.start() - 180) : match.start()]
+        if "typeof document" in context_before or "typeof window" in context_before:
+            continue
+        indent = str(match.group("indent") or "")
+        call = str(match.group("call") or "").strip()
+        guard_global = "window" if runtime_global == "window" else "document"
+        replacement = f'{indent}if (typeof {guard_global} !== "undefined") {{\n{indent}  {call}\n{indent}}}'
+        return RepairOperation(
+            kind="text_replace",
+            path=path,
+            span_start=match.start(),
+            span_end=match.end(),
+            expected=match.group(0),
+            replacement=replacement,
+            before_hash=sha256_text(text),
+            metadata={
+                "repair_kind": "javascript_dom_global_runtime_guard",
+                "runtime_global": guard_global,
+                "diagnostic_id": diagnostic.diagnostic_id,
+                "edit_file_preferred": True,
+                "unsafe_cases_fail_closed": True,
+                "expected_context_before": text[max(0, match.start() - 160) : match.start()],
+                "expected_context_after": text[match.end() : min(len(text), match.end() + 160)],
+            },
+        )
+    return None
 
 
 def _commonjs_to_esm_operations(
     *,
     path: str,
     text: str,
+    base_files: Mapping[str, str],
     diagnostics: Sequence[RepairDiagnostic],
 ) -> tuple[tuple[RepairOperation, ...], str]:
     operations: list[RepairOperation] = []
@@ -981,7 +1428,7 @@ def _commonjs_to_esm_operations(
     offset = 0
     for line in text.splitlines(keepends=True):
         line_body = line.removesuffix("\n")
-        replacement = _commonjs_line_replacement(line_body)
+        replacement = _commonjs_line_replacement(line_body, path=path, base_files=base_files)
         if replacement is None:
             repaired_lines.append(line)
             offset += len(line)
@@ -1009,19 +1456,30 @@ def _commonjs_to_esm_operations(
     return tuple(operations), "".join(repaired_lines)
 
 
-def _commonjs_line_replacement(line: str) -> str | None:
+def _commonjs_line_replacement(line: str, *, path: str, base_files: Mapping[str, str]) -> str | None:
     stripped = line.strip()
     if stripped in {'"use strict";', "'use strict';"}:
         return ""
     match = _COMMONJS_REQUIRE_BINDING_RE.match(line)
     if match:
-        return f"{match.group('indent')}import {match.group('binding')} from '{match.group('specifier')}';"
+        binding = str(match.group("binding") or "").strip()
+        raw_specifier = str(match.group("specifier") or "")
+        specifier = _esm_import_specifier(raw_specifier)
+        if _commonjs_binding_has_named_esm_export(
+            base_files,
+            importer=path,
+            module_ref=raw_specifier,
+            binding=binding,
+        ):
+            return f'{match.group("indent")}import {{ {binding} }} from "{specifier}";'
+        return f'{match.group("indent")}import {match.group("binding")} from "{specifier}";'
     match = _COMMONJS_REQUIRE_DESTRUCTURING_RE.match(line)
     if match:
         bindings = " ".join(str(match.group("bindings") or "").strip().split())
         if not bindings:
             return None
-        return f"{match.group('indent')}import {{ {bindings} }} from '{match.group('specifier')}';"
+        specifier = _esm_import_specifier(str(match.group("specifier") or ""))
+        return f'{match.group("indent")}import {{ {bindings} }} from "{specifier}";'
     match = _COMMONJS_MODULE_EXPORTS_DEFAULT_RE.match(line)
     if match:
         return f"{match.group('indent')}export default {match.group('value')};"
@@ -1031,7 +1489,47 @@ def _commonjs_line_replacement(line: str) -> str | None:
         if not bindings:
             return None
         return f"{match.group('indent')}export {{ {bindings} }};"
+    match = _COMMONJS_REQUIRE_MAIN_GUARD_RE.match(line)
+    if match:
+        call = str(match.group("call") or "").strip()
+        return f"{match.group('indent')}if (import.meta.url === `file://${{process.argv[1]}}`) {{ {call} }}"
     return None
+
+
+def _esm_import_specifier(specifier: str) -> str:
+    normalized = str(specifier or "").strip().replace("\\", "/")
+    if not normalized.startswith("."):
+        return normalized
+    if PurePosixPath(normalized).suffix:
+        return normalized
+    return f"{normalized}.js"
+
+
+def _dedupe_diagnostics(diagnostics: Sequence[RepairDiagnostic]) -> tuple[RepairDiagnostic, ...]:
+    deduped: list[RepairDiagnostic] = []
+    seen: set[str] = set()
+    for diagnostic in diagnostics:
+        key = diagnostic.diagnostic_id
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(diagnostic)
+    return tuple(deduped)
+
+
+def _commonjs_binding_has_named_esm_export(
+    base_files: Mapping[str, str],
+    *,
+    importer: str,
+    module_ref: str,
+    binding: str,
+) -> bool:
+    if not _JS_IDENTIFIER_RE.match(binding):
+        return False
+    exporter = _resolve_js_module(base_files, importer, module_ref)
+    if not exporter:
+        return False
+    return _javascript_module_exports_symbol(str(base_files.get(exporter) or ""), binding)
 
 
 def _missing_method_failures(
@@ -1107,6 +1605,8 @@ def _missing_method_alias_operation(
         return None
     existing = existing_methods[0]
     replacement = f"\n  {missing_member}(...args) {{\n    return this.{existing}(...args);\n  }}\n"
+    context_before = text[max(0, class_end - 160) : class_end]
+    context_after = text[class_end : min(len(text), class_end + 160)]
     return RepairOperation(
         kind="text_replace",
         path=path,
@@ -1123,6 +1623,8 @@ def _missing_method_alias_operation(
             "diagnostic_id": diagnostic.diagnostic_id,
             "edit_file_preferred": True,
             "unsafe_cases_fail_closed": True,
+            "expected_context_before": context_before,
+            "expected_context_after": context_after,
         },
     )
 
@@ -1152,12 +1654,14 @@ def _is_overstrict_node_test_script_contract(script_text: str) -> bool:
 
 
 __all__ = [
+    "JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL",
     "JAVASCRIPT_ESM_COMMONJS_ENTRYPOINT_SOURCE_TOOL",
     "JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL",
     "JAVASCRIPT_MISSING_METHOD_RUNTIME_SOURCE_TOOL",
     "JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL",
     "NODE_TEST_SCRIPT_CONTRACT_SOURCE_TOOL",
     "NPM_SCRIPT_CONTRACT_SOURCE_TOOL",
+    "build_javascript_dom_global_runtime_guard_plan",
     "build_javascript_esm_commonjs_entrypoint_plan",
     "build_javascript_frontend_smoke_test_content",
     "build_javascript_missing_export_plan",

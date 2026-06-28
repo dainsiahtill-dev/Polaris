@@ -84,6 +84,14 @@ def _factory_jetstream_fanout_timeout_seconds() -> float:
         return _FACTORY_JETSTREAM_FANOUT_TIMEOUT_SECONDS
 
 
+# Realtime fanout payload bound: must stay under the JetStream 256KB max-message
+# limit AND the WS 1MiB frame limit. Large director stage outputs (full
+# ``task_results`` reach ~2.7MB on big projects) remain durable on disk via
+# ``store.append_event``; the best-effort realtime fanout only needs control
+# fields plus a bounded preview. Headroom kept below 256KB for envelope fields.
+_FACTORY_FANOUT_MAX_PAYLOAD_BYTES = 200_000
+
+
 # NOTE: ``__all__`` intentionally re-exports the symbols, stdlib modules, and
 # private constants/helpers that the original single-file module bound at module
 # scope. Keeping them here preserves the historical public+private import surface
@@ -769,6 +777,15 @@ class FactoryRunService:
                 return
             subject = f"hp.runtime.{workspace_key}.event.factory.{run_id}"
             channel = f"event.factory:{run_id}"
+            # Bound the realtime fanout payload to the JetStream 256KB max-message
+            # limit and the WS 1MiB frame limit. A large director ``stage_completed``
+            # payload (full ``task_results`` reaches ~2.7MB on big projects) is durable
+            # on disk via ``store.append_event`` above; the fanout only carries control
+            # fields plus a bounded preview. Without this bound the oversized frame is
+            # dropped (WS close 1009), the bench loses the socket, times out after the
+            # full deadline, and cancels the chain before QA runs (factory_bench L1-08).
+            from polaris.delivery.ws.endpoints.json_utils import elide_oversized_frame
+
             envelope = {
                 "schema_version": "runtime.v2",
                 "event_id": payload.get("event_id"),
@@ -779,7 +796,7 @@ class FactoryRunService:
                 "ts": payload.get("timestamp"),
                 "cursor": 0,
                 "trace_id": None,
-                "payload": payload,
+                "payload": elide_oversized_frame(payload, _FACTORY_FANOUT_MAX_PAYLOAD_BYTES),
                 "meta": {"source": "factory_run_service"},
             }
             await asyncio.wait_for(

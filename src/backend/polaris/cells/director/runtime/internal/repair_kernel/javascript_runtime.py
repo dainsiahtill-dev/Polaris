@@ -17,12 +17,14 @@ from .contracts import (
 from .diagnostics import normalize_artifact_quality_errors
 from .executor import EditFileFn, TransactionalRepairExecutor, WriteFileFn
 from .javascript_syntax import (
+    JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL,
     JAVASCRIPT_ESM_COMMONJS_ENTRYPOINT_SOURCE_TOOL,
     JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
     JAVASCRIPT_MISSING_METHOD_RUNTIME_SOURCE_TOOL,
     JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL,
     NODE_TEST_SCRIPT_CONTRACT_SOURCE_TOOL,
     NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
+    build_javascript_dom_global_runtime_guard_plan,
     build_javascript_esm_commonjs_entrypoint_plan,
     build_javascript_missing_export_plan,
     build_javascript_missing_method_runtime_plan,
@@ -151,6 +153,25 @@ def plan_javascript_esm_commonjs_entrypoint_repair(
         advisor_notes=advisor_notes,
         mode=mode,
         builder=build_javascript_esm_commonjs_entrypoint_plan,
+    )
+
+
+def plan_javascript_dom_global_runtime_guard_repair(
+    *,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> JavaScriptRepairPlanning:
+    """Plan browser DOM global guards for Node-executed browser bundles."""
+
+    return _plan_javascript_repair(
+        source_tool=JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        builder=build_javascript_dom_global_runtime_guard_plan,
     )
 
 
@@ -313,6 +334,34 @@ def run_javascript_esm_commonjs_entrypoint_repair(
     )
 
 
+def run_javascript_dom_global_runtime_guard_repair(
+    *,
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> JavaScriptRepairRun:
+    """Run browser DOM global guard repair through Plan->Compose->Policy->Execute."""
+
+    return _run_javascript_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        planner=plan_javascript_dom_global_runtime_guard_repair,
+        not_planned_message="No matching JavaScript DOM global runtime guard repair plan.",
+        composition_missing_message="JavaScript DOM global runtime guard repair composition was not produced.",
+    )
+
+
 def run_javascript_missing_method_runtime_repair(
     *,
     workspace: str | Path,
@@ -464,12 +513,14 @@ def _normalize_repair_path(path: str) -> str:
 __all__ = [
     "JavaScriptRepairPlanning",
     "JavaScriptRepairRun",
+    "plan_javascript_dom_global_runtime_guard_repair",
     "plan_javascript_esm_commonjs_entrypoint_repair",
     "plan_javascript_missing_export_repair",
     "plan_javascript_missing_method_runtime_repair",
     "plan_javascript_test_missing_target_repair",
     "plan_node_test_script_contract_repair",
     "plan_npm_script_contract_repair",
+    "run_javascript_dom_global_runtime_guard_repair",
     "run_javascript_esm_commonjs_entrypoint_repair",
     "run_javascript_missing_export_repair",
     "run_javascript_missing_method_runtime_repair",

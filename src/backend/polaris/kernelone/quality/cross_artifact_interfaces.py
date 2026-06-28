@@ -687,6 +687,67 @@ def _scan_python_file(
     return _dedupe_symbols(exports), imports, reexports, unknown_exports
 
 
+def _ts_js_code_mask(text: str) -> list[bool]:
+    """Mark TS/JS source positions that are executable code.
+
+    Interface snapshots must not turn fixture strings into physical imports or
+    exports. This deliberately treats full template literals as non-code; a
+    missed dynamic edge is safer than a false cross-artifact contract failure.
+    """
+
+    source = str(text or "")
+    mask = [True] * len(source)
+    i = 0
+    n = len(source)
+    while i < n:
+        char = source[i]
+        nxt = source[i + 1] if i + 1 < n else ""
+        if char == "/" and nxt == "/":
+            start = i
+            i += 2
+            while i < n and source[i] not in "\r\n":
+                i += 1
+            for pos in range(start, i):
+                mask[pos] = False
+            continue
+        if char == "/" and nxt == "*":
+            start = i
+            i += 2
+            while i + 1 < n and not (source[i] == "*" and source[i + 1] == "/"):
+                i += 1
+            i = min(n, i + 2)
+            for pos in range(start, i):
+                mask[pos] = False
+            continue
+        if char in {"'", '"', "`"}:
+            quote = char
+            start = i
+            i += 1
+            escaped = False
+            while i < n:
+                current = source[i]
+                if escaped:
+                    escaped = False
+                    i += 1
+                    continue
+                if current == "\\":
+                    escaped = True
+                    i += 1
+                    continue
+                i += 1
+                if current == quote:
+                    break
+            for pos in range(start, i):
+                mask[pos] = False
+            continue
+        i += 1
+    return mask
+
+
+def _match_starts_in_ts_js_code(mask: list[bool], start: int) -> bool:
+    return 0 <= start < len(mask) and mask[start]
+
+
 def _scan_ts_js_file(
     root: Path, relative_path: str, text: str
 ) -> tuple[list[InterfaceSymbol], list[InterfaceImport], list[_ReexportEdge], bool]:
@@ -694,8 +755,11 @@ def _scan_ts_js_file(
     imports: list[InterfaceImport] = []
     reexports: list[_ReexportEdge] = []
     unknown_exports = bool(_TS_UNKNOWABLE_EXPORT_RE.search(text))
+    code_mask = _ts_js_code_mask(text)
     module_id = _ts_module_id(relative_path)
     for match in _TS_EXPORT_DECL_RE.finditer(text):
+        if not _match_starts_in_ts_js_code(code_mask, match.start()):
+            continue
         name = (
             match.group("fn")
             or match.group("cls")
@@ -719,9 +783,11 @@ def _scan_ts_js_file(
         if match.group("fn_params"):
             signature = f"function {name}{_compact_params(match.group('fn_params') or '')}"
         exports.append(_symbol(name, kind, relative_path, f"{module_id}.{name}", signature))
-    if _TS_EXPORT_DEFAULT_RE.search(text):
+    if any(_match_starts_in_ts_js_code(code_mask, match.start()) for match in _TS_EXPORT_DEFAULT_RE.finditer(text)):
         exports.append(_symbol("default", "default", relative_path, f"{module_id}.default", "default"))
     for match in _TS_EXPORT_CLAUSE_RE.finditer(text):
+        if not _match_starts_in_ts_js_code(code_mask, match.start()):
+            continue
         mapping = _parse_ts_export_clause(match.group("inner"))
         specifier = str(match.group("spec") or "").strip()
         if specifier:
@@ -732,12 +798,16 @@ def _scan_ts_js_file(
         for _source, exported in mapping.items():
             exports.append(_symbol(exported, "value", relative_path, f"{module_id}.{exported}", "value"))
     for match in _TS_EXPORT_STAR_RE.finditer(text):
+        if not _match_starts_in_ts_js_code(code_mask, match.start()):
+            continue
         owner = _resolve_ts_relative_path(root, relative_path, str(match.group("spec") or ""))
         if owner:
             reexports.append(_ReexportEdge(specifier=owner, symbols={}, export_all=True))
         else:
             unknown_exports = True
     for match in _TS_NAMED_IMPORT_RE.finditer(text):
+        if not _match_starts_in_ts_js_code(code_mask, match.start()):
+            continue
         if match.group("typeonly") or not _ts_symbol_coherence_enabled():
             continue
         specifier = str(match.group("spec") or "").strip()

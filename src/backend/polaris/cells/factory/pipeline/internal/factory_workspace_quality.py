@@ -55,7 +55,24 @@ _CALLED_PROCESS_ERROR_COMMAND_RE = re.compile(
     r"returned\s+non-zero\s+exit\s+status\s+\d+",
     re.IGNORECASE,
 )
+_LONG_RUNNING_WEB_START_MARKERS = (
+    "http-server",
+    "vite --host",
+    "vite --host ",
+    "vite --host=",
+    "webpack serve",
+    "next start",
+)
 _NESTED_JAVAC_DIAGNOSTIC_TIMEOUT_SECONDS = 30.0
+
+
+def _npm_start_runs_long_lived_web_server(script: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(script or "").strip().lower())
+    if not normalized:
+        return False
+    if any(marker in normalized for marker in _LONG_RUNNING_WEB_START_MARKERS):
+        return True
+    return bool(re.search(r"(?:^|\s)npx\s+(?:--yes\s+)?serve(?:\s|$)", normalized))
 
 
 class WorkspaceQualityRunner:
@@ -151,6 +168,7 @@ class WorkspaceQualityRunner:
                 default=True,
             )
             and "start" in scripts
+            and not _npm_start_runs_long_lived_web_server(scripts["start"])
         ):
             commands.append(["npm", "run", "start"])
         go_commands = self._go_workspace_quality_commands(context)

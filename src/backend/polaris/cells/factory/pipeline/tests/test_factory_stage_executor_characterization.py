@@ -1668,6 +1668,163 @@ class TestMirrorHelpers:
         assert "workspace/blueprints/bp1.json" in artifacts
 
 
+class TestQualityGateDeadlineHandling:
+    def test_director_dispatch_timeout_caps_to_factory_deadline(self) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 12.0
+        timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(
+            {
+                "director_dispatch_timeout_seconds": 1800,
+                "llm_call_timeout_seconds": 1800,
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+            },
+            task_count=2,
+        )
+
+        assert 1 <= timeout <= 12
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_deadline_insufficient_writes_fail_report(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-deadline",
+            config=FactoryConfig(name="deadline-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+        workspace_checks_called = False
+
+        async def fake_workspace_checks(_run: FactoryRun, _context: dict[str, Any]) -> tuple[bool, str]:
+            nonlocal workspace_checks_called
+            workspace_checks_called = True
+            return True, ""
+
+        monkeypatch.setattr(executor, "_run_workspace_quality_checks", fake_workspace_checks)
+
+        def fail_if_qa_started(_context: dict[str, Any]) -> object:
+            raise AssertionError("QA orchestration should not start when the factory deadline is exhausted")
+
+        monkeypatch.setattr(executor, "_build_orchestration_service", fail_if_qa_started)
+
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 1.0
+        result = await executor._execute_quality_gate(
+            run,
+            {
+                "qa_target": "Quality gate",
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "factory_run_timeout_seconds": 540.0,
+                "factory_run_deadline_source": "test",
+            },
+        )
+
+        assert result.status == "failed"
+        assert workspace_checks_called is False
+        assert "factory_quality_gate_deadline_insufficient_before_checks" in result.output
+        report_path = Path(resolve_logical_path(tmp_path, "runtime/qa/report.json"))
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert report["passed"] is False
+        assert report["verdict"] == "FAIL"
+        assert "factory_quality_gate_deadline_insufficient_before_checks" in report["warnings"]
+        assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).is_file()
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_report_missing_becomes_failed_report(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-report-missing",
+            config=FactoryConfig(name="missing-report-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        async def fake_workspace_checks(_run: FactoryRun, _context: dict[str, Any]) -> tuple[bool, str]:
+            executor._write_json_artifact("runtime/qa/workspace-validation.json", {"passed": True})
+            return True, "runtime/qa/workspace-validation.json"
+
+        class FakeQAService:
+            async def execute_qa_run(self, **_kwargs: Any) -> CommandResult:
+                return CommandResult(run_id="qa-run", status="running", message="started")
+
+        async def fake_wait_run_completion(*_args: Any, **_kwargs: Any) -> CommandResult:
+            return CommandResult(run_id="qa-run", status="completed", message="done")
+
+        monkeypatch.setattr(executor, "_run_workspace_quality_checks", fake_workspace_checks)
+        monkeypatch.setattr(executor, "_build_orchestration_service", lambda _context: FakeQAService())
+        monkeypatch.setattr(executor, "_wait_run_completion", fake_wait_run_completion)
+
+        result = await executor._execute_quality_gate(run, {"qa_target": "Quality gate"})
+
+        assert result.status == "failed"
+        assert "factory_quality_gate_report_missing" in result.output
+        report_path = Path(resolve_logical_path(tmp_path, "runtime/qa/report.json"))
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert report["critical_issue_count"] == 1
+        assert report["workspace_checks_passed"] is True
+        assert report["workspace_checks_artifact"] == "runtime/qa/workspace-validation.json"
+        assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).is_file()
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_workspace_validation_failure_writes_fail_report_without_qa(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-workspace-fail",
+            config=FactoryConfig(name="workspace-fail-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        async def fake_workspace_checks(_run: FactoryRun, _context: dict[str, Any]) -> tuple[bool, str]:
+            executor._write_json_artifact(
+                "runtime/qa/workspace-validation.json",
+                {
+                    "passed": False,
+                    "commands": [
+                        {
+                            "command": ["npm", "run", "start"],
+                            "passed": False,
+                            "stderr_tail": "ReferenceError: exports is not defined in ES module scope",
+                        }
+                    ],
+                    "repair": {
+                        "residual_errors": [
+                            "Artifact quality scan failed: workspace validation command failed (npm run start)"
+                        ]
+                    },
+                },
+            )
+            return False, "runtime/qa/workspace-validation.json"
+
+        def fail_if_qa_started(_context: dict[str, Any]) -> object:
+            raise AssertionError("QA orchestration should not start when workspace validation already failed")
+
+        monkeypatch.setattr(executor, "_run_workspace_quality_checks", fake_workspace_checks)
+        monkeypatch.setattr(executor, "_build_orchestration_service", fail_if_qa_started)
+
+        result = await executor._execute_quality_gate(run, {"qa_target": "Quality gate"})
+
+        assert result.status == "failed"
+        assert "factory_quality_gate_workspace_checks_failed" in result.output
+        assert "npm run start" in result.output
+        report_path = Path(resolve_logical_path(tmp_path, "runtime/qa/report.json"))
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert report["passed"] is False
+        assert report["verdict"] == "FAIL"
+        assert report["workspace_checks_passed"] is False
+        assert "factory_quality_gate_workspace_checks_failed" in report["warnings"]
+        assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).is_file()
+
+
 # ---------------------------------------------------------------------------
 # package.json parsing
 # ---------------------------------------------------------------------------
@@ -3674,6 +3831,161 @@ class TestDirectorDispatchLoop:
         assert "director.partial_failure_progress_continued" not in codes
 
     @pytest.mark.asyncio
+    async def test_idle_blocked_materialization_quality_failure_with_missing_targets_enters_quality_gate_handoff(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        class _BlockedQualityFailureExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.stats = [
+                    {
+                        "total": 2,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "in_design": 0,
+                        "in_execution": 0,
+                        "in_qa": 0,
+                        "waiting_human": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 1,
+                    },
+                    {
+                        "total": 2,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "in_design": 0,
+                        "in_execution": 0,
+                        "in_qa": 0,
+                        "waiting_human": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 1,
+                    },
+                    {
+                        "total": 2,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "in_design": 0,
+                        "in_execution": 0,
+                        "in_qa": 0,
+                        "waiting_human": 0,
+                        "completed": 0,
+                        "failed": 1,
+                        "blocked": 1,
+                    },
+                    {
+                        "total": 2,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "in_design": 0,
+                        "in_execution": 0,
+                        "in_qa": 0,
+                        "waiting_human": 0,
+                        "completed": 0,
+                        "failed": 1,
+                        "blocked": 1,
+                    },
+                ]
+                self.execute_calls = 0
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                if len(self.stats) > 1:
+                    return dict(self.stats.pop(0))
+                return dict(self.stats[0])
+
+            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
+                del limit
+                return ["TASK-1"] if self.execute_calls == 0 else []
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                executor = self
+
+                class _Service:
+                    async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                        del kwargs
+                        executor.execute_calls += 1
+                        return CommandResult(run_id="director-blocked-quality", status="running", message="submitted")
+
+                return _Service()
+
+            async def _wait_run_completion(
+                self,
+                service: Any,
+                initial_result: CommandResult,
+                timeout_seconds: int = 300,
+                *,
+                cancel_event: asyncio.Event | None = None,
+                abort_checker: Any = None,
+            ) -> CommandResult:
+                del service, timeout_seconds, cancel_event, abort_checker
+                return CommandResult(
+                    run_id=initial_result.run_id,
+                    status="failed",
+                    message=(
+                        "Run status: failed | failed_task=task-0-director "
+                        "| error=director_materialization_quality_failed"
+                    ),
+                    metadata={
+                        "failed_task_count": 1,
+                        "failed_tasks": [
+                            {
+                                "task_id": "task-0-director",
+                                "error_message": "director_materialization_quality_failed",
+                            }
+                        ],
+                    },
+                )
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"build":"tsc"},"devDependencies":{"typescript":"latest"}}',
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
+
+        executor = _BlockedQualityFailureExecutor(tmp_path)
+        tasks = [
+            {"id": "TASK-1", "target_files": ["package.json", "src/index.ts"]},
+            {"id": "TASK-2", "target_files": ["tests/verify.test.ts"], "depends_on": ["TASK-1"]},
+        ]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
+        run = FactoryRun(
+            id="factory-blocked-quality-handoff",
+            config=FactoryConfig(name="blocked-quality-handoff"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-23T00:00:00+00:00",
+        )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"director_max_rounds": 3, "timeout": 1, "execution_mode": "serial", "max_workers": 1},
+        )
+
+        assert result.status == "success"
+        assert executor.execute_calls == 1
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        assert payload["quality_gate_handoff"] is True
+        assert payload["failure_stage"] == ""
+        assert payload["taskboard"]["converged"] is False
+        codes = [item.get("code") for item in payload["signals"]]
+        assert "director.materialization_quality_handoff_ready" in codes
+        assert "director.materialization_quality_handoff" in codes
+        assert "director.taskboard_unresolved_quality_handoff" in codes
+        assert "director.taskboard_not_converged" not in codes
+
+    @pytest.mark.asyncio
     async def test_no_claimable_tasks_after_attempt_does_not_replay_requested_pm_tasks(self, tmp_path: Path) -> None:
         class _NoClaimableAfterProgressExecutor(OrchestrationStageExecutor):
             def __init__(self, workspace: Path) -> None:
@@ -4353,6 +4665,112 @@ class TestDirectorDispatchLoop:
         assert "director.dispatch_timeout" in codes
         assert payload.get("error_code") == "director.dispatch_timeout"
         assert "timed out" in (payload.get("root_cause_hint") or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_timeout_with_inflight_task_settles_late_director_success(self, tmp_path: Path) -> None:
+        """A Director run that finishes during timeout grace should not leave TaskBoard partial."""
+
+        class _MockService:
+            def __init__(self, executor: _LateSuccessExecutor) -> None:
+                self.executor = executor
+
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                self.executor.taskboard_state = {
+                    "total": 1,
+                    "pending": 0,
+                    "ready": 0,
+                    "in_progress": 0,
+                    "completed": 1,
+                    "failed": 0,
+                    "blocked": 0,
+                }
+                return CommandResult(
+                    run_id=run_id,
+                    status="completed",
+                    message="Director completed 1/1 tasks",
+                    metadata={"task_status_counts": dict(self.executor.taskboard_state)},
+                )
+
+        class _LateSuccessExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.claim_count = 0
+                self.taskboard_state = {
+                    "total": 1,
+                    "pending": 1,
+                    "ready": 1,
+                    "in_progress": 0,
+                    "completed": 0,
+                    "failed": 0,
+                    "blocked": 0,
+                }
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                return _MockService(self)
+
+            def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+                del context
+                return [{"binding_id": "director:test", "provider_id": "test", "model": "test"}]
+
+            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
+                del limit
+                self.claim_count += 1
+                return ["TASK-1"] if self.claim_count == 1 else []
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                return dict(self.taskboard_state)
+
+            async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                self.taskboard_state = {
+                    "total": 1,
+                    "pending": 0,
+                    "ready": 0,
+                    "in_progress": 1,
+                    "completed": 0,
+                    "failed": 0,
+                    "blocked": 0,
+                }
+                return CommandResult(
+                    run_id="director-late-success",
+                    status="timeout",
+                    message="Run timed out after 1 seconds",
+                )
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        executor = _LateSuccessExecutor(tmp_path)
+        tasks = [{"id": "TASK-1", "target_files": ["src/index.ts"]}]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
+        run = FactoryRun(
+            id="factory-late-success",
+            config=FactoryConfig(name="late-success"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-21T00:00:00+00:00",
+        )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {
+                "director_max_rounds": 2,
+                "timeout": 1,
+                "execution_mode": "parallel",
+                "max_workers": 1,
+                "director_dispatch_timeout_settle_grace_seconds": 1,
+            },
+        )
+
+        assert result.status == "success"
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        codes = [item.get("code") for item in payload["signals"]]
+        assert "director.inflight_timeout_settled" in codes
+        assert "director.taskboard_not_converged" not in codes
+        assert payload["attempts"][-1]["settled_after_timeout"] is True
+        assert payload["taskboard"]["converged"] is True
 
 
 class TestPmMetaDiagnostic:

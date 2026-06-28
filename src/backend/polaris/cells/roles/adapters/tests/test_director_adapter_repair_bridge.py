@@ -1748,6 +1748,33 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
     assert all(call["convergence_verifier"] is sentinel_verifier for call in runtime_calls)
 
 
+def test_materialization_target_runtime_allowed_paths_include_runtime_planned_new_test_target() -> None:
+    base_files = {
+        "package.json": (
+            "{"
+            '"scripts":{'
+            '"build":"tsc -p tsconfig.json",'
+            '"test":"npm run build && node --test --import tsx ./tests/smoke.test.ts '
+            '2>/dev/null || node --test dist-test"'
+            "},"
+            '"main":"dist/main.js"'
+            "}\n"
+        ),
+        "src/main.ts": "console.log('ok');\n",
+    }
+    artifact_quality_errors = ["workspace validation command failed (npm test): Could not find 'dist-test'"]
+
+    allowed_paths = materialization_quality_repair_bridge._materialization_allowed_paths_from_runtime_shadow_plan(
+        source_tool="deterministic_javascript_test_missing_target_repair",
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+    )
+
+    assert "package.json" in allowed_paths
+    assert "src/main.ts" in allowed_paths
+    assert "tests/smoke.test.ts" in allowed_paths
+
+
 def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     tmp_path: Path,
     monkeypatch: Any,

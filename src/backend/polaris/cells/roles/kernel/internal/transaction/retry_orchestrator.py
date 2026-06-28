@@ -1010,10 +1010,14 @@ class RetryOrchestrator:
                     bootstrap_receipt=bootstrap_receipt,
                     failed_bootstrap_files=failed_bootstrap_files,
                 )
+            edit_blocks_is_preference_only = followup_forced_write_tool_name == "edit_blocks"
+            followup_prompt_forced_write_tool_name = (
+                None if edit_blocks_is_preference_only else followup_forced_write_tool_name
+            )
             write_context = build_retry_write_after_bootstrap_context(
                 original_context=context,
                 bootstrap_receipt=bootstrap_receipt,
-                forced_write_tool_name=followup_forced_write_tool_name,
+                forced_write_tool_name=followup_prompt_forced_write_tool_name,
                 from_scratch_create=from_scratch_create,
             )
             if followup_forced_write_tool_name != forced_write_tool_name:
@@ -1028,7 +1032,7 @@ class RetryOrchestrator:
                     "type": "function",
                     "function": {"name": followup_forced_write_tool_name},
                 }
-                if followup_forced_write_tool_name
+                if followup_forced_write_tool_name and not edit_blocks_is_preference_only
                 else None
             )
             if followup_forced_write_tool_name:
@@ -1036,7 +1040,7 @@ class RetryOrchestrator:
                     retry_tool_definitions,
                     followup_forced_write_tool_name,
                     include_verification_tools=requires_verification,
-                    allow_write_file_companion_for_edit_blocks=from_scratch_create,
+                    allow_write_file_companion_for_edit_blocks=True,
                 )
                 followup_allowed_tool_names = extract_allowed_tool_names_from_definitions(followup_tool_definitions)
             else:
@@ -1204,7 +1208,7 @@ class RetryOrchestrator:
                                     else allowed_retry_tool_names
                                 ),
                                 reason=f"{followup_exc!s} (bootstrap follow-up {followup_attempt + 1}/{max_followup_attempts})",
-                                forced_write_tool_name=followup_forced_write_tool_name,
+                                forced_write_tool_name=followup_prompt_forced_write_tool_name,
                             )
                             continue
                         if is_mutation_contract_violation(followup_exc):
@@ -1258,7 +1262,7 @@ class RetryOrchestrator:
                     current_write_context = build_retry_write_after_bootstrap_context(
                         original_context=context,
                         bootstrap_receipt=next_bootstrap_receipt,
-                        forced_write_tool_name=followup_forced_write_tool_name,
+                        forced_write_tool_name=followup_prompt_forced_write_tool_name,
                     )
                     continue
 

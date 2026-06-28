@@ -2692,6 +2692,10 @@ def run_factory_chain(
             check=False,
         )
 
+    started = time.time()
+    deadline_safety_seconds = min(max(float(timeout_s) * 0.05, 15.0), 30.0)
+    factory_deadline_epoch_seconds = started + max(float(timeout_s) - deadline_safety_seconds, 1.0)
+
     payload = {
         "workspace": str(workspace),
         "start_from": normalized_start_from,
@@ -2710,10 +2714,13 @@ def run_factory_chain(
             "factory_bench_title": str(project.get("title") or "").strip(),
             "factory_bench_project_workspace": str(workspace.resolve()),
             "factory_bench_start_from": normalized_start_from,
+            "factory_run_timeout_seconds": float(timeout_s),
+            "factory_run_started_epoch_seconds": started,
+            "factory_run_deadline_epoch_seconds": factory_deadline_epoch_seconds,
+            "factory_run_deadline_safety_seconds": deadline_safety_seconds,
+            "factory_run_deadline_source": "factory_bench_runner",
         },
     }
-
-    started = time.time()
 
     with open(log_path, "w", encoding="utf-8") as log_fh:
 

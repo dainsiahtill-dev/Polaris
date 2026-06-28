@@ -98,6 +98,70 @@ def _tool_results_from_batch_receipt(batch_receipt: dict[str, Any] | None) -> li
     return tool_results
 
 
+def _tool_schema_names_for_error_audit(tool_definitions: list[dict[str, Any]]) -> list[str]:
+    names: list[str] = []
+    for definition in tool_definitions:
+        function_payload = definition.get("function") if isinstance(definition, dict) else None
+        if not isinstance(function_payload, dict):
+            continue
+        name = str(function_payload.get("name") or "").strip()
+        if name:
+            names.append(name)
+    return names
+
+
+def _llm_metadata_from_ledger_on_error(
+    ledger: Any,
+    *,
+    messages: list[dict[str, Any]],
+    tool_definitions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Project final-request audit evidence even when TransactionKernel raises."""
+
+    metadata: dict[str, Any] = {}
+    calls = getattr(ledger, "llm_calls", None)
+    if isinstance(calls, list):
+        for call in reversed(calls):
+            if not isinstance(call, dict):
+                continue
+            raw_metadata = call.get("metadata")
+            if not isinstance(raw_metadata, dict):
+                continue
+            for key in (
+                "final_request_context_audit",
+                "context_snapshot_ref",
+                "context_snapshot_degraded",
+                "context_snapshot_degraded_reason",
+                "context_tokens_after",
+                "contextTokens",
+                "usage",
+                "usage_source",
+            ):
+                if key in raw_metadata and key not in metadata:
+                    value = raw_metadata.get(key)
+                    metadata[key] = dict(value) if isinstance(value, dict) else value
+            if metadata:
+                break
+    context_os_audit_summary = summarize_context_os_audit_from_ledger(ledger)
+    if context_os_audit_summary:
+        metadata.setdefault("context_os_audit", context_os_audit_summary)
+    metadata["transaction_kernel_error_audit_available"] = bool(
+        isinstance(metadata.get("final_request_context_audit"), dict)
+        or str(metadata.get("context_snapshot_ref") or "").strip()
+    )
+    if not metadata["transaction_kernel_error_audit_available"]:
+        metadata["provider_request_snapshot_degraded"] = True
+        metadata["provider_request_snapshot_degraded_reason"] = "transaction_kernel_failed_without_llm_metadata"
+        metadata["provider_request_assembly_projection"] = {
+            "schema_version": "llm.provider_request_assembly_projection.v1",
+            "source": "roles.kernel.transaction_error_path",
+            "message_count": len(messages),
+            "tool_schema_count": len(tool_definitions),
+            "tool_names": _tool_schema_names_for_error_audit(tool_definitions),
+        }
+    return metadata
+
+
 async def execute_transaction_kernel_turn(
     kernel: RoleExecutionKernel,
     role: str,
@@ -285,6 +349,17 @@ async def execute_transaction_kernel_turn(
             )
         except (AttributeError, RuntimeError, TypeError, ValueError):
             logger.debug("Projection outcome feedback failed after TransactionKernel error", exc_info=True)
+        error_metadata = _llm_metadata_from_ledger_on_error(
+            getattr(exc, "turn_ledger", None),
+            messages=messages,
+            tool_definitions=tool_definitions,
+        )
+        if profile.provider_id:
+            error_metadata["provider_id"] = str(profile.provider_id).strip()
+        if profile.model:
+            error_metadata["model"] = str(profile.model).strip()
+        if tool_filter_audit is not None:
+            error_metadata["tool_filter_audit"] = tool_filter_audit
         return RoleTurnResult(
             content="",
             error=f"TransactionKernel execution failed: {exc}",
@@ -292,6 +367,7 @@ async def execute_transaction_kernel_turn(
             profile_version=profile.version,
             prompt_fingerprint=fingerprint,
             tool_policy_id=profile.tool_policy.policy_id,
+            metadata=error_metadata,
         )
 
     kind = tk_result.get("kind", "final_answer")

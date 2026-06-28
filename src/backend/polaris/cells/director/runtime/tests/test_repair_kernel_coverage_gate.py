@@ -97,17 +97,23 @@ def test_public_coverage_routes_node_typescript_configuration_diagnostics_to_run
                 "Do you need to install type definitions for node? Try npm i --save-dev @types/node.",
                 "src/main.ts(152,16): error TS1343: The 'import.meta' meta-property is only "
                 "allowed when '--module' is es2020/es2022/esnext/system/node16/nodenext.",
+                "src/verify.ts(201,40): error TS2550: Property 'replaceAll' does not exist "
+                "on type 'string'. Do you need to change your target library? Try changing "
+                "the 'lib' compiler option to 'es2021' or later.",
+                "error TS6059: File '/tmp/workspace/tests/verify.test.ts' is not under 'rootDir' "
+                "'/tmp/workspace/src'. 'rootDir' is expected to contain all source files.",
             )
         )
     ).to_dict()
 
     assert payload["coverage_gap_count"] == 0
-    assert payload["covered_diagnostic_count"] == 3
-    assert payload["executable_runtime_plan_diagnostic_count"] == 3
+    assert payload["covered_diagnostic_count"] == 5
+    assert payload["executable_runtime_plan_diagnostic_count"] == 5
 
     matched_tools = [tuple(item["matched_source_tools"]) for item in payload["items"]]
     assert ("deterministic_runtime_dependency_repair",) in matched_tools
     assert ("deterministic_typescript_tsconfig_lib_repair",) in matched_tools
+    assert ("deterministic_typescript_tsconfig_rootdir_repair",) in matched_tools
     for item in payload["items"]:
         assert item["known_rule_matched"] is True
         assert item["executable_runtime_plan_matched"] is True

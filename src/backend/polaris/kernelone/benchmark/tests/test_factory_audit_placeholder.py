@@ -28,3 +28,28 @@ func Tick() int {
 """
 
     assert _has_unfinished_placeholder(text) is True
+
+
+def test_placeholder_markers_inside_javascript_template_literals_are_not_unfinished_code() -> None:
+    text = """
+export function verifyScript(testScript: string): void {
+  if (testScript.includes("no test specified")) {
+    throw new Error(`test script is placeholder: "${testScript}"`);
+  }
+}
+"""
+
+    assert _has_unfinished_placeholder(text) is False
+
+
+def test_placeholder_markers_inside_javascript_regex_literals_are_not_unfinished_code() -> None:
+    text = """
+export function verifyScript(cmd: string): boolean {
+  if (/TODO|FIXME|placeholder/i.test(cmd)) {
+    return false;
+  }
+  return true;
+}
+"""
+
+    assert _has_unfinished_placeholder(text) is False

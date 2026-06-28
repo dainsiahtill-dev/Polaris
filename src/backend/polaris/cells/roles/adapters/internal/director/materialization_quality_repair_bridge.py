@@ -14,11 +14,13 @@ from typing import Any
 from polaris.cells.director.runtime.public.service import (
     CompareDirectorRepairShadowRunV1,
     DirectorRepairMaterializationQualityStepV1,
+    PlanDirectorRepairCommandV1,
     QueryDirectorRepairCoverageV1,
     QueryDirectorRepairMaterializationQualityScheduleV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairReceiptV1,
     compare_director_repair_shadow_run,
+    plan_director_repair,
     query_director_repair_coverage,
     query_director_repair_materialization_quality_schedule,
     query_director_repair_strategy_catalog,
@@ -127,7 +129,9 @@ _MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS = (
     "deterministic_javascript_typescript_annotation_repair",
     "deterministic_javascript_missing_export_repair",
     "deterministic_javascript_esm_commonjs_entrypoint_repair",
+    "deterministic_javascript_dom_global_runtime_guard_repair",
     "deterministic_javascript_missing_method_runtime_repair",
+    "deterministic_typescript_html_container_selector_repair",
 )
 
 
@@ -681,18 +685,41 @@ def _collect_materialization_target_runtime_base_files(
         workspace_path,
         artifact_quality_errors=artifact_quality_errors,
         source_tool=source_tool,
-        allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"),
+        allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".html", ".htm"),
         collect_unmatched_diagnostic_paths=True,
         task=task,
     )
-    if source_tool == "deterministic_missing_declared_target_repair":
+    if source_tool in _MATERIALIZATION_TARGET_RUNTIME_SOURCE_TOOLS:
         _add_bounded_workspace_materialization_base_files(
             base_files,
             workspace_path,
-            allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"),
+            allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".html", ".htm"),
             max_files=512,
         )
     return base_files
+
+
+def _materialization_allowed_paths_from_runtime_shadow_plan(
+    *,
+    source_tool: str,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: list[str],
+) -> tuple[str, ...]:
+    allowed_paths: list[str] = [str(path) for path in base_files]
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=tuple(artifact_quality_errors),
+            mode="shadow",
+        )
+    ).to_dict()
+    composition = planning.get("composition_summary")
+    if isinstance(composition, Mapping):
+        changed_paths = composition.get("changed_paths")
+        if isinstance(changed_paths, list | tuple | set):
+            allowed_paths.extend(str(path) for path in changed_paths if str(path or "").strip())
+    return tuple(dict.fromkeys(allowed_paths))
 
 
 def _add_bounded_workspace_materialization_base_files(
@@ -866,7 +893,11 @@ def _run_materialization_target_runtime(
                 executor_factory=DirectorToolExecutor,
                 base_files=base_files,
                 artifact_quality_errors=artifact_quality_errors,
-                allowed_paths=tuple(base_files.keys()),
+                allowed_paths=_materialization_allowed_paths_from_runtime_shadow_plan(
+                    source_tool=source_tool,
+                    base_files=base_files,
+                    artifact_quality_errors=artifact_quality_errors,
+                ),
                 use_editor=True,
                 convergence_verifier=convergence_verifier,
             )

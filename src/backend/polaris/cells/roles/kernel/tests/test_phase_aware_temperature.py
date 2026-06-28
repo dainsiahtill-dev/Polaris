@@ -414,6 +414,47 @@ class TestTransactionKernelTemperatureChannel:
         assert isinstance(context_override, dict)
         assert _CHANNEL_KEY not in context_override
 
+    @pytest.mark.asyncio
+    async def test_payload_output_floor_does_not_lower_execution_strategy_budget(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = SimpleNamespace(role_id="director", version="1.0", model="test-model", provider_id="openai")
+        request = SimpleNamespace(
+            message="repair existing targets",
+            run_id="run_123",
+            task_id=None,
+            workspace=".",
+            context_override={
+                "context_os_snapshot": {},
+                "director_execution_strategy": {
+                    "schema_version": "task.execution_strategy.v1",
+                    "output_budget_tokens": 128000,
+                },
+            },
+        )
+        captured_contexts: list[Any] = []
+
+        async def _fake_call(*, context: Any, **_kwargs: Any) -> Any:
+            captured_contexts.append(context)
+            return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
+
+        kernel.inject_llm_caller(SimpleNamespace(call=_fake_call))
+        tk = kernel._create_transaction_kernel("director", profile, request)
+
+        await tk.llm_provider(
+            {
+                "messages": [
+                    {"role": "system", "content": "sys"},
+                    {"role": "user", "content": "repair existing targets"},
+                ],
+                "max_tokens_floor": 2500,
+            }
+        )
+
+        assert len(captured_contexts) == 1
+        context_override = getattr(captured_contexts[0], "context_override", None)
+        assert isinstance(context_override, dict)
+        assert context_override[_FLOOR_CHANNEL_KEY] == 128000
+
 
 class TestTransactionKernelTaskRuntimeGuard:
     @pytest.mark.asyncio

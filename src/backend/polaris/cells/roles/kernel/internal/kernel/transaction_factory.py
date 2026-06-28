@@ -61,6 +61,43 @@ def _first_non_empty(*values: Any) -> str:
     return ""
 
 
+def _coerce_positive_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _mapping_value(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _resolve_existing_output_budget_tokens(context_override: dict[str, Any]) -> int | None:
+    for key in ("llm_max_tokens", "max_output_tokens", "max_tokens"):
+        parsed = _coerce_positive_int(context_override.get(key))
+        if parsed is not None:
+            return parsed
+    for payload_key in (
+        "task_execution_contract",
+        "director_execution_contract",
+        "task_execution_strategy",
+        "director_execution_strategy",
+        "execution_strategy",
+    ):
+        payload = _mapping_value(context_override.get(payload_key))
+        context_budget = _mapping_value(payload.get("context_budget"))
+        for nested_key in ("output_budget_tokens", "llm_max_tokens", "max_output_tokens", "max_tokens"):
+            parsed = _coerce_positive_int(payload.get(nested_key))
+            if parsed is None:
+                parsed = _coerce_positive_int(context_budget.get(nested_key))
+            if parsed is not None:
+                return parsed
+    return None
+
+
 def _assert_task_runtime_guard_allows_tool(request: Any) -> None:
     context_override = _as_mapping(getattr(request, "context_override", None))
     metadata = _as_mapping(getattr(request, "metadata", None))
@@ -213,17 +250,18 @@ def create_transaction_kernel(
         # ADR-0090 W2.6: phase-aware low temperature rides the same channel.
         if temperature_override is not None:
             override["_transaction_kernel_temperature_override"] = temperature_override
-        # I3-r22 (F10): the reserved output floor rides the same channel —
-        # resolve_max_tokens reads override["llm_max_tokens"] as the requested
-        # output budget, which TokenBudgetManager.enforce then reserves while
-        # compressing the (bulky retry) prompt to fit the fixed window.
+        # I3-r22 (F10): the reserved output floor rides the same channel as an
+        # output-budget lower bound. It must never shrink a larger execution
+        # strategy budget; high-capacity Director runs should keep their declared
+        # output contract instead of being capped at the retry floor.
         if max_tokens_floor is not None:
             try:
                 floor_value = int(max_tokens_floor)
             except (TypeError, ValueError):
                 floor_value = 0
             if floor_value > 0:
-                override["llm_max_tokens"] = floor_value
+                existing_budget = _resolve_existing_output_budget_tokens(override)
+                override["llm_max_tokens"] = max(floor_value, existing_budget or 0)
         return override
 
     def _extract_model_override_from_request_payload(request_payload: dict[str, Any]) -> str | None:

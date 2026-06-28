@@ -38,6 +38,7 @@ from .go_syntax import (
 )
 from .java_syntax import JAVA_POST_SOURCE_TOOL, JAVA_TEST_DEPENDENCY_SOURCE_TOOL
 from .javascript_syntax import (
+    JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL,
     JAVASCRIPT_ESM_COMMONJS_ENTRYPOINT_SOURCE_TOOL,
     JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
     JAVASCRIPT_MISSING_METHOD_RUNTIME_SOURCE_TOOL,
@@ -80,6 +81,7 @@ from .typescript_syntax import (
     TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL,
     TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
     TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL,
+    TYPESCRIPT_HTML_CONTAINER_SELECTOR_SOURCE_TOOL,
     TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL,
     TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
     TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
@@ -96,6 +98,7 @@ from .typescript_syntax import (
     TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL,
     TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL,
     TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
+    TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL,
     TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL,
     TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
     TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL,
@@ -122,6 +125,7 @@ class RepairArchetype(str, Enum):
     GENERATED_RESIDUE = "generated_residue"
     MISSING_DECLARED_TARGET = "missing_declared_target"
     WRONG_IMPORT_PATH = "wrong_import_path"
+    RUNTIME_CONTRACT = "runtime_contract"
 
 
 def _slot_non_empty(value: str) -> str:
@@ -176,6 +180,7 @@ _RUNTIME_MIGRATION_SOURCE_TOOLS = frozenset(
         TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL,
         TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL,
         TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
+        TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL,
         TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL,
         TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
         TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL,
@@ -1610,6 +1615,19 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
+                rule_id="javascript.npm_script_port_conflict",
+                source_tool=NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
+                language="javascript",
+                phase="runtime_smoke",
+                archetype=RepairArchetype.RUNTIME_CONTRACT,
+                priority=1,
+                diagnostic_codes=("workspace_validation_failed",),
+                raw_terms=("eaddrinuse",),
+                risk_level="low",
+                description="Repairs fixed-port package start scripts when npm start fails with EADDRINUSE.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
                 rule_id="javascript.typescript_test_runner_script_contract",
                 source_tool=NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
                 language="javascript",
@@ -1665,6 +1683,40 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 metadata=_executable_runtime_metadata(scope="node_test_target_write_file"),
             ),
             RepairRuleDefinition(
+                rule_id="javascript.node_test_missing_directory_target",
+                source_tool=JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL,
+                language="javascript",
+                phase="target_contract",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                diagnostic_codes=("artifact_quality_error", "workspace_validation_failed"),
+                raw_terms=("npm", "could not find", "test"),
+                risk_level="low",
+                description=(
+                    "Creates a concrete Node smoke test file when package.json points at a missing "
+                    "local tests directory."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="node_test_directory_target_write_file"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.node_test_missing_directory_target",
+                source_tool=JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL,
+                language="typescript",
+                phase="target_contract",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                diagnostic_codes=("workspace_validation_failed",),
+                raw_terms=("npm", "could not find", "test"),
+                risk_level="low",
+                description=(
+                    "Creates a TypeScript source smoke test when a compiled Node test directory "
+                    "target such as dist/__tests__ is missing."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="node_test_directory_target_write_file"),
+            ),
+            RepairRuleDefinition(
                 rule_id="javascript.missing_named_export",
                 source_tool=JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
                 language="javascript",
@@ -1675,6 +1727,19 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 message_terms=("does not provide an export named",),
                 risk_level="low",
                 description="Covers JavaScript missing named export repair metadata.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="javascript.dom_global_runtime_guard",
+                source_tool=JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL,
+                language="javascript",
+                phase="runtime_smoke",
+                archetype=RepairArchetype.RUNTIME_CONTRACT,
+                priority=1,
+                diagnostic_codes=("javascript_dom_global_in_node_runtime",),
+                message_terms=("dom global", "not available in node"),
+                risk_level="low",
+                description=("Guards browser-only bootstrap calls when Node smoke/start executes a browser bundle."),
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
@@ -2266,7 +2331,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 phase="quality_repair",
                 archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
                 priority=1,
-                raw_terms=("typescript annotation",),
+                raw_terms=("unexpected token ':'",),
                 risk_level="low",
                 description="Removes generated TypeScript annotations that leaked into JavaScript files.",
                 runtime_plan_available=True,
@@ -2370,6 +2435,23 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 metadata=_executable_runtime_metadata(scope="missing_member_declaration_text_replace"),
             ),
             RepairRuleDefinition(
+                rule_id="typescript.object_literal_missing_member_implementation",
+                source_tool=TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_ts2739", "typescript_ts2741"),
+                message_terms=("missing", "type"),
+                risk_level="medium",
+                description=(
+                    "Adds object-literal method implementations when an interface method was declared "
+                    "but a same-file factory Object.freeze return does not implement it."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="object_literal_member_implementation_text_replace"),
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.reexport",
                 source_tool=TYPESCRIPT_REEXPORT_SOURCE_TOOL,
                 language="typescript",
@@ -2408,6 +2490,22 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 description="Rewrites generated TypeScript relative imports to the exact file-system casing.",
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="relative_import_case_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.html_container_selector",
+                source_tool=TYPESCRIPT_HTML_CONTAINER_SELECTOR_SOURCE_TOOL,
+                language="html",
+                phase="target_runtime",
+                archetype=RepairArchetype.RUNTIME_CONTRACT,
+                priority=1,
+                diagnostic_codes=("html_container_contract_failed",),
+                risk_level="low",
+                description=(
+                    "Broadens generated TypeScript/HTML verifier container-id regexes only when actual HTML "
+                    "container ids contain the declared selector tokens."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="html_container_selector_text_replace"),
             ),
             RepairRuleDefinition(
                 rule_id="typescript.scaffold",
@@ -2527,6 +2625,20 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
+                rule_id="typescript.nullable_dom_global",
+                source_tool="deterministic_typescript_nullable_canvas_context_repair",
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
+                priority=1,
+                diagnostic_codes=("typescript_ts18047", "typescript_ts18048"),
+                message_terms=("possibly",),
+                risk_level="low",
+                description="Adds narrow guards for nullable browser globals such as window/document.",
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="nullable_dom_global_guard"),
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.number_to_string_argument",
                 source_tool=TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL,
                 language="typescript",
@@ -2603,6 +2715,34 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 metadata=_executable_runtime_metadata(scope="tsconfig_json_compiler_options_json_set"),
             ),
             RepairRuleDefinition(
+                rule_id="typescript.tsconfig_rootdir",
+                source_tool=TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL,
+                language="typescript",
+                phase="dependency_resolution",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                diagnostic_codes=("typescript_ts6059",),
+                message_terms=("rootDir",),
+                risk_level="medium",
+                description="Widens TypeScript rootDir when compiler-included test sources sit outside src/.",
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="tsconfig_json_rootdir_json_set"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.tsconfig_es2021_lib",
+                source_tool=TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
+                language="typescript",
+                phase="dependency_resolution",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                diagnostic_codes=("typescript_ts2550",),
+                raw_terms=("replaceall",),
+                risk_level="medium",
+                description="Raises TypeScript compiler lib/target when generated code uses ES2021 built-ins.",
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="tsconfig_json_compiler_options_json_set"),
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.import_meta_module_option",
                 source_tool=TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
                 language="typescript",
@@ -2644,18 +2784,51 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 metadata=_executable_runtime_metadata(scope="unique_export_import_text_replace"),
             ),
             RepairRuleDefinition(
+                rule_id="typescript.duplicate_export_import_binding",
+                source_tool=TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
+                language="typescript",
+                phase="export_resolution",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_ts2300",),
+                message_terms=("duplicate identifier",),
+                risk_level="low",
+                description=(
+                    "Removes duplicate TypeScript value re-export bindings when the same symbol is imported "
+                    "and locally exported by the barrel file."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="duplicate_export_import_binding_text_replace"),
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.unused_import",
                 source_tool=TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL,
                 language="typescript",
                 phase="quality_repair",
                 archetype=RepairArchetype.GENERATED_RESIDUE,
                 priority=2,
-                diagnostic_codes=("typescript_ts6133",),
-                message_terms=("declared", "never read"),
+                raw_terms=("unused import",),
                 risk_level="low",
                 description="Removes generated unused TypeScript import residue through span-based text replacement.",
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="unused_import_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.unused_parameter",
+                source_tool=TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.GENERATED_RESIDUE,
+                priority=1,
+                diagnostic_codes=("typescript_ts6133",),
+                message_terms=("declared", "never read"),
+                risk_level="low",
+                description=(
+                    "Prefixes generated unused TypeScript parameters with an underscore so strict builds "
+                    "can distinguish intentional API placeholders from unread locals."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="unused_parameter_line_text_replace"),
             ),
             RepairRuleDefinition(
                 rule_id="typescript.unresolved_relative_unused_import",

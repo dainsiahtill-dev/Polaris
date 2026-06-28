@@ -108,6 +108,21 @@ class TestTypescriptNamespaceExports:
 
         assert "Artifact quality scan failed: declared interface 'WeatherReport' missing from src/weather.ts" in errors
 
+    def test_typescript_fixture_string_import_is_not_physical_interface_import(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path / "tests/verify.test.ts",
+            """
+const VALID_WEB = `import { render } from "./engine/renderer";
+export function boot(): void { render(); }`;
+""".lstrip(),
+        )
+
+        snapshot = build_symbol_index_snapshot(tmp_path)
+        issues = scan_cross_artifact_consistency(tmp_path)
+
+        assert snapshot.imports == ()
+        assert issues == []
+
 
 class TestSnapshotSignatures:
     def test_python_signature_digest_is_stable_contract_evidence(self, tmp_path: Path) -> None:

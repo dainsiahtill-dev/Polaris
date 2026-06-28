@@ -122,12 +122,14 @@ from .java_syntax import (
 from .javascript_runtime import (
     JavaScriptRepairPlanning,
     JavaScriptRepairRun,
+    plan_javascript_dom_global_runtime_guard_repair,
     plan_javascript_esm_commonjs_entrypoint_repair,
     plan_javascript_missing_export_repair,
     plan_javascript_missing_method_runtime_repair,
     plan_javascript_test_missing_target_repair,
     plan_node_test_script_contract_repair,
     plan_npm_script_contract_repair,
+    run_javascript_dom_global_runtime_guard_repair,
     run_javascript_esm_commonjs_entrypoint_repair,
     run_javascript_missing_export_repair,
     run_javascript_missing_method_runtime_repair,
@@ -136,6 +138,7 @@ from .javascript_runtime import (
     run_npm_script_contract_repair,
 )
 from .javascript_syntax import (
+    JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL,
     JAVASCRIPT_ESM_COMMONJS_ENTRYPOINT_SOURCE_TOOL,
     JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
     JAVASCRIPT_MISSING_METHOD_RUNTIME_SOURCE_TOOL,
@@ -328,6 +331,7 @@ from .typescript_syntax import (
     TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
     TYPESCRIPT_ENUM_MEMBER_SEPARATOR_SOURCE_TOOL,
     TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL,
+    TYPESCRIPT_HTML_CONTAINER_SELECTOR_SOURCE_TOOL,
     TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL,
     TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
     TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
@@ -345,6 +349,7 @@ from .typescript_syntax import (
     TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL,
     TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL,
     TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
+    TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL,
     TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL,
     TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
     TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL,
@@ -1099,6 +1104,21 @@ def _plan_javascript_esm_commonjs_entrypoint(
     mode: str,
 ) -> RuntimeRepairPlanning:
     planning = plan_javascript_esm_commonjs_entrypoint_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_javascript(planning)
+
+
+def _plan_javascript_dom_global_runtime_guard(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_javascript_dom_global_runtime_guard_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         advisor_notes=advisor_notes,
@@ -2189,6 +2209,30 @@ def _run_javascript_esm_commonjs_entrypoint(
     mode: str,
 ) -> RuntimeRepairRun:
     run = run_javascript_esm_commonjs_entrypoint_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_javascript(run)
+
+
+def _run_javascript_dom_global_runtime_guard(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    run = run_javascript_dom_global_runtime_guard_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
@@ -3687,6 +3731,7 @@ _TYPESCRIPT_RUNTIME_MIGRATION_BINDINGS: tuple[tuple[str, str, str], ...] = (
     (TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL, "typescript", "typescript.entrypoint"),
     (TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL, "typescript", "typescript.escaped_newline"),
     (TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL, "typescript", "typescript.hyphenated_identifier"),
+    (TYPESCRIPT_HTML_CONTAINER_SELECTOR_SOURCE_TOOL, "html", "typescript.html_container_selector"),
     (
         TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
         "typescript",
@@ -3702,6 +3747,7 @@ _TYPESCRIPT_RUNTIME_MIGRATION_BINDINGS: tuple[tuple[str, str, str], ...] = (
     (TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL, "typescript", "typescript.sourcefile_diagnostics"),
     (TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL, "typescript", "typescript.too_few_arguments"),
     (TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL, "typescript", "typescript.tsconfig_lib"),
+    (TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL, "typescript", "typescript.tsconfig_rootdir"),
     (TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL, "typescript", "typescript.uninitialized_property"),
     (TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL, "typescript", "typescript.unique_export_import"),
     (TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL, "typescript", "typescript.unresolved_identifier"),
@@ -4075,6 +4121,13 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="javascript.commonjs_esm_entrypoint",
         planner=_plan_javascript_esm_commonjs_entrypoint,
         runner=_run_javascript_esm_commonjs_entrypoint,
+    ),
+    JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL,
+        language="javascript",
+        rule_id="javascript.dom_global_runtime_guard",
+        planner=_plan_javascript_dom_global_runtime_guard,
+        runner=_run_javascript_dom_global_runtime_guard,
     ),
     JAVASCRIPT_MISSING_METHOD_RUNTIME_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=JAVASCRIPT_MISSING_METHOD_RUNTIME_SOURCE_TOOL,

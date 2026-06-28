@@ -201,6 +201,41 @@ class PromptBuilder:
             profile_fingerprint=profile.version,
         )
 
+    @staticmethod
+    def _output_contract_suppresses_working_memory_contract(
+        *,
+        prompt_appendix: str = "",
+        message: str = "",
+    ) -> bool:
+        """Return whether an exact output contract conflicts with SESSION_PATCH."""
+
+        haystack = f"{prompt_appendix}\n{message}".lower()
+        if not haystack.strip():
+            return False
+        exact_json_markers = (
+            "return exactly one json object",
+            "exactly one json object and nothing else",
+            "json object and nothing else",
+            "只输出一个 json",
+            "仅输出一个 json",
+            "只返回一个 json",
+            "仅返回一个 json",
+        )
+        if any(marker in haystack for marker in exact_json_markers):
+            return True
+        if "<session_patch>" not in haystack:
+            return False
+        suppress_markers = (
+            "do not output",
+            "must not output",
+            "never output",
+            "不要输出",
+            "不得输出",
+            "禁止输出",
+            "严禁输出",
+        )
+        return any(marker in haystack for marker in suppress_markers)
+
     def build_system_prompt(
         self,
         profile: RoleProfile,
@@ -230,6 +265,13 @@ class PromptBuilder:
             include_working_memory_contract: 是否注入 ADR-0080 SESSION_PATCH 工作记忆契约
             include_tool_policy: 是否注入工具策略提示
         """
+        effective_include_working_memory_contract = (
+            include_working_memory_contract
+            and not self._output_contract_suppresses_working_memory_contract(
+                prompt_appendix=prompt_appendix,
+                message=message,
+            )
+        )
         # 优先尝试三轴模式（Tri-Axis Role Composition）
         core_template_id = getattr(profile.prompt_policy, "core_template_id", None)
         if core_template_id and core_template_id in ROLE_PROMPT_TEMPLATES:
@@ -241,7 +283,7 @@ class PromptBuilder:
                     domain=domain,
                     message=message,
                     task_type=getattr(profile.prompt_policy, "task_type", "default") or "default",
-                    include_working_memory_contract=include_working_memory_contract,
+                    include_working_memory_contract=effective_include_working_memory_contract,
                     include_tool_policy=include_tool_policy,
                 )
             except (RuntimeError, ValueError) as exc:
@@ -274,7 +316,7 @@ class PromptBuilder:
         l3_content = self._get_cached_l3()
 
         # L4: 工作记忆契约（ADR-0080 全局缓存）
-        l4_content = self._get_cached_l4() if include_working_memory_contract else ""
+        l4_content = self._get_cached_l4() if effective_include_working_memory_contract else ""
 
         # L5: 动态交互策略（按角色/意图构建）
         tool_prompt = (
@@ -343,6 +385,13 @@ class PromptBuilder:
         Returns:
             完整系统提示词字符串
         """
+        effective_include_working_memory_contract = (
+            include_working_memory_contract
+            and not self._output_contract_suppresses_working_memory_contract(
+                prompt_appendix=prompt_appendix,
+                message=message,
+            )
+        )
         effective_task_type = self._resolve_prompt_task_type(
             task_type=task_type,
             message=message,
@@ -419,7 +468,7 @@ class PromptBuilder:
         l3_content = self._get_cached_l3()
 
         # L4: 工作记忆契约（ADR-0080）
-        l4_content = self._get_cached_l4() if include_working_memory_contract else ""
+        l4_content = self._get_cached_l4() if effective_include_working_memory_contract else ""
 
         # L5: 工具策略（基于 profile 的工具策略）
         tool_prompt = (

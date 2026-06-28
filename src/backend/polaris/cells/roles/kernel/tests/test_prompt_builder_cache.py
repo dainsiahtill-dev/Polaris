@@ -197,6 +197,33 @@ class TestL1CacheHitRate:
         assert "使用 pytest 框架" not in prompt
         assert "严禁 bare except" not in prompt
 
+    def test_exact_json_output_contract_suppresses_session_patch(self) -> None:
+        builder = PromptBuilder()
+        prompt = builder.build_system_prompt(
+            _make_profile(template_id="qa", role_id="qa"),
+            prompt_appendix=(
+                "Polaris QA output contract:\n"
+                "Return exactly one JSON object and nothing else.\n"
+                'Use this schema: {"verdict":"PASS|FAIL"}'
+            ),
+            domain="code",
+        )
+
+        assert "Return exactly one JSON object and nothing else." in prompt
+        assert "<SESSION_PATCH>" not in prompt
+        assert "Working Memory Contract" not in prompt
+
+    def test_default_director_prompt_still_includes_session_patch(self) -> None:
+        builder = PromptBuilder()
+        prompt = builder.build_system_prompt(
+            _make_profile(template_id="director", role_id="director"),
+            prompt_appendix="Continue the multi-turn implementation.",
+            domain="code",
+        )
+
+        assert "<SESSION_PATCH>" in prompt
+        assert "Working Memory Contract" in prompt
+
     def test_chief_engineer_go_blueprint_uses_language_identity_without_python_standards(self) -> None:
         builder = PromptBuilder()
         prompt = builder.build_system_prompt(

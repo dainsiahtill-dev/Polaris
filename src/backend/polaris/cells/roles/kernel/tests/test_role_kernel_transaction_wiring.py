@@ -973,6 +973,73 @@ class TestExecuteTransactionKernelTurn:
         assert context_os_audit["latest"]["control_plane"]["isolated"] is True
 
     @pytest.mark.asyncio
+    async def test_transaction_kernel_error_preserves_final_request_audit_metadata(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(role_id="director")
+        request = _MockRequest(run_id="run_123")
+        fingerprint = _MockFingerprint()
+        final_audit = {
+            "schema_version": "llm.final_request_context_audit.v1",
+            "message_count": 2,
+            "tool_schema_count": 2,
+            "final_request_token_estimate": 321,
+            "context_window_utilization": 0.0123,
+        }
+        ledger = TurnLedger("turn_error")
+        ledger.record_llm_call(
+            phase="decision",
+            model="test-model",
+            tokens_in=10,
+            tokens_out=1,
+            metadata={
+                "final_request_context_audit": final_audit,
+                "context_snapshot_ref": "abc123abc123abc123abc123",
+                "context_tokens_after": 321,
+            },
+        )
+        failure = RuntimeError("single_batch_contract_violation: mutation write batch failed")
+        failure.turn_ledger = ledger
+
+        with (
+            patch.object(
+                kernel,
+                "_create_transaction_kernel",
+                return_value=MagicMock(execute=AsyncMock(side_effect=failure)),
+            ),
+            patch(
+                "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+                return_value=MagicMock(
+                    build_context=AsyncMock(
+                        return_value=MagicMock(
+                            messages=[
+                                {"role": "system", "content": "sys"},
+                                {"role": "user", "content": "repair"},
+                            ],
+                            token_estimate=37,
+                        )
+                    ),
+                    record_projection_outcome=MagicMock(),
+                ),
+            ),
+        ):
+            result = await kernel._execute_transaction_kernel_turn(
+                role="director",
+                profile=profile,
+                request=request,
+                system_prompt="sys",
+                fingerprint=fingerprint,
+                observer_run_id="run_123",
+                response_schema=None,
+            )
+
+        assert result.is_complete is False
+        assert "single_batch_contract_violation" in str(result.error)
+        assert result.metadata["transaction_kernel_error_audit_available"] is True
+        assert result.metadata["final_request_context_audit"] == final_audit
+        assert result.metadata["context_snapshot_ref"] == "abc123abc123abc123abc123"
+        assert result.metadata["context_tokens_after"] == 321
+
+    @pytest.mark.asyncio
     async def test_run_preserves_transaction_context_os_audit_metadata(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(role_id="pm")

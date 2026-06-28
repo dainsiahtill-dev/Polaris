@@ -135,13 +135,16 @@ _COMMENT_LINE_PREFIXES: tuple[str, ...] = ("//", "#", "*", "/*", "--", "<!--")
 # (e.g. a module docstring "...never falls back to static placeholder text...", or an
 # anti-placeholder test naming forbidden tokens). Strip string literals so their words
 # don't false-trigger; bare ``pass`` (never inside a string) and code-level markers stay
-# flagged. Triple-quoted (docstring) literals are matched before single-line ones.
+# flagged. Triple-quoted (docstring) literals and JS/TS template literals are matched
+# before single-line ones.
 _STRING_LITERAL_RE = re.compile(
     r'"""[\s\S]*?"""'
     r"|'''[\s\S]*?'''"
+    r"|`(?:[^`\\]|\\.)*`"
     r'|"(?:[^"\\]|\\.)*"'
     r"|'(?:[^'\\]|\\.)*'"
 )
+_JS_REGEX_LITERAL_RE = re.compile(r"/(?:[^/\\\n\[]|\\.|\[[^\]\n]*(?:\\.[^\]\n]*)*\])+/[a-z]*")
 
 
 def _has_unfinished_placeholder(text: str) -> bool:
@@ -155,6 +158,7 @@ def _has_unfinished_placeholder(text: str) -> bool:
     is dropped whole, while an inline ``#`` after code is treated as a comment.
     """
     without_strings = _STRING_LITERAL_RE.sub('""', text)
+    without_strings = _JS_REGEX_LITERAL_RE.sub("/regex/", without_strings)
     scan_lines: list[str] = []
     for line in without_strings.splitlines():
         if line.lstrip().startswith(_COMMENT_LINE_PREFIXES):

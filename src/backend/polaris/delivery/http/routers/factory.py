@@ -115,6 +115,11 @@ _DIRECTOR_DISPATCH_TIMEOUT_ENV_KEYS = (
     "KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS",
     "KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS",
 )
+_FACTORY_RUN_DEADLINE_METADATA_KEYS = (
+    "factory_run_deadline_epoch_seconds",
+    "factory_deadline_epoch_seconds",
+    "deadline_epoch_seconds",
+)
 _RETRY_START_POLICY_AFTER_CHECKPOINT = "after_checkpoint"
 FactoryStartFrom: TypeAlias = Literal["auto", "architect", "pm", "director"]
 
@@ -137,6 +142,36 @@ def _resolve_director_dispatch_timeout_seconds() -> int:
         if value > 0:
             candidates.append(value)
     return max(candidates)
+
+
+def _metadata_float(metadata: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        raw = metadata.get(key)
+        if raw is None:
+            continue
+        try:
+            value = float(str(raw).strip())
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def _append_factory_deadline_context(context: dict[str, Any], metadata: dict[str, Any]) -> None:
+    deadline_epoch = _metadata_float(metadata, *_FACTORY_RUN_DEADLINE_METADATA_KEYS)
+    if deadline_epoch is None:
+        return
+    now_epoch = datetime.now(timezone.utc).timestamp()
+    remaining_seconds = max(0.0, deadline_epoch - now_epoch)
+    context["factory_run_deadline_epoch_seconds"] = deadline_epoch
+    context["factory_run_deadline_remaining_seconds"] = remaining_seconds
+    timeout_seconds = _metadata_float(metadata, "factory_run_timeout_seconds", "factory_timeout_seconds")
+    if timeout_seconds is not None:
+        context["factory_run_timeout_seconds"] = timeout_seconds
+    source = str(metadata.get("factory_run_deadline_source") or "").strip()
+    if source:
+        context["factory_run_deadline_source"] = source
 
 
 def _resolve_workspace(state: AppState, workspace: str | None = None) -> str:
@@ -846,6 +881,7 @@ def _build_stage_context(
         "factory_start_from": metadata["factory_start_from"],
         "metadata": metadata,
     }
+    _append_factory_deadline_context(context, metadata)
     if stage in {"docs_generation", "pm_planning"}:
         context["directive"] = payload.directive
     if stage == "chief_engineer_review":

@@ -9,8 +9,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from polaris.cells.factory.pipeline.internal.factory_workspace_quality import (
     WorkspaceQualityRunner,
 )
@@ -20,9 +18,7 @@ class TestNpmDependencyRepair:
     """Validate repair_hallucinated_npm_dependencies removes bad deps."""
 
     def _write_package_json(self, tmp_path: Path, payload: dict) -> None:
-        (tmp_path / "package.json").write_text(
-            json.dumps(payload, indent=2), encoding="utf-8"
-        )
+        (tmp_path / "package.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def test_remove_nonexistent_dependency_etarget(self, tmp_path: Path) -> None:
         """npm ETARGET error -> remove the hallucinated package."""
@@ -86,6 +82,44 @@ class TestNpmDependencyRepair:
         assert removed == []
         pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
         assert "express" in pkg["dependencies"]
+
+    def test_workspace_quality_skips_long_lived_http_server_start(self, tmp_path: Path) -> None:
+        """Static web server start scripts should not be required to exit for workspace validation."""
+        self._write_package_json(
+            tmp_path,
+            {
+                "name": "web-project",
+                "scripts": {
+                    "build": "tsc -p tsconfig.json",
+                    "test": "npm run build",
+                    "start": "npx --yes http-server . -p ${PORT:-0} -c-1",
+                },
+            },
+        )
+
+        commands = WorkspaceQualityRunner(tmp_path).workspace_quality_commands({})
+
+        assert ["npm", "run", "build"] in commands
+        assert ["npm", "test"] in commands
+        assert ["npm", "run", "start"] not in commands
+
+    def test_workspace_quality_keeps_exiting_node_start_smoke(self, tmp_path: Path) -> None:
+        """CLI-style npm start scripts still run as entrypoint smoke checks."""
+        self._write_package_json(
+            tmp_path,
+            {
+                "name": "cli-project",
+                "scripts": {
+                    "build": "tsc -p tsconfig.json",
+                    "start": "node dist/main.js",
+                },
+            },
+        )
+
+        commands = WorkspaceQualityRunner(tmp_path).workspace_quality_commands({})
+
+        assert ["npm", "run", "build"] in commands
+        assert ["npm", "run", "start"] in commands
 
     def test_no_package_json(self, tmp_path: Path) -> None:
         """Missing package.json -> no crash, empty result."""

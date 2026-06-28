@@ -120,6 +120,25 @@ class _CognitiveRuntimeMixin:
                 if isinstance(context_os_audit, Mapping):
                     receipt_payload["context_os_audit"] = dict(context_os_audit)
                     evidence["context_os_audit_recorded"] = True
+                final_request_context_audit = result_metadata.get("final_request_context_audit")
+                if isinstance(final_request_context_audit, Mapping):
+                    receipt_payload["final_request_context_audit"] = dict(final_request_context_audit)
+                    evidence["final_request_context_audit_recorded"] = True
+                for key in (
+                    "context_snapshot_ref",
+                    "context_snapshot_degraded",
+                    "context_snapshot_degraded_reason",
+                    "context_tokens_after",
+                    "contextTokens",
+                    "provider_request_snapshot_degraded",
+                    "provider_request_snapshot_degraded_reason",
+                    "transaction_kernel_error_audit_available",
+                ):
+                    if key in result_metadata:
+                        receipt_payload[key] = result_metadata.get(key)
+                provider_request_assembly_projection = result_metadata.get("provider_request_assembly_projection")
+                if isinstance(provider_request_assembly_projection, Mapping):
+                    receipt_payload["provider_request_assembly_projection"] = dict(provider_request_assembly_projection)
                 receipt_result = service.record_runtime_receipt(
                     RecordRuntimeReceiptCommandV1(
                         workspace=workspace,

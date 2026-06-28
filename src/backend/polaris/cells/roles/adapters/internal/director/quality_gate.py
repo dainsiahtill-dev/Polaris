@@ -132,6 +132,35 @@ def _quality_repair_edit_file_tool_definition() -> dict[str, Any]:
     }
 
 
+def _quality_repair_execute_command_tool_definition() -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": "execute_command",
+            "description": (
+                "Run a workspace-local verification command after a quality repair. "
+                "Use this for bounded build, test, typecheck, or lint commands."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "minLength": 1},
+                    "timeout": {"type": "integer", "minimum": 1, "maximum": 120},
+                },
+                "required": ["command"],
+            },
+        },
+    }
+
+
+def _quality_repair_existing_target_tool_definitions() -> list[dict[str, Any]]:
+    return [
+        _quality_repair_edit_file_tool_definition(),
+        _quality_repair_write_file_tool_definition(),
+        _quality_repair_execute_command_tool_definition(),
+    ]
+
+
 def _format_unresolved_relative_import_error_for_repair_prompt(error: Any) -> str | None:
     """Return a path-safe repair prompt line for unresolved relative imports."""
 
@@ -1228,6 +1257,61 @@ def _materialization_quality_scan_paths(
     )
 
 
+def _run_post_llm_materialization_runtime_guard(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    target_task_id: str,
+    context: dict[str, Any],
+    changed_files: list[str],
+    repair_tool_results: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Re-run runtime-owned materialization repairs after LLM repair writes.
+
+    LLM repair turns may touch package/config files after an earlier
+    deterministic repair fixed them. This guard performs a final artifact scan
+    over the actual write set and only routes diagnostics that the
+    director.runtime catalog already covers.
+    """
+
+    if not repair_tool_results or not has_successful_write_tool(repair_tool_results):
+        return [], {"attempted": False, "reason": "no_successful_llm_repair_write"}
+    workspace_full = str(getattr(adapter, "workspace", "") or "")
+    workspace_name = Path(workspace_full).name if workspace_full else ""
+    post_repair_errors = _collect_materialization_quality_errors(
+        adapter,
+        task=task,
+        all_affected_files=_materialization_quality_scan_paths(changed_files, repair_tool_results),
+        workspace_name=workspace_name,
+        context=context,
+    )
+    if not post_repair_errors:
+        return [], {"attempted": False, "reason": "post_llm_artifact_quality_clean"}
+    if not has_materialization_quality_runtime_repair_coverage(post_repair_errors):
+        return [], {
+            "attempted": False,
+            "reason": "post_llm_errors_not_runtime_covered",
+            "artifact_quality_errors": post_repair_errors[:20],
+        }
+    guard_tool_results, guard_summary = run_materialization_quality_repairs(
+        adapter,
+        task=task,
+        task_id=target_task_id,
+        artifact_quality_errors=post_repair_errors,
+    )
+    summary = dict(guard_summary or {})
+    summary.update(
+        {
+            "stage": "post_llm_materialization_runtime_guard",
+            "attempted": True,
+            "artifact_quality_errors": post_repair_errors[:20],
+            "tool_results": len(guard_tool_results),
+            "write_tool_evidence": has_successful_write_tool(guard_tool_results),
+        }
+    )
+    return guard_tool_results, summary
+
+
 async def _run_materialization_quality_repair_retry(
     adapter: Any,
     *,
@@ -1478,10 +1562,13 @@ async def _run_materialization_quality_repair_retry(
             ]
             repair_context["_transaction_kernel_force_exact_tools"] = True
         else:
-            repair_context["_transaction_kernel_forced_tool_definitions"] = [
-                _quality_repair_edit_file_tool_definition(),
-                _quality_repair_write_file_tool_definition(),
-            ]
+            repair_context["_transaction_kernel_forced_tool_definitions"] = (
+                _quality_repair_existing_target_tool_definitions()
+            )
+            repair_metadata["tool_contract"] = {
+                **dict(repair_metadata.get("tool_contract") or {}),
+                "required_tools": ["execute_command"],
+            }
             repair_context["director_quality_repair"]["edit_preferred_target_files"] = existing_repair_target_files[:12]
         if len(missing_repair_target_files) == 1 and not existing_repair_target_files:
             # Single-missing: also name the specific target file in the
@@ -1541,7 +1628,7 @@ async def _run_materialization_quality_repair_retry(
             allowed_tool_names = {"write_file"}
             allow_patch_fallback = False
         elif repair_target_files:
-            allowed_tool_names = {"edit_file", "write_file"}
+            allowed_tool_names = {"edit_file", "write_file", "execute_command"}
         fallback_tool_results = await adapter._execution.execute_tools(
             content,
             target_task_id,
@@ -1594,6 +1681,20 @@ async def _run_materialization_quality_repair_retry(
             "rotated_repair_targets": rotate_repair_targets,
         }
     )
+    guard_tool_results, guard_summary = _run_post_llm_materialization_runtime_guard(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        context=context,
+        changed_files=changed_files,
+        repair_tool_results=repair_tool_results,
+    )
+    if guard_tool_results:
+        repair_tool_results.extend(guard_tool_results)
+        summary["tool_results"] = len(repair_tool_results)
+        summary["write_tool_evidence"] = has_successful_write_tool(repair_tool_results)
+    if guard_summary.get("attempted"):
+        summary["post_llm_materialization_runtime_guard"] = guard_summary
     return repair_tool_results, summary
 
 

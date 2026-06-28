@@ -16,6 +16,9 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _build_materialization_quality_repair_message,
     _pin_materialize_delivery_mode,
 )
+from polaris.cells.roles.adapters.internal.director.quality_gate import (
+    _quality_repair_existing_target_tool_definitions,
+)
 from polaris.cells.roles.kernel.public import DeliveryMode
 from polaris.cells.roles.kernel.public.transaction_contracts import (
     extract_continuation_prompt_metadata,
@@ -124,3 +127,9 @@ class TestPinMaterializeDeliveryMode:
         # Without the pin, a pure-analysis phrasing stays out of MATERIALIZE.
         contract = resolve_delivery_mode("analyze the architecture and summarize")
         assert contract.mode != DeliveryMode.MATERIALIZE_CHANGES
+
+    def test_existing_target_quality_repair_exposes_verification_tool(self) -> None:
+        tool_definitions = _quality_repair_existing_target_tool_definitions()
+        tool_names = {item.get("function", {}).get("name") for item in tool_definitions if isinstance(item, dict)}
+
+        assert {"edit_file", "write_file", "execute_command"} <= tool_names

@@ -502,16 +502,16 @@ def _declared_interface_contract(
         for target, entry in entries.items():
             current = declared.setdefault(target, {"identifiers": [], "public_symbols": [], "signatures": []})
             current["identifiers"] = _merge_quality_names(current.get("identifiers"), entry.get("identifiers"))
-            current["public_symbols"] = _merge_quality_names(
-                current.get("public_symbols"), entry.get("public_symbols")
-            )
+            current["public_symbols"] = _merge_quality_names(current.get("public_symbols"), entry.get("public_symbols"))
             current["signatures"] = _merge_quality_names(current.get("signatures"), entry.get("signatures"))
     if not declared:
         return None
     interfaces = []
     for owner_path, entry in sorted(declared.items()):
         code_symbols = _quality_string_list(entry.get("public_symbols")) or [
-            identifier for identifier in _quality_string_list(entry.get("identifiers")) if _looks_like_code_symbol(identifier)
+            identifier
+            for identifier in _quality_string_list(entry.get("identifiers"))
+            if _looks_like_code_symbol(identifier)
         ]
         for identifier in code_symbols:
             interfaces.append(
@@ -1387,10 +1387,13 @@ def _scan_typescript_imports(root_full: Path, full_path: Path, text: str, relati
         return []
     declared_dependencies = _declared_package_dependencies(root_full)
     errors: list[str] = []
+    code_mask = _ts_js_code_mask(text)
     is_typescript = full_path.suffix.lower() in _TS_SOURCE_EXTS
     has_package_manifest = (root_full / "package.json").is_file()
     node_types_error_added = False
     for match in _IMPORT_SPECIFIER_RE.finditer(text):
+        if not _match_starts_in_ts_js_code(code_mask, match.start()):
+            continue
         specifier = str(match.group(1) or "").strip()
         if not specifier:
             continue
@@ -1422,7 +1425,7 @@ def _scan_typescript_imports(root_full: Path, full_path: Path, text: str, relati
         if not _is_test_like_artifact_path(relative_path):
             errors.append(f"Artifact quality scan failed: undeclared runtime import {specifier!r} in {relative_path}")
     if _ts_symbol_coherence_enabled():
-        errors.extend(_scan_typescript_symbol_coherence(root_full, full_path, text, relative_path))
+        errors.extend(_scan_typescript_symbol_coherence(root_full, full_path, text, relative_path, code_mask=code_mask))
     return errors
 
 
@@ -1510,6 +1513,69 @@ def _ts_symbol_coherence_enabled() -> bool:
     return os.environ.get(_TS_SYMBOL_COHERENCE_FLAG, "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _ts_js_code_mask(text: str) -> list[bool]:
+    """Mark TS/JS source positions that are executable code.
+
+    The artifact scanner is intentionally regex-based and conservative. This
+    mask prevents fixture strings, template literals, and comments from being
+    interpreted as real imports. Template literal expressions are skipped too:
+    that can miss a rare dynamic case, but it avoids false positives in tests
+    that embed generated source snippets.
+    """
+
+    source = str(text or "")
+    mask = [True] * len(source)
+    i = 0
+    n = len(source)
+    while i < n:
+        char = source[i]
+        nxt = source[i + 1] if i + 1 < n else ""
+        if char == "/" and nxt == "/":
+            start = i
+            i += 2
+            while i < n and source[i] not in "\r\n":
+                i += 1
+            for pos in range(start, i):
+                mask[pos] = False
+            continue
+        if char == "/" and nxt == "*":
+            start = i
+            i += 2
+            while i + 1 < n and not (source[i] == "*" and source[i + 1] == "/"):
+                i += 1
+            i = min(n, i + 2)
+            for pos in range(start, i):
+                mask[pos] = False
+            continue
+        if char in {"'", '"', "`"}:
+            quote = char
+            start = i
+            i += 1
+            escaped = False
+            while i < n:
+                current = source[i]
+                if escaped:
+                    escaped = False
+                    i += 1
+                    continue
+                if current == "\\":
+                    escaped = True
+                    i += 1
+                    continue
+                i += 1
+                if current == quote:
+                    break
+            for pos in range(start, i):
+                mask[pos] = False
+            continue
+        i += 1
+    return mask
+
+
+def _match_starts_in_ts_js_code(mask: list[bool], start: int) -> bool:
+    return 0 <= start < len(mask) and mask[start]
+
+
 def _parse_ts_clause_names(inner: str, *, for_export: bool) -> set[str]:
     """Parse the identifiers in an `import {…}` or `export {…}` clause.
 
@@ -1588,7 +1654,14 @@ def _read_typescript_module_exports(module_file: Path) -> set[str] | None:
     return _typescript_module_exports(content)
 
 
-def _scan_typescript_symbol_coherence(root_full: Path, full_path: Path, text: str, relative_path: str) -> list[str]:
+def _scan_typescript_symbol_coherence(
+    root_full: Path,
+    full_path: Path,
+    text: str,
+    relative_path: str,
+    *,
+    code_mask: list[bool] | None = None,
+) -> list[str]:
     """Flag named imports of a resolvable relative sibling that the sibling never
     exports — the TS/JS analogue of the Python symbol-coherence check. Conservative
     by construction: only plain named imports of relative specifiers are checked,
@@ -1598,7 +1671,10 @@ def _scan_typescript_symbol_coherence(root_full: Path, full_path: Path, text: st
     errors: list[str] = []
     seen: set[tuple[str, str]] = set()
     exports_cache: dict[Path, set[str] | None] = {}
+    mask = code_mask if code_mask is not None else _ts_js_code_mask(text)
     for match in _TS_NAMED_IMPORT_RE.finditer(text):
+        if not _match_starts_in_ts_js_code(mask, match.start()):
+            continue
         if match.group("typeonly"):
             continue
         specifier = str(match.group("spec") or "").strip()

@@ -115,7 +115,11 @@ _WORKSPACE_QUALITY_REPAIR_SOURCE_SUFFIXES = frozenset(
 _DIRECTOR_BINDING_TIMEOUT_QUARANTINE_ENV = "KERNELONE_FACTORY_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT"
 _DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT = 4
 _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS = 60
+_DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS = 5
 _QUALITY_GATE_MIN_PASS_SCORE = 70
+_QUALITY_GATE_MIN_START_BUDGET_SECONDS = 45.0
+_QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS = 75.0
+_QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS = 5.0
 _PRE_DIRECTOR_SNAPSHOT_RELATIVE_DIR = ".polaris/factory_snapshots/pre_director"
 _PRE_DIRECTOR_SNAPSHOT_KIND = "pre_director_workspace"
 _PRE_DIRECTOR_PLATFORM_PREFIXES = (
@@ -1533,12 +1537,11 @@ class OrchestrationStageExecutor:
     @staticmethod
     def _director_dispatch_timeout_seconds(context: dict[str, Any], *, task_count: int) -> int:
         del task_count
+        resolved_timeout: int | None = None
         raw_override = context.get("director_dispatch_timeout_seconds")
         if raw_override is not None:
-            try:
-                return max(1, int(raw_override))
-            except (TypeError, ValueError):
-                pass
+            with contextlib.suppress(TypeError, ValueError):
+                resolved_timeout = max(1, int(raw_override))
 
         def _parse_timeout(raw: Any) -> int | None:
             if raw is None:
@@ -1552,19 +1555,39 @@ class OrchestrationStageExecutor:
             return value
 
         stage_timeout = _parse_timeout(context.get("timeout"))
-        llm_timeout_candidates: list[int] = []
-        for key in ("director_llm_timeout_seconds", "llm_call_timeout_seconds"):
-            value = _parse_timeout(context.get(key))
-            if value is not None:
-                llm_timeout_candidates.append(value)
-        for env_key in _DIRECTOR_TIMEOUT_ENV_KEYS:
-            value = _parse_timeout(os.getenv(env_key))
-            if value is not None:
-                llm_timeout_candidates.append(value)
-        if llm_timeout_candidates:
-            return max(llm_timeout_candidates) + _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS
+        if resolved_timeout is None:
+            llm_timeout_candidates: list[int] = []
+            for key in ("director_llm_timeout_seconds", "llm_call_timeout_seconds"):
+                value = _parse_timeout(context.get(key))
+                if value is not None:
+                    llm_timeout_candidates.append(value)
+            for env_key in _DIRECTOR_TIMEOUT_ENV_KEYS:
+                value = _parse_timeout(os.getenv(env_key))
+                if value is not None:
+                    llm_timeout_candidates.append(value)
+            if llm_timeout_candidates:
+                resolved_timeout = max(llm_timeout_candidates) + _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS
 
-        return stage_timeout or 600
+        if resolved_timeout is None:
+            resolved_timeout = stage_timeout or 600
+
+        remaining_seconds = OrchestrationStageExecutor._factory_deadline_remaining_seconds(context)
+        if remaining_seconds is not None:
+            deadline_timeout = int(max(1.0, remaining_seconds - _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS))
+            return max(1, min(resolved_timeout, deadline_timeout))
+
+        return resolved_timeout
+
+    @staticmethod
+    def _director_dispatch_timeout_settle_grace_seconds(context: dict[str, Any]) -> int:
+        raw_value = context.get("director_dispatch_timeout_settle_grace_seconds")
+        if raw_value is None:
+            raw_value = os.getenv("POLARIS_DIRECTOR_DISPATCH_TIMEOUT_SETTLE_GRACE_SECONDS")
+        try:
+            value = int(float(str(raw_value).strip())) if raw_value is not None else 45
+        except (TypeError, ValueError):
+            value = 45
+        return max(0, min(value, 120))
 
     @staticmethod
     def _chief_engineer_llm_timeout_seconds(context: dict[str, Any]) -> int:
@@ -3437,16 +3460,57 @@ class OrchestrationStageExecutor:
                     context,
                     task_count=len(pm_tasks),
                 )
-                base_options["llm_call_timeout_seconds"] = int(
-                    context.get("llm_call_timeout_seconds") or director_timeout_seconds
-                )
-                base_options["director_llm_timeout_seconds"] = int(
+                requested_llm_timeout = int(context.get("llm_call_timeout_seconds") or director_timeout_seconds)
+                requested_director_timeout = int(
                     context.get("director_llm_timeout_seconds")
                     or context.get("llm_call_timeout_seconds")
                     or director_timeout_seconds
                 )
+                base_options["llm_call_timeout_seconds"] = min(requested_llm_timeout, director_timeout_seconds)
+                base_options["director_llm_timeout_seconds"] = min(requested_director_timeout, director_timeout_seconds)
                 round_requested_task_ids = self._read_claimable_director_task_ids(limit=max_workers)
                 if not round_requested_task_ids and attempts:
+                    settle_result = await self._settle_inflight_director_run_after_timeout(
+                        service,
+                        run_id=str((last_command_result.run_id if last_command_result else "") or "").strip(),
+                        grace_seconds=self._director_dispatch_timeout_settle_grace_seconds(context),
+                        cancel_event=self._resolve_cancel_event(context),
+                        abort_checker=abort_checker,
+                    )
+                    if settle_result is not None:
+                        final_result = settle_result
+                        settled_stats = self._read_taskboard_stats()
+                        settled_metadata = settle_result.metadata if isinstance(settle_result.metadata, dict) else {}
+                        settled_status = str(settle_result.status or "").strip().lower()
+                        attempts.append(
+                            {
+                                "round": round_index,
+                                "run_id": str(settle_result.run_id or "").strip(),
+                                "status": str(settle_result.status or "").strip(),
+                                "message": str(settle_result.message or "").strip(),
+                                "metadata": settled_metadata,
+                                "taskboard_before": before_stats,
+                                "taskboard_after": settled_stats,
+                                "progress_made": self._has_director_progress(before_stats, settled_stats)
+                                or settled_status in {"completed", "success"},
+                                "metadata_progress": self._metadata_indicates_execution(settled_metadata),
+                                "settled_after_timeout": True,
+                            }
+                        )
+                        stage_signals.append(
+                            {
+                                "code": "director.inflight_timeout_settled",
+                                "severity": "info" if settled_status in {"completed", "success"} else "error",
+                                "detail": (
+                                    "Director run reached terminal status during timeout settle grace: "
+                                    f"{settled_status or 'unknown'}"
+                                ),
+                                "round": round_index,
+                                "run_id": str(settle_result.run_id or "").strip(),
+                                "taskboard_after": settled_stats,
+                            }
+                        )
+                        break
                     stage_signals.append(
                         {
                             "code": "director.no_claimable_tasks_after_progress",
@@ -4028,6 +4092,38 @@ class OrchestrationStageExecutor:
                 return True
         return False
 
+    @staticmethod
+    def _failure_metadata_mentions_materialization_quality(metadata: dict[str, Any]) -> bool:
+        markers = (
+            "director_materialization_quality_failed",
+            "director_materialization_semantic_quality_failed",
+        )
+        text = json.dumps(metadata, ensure_ascii=False, default=str).lower()
+        return any(marker in text for marker in markers)
+
+    def _failed_task_records_indicate_materialization_quality_handoff(self) -> bool:
+        tasks_dir = self._artifact_path("tasks/plan.json").parent
+        if not tasks_dir.exists():
+            return False
+        markers = (
+            "director_materialization_quality_failed",
+            "director_materialization_semantic_quality_failed",
+        )
+        for task_path in sorted(tasks_dir.glob("task_*.json")):
+            try:
+                payload = json.loads(task_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            status = str(payload.get("status") or "").strip().lower()
+            if status not in {"failed", "blocked"}:
+                continue
+            text = json.dumps(payload, ensure_ascii=False, default=str).lower()
+            if any(marker in text for marker in markers):
+                return True
+        return False
+
     def _failed_task_records_indicate_quality_handoff(self) -> bool:
         """Return true when failed task records show artifacts that should enter QA.
 
@@ -4198,18 +4294,28 @@ class OrchestrationStageExecutor:
         pm_tasks: list[dict[str, Any]],
     ) -> bool:
         idle_with_unresolved = self._taskboard_idle_with_unresolved_work(final_stats)
-        if idle_with_unresolved and self._missing_declared_delivery_targets(pm_tasks):
+        metadata_quality_handoff = self._failure_metadata_mentions_materialization_quality(metadata)
+        task_record_materialization_quality_handoff = (
+            self._failed_task_records_indicate_materialization_quality_handoff()
+        )
+        if (
+            idle_with_unresolved
+            and self._missing_declared_delivery_targets(pm_tasks)
+            and not (metadata_quality_handoff or task_record_materialization_quality_handoff)
+        ):
             return False
         taskboard_terminal_enough = self._is_taskboard_converged(final_stats) or idle_with_unresolved
         if not taskboard_terminal_enough:
             return False
         if not self._workspace_has_materialized_delivery_evidence(pm_tasks):
             return False
+        task_record_quality_handoff = self._failed_task_records_indicate_quality_handoff()
         if not self._fanout_all_active_bindings_failed(metadata):
-            return self._failed_task_records_indicate_quality_handoff()
+            return metadata_quality_handoff or task_record_quality_handoff
         return (
             self._fanout_failure_mentions_materialization_quality(metadata)
-            or self._failed_task_records_indicate_quality_handoff()
+            or metadata_quality_handoff
+            or task_record_quality_handoff
         )
 
     @staticmethod
@@ -4863,6 +4969,137 @@ class OrchestrationStageExecutor:
     def _qa_report_has_warning(payload: dict[str, Any], warning: str) -> bool:
         return helpers.qa_report_has_warning(payload, warning)
 
+    @staticmethod
+    def _factory_deadline_remaining_seconds(context: dict[str, Any]) -> float | None:
+        raw_deadline = context.get("factory_run_deadline_epoch_seconds")
+        if raw_deadline is None:
+            return None
+        try:
+            deadline_epoch = float(str(raw_deadline).strip())
+        except (TypeError, ValueError):
+            return None
+        if deadline_epoch <= 0:
+            return None
+        return max(0.0, deadline_epoch - datetime.now(timezone.utc).timestamp())
+
+    @staticmethod
+    async def _quality_gate_abort_reason(
+        abort_checker: Callable[[], Awaitable[str | None]] | None,
+    ) -> str:
+        if abort_checker is None:
+            return ""
+        try:
+            return str(await abort_checker() or "").strip()
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Factory quality gate abort checker failed: %s", exc)
+            return ""
+
+    def _build_quality_gate_failure_stage(
+        self,
+        run: FactoryRun,
+        *,
+        reason_code: str,
+        detail: str,
+        context: dict[str, Any],
+        workspace_checks_artifact: str = "",
+        workspace_checks_passed: bool | None = None,
+        status: str = "failed",
+    ) -> StageResult:
+        target = str(context.get("qa_target") or "Quality gate")
+        remaining_seconds = self._factory_deadline_remaining_seconds(context)
+        warnings = [reason_code]
+        if reason_code != _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING:
+            warnings.append(_QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING)
+        payload: dict[str, Any] = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "source": "factory_stage_executor",
+            "review_type": "quality_gate",
+            "target": target,
+            "runtime_hard_gate_passed": False,
+            "verdict": "FAIL",
+            "passed": False,
+            "score": 0,
+            "critical_issue_count": 1,
+            "critical_issues": [detail],
+            "major_issues": [],
+            "warnings": warnings,
+            "evidence": [
+                f"factory_run_id={run.id}",
+                f"reason_code={reason_code}",
+            ],
+            "suggestions": [],
+            "raw_excerpt": detail[:2000],
+            "deadline": {
+                "remaining_seconds": remaining_seconds,
+                "deadline_epoch_seconds": context.get("factory_run_deadline_epoch_seconds"),
+                "timeout_seconds": context.get("factory_run_timeout_seconds"),
+                "source": context.get("factory_run_deadline_source"),
+            },
+        }
+        if workspace_checks_passed is not None:
+            payload["workspace_checks_passed"] = workspace_checks_passed
+            payload["evidence"].append(f"workspace_checks_passed={workspace_checks_passed}")
+        if workspace_checks_artifact:
+            payload["workspace_checks_artifact"] = workspace_checks_artifact
+            payload["evidence"].append(f"workspace_checks_artifact={workspace_checks_artifact}")
+        self._write_json_artifact("runtime/qa/report.json", payload)
+        artifacts = ["runtime/qa/report.json"]
+        if workspace_checks_artifact:
+            artifacts.append(workspace_checks_artifact)
+        self._mirror_quality_gate_artifacts(run.id, artifacts)
+        return StageResult(
+            stage="quality_gate",
+            status=status,
+            output=f"Quality gate {status}: {reason_code}; {detail}",
+            artifacts=artifacts,
+        )
+
+    def _workspace_quality_failure_detail(self, workspace_checks_artifact: str) -> str:
+        detail = "Workspace validation failed"
+        if not workspace_checks_artifact:
+            return detail
+        artifact_path = self._artifact_path(workspace_checks_artifact)
+        try:
+            payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return f"{detail}; see {workspace_checks_artifact}"
+        if not isinstance(payload, dict):
+            return f"{detail}; see {workspace_checks_artifact}"
+        evidence: list[str] = []
+        repair = payload.get("repair")
+        if isinstance(repair, dict):
+            for raw in repair.get("residual_errors") or ():
+                text = str(raw or "").strip()
+                if text:
+                    evidence.append(text[:500])
+                if len(evidence) >= 2:
+                    break
+        for item in payload.get("commands") or ():
+            if len(evidence) >= 3:
+                break
+            if not isinstance(item, dict) or bool(item.get("passed")):
+                continue
+            command = item.get("command")
+            command_text = " ".join(str(part) for part in command) if isinstance(command, list) else str(command or "")
+            stderr_tail = str(item.get("stderr_tail") or item.get("error") or "").strip()
+            if command_text or stderr_tail:
+                evidence.append(f"{command_text}: {stderr_tail[:400]}".strip(": "))
+        if not evidence:
+            return f"{detail}; see {workspace_checks_artifact}"
+        return f"{detail}: {'; '.join(evidence)}; see {workspace_checks_artifact}"
+
+    def _quality_gate_qa_wait_timeout_seconds(self, context: dict[str, Any]) -> int:
+        try:
+            configured = int(context.get("timeout", 600))
+        except (TypeError, ValueError):
+            configured = 600
+        configured = max(1, configured)
+        remaining_seconds = self._factory_deadline_remaining_seconds(context)
+        if remaining_seconds is None:
+            return configured
+        capped = max(1, int(remaining_seconds - _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS))
+        return max(1, min(configured, capped))
+
     def _build_qa_input_with_workspace_quality_evidence(
         self,
         qa_input: object,
@@ -4919,12 +5156,69 @@ class OrchestrationStageExecutor:
         logger.info("Executing quality gate for run %s", run.id)
         abort_checker = self._resolve_abort_checker(context)
 
+        abort_reason = await self._quality_gate_abort_reason(abort_checker)
+        if abort_reason:
+            return self._build_quality_gate_failure_stage(
+                run,
+                reason_code="factory_quality_gate_cancelled_before_checks",
+                detail=f"Quality gate cancelled before workspace checks: {abort_reason}",
+                context=context,
+                status="cancelled",
+            )
+
+        remaining_seconds = self._factory_deadline_remaining_seconds(context)
+        if remaining_seconds is not None and remaining_seconds < _QUALITY_GATE_MIN_START_BUDGET_SECONDS:
+            return self._build_quality_gate_failure_stage(
+                run,
+                reason_code="factory_quality_gate_deadline_insufficient_before_checks",
+                detail=(
+                    "Quality gate skipped before workspace checks because the factory run deadline "
+                    f"has only {remaining_seconds:.1f}s remaining"
+                ),
+                context=context,
+            )
+
         workspace_checks_passed, workspace_checks_artifact = await self._run_workspace_quality_checks(run, context)
         qa_input = self._build_qa_input_with_workspace_quality_evidence(
             context.get("qa_input"),
             workspace_checks_artifact,
             run_id=run.id,
         )
+        if not workspace_checks_passed:
+            return self._build_quality_gate_failure_stage(
+                run,
+                reason_code="factory_quality_gate_workspace_checks_failed",
+                detail=self._workspace_quality_failure_detail(workspace_checks_artifact),
+                context=context,
+                workspace_checks_artifact=workspace_checks_artifact,
+                workspace_checks_passed=False,
+            )
+
+        abort_reason = await self._quality_gate_abort_reason(abort_checker)
+        if abort_reason:
+            return self._build_quality_gate_failure_stage(
+                run,
+                reason_code="factory_quality_gate_cancelled_before_qa",
+                detail=f"Quality gate cancelled before QA judgement: {abort_reason}",
+                context=context,
+                workspace_checks_artifact=workspace_checks_artifact,
+                workspace_checks_passed=workspace_checks_passed,
+                status="cancelled",
+            )
+
+        remaining_seconds = self._factory_deadline_remaining_seconds(context)
+        if remaining_seconds is not None and remaining_seconds < _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS:
+            return self._build_quality_gate_failure_stage(
+                run,
+                reason_code="factory_quality_gate_deadline_insufficient_before_qa",
+                detail=(
+                    "Quality gate did not start QA LLM judgement because the factory run deadline "
+                    f"has only {remaining_seconds:.1f}s remaining"
+                ),
+                context=context,
+                workspace_checks_artifact=workspace_checks_artifact,
+                workspace_checks_passed=workspace_checks_passed,
+            )
 
         service = self._build_orchestration_service(context)
         command_result = await service.execute_qa_run(
@@ -4937,21 +5231,41 @@ class OrchestrationStageExecutor:
         final_result = await self._wait_run_completion(
             service,
             command_result,
-            timeout_seconds=int(context.get("timeout", 600)),
+            timeout_seconds=self._quality_gate_qa_wait_timeout_seconds(context),
             cancel_event=self._resolve_cancel_event(context),
             abort_checker=abort_checker,
         )
-        if str(final_result.status or "").strip().lower() == "cancelled":
-            return StageResult(
-                stage="quality_gate",
+        final_status = str(final_result.status or "").strip().lower()
+        if final_status == "cancelled":
+            return self._build_quality_gate_failure_stage(
+                run,
+                reason_code="factory_quality_gate_qa_cancelled",
+                detail=f"Quality gate QA run cancelled: {final_result.message or 'N/A'}",
+                context=context,
+                workspace_checks_artifact=workspace_checks_artifact,
+                workspace_checks_passed=workspace_checks_passed,
                 status="cancelled",
-                output=f"Quality gate cancelled: {final_result.message or 'N/A'}",
-                artifacts=[],
+            )
+        if final_status == "timeout":
+            return self._build_quality_gate_failure_stage(
+                run,
+                reason_code="factory_quality_gate_qa_timeout",
+                detail=f"Quality gate QA run timed out: {final_result.message or 'N/A'}",
+                context=context,
+                workspace_checks_artifact=workspace_checks_artifact,
+                workspace_checks_passed=workspace_checks_passed,
             )
 
         qa_report_path = self._artifact_path("runtime/qa/report.json")
         if not self._artifact_file_ready(qa_report_path):
-            raise RuntimeError(f"Quality gate report missing: {qa_report_path}")
+            return self._build_quality_gate_failure_stage(
+                run,
+                reason_code="factory_quality_gate_report_missing",
+                detail=f"Quality gate report missing after QA run: {qa_report_path}",
+                context=context,
+                workspace_checks_artifact=workspace_checks_artifact,
+                workspace_checks_passed=workspace_checks_passed,
+            )
         loaded: dict[str, Any] | Any = {}
         parse_error: Exception | None = None
         for _attempt in range(5):
@@ -5037,6 +5351,84 @@ class OrchestrationStageExecutor:
             cancel_event=cancel_event,
             abort_checker=abort_checker,
         )
+
+    async def _settle_inflight_director_run_after_timeout(
+        self,
+        service: OrchestrationCommandService,
+        *,
+        run_id: str,
+        grace_seconds: int,
+        cancel_event: asyncio.Event | None = None,
+        abort_checker: Callable[[], Awaitable[str | None]] | None = None,
+    ) -> CommandResult | None:
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id or grace_seconds <= 0:
+            return None
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, float(grace_seconds))
+        terminal_statuses = {"completed", "success", "failed", "cancelled", "blocked"}
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                return CommandResult(
+                    run_id=normalized_run_id,
+                    status="cancelled",
+                    message="Run cancelled: factory_cancelled",
+                )
+            if abort_checker is not None:
+                with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                    abort_reason = await abort_checker()
+                    if abort_reason:
+                        return CommandResult(
+                            run_id=normalized_run_id,
+                            status="cancelled",
+                            message=f"Run cancelled: {abort_reason}",
+                        )
+
+            status_probe: CommandResult | None = None
+            with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                status_probe = await service.query_run_status(normalized_run_id)
+            if status_probe is not None:
+                probed_status = str(status_probe.status or "").strip().lower()
+                if probed_status in terminal_statuses:
+                    return status_probe
+                metadata = status_probe.metadata if isinstance(status_probe.metadata, dict) else {}
+                count_status = self._terminal_status_from_task_counts(metadata.get("task_status_counts"))
+                if count_status:
+                    return CommandResult(
+                        run_id=normalized_run_id,
+                        status=count_status,
+                        message=(
+                            "Director run reached terminal task counts during timeout settle grace: "
+                            f"{metadata.get('task_status_counts')}"
+                        ),
+                        metadata={
+                            **metadata,
+                            "terminal_source": "timeout_settle_task_status_counts",
+                            "queried_status": probed_status,
+                        },
+                    )
+
+            with contextlib.suppress(RuntimeError, OSError, TypeError, ValueError):
+                taskboard_stats = self._read_taskboard_stats()
+                count_status = self._terminal_status_from_task_counts(taskboard_stats)
+                if count_status:
+                    return CommandResult(
+                        run_id=normalized_run_id,
+                        status=count_status,
+                        message=(
+                            "Director run reached terminal workspace TaskBoard counts during timeout settle grace: "
+                            f"{taskboard_stats}"
+                        ),
+                        metadata={
+                            "terminal_source": "timeout_settle_workspace_taskboard_counts",
+                            "task_status_counts": dict(taskboard_stats),
+                        },
+                    )
+
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return None
+            await asyncio.sleep(min(2.0, remaining))
 
     @staticmethod
     def _resolve_cancel_event(context: dict[str, Any]) -> asyncio.Event | None:
