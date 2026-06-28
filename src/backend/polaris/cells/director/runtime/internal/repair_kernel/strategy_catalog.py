@@ -109,6 +109,7 @@ KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
         "deterministic_typescript_unique_export_import_repair",
         "deterministic_typescript_unresolved_identifier_repair",
         "deterministic_typescript_unused_import_repair",
+        "deterministic_typescript_value_used_as_type_repair",
         "deterministic_typescript_vitest_globals_repair",
         "deterministic_typescript_zod_type_class_collision_repair",
         "deterministic_unresolved_import_symbol_repair",

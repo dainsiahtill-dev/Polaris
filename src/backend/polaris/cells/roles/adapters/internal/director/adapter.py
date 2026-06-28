@@ -369,10 +369,10 @@ def _merge_ce_blueprint_contract_payload(
 
 
 def _director_actual_interface_injection_enabled() -> bool:
-    """Default OFF -> byte-identical legacy prompt. Opt in to inject the actual
-    exported symbols of already-generated workspace files into the Director prompt."""
+    """Default ON so Director consumes actual sibling interfaces before writing."""
+
     raw = str(os.environ.get("KERNELONE_DIRECTOR_INJECT_WORKSPACE_INTERFACE", "")).strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+    return raw not in {"0", "false", "no", "off"}
 
 
 def _build_director_workspace_interface_lines(workspace: str) -> list[str]:
@@ -542,6 +542,24 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
     if test_targets:
         lines.append(_join_limited_values("blueprint required test targets", test_targets[:12]))
 
+    module_interface_contract = payload.get("module_interface_contract")
+    if isinstance(module_interface_contract, dict) and module_interface_contract:
+        lines.append("- module_interface_contract: required")
+        modules = module_interface_contract.get("modules")
+        if isinstance(modules, list):
+            for module in modules[:10]:
+                if not isinstance(module, dict):
+                    continue
+                path = str(module.get("path") or "").strip()
+                symbols = _string_list_payload(module.get("planned_public_symbols"), limit=8)
+                role = str(module.get("role") or "").strip()
+                if path and symbols:
+                    role_suffix = f" [{role}]" if role else ""
+                    lines.append(f"  - {path}{role_suffix}: exports {', '.join(symbols)}")
+        rules = _string_list_payload(module_interface_contract.get("rules"), limit=4)
+        for rule in rules:
+            lines.append(f"  - interface rule: {rule}")
+
     llm_blueprint = payload.get("llm_blueprint")
     if isinstance(llm_blueprint, dict) and llm_blueprint:
         authority = str(llm_blueprint.get("authority") or "advisory_only").strip()
@@ -577,7 +595,7 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
             if advisory:
                 lines.append(_join_limited_values("blueprint advisory", advisory))
 
-    return lines[:28]
+    return lines[:40]
 
 
 _VERIFICATION_COMMAND_MARKERS = (

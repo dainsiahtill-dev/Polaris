@@ -3028,6 +3028,14 @@ async def _phase_quality_repair_loop(
                 artifact_quality_errors=artifact_quality_errors,
             ),
         )
+        if _materialization_plan_probe_requires_task_boundary_triage(deterministic_quality_summary):
+            quality_repair_summary = _materialization_task_boundary_triage_summary(
+                deterministic_quality_summary,
+                repair_attempt=repair_attempt,
+                artifact_quality_errors=artifact_quality_errors,
+            )
+            quality_repair_attempts.append(quality_repair_summary)
+            break
         if deterministic_quality_tool_results:
             deterministic_quality_made_progress = True
             tool_results.extend(deterministic_quality_tool_results)
@@ -3132,6 +3140,14 @@ async def _phase_quality_repair_loop(
                         artifact_quality_errors=artifact_quality_errors,
                     ),
                 )
+                if _materialization_plan_probe_requires_task_boundary_triage(deterministic_quality_summary):
+                    quality_repair_summary = _materialization_task_boundary_triage_summary(
+                        deterministic_quality_summary,
+                        repair_attempt=repair_attempt,
+                        artifact_quality_errors=artifact_quality_errors,
+                    )
+                    quality_repair_attempts.append(quality_repair_summary)
+                    break
                 if deterministic_quality_tool_results:
                     tool_results.extend(deterministic_quality_tool_results)
                     quality_repair_summary = deterministic_quality_summary
@@ -3183,6 +3199,40 @@ async def _phase_quality_repair_loop(
         quality_repair_summary,
         write_tool_evidence,
     )
+
+
+def _materialization_task_boundary_triage_summary(
+    summary: dict[str, Any],
+    *,
+    repair_attempt: int,
+    artifact_quality_errors: list[str],
+) -> dict[str, Any]:
+    plan_probe = summary.get("plan_probe_preaudit")
+    plan_probe_payload = dict(plan_probe) if isinstance(plan_probe, dict) else {}
+    return {
+        **dict(summary or {}),
+        "stage": "runtime_plan_probe_unplannable",
+        "attempted": True,
+        "attempt": repair_attempt,
+        "success": False,
+        "success_reason": "task_boundary_interface_discrepancy_required",
+        "tool_results": 0,
+        "write_tool_evidence": False,
+        "llm_fallback_blocked": True,
+        "residual_error_count": len(artifact_quality_errors),
+        "interface_discrepancy_evidence": {
+            "schema_version": "director.task_boundary.interface_discrepancy.v1",
+            "route": "task_boundary_quality_loop",
+            "plan_probe_status": plan_probe_payload.get("status"),
+            "covered_unplannable_source_tools": plan_probe_payload.get("covered_unplannable_source_tools", []),
+            "covered_unplannable_diagnostic_count": plan_probe_payload.get(
+                "covered_unplannable_diagnostic_count",
+                0,
+            ),
+            "coverage_gap_count": plan_probe_payload.get("coverage_gap_count", 0),
+            "reason": "coverage_matched_but_unplannable",
+        },
+    }
 
 
 async def _phase_semantic_quality_repair_loop(
@@ -4061,6 +4111,7 @@ from .quality_gate import (  # noqa: E402  (deferred for circular-import safety)
     _is_node_runtime_source_path as _is_node_runtime_source_path,
     _is_recoverable_no_write_mutation_contract_error_text as _is_recoverable_no_write_mutation_contract_error_text,
     _is_recoverable_no_write_mutation_contract_exception as _is_recoverable_no_write_mutation_contract_exception,
+    _materialization_plan_probe_requires_task_boundary_triage as _materialization_plan_probe_requires_task_boundary_triage,
     _materialization_quality_scan_paths as _materialization_quality_scan_paths,
     _materialization_quality_scan_paths_with_package_manifest as _materialization_quality_scan_paths_with_package_manifest,
     _merge_successful_write_paths as _merge_successful_write_paths,

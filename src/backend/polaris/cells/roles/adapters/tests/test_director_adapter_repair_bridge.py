@@ -1567,9 +1567,9 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
     assert captured["runtime_bridge"]["task_id"] == "task-go-materialization"
     assert captured["runtime_bridge"]["base_files"] == {"main.go": target.read_text(encoding="utf-8")}
     assert captured["runtime_bridge"]["convergence_verifier"] is sentinel_verifier
-    assert [call["source_tool"] for call in captured["runtime_bridge_calls"]] == list(
-        materialization_quality_repair_bridge._MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS
-    )
+    assert [call["source_tool"] for call in captured["runtime_bridge_calls"]] == [
+        "deterministic_go_bare_import_string_repair"
+    ]
     assert captured["verifier_request"].round_number == 1
     assert summary["convergence_verifier_present"] is True
     assert summary["materialization_quality_bridge"]["convergence_verifier_present"] is True
@@ -1664,9 +1664,7 @@ def test_materialization_python_import_runs_through_runtime_bridge(
     )
 
     assert len(results) == 1
-    assert [call["source_tool"] for call in runtime_calls] == list(
-        materialization_quality_repair_bridge._MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS
-    )
+    assert [call["source_tool"] for call in runtime_calls] == ["deterministic_unresolved_import_symbol_repair"]
     assert runtime_calls[-1]["base_files"] == {
         "shared/__init__.py": "from shared.registry import Registry\n",
         "shared/registry.py": "class ServiceRegistry:\n    pass\n",
@@ -1912,11 +1910,28 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
             }
         ]
 
+    expected_source_tools = [
+        "deterministic_rust_crate_import_rewrite_repair",
+        "deterministic_rust_dependency_repair",
+        "deterministic_rust_missing_lib_target_repair",
+        "deterministic_rust_missing_module_file_repair",
+        "deterministic_rust_duplicate_module_file_repair",
+        "deterministic_rust_lib_root_facade_repair",
+        "deterministic_rust_serde_derive_repair",
+        "deterministic_rust_line_suggestion_repair",
+        "deterministic_rust_unresolved_pub_use_repair",
+        "deterministic_rust_trait_import_repair",
+    ]
     monkeypatch.setattr(runtime_repair_tool_adapter, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
     monkeypatch.setattr(
         materialization_quality_repair_bridge,
         "_runtime_coverage_matched_source_tools",
         lambda **_kwargs: (),
+    )
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge,
+        "_materialization_plannable_runtime_source_tools_from_base_files",
+        lambda **_kwargs: tuple(expected_source_tools),
     )
     for runner_name in (
         "_run_materialization_hygiene_scaffold",
@@ -1938,18 +1953,6 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
         artifact_quality_errors=["error[E0432]: unresolved import `serde`"],
     )
 
-    expected_source_tools = [
-        "deterministic_rust_crate_import_rewrite_repair",
-        "deterministic_rust_dependency_repair",
-        "deterministic_rust_missing_lib_target_repair",
-        "deterministic_rust_missing_module_file_repair",
-        "deterministic_rust_duplicate_module_file_repair",
-        "deterministic_rust_lib_root_facade_repair",
-        "deterministic_rust_serde_derive_repair",
-        "deterministic_rust_line_suggestion_repair",
-        "deterministic_rust_unresolved_pub_use_repair",
-        "deterministic_rust_trait_import_repair",
-    ]
     assert [item["source_tool"] for item in runtime_calls] == expected_source_tools
     assert all(item["use_editor"] is True for item in runtime_calls)
     assert all(item["task_id"] == "task-rust-materialization" for item in runtime_calls)
@@ -1964,6 +1967,79 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     assert "deterministic_rust_missing_lib_target_repair" in rust_debt["runtime_executable_source_tools"]
     assert "deterministic_rust_lib_root_facade_repair" in rust_debt["runtime_executable_source_tools"]
     assert rust_debt["legacy_only_source_tools"] == []
+
+
+def test_materialization_rust_compiler_executes_only_plan_probe_plannable_tools(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    source = tmp_path / "src" / "lib.rs"
+    source.parent.mkdir(parents=True)
+    source.write_text("use serde::Serialize;\npub struct Demo;\n", encoding="utf-8")
+    artifact_quality_errors = ["error[E0432]: unresolved import `serde`"]
+    candidate_source_tools = (
+        "deterministic_rust_missing_module_file_repair",
+        "deterministic_rust_dependency_repair",
+    )
+    plannable_source_tools = ("deterministic_rust_dependency_repair",)
+    probe_calls: list[dict[str, Any]] = []
+    runtime_calls: list[str] = []
+
+    def fake_plannable_tools(**kwargs: Any) -> tuple[str, ...]:
+        probe_calls.append(dict(kwargs))
+        return plannable_source_tools
+
+    def fake_runtime_repair(*_args: Any, source_tool: str, **_kwargs: Any) -> list[dict[str, Any]]:
+        runtime_calls.append(source_tool)
+        return [
+            {
+                "tool": "edit_file",
+                "tool_name": "edit_file",
+                "success": True,
+                "result": {"ok": True, "source_tool": source_tool},
+            }
+        ]
+
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge,
+        "_materialization_rust_compiler_runtime_source_tools",
+        lambda _errors: candidate_source_tools,
+    )
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge,
+        "_materialization_plannable_runtime_source_tools_from_base_files",
+        fake_plannable_tools,
+    )
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge,
+        "_run_materialization_rust_runtime_repair",
+        fake_runtime_repair,
+    )
+
+    results = materialization_quality_repair_bridge._run_materialization_rust_compiler(
+        _FakeAdapter(tmp_path),
+        task={"target_files": ["src/lib.rs"]},
+        task_id="task-rust-materialization",
+        artifact_quality_errors=artifact_quality_errors,
+    )
+
+    assert runtime_calls == ["deterministic_rust_dependency_repair"]
+    assert [item["result"]["source_tool"] for item in results] == ["deterministic_rust_dependency_repair"]
+    assert probe_calls == [
+        {
+            "artifact_quality_errors": artifact_quality_errors,
+            "candidate_source_tools": candidate_source_tools,
+            "base_files": {
+                "Cargo.toml": '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n',
+                "src/lib.rs": "use serde::Serialize;\npub struct Demo;\n",
+            },
+            "caller": "materialization_rust_compiler",
+        }
+    ]
 
 
 def test_materialization_rust_compiler_uses_runtime_coverage_matched_tools(monkeypatch: Any) -> None:

@@ -36,6 +36,7 @@ DEFAULT_WATCHDOG_INTERVAL_SECONDS = 2.0
 PROCESS_TERMINATE_TIMEOUT_SECONDS = 5.0
 PORT_RELEASE_TIMEOUT_SECONDS = 8.0
 BACKEND_IDENTITY_TIMEOUT_SECONDS = 75.0
+FRONTEND_IDENTITY_TIMEOUT_SECONDS = 10.0
 PARTIAL_STARTUP_GRACE_SECONDS = 120.0
 
 logger = logging.getLogger(__name__)
@@ -166,6 +167,9 @@ def _is_retryable_auto_port_start_error(exc: BaseException) -> bool:
             "backend identity mismatch",
             "backend identity check timed out",
             "backend process exited before identity check",
+            "frontend identity mismatch",
+            "frontend identity check timed out",
+            "frontend process exited before identity check",
             "address already in use",
             "port is already in use",
         )
@@ -472,6 +476,7 @@ class InstanceSupervisor:
                 self._wait_for_backend_identity(record)
                 if record.start_frontend:
                     record.frontend_pid = self._start_frontend(record, log_dir / "frontend.log")
+                    self._wait_for_frontend_identity(record)
             except Exception as exc:
                 self._terminate_pid(record.frontend_pid)
                 self._terminate_pid(record.backend_pid)
@@ -532,6 +537,7 @@ class InstanceSupervisor:
         pid: int | None,
         *,
         process_kind: str,
+        allow_unknown: bool = False,
     ) -> bool:
         if not pid or pid <= 0:
             return False
@@ -539,7 +545,7 @@ class InstanceSupervisor:
             return True
         process_text = _read_linux_process_text(pid)
         if not process_text:
-            return False
+            return bool(allow_unknown)
         if process_kind == "backend":
             return (
                 "polaris.delivery.cli.backend" in process_text
@@ -558,9 +564,14 @@ class InstanceSupervisor:
         record = self._require_record(instance_id)
         if self._record_is_current_backend(record):
             raise RuntimeError("current backend instance cannot stop itself")
-        self._terminate_pid(record.frontend_pid)
-        self._terminate_pid(record.backend_pid)
-        self._wait_for_record_ports_free(record)
+        frontend_owned = self._pid_looks_like_instance_process(record, record.frontend_pid, process_kind="frontend")
+        backend_owned = self._pid_looks_like_instance_process(record, record.backend_pid, process_kind="backend")
+        if frontend_owned:
+            self._terminate_pid(record.frontend_pid)
+        if backend_owned:
+            self._terminate_pid(record.backend_pid)
+        if backend_owned or frontend_owned:
+            self._wait_for_record_ports_free(record, wait_backend=backend_owned, wait_frontend=frontend_owned)
         record.frontend_pid = None
         record.backend_pid = None
         record.status = "stopped"
@@ -759,8 +770,22 @@ class InstanceSupervisor:
         return int(process.pid)
 
     def _with_health(self, record: InstanceRecord, *, probe_http: bool) -> InstanceRecord:
-        backend_alive = is_process_alive(record.backend_pid)
-        frontend_pid_alive = is_process_alive(record.frontend_pid)
+        backend_raw_alive = is_process_alive(record.backend_pid)
+        frontend_raw_alive = is_process_alive(record.frontend_pid)
+        backend_alive = backend_raw_alive and self._pid_looks_like_instance_process(
+            record,
+            record.backend_pid,
+            process_kind="backend",
+            allow_unknown=True,
+        )
+        frontend_pid_alive = frontend_raw_alive and self._pid_looks_like_instance_process(
+            record,
+            record.frontend_pid,
+            process_kind="frontend",
+            allow_unknown=True,
+        )
+        backend_foreign_pid = backend_raw_alive and not backend_alive
+        frontend_foreign_pid = frontend_raw_alive and not frontend_pid_alive
         partial_startup_timed_out = (
             (backend_alive != frontend_pid_alive)
             and record.start_frontend
@@ -781,8 +806,12 @@ class InstanceSupervisor:
             if partial_startup_timed_out and not backend_alive:
                 record.metadata["backend_health"] = "failed"
                 record.metadata["status_reason"] = "backend process did not survive startup"
+            elif backend_foreign_pid:
+                record.metadata["backend_health"] = "foreign_process"
             if frontend_pid_alive:
                 record.metadata["frontend_health"] = "process"
+            elif frontend_foreign_pid:
+                record.metadata["frontend_health"] = "foreign_process"
             elif partial_startup_timed_out and record.start_frontend:
                 record.metadata["frontend_health"] = "failed"
                 record.metadata["status_reason"] = "frontend process did not survive startup"
@@ -797,12 +826,12 @@ class InstanceSupervisor:
         else:
             backend_http_ok = (
                 self._http_ok(f"{record.backend_url}/health", record.token)
-                if probe_http and record.backend_url
+                if probe_http and record.backend_url and (backend_alive or not record.backend_pid)
                 else False
             )
-        frontend_http_ok = (
-            self._http_ok(record.frontend_url, record.token) if probe_http and record.frontend_url else False
-        )
+        frontend_http_ok = False
+        if probe_http and record.frontend_url and (frontend_pid_alive or not record.start_frontend):
+            frontend_http_ok = self._http_ok(record.frontend_url, record.token)
         if record.start_frontend:
             frontend_alive = frontend_pid_alive or frontend_http_ok
         else:
@@ -821,6 +850,8 @@ class InstanceSupervisor:
             record.metadata["backend_health"] = "ok"
         elif backend_alive:
             record.metadata["backend_health"] = "starting"
+        elif backend_foreign_pid:
+            record.metadata["backend_health"] = "foreign_process"
         elif partial_startup_timed_out and record.start_frontend:
             record.metadata["backend_health"] = "failed"
             record.metadata["status_reason"] = "backend did not become healthy during startup"
@@ -830,6 +861,8 @@ class InstanceSupervisor:
             record.metadata["frontend_health"] = "ok"
         elif frontend_pid_alive:
             record.metadata["frontend_health"] = "starting"
+        elif frontend_foreign_pid:
+            record.metadata["frontend_health"] = "foreign_process"
         elif partial_startup_timed_out and record.start_frontend:
             record.metadata["frontend_health"] = "failed"
             record.metadata["status_reason"] = "frontend did not become healthy during startup"
@@ -867,10 +900,22 @@ class InstanceSupervisor:
             time.sleep(0.1)
         raise RuntimeError(f"backend/frontend port did not become free after stop: {port}")
 
-    def _wait_for_record_ports_free(self, record: InstanceRecord) -> None:
-        if record.backend_pid:
+    def _wait_for_record_ports_free(
+        self,
+        record: InstanceRecord,
+        *,
+        wait_backend: bool | None = None,
+        wait_frontend: bool | None = None,
+    ) -> None:
+        should_wait_backend = bool(record.backend_pid) if wait_backend is None else bool(wait_backend)
+        should_wait_frontend = (
+            bool(record.start_frontend and record.frontend_pid and record.frontend_port > 0)
+            if wait_frontend is None
+            else bool(wait_frontend)
+        )
+        if should_wait_backend:
             self._wait_for_port_free(record.backend_port)
-        if record.start_frontend and record.frontend_pid and record.frontend_port > 0:
+        if should_wait_frontend:
             self._wait_for_port_free(record.frontend_port)
 
     @staticmethod
@@ -912,6 +957,28 @@ class InstanceSupervisor:
                 raise RuntimeError(f"backend process exited before identity check: {record.backend_pid}")
             time.sleep(0.2)
         raise RuntimeError(f"backend identity check timed out for port {record.backend_port}")
+
+    def _wait_for_frontend_identity(
+        self,
+        record: InstanceRecord,
+        *,
+        timeout_seconds: float = FRONTEND_IDENTITY_TIMEOUT_SECONDS,
+    ) -> None:
+        if not record.start_frontend or not record.frontend_pid:
+            return
+        deadline = time.monotonic() + timeout_seconds
+        last_process_alive = True
+        while time.monotonic() < deadline:
+            last_process_alive = is_process_alive(record.frontend_pid)
+            if not last_process_alive:
+                raise RuntimeError("frontend process exited before identity check")
+            if self._pid_looks_like_instance_process(record, record.frontend_pid, process_kind="frontend"):
+                return
+            time.sleep(0.1)
+        if not last_process_alive:
+            raise RuntimeError("frontend process exited before identity check")
+        detail = f"expected instance={record.instance_id!r} workspace={record.workspace!r} port={record.frontend_port}"
+        raise RuntimeError(f"frontend identity check timed out: {detail}")
 
     @staticmethod
     def _signal_pid(pid: int, sig: signal.Signals) -> None:

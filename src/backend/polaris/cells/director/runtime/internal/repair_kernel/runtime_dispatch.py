@@ -360,6 +360,7 @@ from .typescript_syntax import (
     TYPESCRIPT_UNKNOWN_MEMBER_ACCESS_SOURCE_TOOL,
     TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL,
     TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL,
+    TYPESCRIPT_VALUE_USED_AS_TYPE_SOURCE_TOOL,
     TYPESCRIPT_VITEST_GLOBALS_SOURCE_TOOL,
     TYPESCRIPT_ZOD_TYPE_CLASS_COLLISION_SOURCE_TOOL,
 )
@@ -3760,6 +3761,7 @@ _TYPESCRIPT_RUNTIME_MIGRATION_BINDINGS: tuple[tuple[str, str, str], ...] = (
     (TYPESCRIPT_UNKNOWN_MEMBER_ACCESS_SOURCE_TOOL, "typescript", "typescript.unknown_member_access"),
     (TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL, "typescript", "typescript.uninitialized_property"),
     (TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL, "typescript", "typescript.unique_export_import"),
+    (TYPESCRIPT_VALUE_USED_AS_TYPE_SOURCE_TOOL, "typescript", "typescript.value_used_as_type"),
     (TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL, "typescript", "typescript.branded_literal_cast"),
     (
         TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL,

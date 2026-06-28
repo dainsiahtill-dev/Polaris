@@ -701,6 +701,15 @@ def _append_text_operation(
     metadata: Mapping[str, object],
 ) -> RepairOperation:
     replacement = addition if text.endswith("\n") else "\n" + addition.lstrip("\n")
+    operation_metadata: dict[str, object] = {
+        "repair_kind": repair_kind,
+        "diagnostic_id": diagnostic.diagnostic_id,
+        "edit_file_preferred": True,
+        **dict(metadata),
+    }
+    context_before = _append_text_context_before(text)
+    if context_before:
+        operation_metadata.setdefault("expected_context_before", context_before)
     return RepairOperation(
         kind="text_replace",
         path=path,
@@ -709,13 +718,29 @@ def _append_text_operation(
         expected="",
         replacement=replacement,
         before_hash=sha256_text(text),
-        metadata={
-            "repair_kind": repair_kind,
-            "diagnostic_id": diagnostic.diagnostic_id,
-            "edit_file_preferred": True,
-            **dict(metadata),
-        },
+        metadata=operation_metadata,
     )
+
+
+def _append_text_context_before(text: str) -> str:
+    """Return a bounded unique EOF context for append-style text operations."""
+
+    if not text:
+        return ""
+    context = ""
+    for line in reversed(text.splitlines(keepends=True)):
+        context = line + context
+        if context.strip() and text.count(context) == 1:
+            return context
+        if len(context) >= 4096:
+            break
+    for size in (256, 512, 1024, 2048, 4096):
+        candidate = text[-size:]
+        if candidate.strip() and text.count(candidate) == 1:
+            return candidate
+    if len(text) <= 8192 and text.count(text) == 1:
+        return text
+    return ""
 
 
 def _dedupe_diagnostics(diagnostics: Sequence[RepairDiagnostic]) -> tuple[RepairDiagnostic, ...]:

@@ -346,6 +346,7 @@ def _run_legacy_materialization_quality_repair_step(
     if step_id == "materialization.rust_compiler":
         return _run_materialization_rust_compiler(
             adapter,
+            task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
             convergence_verifier=convergence_verifier,
@@ -369,6 +370,7 @@ def _run_legacy_materialization_quality_repair_step(
     if step_id == "materialization.go_import":
         return _run_materialization_go_import(
             adapter,
+            task=task,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,
             convergence_verifier=convergence_verifier,
@@ -518,10 +520,32 @@ def _materialization_plannable_runtime_source_tools(
     )
     if not base_files:
         return ()
+    return _materialization_plannable_runtime_source_tools_from_base_files(
+        artifact_quality_errors=artifact_quality_errors,
+        candidate_source_tools=candidate_source_tools,
+        base_files=base_files,
+        caller=caller,
+    )
+
+
+def _materialization_plannable_runtime_source_tools_from_base_files(
+    *,
+    artifact_quality_errors: Sequence[str] | None,
+    candidate_source_tools: Sequence[str],
+    base_files: Mapping[str, str],
+    caller: str,
+) -> tuple[str, ...]:
+    """Return source tools proven by runtime plan-probe, not coverage alone."""
+
+    if not candidate_source_tools or not base_files:
+        return ()
+    errors = tuple(str(item) for item in artifact_quality_errors or () if str(item or "").strip())
+    if not errors:
+        return tuple(str(item) for item in candidate_source_tools)
     plan_probe = query_director_repair_plan_probe(
         QueryDirectorRepairPlanProbeV1(
-            artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
-            base_files=base_files,
+            artifact_quality_errors=errors,
+            base_files=dict(base_files),
             source_tools=tuple(str(item) for item in candidate_source_tools),
             mode="shadow",
             metadata={
@@ -635,12 +659,23 @@ def _run_materialization_node_manifest(
 def _run_materialization_rust_compiler(
     adapter: Any,
     *,
+    task: Mapping[str, Any] | None = None,
     task_id: str,
     artifact_quality_errors: list[str],
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    for source_tool in _materialization_rust_compiler_runtime_source_tools(artifact_quality_errors):
+    del task
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    base_files = _collect_materialization_rust_base_files(workspace_path)
+    candidate_source_tools = _materialization_rust_compiler_runtime_source_tools(artifact_quality_errors)
+    source_tools = _materialization_plannable_runtime_source_tools_from_base_files(
+        artifact_quality_errors=artifact_quality_errors,
+        candidate_source_tools=candidate_source_tools,
+        base_files=base_files,
+        caller="materialization_rust_compiler",
+    )
+    for source_tool in source_tools:
         results.extend(
             _run_materialization_rust_runtime_repair(
                 adapter,
@@ -656,6 +691,8 @@ def _run_materialization_rust_compiler(
 def _materialization_rust_compiler_runtime_source_tools(
     artifact_quality_errors: Sequence[str] | None = None,
 ) -> tuple[str, ...]:
+    """Return Rust runtime repair candidates; plan-probe decides executability."""
+
     matched_tools = _runtime_coverage_matched_source_tools(
         artifact_quality_errors=artifact_quality_errors,
         source_tool_prefixes=("deterministic_rust_",),
@@ -1004,7 +1041,6 @@ def _run_materialization_python_import(
     artifact_quality_errors: list[str],
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
-    del task
     workspace = Path(getattr(adapter, "workspace", "") or "")
     if not workspace.is_dir() or not artifact_quality_errors:
         return []
@@ -1012,11 +1048,15 @@ def _run_materialization_python_import(
     if not any(workspace_path.rglob("*.py")):
         return []
     results: list[dict[str, Any]] = []
+    base_files = _collect_materialization_python_base_files(workspace_path)
+    source_tools = _materialization_plannable_runtime_source_tools_from_base_files(
+        artifact_quality_errors=artifact_quality_errors,
+        candidate_source_tools=_materialization_python_import_runtime_source_tools(artifact_quality_errors),
+        base_files=base_files,
+        caller="materialization_python_import",
+    )
 
-    for source_tool in _MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS:
-        base_files = _collect_materialization_python_base_files(workspace_path)
-        if not base_files:
-            return results
+    for source_tool in source_tools:
         runtime_results = run_runtime_repair_with_director_tools(
             adapter,
             workspace_path=workspace_path,
@@ -1033,6 +1073,22 @@ def _run_materialization_python_import(
             return [*results, *runtime_results]
         results.extend(runtime_results)
     return results
+
+
+def _materialization_python_import_runtime_source_tools(
+    artifact_quality_errors: Sequence[str] | None = None,
+) -> tuple[str, ...]:
+    """Return Python import repair candidates; plan-probe decides executability."""
+
+    matched_tools = _runtime_coverage_matched_source_tools(
+        artifact_quality_errors=artifact_quality_errors,
+        source_tool_prefixes=("deterministic_python_", "deterministic_unresolved_import_symbol"),
+    )
+    materialization_tools = set(_MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS)
+    selected = tuple(source_tool for source_tool in matched_tools if source_tool in materialization_tools)
+    if selected:
+        return selected
+    return _MATERIALIZATION_PYTHON_RUNTIME_SOURCE_TOOLS
 
 
 def _collect_materialization_python_base_files(workspace_path: Path) -> dict[str, str]:
@@ -1053,12 +1109,14 @@ def _collect_materialization_python_base_files(workspace_path: Path) -> dict[str
 def _run_materialization_go_import(
     adapter: Any,
     *,
+    task: Mapping[str, Any] | None = None,
     task_id: str,
     artifact_quality_errors: list[str],
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     return _run_materialization_go_import_repairs(
         adapter,
+        task=task,
         task_id=task_id,
         artifact_quality_errors=artifact_quality_errors,
         convergence_verifier=convergence_verifier,
@@ -1068,6 +1126,7 @@ def _run_materialization_go_import(
 def _run_materialization_go_import_repairs(
     adapter: Any,
     *,
+    task: Mapping[str, Any] | None = None,
     task_id: str,
     artifact_quality_errors: list[str] | tuple[str, ...] = (),
     advisor_notes: tuple[Any, ...] = (),
@@ -1082,11 +1141,18 @@ def _run_materialization_go_import_repairs(
     if not any(workspace_path.rglob("*.go")):
         return []
     results: list[dict[str, Any]] = []
+    del task
+    base_files = _collect_materialization_go_base_files(workspace_path)
+    if not any(path.endswith(".go") for path in base_files):
+        return results
+    source_tools = _materialization_plannable_runtime_source_tools_from_base_files(
+        artifact_quality_errors=artifact_quality_errors,
+        candidate_source_tools=_materialization_go_import_runtime_source_tools(artifact_quality_errors),
+        base_files=base_files,
+        caller="materialization_go_import",
+    )
 
-    for source_tool in _MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS:
-        base_files = _collect_materialization_go_base_files(workspace_path)
-        if not any(path.endswith(".go") for path in base_files):
-            return results
+    for source_tool in source_tools:
         runtime_results = run_runtime_repair_with_director_tools(
             adapter,
             workspace_path=workspace_path,
@@ -1105,6 +1171,22 @@ def _run_materialization_go_import_repairs(
         results.extend(runtime_results)
 
     return results
+
+
+def _materialization_go_import_runtime_source_tools(
+    artifact_quality_errors: Sequence[str] | None = None,
+) -> tuple[str, ...]:
+    """Return Go import repair candidates; plan-probe decides executability."""
+
+    matched_tools = _runtime_coverage_matched_source_tools(
+        artifact_quality_errors=artifact_quality_errors,
+        source_tool_prefixes=("deterministic_go_",),
+    )
+    materialization_tools = set(_MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS)
+    selected = tuple(source_tool for source_tool in matched_tools if source_tool in materialization_tools)
+    if selected:
+        return selected
+    return _MATERIALIZATION_GO_RUNTIME_SOURCE_TOOLS
 
 
 def _collect_materialization_go_base_files(workspace_path: Path) -> dict[str, str]:

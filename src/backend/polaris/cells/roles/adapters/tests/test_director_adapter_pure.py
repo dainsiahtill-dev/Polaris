@@ -29,7 +29,12 @@ from polaris.cells.director.runtime.internal.repair_kernel.javascript_syntax imp
     build_substantive_node_test_script as _build_substantive_node_test_script,
 )
 from polaris.cells.roles.adapters.internal.director import execute_method as execute_method_module
-from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _normalize_director_role_response
+from polaris.cells.roles.adapters.internal.director.adapter import (
+    DirectorAdapter,
+    _build_director_blueprint_handoff_lines,
+    _director_actual_interface_injection_enabled,
+    _normalize_director_role_response,
+)
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
     _apply_deterministic_scaffold_marker_cleanup,
 )
@@ -93,6 +98,50 @@ def _make_adapter(tmp_path: Any, task_board: Any = None, task_runtime: Any = Non
     else:
         adapter = DirectorAdapter(workspace=str(tmp_path), task_board=task_board, task_runtime=task_runtime)
     return adapter
+
+
+def test_director_actual_interface_injection_defaults_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("KERNELONE_DIRECTOR_INJECT_WORKSPACE_INTERFACE", raising=False)
+    assert _director_actual_interface_injection_enabled() is True
+
+    monkeypatch.setenv("KERNELONE_DIRECTOR_INJECT_WORKSPACE_INTERFACE", "0")
+    assert _director_actual_interface_injection_enabled() is False
+
+
+def test_director_blueprint_handoff_projects_module_interface_contract(tmp_path: Any) -> None:
+    BlueprintPersistence(str(tmp_path)).save(
+        "bp-interface",
+        {
+            "blueprint_id": "bp-interface",
+            "task_id": "task-1",
+            "target_files": ["src/models/stall.ts", "src/main.ts"],
+            "module_interface_contract": {
+                "schema_version": "chief_engineer.module_interface_contract.v1",
+                "modules": [
+                    {
+                        "path": "src/models/stall.ts",
+                        "role": "domain_model",
+                        "planned_public_symbols": ["Stall", "StallState"],
+                    },
+                    {
+                        "path": "src/main.ts",
+                        "role": "entrypoint",
+                        "planned_public_symbols": ["main"],
+                    },
+                ],
+                "rules": [
+                    "Every symbol imported from a sibling target module must be defined by that module in the same task."
+                ],
+            },
+        },
+    )
+
+    lines = _build_director_blueprint_handoff_lines(str(tmp_path), "bp-interface")
+    text = "\n".join(lines)
+
+    assert "- module_interface_contract: required" in text
+    assert "src/models/stall.ts [domain_model]: exports Stall, StallState" in text
+    assert "interface rule: Every symbol imported from a sibling target module" in text
 
 
 def _run_runtime_director_repair(
@@ -2683,6 +2732,93 @@ async def test_phase_quality_repair_loop_continues_after_deterministic_progress_
     assert final_receipt["revalidation_evidence"]["errors_after"] == 0
     assert final_receipt["revalidation_evidence"]["exit_code"] == 0
     assert final_receipt["net_error_reduction"] == 1
+
+
+@pytest.mark.asyncio
+async def test_phase_quality_repair_loop_stops_on_plan_probe_task_boundary_triage(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _make_adapter(tmp_path)
+    artifact_errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/main.ts(10,12): error TS2339: Property 'stallId' does not exist on type 'Stall'."
+    ]
+    deterministic_inputs: list[list[str]] = []
+
+    def fake_collect_materialization_quality_errors(*args: Any, **kwargs: Any) -> list[str]:
+        return list(artifact_errors)
+
+    def fake_deterministic_quality_repair(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        deterministic_inputs.append(list(kwargs.get("artifact_quality_errors") or []))
+        return [], {
+            "stage": "materialization_quality_repairs",
+            "success": False,
+            "plan_probe_preaudit": {
+                "status": "coverage_matched_but_unplannable",
+                "plannable_source_tools": [],
+                "covered_unplannable_source_tools": ["deterministic_typescript_member_alias_repair"],
+                "covered_unplannable_diagnostic_count": 1,
+                "coverage_gap_count": 0,
+            },
+        }
+
+    async def fail_if_llm_retry_called(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        raise AssertionError("covered_unplannable task-boundary diagnostics must not enter LLM retry grind")
+
+    monkeypatch.setattr(
+        execute_method_module, "_collect_materialization_quality_errors", fake_collect_materialization_quality_errors
+    )
+    monkeypatch.setattr(execute_method_module, "_collect_step_verify_errors", lambda *args, **kwargs: [])
+    monkeypatch.setattr(execute_method_module, "run_python_static_smoke", lambda *args, **kwargs: [])
+    monkeypatch.setattr(execute_method_module, "run_python_runtime_smoke", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        execute_method_module, "_filter_satisfied_declared_target_missing_errors", lambda errors, workspace: errors
+    )
+    monkeypatch.setattr(execute_method_module, "_missing_declared_target_files", lambda task, workspace: [])
+    monkeypatch.setattr(
+        execute_method_module,
+        "run_declared_target_contract_repairs",
+        lambda *args, **kwargs: ([], {"stage": "deterministic_contract_repair", "success": False}),
+    )
+    monkeypatch.setattr(execute_method_module, "run_materialization_quality_repairs", fake_deterministic_quality_repair)
+    monkeypatch.setattr(execute_method_module, "_run_materialization_quality_repair_retry", fail_if_llm_retry_called)
+
+    quality_repair_attempts: list[dict[str, Any]] = []
+
+    state, residual_errors, summary, write_evidence = await execute_method_module._phase_quality_repair_loop(
+        adapter,
+        adapter_workspace=str(tmp_path),
+        baseline_files={},
+        context={},
+        llm_call_timeout=1.0,
+        message="repair TypeScript project",
+        quality_repair_attempts=quality_repair_attempts,
+        quality_repair_summary=None,
+        run_id="run-1",
+        target_task_id="task-1",
+        task={"metadata": {"target_files": ["src/main.ts", "src/models.ts"]}},
+        workspace_name=tmp_path.name,
+        write_tool_evidence=False,
+        state=execute_method_module.MaterializationState(
+            current_files={},
+            new_files=[],
+            modified_files=[],
+            all_affected_files=["src/main.ts", "src/models.ts"],
+            tool_results=[],
+        ),
+    )
+
+    assert residual_errors == artifact_errors
+    assert deterministic_inputs == [artifact_errors]
+    assert state.tool_results == []
+    assert write_evidence is False
+    assert summary is not None
+    assert summary["stage"] == "runtime_plan_probe_unplannable"
+    assert summary["llm_fallback_blocked"] is True
+    assert summary["success_reason"] == "task_boundary_interface_discrepancy_required"
+    assert summary["interface_discrepancy_evidence"]["plan_probe_status"] == "coverage_matched_but_unplannable"
+    assert quality_repair_attempts == [summary]
 
 
 def test_go_bare_import_string_repair_uses_director_runtime_kernel(
@@ -11243,6 +11379,72 @@ class TestQualityRepairMissingTargetContract:
         )
         repaired = (tmp_path / "src" / "verify.ts").read_text(encoding="utf-8")
         assert "runVerification" not in repaired
+
+    @pytest.mark.asyncio
+    async def test_quality_repair_skips_llm_when_factory_deadline_is_too_close(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                raise AssertionError("quality repair must not start an LLM call past the factory deadline")
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.ts").write_text("export const ok = true;\n", encoding="utf-8")
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["src/main.ts"]},
+            target_task_id="TASK-DEADLINE",
+            run_id="run-deadline",
+            context={
+                "metadata": {
+                    "factory_run_deadline_epoch_seconds": 1,
+                    "factory_run_deadline_safety_seconds": 27,
+                }
+            },
+            original_message="Repair TypeScript project.",
+            llm_call_timeout=180,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: workspace validation command failed (npm run build): "
+                "src/main.ts(1,1): error TS2304: Cannot find name 'missingSymbol'."
+            ],
+            changed_files=["src/main.ts"],
+        )
+
+        assert tool_results == []
+        assert summary["error_code"] == "quality_repair_deadline_insufficient"
+        assert summary["deadline_decision"]["can_start"] is False
+        assert summary["deadline_decision"]["reason"] == "factory_deadline_insufficient"
 
     def test_repair_targets_css_import_exact_path(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

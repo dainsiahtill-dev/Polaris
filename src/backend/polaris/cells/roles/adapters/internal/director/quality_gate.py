@@ -20,6 +20,7 @@ import os
 import re
 import shlex
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -1489,6 +1490,25 @@ async def _run_materialization_quality_repair_retry(
     missing_target_set = set(missing_target_files)
     missing_repair_target_files = [path for path in repair_target_files if path in missing_target_set]
     existing_repair_target_files = [path for path in repair_target_files if path not in missing_target_set]
+    quality_repair_timeout = _resolve_quality_repair_timeout_seconds(llm_call_timeout)
+    deadline_decision = _quality_repair_deadline_decision(context, quality_repair_timeout)
+    if not bool(deadline_decision.get("can_start")):
+        return [], {
+            "attempted": True,
+            "attempt": repair_attempt,
+            "success": False,
+            "error": str(deadline_decision.get("reason") or "quality_repair_deadline_insufficient"),
+            "error_code": "quality_repair_deadline_insufficient",
+            "tool_results": 0,
+            "write_tool_evidence": False,
+            "missing_target_files": missing_target_files[:12],
+            "runtime_smoke_target_files": runtime_smoke_target_files[:12],
+            "semantic_quality_target_files": semantic_quality_target_files[:12],
+            "explicit_quality_target_files": explicit_quality_target_files[:12],
+            "repair_target_files": repair_target_files[:12],
+            "rotated_repair_targets": rotate_repair_targets,
+            "deadline_decision": deadline_decision,
+        }
     deterministic_quality_tool_results: list[dict[str, Any]] = []
     deterministic_quality_summary: dict[str, Any] = {}
     if not missing_repair_target_files and (
@@ -1691,11 +1711,12 @@ async def _run_materialization_quality_repair_retry(
                 "tool": "write_file",
                 "target_file": missing_repair_target_files[0],
             }
+    repair_context["director_quality_repair"]["deadline_decision"] = deadline_decision
     try:
         result = await adapter._invoke_role_dialogue_with_timeout(
             repair_message,
             context=repair_context,
-            timeout_seconds=_resolve_quality_repair_timeout_seconds(llm_call_timeout),
+            timeout_seconds=float(deadline_decision.get("timeout_seconds") or quality_repair_timeout),
             stage_label="quality_repair" if repair_attempt <= 1 else f"quality_repair_{repair_attempt}",
         )
     except Exception as exc:  # noqa: BLE001 - quality repair is a structured fallback boundary.
@@ -1730,6 +1751,7 @@ async def _run_materialization_quality_repair_retry(
             "explicit_quality_target_files": explicit_quality_target_files[:12],
             "repair_target_files": repair_target_files[:12],
             "rotated_repair_targets": rotate_repair_targets,
+            "deadline_decision": deadline_decision,
         }
 
     content = str(result.get("content") or "")
@@ -1792,6 +1814,7 @@ async def _run_materialization_quality_repair_retry(
             "explicit_quality_target_files": explicit_quality_target_files[:12],
             "repair_target_files": repair_target_files[:12],
             "rotated_repair_targets": rotate_repair_targets,
+            "deadline_decision": deadline_decision,
         }
     )
     guard_tool_results, guard_summary = _run_post_llm_materialization_runtime_guard(
@@ -1821,6 +1844,64 @@ _QUALITY_REPAIR_TARGET_BATCH_LIMIT = 12
 
 
 _DEFAULT_QUALITY_REPAIR_TIMEOUT_SECONDS = 180.0
+_QUALITY_REPAIR_DEADLINE_MIN_LLM_SECONDS = 30.0
+_QUALITY_REPAIR_DEADLINE_DEFAULT_SAFETY_SECONDS = 35.0
+
+
+def _context_float_value(value: Any, key: str, *, depth: int = 0) -> float | None:
+    if depth > 5:
+        return None
+    if isinstance(value, dict):
+        if key in value:
+            try:
+                parsed = float(value[key])
+            except (TypeError, ValueError):
+                parsed = 0.0
+            if parsed > 0:
+                return parsed
+        for item in value.values():
+            found = _context_float_value(item, key, depth=depth + 1)
+            if found is not None:
+                return found
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            found = _context_float_value(item, key, depth=depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
+def _quality_repair_deadline_decision(context: dict[str, Any], requested_timeout_seconds: float) -> dict[str, Any]:
+    deadline_epoch = _context_float_value(context, "factory_run_deadline_epoch_seconds")
+    if deadline_epoch is None:
+        return {
+            "can_start": True,
+            "timeout_seconds": requested_timeout_seconds,
+            "reason": "no_factory_deadline",
+        }
+    safety_seconds = (
+        _context_float_value(context, "factory_run_deadline_safety_seconds")
+        or _QUALITY_REPAIR_DEADLINE_DEFAULT_SAFETY_SECONDS
+    )
+    safety_seconds = max(_QUALITY_REPAIR_DEADLINE_DEFAULT_SAFETY_SECONDS, float(safety_seconds))
+    remaining_seconds = max(0.0, deadline_epoch - time.time())
+    available_seconds = remaining_seconds - safety_seconds
+    if available_seconds < _QUALITY_REPAIR_DEADLINE_MIN_LLM_SECONDS:
+        return {
+            "can_start": False,
+            "timeout_seconds": 0.0,
+            "reason": "factory_deadline_insufficient",
+            "remaining_seconds": round(remaining_seconds, 3),
+            "safety_seconds": round(safety_seconds, 3),
+            "minimum_llm_seconds": _QUALITY_REPAIR_DEADLINE_MIN_LLM_SECONDS,
+        }
+    return {
+        "can_start": True,
+        "timeout_seconds": max(0.1, min(float(requested_timeout_seconds), available_seconds)),
+        "reason": "factory_deadline_budgeted",
+        "remaining_seconds": round(remaining_seconds, 3),
+        "safety_seconds": round(safety_seconds, 3),
+    }
 
 
 def _materialization_plan_probe_requires_task_boundary_triage(summary: dict[str, Any]) -> bool:

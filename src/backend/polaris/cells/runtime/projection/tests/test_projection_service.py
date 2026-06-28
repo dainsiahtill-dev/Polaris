@@ -465,6 +465,68 @@ class TestBuildSnapshotPayloadFromProjection:
         assert task["blueprint_summary"] == "Chief Engineer blueprint for TASK-1"
         assert task["handoff_ready"] is True
 
+    def test_factory_blueprint_target_files_extend_existing_plan_scope(self, tmp_path: Path) -> None:
+        plan_dir = tmp_path / ".polaris" / "plans"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "latest.plan.json").write_text(
+            """
+            {
+              "tasks": [
+                {
+                  "id": "TASK-2",
+                  "title": "Build browser simulation",
+                  "goal": "Implement the browser entrypoint",
+                  "target_files": ["package.json", "src/web.ts"],
+                  "scope_paths": ["package.json", "src/web.ts"],
+                  "assigned_to": "Director"
+                }
+              ]
+            }
+            """,
+            encoding="utf-8",
+        )
+        blueprint_dir = tmp_path / ".polaris" / "blueprints"
+        blueprint_dir.mkdir(parents=True)
+        (blueprint_dir / "ce_TASK-2_20260619000000000000.json").write_text(
+            """
+            {
+              "blueprint_id": "ce_TASK-2_20260619000000000000",
+              "task_id": "TASK-2",
+              "summary": "Chief Engineer blueprint for TASK-2",
+              "status": "generated",
+              "target_files": [
+                "package.json",
+                "src/web.ts",
+                "src/engine/types.ts",
+                "src/engine/simulation.ts"
+              ],
+              "scope_paths": ["src/engine/types.ts", "src/engine/simulation.ts"],
+              "handoff_ready": true
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        payload = build_snapshot_payload_from_projection(
+            RuntimeProjection(),
+            workspace=str(tmp_path),
+            cache_root=tmp_path,
+        )
+
+        task = payload["tasks"][0]
+        assert task["target_files"] == [
+            "package.json",
+            "src/web.ts",
+            "src/engine/types.ts",
+            "src/engine/simulation.ts",
+        ]
+        assert task["scope_paths"] == [
+            "package.json",
+            "src/web.ts",
+            "src/engine/types.ts",
+            "src/engine/simulation.ts",
+        ]
+
     def test_docs_ready_projection_overrides_stale_workspace_status(self, tmp_path: Path) -> None:
         (tmp_path / "docs").mkdir()
         write_workspace_status(

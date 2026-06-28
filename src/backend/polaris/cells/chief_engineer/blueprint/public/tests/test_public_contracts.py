@@ -544,6 +544,63 @@ class TestChiefEngineerBlueprintPublicService:
             "README.md",
         )
 
+    def test_generate_task_blueprint_promotes_nested_construction_plan_files(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-TS-FILES",
+            workspace=str(tmp_path),
+            objective="Build browser simulation with shared TypeScript engine types",
+            llm_blueprint={
+                "construction_plan": {
+                    "phase_1_bootstrap": {
+                        "files": [
+                            {"path": "package.json", "contract": "Node scripts and TypeScript config"},
+                            {"path": "index.html", "contract": "Browser shell"},
+                        ],
+                    },
+                    "phase_2_engine_core": {
+                        "files": [
+                            {
+                                "path": "src/engine/types.ts",
+                                "contract": "Shared domain interfaces for simulation and renderer",
+                            },
+                            {"path": "src/engine/simulation.ts"},
+                            {"path": "src/engine/renderer.ts"},
+                            {"path": "../outside.ts"},
+                            {"path": "/tmp/absolute.ts"},
+                        ],
+                    },
+                    "verification": ["npm run build", "npm test"],
+                },
+            },
+            context={
+                "language": "typescript",
+                "target_files": ["package.json", "index.html", "src/web.ts"],
+                "scope_paths": ["package.json", "index.html", "src/web.ts"],
+                "acceptance_criteria": ["npm run build passes"],
+                "execution_checklist": ["Implement browser entrypoint and engine"],
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        assert "src/engine/types.ts" in result.target_files
+        assert "src/engine/simulation.ts" in result.target_files
+        assert "src/engine/renderer.ts" in result.target_files
+        assert "../outside.ts" not in result.target_files
+        assert "/tmp/absolute.ts" not in result.target_files
+        assert "npm run build" not in result.target_files
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["target_files"] == list(result.target_files)
+        assert persisted["context"]["target_files"] == persisted["target_files"]
+        assert "src/engine/types.ts" in persisted["scope_paths"]
+        assert "src/engine/types.ts" in persisted["llm_blueprint"]["projected_target_files"]
+        module_paths = {
+            module["path"] for module in persisted["module_interface_contract"]["modules"] if isinstance(module, dict)
+        }
+        assert "src/engine/types.ts" in module_paths
+
     def test_generate_task_blueprint_materializes_depth_contract_test_target(self, tmp_path) -> None:
         cmd = GenerateTaskBlueprintCommandV1(
             task_id="TASK-TS",

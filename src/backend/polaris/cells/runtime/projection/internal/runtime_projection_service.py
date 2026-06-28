@@ -112,6 +112,26 @@ def _dedupe_text_values(values: list[str]) -> list[str]:
     return result
 
 
+def _ordered_string_union(*values: Any) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if isinstance(value, str):
+            items: Any = [value]
+        elif isinstance(value, (list, tuple, set)):
+            items = value
+        else:
+            continue
+        for item in items:
+            text = str(item or "").strip()
+            marker = text.casefold()
+            if not text or marker in seen:
+                continue
+            seen.add(marker)
+            rows.append(text)
+    return rows
+
+
 def _is_pm_contract_path(path: str) -> bool:
     """Return True for PM task contract paths emitted by runtime storage."""
 
@@ -258,7 +278,8 @@ def _enrich_tasks_with_factory_blueprints(tasks: list[dict[str, Any]], workspace
         for key, value in blueprint.items():
             if value in (None, "", []):
                 continue
-            if key in {"target_files", "scope_paths"} and merged.get(key):
+            if key in {"target_files", "scope_paths"}:
+                merged[key] = _ordered_string_union(merged.get(key), value)
                 continue
             merged.setdefault(key, value)
         enriched.append(merged)

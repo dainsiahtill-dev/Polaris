@@ -65,6 +65,29 @@ from .contracts import (
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _SEMANTIC_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
 _CAMEL_TOKEN_RE = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|[0-9]+")
+_WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
+_BLUEPRINT_FILE_PATH_KEYS = frozenset(
+    {
+        "path",
+        "file",
+        "filename",
+        "target_file",
+        "target_path",
+        "source_path",
+        "output_path",
+    }
+)
+_BLUEPRINT_FILE_CONTAINER_KEYS = frozenset(
+    {
+        "files",
+        "file_plans",
+        "target_files",
+        "scope_paths",
+        "outputs",
+        "artifacts",
+    }
+)
+_COMMON_EXTENSIONLESS_FILES = frozenset({"dockerfile", "makefile", "procfile", "readme", "license"})
 _GENERIC_SEMANTIC_TOKENS = frozenset(
     {
         "api",
@@ -526,6 +549,48 @@ def _merge_string_lists(*values: Any) -> list[str]:
     return merged
 
 
+def _normalize_blueprint_file_path(value: Any) -> str:
+    token = str(value or "").replace("\\", "/").strip()
+    if not token or any(char.isspace() for char in token):
+        return ""
+    if token.startswith(("/", "~")) or "://" in token or "\x00" in token:
+        return ""
+    if _WINDOWS_DRIVE_PATH_RE.match(token):
+        return ""
+    while token.startswith("./"):
+        token = token[2:]
+    parts = [part for part in token.split("/") if part]
+    if not parts or any(part == ".." for part in parts):
+        return ""
+    basename = parts[-1]
+    if not ("/" in token or "." in basename or basename.casefold() in _COMMON_EXTENSIONLESS_FILES):
+        return ""
+    return "/".join(parts)
+
+
+def _blueprint_declared_file_paths(value: Any, *, parent_key: str = "") -> list[str]:
+    rows: list[str] = []
+    if isinstance(value, dict):
+        for raw_key, item in value.items():
+            key = str(raw_key or "").strip().casefold()
+            if key in _BLUEPRINT_FILE_PATH_KEYS:
+                path = _normalize_blueprint_file_path(item)
+                if path:
+                    rows.append(path)
+                continue
+            rows.extend(_blueprint_declared_file_paths(item, parent_key=key))
+        return _merge_string_lists(rows)
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if isinstance(item, str) and parent_key in _BLUEPRINT_FILE_CONTAINER_KEYS:
+                path = _normalize_blueprint_file_path(item)
+                if path:
+                    rows.append(path)
+                continue
+            rows.extend(_blueprint_declared_file_paths(item, parent_key=parent_key))
+    return _merge_string_lists(rows)
+
+
 def _task_payload_from_context(context: dict[str, Any]) -> dict[str, Any]:
     for key in ("task", "pm_task", "source_task", "contract_task"):
         nested = _mapping(context.get(key))
@@ -890,6 +955,12 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     dependencies = list(contract_fields["dependencies"])
     delivery_plan_document = dict(contract_fields["delivery_plan_document"])
     delivery_depth_contract = dict(contract_fields["delivery_depth_contract"])
+    llm_blueprint_overlay = _normalize_llm_blueprint_overlay(command.llm_blueprint)
+    llm_declared_target_files = _blueprint_declared_file_paths(_mapping(command.llm_blueprint).get("construction_plan"))
+    if llm_declared_target_files:
+        target_files = _merge_string_lists(target_files, llm_declared_target_files)
+        scope_paths = _merge_string_lists(scope_paths, llm_declared_target_files)
+        llm_blueprint_overlay["projected_target_files"] = llm_declared_target_files[:32]
     _apply_delivery_depth_test_targets(
         target_files=target_files,
         scope_paths=scope_paths,
@@ -898,7 +969,6 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         delivery_depth_contract=delivery_depth_contract,
         context=context,
     )
-    llm_blueprint_overlay = _normalize_llm_blueprint_overlay(command.llm_blueprint)
     inferred_decisions = infer_architecture_decisions(
         objective=command.objective,
         context=context,

@@ -19,6 +19,7 @@ from polaris.cells.instances.internal.service import (
 @pytest.fixture(autouse=True)
 def _disable_backend_identity_probe(monkeypatch: Any) -> None:
     monkeypatch.setattr(InstanceSupervisor, "_wait_for_backend_identity", lambda _self, _record: None)
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_frontend_identity", lambda _self, _record: None)
 
 
 def _make_polaris_root(tmp_path: Path) -> Path:
@@ -111,6 +112,142 @@ def test_current_backend_instance_cannot_stop_restart_or_delete_itself(
     assert registry.get(record.instance_id) is not None
 
 
+def test_stop_instance_does_not_wait_on_foreign_frontend_port(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    record = registry.save(
+        InstanceRecord(
+            instance_id="bench-race",
+            name="Bench Race",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "bench-race").resolve()),
+            runtime_root=str((tmp_path / "bench-race" / "runtime").resolve()),
+            backend_port=60175,
+            frontend_port=60771,
+            backend_url="http://127.0.0.1:60175",
+            frontend_url="http://127.0.0.1:60771",
+            token="test-token",
+            backend_pid=81001,
+            frontend_pid=81002,
+            start_frontend=True,
+            status="failed",
+        )
+    )
+    terminated: list[int] = []
+    waited_ports: list[int] = []
+    monkeypatch.setattr(
+        InstanceSupervisor,
+        "_pid_looks_like_instance_process",
+        staticmethod(lambda _record, _pid, *, process_kind, allow_unknown=False: False),
+    )
+    monkeypatch.setattr(
+        InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: terminated.append(int(pid or 0)))
+    )
+    monkeypatch.setattr(
+        InstanceSupervisor, "_wait_for_port_free", staticmethod(lambda port: waited_ports.append(int(port)))
+    )
+
+    stopped = supervisor.stop_instance(record.instance_id)
+
+    assert stopped["status"] == "stopped"
+    assert stopped["backend_pid"] is None
+    assert stopped["frontend_pid"] is None
+    assert terminated == []
+    assert waited_ports == []
+
+
+def test_health_does_not_accept_foreign_frontend_process(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    record = registry.save(
+        InstanceRecord(
+            instance_id="bench-r54",
+            name="Bench R54",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "bench-r54").resolve()),
+            runtime_root=str((tmp_path / "bench-r54" / "runtime").resolve()),
+            backend_port=60175,
+            frontend_port=60771,
+            backend_url="http://127.0.0.1:60175",
+            frontend_url="http://127.0.0.1:60771",
+            token="test-token",
+            backend_pid=82001,
+            frontend_pid=82002,
+            start_frontend=True,
+            status="running",
+        )
+    )
+    http_probes: list[str] = []
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
+    monkeypatch.setattr(
+        InstanceSupervisor,
+        "_pid_looks_like_instance_process",
+        staticmethod(lambda _record, _pid, *, process_kind, allow_unknown=False: process_kind == "backend"),
+    )
+    monkeypatch.setattr(
+        InstanceSupervisor,
+        "_http_ok",
+        staticmethod(lambda url, _token: http_probes.append(str(url)) or True),
+    )
+
+    health = InstanceSupervisor(registry).health(record.instance_id)
+
+    assert health["status"] == "starting"
+    assert health["metadata"]["backend_health"] == "ok"
+    assert health["metadata"]["frontend_health"] == "foreign_process"
+    assert http_probes == ["http://127.0.0.1:60175/health"]
+
+
+def test_health_does_not_probe_managed_frontend_without_owned_pid(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    record = registry.save(
+        InstanceRecord(
+            instance_id="bench-stopped",
+            name="Bench Stopped",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str((tmp_path / "bench-stopped").resolve()),
+            runtime_root=str((tmp_path / "bench-stopped" / "runtime").resolve()),
+            backend_port=60175,
+            frontend_port=60771,
+            backend_url="http://127.0.0.1:60175",
+            frontend_url="http://127.0.0.1:60771",
+            token="test-token",
+            backend_pid=None,
+            frontend_pid=None,
+            start_frontend=True,
+            status="stopped",
+        )
+    )
+
+    def fail_frontend_probe(url: str, _token: str) -> bool:
+        assert str(url) != "http://127.0.0.1:60771"
+        return False
+
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda _pid: False)
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(fail_frontend_probe))
+
+    health = InstanceSupervisor(registry).health(record.instance_id)
+
+    assert health["status"] == "stopped"
+    assert health["metadata"]["backend_health"] == "stopped"
+    assert health["metadata"]["frontend_health"] == "stopped"
+    assert health["frontend_alive"] is False
+
+
 def test_list_instances_uses_fast_process_projection_without_http_probe(
     tmp_path: Path,
     monkeypatch: Any,
@@ -137,6 +274,11 @@ def test_list_instances_uses_fast_process_projection_without_http_probe(
         )
     )
     monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: pid == 12345)
+    monkeypatch.setattr(
+        InstanceSupervisor,
+        "_pid_looks_like_instance_process",
+        staticmethod(lambda _record, pid, *, process_kind, allow_unknown=False: pid == 12345),
+    )
 
     def fail_http_probe(_url: str, _token: str) -> bool:
         raise AssertionError("HTTP probe not allowed")
@@ -456,13 +598,14 @@ def test_start_instance_recycled_pid_does_not_reuse_dead_backend(
     monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
     # The recycled PID *is* alive (recycled to an unrelated process)...
     monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
+    monkeypatch.setattr(instance_service, "is_port_free", lambda _port: True)
     # ...but it is NOT our backend: the /proc cmdline identity check fails for it.
     # Newly spawned backend PIDs (>= 70000) are accepted as ours so _with_health
     # reports the fresh instance as running.
     monkeypatch.setattr(
         InstanceSupervisor,
         "_pid_looks_like_instance_process",
-        staticmethod(lambda _record, pid, *, process_kind: bool(pid) and int(pid) >= 70000),
+        staticmethod(lambda _record, pid, *, process_kind, allow_unknown=False: bool(pid) and int(pid) >= 70000),
     )
     monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
 
@@ -811,7 +954,11 @@ def test_start_instance_restarts_alive_record_when_workspace_changes(tmp_path: P
     monkeypatch.setattr(
         InstanceSupervisor,
         "_pid_looks_like_instance_process",
-        staticmethod(lambda _record, pid, process_kind: bool(pid and process_kind in {"backend", "frontend"})),
+        staticmethod(
+            lambda _record, pid, *, process_kind, allow_unknown=False: bool(
+                pid and process_kind in {"backend", "frontend"}
+            )
+        ),
     )
 
     registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
@@ -1195,13 +1342,25 @@ def test_restart_waits_for_old_ports_before_starting_replacement(
         events.append(f"popen:{command[command.index('--port') + 1]}")
         return FakeProcess(63500 + len(events))
 
-    def fake_wait(record: InstanceRecord) -> None:
+    def fake_wait(
+        record: InstanceRecord,
+        *,
+        wait_backend: bool | None = None,
+        wait_frontend: bool | None = None,
+    ) -> None:
+        assert wait_backend is True
+        assert wait_frontend is True
         assert not any(item.startswith("popen:") for item in events)
         events.append(f"wait:{record.backend_port}:{record.frontend_port}")
 
     monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: events.append(f"term:{pid}")))
     monkeypatch.setattr(InstanceSupervisor, "_wait_for_record_ports_free", staticmethod(fake_wait))
+    monkeypatch.setattr(
+        InstanceSupervisor,
+        "_pid_looks_like_instance_process",
+        staticmethod(lambda _record, pid, *, process_kind, allow_unknown=False: bool(pid)),
+    )
     monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
     monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
     registry.save(

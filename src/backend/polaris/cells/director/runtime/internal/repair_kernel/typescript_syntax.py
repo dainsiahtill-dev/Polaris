@@ -45,6 +45,7 @@ TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL = "deterministic_typescript_tsconfig_lib_rep
 TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL = "deterministic_typescript_tsconfig_rootdir_repair"
 TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL = "deterministic_typescript_uninitialized_property_repair"
 TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL = "deterministic_typescript_unique_export_import_repair"
+TYPESCRIPT_VALUE_USED_AS_TYPE_SOURCE_TOOL = "deterministic_typescript_value_used_as_type_repair"
 TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL = "deterministic_typescript_branded_literal_cast_repair"
 TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL = "deterministic_typescript_literal_union_value_facade_repair"
 TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL = "deterministic_typescript_unresolved_identifier_repair"
@@ -72,20 +73,24 @@ _TS_HYPHENATED_VARIABLE_DECLARATION_RE = re.compile(
 )
 _TS_POSSIBLY_NULL_RAW_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS18047:\s*"
-    r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+is\s+possibly\s+['\"]null['\"]",
+    r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*)['\"]\s+"
+    r"is\s+possibly\s+['\"]null['\"]",
     re.IGNORECASE,
 )
 _TS_POSSIBLY_NULL_MESSAGE_RE = re.compile(
-    r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+is\s+possibly\s+['\"]null['\"]",
+    r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*)['\"]\s+"
+    r"is\s+possibly\s+['\"]null['\"]",
     re.IGNORECASE,
 )
 _TS_POSSIBLY_UNDEFINED_RAW_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS18048:\s*"
-    r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+is\s+possibly\s+['\"]undefined['\"]",
+    r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*)['\"]\s+"
+    r"is\s+possibly\s+['\"]undefined['\"]",
     re.IGNORECASE,
 )
 _TS_POSSIBLY_UNDEFINED_MESSAGE_RE = re.compile(
-    r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+is\s+possibly\s+['\"]undefined['\"]",
+    r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*)['\"]\s+"
+    r"is\s+possibly\s+['\"]undefined['\"]",
     re.IGNORECASE,
 )
 _TS_NULLABLE_ARGUMENT_RAW_RE = re.compile(
@@ -131,6 +136,17 @@ _TS_STRING_LITERAL_SUGGESTION_RAW_RE = re.compile(
     r"Type\s+(?P<actual_quote>['\"])(?P<actual>.*?)(?P=actual_quote)\s+is\s+not\s+assignable\s+to\s+type\s+"
     r"(?P<target_quote>['\"])(?P<target>.*?)(?P=target_quote)\.\s+Did\s+you\s+mean\s+"
     r"(?P<suggestion_quote>['\"])(?P<suggestion>.*?)(?P=suggestion_quote)\?",
+    re.IGNORECASE,
+)
+_TS_VALUE_USED_AS_TYPE_RAW_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2749:\s*"
+    r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+refers\s+to\s+a\s+value,\s+"
+    r"but\s+is\s+being\s+used\s+as\s+a\s+type\s+here",
+    re.IGNORECASE,
+)
+_TS_VALUE_USED_AS_TYPE_MESSAGE_RE = re.compile(
+    r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+refers\s+to\s+a\s+value,\s+"
+    r"but\s+is\s+being\s+used\s+as\s+a\s+type\s+here",
     re.IGNORECASE,
 )
 _TS_SHORTHAND_PROPERTY_SCOPE_RAW_RE = re.compile(
@@ -212,6 +228,12 @@ _TS_NO_EXPORTED_MEMBER_NAMED_ERROR_RE = re.compile(
     r"(?:\.\s+Did\s+you\s+mean\s+['\"](?P<suggestion>[^'\"]+)['\"])?",
     re.IGNORECASE,
 )
+_TS_DECLARES_LOCALLY_NOT_EXPORTED_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2459:\s*"
+    r"Module\s+(?P<module>.+?)\s+declares\s+['\"](?P<symbol>[^'\"]+)['\"]\s+locally,\s+"
+    r"but\s+it\s+is\s+not\s+exported",
+    re.IGNORECASE,
+)
 _TS_MISSING_PROPERTY_ERROR_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2339:\s*"
     r"Property\s+['\"](?P<member>[^'\"]+)['\"]\s+does\s+not\s+exist\s+on\s+type\s+['\"](?P<type>[^'\"]+)['\"]",
@@ -237,6 +259,10 @@ _TS_TOO_FEW_ARGUMENTS_RAW_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2554:\s*"
     r"Expected\s+(?P<expected>\d+)\s+arguments?,\s+but\s+got\s+(?P<got>\d+)",
     re.IGNORECASE,
+)
+_TS_REEXPORTABLE_NAMED_IMPORT_RE = re.compile(
+    r"(?ms)^(?P<indent>\s*)import\s+(?P<type_only>type\s+)?\{(?P<names>.*?)\}\s+from\s+"
+    r"(?P<quote>['\"])(?P<module>[^'\"]+)(?P=quote)\s*;?"
 )
 _TS_CANNOT_FIND_TEST_GLOBAL_RAW_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS(?:2304|2582):\s*"
@@ -286,7 +312,11 @@ _TS_NAMED_REEXPORT_RE = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 _TS_LOCAL_NAMED_EXPORT_RE = re.compile(
-    r"export\s*\{\s*(?P<symbols>[^}]+)\s*\}\s*(?!from\b)\s*;?",
+    r"export\s*\{\s*(?P<symbols>[^}]+)\s*\}(?!\s*from\b)\s*;?",
+    re.MULTILINE | re.DOTALL,
+)
+_TS_LOCAL_TYPE_NAMED_EXPORT_RE = re.compile(
+    r"export\s+type\s*\{\s*(?P<symbols>[^}]+)\s*\}(?!\s*from\b)\s*;?",
     re.MULTILINE | re.DOTALL,
 )
 _TS_DUPLICATE_IDENTIFIER_MESSAGE_RE = re.compile(
@@ -643,10 +673,39 @@ def repair_typescript_nullable_canvas_context_guards(
             repaired_lines.append(repaired_line)
             guarded.append(symbol)
             continue
+        repaired_line, asserted_symbols = _typescript_nullable_property_chain_non_null_assertion_line(line, symbols)
+        if asserted_symbols:
+            repaired_lines.append(repaired_line)
+            guarded.extend(asserted_symbols)
+            continue
         repaired_lines.append(line)
     if not guarded:
         return text, []
     return "\n".join(repaired_lines) + ("\n" if text.endswith("\n") else ""), _dedupe_preserve_order(guarded)
+
+
+def _typescript_nullable_property_chain_non_null_assertion_line(
+    line: str,
+    symbols: set[str],
+) -> tuple[str, list[str]]:
+    if not symbols:
+        return line, []
+    repaired = str(line or "")
+    asserted: list[str] = []
+    for symbol in sorted(symbols, key=len, reverse=True):
+        if "." not in symbol or not _typescript_nullable_target_is_safe(symbol):
+            continue
+        pattern = re.compile(rf"(?<![\w$]){re.escape(symbol)}(?!\s*!)(?=\s*[.\[])")
+        next_repaired = pattern.sub(f"{symbol}!", repaired)
+        if next_repaired != repaired:
+            repaired = next_repaired
+            asserted.append(symbol)
+    return repaired, asserted
+
+
+def _typescript_nullable_target_is_safe(symbol: str) -> bool:
+    parts = str(symbol or "").split(".")
+    return bool(parts) and all(_TS_IDENTIFIER_RE.fullmatch(part) for part in parts)
 
 
 def _typescript_nullable_global_symbol_for_line(line: str, symbols: set[str]) -> str:
@@ -1290,6 +1349,7 @@ def build_typescript_runtime_plan_for_source_tool(
         TYPESCRIPT_UNKNOWN_MEMBER_ACCESS_SOURCE_TOOL: build_typescript_unknown_member_access_plan,
         TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL: _build_typescript_uninitialized_property_plan,
         TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL: _build_typescript_unique_export_import_plan,
+        TYPESCRIPT_VALUE_USED_AS_TYPE_SOURCE_TOOL: _build_typescript_value_used_as_type_plan,
         TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL: _build_typescript_branded_literal_cast_plan,
         TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL: _build_typescript_literal_union_value_facade_plan,
         TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL: _build_typescript_unresolved_identifier_plan,
@@ -1765,6 +1825,8 @@ def _build_typescript_missing_member_plan(
             member,
             member_is_call=member_is_call,
         )
+        if not declared_type or declared_type == "unknown":
+            continue
         existing_members = _typescript_existing_member_names_for_type(base_files=base_files, type_name=type_name)
         receiver = ""
         if line_number > 0:
@@ -1942,6 +2004,73 @@ def _build_typescript_unique_export_import_plan(
         source_tool=TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
         rule_id="typescript.unique_export_import",
         mode_filter="unique_export",
+    )
+
+
+def _build_typescript_value_used_as_type_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+) -> RepairPlan | None:
+    parsed = _parse_typescript_value_used_as_type_errors(diagnostics)
+    if not parsed:
+        return None
+
+    updated: dict[str, str] = dict(base_files)
+    matched_diagnostics: list[RepairDiagnostic] = []
+    repaired: list[dict[str, object]] = []
+    for item in parsed:
+        path = str(item.get("file") or "")
+        symbol = str(item.get("symbol") or "")
+        original = str(updated.get(path) or "")
+        if not original or not _TS_IDENTIFIER_RE.fullmatch(symbol):
+            continue
+        if not _typescript_imported_const_class_alias_available(
+            base_files=base_files,
+            importer_path=path,
+            importer_text=original,
+            symbol=symbol,
+        ):
+            continue
+        next_text, line_repaired = _replace_typescript_value_used_as_type_reference(
+            original,
+            line_number=_to_positive_int(item.get("line")),
+            column_number=_to_positive_int(item.get("col")),
+            symbol=symbol,
+        )
+        if next_text == original or not line_repaired:
+            continue
+        updated[path] = next_text
+        diagnostic = item.get("diagnostic")
+        if isinstance(diagnostic, RepairDiagnostic):
+            matched_diagnostics.append(diagnostic)
+        repaired.append({"file": path, "symbol": symbol, "line": item.get("line")})
+
+    operations: list[RepairOperation] = []
+    for path, repaired_text in updated.items():
+        original = str(base_files.get(path) or "")
+        if not original or repaired_text == original:
+            continue
+        operations.extend(
+            _text_replace_operations_from_repair(
+                path=path,
+                original=original,
+                repaired=repaired_text,
+                metadata={
+                    "repair_kind": "typescript_value_used_as_type",
+                    "strategy": "instance_type_of_exported_const_class_alias",
+                },
+            )
+        )
+
+    return _repair_plan_or_none(
+        rule_id="typescript.value_used_as_type",
+        source_tool=TYPESCRIPT_VALUE_USED_AS_TYPE_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=tuple(matched_diagnostics),
+        mode=mode,
+        metadata={"value_type_references": repaired},
     )
 
 
@@ -3398,7 +3527,7 @@ def _typescript_member_insert_indent(body: str, *, fallback: str) -> str:
 
 
 def _typescript_receiver_for_member_access(line: str, member: str) -> str:
-    match = re.search(rf"\b(?P<receiver>[A-Za-z_$][\w$]*)\s*\.\s*{re.escape(member)}\b", str(line or ""))
+    match = re.search(rf"\b(?P<receiver>[A-Za-z_$][\w$]*!?)\s*\.\s*{re.escape(member)}\b", str(line or ""))
     return str(match.group("receiver") if match else "")
 
 
@@ -3788,6 +3917,8 @@ def _typescript_member_alias_replacement(*, receiver: str, missing_member: str, 
         return f"{receiver}.intensity"
     if missing_member == "size" and "radius" in existing_members:
         return f"{receiver}.radius"
+    if missing_member != "id" and missing_member.endswith("Id") and "id" in existing_members:
+        return f"{receiver}.id"
     return ""
 
 
@@ -3821,6 +3952,7 @@ def _parse_typescript_missing_export_errors(diagnostics: Sequence[RepairDiagnost
             _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE,
             _TS_NO_EXPORTED_MEMBER_ERROR_RE,
             _TS_NO_EXPORTED_MEMBER_NAMED_ERROR_RE,
+            _TS_DECLARES_LOCALLY_NOT_EXPORTED_ERROR_RE,
         ):
             for match in pattern.finditer(text):
                 module = str(match.group("module") or "").strip().strip("'\"`").rstrip(".")
@@ -3837,6 +3969,47 @@ def _parse_typescript_missing_export_errors(diagnostics: Sequence[RepairDiagnost
     return [item for item in parsed if item["file"] and item["module"] and item["symbol"]]
 
 
+def _parse_typescript_value_used_as_type_errors(
+    diagnostics: Sequence[RepairDiagnostic],
+) -> list[dict[str, object]]:
+    parsed: list[dict[str, object]] = []
+    for diagnostic in diagnostics:
+        text = str(diagnostic.raw or diagnostic.message or "")
+        matched = False
+        for match in _TS_VALUE_USED_AS_TYPE_RAW_RE.finditer(text):
+            parsed.append(
+                {
+                    "file": _normalize_repair_path(str(match.group("file") or "")),
+                    "line": str(match.group("line") or ""),
+                    "col": str(match.group("col") or ""),
+                    "symbol": str(match.group("symbol") or "").strip(),
+                    "diagnostic": diagnostic,
+                }
+            )
+            matched = True
+        if matched:
+            continue
+        if diagnostic.code.lower() != "typescript_ts2749":
+            continue
+        message_match = _TS_VALUE_USED_AS_TYPE_MESSAGE_RE.search(text)
+        if not message_match:
+            continue
+        parsed.append(
+            {
+                "file": _normalize_repair_path(str(diagnostic.path or "")),
+                "line": "",
+                "col": "",
+                "symbol": str(message_match.group("symbol") or "").strip(),
+                "diagnostic": diagnostic,
+            }
+        )
+    return [
+        item
+        for item in parsed
+        if str(item.get("file") or "") and _TS_IDENTIFIER_RE.fullmatch(str(item.get("symbol") or ""))
+    ]
+
+
 def _missing_export_operation(
     *,
     base_files: Mapping[str, str],
@@ -3851,8 +4024,10 @@ def _missing_export_operation(
     original = str(base_files.get(exporter) or "")
     if _typescript_module_exports_symbol(original, symbol):
         return None, {}
-    exported = _export_existing_typescript_declaration(original, symbol)
-    declaration_kind = "export_existing"
+    exported, declaration_kind = _reexport_imported_typescript_symbol(original, symbol)
+    if exported == original:
+        exported = _export_existing_typescript_declaration(original, symbol)
+        declaration_kind = "export_existing"
     if exported == original:
         return None, {
             "file": exporter,
@@ -3871,6 +4046,45 @@ def _missing_export_operation(
         },
     )
     return (ops[0], {"file": exporter, "symbol": symbol, "kind": declaration_kind}) if len(ops) == 1 else (None, {})
+
+
+def _reexport_imported_typescript_symbol(text: str, symbol: str) -> tuple[str, str]:
+    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
+        return text, "interface_contract_required"
+    for match in _TS_REEXPORTABLE_NAMED_IMPORT_RE.finditer(str(text or "")):
+        specifiers = _typescript_import_specifiers(match.group("names"))
+        imported = specifiers.get(symbol)
+        if imported is None:
+            continue
+        declaration_kind = (
+            "export_type_reexport" if match.group("type_only") or imported == "type" else "export_reexport"
+        )
+        export_prefix = "export type" if declaration_kind == "export_type_reexport" else "export"
+        quote = str(match.group("quote") or '"')
+        module_ref = str(match.group("module") or "")
+        declaration = f"{export_prefix} {{ {symbol} }} from {quote}{module_ref}{quote};"
+        if declaration in text:
+            return text, declaration_kind
+        insert_at = match.end()
+        separator = "\n" if text[insert_at : insert_at + 1] == "\n" else "\n\n"
+        return f"{text[:insert_at]}{separator}{declaration}{text[insert_at:]}", declaration_kind
+    return text, "interface_contract_required"
+
+
+def _typescript_import_specifiers(raw: str) -> dict[str, str]:
+    specifiers: dict[str, str] = {}
+    for item in str(raw or "").replace("\n", " ").split(","):
+        token = item.strip()
+        if not token:
+            continue
+        kind = "value"
+        if token.startswith("type "):
+            kind = "type"
+            token = token[5:].strip()
+        imported = token.split(" as ", 1)[0].strip()
+        if _TS_IDENTIFIER_RE.fullmatch(imported):
+            specifiers[imported] = kind
+    return specifiers
 
 
 def _append_typescript_missing_export_declaration_operation(
@@ -4224,6 +4438,81 @@ def _parse_named_import_symbols(symbols: str) -> list[str]:
     return _dedupe_preserve_order(parsed)
 
 
+def _typescript_imported_const_class_alias_available(
+    *,
+    base_files: Mapping[str, str],
+    importer_path: str,
+    importer_text: str,
+    symbol: str,
+) -> bool:
+    for match in _TS_NAMED_IMPORT_RE.finditer(importer_text):
+        imported_symbols = _parse_named_import_symbols(str(match.group("symbols") or ""))
+        if symbol not in imported_symbols:
+            continue
+        module_path = _resolve_relative_ts_module_path(importer_path, str(match.group("module") or ""), base_files)
+        if not module_path:
+            continue
+        if _typescript_module_exports_const_class_alias(str(base_files.get(module_path) or ""), symbol):
+            return True
+    return False
+
+
+def _typescript_module_exports_const_class_alias(module_text: str, symbol: str) -> bool:
+    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
+        return False
+    alias_re = re.compile(
+        rf"\bexport\s+const\s+{re.escape(symbol)}\s*=\s*(?P<class_name>[A-Za-z_$][A-Za-z0-9_$]*)\s*;",
+        re.MULTILINE,
+    )
+    alias = alias_re.search(module_text)
+    if not alias:
+        return False
+    class_name = str(alias.group("class_name") or "")
+    if not _TS_IDENTIFIER_RE.fullmatch(class_name):
+        return False
+    class_re = re.compile(rf"\b(?:export\s+)?class\s+{re.escape(class_name)}\b", re.MULTILINE)
+    return bool(class_re.search(module_text))
+
+
+def _replace_typescript_value_used_as_type_reference(
+    text: str,
+    *,
+    line_number: int,
+    column_number: int,
+    symbol: str,
+) -> tuple[str, bool]:
+    if line_number <= 0 or not _TS_IDENTIFIER_RE.fullmatch(symbol):
+        return text, False
+    lines = str(text or "").splitlines(keepends=True)
+    line_index = line_number - 1
+    if line_index < 0 or line_index >= len(lines):
+        return text, False
+    original_line = lines[line_index]
+    if re.search(r"\bimport\b|\bexport\s+(?:const|class|function)\b", original_line):
+        return text, False
+    replacement = f"InstanceType<typeof {symbol}>"
+    if replacement in original_line:
+        return text, False
+    symbol_re = re.compile(rf"(?<![\w$]){re.escape(symbol)}(?![\w$])")
+    matches = list(symbol_re.finditer(original_line))
+    if not matches:
+        return text, False
+    column_index = max(0, column_number - 1)
+    selected = min(
+        matches,
+        key=lambda match: (
+            0
+            if match.start() <= column_index <= match.end()
+            else min(abs(match.start() - column_index), abs(match.end() - column_index))
+        ),
+    )
+    prefix = original_line[max(0, selected.start() - 16) : selected.start()]
+    if re.search(r"typeof\s+$", prefix):
+        return text, False
+    lines[line_index] = original_line[: selected.start()] + replacement + original_line[selected.end() :]
+    return "".join(lines), True
+
+
 def _typescript_duplicate_identifier_targets(diagnostics: Sequence[RepairDiagnostic]) -> dict[str, set[str]]:
     targets: dict[str, set[str]] = {}
     for diagnostic in diagnostics:
@@ -4247,10 +4536,14 @@ def _typescript_duplicate_export_import_operations(
 ) -> tuple[RepairOperation, ...]:
     imported_by_module = _typescript_named_imports_by_module(content)
     locally_exported_names = _typescript_local_named_export_names(content)
+    locally_type_exported_names = _typescript_local_type_named_export_names(content)
     value_reexports_by_module = _typescript_named_reexports_by_module(content, type_only=False)
     type_reexports_by_module = _typescript_named_reexports_by_module(content, type_only=True)
+    type_reexported_names = set().union(*type_reexports_by_module.values()) if type_reexports_by_module else set()
     if not (
-        (imported_by_module and locally_exported_names) or (value_reexports_by_module and type_reexports_by_module)
+        (imported_by_module and locally_exported_names)
+        or (value_reexports_by_module and type_reexports_by_module)
+        or (locally_type_exported_names and type_reexported_names)
     ):
         return ()
 
@@ -4303,6 +4596,47 @@ def _typescript_duplicate_export_import_operations(
                 metadata={
                     "repair_kind": "typescript_duplicate_export_import_binding",
                     "module": module,
+                    "removed_symbols": tuple(sorted(removed)),
+                    "removed_empty_export_statement": True,
+                },
+            )
+        )
+    for match in _TS_LOCAL_TYPE_NAMED_EXPORT_RE.finditer(content):
+        symbols = str(match.group("symbols") or "")
+        removable = duplicate_names & type_reexported_names & _typescript_named_export_specifier_names(symbols)
+        if not removable:
+            continue
+        replacement_symbols, removed = _remove_typescript_named_export_symbols(symbols, removable)
+        if not removed:
+            continue
+        if replacement_symbols.strip():
+            operations.append(
+                RepairOperation(
+                    kind="text_replace",
+                    path=path,
+                    span_start=match.start("symbols"),
+                    span_end=match.end("symbols"),
+                    expected=symbols,
+                    replacement=replacement_symbols,
+                    before_hash=before_hash,
+                    metadata={
+                        "repair_kind": "typescript_duplicate_type_reexport_binding",
+                        "removed_symbols": tuple(sorted(removed)),
+                    },
+                )
+            )
+            continue
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=path,
+                span_start=match.start(),
+                span_end=match.end(),
+                expected=str(match.group(0) or ""),
+                replacement="",
+                before_hash=before_hash,
+                metadata={
+                    "repair_kind": "typescript_duplicate_type_reexport_binding",
                     "removed_symbols": tuple(sorted(removed)),
                     "removed_empty_export_statement": True,
                 },
@@ -4562,13 +4896,21 @@ def _typescript_named_reexports_by_module(content: str, *, type_only: bool) -> d
     exported: dict[str, set[str]] = {}
     for match in _TS_NAMED_REEXPORT_RE.finditer(content):
         raw = str(match.group(0) or "")
+        symbols = str(match.group("symbols") or "")
         is_type_reexport = raw.lstrip().startswith("export type")
-        if is_type_reexport != type_only:
-            continue
         module = str(match.group("module") or "")
-        symbols = _typescript_named_value_specifier_names(str(match.group("symbols") or ""))
-        if module and symbols:
-            exported.setdefault(module, set()).update(symbols)
+        if type_only:
+            names = (
+                _typescript_named_export_specifier_names(symbols)
+                if is_type_reexport
+                else _typescript_named_type_specifier_names(symbols)
+            )
+        else:
+            if is_type_reexport:
+                continue
+            names = _typescript_named_value_specifier_names(symbols)
+        if module and names:
+            exported.setdefault(module, set()).update(names)
     return exported
 
 
@@ -4576,6 +4918,34 @@ def _typescript_local_named_export_names(content: str) -> set[str]:
     names: set[str] = set()
     for match in _TS_LOCAL_NAMED_EXPORT_RE.finditer(content):
         names.update(_typescript_named_value_specifier_names(str(match.group("symbols") or "")))
+    return names
+
+
+def _typescript_local_type_named_export_names(content: str) -> set[str]:
+    names: set[str] = set()
+    for match in _TS_LOCAL_TYPE_NAMED_EXPORT_RE.finditer(content):
+        names.update(_typescript_named_export_specifier_names(str(match.group("symbols") or "")))
+    return names
+
+
+def _typescript_named_export_specifier_names(symbols: str) -> set[str]:
+    names: set[str] = set()
+    for raw in str(symbols or "").split(","):
+        name = _typescript_named_export_specifier_name(raw)
+        if name:
+            names.add(name)
+    return names
+
+
+def _typescript_named_type_specifier_names(symbols: str) -> set[str]:
+    names: set[str] = set()
+    for raw in str(symbols or "").split(","):
+        token = str(raw or "").strip()
+        if not token.lower().startswith("type "):
+            continue
+        name = _typescript_named_export_specifier_name(token[5:].strip())
+        if name:
+            names.add(name)
     return names
 
 
@@ -4611,6 +4981,13 @@ def _remove_typescript_named_export_symbols(symbols: str, removable: set[str]) -
 def _typescript_named_value_specifier_name(raw: str) -> str:
     token = str(raw or "").strip()
     if not token or token.startswith("type "):
+        return ""
+    return _typescript_named_export_specifier_name(token)
+
+
+def _typescript_named_export_specifier_name(raw: str) -> str:
+    token = str(raw or "").strip()
+    if not token:
         return ""
     candidate = re.split(r"\s+as\s+", token, maxsplit=1, flags=re.IGNORECASE)[0].strip()
     return candidate if _TS_IDENTIFIER_RE.fullmatch(candidate) else ""
@@ -5328,8 +5705,10 @@ def _typescript_param_with_default(param: str) -> str:
 
 def _typescript_errors_require_dom_lib(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     text = _diagnostic_text(diagnostics).lower()
-    return "include 'dom'" in text and any(
-        f"cannot find name '{name}'" in text for name in ("console", "window", "document", "navigator", "location")
+    dom_global_names = ("console", "window", "document", "navigator", "location")
+    dom_type_names = ("htmlelement", "htmlelementtagnamemap")
+    return ("include 'dom'" in text and any(f"cannot find name '{name}'" in text for name in dom_global_names)) or any(
+        f"cannot find name '{name}'" in text for name in dom_type_names
     )
 
 
@@ -5791,7 +6170,7 @@ def _parse_nullable_canvas_context_targets(
                 else _TS_POSSIBLY_NULL_MESSAGE_RE.search(message)
             )
             symbol = str(match.group("symbol") or "").strip() if match else ""
-            if _TS_IDENTIFIER_RE.fullmatch(symbol):
+            if _typescript_nullable_target_is_safe(symbol):
                 _add_nullable_target(by_path, path, symbol)
         elif code == "typescript_ts2345" and "null" in message.lower() and "not assignable" in message.lower():
             _add_nullable_target(by_path, path, "")
@@ -6799,12 +7178,12 @@ def _add_nullable_targets_from_raw(targets: dict[str, set[str] | None], raw: str
     for match in _TS_POSSIBLY_NULL_RAW_RE.finditer(text):
         path = _normalize_repair_path(str(match.group("file") or ""))
         symbol = str(match.group("symbol") or "").strip()
-        if path and _TS_IDENTIFIER_RE.fullmatch(symbol):
+        if path and _typescript_nullable_target_is_safe(symbol):
             _add_nullable_target(targets, path, symbol)
     for match in _TS_POSSIBLY_UNDEFINED_RAW_RE.finditer(text):
         path = _normalize_repair_path(str(match.group("file") or ""))
         symbol = str(match.group("symbol") or "").strip()
-        if path and _TS_IDENTIFIER_RE.fullmatch(symbol):
+        if path and _typescript_nullable_target_is_safe(symbol):
             _add_nullable_target(targets, path, symbol)
     for match in _TS_NULLABLE_ARGUMENT_RAW_RE.finditer(text):
         path = _normalize_repair_path(str(match.group("file") or ""))

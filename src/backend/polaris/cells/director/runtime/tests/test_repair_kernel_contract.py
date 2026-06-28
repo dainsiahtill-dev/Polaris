@@ -1288,6 +1288,25 @@ def test_typescript_nullable_canvas_context_rule_plans_precise_text_replacements
     assert "if (!ctx) {" in composition.patches[0].content_after
 
 
+def test_typescript_nullable_property_chain_rule_adds_targeted_non_null_assertion() -> None:
+    diagnostic = "src/main.ts(2,19): error TS18047: 'opened.stall' is possibly 'null'."
+    content = "const opened = market.openStall('north', 8);\nconst stallId = opened.stall.id;\n"
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_NULLABLE_CANVAS_CONTEXT_SOURCE_TOOL,
+            base_files={"src/main.ts": content},
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    content_after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "const stallId = opened.stall!.id;" in content_after
+
+
 def test_public_typescript_nullable_dom_global_covers_window_possibly_undefined() -> None:
     diagnostic = "src/web.ts(5,3): error TS18048: 'window' is possibly 'undefined'."
     content = (
@@ -2051,11 +2070,11 @@ def _typescript_conservative_planner_safe_cases() -> dict[str, tuple[dict[str, s
         ),
         ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL: (
             {
-                "src/app.ts": "interface Sprite {\n}\nfunction draw(sprite: Sprite) {\n  sprite.glow();\n}\n",
+                "src/app.ts": "interface Sprite {\n}\nfunction draw(sprite: Sprite) {\n  sprite.pixels['main'];\n}\n",
             },
             (
                 _ts_diag(
-                    "src/app.ts(4,10): error TS2339: Property 'glow' does not exist on type 'Sprite'.",
+                    "src/app.ts(4,10): error TS2339: Property 'pixels' does not exist on type 'Sprite'.",
                     path="src/app.ts",
                     code="typescript_ts2339",
                 ),
@@ -2153,6 +2172,27 @@ def _typescript_conservative_planner_safe_cases() -> dict[str, tuple[dict[str, s
             },
             (_ts_diag("unresolved relative import './missing' in src/main.ts"),),
         ),
+        ts_syntax.TYPESCRIPT_VALUE_USED_AS_TYPE_SOURCE_TOOL: (
+            {
+                "src/fairy.ts": (
+                    'import { Reputation } from "./reputation";\n'
+                    "export interface FairyInit {\n"
+                    "  readonly reputation: Reputation;\n"
+                    "}\n"
+                ),
+                "src/reputation.ts": (
+                    "class ReputationImpl {\n  readonly score = 0;\n}\nexport const Reputation = ReputationImpl;\n"
+                ),
+            },
+            (
+                _ts_diag(
+                    "src/fairy.ts(3,24): error TS2749: 'Reputation' refers to a value, "
+                    "but is being used as a type here. Did you mean 'typeof Reputation'?",
+                    path="src/fairy.ts",
+                    code="typescript_ts2749",
+                ),
+            ),
+        ),
         ts_syntax.TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL: (
             {
                 "src/model.ts": 'export type WidgetKind = "Primary" | "Secondary";\n',
@@ -2227,6 +2267,7 @@ def test_typescript_conservative_planner_recognizes_all_legacy_ts_html_source_to
         ts_syntax.TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_VALUE_USED_AS_TYPE_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL,
@@ -2235,7 +2276,7 @@ def test_typescript_conservative_planner_recognizes_all_legacy_ts_html_source_to
     }
 
     assert set(cases) == expected_source_tools
-    assert len(cases) == 24
+    assert len(cases) == 25
 
     plans = []
     for source_tool, (base_files, diagnostics) in cases.items():
@@ -2379,6 +2420,56 @@ def test_scaffold_placeholder_quality_diagnostic_is_covered_plannable() -> None:
 
     assert result.status == "covered_plannable"
     assert result.plannable_source_tools == ("deterministic_scaffold_marker_quality_cleanup",)
+    assert result.items[0].status == "covered_plannable"
+    assert result.items[0].patch_count == 1
+
+
+def test_typescript_ts2584_dom_lib_diagnostic_is_covered_plannable() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL
+    diagnostic = (
+        "src/web.ts(1,17): error TS2584: Cannot find name 'document'. "
+        "Do you need to change your target library? Try changing the 'lib' "
+        "compiler option to include 'dom'."
+    )
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,))
+    ).to_dict()
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=(diagnostic,),
+            base_files={"tsconfig.json": '{"compilerOptions":{"target":"ES2020"}}\n'},
+        )
+    )
+
+    assert coverage["covered_diagnostic_count"] == 1
+    assert coverage["uncovered_diagnostic_count"] == 0
+    assert source_tool in coverage["items"][0]["matched_source_tools"]
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == (source_tool,)
+    assert result.items[0].status == "covered_plannable"
+    assert result.items[0].patch_count == 1
+
+
+def test_typescript_ts2304_dom_html_type_diagnostic_is_covered_plannable() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL
+    diagnostic = "src/web.ts(18,18): error TS2304: Cannot find name 'HTMLElementTagNameMap'."
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,))
+    ).to_dict()
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=(diagnostic,),
+            base_files={"tsconfig.json": '{"compilerOptions":{"target":"ES2020","lib":["ES2020"]}}\n'},
+        )
+    )
+
+    assert coverage["covered_diagnostic_count"] == 1
+    assert coverage["uncovered_diagnostic_count"] == 0
+    assert source_tool in coverage["items"][0]["matched_source_tools"]
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == (source_tool,)
     assert result.items[0].status == "covered_plannable"
     assert result.items[0].patch_count == 1
 
@@ -2552,7 +2643,7 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
     assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert len(runtime_repair_source_tools()) == len(bindings)
-    assert len(runtime_repair_source_tools()) == 99
+    assert len(runtime_repair_source_tools()) == 100
     assert sum(1 for binding in bindings if binding["language"] == "rust") == 20
     assert runtime_repair_source_tools() == tuple(binding["source_tool"] for binding in bindings)
     assert all(set(binding) == {"source_tool", "language", "rule_id"} for binding in bindings)
@@ -3383,6 +3474,42 @@ def test_typescript_member_alias_maps_verify_report_derived_members_to_results()
     assert "report.checks" not in content_after
 
 
+def test_typescript_member_alias_maps_generated_id_suffix_to_existing_id_member() -> None:
+    diagnostic = (
+        "src/main.ts(2,37): error TS2339: Property 'stallId' does not exist on type 'Stall'.\n"
+        "src/main.ts(3,38): error TS2339: Property 'stallId' does not exist on type 'Stall'.\n"
+    )
+    base_files = {
+        "src/models/Market.ts": (
+            "export interface Stall {\n"
+            "  readonly id: StallId;\n"
+            "  readonly name: string;\n"
+            "}\n"
+            "export type StallId = string & { readonly __brand: 'StallId' };\n"
+        ),
+        "src/main.ts": (
+            "const opened = market.openStall('north', 8);\n"
+            "const a = opened.stall.stallId;\n"
+            "const b = opened.stall!.stallId;\n"
+        ),
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    content_after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "const a = opened.stall.id;" in content_after
+    assert "const b = opened.stall!.id;" in content_after
+
+
 def test_typescript_duplicate_export_import_binding_repairs_barrel_ts2300() -> None:
     diagnostic = (
         "src/index.ts(9,3): error TS2300: Duplicate identifier Market.\n"
@@ -3519,6 +3646,55 @@ def test_typescript_duplicate_export_import_binding_repairs_barrel_value_and_typ
     assert "FairyRole, Fairy }" not in repaired
 
 
+def test_typescript_duplicate_export_import_binding_repairs_local_type_export_duplicates() -> None:
+    diagnostic = (
+        "src/index.ts(19,8): error TS2300: Duplicate identifier 'FairyId'.\n"
+        "src/index.ts(20,8): error TS2300: Duplicate identifier 'FairyRole'.\n"
+        "src/index.ts(33,8): error TS2300: Duplicate identifier 'ReputationTier'.\n"
+        "src/index.ts(183,15): error TS2300: Duplicate identifier 'FairyId'.\n"
+        "src/index.ts(183,24): error TS2300: Duplicate identifier 'FairyRole'.\n"
+        "src/index.ts(183,35): error TS2300: Duplicate identifier 'ReputationTier'.\n"
+    )
+    index_text = (
+        "export {\n"
+        "  Fairy,\n"
+        "  createFairy,\n"
+        "  type FairyId,\n"
+        "  type FairyRole,\n"
+        "  type FairyRosterEntry,\n"
+        '} from "./models/Fairy";\n'
+        "export {\n"
+        "  Reputation,\n"
+        "  createReputation,\n"
+        "  type ReputationTier,\n"
+        "  type ReputationEvent,\n"
+        "  type ReputationReport,\n"
+        '} from "./models/Reputation";\n'
+        'import { Fairy, type FairyId, type FairyRole } from "./models/Fairy";\n'
+        'import { Reputation, type ReputationTier } from "./models/Reputation";\n'
+        "export function createDemoMarket(): void {}\n"
+        "export type { FairyId, FairyRole, ReputationTier };\n"
+    )
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
+            base_files={"src/index.ts": index_text},
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.duplicate_export_import_binding"
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "type FairyId," in repaired
+    assert "type FairyRole," in repaired
+    assert "type ReputationTier," in repaired
+    assert "export type { FairyId, FairyRole, ReputationTier };" not in repaired
+
+
 def test_typescript_branded_literal_cast_repairs_string_literal_id_assignments() -> None:
     diagnostics = (
         "src/main.ts(4,29): error TS2345: Argument of type 'string' is not assignable to parameter of type 'MarketId'.\n"
@@ -3649,6 +3825,145 @@ def test_typescript_missing_export_without_declaration_is_covered_unplannable() 
     assert probe.covered_unplannable_source_tools == (ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,)
 
 
+def test_typescript_ts2459_declares_locally_reexports_imported_type() -> None:
+    diagnostics = (
+        "src/index.ts(7,8): error TS2459: Module '\"./models/Fairy\"' declares "
+        "'FairyMood' locally, but it is not exported.",
+    )
+    base_files = {
+        "src/index.ts": (
+            'export { createFairy, type FairyMood } from "./models/Fairy";\n'
+            "export function boot(): string { return 'ok'; }\n"
+        ),
+        "src/models/Fairy.ts": (
+            "import {\n"
+            "  type Fairy,\n"
+            "  type FairyMood,\n"
+            '} from "./types";\n'
+            "\n"
+            "export function createFairy(mood: FairyMood): Fairy {\n"
+            "  return { mood };\n"
+            "}\n"
+        ),
+        "src/models/types.ts": (
+            'export type FairyMood = "cheerful" | "neutral" | "grumpy";\n'
+            "export interface Fairy { readonly mood: FairyMood; }\n"
+        ),
+    }
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=diagnostics))
+    assert coverage.items[0].known_rule_matched is True
+    assert ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL in coverage.items[0].matched_source_tools
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.missing_export"
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert 'export type { FairyMood } from "./types";' in repaired
+
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            source_tools=(ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,),
+        )
+    )
+    assert probe.status == "covered_plannable"
+    assert probe.plannable_source_tools == (ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,)
+
+
+def test_typescript_value_used_as_type_repairs_exported_const_class_alias() -> None:
+    diagnostics = (
+        "src/models/Fairy.ts(4,24): error TS2749: 'Reputation' refers to a value, "
+        "but is being used as a type here. Did you mean 'typeof Reputation'?",
+        "src/models/Fairy.ts(8,32): error TS2749: 'Reputation' refers to a value, "
+        "but is being used as a type here. Did you mean 'typeof Reputation'?",
+    )
+    base_files = {
+        "src/models/Fairy.ts": (
+            'import { Reputation } from "./Reputation";\n'
+            "\n"
+            "export interface FairyInit {\n"
+            "  readonly reputation: Reputation;\n"
+            "}\n"
+            "\n"
+            "class FairyImpl {\n"
+            "  private readonly reputation: Reputation;\n"
+            "}\n"
+        ),
+        "src/models/Reputation.ts": (
+            "class ReputationImpl {\n  readonly score = 0;\n}\nexport const Reputation = ReputationImpl;\n"
+        ),
+    }
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=diagnostics))
+    assert coverage.items[0].known_rule_matched is True
+    assert ts_syntax.TYPESCRIPT_VALUE_USED_AS_TYPE_SOURCE_TOOL in coverage.items[0].matched_source_tools
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_VALUE_USED_AS_TYPE_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.value_used_as_type"
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "readonly reputation: InstanceType<typeof Reputation>;" in repaired
+    assert "private readonly reputation: InstanceType<typeof Reputation>;" in repaired
+
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            source_tools=(ts_syntax.TYPESCRIPT_VALUE_USED_AS_TYPE_SOURCE_TOOL,),
+        )
+    )
+    assert probe.status == "covered_plannable"
+    assert probe.plannable_source_tools == (ts_syntax.TYPESCRIPT_VALUE_USED_AS_TYPE_SOURCE_TOOL,)
+
+
+def test_typescript_value_used_as_type_without_class_alias_is_covered_unplannable() -> None:
+    diagnostics = (
+        "src/models/Fairy.ts(3,24): error TS2749: 'Reputation' refers to a value, "
+        "but is being used as a type here. Did you mean 'typeof Reputation'?",
+    )
+    base_files = {
+        "src/models/Fairy.ts": (
+            'import { Reputation } from "./Reputation";\n'
+            "export interface FairyInit {\n"
+            "  readonly reputation: Reputation;\n"
+            "}\n"
+        ),
+        "src/models/Reputation.ts": "export const Reputation = { score: 0 };\n",
+    }
+
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            source_tools=(ts_syntax.TYPESCRIPT_VALUE_USED_AS_TYPE_SOURCE_TOOL,),
+        )
+    )
+
+    assert probe.status == "coverage_matched_but_unplannable"
+    assert probe.plannable_source_tools == ()
+    assert probe.covered_unplannable_source_tools == (ts_syntax.TYPESCRIPT_VALUE_USED_AS_TYPE_SOURCE_TOOL,)
+
+
 def test_typescript_type_inference_required_diagnostics_are_metadata_only() -> None:
     diagnostics = (
         "src/factory.ts(10,5): error TS2353: Object literal may only specify known properties, "
@@ -3673,7 +3988,7 @@ def test_typescript_type_inference_required_diagnostics_are_metadata_only() -> N
     )
 
 
-def test_typescript_missing_member_batches_same_type_members_without_hash_mismatch() -> None:
+def test_typescript_missing_member_without_type_evidence_is_unplannable() -> None:
     diagnostic = (
         "tests/usage.ts(3,8): error TS2339: Property 'label' does not exist on type 'Widget'.\n"
         "tests/usage.ts(4,8): error TS2339: Property 'render' does not exist on type 'Widget'.\n"
@@ -3688,6 +4003,13 @@ def test_typescript_missing_member_batches_same_type_members_without_hash_mismat
         ),
     }
 
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,),
+            artifact_quality_errors=(diagnostic,),
+            base_files=base_files,
+        )
+    )
     planning = plan_director_repair(
         PlanDirectorRepairCommandV1(
             source_tool=ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
@@ -3697,14 +4019,10 @@ def test_typescript_missing_member_batches_same_type_members_without_hash_mismat
         )
     ).to_dict()
 
-    assert planning["ok"] is True
-    assert planning["planned"] is True
-    assert planning["plan_summary"]["operation_count"] == 1
-    assert planning["composition_summary"]["issue_count"] == 0
-    assert planning["composition_summary"]["patch_count"] == 1
-    content_after = planning["composition_summary"]["patches"][0]["content_after"]
-    assert "label: unknown;" in content_after
-    assert "render(..._args: unknown[]): unknown;" in content_after
+    assert result.status == "coverage_matched_but_unplannable"
+    assert result.items[0].status == "covered_unplannable"
+    assert planning["ok"] is False
+    assert planning["planned"] is False
 
 
 def test_typescript_missing_member_infers_indexed_property_shape() -> None:
@@ -9606,7 +9924,7 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         or source_tool == "deterministic_javascript_typescript_annotation_repair"
     ]
     catalog_failure_message = (
-        "expected public strategy catalog ledger total=100 executable_runtime=99 "
+        "expected public strategy catalog ledger total=101 executable_runtime=100 "
         "metadata_rule_registered=1 legacy_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
         "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
@@ -9616,17 +9934,17 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
-    assert catalog_summary["total"] == 100
+    assert catalog_summary["total"] == 101
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert legacy_source_tools == [], catalog_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 99, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 100, catalog_failure_message
     assert catalog_summary["implementation_status_counts"].get("metadata_rule_registered", 0) == 1, (
         catalog_failure_message
     )
     assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, catalog_failure_message
-    assert catalog_summary["executable_runtime_binding_count"] == 99, catalog_failure_message
+    assert catalog_summary["executable_runtime_binding_count"] == 100, catalog_failure_message
     assert catalog_summary["legacy_strategy_host_count"] == 0, catalog_failure_message
-    assert len(catalog_summary["executable_runtime_source_tools"]) == 99, catalog_failure_message
+    assert len(catalog_summary["executable_runtime_source_tools"]) == 100, catalog_failure_message
     assert set(catalog_summary["implementation_status_counts"]).issubset(
         {"executable_runtime", "metadata_rule_registered", "legacy_strategy_host"}
     )
