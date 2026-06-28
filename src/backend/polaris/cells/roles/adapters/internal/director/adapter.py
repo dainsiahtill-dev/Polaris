@@ -422,14 +422,19 @@ def _build_director_workspace_interface_lines(workspace: str) -> list[str]:
     # Inject bounded actual file bodies so it sees the real fields/constructors/
     # return types. These files already exist and are correct -- the model must USE
     # their symbols, not rewrite them.
-    content_budget = 6000
+    # Budget large enough to carry full small/medium implementations: a TEST task
+    # must see the WHOLE implementation it asserts against (factory_bench L1-03
+    # forecast.py is 433 lines; a 60-line snippet left the model guessing expected
+    # values -> 11 failing test assertions). Still capped so a huge file cannot
+    # dominate the window.
+    content_budget = 30000
     body_lines: list[str] = []
     for path in sorted(exports):
         if content_budget <= 0:
             break
         try:
             with open(os.path.join(workspace, path), encoding="utf-8", errors="replace") as _fh:
-                snippet = "\n".join(_fh.read().splitlines()[:60])[:content_budget]
+                snippet = "\n".join(_fh.read().splitlines()[:400])[:content_budget]
         except OSError:
             continue
         if not snippet.strip():
