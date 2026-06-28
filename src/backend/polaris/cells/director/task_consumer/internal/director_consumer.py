@@ -551,6 +551,27 @@ def _adapter_failure_message(adapter_result: dict[str, Any]) -> str:
     return base
 
 
+def _scan_director_artifact_quality_evidence(
+    *,
+    workspace_path: Path,
+    task_id: str,
+    scope: list[str],
+) -> tuple[Any | None, str]:
+    try:
+        from polaris.kernelone.quality import scan_workspace_artifact_quality_evidence
+
+        return (
+            scan_workspace_artifact_quality_evidence(
+                workspace_path.as_posix(),
+                relative_paths=scope or None,
+                task_id=task_id,
+            ),
+            "",
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        return None, str(exc)
+
+
 def _interface_contract_amendment_from_adapter_failure(
     *,
     workspace_path: Path,
@@ -563,15 +584,12 @@ def _interface_contract_amendment_from_adapter_failure(
     if adapter_result.get("success") is True:
         return None
     scope = _contract_amendment_scan_scope(payload=payload, adapter_result=adapter_result)
-    try:
-        from polaris.kernelone.quality import scan_workspace_artifact_quality_evidence
-
-        evidence = scan_workspace_artifact_quality_evidence(
-            workspace_path.as_posix(),
-            relative_paths=scope or None,
-            task_id=task_id,
-        )
-    except (OSError, RuntimeError, ValueError):
+    evidence, _scan_error = _scan_director_artifact_quality_evidence(
+        workspace_path=workspace_path,
+        task_id=task_id,
+        scope=scope,
+    )
+    if evidence is None:
         return None
     if evidence.contract_amendment_request is None:
         return None
@@ -594,15 +612,12 @@ def _interface_contract_repair_from_adapter_failure(
     if adapter_result.get("success") is True:
         return None
     scope = _contract_amendment_scan_scope(payload=payload, adapter_result=adapter_result)
-    try:
-        from polaris.kernelone.quality import scan_workspace_artifact_quality_evidence
-
-        evidence = scan_workspace_artifact_quality_evidence(
-            workspace_path.as_posix(),
-            relative_paths=scope or None,
-            task_id=task_id,
-        )
-    except (OSError, RuntimeError, ValueError):
+    evidence, _scan_error = _scan_director_artifact_quality_evidence(
+        workspace_path=workspace_path,
+        task_id=task_id,
+        scope=scope,
+    )
+    if evidence is None:
         return None
     if evidence.contract_amendment_request is not None:
         return None
@@ -617,6 +632,101 @@ def _interface_contract_repair_from_adapter_failure(
         "cross_artifact_issues": [issue.to_dict() for issue in evidence.cross_artifact_issues],
         "cross_artifact_repair_plans": repair_plans,
     }
+
+
+def _final_convergence_scan_scope(
+    *,
+    workspace_path: Path,
+    payload: dict[str, Any],
+    changed_files: list[str],
+    exec_result: dict[str, Any],
+) -> list[str]:
+    """Return existing files that represent the final Director output surface."""
+
+    scope: list[str] = []
+    scope.extend(_normalize_string_list(changed_files))
+    scope.extend(_normalize_string_list(payload.get("target_files")))
+    scope.extend(_normalize_string_list(payload.get("scope_paths")))
+    step_target = _step_target_file(payload)
+    if step_target:
+        scope.append(step_target)
+    adapter_result = exec_result.get("director_adapter_result")
+    if isinstance(adapter_result, dict):
+        existing_evidence = adapter_result.get("existing_contract_evidence")
+        if isinstance(existing_evidence, dict):
+            scope.extend(_normalize_string_list(existing_evidence.get("existing_paths")))
+
+    rows: list[str] = []
+    seen: set[str] = set()
+    for raw_path in _dedupe_normalized_paths(scope):
+        path = raw_path.strip().replace("\\", "/").lstrip("./")
+        if not path or path in {".", "/"} or any(part in {"", ".", ".."} for part in Path(path).parts):
+            continue
+        if path in seen:
+            continue
+        if (workspace_path / path).is_file():
+            seen.add(path)
+            rows.append(path)
+    return rows
+
+
+def _final_convergence_failure(
+    *,
+    workspace_path: Path,
+    task_id: str,
+    payload: dict[str, Any],
+    changed_files: list[str],
+    exec_result: dict[str, Any],
+) -> tuple[str, str, str, dict[str, Any]] | None:
+    """Validate final files after all Director writes/fallbacks have settled."""
+
+    scope = _final_convergence_scan_scope(
+        workspace_path=workspace_path,
+        payload=payload,
+        changed_files=changed_files,
+        exec_result=exec_result,
+    )
+    if not scope:
+        return None
+    evidence, scan_error = _scan_director_artifact_quality_evidence(
+        workspace_path=workspace_path,
+        task_id=task_id,
+        scope=scope,
+    )
+    if evidence is None:
+        return (
+            "FINAL_CONVERGENCE_SCAN_FAILED",
+            f"Final convergence scan failed before QA handoff: {scan_error}",
+            "pending_exec",
+            {"scan_scope": scope, "scan_error": scan_error},
+        )
+    errors = [str(item).strip() for item in evidence.errors if str(item).strip()]
+    if not errors and evidence.contract_amendment_request is None:
+        return None
+    evidence_payload = {
+        "schema_version": "director.final_convergence_evidence.v1",
+        "scan_scope": scope,
+        "changed_files": list(changed_files),
+        "errors": errors,
+        "cross_artifact_issues": [issue.to_dict() for issue in evidence.cross_artifact_issues],
+        "cross_artifact_repair_plans": [plan.to_dict() for plan in evidence.cross_artifact_repair_plans],
+        "contract_amendment_request": (
+            evidence.contract_amendment_request.to_dict() if evidence.contract_amendment_request is not None else None
+        ),
+    }
+    if evidence.contract_amendment_request is not None:
+        return (
+            "FINAL_CONVERGENCE_CONTRACT_AMENDMENT_REQUIRED",
+            errors[0] if errors else "Final convergence requires CE interface contract amendment",
+            "pending_design",
+            evidence_payload,
+        )
+    return (
+        "FINAL_CONVERGENCE_ARTIFACT_QUALITY_FAILED",
+        errors[0] if errors else "Final convergence artifact quality failed before QA handoff",
+        "pending_exec",
+        evidence_payload,
+    )
 
 
 def _contract_amendment_scan_scope(*, payload: dict[str, Any], adapter_result: dict[str, Any]) -> list[str]:
@@ -1030,6 +1140,43 @@ class DirectorExecutionConsumer:
                     )
                 )
                 return {"task_id": task_id, "ok": False, "reason": drift_code}
+            final_convergence = _final_convergence_failure(
+                workspace_path=Path(self._workspace).expanduser().resolve(),
+                task_id=task_id,
+                payload=payload,
+                changed_files=changed_files,
+                exec_result=exec_result,
+            )
+            if final_convergence is not None:
+                error_code, error_message, requeue_stage, evidence = final_convergence
+                self._append_final_convergence_event(
+                    task_id=task_id,
+                    payload=payload,
+                    ok=False,
+                    error_code=error_code,
+                    summary=error_message,
+                    evidence=evidence,
+                )
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code=error_code,
+                        error_message=error_message,
+                        requeue_stage=requeue_stage,
+                        metadata={
+                            "reason": "director_final_convergence_failed",
+                            "final_convergence": evidence,
+                        },
+                    )
+                )
+                return {
+                    "task_id": task_id,
+                    "ok": False,
+                    "reason": "director_final_convergence_failed",
+                    "requeue_stage": requeue_stage,
+                }
             registered_actions = self._register_compensation_actions(
                 task_id=task_id,
                 lease_token=lease_token,
@@ -1175,6 +1322,56 @@ class DirectorExecutionConsumer:
         finally:
             if heartbeat is not None:
                 heartbeat.stop()
+
+    def _append_final_convergence_event(
+        self,
+        *,
+        task_id: str,
+        payload: dict[str, Any],
+        ok: bool,
+        error_code: str,
+        summary: str,
+        evidence: dict[str, Any],
+    ) -> None:
+        job_token = _job_token_from_payload(payload)
+        run_id = str(job_token.get("run_id") or payload.get("run_id") or "").strip()
+        if not run_id:
+            return
+        try:
+            from polaris.cells.control_plane.run_ledger.public import (
+                AppendRunLedgerEventCommandV1,
+                append_run_ledger_event,
+            )
+
+            append_run_ledger_event(
+                AppendRunLedgerEventCommandV1(
+                    workspace=self._workspace,
+                    run_id=run_id,
+                    event={
+                        "event_type": "gate_evaluated",
+                        "stage": "director_final_convergence",
+                        "gate": {
+                            "name": "director_final_convergence",
+                            "ok": bool(ok),
+                            "summary": summary,
+                        },
+                        "job_token": job_token,
+                        "physical_evidence": {
+                            "modalities": {
+                                "code": {
+                                    "present": True,
+                                    "ok": bool(ok),
+                                    "detail": summary,
+                                }
+                            },
+                            "error_code": error_code,
+                            "final_convergence": evidence,
+                        },
+                    },
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Could not append Director final convergence event for %s: %s", task_id, exc)
 
     def _register_compensation_actions(
         self,

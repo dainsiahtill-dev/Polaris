@@ -629,6 +629,108 @@ class TestDirectorExecutionConsumerPollOnce:
         mock_svc.fail_task_stage.assert_not_called()
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_final_convergence_rejects_bad_final_artifact(self, mock_get_svc: MagicMock, tmp_path: Path) -> None:
+        """A success result is not enough; the final file state must pass artifact quality."""
+
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").write_text("def broken(\n", encoding="utf-8")
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-final-bad"
+        claim_result.lease_token = "lease-final-bad"
+        claim_result.payload = {
+            "blueprint_id": "bp-final-bad",
+            "target_files": ["src/main.py"],
+            "job_token": {
+                "token_id": "job-final-bad",
+                "run_id": "run-final-bad",
+                "contract_hash": "ch",
+                "blueprint_hash": "bh",
+            },
+        }
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+        with patch.object(
+            consumer,
+            "_execute_task",
+            return_value={"changed_files": ["src/main.py"], "duration": 1, "side_effects": []},
+        ):
+            results = consumer.poll_once()
+
+        assert results[0]["ok"] is False
+        assert results[0]["reason"] == "director_final_convergence_failed"
+        assert results[0]["requeue_stage"] == "pending_exec"
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.error_code == "FINAL_CONVERGENCE_ARTIFACT_QUALITY_FAILED"
+        assert fail_call.requeue_stage == "pending_exec"
+        assert fail_call.metadata["final_convergence"]["scan_scope"] == ["src/main.py"]
+        assert "syntax" in fail_call.error_message.lower()
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_final_convergence_routes_contract_amendment_to_ce(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Cross-file symbol drift after a successful write belongs to CE when no contract owns the symbol."""
+
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "weather.ts").write_text(
+            "export interface WeatherSnapshot { condition: string }\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "forecast.ts").write_text(
+            "import { WeatherReport } from './weather';\nexport const report: WeatherReport | null = null;\n",
+            encoding="utf-8",
+        )
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-final-contract"
+        claim_result.lease_token = "lease-final-contract"
+        claim_result.payload = {
+            "blueprint_id": "bp-final-contract",
+            "target_files": ["src/forecast.ts", "src/weather.ts"],
+            "job_token": {
+                "token_id": "job-final-contract",
+                "run_id": "run-final-contract",
+                "contract_hash": "ch",
+                "blueprint_hash": "bh",
+            },
+        }
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_design")
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+        with patch.object(
+            consumer,
+            "_execute_task",
+            return_value={"changed_files": ["src/forecast.ts"], "duration": 1, "side_effects": []},
+        ):
+            results = consumer.poll_once()
+
+        assert results[0]["ok"] is False
+        assert results[0]["reason"] == "director_final_convergence_failed"
+        assert results[0]["requeue_stage"] == "pending_design"
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.error_code == "FINAL_CONVERGENCE_CONTRACT_AMENDMENT_REQUIRED"
+        assert fail_call.requeue_stage == "pending_design"
+        assert fail_call.metadata["final_convergence"]["contract_amendment_request"] is not None
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_execute_task_delegates_to_director_adapter_for_existing_workspace(
         self,
         mock_get_svc: MagicMock,
