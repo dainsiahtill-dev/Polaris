@@ -428,8 +428,49 @@ def _build_director_workspace_interface_lines(workspace: str) -> list[str]:
     # values -> 11 failing test assertions). Still capped so a huge file cannot
     # dominate the window.
     content_budget = 30000
+    # build_symbol_index_snapshot omits entrypoint files (e.g. Go main.go where
+    # package-level helpers like fixedClock/mustExhibit live), so a TEST task that
+    # only sees `exports` redeclares them and fails to compile (factory_bench L1-04
+    # main_test.go redeclared main.go symbols). Walk the workspace for real impl
+    # source files too, entrypoint first, skipping the test files the task itself
+    # writes and build/vendor dirs.
+    _src_ext = (
+        ".py", ".go", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".rb",
+        ".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".kt", ".swift", ".php",
+    )
+    _skip_seg = {
+        "node_modules", ".git", "dist", "build", "target", "__pycache__",
+        "vendor", ".venv", "venv", ".polaris", ".mypy_cache",
+    }
+
+    def _looks_like_test(rel: str) -> bool:
+        base = rel.rsplit("/", 1)[-1]
+        guarded = f"/{rel}/"
+        return (
+            base.startswith("test_")
+            or base.endswith("_test.go")
+            or base.endswith("_test.py")
+            or ".test." in base
+            or ".spec." in base
+            or "/tests/" in guarded
+            or "/test/" in guarded
+        )
+
+    inject_paths: list[str] = [p for p in sorted(exports) if not _looks_like_test(p)]
+    seen_paths = set(inject_paths)
+    for _root, _dirs, _files in os.walk(workspace):
+        _dirs[:] = [_d for _d in _dirs if _d not in _skip_seg]
+        for _fn in _files:
+            if not _fn.endswith(_src_ext):
+                continue
+            _rel = os.path.relpath(os.path.join(_root, _fn), workspace).replace("\\", "/")
+            if _rel in seen_paths or _looks_like_test(_rel):
+                continue
+            seen_paths.add(_rel)
+            inject_paths.append(_rel)
+    inject_paths.sort(key=lambda p: (0 if p.rsplit("/", 1)[-1].split(".")[0] in {"main", "index", "app"} else 1, p))
     body_lines: list[str] = []
-    for path in sorted(exports):
+    for path in inject_paths:
         if content_budget <= 0:
             break
         try:
@@ -439,7 +480,7 @@ def _build_director_workspace_interface_lines(workspace: str) -> list[str]:
             continue
         if not snippet.strip():
             continue
-        body_lines.append(f"--- {path} (已存在文件实际内容，截断；请使用其符号，勿重写此文件) ---")
+        body_lines.append(f"--- {path} (已存在文件实际内容；请使用其符号，勿重复声明或重写此文件) ---")
         body_lines.append(snippet)
         content_budget -= len(snippet)
     if body_lines:
