@@ -393,7 +393,21 @@ def build_forced_write_only_retry_tool_definitions(
         # companions so the model can read-then-write inside the single batch;
         # the batch contract guard still requires a write, so a read-only batch
         # is still rejected. Default OFF -> byte-identical legacy behaviour.
-        companion_tool_names.update({"read_file", "repo_read_head", "repo_read_slice", "repo_read_around"})
+        companion_tool_names.update(
+            {
+                "read_file",
+                "file_exists",
+                "list_directory",
+                "glob",
+                "repo_tree",
+                "repo_read_head",
+                "repo_read_slice",
+                "repo_read_around",
+                "repo_read_tail",
+                "repo_rg",
+                "repo_glob",
+            }
+        )
     if forced_write_tool_name == "edit_blocks" and allow_write_file_companion_for_edit_blocks:
         # New-file deadlock fix (factory-bench L1-03/L1-02 live, 2026-06-12):
         # edit_blocks cannot create files and its teaching error tells the
