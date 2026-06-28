@@ -26,6 +26,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
 )
 from polaris.cells.chief_engineer.blueprint.public.contracts import TaskBlueprintResultV1
 from polaris.cells.factory.pipeline.internal import factory_stage_executor as stage_executor_module
+from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
     FactoryConfig,
@@ -194,6 +195,53 @@ def _generate_domain_blueprint(
 
 
 class TestChiefEngineerHandoffGuards:
+    def test_task_blueprint_context_injects_catalog_delivery_depth_contract(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        catalog_path = tmp_path / ".polaris" / "catalog_contract.json"
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text(
+            json.dumps(
+                {
+                    "project_id": "L2-07",
+                    "primary_language": "typescript",
+                    "project_type": "management_game",
+                    "feature_keywords": ["market", "fairy", "inventory", "reputation"],
+                    "level": 2,
+                    "level_contract": {
+                        "schema_version": "factory-bench.level_contract.v1",
+                        "level": 2,
+                        "minimums": {
+                            "min_test_files": 1,
+                            "min_test_assertions": 8,
+                        },
+                        "required_evidence": ["Tests assert business results"],
+                        "anti_hollow_delivery": ["Do not pass tests that only check files exist"],
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        context = executor._task_blueprint_context(
+            {
+                "id": "TASK-1",
+                "title": "Build TypeScript market models",
+                "target_files": ["package.json", "src/index.ts"],
+                "acceptance_criteria": ["npm run build passes"],
+                "execution_checklist": ["Implement source"],
+            },
+            run_id="factory_test",
+            index=1,
+        )
+
+        depth_contract = context["delivery_depth_contract"]
+        assert depth_contract["source"] == "factory.catalog_contract"
+        assert depth_contract["language"] == "typescript"
+        assert depth_contract["minimums"]["min_test_files"] == 1
+        assert depth_contract["minimums"]["min_test_assertions"] == 8
+        assert context["metadata"]["delivery_depth_contract"] == depth_contract
+
     def test_chief_engineer_review_consumes_llm_blueprint_overlay(
         self,
         tmp_path: Path,
@@ -3124,6 +3172,82 @@ class _PartialFailureProgressExecutor(OrchestrationStageExecutor):
 
 
 class TestDirectorDispatchLoop:
+    @pytest.mark.asyncio
+    async def test_run_completion_waiter_cancel_event_propagates_to_active_orchestration_run(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class _FakeOrchestrationService:
+            def __init__(self) -> None:
+                self.active_task = asyncio.create_task(asyncio.sleep(60))
+                self._active_runs = {"run-1": self.active_task}
+                self.cancelled: list[tuple[str, bool]] = []
+
+            async def cancel_run(self, run_id: str, force: bool = False) -> object:
+                self.cancelled.append((run_id, force))
+                self.active_task.cancel()
+                return object()
+
+        class _FakeCommandService:
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                return CommandResult(run_id=run_id, status="running", message="still running")
+
+        fake_orchestration = _FakeOrchestrationService()
+
+        async def _fake_get_orchestration_service() -> _FakeOrchestrationService:
+            return fake_orchestration
+
+        monkeypatch.setattr(
+            "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+            _fake_get_orchestration_service,
+        )
+        cancel_event = asyncio.Event()
+        cancel_event.set()
+
+        result = await RunCompletionWaiter(tmp_path).wait(
+            _FakeCommandService(),
+            CommandResult(run_id="run-1", status="running", message="submitted"),
+            timeout_seconds=30,
+            cancel_event=cancel_event,
+        )
+
+        assert result.status == "cancelled"
+        assert result.message == "Run cancelled: factory_cancelled"
+        assert fake_orchestration.cancelled == [("run-1", True)]
+        await asyncio.sleep(0)
+        assert fake_orchestration.active_task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_director_timeout_settle_cancel_event_propagates_to_active_orchestration_run(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        class _FakeRunCompletionWaiter:
+            def __init__(self) -> None:
+                self.cancelled: list[tuple[str, str]] = []
+
+            async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
+                self.cancelled.append((run_id, reason))
+
+        fake_waiter = _FakeRunCompletionWaiter()
+        executor = _executor(tmp_path)
+        executor._run_completion_waiter = fake_waiter  # type: ignore[assignment]
+        cancel_event = asyncio.Event()
+        cancel_event.set()
+
+        result = await executor._settle_inflight_director_run_after_timeout(
+            service=object(),  # type: ignore[arg-type]
+            run_id="run-2",
+            grace_seconds=30,
+            cancel_event=cancel_event,
+        )
+
+        assert result is not None
+        assert result.status == "cancelled"
+        assert result.message == "Run cancelled: factory_cancelled"
+        assert fake_waiter.cancelled == [("run-2", "factory_cancelled")]
+
     @pytest.mark.asyncio
     async def test_director_binding_fanout_waits_submitted_runs_concurrently(self, tmp_path: Path) -> None:
         class _FanoutService:

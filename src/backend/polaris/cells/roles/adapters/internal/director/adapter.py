@@ -134,6 +134,20 @@ def _join_limited_values(label: str, values: list[str]) -> str:
     return f"- {label}: {', '.join(values)}" if values else ""
 
 
+def _path_looks_like_test_target(path: str) -> bool:
+    normalized = str(path or "").replace("\\", "/").strip().lower()
+    filename = normalized.rsplit("/", 1)[-1]
+    return bool(
+        normalized.startswith("tests/")
+        or "/tests/" in normalized
+        or ".test." in filename
+        or ".spec." in filename
+        or filename.startswith("test_")
+        or "_test." in filename
+        or filename.endswith("test.java")
+    )
+
+
 _TASK_CONTRACT_LIST_KEYS = (
     "target_files",
     "scope_paths",
@@ -258,6 +272,102 @@ def _promoted_task_contract_payload(sources: list[dict[str, Any]]) -> dict[str, 
     return payload
 
 
+def _normalize_contract_task_token(value: Any) -> str:
+    token = str(value or "").strip().lower()
+    token = re.sub(r"^(task[-_])+", "", token)
+    return token
+
+
+def _contract_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return [normalized] if normalized else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item or "").strip()]
+    return []
+
+
+def _merge_contract_lists(*values: Any) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for item in _contract_list(value):
+            if item in seen:
+                continue
+            seen.add(item)
+            merged.append(item)
+    return merged
+
+
+def _load_ce_blueprint_contract_payload(workspace: str, task: dict[str, Any]) -> dict[str, Any]:
+    if not workspace or not isinstance(task, dict):
+        return {}
+    sources = _task_contract_sources(task)
+    task_tokens = {
+        token
+        for source in sources
+        for value in (
+            source.get("id"),
+            source.get("task_id"),
+            source.get("pm_task_id"),
+            source.get("external_task_id"),
+        )
+        if (token := _normalize_contract_task_token(value))
+    }
+    explicit_blueprint_ids = [
+        item
+        for source in sources
+        for item in _contract_list(
+            source.get("blueprint_id")
+            or source.get("chief_engineer_blueprint_id")
+            or source.get("ce_blueprint_id")
+            or source.get("runtime_blueprint_id")
+        )
+    ]
+    try:
+        from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
+    except (ImportError, RuntimeError):
+        return {}
+    persistence = BlueprintPersistence(workspace, ensure_directory=False)
+    candidates: list[tuple[str, str, dict[str, Any]]] = []
+    for blueprint_id in dict.fromkeys([*explicit_blueprint_ids, *persistence.list_all()]):
+        payload = persistence.load(blueprint_id)
+        if not isinstance(payload, dict):
+            continue
+        payload_task = _normalize_contract_task_token(payload.get("task_id"))
+        if explicit_blueprint_ids and blueprint_id in explicit_blueprint_ids:
+            pass
+        elif (task_tokens and payload_task not in task_tokens) or (not task_tokens and not explicit_blueprint_ids):
+            continue
+        updated_at = str(payload.get("updated_at") or payload.get("created_at") or "").strip()
+        candidates.append((updated_at, str(blueprint_id), payload))
+    if not candidates:
+        return {}
+    _updated_at, _blueprint_id, payload = max(candidates, key=lambda item: (item[0], item[1]))
+    return payload
+
+
+def _merge_ce_blueprint_contract_payload(
+    contract_payload: dict[str, Any],
+    blueprint_payload: dict[str, Any],
+) -> dict[str, Any]:
+    if not blueprint_payload:
+        return contract_payload
+    merged = dict(contract_payload)
+    for key in _TASK_CONTRACT_LIST_KEYS:
+        values = _merge_contract_lists(contract_payload.get(key), blueprint_payload.get(key))
+        if values:
+            merged[key] = values
+    for key in _TASK_CONTRACT_MAPPING_KEYS:
+        if not _has_contract_value(merged, key) and isinstance(blueprint_payload.get(key), dict):
+            merged[key] = dict(blueprint_payload[key])
+    for key in _TASK_CONTRACT_SCALAR_KEYS:
+        if not _has_contract_value(merged, key) and blueprint_payload.get(key) is not None:
+            merged[key] = blueprint_payload[key]
+    merged.setdefault("ce_blueprint", dict(blueprint_payload))
+    return merged
+
+
 def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -> list[str]:
     resolved_blueprint_id = str(blueprint_id or "").strip()
     if not resolved_blueprint_id:
@@ -286,15 +396,27 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
         if blockers:
             lines.append(_join_limited_values("handoff blockers", blockers))
 
-    for label, key in (
-        ("blueprint target_files", "target_files"),
-        ("blueprint scope_paths", "scope_paths"),
-        ("blueprint acceptance", "acceptance_criteria"),
-        ("blueprint execution_checklist", "execution_checklist"),
+    for label, key, limit in (
+        ("blueprint target_files", "target_files", 16),
+        ("blueprint scope_paths", "scope_paths", 16),
+        ("blueprint acceptance", "acceptance_criteria", 10),
+        ("blueprint execution_checklist", "execution_checklist", 10),
     ):
-        item = _join_limited_values(label, _string_list_payload(payload.get(key), limit=8))
+        item = _join_limited_values(label, _string_list_payload(payload.get(key), limit=limit))
         if item:
             lines.append(item)
+    test_targets = [
+        item
+        for item in _string_list_payload(payload.get("target_files"), limit=40)
+        if _path_looks_like_test_target(item)
+    ]
+    test_targets.extend(
+        item
+        for item in _string_list_payload(payload.get("scope_paths"), limit=40)
+        if _path_looks_like_test_target(item) and item not in test_targets
+    )
+    if test_targets:
+        lines.append(_join_limited_values("blueprint required test targets", test_targets[:12]))
 
     llm_blueprint = payload.get("llm_blueprint")
     if isinstance(llm_blueprint, dict) and llm_blueprint:
@@ -967,20 +1089,32 @@ class DirectorAdapter(BaseRoleAdapter):
             return
         sources = _task_contract_sources(task)
         contract_payload = _promoted_task_contract_payload(sources)
+        blueprint_payload = _load_ce_blueprint_contract_payload(workspace, task)
+        contract_payload = _merge_ce_blueprint_contract_payload(contract_payload, blueprint_payload)
         if not contract_payload:
             return
 
         metadata_raw = context.get("metadata")
         metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+        task_metadata_raw = task.get("metadata")
+        task_metadata: dict[str, Any] = dict(task_metadata_raw) if isinstance(task_metadata_raw, dict) else {}
 
         for key in _TASK_CONTRACT_LIST_KEYS:
             value = contract_payload.get(key)
             if not isinstance(value, list) or not value:
                 continue
-            if not _has_contract_value(context, key):
-                context[key] = list(value)
-            if not _has_contract_value(metadata, key):
-                metadata[key] = list(value)
+            merged_task = _merge_contract_lists(task.get(key), value)
+            if merged_task:
+                task[key] = merged_task
+            merged_task_metadata = _merge_contract_lists(task_metadata.get(key), value)
+            if merged_task_metadata:
+                task_metadata[key] = merged_task_metadata
+            merged_context = _merge_contract_lists(context.get(key), value)
+            if merged_context:
+                context[key] = merged_context
+            merged_metadata = _merge_contract_lists(metadata.get(key), value)
+            if merged_metadata:
+                metadata[key] = merged_metadata
 
         for key in _TASK_CONTRACT_MAPPING_KEYS:
             value = contract_payload.get(key)
@@ -990,6 +1124,10 @@ class DirectorAdapter(BaseRoleAdapter):
                 context[key] = dict(value)
             if not _has_contract_value(metadata, key):
                 metadata[key] = dict(value)
+            if not _has_contract_value(task, key):
+                task[key] = dict(value)
+            if not _has_contract_value(task_metadata, key):
+                task_metadata[key] = dict(value)
 
         for key in _TASK_CONTRACT_SCALAR_KEYS:
             value = contract_payload.get(key)
@@ -999,16 +1137,25 @@ class DirectorAdapter(BaseRoleAdapter):
                 context[key] = value
             if not _has_contract_value(metadata, key):
                 metadata[key] = value
+            if not _has_contract_value(task, key):
+                task[key] = value
+            if not _has_contract_value(task_metadata, key):
+                task_metadata[key] = value
 
         if workspace and not _has_contract_value(context, "workspace"):
             context["workspace"] = str(workspace)
         if workspace and not _has_contract_value(metadata, "workspace"):
             metadata["workspace"] = str(workspace)
+        if workspace and not _has_contract_value(task_metadata, "workspace"):
+            task_metadata["workspace"] = str(workspace)
 
         if not _has_contract_value(metadata, "task"):
             metadata["task"] = dict(contract_payload)
         if not _has_contract_value(context, "task_contract"):
             context["task_contract"] = dict(contract_payload)
+        if not _has_contract_value(task_metadata, "task_contract"):
+            task_metadata["task_contract"] = dict(contract_payload)
+        task["metadata"] = task_metadata
         context["metadata"] = metadata
 
     @staticmethod

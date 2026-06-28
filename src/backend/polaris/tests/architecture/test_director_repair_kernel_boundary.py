@@ -1005,10 +1005,10 @@ def test_rust_post_execution_callback_does_not_own_convergence_loop() -> None:
     assert '"revalidation"' in rust_annotation_source
 
 
-def test_rust_aggregate_post_repair_is_executable_runtime_binding() -> None:
+def test_rust_aggregate_post_repair_is_not_executable_runtime_binding() -> None:
     source_tools = {binding["source_tool"] for binding in runtime_repair_bindings()}
 
-    assert "deterministic_rust_post_repair" in source_tools
+    assert "deterministic_rust_post_repair" not in source_tools
     assert "deterministic_rust_method_self_signature_repair" in source_tools
     assert "deterministic_rust_missing_module_file_repair" in source_tools
 

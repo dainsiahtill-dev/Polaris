@@ -138,6 +138,50 @@ class TestBlueprintStepCard:
         assert "consumes_symbols(跨文件导入/调用必须逐字匹配):" in card
         assert "src/models/weather.py: WeatherReport, forecast_for" in card
 
+    def test_consumed_python_provider_files_are_in_real_interface_snapshot(self, tmp_path: Path) -> None:
+        models = tmp_path / "src" / "models"
+        engine = tmp_path / "src" / "engine"
+        models.mkdir(parents=True)
+        engine.mkdir(parents=True)
+        (models / "weather.py").write_text(
+            "\n".join(
+                [
+                    "class WeatherSnapshot:",
+                    "    pass",
+                    "",
+                    "class WeatherReport:",
+                    "    pass",
+                    "",
+                    "def forecast_for(mood):",
+                    "    return WeatherReport()",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        card = self._card(
+            {
+                "construction_step": {
+                    "step_id": "TASK-2",
+                    "target_file": "src/engine/forecast.py",
+                    "consumes_symbols": {"src/models/weather.py": ["WeatherReport", "forecast_for"]},
+                },
+                "consumed_interfaces": {
+                    "src/models/weather.py": {
+                        "identifiers": ["WeatherReport", "forecast_for"],
+                        "signatures": [],
+                    }
+                },
+            },
+            workspace=tmp_path,
+        )
+
+        assert card is not None
+        assert "真实文件接口快照" in card
+        assert "src/models/weather.py exports:" in card
+        assert "WeatherReport" in card
+        assert "forecast_for" in card
+
     def test_repair_turn_emits_localized_edit_directive(self):
         card = self._card(
             {

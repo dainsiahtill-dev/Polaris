@@ -574,6 +574,122 @@ def _target_files_from_context(context: dict[str, Any]) -> list[str]:
     return _merge_string_lists(context.get("scope_paths"), task_payload.get("scope_paths"))
 
 
+def _path_looks_like_test(path: str) -> bool:
+    normalized = str(path or "").replace("\\", "/").strip().lower()
+    name = normalized.rsplit("/", 1)[-1]
+    return bool(
+        normalized.startswith("tests/")
+        or "/tests/" in normalized
+        or ".test." in name
+        or ".spec." in name
+        or name.startswith("test_")
+        or "_test." in name
+        or name.endswith("test.java")
+    )
+
+
+def _delivery_depth_minimums(delivery_depth_contract: dict[str, Any] | None) -> dict[str, Any]:
+    contract = _mapping(delivery_depth_contract)
+    for candidate in (
+        contract.get("minimums"),
+        _mapping(contract.get("level_contract")).get("minimums"),
+        _mapping(contract.get("behavior_contract")).get("minimums"),
+    ):
+        minimums = _mapping(candidate)
+        if minimums:
+            return minimums
+    return {}
+
+
+def _positive_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _infer_language_from_targets(target_files: list[str]) -> str:
+    suffix_to_language = (
+        ((".ts", ".tsx"), "typescript"),
+        ((".js", ".jsx", ".mjs", ".cjs"), "javascript"),
+        ((".py",), "python"),
+        ((".go",), "go"),
+        ((".rs",), "rust"),
+        ((".java",), "java"),
+        ((".cpp", ".cc", ".cxx", ".hpp", ".hxx"), "cpp"),
+        ((".html",), "html"),
+    )
+    lowered_paths = [str(path or "").lower() for path in target_files]
+    for suffixes, language in suffix_to_language:
+        if any(path.endswith(suffixes) for path in lowered_paths):
+            return language
+    return ""
+
+
+def _default_delivery_depth_test_target(language: str) -> str:
+    normalized = str(language or "").strip().lower()
+    if normalized in {"typescript", "ts", "tsx"}:
+        return "tests/behavior.test.ts"
+    if normalized in {"javascript", "js", "jsx", "node"}:
+        return "tests/behavior.test.js"
+    if normalized in {"python", "py"}:
+        return "tests/test_behavior.py"
+    if normalized in {"go", "golang"}:
+        return "behavior_test.go"
+    if normalized in {"rust", "rs"}:
+        return "tests/behavior.rs"
+    if normalized == "java":
+        return "src/test/java/BehaviorTest.java"
+    if normalized in {"cpp", "c++", "cc", "cxx"}:
+        return "tests/behavior_test.cpp"
+    if normalized in {"html", "html5"}:
+        return "tests/behavior.test.js"
+    return "tests/behavior.test"
+
+
+def _apply_delivery_depth_test_targets(
+    *,
+    target_files: list[str],
+    scope_paths: list[str],
+    acceptance_criteria: list[str],
+    execution_checklist: list[str],
+    delivery_depth_contract: dict[str, Any] | None,
+    context: dict[str, Any],
+) -> None:
+    minimums = _delivery_depth_minimums(delivery_depth_contract)
+    min_test_files = _positive_int(minimums.get("min_test_files"))
+    min_test_assertions = _positive_int(minimums.get("min_test_assertions"))
+    if min_test_files <= 0 and min_test_assertions <= 0:
+        return
+
+    language = str(
+        context.get("language")
+        or _mapping(delivery_depth_contract).get("language")
+        or _infer_language_from_targets(target_files)
+    ).strip()
+    if min_test_files > 0 and not any(_path_looks_like_test(path) for path in target_files):
+        test_target = _default_delivery_depth_test_target(language)
+        if test_target not in target_files:
+            target_files.append(test_target)
+    if min_test_files > 0:
+        for test_target in [path for path in target_files if _path_looks_like_test(path)]:
+            if test_target not in scope_paths:
+                scope_paths.append(test_target)
+
+    requirement = (
+        "Delivery depth contract requires real behavior tests"
+        f" (min_test_files={min_test_files}, min_test_assertions={min_test_assertions})."
+    )
+    if requirement not in acceptance_criteria:
+        acceptance_criteria.append(requirement)
+    checklist_item = (
+        "Create executable behavior tests that assert normal, boundary, and invalid/core-rule outcomes "
+        f"and satisfy min_test_assertions={min_test_assertions}."
+    )
+    if checklist_item not in execution_checklist:
+        execution_checklist.append(checklist_item)
+
+
 def _qa_acceptance_from_task(task_payload: dict[str, Any]) -> list[str]:
     qa_contract = _mapping(task_payload.get("qa_contract"))
     return _first_string_list(qa_contract.get("acceptance_criteria"), qa_contract.get("acceptance"))
@@ -774,6 +890,14 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     dependencies = list(contract_fields["dependencies"])
     delivery_plan_document = dict(contract_fields["delivery_plan_document"])
     delivery_depth_contract = dict(contract_fields["delivery_depth_contract"])
+    _apply_delivery_depth_test_targets(
+        target_files=target_files,
+        scope_paths=scope_paths,
+        acceptance_criteria=acceptance_criteria,
+        execution_checklist=execution_checklist,
+        delivery_depth_contract=delivery_depth_contract,
+        context=context,
+    )
     llm_blueprint_overlay = _normalize_llm_blueprint_overlay(command.llm_blueprint)
     inferred_decisions = infer_architecture_decisions(
         objective=command.objective,
@@ -805,13 +929,13 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         delivery_depth_contract=delivery_depth_contract,
         delivery_plan_document=delivery_plan_document,
     )
-    context.setdefault("acceptance_criteria", acceptance_criteria)
-    context.setdefault("execution_checklist", execution_checklist)
-    context.setdefault("target_files", target_files)
-    context.setdefault("scope_paths", scope_paths)
-    context.setdefault("dependencies", dependencies)
-    context.setdefault("architecture_decisions", architecture_decision_payloads)
-    context.setdefault("selected_libraries", selected_libraries)
+    context["acceptance_criteria"] = acceptance_criteria
+    context["execution_checklist"] = execution_checklist
+    context["target_files"] = target_files
+    context["scope_paths"] = scope_paths
+    context["dependencies"] = dependencies
+    context["architecture_decisions"] = architecture_decision_payloads
+    context["selected_libraries"] = selected_libraries
     if module_interface_contract:
         context.setdefault("module_interface_contract", module_interface_contract)
     if delivery_plan_document:

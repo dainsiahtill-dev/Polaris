@@ -98,6 +98,23 @@ def _tool_results_from_batch_receipt(batch_receipt: dict[str, Any] | None) -> li
     return tool_results
 
 
+def _forced_tool_choice_override(context_override: Any) -> Any | None:
+    if not isinstance(context_override, dict):
+        return None
+
+    forced_choice = context_override.get("_transaction_kernel_forced_tool_choice")
+    if isinstance(forced_choice, dict):
+        forced_function = forced_choice.get("function")
+        if isinstance(forced_function, dict) and str(forced_function.get("name") or "").strip():
+            return forced_choice
+        return None
+
+    forced_token = str(forced_choice or "").strip().lower()
+    if forced_token == "required":
+        return "required"
+    return None
+
+
 def _tool_schema_names_for_error_audit(tool_definitions: list[dict[str, Any]]) -> list[str]:
     names: list[str] = []
     for definition in tool_definitions:
@@ -176,6 +193,7 @@ async def execute_transaction_kernel_turn(
     from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
         build_native_tool_schemas,
         build_tool_filter_audit,
+        ensure_director_first_call_materialization_scope,
         extract_write_tool_pin_target_files,
         pin_write_tool_file_param_to_targets,
         resolve_from_scratch_write_target,
@@ -221,11 +239,10 @@ async def execute_transaction_kernel_turn(
             _latest_user_content_preview(messages),
         )
 
-    tool_definitions = (
-        []
-        if kernel._tool_contract_requires_no_tools(request) or kernel._request_forces_no_transaction_tools(request)
-        else build_native_tool_schemas(profile)
-    )
+    transaction_tools_disabled = kernel._tool_contract_requires_no_tools(
+        request
+    ) or kernel._request_forces_no_transaction_tools(request)
+    tool_definitions = [] if transaction_tools_disabled else build_native_tool_schemas(profile)
     tool_definitions, runtime_tool_policy_audit = kernel._apply_runtime_tool_policy(
         request=request,
         context_result=context_result,
@@ -258,6 +275,18 @@ async def execute_transaction_kernel_turn(
         tool_filter_original_definitions = list(tool_definitions)
         tool_filter_reason = "from_scratch_write_target"
         tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
+        tool_definitions = ensure_director_first_call_materialization_scope(
+            role=role,
+            context_override=getattr(request, "context_override", None),
+            workspace=str(request.workspace or kernel.workspace or "."),
+            tool_definitions=tool_definitions,
+            from_scratch_target=_from_scratch_target,
+            materialize_requested=(
+                _context_requests_materialize_delivery(getattr(request, "context_override", None))
+                or _text_requests_materialize_delivery(getattr(request, "message", None))
+            ),
+            transaction_tools_disabled=transaction_tools_disabled,
+        )
         logger.info(
             "first-turn minimal execution schema for from-scratch leaf step: target=%s",
             _from_scratch_target,
@@ -339,7 +368,12 @@ async def execute_transaction_kernel_turn(
             )
 
     try:
-        tk_result = await tk.execute(turn_id, messages, tool_definitions)
+        tk_result = await tk.execute(
+            turn_id,
+            messages,
+            tool_definitions,
+            tool_choice_override=_forced_tool_choice_override(getattr(request, "context_override", None)),
+        )
     except Exception as exc:
         logger.exception("TransactionKernel execute failed: turn_id=%s", turn_id)
         try:
@@ -536,6 +570,7 @@ async def execute_transaction_kernel_stream(
     from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
         build_native_tool_schemas,
         build_tool_filter_audit,
+        ensure_director_first_call_materialization_scope,
         extract_declared_step_target_files,
         pin_write_tool_file_param_to_targets,
         resolve_from_scratch_write_target,
@@ -573,11 +608,10 @@ async def execute_transaction_kernel_stream(
         getattr(request, "context_override", None),
     )
 
-    tool_definitions = (
-        []
-        if kernel._tool_contract_requires_no_tools(request) or kernel._request_forces_no_transaction_tools(request)
-        else build_native_tool_schemas(profile)
-    )
+    transaction_tools_disabled = kernel._tool_contract_requires_no_tools(
+        request
+    ) or kernel._request_forces_no_transaction_tools(request)
+    tool_definitions = [] if transaction_tools_disabled else build_native_tool_schemas(profile)
     tool_definitions, runtime_tool_policy_audit = kernel._apply_runtime_tool_policy(
         request=request,
         context_result=context_result,
@@ -600,6 +634,18 @@ async def execute_transaction_kernel_stream(
         tool_filter_original_definitions = list(tool_definitions)
         tool_filter_reason = "from_scratch_write_target"
         tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
+        tool_definitions = ensure_director_first_call_materialization_scope(
+            role=role,
+            context_override=getattr(request, "context_override", None),
+            workspace=str(request.workspace or kernel.workspace or "."),
+            tool_definitions=tool_definitions,
+            from_scratch_target=_from_scratch_target,
+            materialize_requested=(
+                _context_requests_materialize_delivery(getattr(request, "context_override", None))
+                or _text_requests_materialize_delivery(getattr(request, "message", None))
+            ),
+            transaction_tools_disabled=transaction_tools_disabled,
+        )
         logger.info(
             "first-turn minimal execution schema for from-scratch leaf step: target=%s",
             _from_scratch_target,
@@ -677,7 +723,12 @@ async def execute_transaction_kernel_stream(
     accumulated_thinking: list[str] = []
     stream_tool_calls: list[dict[str, Any]] = []
     stream_tool_results: list[dict[str, Any]] = []
-    async for event in tk.execute_stream(turn_id, messages, tool_definitions):
+    async for event in tk.execute_stream(
+        turn_id,
+        messages,
+        tool_definitions,
+        tool_choice_override=_forced_tool_choice_override(getattr(request, "context_override", None)),
+    ):
         event_dict: dict[str, Any]
         if isinstance(event, TurnPhaseEvent):
             event_dict = {

@@ -543,10 +543,77 @@ class TestChiefEngineerBlueprintPublicService:
             "tests/test_product.py",
             "README.md",
         )
+
+    def test_generate_task_blueprint_materializes_depth_contract_test_target(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-TS",
+            workspace=str(tmp_path),
+            objective="Build TypeScript market behavior",
+            context={
+                "language": "typescript",
+                "target_files": ["package.json", "src/index.ts", "src/models/Market.ts"],
+                "acceptance_criteria": ["npm run build passes"],
+                "execution_checklist": ["Implement source modules"],
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "source": "factory.catalog_contract",
+                    "language": "typescript",
+                    "minimums": {
+                        "min_test_files": 1,
+                        "min_test_assertions": 8,
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        assert "tests/behavior.test.ts" in result.target_files
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert "tests/behavior.test.ts" in persisted["target_files"]
+        assert "tests/behavior.test.ts" in persisted["scope_paths"]
+        assert persisted["context"]["target_files"] == persisted["target_files"]
+        assert persisted["context"]["scope_paths"] == persisted["scope_paths"]
+        assert any("min_test_files=1" in item for item in persisted["acceptance_criteria"])
+        assert any("min_test_assertions=8" in item for item in persisted["execution_checklist"])
         persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
         assert isinstance(persisted, dict)
         assert persisted["target_files"] == list(result.target_files)
         assert persisted["contract_completeness"]["handoff_ready"] is True
+
+    def test_generate_task_blueprint_adds_existing_test_targets_to_scope(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-TS-SCOPE",
+            workspace=str(tmp_path),
+            objective="Build TypeScript market behavior tests",
+            context={
+                "language": "typescript",
+                "target_files": ["package.json", "src/index.ts", "tests/verify.test.ts"],
+                "scope_paths": ["package.json", "src/index.ts"],
+                "acceptance_criteria": ["npm run test passes"],
+                "execution_checklist": ["Implement source modules and tests"],
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "language": "typescript",
+                    "minimums": {
+                        "min_test_files": 1,
+                        "min_test_assertions": 8,
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert "tests/verify.test.ts" in persisted["target_files"]
+        assert "tests/verify.test.ts" in persisted["scope_paths"]
+        assert persisted["context"]["target_files"] == persisted["target_files"]
+        assert persisted["context"]["scope_paths"] == persisted["scope_paths"]
 
     def test_generate_task_blueprint_does_not_block_path_only_domain_mismatch(self, tmp_path) -> None:
         cmd = GenerateTaskBlueprintCommandV1(

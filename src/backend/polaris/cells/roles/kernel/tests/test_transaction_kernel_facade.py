@@ -78,6 +78,33 @@ async def test_transaction_kernel_executes_single_transaction_turn() -> None:
     assert result["metrics"]["tool_calls"] == 0
 
 
+@pytest.mark.asyncio
+async def test_transaction_kernel_execute_forwards_tool_choice_override_to_provider_request() -> None:
+    llm = AsyncMock(
+        return_value={
+            "content": "Final answer.",
+            "model": "test-model",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 4},
+        }
+    )
+    tool_runtime = AsyncMock()
+    kernel = TransactionKernel(llm_provider=llm, tool_runtime=tool_runtime, config=TransactionConfig(domain="code"))
+    forced_choice = {"type": "function", "function": {"name": "write_file"}}
+    tool_definitions = [{"type": "function", "function": {"name": "write_file"}}]
+
+    result = await kernel.execute(
+        turn_id="turn_tx",
+        context=[{"role": "user", "content": "say hi"}],
+        tool_definitions=tool_definitions,
+        tool_choice_override=forced_choice,
+    )
+
+    assert result["kind"] == "final_answer"
+    assert llm.await_args is not None
+    assert llm.await_args.args[0]["tools"] == tool_definitions
+    assert llm.await_args.args[0]["tool_choice"] == forced_choice
+
+
 def test_build_decision_messages_adds_write_verify_contract_hint() -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),
@@ -153,6 +180,9 @@ def test_build_retry_tool_definitions_for_mutation_keeps_context_reads_with_writ
     tool_definitions = [
         {"type": "function", "function": {"name": "read_file"}},
         {"type": "function", "function": {"name": "list_directory"}},
+        {"type": "function", "function": {"name": "repo_read_slice"}},
+        {"type": "function", "function": {"name": "repo_read_around"}},
+        {"type": "function", "function": {"name": "glob"}},
         {"type": "function", "function": {"name": "edit_file"}},
         {"type": "function", "function": {"name": "execute_command"}},
     ]
@@ -163,7 +193,15 @@ def test_build_retry_tool_definitions_for_mutation_keeps_context_reads_with_writ
     )
     retry_names = extract_allowed_tool_names_from_definitions(retry_definitions)
 
-    assert retry_names == {"read_file", "list_directory", "edit_file", "execute_command"}
+    assert retry_names == {
+        "read_file",
+        "list_directory",
+        "repo_read_slice",
+        "repo_read_around",
+        "glob",
+        "edit_file",
+        "execute_command",
+    }
 
 
 def test_build_forced_write_only_retry_tool_definitions_keeps_execute_command_when_verify_required() -> None:

@@ -46,8 +46,13 @@ def build_retry_tool_definitions_for_mutation(
 
     write_candidates = set(WRITE_TOOLS)
     read_context_candidates = {
+        "glob",
         "read_file",
         "list_directory",
+        "repo_read_head",
+        "repo_read_slice",
+        "repo_read_tail",
+        "repo_read_around",
         "repo_rg",
         "repo_glob",
     }

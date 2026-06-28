@@ -77,6 +77,7 @@ from .typescript_syntax import (
     HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL,
     JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL,
     TYPEORM_MODEL_NORMALIZATION_SOURCE_TOOL,
+    TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL,
     TYPESCRIPT_CANVAS_SCALE_RETURN_TYPE_SOURCE_TOOL,
     TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL,
     TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
@@ -84,6 +85,7 @@ from .typescript_syntax import (
     TYPESCRIPT_HTML_CONTAINER_SELECTOR_SOURCE_TOOL,
     TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL,
     TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
+    TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL,
     TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
     TYPESCRIPT_MISSING_CLOSING_BRACE_SOURCE_TOOL,
     TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
@@ -2301,13 +2303,14 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                     "The planner is intentionally fail-closed unless a split executable Rust rule "
                     "produces a safe plan."
                 ),
-                runtime_plan_available=True,
+                runtime_plan_available=False,
                 metadata={
-                    "rule_status": "executable_runtime",
-                    "metadata_only": False,
-                    "executable_runtime_binding": True,
+                    "rule_status": "metadata_rule_registered",
+                    "metadata_only": True,
+                    "executable_runtime_binding": False,
                     "planner_helper_available": False,
                     "aggregate_label": True,
+                    "authoritative_execution_allowed": False,
                     "unsafe_cases_fail_closed": True,
                 },
             ),
@@ -2943,6 +2946,44 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 ),
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="duplicate_export_import_binding_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.branded_literal_cast",
+                source_tool=TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
+                priority=1,
+                diagnostic_codes=("typescript_ts2322", "typescript_ts2345"),
+                message_terms=("string", "not assignable"),
+                risk_level="low",
+                description=(
+                    "Casts string literals to proven branded string aliases when generated TypeScript passes "
+                    "plain literals into branded ID fields or parameters."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="branded_literal_cast_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.literal_union_value_facade",
+                source_tool=TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_ts2693",),
+                message_terms=("only refers to a type", "used as a value"),
+                risk_level="low",
+                description=(
+                    "Converts pure string-literal union aliases into paired const/type facades when generated "
+                    "TypeScript uses the alias as an enum-like runtime value."
+                ),
+                runtime_plan_available=True,
+                metadata={
+                    **_executable_runtime_metadata(scope="literal_union_value_facade_text_replace"),
+                    "candidate_match_requires_source_line_confirmation": True,
+                    "unsafe_cases_fail_closed": True,
+                },
             ),
             RepairRuleDefinition(
                 rule_id="typescript.unused_import",

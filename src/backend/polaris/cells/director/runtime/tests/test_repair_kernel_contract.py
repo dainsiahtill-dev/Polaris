@@ -2153,6 +2153,20 @@ def _typescript_conservative_planner_safe_cases() -> dict[str, tuple[dict[str, s
             },
             (_ts_diag("unresolved relative import './missing' in src/main.ts"),),
         ),
+        ts_syntax.TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL: (
+            {
+                "src/model.ts": 'export type WidgetKind = "Primary" | "Secondary";\n',
+                "src/app.ts": ('import { WidgetKind } from "./model";\nconst kind = WidgetKind.Primary;\n'),
+            },
+            (
+                _ts_diag(
+                    "src/app.ts(2,14): error TS2693: 'WidgetKind' only refers to a type, "
+                    "but is being used as a value here.",
+                    path="src/app.ts",
+                    code="typescript_ts2693",
+                ),
+            ),
+        ),
         ts_syntax.TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL: (
             {"src/app.ts": "function setLabel(label: string) {\n  return newLabel.trim();\n}\n"},
             (
@@ -2213,6 +2227,7 @@ def test_typescript_conservative_planner_recognizes_all_legacy_ts_html_source_to
         ts_syntax.TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
+        ts_syntax.TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL,
         ts_syntax.TYPESCRIPT_VITEST_GLOBALS_SOURCE_TOOL,
@@ -2220,7 +2235,7 @@ def test_typescript_conservative_planner_recognizes_all_legacy_ts_html_source_to
     }
 
     assert set(cases) == expected_source_tools
-    assert len(cases) == 23
+    assert len(cases) == 24
 
     plans = []
     for source_tool, (base_files, diagnostics) in cases.items():
@@ -2534,11 +2549,11 @@ def test_java_post_rule_repairs_numeric_constant_and_missing_score_aliases() -> 
 def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
     bindings = runtime_repair_bindings()
 
-    assert "deterministic_rust_post_repair" in runtime_repair_source_tools()
+    assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert len(runtime_repair_source_tools()) == len(bindings)
-    assert len(runtime_repair_source_tools()) == 98
-    assert sum(1 for binding in bindings if binding["language"] == "rust") == 21
+    assert len(runtime_repair_source_tools()) == 99
+    assert sum(1 for binding in bindings if binding["language"] == "rust") == 20
     assert runtime_repair_source_tools() == tuple(binding["source_tool"] for binding in bindings)
     assert all(set(binding) == {"source_tool", "language", "rule_id"} for binding in bindings)
     bindings_by_tool = {binding["source_tool"]: binding for binding in bindings}
@@ -2584,6 +2599,16 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
         "source_tool": ts_syntax.TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
         "language": "typescript",
         "rule_id": "typescript.import_specifier_keyword",
+    }
+    assert bindings_by_tool[ts_syntax.TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL] == {
+        "source_tool": ts_syntax.TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL,
+        "language": "typescript",
+        "rule_id": "typescript.branded_literal_cast",
+    }
+    assert bindings_by_tool[ts_syntax.TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL] == {
+        "source_tool": ts_syntax.TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL,
+        "language": "typescript",
+        "rule_id": "typescript.literal_union_value_facade",
     }
 
 
@@ -3465,6 +3490,132 @@ def test_typescript_duplicate_export_import_binding_repairs_type_reexports_ts230
     assert "export { Market, Fairy, Inventory, Reputation };" in repaired
 
 
+def test_typescript_duplicate_export_import_binding_repairs_barrel_value_and_type_reexports() -> None:
+    diagnostic = (
+        "src/index.ts(17,10): error TS2300: Duplicate identifier 'Fairy'.\n"
+        "src/index.ts(18,51): error TS2300: Duplicate identifier 'Fairy'."
+    )
+    index_text = (
+        'export { Market } from "./models/Market";\n'
+        'export type { MarketId } from "./models/Market";\n'
+        'export { Fairy } from "./models/Fairy";\n'
+        'export type { FairyId, FairySpecialty, FairyRole, Fairy } from "./models/Fairy";\n'
+    )
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
+            base_files={"src/index.ts": index_text},
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert 'export { Fairy } from "./models/Fairy";' in repaired
+    assert 'export type { FairyId, FairySpecialty, FairyRole } from "./models/Fairy";' in repaired
+    assert "FairyRole, Fairy }" not in repaired
+
+
+def test_typescript_branded_literal_cast_repairs_string_literal_id_assignments() -> None:
+    diagnostics = (
+        "src/main.ts(4,29): error TS2345: Argument of type 'string' is not assignable to parameter of type 'MarketId'.\n"
+        "  Type 'string' is not assignable to type '{ readonly __brand: \"MarketId\"; }'.",
+        "src/main.ts(6,5): error TS2322: Type 'string' is not assignable to type 'FairyId'.\n"
+        "  Type 'string' is not assignable to type '{ readonly __brand: \"FairyId\"; }'.",
+    )
+    base_files = {
+        "src/models/Market.ts": 'export type MarketId = string & { readonly __brand: "MarketId" };\n',
+        "src/models/Fairy.ts": (
+            'export type FairyId = string & { readonly __brand: "FairyId" };\n'
+            "export interface FairyRole { readonly id: FairyId; }\n"
+        ),
+        "src/main.ts": (
+            'import { Market } from "./models/Market";\n'
+            'import type { FairyRole } from "./models/Fairy";\n'
+            "\n"
+            'const market = new Market("street-corner-fairy-market-01", "街角妖精市集");\n'
+            "const moonFairy: FairyRole = {\n"
+            '  id: "fairy-001",\n'
+            "};\n"
+        ),
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.branded_literal_cast"
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert 'import type { MarketId } from "./models/Market";' in repaired
+    assert 'import type { FairyId } from "./models/Fairy";' in repaired
+    assert '"street-corner-fairy-market-01" as MarketId' in repaired
+    assert '"fairy-001" as FairyId' in repaired
+
+
+def test_typescript_literal_union_value_facade_repairs_ts2693_enum_like_usage() -> None:
+    diagnostics = (
+        "src/main.ts(2,17): error TS2693: 'FairyArchetype' only refers to a type, but is being used as a value here.",
+        "src/web.ts(2,17): error TS2693: 'FairyArchetype' only refers to a type, but is being used as a value here.",
+    )
+    base_files = {
+        "src/models/Fairy.ts": (
+            "export type FairyArchetype =\n"
+            '  "MoonWeaver" | "SunSmith" | "MistRunner";\n'
+            "export function createFairy(archetype: FairyArchetype) { return { archetype }; }\n"
+        ),
+        "src/main.ts": (
+            'import { createFairy, FairyArchetype } from "./models/Fairy";\n'
+            "const fairy = createFairy(FairyArchetype.MoonWeaver);\n"
+        ),
+        "src/web.ts": (
+            'import { createFairy, FairyArchetype } from "./models/Fairy";\n'
+            "const fairy = createFairy(FairyArchetype.MistRunner);\n"
+        ),
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.literal_union_value_facade"
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "export const FairyArchetype = {" in repaired
+    assert '  MoonWeaver: "MoonWeaver",' in repaired
+    assert '  MistRunner: "MistRunner",' in repaired
+    assert "export type FairyArchetype = (typeof FairyArchetype)[keyof typeof FairyArchetype];" in repaired
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=diagnostics))
+    assert coverage.items[0].known_rule_matched is True
+    assert ts_syntax.TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL in coverage.items[0].matched_source_tools
+
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            source_tools=(ts_syntax.TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL,),
+        )
+    )
+    assert probe.status == "covered_plannable"
+    assert probe.plannable_source_tools == (ts_syntax.TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL,)
+
+
 def test_typescript_missing_member_batches_same_type_members_without_hash_mismatch() -> None:
     diagnostic = (
         "tests/usage.ts(3,8): error TS2339: Property 'label' does not exist on type 'Widget'.\n"
@@ -3875,14 +4026,20 @@ def test_public_repair_rust_aggregate_bindings_fail_closed_without_safe_plan(
         )
         planning_payload = planning_result.to_dict()
 
-        assert source_tool in runtime_repair_source_tools()
         assert planning_payload["ok"] is False
         assert planning_payload["planned"] is False
         assert planning_payload["source_tool"] == source_tool
-        assert planning_payload["error_code"] is None
-        assert planning_payload["error_message"] is None
+        if source_tool == "deterministic_rust_post_repair":
+            assert source_tool not in runtime_repair_source_tools()
+            assert planning_payload["error_code"] == "unsupported_repair_source_tool"
+            assert planning_payload["error_message"]
+        else:
+            assert source_tool in runtime_repair_source_tools()
+            assert planning_payload["error_code"] is None
+            assert planning_payload["error_message"] is None
         assert planning_payload["plan_summary"] is None
-        assert planning_payload["composition_summary"]["ok"] is False
+        if planning_payload["composition_summary"] is not None:
+            assert planning_payload["composition_summary"]["ok"] is False
 
         run_result = run_director_repair(
             RunDirectorRepairCommandV1(
@@ -3897,7 +4054,11 @@ def test_public_repair_rust_aggregate_bindings_fail_closed_without_safe_plan(
         )
 
         assert run_result.ok is False
-        assert run_result.error_code == "repair_not_planned"
+        assert run_result.error_code == (
+            "unsupported_repair_source_tool"
+            if source_tool == "deterministic_rust_post_repair"
+            else "repair_not_planned"
+        )
         assert run_result.receipts == ()
         assert run_result.metadata["planning"]["planned"] is False
 
@@ -5261,7 +5422,7 @@ def test_rust_copy_derive_coverage_matches_executable_runtime_plan() -> None:
         mode="shadow",
     )
 
-    assert "deterministic_rust_post_repair" in runtime_repair_source_tools()
+    assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert coverage["items"][0]["known_rule_matched"] is True
     assert coverage["items"][0]["executable_runtime_plan_matched"] is True
@@ -8904,7 +9065,6 @@ def test_public_repair_language_slots_reserve_future_languages_without_registeri
         "deterministic_rust_missing_fields_repair",
         "deterministic_rust_missing_lib_target_repair",
         "deterministic_rust_missing_module_file_repair",
-        "deterministic_rust_post_repair",
         "deterministic_rust_serde_derive_repair",
         "deterministic_rust_struct_literal_missing_field_repair",
         "deterministic_rust_trait_import_repair",
@@ -9343,7 +9503,7 @@ def test_public_strategy_catalog_is_read_only_and_non_agi_authoritative() -> Non
     )
     assert payload["summary"]["executable_runtime_binding_count"] == len(expected_runtime_source_tools)
     assert payload["summary"]["executable_runtime_source_tools"] == expected_runtime_source_tools
-    assert "deterministic_rust_post_repair" in payload["summary"]["executable_runtime_source_tools"]
+    assert "deterministic_rust_post_repair" not in payload["summary"]["executable_runtime_source_tools"]
     assert "deterministic_rust_derive_repair" in payload["summary"]["executable_runtime_source_tools"]
     assert payload["summary"]["executable_runtime_by_language"] == expected_runtime_by_language
     executable_status_count = payload["summary"]["implementation_status_counts"].get("executable_runtime", 0)
@@ -9386,7 +9546,7 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         or source_tool == "deterministic_javascript_typescript_annotation_repair"
     ]
     catalog_failure_message = (
-        "expected public strategy catalog ledger total=97 executable_runtime=97 legacy_strategy_host=0; "
+        "expected public strategy catalog ledger total=99 executable_runtime=99 legacy_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
         "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
     )
@@ -9395,14 +9555,14 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
-    assert catalog_summary["total"] == 98
+    assert catalog_summary["total"] == 99
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert legacy_source_tools == [], catalog_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 98, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 99, catalog_failure_message
     assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, catalog_failure_message
-    assert catalog_summary["executable_runtime_binding_count"] == 98, catalog_failure_message
+    assert catalog_summary["executable_runtime_binding_count"] == 99, catalog_failure_message
     assert catalog_summary["legacy_strategy_host_count"] == 0, catalog_failure_message
-    assert len(catalog_summary["executable_runtime_source_tools"]) == 98, catalog_failure_message
+    assert len(catalog_summary["executable_runtime_source_tools"]) == 99, catalog_failure_message
     assert set(catalog_summary["implementation_status_counts"]).issubset({"executable_runtime", "legacy_strategy_host"})
     assert "reserved_only" not in catalog_summary["implementation_status_counts"]
     assert "metadata_rule_registered" not in catalog_summary["implementation_status_counts"]

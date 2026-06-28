@@ -123,6 +123,32 @@ class TestPinMaterializeDeliveryMode:
         assert "目标文件覆盖硬门禁" not in message
         assert "requirements.txt, src/__init__.py" not in message
 
+    def test_single_target_quality_repair_compact_preserves_ce_blueprint_evidence(self) -> None:
+        message = _build_materialization_quality_repair_message(
+            original_message=(
+                "[mode:materialize]\n"
+                "PM Task Contract / 任务合同:\n"
+                "任务: Build branded TypeScript market models\n"
+                "Chief Engineer Blueprint / CE 蓝图交接:\n"
+                "- blueprint_id: ce_TASK-7_valid\n"
+                "- handoff_ready: yes (handoff_ready)\n"
+                "- blueprint target_files: src/index.ts, src/models/Fairy.ts\n"
+                "- ce_llm_blueprint: consumed (advisory_only)\n"
+                "Verification commands / 验证命令:\n"
+                "- npm run build\n"
+            ),
+            artifact_quality_errors=["src/main.ts(4,27): error TS2345: branded mismatch"],
+            changed_files=["src/index.ts", "src/models/Fairy.ts"],
+            repair_target_files=["src/main.ts"],
+        )
+
+        assert "ORIGINAL TASK CONTEXT (semantic only" in message
+        assert "Chief Engineer Blueprint / CE 蓝图交接" in message
+        assert "- blueprint_id: ce_TASK-7_valid" in message
+        assert "- handoff_ready: yes (handoff_ready)" in message
+        assert "- ce_llm_blueprint: consumed (advisory_only)" in message
+        assert "- blueprint target_files: src/index.ts, src/models/Fairy.ts" not in message
+
     def test_non_fresh_terse_goal_not_forced(self) -> None:
         # Without the pin, a pure-analysis phrasing stays out of MATERIALIZE.
         contract = resolve_delivery_mode("analyze the architecture and summarize")

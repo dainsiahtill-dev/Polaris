@@ -688,6 +688,168 @@ class TestExecuteTransactionKernelTurn:
         assert mock_execute.await_args.args[2] == [forced_write_tool]
 
     @pytest.mark.asyncio
+    async def test_execute_transaction_kernel_turn_injects_write_file_for_missing_from_scratch_target(
+        self, tmp_path
+    ) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=str(tmp_path))
+        profile = _MockProfile(
+            role_id="director",
+            tool_policy=MagicMock(policy_id="tp1", whitelist=["read_file", "repo_rg"]),
+        )
+        request = _MockRequest(
+            message="[mode:materialize]\nCreate the declared test target.",
+            run_id="run_123",
+            workspace=str(tmp_path),
+            context_override={
+                "context_os_snapshot": {},
+                "delivery_mode": "materialize_changes",
+                "construction_step": {"target_file": "tests/test_product.py"},
+            },
+        )
+        fingerprint = _MockFingerprint()
+        mock_execute = AsyncMock(
+            return_value={
+                "turn_id": "turn_abc",
+                "kind": "final_answer",
+                "visible_content": "ok",
+                "metrics": {"duration_ms": 100, "llm_calls": 1, "tool_calls": 0},
+            }
+        )
+        context_gateway = MagicMock(
+            build_context=AsyncMock(
+                return_value=SimpleNamespace(
+                    messages=[{"role": "user", "content": request.message}],
+                    token_estimate=37,
+                    metadata={},
+                )
+            ),
+            record_projection_outcome=MagicMock(return_value={"route_weight": 0.31}),
+        )
+        read_only_tools = [
+            {"type": "function", "function": {"name": "read_file"}},
+            {"type": "function", "function": {"name": "repo_rg"}},
+        ]
+
+        with (
+            patch.object(kernel, "_create_transaction_kernel", return_value=MagicMock(execute=mock_execute)),
+            patch(
+                "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+                return_value=context_gateway,
+            ),
+            patch(
+                "polaris.cells.roles.kernel.internal.llm_caller.tool_helpers.build_native_tool_schemas",
+                return_value=read_only_tools,
+            ),
+        ):
+            result = await kernel._execute_transaction_kernel_turn(
+                role="director",
+                profile=profile,
+                request=request,
+                system_prompt="You are a Director",
+                fingerprint=fingerprint,
+                observer_run_id="run_123",
+                response_schema=None,
+            )
+
+        assert result.content == "ok"
+        assert mock_execute.await_args is not None
+        tool_definitions = mock_execute.await_args.args[2]
+        assert _tool_schema_names(tool_definitions) == ["write_file"]
+        assert _file_param_enum(tool_definitions, "write_file") == [
+            "tests/test_product.py",
+            "./tests/test_product.py",
+        ]
+        assert request.context_override is not None
+        assert request.context_override["_transaction_kernel_forced_tool_choice"] == {
+            "type": "function",
+            "function": {"name": "write_file"},
+        }
+        assert mock_execute.await_args.kwargs["tool_choice_override"] == {
+            "type": "function",
+            "function": {"name": "write_file"},
+        }
+        assert request.context_override["_transaction_kernel_force_exact_tools"] is True
+        scope = request.context_override["director_first_call_materialization_scope"]
+        assert scope["injected"] is True
+        assert scope["reason"] == "declared_scope_incomplete_requires_first_turn_write_tool"
+        assert scope["target_file"] == "tests/test_product.py"
+
+    @pytest.mark.asyncio
+    async def test_execute_transaction_kernel_turn_preserves_existing_first_call_forced_scope(self, tmp_path) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=str(tmp_path))
+        profile = _MockProfile(
+            role_id="director",
+            tool_policy=MagicMock(policy_id="tp1", whitelist=["read_file", "write_file"]),
+        )
+        forced_write_tool = _tool_schema("write_file")
+        request = _MockRequest(
+            message="[mode:materialize]\nCreate the declared target.",
+            run_id="run_123",
+            workspace=str(tmp_path),
+            context_override={
+                "context_os_snapshot": {},
+                "delivery_mode": "materialize_changes",
+                "construction_step": {"target_file": "tests/test_product.py"},
+                "_transaction_kernel_forced_tool_definitions": [forced_write_tool],
+                "_transaction_kernel_forced_tool_choice": {
+                    "type": "function",
+                    "function": {"name": "write_file"},
+                },
+            },
+        )
+        fingerprint = _MockFingerprint()
+        mock_execute = AsyncMock(
+            return_value={
+                "turn_id": "turn_abc",
+                "kind": "final_answer",
+                "visible_content": "ok",
+                "metrics": {"duration_ms": 100, "llm_calls": 1, "tool_calls": 0},
+            }
+        )
+
+        with (
+            patch.object(kernel, "_create_transaction_kernel", return_value=MagicMock(execute=mock_execute)),
+            patch(
+                "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+                return_value=MagicMock(
+                    build_context=AsyncMock(return_value=MagicMock(messages=[{"role": "user", "content": "hi"}])),
+                    record_projection_outcome=MagicMock(return_value={}),
+                ),
+            ),
+        ):
+            result = await kernel._execute_transaction_kernel_turn(
+                role="director",
+                profile=profile,
+                request=request,
+                system_prompt="You are a Director",
+                fingerprint=fingerprint,
+                observer_run_id="run_123",
+                response_schema=None,
+            )
+
+        assert result.content == "ok"
+        assert mock_execute.await_args is not None
+        assert mock_execute.await_args.args[2] == [
+            {
+                **forced_write_tool,
+                "function": {
+                    **forced_write_tool["function"],
+                    "parameters": {
+                        **forced_write_tool["function"]["parameters"],
+                        "properties": {
+                            **forced_write_tool["function"]["parameters"]["properties"],
+                            "file": {
+                                **forced_write_tool["function"]["parameters"]["properties"]["file"],
+                                "enum": ["tests/test_product.py", "./tests/test_product.py"],
+                            },
+                        },
+                    },
+                },
+            }
+        ]
+        assert "director_first_call_materialization_scope" not in request.context_override
+
+    @pytest.mark.asyncio
     async def test_execute_transaction_kernel_turn_slims_tools_for_qwen_director_materialize(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(

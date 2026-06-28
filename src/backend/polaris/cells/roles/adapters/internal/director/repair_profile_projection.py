@@ -7,8 +7,10 @@ from typing import Any
 
 from polaris.cells.director.runtime.public import (
     ProjectDirectorRepairKernelSummaryV1,
+    QueryDirectorRepairPostExecutionScheduleV1,
     QueryDirectorRepairStrategyCatalogV1,
     project_director_repair_kernel_summary,
+    query_director_repair_post_execution_schedule,
     query_director_repair_strategy_catalog,
 )
 
@@ -22,6 +24,18 @@ def summarize_deterministic_repair_source_tools(source_tools: Sequence[str]) -> 
             QueryDirectorRepairStrategyCatalogV1(include_items=True, max_items=1000)
         ).items
     }
+    schedule_profiles = {
+        str(item.source_tool or ""): {
+            "source_tool": item.source_tool,
+            "language": item.language,
+            "phase": item.phase,
+            "concern": "post_execution_schedule",
+            "risk_level": "medium",
+        }
+        for item in query_director_repair_post_execution_schedule(
+            QueryDirectorRepairPostExecutionScheduleV1(include_items=True)
+        ).items
+    }
     seen: set[str] = set()
     profiles: list[dict[str, Any]] = []
     for raw_tool in source_tools:
@@ -32,13 +46,16 @@ def summarize_deterministic_repair_source_tools(source_tools: Sequence[str]) -> 
         profile = dict(
             catalog.get(
                 source_tool,
-                {
-                    "source_tool": source_tool,
-                    "language": "unknown",
-                    "phase": "unknown",
-                    "concern": "unregistered",
-                    "risk_level": "high",
-                },
+                schedule_profiles.get(
+                    source_tool,
+                    {
+                        "source_tool": source_tool,
+                        "language": "unknown",
+                        "phase": "unknown",
+                        "concern": "unregistered",
+                        "risk_level": "high",
+                    },
+                ),
             )
         )
         profile["registered"] = source_tool in catalog

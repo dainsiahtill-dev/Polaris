@@ -737,6 +737,8 @@ class TurnTransactionController:
         turn_id: str,
         context: list[dict],  # 对话上下文
         tool_definitions: list[dict],
+        *,
+        tool_choice_override: Any | None = None,
     ) -> dict:
         """
         执行完整turn（run模式）
@@ -768,7 +770,13 @@ class TurnTransactionController:
             try:
                 logger.debug("[DEBUG] turn_execute_start: turn_id=%s mode=run", turn_id)
                 result = await self._execute_turn(
-                    turn_id, context, tool_definitions, state_machine, ledger, stream=False
+                    turn_id,
+                    context,
+                    tool_definitions,
+                    state_machine,
+                    ledger,
+                    stream=False,
+                    tool_choice_override=tool_choice_override,
                 )
                 result.setdefault("ledger", ledger)
                 result["state_trajectory"] = [s[0] for s in ledger.state_history]
@@ -819,6 +827,8 @@ class TurnTransactionController:
         tool_definitions: list[dict],
         turn_request_id: str | None = None,
         parent_span_id: str | None = None,
+        *,
+        tool_choice_override: Any | None = None,
     ) -> AsyncIterator[TurnEvent]:
         """
         流式执行turn
@@ -840,7 +850,14 @@ class TurnTransactionController:
             effective_turn_span_id = scope.effective_turn_span_id
             truthlog_recorder = scope.truthlog_recorder
             try:
-                async for event in self._execute_turn_stream(turn_id, context, tool_definitions, state_machine, ledger):
+                async for event in self._execute_turn_stream(
+                    turn_id,
+                    context,
+                    tool_definitions,
+                    state_machine,
+                    ledger,
+                    tool_choice_override=tool_choice_override,
+                ):
                     event_with_request_id = self._attach_event_correlation(
                         event,
                         turn_request_id=effective_turn_request_id,
@@ -891,6 +908,8 @@ class TurnTransactionController:
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
         stream: bool = False,
+        *,
+        tool_choice_override: Any | None = None,
     ) -> dict:
         """核心turn执行逻辑（run模式）"""
 
@@ -926,6 +945,18 @@ class TurnTransactionController:
         # Facade-bound helpers are passed as callables/objects so test-time
         # monkeypatch of decoder / _call_llm_for_decision / _apply_delivery_mode_filter
         # on the instance still penetrates the pipeline module.
+        async def _call_llm_for_decision(
+            call_context: list[dict],
+            call_tool_definitions: list[dict],
+            call_ledger: TurnLedger,
+        ) -> RawLLMResponse:
+            return await self._call_llm_for_decision(
+                call_context,
+                call_tool_definitions,
+                call_ledger,
+                tool_choice_override=tool_choice_override,
+            )
+
         decision = await run_decision_pipeline(
             turn_id=turn_id,
             context=context,
@@ -933,7 +964,7 @@ class TurnTransactionController:
             state_machine=state_machine,
             ledger=ledger,
             decoder=self.decoder,
-            call_llm_for_decision=self._call_llm_for_decision,
+            call_llm_for_decision=_call_llm_for_decision,
             apply_delivery_mode_filter=self._apply_delivery_mode_filter,
             guard_assert_single_decision=self._guard_assert_single_decision,
             emit_event=self._emit_phase_event,
@@ -1017,15 +1048,37 @@ class TurnTransactionController:
         tool_definitions: list[dict],
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
+        *,
+        tool_choice_override: Any | None = None,
     ) -> AsyncIterator[TurnEvent]:
         """Proxy to StreamOrchestrator.execute_turn_stream."""
+        async def _call_llm_for_decision_stream(
+            call_context: list[dict],
+            call_tool_definitions: list[dict],
+            call_ledger: TurnLedger,
+            shadow_engine: StreamShadowEngine | None = None,
+            **kwargs: Any,
+        ) -> AsyncIterator[TurnEvent]:
+            effective_tool_choice = kwargs.pop("tool_choice_override", None)
+            if tool_choice_override is not None:
+                effective_tool_choice = tool_choice_override
+            async for event in self._call_llm_for_decision_stream(
+                call_context,
+                call_tool_definitions,
+                call_ledger,
+                shadow_engine=shadow_engine,
+                tool_choice_override=effective_tool_choice,
+                **kwargs,
+            ):
+                yield event
+
         async for event in self._stream_orchestrator.execute_turn_stream(
             turn_id,
             context,
             tool_definitions,
             state_machine,
             ledger,
-            call_llm_for_decision_stream=self._call_llm_for_decision_stream,
+            call_llm_for_decision_stream=_call_llm_for_decision_stream,
         ):
             yield event
 

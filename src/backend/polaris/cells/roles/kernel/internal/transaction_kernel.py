@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
+from typing import Any
 
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
@@ -35,8 +36,20 @@ class TransactionKernel(TurnTransactionController):
             llm_provider_stream=llm_provider_stream,
         )
 
-    async def execute(self, turn_id: str, context: list[dict], tool_definitions: list[dict]) -> dict:
-        return await super().execute(turn_id=turn_id, context=context, tool_definitions=tool_definitions)
+    async def execute(
+        self,
+        turn_id: str,
+        context: list[dict],
+        tool_definitions: list[dict],
+        *,
+        tool_choice_override: Any | None = None,
+    ) -> dict:
+        return await super().execute(
+            turn_id=turn_id,
+            context=context,
+            tool_definitions=tool_definitions,
+            tool_choice_override=tool_choice_override,
+        )
 
     async def execute_stream(
         self,
@@ -45,6 +58,8 @@ class TransactionKernel(TurnTransactionController):
         tool_definitions: list[dict],
         turn_request_id: str | None = None,
         parent_span_id: str | None = None,
+        *,
+        tool_choice_override: Any | None = None,
     ) -> AsyncIterator[TurnEvent]:
         async for event in super().execute_stream(
             turn_id=turn_id,
@@ -52,5 +67,6 @@ class TransactionKernel(TurnTransactionController):
             tool_definitions=tool_definitions,
             turn_request_id=turn_request_id,
             parent_span_id=parent_span_id,
+            tool_choice_override=tool_choice_override,
         ):
             yield event

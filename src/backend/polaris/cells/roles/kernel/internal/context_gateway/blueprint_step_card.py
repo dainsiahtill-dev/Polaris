@@ -266,6 +266,12 @@ def _collect_declared_paths(context_override: dict[str, Any], step: dict[str, An
         ):
             add_values(source.get(key))
 
+    consumes_symbols = _string_symbol_map(step.get("consumes_symbols"))
+    add_values(consumes_symbols.keys())
+    consumed_interfaces = context_override.get("consumed_interfaces")
+    if isinstance(consumed_interfaces, dict):
+        add_values(consumed_interfaces.keys())
+
     for task_key in ("task", "pm_task", "task_contract"):
         task = context_override.get(task_key)
         if isinstance(task, dict):

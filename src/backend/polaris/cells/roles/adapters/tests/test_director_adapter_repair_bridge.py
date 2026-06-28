@@ -1913,6 +1913,11 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
         ]
 
     monkeypatch.setattr(runtime_repair_tool_adapter, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge,
+        "_runtime_coverage_matched_source_tools",
+        lambda **_kwargs: (),
+    )
     for runner_name in (
         "_run_materialization_hygiene_scaffold",
         "_run_materialization_typescript_scaffold",
@@ -1937,6 +1942,8 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
         "deterministic_rust_crate_import_rewrite_repair",
         "deterministic_rust_dependency_repair",
         "deterministic_rust_missing_lib_target_repair",
+        "deterministic_rust_missing_module_file_repair",
+        "deterministic_rust_duplicate_module_file_repair",
         "deterministic_rust_lib_root_facade_repair",
         "deterministic_rust_serde_derive_repair",
         "deterministic_rust_line_suggestion_repair",
@@ -1957,6 +1964,27 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     assert "deterministic_rust_missing_lib_target_repair" in rust_debt["runtime_executable_source_tools"]
     assert "deterministic_rust_lib_root_facade_repair" in rust_debt["runtime_executable_source_tools"]
     assert rust_debt["legacy_only_source_tools"] == []
+
+
+def test_materialization_rust_compiler_uses_runtime_coverage_matched_tools(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge,
+        "_runtime_coverage_matched_source_tools",
+        lambda **_kwargs: (
+            "deterministic_rust_missing_module_file_repair",
+            "deterministic_rust_dependency_repair",
+            "deterministic_rust_post_repair",
+        ),
+    )
+
+    selected = materialization_quality_repair_bridge._materialization_rust_compiler_runtime_source_tools(
+        ["error[E0583]: file not found for module `models`"]
+    )
+
+    assert selected == (
+        "deterministic_rust_missing_module_file_repair",
+        "deterministic_rust_dependency_repair",
+    )
 
 
 def test_materialization_runtime_coverage_detects_rust_line_suggestion() -> None:

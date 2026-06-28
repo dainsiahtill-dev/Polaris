@@ -49,3 +49,20 @@ def test_route_wholefile_does_not_treat_closing_code_line_as_filename() -> None:
     ops = route_edit_operations(text, inchat_files=[])
     assert [op.path for op in ops] == ["src/a.ts"]
     assert "END FILE" not in str(ops[0].content)
+
+
+def test_route_wholefile_ignores_markdown_file_inventory_fence() -> None:
+    text = (
+        "# Blueprint report\n\n"
+        "Target files:\n"
+        "```text\n"
+        "src/index.ts # main entry\n"
+        "src/web.ts # browser entry\n"
+        "```\n\n"
+        "**Additional guidance**\n"
+        "1. Keep the implementation small.\n"
+    )
+
+    ops = route_edit_operations(text, inchat_files=["src/index.ts", "src/web.ts"])
+
+    assert ops == []

@@ -29,6 +29,30 @@ _FENCED_FILE_BLOCK_RE = re.compile(
 _FENCED_FILE_HEADER_RE = re.compile(r"^```file:\s*([^`\r\n]+?)\s*$", re.IGNORECASE)
 _FENCE_CLOSE_RE = re.compile(r"^```\s*$")
 _PROTOCOL_PATH_RE = re.compile(r"(?im)^\s*(?:PATCH_FILE|FILE|DELETE(?:_FILE)?)\s*(?::|\s+)\s*([^\r\n]+?)\s*$")
+_SOURCE_FILE_SUFFIXES = (
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cs",
+    ".go",
+    ".java",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".py",
+    ".rs",
+    ".ts",
+    ".tsx",
+)
+_SOURCE_CODE_LINE_RE = re.compile(
+    r"^\s*(?:"
+    r"import\s|export\s|from\s|const\s|let\s|var\s|function\s|class\s|"
+    r"interface\s|type\s|enum\s|def\s|async\s+def\s|package\s|func\s|"
+    r"use\s|pub\s|impl\s|struct\s|public\s|private\s|protected\s|"
+    r"#include\b|using\s+namespace\b"
+    r")"
+)
+_MARKDOWN_ADVISORY_LINE_RE = re.compile(r"^\s*(?:#{1,6}\s|\*\*[^*\n]+?\*\*|[-*]\s+|>\s+|\d+\.\s+|\|)")
 
 
 def _is_package_manifest_path(rel_path: str) -> bool:
@@ -97,6 +121,28 @@ def _escape_nested_markdown_fences_for_protocol(path: str, content: str) -> str:
         else:
             escaped_lines.append(line)
     return "\n".join(escaped_lines)
+
+
+def _source_file_markdown_advisory_error(path: str, content: str) -> str | None:
+    """Reject obvious prose reports accidentally routed into source files."""
+    normalized = str(path or "").strip().replace("\\", "/").lower()
+    if not normalized.endswith(_SOURCE_FILE_SUFFIXES):
+        return None
+
+    stripped = str(content or "").lstrip()
+    if not stripped:
+        return None
+    if not stripped.startswith(("#", "**", "- ", "* ", "> ", "|")) and not re.match(r"^\d+\.\s", stripped):
+        return None
+
+    probe_lines = [line for line in stripped.splitlines()[:16] if line.strip()]
+    if not probe_lines:
+        return None
+    markdown_lines = sum(1 for line in probe_lines if _MARKDOWN_ADVISORY_LINE_RE.match(line))
+    code_lines = sum(1 for line in probe_lines if _SOURCE_CODE_LINE_RE.match(line) or "=>" in line)
+    if markdown_lines >= 2 and code_lines == 0:
+        return f"{path}: source file content appears to be markdown/advisory text, not code"
+    return None
 
 
 def _collect_fenced_file_blocks(response: str) -> list[tuple[str, str]]:
@@ -483,6 +529,9 @@ class FileApplyService:
     def _structured_file_validation_error(path: str, content: str) -> str | None:
         """Return a syntax error for structured files, if validation fails."""
         normalized = str(path or "").strip().replace("\\", "/").lower()
+        source_error = _source_file_markdown_advisory_error(path, content)
+        if source_error:
+            return source_error
         if normalized.endswith(".json"):
             try:
                 json.loads(content)

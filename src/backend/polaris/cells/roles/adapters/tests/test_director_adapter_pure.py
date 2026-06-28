@@ -5574,8 +5574,18 @@ class TestBuildDirectorMessage:
                 "schema_version": "chief_engineer.blueprint.v1",
                 "blueprint_id": blueprint_id,
                 "task_id": "TASK-1",
-                "target_files": ["src/engine/SimulationEngine.ts"],
-                "scope_paths": ["src/engine/SimulationEngine.ts"],
+                "target_files": [
+                    "src/engine/SimulationEngine.ts",
+                    "src/engine/Renderer.ts",
+                    "src/engine/Clock.ts",
+                    "src/models/Firefly.ts",
+                    "src/models/Garden.ts",
+                    "src/index.ts",
+                    "src/main.ts",
+                    "src/web.ts",
+                    "tests/behavior.test.ts",
+                ],
+                "scope_paths": ["src/engine/SimulationEngine.ts", "tests/behavior.test.ts"],
                 "acceptance_criteria": ["npm run build passes"],
                 "execution_checklist": ["Write the simulation engine"],
                 "recommendations": ["Run build", "Run smoke test"],
@@ -5625,6 +5635,8 @@ class TestBuildDirectorMessage:
         assert "- blueprint_id: bp-L1-01-contract" in msg
         assert "- handoff_ready: yes" in msg
         assert "- blueprint target_files: src/engine/SimulationEngine.ts" in msg
+        assert "tests/behavior.test.ts" in msg
+        assert "- blueprint required test targets: tests/behavior.test.ts" in msg
         assert "- blueprint acceptance: npm run build passes" in msg
         assert "- blueprint execution_checklist: Write the simulation engine" in msg
         assert "- blueprint expected_terms: firefly, garden, simulation" in msg
@@ -5634,6 +5646,51 @@ class TestBuildDirectorMessage:
         assert "- ce verification: npm run build, npm test" in msg
         assert "- ce scope advisory: src/engine/SimulationEngine.ts" in msg
         assert "- ce risks: browser bootstrap can drift from compiled output" in msg
+
+    def test_promote_task_contract_merges_ce_blueprint_targets_into_runtime_context(self, tmp_path: Any) -> None:
+        blueprint_id = "bp-task-1-with-tests"
+        BlueprintPersistence(str(tmp_path)).save(
+            blueprint_id,
+            {
+                "schema_version": "chief_engineer.blueprint.v1",
+                "blueprint_id": blueprint_id,
+                "task_id": "TASK-1",
+                "target_files": ["src/index.ts", "tests/behavior.test.ts"],
+                "scope_paths": ["src/index.ts", "tests/behavior.test.ts"],
+                "acceptance_criteria": ["npm run test passes"],
+                "execution_checklist": ["Implement source and behavior tests"],
+            },
+        )
+        task = {
+            "id": 1,
+            "metadata": {
+                "blueprint_id": blueprint_id,
+                "target_files": ["src/index.ts"],
+                "scope_paths": ["src/index.ts"],
+            },
+        }
+        context: dict[str, Any] = {}
+
+        DirectorAdapter._promote_task_contract_to_runtime_context(
+            task=task,
+            context=context,
+            workspace=str(tmp_path),
+        )
+
+        metadata = context["metadata"]
+        assert context["target_files"] == ["src/index.ts", "tests/behavior.test.ts"]
+        assert context["scope_paths"] == ["src/index.ts", "tests/behavior.test.ts"]
+        assert metadata["target_files"] == ["src/index.ts", "tests/behavior.test.ts"]
+        assert metadata["scope_paths"] == ["src/index.ts", "tests/behavior.test.ts"]
+        assert task["target_files"] == ["src/index.ts", "tests/behavior.test.ts"]
+        assert task["scope_paths"] == ["src/index.ts", "tests/behavior.test.ts"]
+        assert task["metadata"]["target_files"] == ["src/index.ts", "tests/behavior.test.ts"]
+        assert task["metadata"]["scope_paths"] == ["src/index.ts", "tests/behavior.test.ts"]
+        assert execute_method_module._declared_write_retry_target_files(task) == [
+            "src/index.ts",
+            "tests/behavior.test.ts",
+        ]
+        assert metadata["ce_blueprint"]["blueprint_id"] == blueprint_id
 
     def test_message_requires_unittest_and_contract_scoped_python_tests(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

@@ -3867,9 +3867,16 @@ def _compact_original_message_for_quality_repair(original_message: str) -> str:
 
     text = str(original_message or "")
     semantic_lines: list[str] = []
+    blueprint_lines: list[str] = []
     for raw_line in text.splitlines():
         line = " ".join(str(raw_line or "").strip().split())
         if not line:
+            continue
+        line_lc = line.lower()
+        if line.startswith("Chief Engineer Blueprint") or line_lc.startswith(
+            ("- blueprint_id:", "- handoff_ready:", "- ce_llm_blueprint:")
+        ):
+            blueprint_lines.append(line)
             continue
         if line.startswith(("[mode:", "<SESSION_PATCH>", "</SESSION_PATCH>", "PM Task Contract")):
             continue
@@ -3895,7 +3902,7 @@ def _compact_original_message_for_quality_repair(original_message: str) -> str:
         if terms:
             keyword_lines.append(f"需求关键词: {terms}")
 
-    lines = list(dict.fromkeys([*semantic_lines, *keyword_lines]))
+    lines = list(dict.fromkeys([*semantic_lines, *blueprint_lines[:4], *keyword_lines]))
     if not lines:
         lines = ["原始任务语义已省略；以下质量修复指令是本轮唯一执行范围。"]
 

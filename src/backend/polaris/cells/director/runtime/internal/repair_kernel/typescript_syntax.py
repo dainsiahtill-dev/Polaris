@@ -45,6 +45,8 @@ TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL = "deterministic_typescript_tsconfig_lib_rep
 TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL = "deterministic_typescript_tsconfig_rootdir_repair"
 TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL = "deterministic_typescript_uninitialized_property_repair"
 TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL = "deterministic_typescript_unique_export_import_repair"
+TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL = "deterministic_typescript_branded_literal_cast_repair"
+TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL = "deterministic_typescript_literal_union_value_facade_repair"
 TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL = "deterministic_typescript_unresolved_identifier_repair"
 TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL = "deterministic_typescript_unused_import_repair"
 TYPESCRIPT_VITEST_GLOBALS_SOURCE_TOOL = "deterministic_typescript_vitest_globals_repair"
@@ -290,6 +292,24 @@ _TS_LOCAL_NAMED_EXPORT_RE = re.compile(
 _TS_DUPLICATE_IDENTIFIER_MESSAGE_RE = re.compile(
     r"Duplicate identifier\s+['\"]?(?P<name>[A-Za-z_$][\w$]*)['\"]?",
     re.IGNORECASE,
+)
+_TS_BRANDED_STRING_ASSIGNMENT_MESSAGE_RE = re.compile(
+    r"(?:Argument of type ['\"]?string['\"]? is not assignable to parameter of type|"
+    r"Type ['\"]?string['\"]? is not assignable to type)\s+['\"]?(?P<type>[A-Za-z_$][\w$]*)['\"]?",
+    re.IGNORECASE,
+)
+_TS_STRING_BRAND_TYPE_ALIAS_RE = re.compile(
+    r"(?:export\s+)?type\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*string\s*&\s*\{(?P<body>[^}]*)__brand\b[^}]*\}",
+    re.DOTALL,
+)
+_TS_TYPE_ONLY_VALUE_USAGE_MESSAGE_RE = re.compile(
+    r"['\"](?P<name>[A-Za-z_$][\w$]*)['\"]\s+only\s+refers\s+to\s+a\s+type,\s+"
+    r"but\s+is\s+being\s+used\s+as\s+a\s+value",
+    re.IGNORECASE,
+)
+_TS_STRING_LITERAL_UNION_TYPE_ALIAS_RE = re.compile(
+    r"(?P<export>export\s+)?type\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*(?P<body>[^;]+);",
+    re.DOTALL,
 )
 _TS_VITEST_IMPORT_RE = re.compile(
     r"import\s*\{\s*(?P<symbols>[^}]+)\}\s*from\s*['\"]vitest['\"]\s*;?",
@@ -1270,6 +1290,8 @@ def build_typescript_runtime_plan_for_source_tool(
         TYPESCRIPT_UNKNOWN_MEMBER_ACCESS_SOURCE_TOOL: build_typescript_unknown_member_access_plan,
         TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL: _build_typescript_uninitialized_property_plan,
         TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL: _build_typescript_unique_export_import_plan,
+        TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL: _build_typescript_branded_literal_cast_plan,
+        TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL: _build_typescript_literal_union_value_facade_plan,
         TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL: _build_typescript_unresolved_identifier_plan,
         TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL: _build_typescript_unused_import_plan,
         TYPESCRIPT_VITEST_GLOBALS_SOURCE_TOOL: _build_typescript_vitest_globals_plan,
@@ -1962,6 +1984,136 @@ def _build_typescript_duplicate_export_import_binding_plan(
         diagnostics=matched_diagnostics,
         mode=mode,
         metadata={"duplicate_export_import_bindings": repaired},
+    )
+
+
+def _build_typescript_branded_literal_cast_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+) -> RepairPlan | None:
+    brand_sources = _typescript_string_brand_type_sources(base_files)
+    if not brand_sources:
+        return None
+
+    operations: list[RepairOperation] = []
+    matched_diagnostics: list[RepairDiagnostic] = []
+    repaired: list[dict[str, object]] = []
+    import_requirements: dict[str, set[str]] = {}
+    for diagnostic in diagnostics:
+        target_type = _typescript_branded_literal_target_type(diagnostic)
+        if not target_type or target_type not in brand_sources:
+            continue
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        content = str(base_files.get(path) or "")
+        if not path or not content:
+            continue
+        operation = _typescript_branded_literal_cast_operation(
+            path=path,
+            content=content,
+            diagnostic=diagnostic,
+            target_type=target_type,
+        )
+        if operation is None:
+            continue
+        operations.append(operation)
+        import_requirements.setdefault(path, set()).add(target_type)
+        matched_diagnostics.append(diagnostic)
+        repaired.append(
+            {
+                "file": path,
+                "target_type": target_type,
+                "line": diagnostic.line,
+                "column": diagnostic.column,
+            }
+        )
+
+    for path, type_names in sorted(import_requirements.items()):
+        content = str(base_files.get(path) or "")
+        for type_name in sorted(type_names):
+            source_path = brand_sources.get(type_name, "")
+            if not source_path or source_path == path:
+                continue
+            if _typescript_file_has_type_name_import(content, type_name):
+                continue
+            import_operation = _typescript_insert_type_import_operation(
+                path=path,
+                content=content,
+                type_name=type_name,
+                source_path=source_path,
+            )
+            if import_operation is not None:
+                operations.append(import_operation)
+
+    return _repair_plan_or_none(
+        rule_id="typescript.branded_literal_cast",
+        source_tool=TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        metadata={"branded_literal_casts": repaired},
+    )
+
+
+def _build_typescript_literal_union_value_facade_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+) -> RepairPlan | None:
+    aliases = _typescript_string_literal_union_type_aliases(base_files)
+    if not aliases:
+        return None
+
+    operations: list[RepairOperation] = []
+    matched_diagnostics: list[RepairDiagnostic] = []
+    repaired: list[dict[str, object]] = []
+    processed_symbols: set[str] = set()
+    for diagnostic in diagnostics:
+        symbol = _typescript_type_only_value_usage_symbol(diagnostic)
+        if not symbol or symbol in processed_symbols or symbol not in aliases:
+            continue
+        path, span_start, span_end, expected, literals, exported = aliases[symbol]
+        use_member = _typescript_type_value_dot_member(
+            base_files=base_files,
+            diagnostic=diagnostic,
+            symbol=symbol,
+        )
+        if not use_member or use_member not in literals:
+            continue
+        operation = _typescript_literal_union_value_facade_operation(
+            path=path,
+            content=str(base_files.get(path) or ""),
+            span_start=span_start,
+            span_end=span_end,
+            expected=expected,
+            type_name=symbol,
+            literals=literals,
+            exported=exported,
+        )
+        if operation is None:
+            continue
+        operations.append(operation)
+        matched_diagnostics.append(diagnostic)
+        processed_symbols.add(symbol)
+        repaired.append(
+            {
+                "file": path,
+                "type_name": symbol,
+                "literals": tuple(literals),
+                "usage_member": use_member,
+                "diagnostic_path": diagnostic.path,
+            }
+        )
+
+    return _repair_plan_or_none(
+        rule_id="typescript.literal_union_value_facade",
+        source_tool=TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        metadata={"literal_union_value_facades": repaired},
     )
 
 
@@ -4110,19 +4262,30 @@ def _typescript_duplicate_export_import_operations(
 ) -> tuple[RepairOperation, ...]:
     imported_by_module = _typescript_named_imports_by_module(content)
     locally_exported_names = _typescript_local_named_export_names(content)
-    if not imported_by_module or not locally_exported_names:
+    value_reexports_by_module = _typescript_named_reexports_by_module(content, type_only=False)
+    type_reexports_by_module = _typescript_named_reexports_by_module(content, type_only=True)
+    if not (
+        (imported_by_module and locally_exported_names) or (value_reexports_by_module and type_reexports_by_module)
+    ):
         return ()
 
     operations: list[RepairOperation] = []
     before_hash = sha256_text(content)
     for match in _TS_NAMED_REEXPORT_RE.finditer(content):
         module = str(match.group("module") or "")
-        removable = duplicate_names & imported_by_module.get(module, set()) & locally_exported_names
+        symbols = str(match.group("symbols") or "")
+        is_type_reexport = str(match.group(0) or "").lstrip().startswith("export type")
+        if is_type_reexport:
+            removable = (
+                duplicate_names
+                & (value_reexports_by_module.get(module, set()) | locally_exported_names)
+                & _typescript_named_value_specifier_names(symbols)
+            )
+        else:
+            removable = duplicate_names & imported_by_module.get(module, set()) & locally_exported_names
         if not removable:
             continue
-        replacement_symbols, removed = _remove_typescript_named_export_symbols(
-            str(match.group("symbols") or ""), removable
-        )
+        replacement_symbols, removed = _remove_typescript_named_export_symbols(symbols, removable)
         if not removed:
             continue
         if replacement_symbols.strip():
@@ -4163,6 +4326,243 @@ def _typescript_duplicate_export_import_operations(
     return tuple(operations)
 
 
+def _typescript_branded_literal_target_type(diagnostic: RepairDiagnostic) -> str:
+    text = f"{diagnostic.message}\n{diagnostic.raw}"
+    match = _TS_BRANDED_STRING_ASSIGNMENT_MESSAGE_RE.search(text)
+    if not match:
+        return ""
+    candidate = str(match.group("type") or "").strip()
+    return candidate if _TS_IDENTIFIER_RE.fullmatch(candidate) else ""
+
+
+def _typescript_string_brand_type_sources(base_files: Mapping[str, str]) -> dict[str, str]:
+    sources: dict[str, str] = {}
+    for path, content in base_files.items():
+        normalized = _normalize_repair_path(path)
+        if not normalized.endswith((".ts", ".tsx")):
+            continue
+        for match in _TS_STRING_BRAND_TYPE_ALIAS_RE.finditer(str(content or "")):
+            name = str(match.group("name") or "").strip()
+            if name:
+                sources.setdefault(name, normalized)
+    return sources
+
+
+def _typescript_branded_literal_cast_operation(
+    *,
+    path: str,
+    content: str,
+    diagnostic: RepairDiagnostic,
+    target_type: str,
+) -> RepairOperation | None:
+    line_number = int(diagnostic.line or 0)
+    column_number = int(diagnostic.column or 0)
+    if line_number <= 0:
+        return None
+    lines = content.splitlines(keepends=True)
+    if line_number > len(lines):
+        return None
+    line_start = sum(len(line) for line in lines[: line_number - 1])
+    line = lines[line_number - 1]
+    search_start = max(0, min(len(line), column_number - 1 if column_number > 0 else 0))
+    literal_match = _find_string_literal_after_column(line, search_start)
+    if literal_match is None:
+        return None
+    literal_end = literal_match.end()
+    trailing = line[literal_end : literal_end + 40]
+    if re.match(r"\s+as\s+[A-Za-z_$][\w$]*", trailing):
+        return None
+    before_hash = sha256_text(content)
+    literal = literal_match.group(0)
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=line_start + literal_match.start(),
+        span_end=line_start + literal_match.end(),
+        expected=literal,
+        replacement=f"{literal} as {target_type}",
+        before_hash=before_hash,
+        metadata={
+            "repair_kind": "typescript_branded_literal_cast",
+            "target_type": target_type,
+            "line": line_number,
+            "column": column_number,
+        },
+    )
+
+
+def _find_string_literal_after_column(line: str, column_index: int) -> re.Match[str] | None:
+    for match in re.finditer(r"(['\"])(?:\\.|(?!\1).)*\1", line):
+        if match.end() <= column_index:
+            continue
+        return match
+    return None
+
+
+def _typescript_type_only_value_usage_symbol(diagnostic: RepairDiagnostic) -> str:
+    text = f"{diagnostic.message}\n{diagnostic.raw}"
+    match = _TS_TYPE_ONLY_VALUE_USAGE_MESSAGE_RE.search(text)
+    if not match:
+        return ""
+    candidate = str(match.group("name") or "").strip()
+    return candidate if _TS_IDENTIFIER_RE.fullmatch(candidate) else ""
+
+
+def _typescript_string_literal_union_type_aliases(
+    base_files: Mapping[str, str],
+) -> dict[str, tuple[str, int, int, str, tuple[str, ...], bool]]:
+    aliases: dict[str, tuple[str, int, int, str, tuple[str, ...], bool]] = {}
+    for path, content in base_files.items():
+        normalized = _normalize_repair_path(path)
+        if not normalized.endswith((".ts", ".tsx")):
+            continue
+        text = str(content or "")
+        for match in _TS_STRING_LITERAL_UNION_TYPE_ALIAS_RE.finditer(text):
+            name = str(match.group("name") or "").strip()
+            if not name or name in aliases:
+                continue
+            literals = _typescript_identifier_string_literal_union_values(str(match.group("body") or ""))
+            if len(literals) < 2:
+                continue
+            aliases[name] = (
+                normalized,
+                match.start(),
+                match.end(),
+                str(match.group(0) or ""),
+                literals,
+                bool(match.group("export")),
+            )
+    return aliases
+
+
+def _typescript_identifier_string_literal_union_values(body: str) -> tuple[str, ...]:
+    literals: list[str] = []
+    seen: set[str] = set()
+    for part in str(body or "").split("|"):
+        token = part.strip()
+        match = re.fullmatch(r"(['\"])(?P<literal>[A-Za-z_$][\w$]*)\1", token)
+        if not match:
+            return ()
+        literal = str(match.group("literal") or "")
+        if literal in seen:
+            continue
+        seen.add(literal)
+        literals.append(literal)
+    return tuple(literals)
+
+
+def _typescript_type_value_dot_member(
+    *,
+    base_files: Mapping[str, str],
+    diagnostic: RepairDiagnostic,
+    symbol: str,
+) -> str:
+    path = _normalize_repair_path(str(diagnostic.path or ""))
+    content = str(base_files.get(path) or "")
+    line_number = int(diagnostic.line or 0)
+    if not path or not content:
+        return ""
+    fallback_match = re.search(rf"\b{re.escape(symbol)}\.(?P<member>[A-Za-z_$][\w$]*)\b", content)
+    if line_number <= 0:
+        return str(fallback_match.group("member") or "") if fallback_match else ""
+    lines = content.splitlines()
+    if line_number > len(lines):
+        return ""
+    line = lines[line_number - 1]
+    match = re.search(rf"\b{re.escape(symbol)}\.(?P<member>[A-Za-z_$][\w$]*)\b", line)
+    if not match and fallback_match is not None:
+        match = fallback_match
+    if match is None:
+        return ""
+    return str(match.group("member") or "")
+
+
+def _typescript_literal_union_value_facade_operation(
+    *,
+    path: str,
+    content: str,
+    span_start: int,
+    span_end: int,
+    expected: str,
+    type_name: str,
+    literals: Sequence[str],
+    exported: bool,
+) -> RepairOperation | None:
+    if re.search(rf"\bconst\s+{re.escape(type_name)}\s*=", content):
+        return None
+    export_prefix = "export " if exported else ""
+    entries = "\n".join(f'  {literal}: "{literal}",' for literal in literals)
+    replacement = (
+        f"{export_prefix}const {type_name} = {{\n"
+        f"{entries}\n"
+        f"}} as const;\n"
+        f"{export_prefix}type {type_name} = (typeof {type_name})[keyof typeof {type_name}];"
+    )
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=span_start,
+        span_end=span_end,
+        expected=expected,
+        replacement=replacement,
+        before_hash=sha256_text(content),
+        metadata={
+            "repair_kind": "typescript_literal_union_value_facade",
+            "type_name": type_name,
+            "literal_count": len(tuple(literals)),
+        },
+    )
+
+
+def _typescript_file_has_type_name_import(content: str, type_name: str) -> bool:
+    escaped = re.escape(type_name)
+    return bool(
+        re.search(rf"\bimport\s+type\s*\{{[^}}]*\b{escaped}\b[^}}]*\}}\s+from\b", content, re.DOTALL)
+        or re.search(rf"\bimport\s*\{{[^}}]*\btype\s+{escaped}\b[^}}]*\}}\s+from\b", content, re.DOTALL)
+    )
+
+
+def _typescript_insert_type_import_operation(
+    *,
+    path: str,
+    content: str,
+    type_name: str,
+    source_path: str,
+) -> RepairOperation | None:
+    module_specifier = _relative_import_specifier_for_actual_path(
+        importer_rel=path,
+        original_specifier="",
+        actual_target_rel=source_path,
+    )
+    import_line = f'import type {{ {type_name} }} from "{module_specifier}";\n'
+    insert_at = _typescript_import_insert_offset(content)
+    before_hash = sha256_text(content)
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=insert_at,
+        span_end=insert_at,
+        expected="",
+        replacement=import_line,
+        before_hash=before_hash,
+        metadata={
+            "repair_kind": "typescript_branded_literal_type_import",
+            "target_type": type_name,
+            "module_specifier": module_specifier,
+            "expected_context_before": content[max(0, insert_at - 240) : insert_at],
+            "expected_context_after": content[insert_at : insert_at + 120],
+        },
+    )
+
+
+def _typescript_import_insert_offset(content: str) -> int:
+    matches = list(re.finditer(r"^import\b[^\n]*(?:\n|$)", content, re.MULTILINE))
+    if matches:
+        return matches[-1].end()
+    header_match = re.match(r"^(?:/\*.*?\*/\s*)", content, re.DOTALL)
+    return header_match.end() if header_match else 0
+
+
 def _typescript_named_imports_by_module(content: str) -> dict[str, set[str]]:
     imported: dict[str, set[str]] = {}
     for match in _TS_NAMED_IMPORT_RE.finditer(content):
@@ -4171,6 +4571,20 @@ def _typescript_named_imports_by_module(content: str) -> dict[str, set[str]]:
         if module and symbols:
             imported.setdefault(module, set()).update(symbols)
     return imported
+
+
+def _typescript_named_reexports_by_module(content: str, *, type_only: bool) -> dict[str, set[str]]:
+    exported: dict[str, set[str]] = {}
+    for match in _TS_NAMED_REEXPORT_RE.finditer(content):
+        raw = str(match.group(0) or "")
+        is_type_reexport = raw.lstrip().startswith("export type")
+        if is_type_reexport != type_only:
+            continue
+        module = str(match.group("module") or "")
+        symbols = _typescript_named_value_specifier_names(str(match.group("symbols") or ""))
+        if module and symbols:
+            exported.setdefault(module, set()).update(symbols)
+    return exported
 
 
 def _typescript_local_named_export_names(content: str) -> set[str]:
@@ -6517,6 +6931,7 @@ __all__ = [
     "HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL",
     "JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL",
     "TYPEORM_MODEL_NORMALIZATION_SOURCE_TOOL",
+    "TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL",
     "TYPESCRIPT_CANVAS_SCALE_RETURN_TYPE_SOURCE_TOOL",
     "TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL",
     "TYPESCRIPT_DUPLICATE_OBJECT_PROPERTY_SOURCE_TOOL",
@@ -6525,6 +6940,7 @@ __all__ = [
     "TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL",
     "TYPESCRIPT_HTML_CONTAINER_SELECTOR_SOURCE_TOOL",
     "TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL",
+    "TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL",
     "TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL",
     "TYPESCRIPT_MISSING_CLOSING_BRACE_SOURCE_TOOL",
     "TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL",

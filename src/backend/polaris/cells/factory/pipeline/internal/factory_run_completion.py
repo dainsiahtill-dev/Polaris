@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -50,6 +51,30 @@ class RunCompletionWaiter:
         settings = context.get("settings") or Settings(workspace=Path(self.workspace))
         return OrchestrationCommandService(settings)
 
+    async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            return
+        try:
+            from polaris.cells.orchestration.workflow_runtime.public import (
+                get_orchestration_service,
+            )
+
+            orchestration_service = await get_orchestration_service()
+            cancel_run = getattr(orchestration_service, "cancel_run", None)
+            if not callable(cancel_run):
+                return
+            try:
+                result = cancel_run(normalized_run_id, force=True)
+            except TypeError:
+                result = cancel_run(normalized_run_id)
+            if inspect.isawaitable(result):
+                await result
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Failed to propagate factory cancellation to run %s: %s", normalized_run_id, exc)
+        else:
+            logger.info("Propagated factory cancellation to run %s: %s", normalized_run_id, reason)
+
     async def wait(
         self,
         service: OrchestrationCommandService,
@@ -72,6 +97,7 @@ class RunCompletionWaiter:
                 logger.debug("Factory abort checker failed for run %s: %s", run_id, exc)
                 abort_reason = None
             if abort_reason:
+                await self.cancel_active_run(run_id, reason=abort_reason)
                 return CommandResult(
                     run_id=run_id,
                     status="cancelled",
@@ -109,6 +135,7 @@ class RunCompletionWaiter:
                     break
 
             if completed_reason == "cancel":
+                await self.cancel_active_run(run_id, reason="factory_cancelled")
                 return CommandResult(
                     run_id=run_id,
                     status="cancelled",

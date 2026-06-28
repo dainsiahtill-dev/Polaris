@@ -552,6 +552,73 @@ class OrchestrationStageExecutor:
             f"PM likely confused this project with a different language project."
         )
 
+    def _read_catalog_contract(self) -> dict[str, Any]:
+        catalog_path = self.workspace / ".polaris" / "catalog_contract.json"
+        if not catalog_path.exists():
+            return {}
+        try:
+            payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _catalog_delivery_depth_contract(catalog: dict[str, Any]) -> dict[str, Any]:
+        level_contract_raw = catalog.get("level_contract")
+        level_contract: dict[str, Any] = level_contract_raw if isinstance(level_contract_raw, dict) else {}
+        if not level_contract:
+            return {}
+        feature_keywords = [
+            str(item).strip() for item in (catalog.get("feature_keywords") or []) if str(item or "").strip()
+        ]
+        minimums = dict(level_contract.get("minimums") or {})
+        return {
+            "schema_version": "polaris.delivery_depth_contract.v1",
+            "source": "factory.catalog_contract",
+            "language": str(catalog.get("primary_language") or "").strip(),
+            "project_type": str(catalog.get("project_type") or "").strip(),
+            "level": level_contract.get("level") or catalog.get("level"),
+            "minimums": minimums,
+            "required_evidence": list(level_contract.get("required_evidence") or []),
+            "anti_hollow_delivery": list(level_contract.get("anti_hollow_delivery") or []),
+            "level_contract": dict(level_contract),
+            "product_intent": {
+                "subject": str(catalog.get("project_id") or catalog.get("project_type") or "").strip(),
+                "primary_entities": feature_keywords,
+            },
+            "behavior_contract": {
+                "minimums": minimums,
+                "required_behavior_tests": [
+                    "normal behavior",
+                    "boundary behavior",
+                    "invalid or edge-case behavior",
+                ],
+            },
+        }
+
+    def _inject_catalog_delivery_depth_contract(self, context: dict[str, Any]) -> None:
+        metadata_raw = context.get("metadata")
+        metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+        if isinstance(context.get("delivery_depth_contract"), dict) or isinstance(
+            metadata.get("delivery_depth_contract"), dict
+        ):
+            return
+        catalog = self._read_catalog_contract()
+        depth_contract = self._catalog_delivery_depth_contract(catalog)
+        if not depth_contract:
+            return
+        context["delivery_depth_contract"] = depth_contract
+        context["level_contract"] = dict(depth_contract.get("level_contract") or {})
+        language = str(depth_contract.get("language") or "").strip()
+        if language and not str(context.get("language") or "").strip():
+            context["language"] = language
+        metadata = dict(metadata)
+        metadata.setdefault("delivery_depth_contract", depth_contract)
+        metadata.setdefault("level_contract", dict(depth_contract.get("level_contract") or {}))
+        if language:
+            metadata.setdefault("language", language)
+        context["metadata"] = metadata
+
     def _load_pm_plan_tasks(
         self,
         relative_path: str = "tasks/plan.json",
@@ -1102,6 +1169,7 @@ class OrchestrationStageExecutor:
         scope = self._task_string(task, "scope")
         if scope:
             context.setdefault("scope_paths", [scope])
+        self._inject_catalog_delivery_depth_contract(context)
         # Inject existing target file contents so the CE blueprint (and Director)
         # can see the actual API of files created by earlier tasks. Without this,
         # test-generation tasks guess at class/function names and produce broken tests.
@@ -5369,6 +5437,10 @@ class OrchestrationStageExecutor:
         terminal_statuses = {"completed", "success", "failed", "cancelled", "blocked"}
         while True:
             if cancel_event is not None and cancel_event.is_set():
+                await self._run_completion_waiter.cancel_active_run(
+                    normalized_run_id,
+                    reason="factory_cancelled",
+                )
                 return CommandResult(
                     run_id=normalized_run_id,
                     status="cancelled",
@@ -5378,6 +5450,10 @@ class OrchestrationStageExecutor:
                 with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
                     abort_reason = await abort_checker()
                     if abort_reason:
+                        await self._run_completion_waiter.cancel_active_run(
+                            normalized_run_id,
+                            reason=abort_reason,
+                        )
                         return CommandResult(
                             run_id=normalized_run_id,
                             status="cancelled",

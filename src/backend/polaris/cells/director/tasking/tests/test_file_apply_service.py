@@ -257,6 +257,46 @@ class TestFileApplyService:
         assert any("invalid JSON" in error for error in errors)
         assert not (tmp_path / "package.json").exists()
 
+    def test_apply_response_operations_rejects_markdown_advisory_as_source_file(self, tmp_path: Path) -> None:
+        """Plain review prose must not be accepted as source code output."""
+        from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService
+
+        service = FileApplyService(workspace=str(tmp_path))
+        applied, errors = service.apply_response_operations(
+            "FILE: src/web.ts\n"
+            "**Additional guidance**\n\n"
+            "# Blueprint analysis\n"
+            "1. Keep the browser entry small.\n"
+            "2. Use the existing contract.\n"
+            "END FILE",
+            allowed_scope_paths=["src/web.ts"],
+        )
+
+        assert applied == []
+        assert any("markdown/advisory text" in error for error in errors)
+        assert not (tmp_path / "src" / "web.ts").exists()
+
+    def test_apply_response_operations_ignores_markdown_file_inventory_fence(self, tmp_path: Path) -> None:
+        """A target-file inventory code fence is not a whole-file write."""
+        from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService
+
+        service = FileApplyService(workspace=str(tmp_path))
+        applied, errors = service.apply_response_operations(
+            "# Blueprint report\n\n"
+            "Target files:\n"
+            "```text\n"
+            "src/index.ts # main entry\n"
+            "src/web.ts # browser entry\n"
+            "```\n\n"
+            "**Additional guidance**\n"
+            "1. Keep the implementation small.\n",
+            allowed_scope_paths=["src/index.ts", "src/web.ts"],
+        )
+
+        assert applied == []
+        assert errors == ["no_changes"]
+        assert not (tmp_path / "src" / "web.ts").exists()
+
     def test_write_files_normalizes_trailing_fence_json_config(self, tmp_path: Path) -> None:
         """Direct write_files must share weak-model JSON normalization with write_file."""
         from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService

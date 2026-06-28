@@ -505,8 +505,10 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     required_modalities = _string_list(required_modalities)
     missing_required_modalities = _string_list(missing_required_modalities)
     failed_required_modalities = _string_list(failed_required_modalities)
-    evidence_policy_ok = bool(gates) and not missing_required_modalities
-    integrity_ok = bool(gates) and capability_ok and evidence_policy_ok
+    evidence_policy_integrity_ok = bool(gates) and not missing_required_modalities
+    evidence_policy_outcome_ok = bool(gates) and not failed_required_modalities
+    evidence_policy_ok = evidence_policy_integrity_ok and evidence_policy_outcome_ok
+    integrity_ok = bool(gates) and capability_ok and evidence_policy_integrity_ok
     outcome_ok = bool(gates) and not failed_gates and not failed_required_modalities
     projection_ok = integrity_ok and outcome_ok
     return {
@@ -536,6 +538,8 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         "evidence_modalities": dict(sorted(evidence_modalities.items())),
         "evidence_policy": {
             "ok": evidence_policy_ok,
+            "integrity_ok": evidence_policy_integrity_ok,
+            "outcome_ok": evidence_policy_outcome_ok,
             "enabled_modalities": enabled_modalities,
             "required_modalities": required_modalities,
             "missing_required_modalities": missing_required_modalities,
@@ -583,9 +587,9 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
         }
     evidence_policy = value.get("evidence_policy")
     evidence_policy_map = evidence_policy if isinstance(evidence_policy, dict) else {}
-    if evidence_policy_map and not bool(evidence_policy_map.get("ok")):
-        missing = evidence_policy_map.get("missing_required_modalities")
-        missing_list = [str(item) for item in missing] if isinstance(missing, list) else ["evidence_modalities"]
+    missing = evidence_policy_map.get("missing_required_modalities") if evidence_policy_map else []
+    missing_list = [str(item) for item in missing] if isinstance(missing, list) else []
+    if evidence_policy_map and missing_list:
         return {
             "ok": False,
             "detail": "run ledger projection missing required evidence: " + ", ".join(missing_list),

@@ -63,6 +63,7 @@ def extract_wholefile_blocks(
     file_name: str | None = None
     file_source: str | None = None
     block_lines: list[str] = []
+    unowned_fence_open = False
 
     for i, line in enumerate(lines):
         if line.startswith(fence[0]) or line.startswith(fence[1]):
@@ -72,6 +73,10 @@ def extract_wholefile_blocks(
                 file_name = None
                 file_source = None
                 block_lines = []
+                continue
+
+            if unowned_fence_open:
+                unowned_fence_open = False
                 continue
 
             fenced_name = _extract_fence_filename(line)
@@ -95,10 +100,15 @@ def extract_wholefile_blocks(
                 elif len(chat_files) == 1:
                     file_name = chat_files[0]
                     file_source = "chat"
+            if not file_name:
+                unowned_fence_open = True
             continue
 
         if file_name is not None:
             block_lines.append(line)
+            continue
+
+        if unowned_fence_open:
             continue
 
         for word in line.strip().split():

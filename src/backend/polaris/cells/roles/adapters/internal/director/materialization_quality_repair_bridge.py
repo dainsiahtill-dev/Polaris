@@ -57,6 +57,8 @@ _MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS = (
     "deterministic_rust_crate_import_rewrite_repair",
     "deterministic_rust_dependency_repair",
     "deterministic_rust_missing_lib_target_repair",
+    "deterministic_rust_missing_module_file_repair",
+    "deterministic_rust_duplicate_module_file_repair",
     "deterministic_rust_lib_root_facade_repair",
     "deterministic_rust_serde_derive_repair",
     "deterministic_rust_line_suggestion_repair",
@@ -580,7 +582,7 @@ def _run_materialization_rust_compiler(
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    for source_tool in _MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS:
+    for source_tool in _materialization_rust_compiler_runtime_source_tools(artifact_quality_errors):
         results.extend(
             _run_materialization_rust_runtime_repair(
                 adapter,
@@ -591,6 +593,20 @@ def _run_materialization_rust_compiler(
             )
         )
     return results
+
+
+def _materialization_rust_compiler_runtime_source_tools(
+    artifact_quality_errors: Sequence[str] | None = None,
+) -> tuple[str, ...]:
+    matched_tools = _runtime_coverage_matched_source_tools(
+        artifact_quality_errors=artifact_quality_errors,
+        source_tool_prefixes=("deterministic_rust_",),
+    )
+    materialization_tools = set(_MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS)
+    selected = tuple(source_tool for source_tool in matched_tools if source_tool in materialization_tools)
+    if selected:
+        return selected
+    return _MATERIALIZATION_RUST_RUNTIME_SOURCE_TOOLS
 
 
 def _collect_materialization_runtime_base_files(

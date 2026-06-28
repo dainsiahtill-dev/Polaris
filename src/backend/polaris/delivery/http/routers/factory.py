@@ -42,6 +42,7 @@ from polaris.cells.factory.pipeline.public.types import (
     RunLifecycleStatus,
     RunPhase,
 )
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.cells.storage.layout.public.service import (
     save_persisted_settings,
     sync_process_settings_environment,
@@ -108,6 +109,7 @@ SERVICE_STATUS_TO_CONTRACT: dict[ServiceRunStatus, RunLifecycleStatus] = {
 
 _DEFAULT_LOOP_MAX_CYCLES = 12
 _DEFAULT_LOOP_STALL_THRESHOLD = 2
+_DEFAULT_QUALITY_REWORK_MAX_CYCLES = 3
 _DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS = 1800
 _DIRECTOR_DISPATCH_TIMEOUT_ENV_KEYS = (
     "KERNELONE_FACTORY_DIRECTOR_DISPATCH_TIMEOUT_SECONDS",
@@ -122,6 +124,7 @@ _FACTORY_RUN_DEADLINE_METADATA_KEYS = (
 )
 _RETRY_START_POLICY_AFTER_CHECKPOINT = "after_checkpoint"
 FactoryStartFrom: TypeAlias = Literal["auto", "architect", "pm", "director"]
+StageSequenceStatus: TypeAlias = Literal["completed", "cancelled", "quality_rework_requested"]
 
 
 def _get_service(workspace: str) -> FactoryRunService:
@@ -992,6 +995,74 @@ def _resolve_loop_stall_threshold() -> int:
     return max(1, min(value, 20))
 
 
+def _resolve_quality_rework_max_cycles() -> int:
+    raw = os.getenv("KERNELONE_FACTORY_QUALITY_REWORK_MAX_CYCLES", str(_DEFAULT_QUALITY_REWORK_MAX_CYCLES))
+    try:
+        value = int(raw)
+    except (RuntimeError, ValueError):
+        value = _DEFAULT_QUALITY_REWORK_MAX_CYCLES
+    return max(1, min(value, 20))
+
+
+def _read_quality_gate_rework_summary(workspace: str) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "requested": False,
+        "requested_count": 0,
+        "exhausted_count": 0,
+        "ready_count": 0,
+        "tasks": [],
+    }
+    try:
+        task_board = TaskRuntimeService(str(workspace))
+        entries = task_board.list_all()
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        summary["error"] = f"{type(exc).__name__}: {exc}"
+        return summary
+
+    tasks: list[dict[str, Any]] = []
+    requested_count = 0
+    exhausted_count = 0
+    ready_count = 0
+    for entry in entries:
+        record = entry.to_dict() if hasattr(entry, "to_dict") else entry
+        if not isinstance(record, dict):
+            continue
+        metadata_raw = record.get("metadata")
+        metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+        if not bool(metadata.get("qa_rework_requested")):
+            continue
+        status = str(record.get("status") or "").strip().lower()
+        exhausted = bool(metadata.get("qa_rework_exhausted"))
+        if exhausted:
+            exhausted_count += 1
+        else:
+            requested_count += 1
+        if status in {"pending", "ready"}:
+            ready_count += 1
+        tasks.append(
+            {
+                "task_id": str(record.get("id") or record.get("task_id") or "").strip(),
+                "external_task_id": str(metadata.get("external_task_id") or metadata.get("pm_task_id") or "").strip(),
+                "status": status,
+                "reason": str(metadata.get("qa_rework_reason") or "").strip(),
+                "retry_count": metadata.get("qa_rework_retry_count"),
+                "max_retries": metadata.get("qa_rework_max_retries"),
+                "exhausted": exhausted,
+            }
+        )
+
+    summary.update(
+        {
+            "requested": requested_count > 0,
+            "requested_count": requested_count,
+            "exhausted_count": exhausted_count,
+            "ready_count": ready_count,
+            "tasks": tasks,
+        }
+    )
+    return summary
+
+
 def _decide_delivery_loop_action(
     *,
     plan_signature: str,
@@ -1494,13 +1565,56 @@ async def _execute_run_with_service(
     active_stage = ""
     workspace = str(service.workspace)
 
-    async def _execute_stage_sequence(stage_names: list[str]) -> bool:
+    async def _record_quality_rework_request(cycle: int, summary: dict[str, Any]) -> None:
+        current_run = await service.get_run(run_id)
+        if current_run is None or current_run.status in {ServiceRunStatus.COMPLETED, ServiceRunStatus.CANCELLED}:
+            return
+        history_raw = current_run.metadata.get("quality_rework_history")
+        history: list[Any] = list(history_raw) if isinstance(history_raw, list) else []
+        intermediate_failure = (
+            dict(current_run.metadata.get("failure")) if isinstance(current_run.metadata.get("failure"), dict) else {}
+        )
+        entry = {
+            "cycle": cycle,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": "factory.quality_gate.taskboard_rework",
+            "summary": dict(summary),
+            "intermediate_failure": intermediate_failure,
+        }
+        history.append(entry)
+        if current_run.status == ServiceRunStatus.FAILED:
+            current_run.status = ServiceRunStatus.RUNNING
+            current_run.metadata.pop("failure", None)
+            if str(current_run.metadata.get("last_failed_stage") or "").strip() == "quality_gate":
+                current_run.metadata.pop("last_failed_stage", None)
+            current_run.stages_failed = [
+                stage for stage in current_run.stages_failed if str(stage or "").strip() != "quality_gate"
+            ]
+        current_run.metadata["quality_rework_history"] = history[-50:]
+        current_run.metadata["quality_rework_last"] = entry
+        current_run.metadata["quality_rework_cycles_executed"] = cycle
+        await service.store.save_run(current_run)
+        await service._append_event(
+            run_id,
+            {
+                "type": "quality_rework_requested",
+                "cycle": cycle,
+                "summary": dict(summary),
+            },
+        )
+
+    async def _execute_stage_sequence(
+        stage_names: list[str],
+        *,
+        allow_quality_rework: bool = False,
+        quality_rework_cycle: int = 0,
+    ) -> StageSequenceStatus:
         nonlocal active_stage
         for stage_name in stage_names:
             active_stage = str(stage_name or "").strip()
             current = await service.get_run(run_id)
             if current is None or current.status in TERMINAL_RUN_STATUSES:
-                return False
+                return "cancelled"
 
             result = await service.execute_stage(
                 run_id,
@@ -1514,10 +1628,15 @@ async def _execute_run_with_service(
                     run_id,
                     active_stage,
                 )
-                return False
+                return "cancelled"
             if result.status != "success":
+                if allow_quality_rework and active_stage == "quality_gate":
+                    rework_summary = _read_quality_gate_rework_summary(workspace)
+                    if bool(rework_summary.get("requested")):
+                        await _record_quality_rework_request(quality_rework_cycle, rework_summary)
+                        return "quality_rework_requested"
                 raise RuntimeError(result.output or f"Stage {stage_name} failed")
-        return True
+        return "completed"
 
     try:
         run = await service.get_run(run_id)
@@ -1529,6 +1648,38 @@ async def _execute_run_with_service(
             raise RuntimeError("Factory run has no configured stages")
 
         execution_stages = _execution_stages_for_run(run, configured_stages)
+        quality_rework_max_cycles = _resolve_quality_rework_max_cycles()
+
+        def _quality_rework_stage_names() -> list[str]:
+            if "director_dispatch" not in execution_stages or "quality_gate" not in execution_stages:
+                raise RuntimeError(
+                    "Quality gate requested Director rework, but this run does not include both "
+                    "director_dispatch and quality_gate stages"
+                )
+            return ["director_dispatch", "quality_gate"]
+
+        async def _execute_with_quality_rework(stage_names: list[str]) -> bool:
+            quality_rework_cycles = 0
+            next_stage_names = list(stage_names)
+            while True:
+                next_cycle = quality_rework_cycles + 1
+                sequence_status = await _execute_stage_sequence(
+                    next_stage_names,
+                    allow_quality_rework=True,
+                    quality_rework_cycle=next_cycle,
+                )
+                if sequence_status == "completed":
+                    return True
+                if sequence_status == "cancelled":
+                    return False
+                quality_rework_cycles = next_cycle
+                if quality_rework_cycles > quality_rework_max_cycles:
+                    raise RuntimeError(
+                        "Quality gate requested rework after exceeding max cycles "
+                        f"({quality_rework_max_cycles}); stop to prevent infinite QA loop"
+                    )
+                next_stage_names = _quality_rework_stage_names()
+
         loop_requested = bool(payload.loop)
         loop_enabled = loop_requested and ("pm_planning" in execution_stages)
         run.metadata["loop_requested"] = loop_requested
@@ -1552,8 +1703,8 @@ async def _execute_run_with_service(
                 await service.store.save_run(run)
             else:
                 if prefix_stages:
-                    completed = await _execute_stage_sequence(prefix_stages)
-                    if not completed:
+                    sequence_status = await _execute_stage_sequence(prefix_stages)
+                    if sequence_status != "completed":
                         return
 
                 max_cycles = _resolve_loop_max_cycles()
@@ -1569,8 +1720,8 @@ async def _execute_run_with_service(
                             f"Delivery loop exceeded max cycles ({max_cycles}); stop to prevent infinite loop"
                         )
 
-                    completed = await _execute_stage_sequence(iterative_stages)
-                    if not completed:
+                    sequence_status = await _execute_stage_sequence(iterative_stages)
+                    if sequence_status != "completed":
                         return
 
                     current_run = await service.get_run(run_id)
@@ -1639,12 +1790,12 @@ async def _execute_run_with_service(
                     break
 
                 if terminal_stages:
-                    completed = await _execute_stage_sequence(terminal_stages)
+                    completed = await _execute_with_quality_rework(terminal_stages)
                     if not completed:
                         return
 
         if not loop_enabled:
-            completed = await _execute_stage_sequence(execution_stages)
+            completed = await _execute_with_quality_rework(execution_stages)
             if not completed:
                 return
 

@@ -184,7 +184,7 @@ def test_public_coverage_matches_rust_e0761_duplicate_module_as_executable_runti
     item = payload["items"][0]
 
     assert RUST_DUPLICATE_MODULE_FILE_SOURCE_TOOL in runtime_repair_source_tools()
-    assert "deterministic_rust_post_repair" in runtime_repair_source_tools()
+    assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
     assert payload["covered_diagnostic_count"] == 1
     assert payload["metadata_only_diagnostic_count"] == 0
     assert payload["executable_runtime_plan_diagnostic_count"] == 1
@@ -211,7 +211,7 @@ def test_public_coverage_matches_rust_missing_fields_as_executable_runtime_with_
     e0609_item = payload["items"][0]
 
     assert RUST_MISSING_FIELDS_SOURCE_TOOL in runtime_repair_source_tools()
-    assert "deterministic_rust_post_repair" in runtime_repair_source_tools()
+    assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
     assert payload["covered_diagnostic_count"] == 1
     assert payload["uncovered_diagnostic_count"] == 0
     assert payload["metadata_only_diagnostic_count"] == 0

@@ -491,6 +491,87 @@ def restrict_tool_definitions_to_write(tool_definitions: list[dict[str, Any]]) -
     return kept
 
 
+def _native_tool_schema(tool_name: str) -> dict[str, Any] | None:
+    try:
+        from polaris.kernelone.llm.toolkit.definitions import create_default_registry
+    except (ImportError, RuntimeError, ValueError):
+        return None
+    definition = create_default_registry().get(str(tool_name or "").strip())
+    if definition is None:
+        return None
+    try:
+        schema = definition.to_openai_function()
+    except (RuntimeError, TypeError, ValueError):
+        return None
+    return dict(schema) if isinstance(schema, dict) else None
+
+
+def ensure_director_first_call_materialization_scope(
+    *,
+    role: str,
+    context_override: Any,
+    workspace: str,
+    tool_definitions: list[dict[str, Any]],
+    from_scratch_target: str | None,
+    materialize_requested: bool,
+    transaction_tools_disabled: bool,
+) -> list[dict[str, Any]]:
+    """Force a scoped ``write_file`` first-call schema for missing materialization targets."""
+
+    del workspace  # The caller has already resolved ``from_scratch_target`` against workspace.
+    if str(role or "").strip().lower() != "director":
+        return tool_definitions
+    if transaction_tools_disabled or not materialize_requested:
+        return tool_definitions
+    if not isinstance(context_override, dict):
+        return tool_definitions
+    target = str(from_scratch_target or "").strip().replace("\\", "/")
+    if not target:
+        return tool_definitions
+    if isinstance(context_override.get("_transaction_kernel_forced_tool_definitions"), list):
+        return tool_definitions
+    if context_override.get("_transaction_kernel_forced_tool_choice") is not None:
+        return tool_definitions
+
+    target_variants = _single_relative_target_variants(target)
+    if not target_variants:
+        return tool_definitions
+    write_schema = _native_tool_schema("write_file")
+    if write_schema is None:
+        context_override.setdefault(
+            "director_first_call_materialization_scope",
+            {
+                "schema_version": "director.first_call_materialization_scope.v1",
+                "source": "roles.kernel.llm_caller.tool_helpers",
+                "injected": False,
+                "reason": "write_file_schema_unavailable",
+                "target_file": target,
+                "tool": "write_file",
+            },
+        )
+        return tool_definitions
+
+    forced_definitions = pin_write_tool_file_param_to_targets([write_schema], target_variants)
+    context_override["_transaction_kernel_forced_tool_definitions"] = forced_definitions
+    context_override["_transaction_kernel_forced_tool_choice"] = {
+        "type": "function",
+        "function": {"name": "write_file"},
+    }
+    context_override["_transaction_kernel_force_exact_tools"] = True
+    context_override["director_first_call_materialization_scope"] = {
+        "schema_version": "director.first_call_materialization_scope.v1",
+        "source": "roles.kernel.llm_caller.tool_helpers",
+        "injected": True,
+        "reason": "declared_scope_incomplete_requires_first_turn_write_tool",
+        "target_file": target,
+        "target_file_variants": list(target_variants),
+        "tool": "write_file",
+        "materialize_requested": True,
+        "transaction_tools_disabled": False,
+    }
+    return forced_definitions
+
+
 # Whole-file rewrite verbs dropped on a repair turn — these let the weak model
 # regenerate the file from its (compressed) memory and thereby shrink/degrade it.
 _FULL_REWRITE_TOOLS = frozenset({"write_file", "append_to_file"})
