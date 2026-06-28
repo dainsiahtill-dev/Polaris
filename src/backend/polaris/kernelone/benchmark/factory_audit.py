@@ -459,6 +459,17 @@ def _check_implementation_depth(
     return True, detail
 
 
+def check_workspace_delivery_depth_contract(
+    workspace: str,
+    *,
+    level_contract: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
+    """Check generated workspace depth using the same metric contract as audits."""
+
+    inventory = collect_workspace_inventory(workspace)
+    return _check_implementation_depth(workspace, inventory, level_contract=level_contract)
+
+
 def _should_add_implementation_depth_check(configured_checks: list[str]) -> bool:
     normalized = [str(item or "").strip().lower() for item in configured_checks]
     if "implementation_depth" in normalized:

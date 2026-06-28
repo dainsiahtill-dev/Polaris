@@ -2437,6 +2437,148 @@ class TestRunWorkspaceQualityChecks:
         assert "TS2305" in payload["repair"]["residual_errors"][0]
 
     @pytest.mark.asyncio
+    async def test_workspace_quality_delivery_depth_contract_enters_repair_loop(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / ".polaris").mkdir(parents=True)
+        (tmp_path / ".polaris" / "catalog_contract.json").write_text(
+            json.dumps(
+                {
+                    "project_id": "depth-contract",
+                    "level": 2,
+                    "level_contract": {
+                        "schema_version": "factory-bench.level_contract.v1",
+                        "level": 2,
+                        "minimums": {
+                            "min_prod_files": 1,
+                            "min_prod_lines": 3,
+                            "min_behavior_symbols": 1,
+                            "min_branch_count": 0,
+                            "min_test_files": 0,
+                            "min_test_assertions": 0,
+                        },
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src").mkdir()
+        source_path = tmp_path / "src" / "index.ts"
+        source_path.write_text("export function run() { return 1; }\n", encoding="utf-8")
+        run = FactoryRun(
+            id="factory-quality-depth-contract",
+            config=FactoryConfig(name="quality-depth-contract"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-21T00:00:00+00:00",
+        )
+        calls: list[list[str]] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            calls.append(command)
+            return {
+                "command": command,
+                "exit_code": 0,
+                "passed": True,
+                "stdout_tail": "test passed",
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        def fake_apply_workspace_quality_repairs(
+            *,
+            run_id: str,
+            artifact_quality_errors: list[str],
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            assert run_id == "factory-quality-depth-contract"
+            assert any("delivery_depth_contract_failed" in item for item in artifact_quality_errors)
+            return (
+                [],
+                {
+                    "attempted": True,
+                    "success": False,
+                    "source_tools": [],
+                    "tool_results": 0,
+                    "write_tool_evidence": False,
+                },
+            )
+
+        async def fake_apply_workspace_quality_llm_repairs(
+            *,
+            run_id: str,
+            context: dict[str, Any],
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            del context
+            assert run_id == "factory-quality-depth-contract"
+            assert repair_attempt == 1
+            assert any("production_source_lines=1 < 3" in item for item in artifact_quality_errors)
+            source_path.write_text(
+                "\n".join(
+                    [
+                        "export function run() {",
+                        "  const value = 1;",
+                        "  return value;",
+                        "}",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return (
+                [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {
+                            "source_tool": "director_llm_workspace_quality_repair",
+                            "file": "src/index.ts",
+                            "operation": "modify",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "source_tools": ["director_llm_workspace_quality_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "test"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_llm_repairs",
+            fake_apply_workspace_quality_llm_repairs,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 1},
+        )
+
+        assert passed is True
+        assert calls == [["npm", "test"], ["npm", "test"]]
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        assert payload["passed"] is True
+        command_phases = [(item["command"], item["phase"], item["passed"]) for item in payload["commands"]]
+        assert (["delivery_depth_contract"], "check", False) in command_phases
+        assert (["delivery_depth_contract"], "check_after_repair", True) in command_phases
+        assert payload["repair"]["attempted"] is True
+        assert payload["repair"]["success"] is True
+
+    @pytest.mark.asyncio
     async def test_workspace_quality_escalates_to_director_llm_repair_after_deterministic_noop(
         self,
         tmp_path: Path,

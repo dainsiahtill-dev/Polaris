@@ -271,7 +271,16 @@ def run_typescript_semantic_quality_repairs(
     """Run TypeScript semantic quality repairs behind the materialization bridge boundary."""
 
     results: list[dict[str, Any]] = []
-    for source_tool in _semantic_typescript_compiler_runtime_source_tools():
+    candidate_source_tools = _semantic_typescript_compiler_runtime_source_tools()
+    source_tools = _materialization_plannable_runtime_source_tools(
+        adapter,
+        task=task,
+        artifact_quality_errors=artifact_quality_errors,
+        candidate_source_tools=candidate_source_tools,
+        allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".html", ".json"),
+        caller="typescript_semantic_quality",
+    )
+    for source_tool in source_tools:
         results.extend(
             _run_materialization_typescript_runtime_repair(
                 adapter,
@@ -450,7 +459,16 @@ def _run_materialization_typescript_compiler(
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    for source_tool in _materialization_typescript_compiler_runtime_source_tools(artifact_quality_errors):
+    candidate_source_tools = _materialization_typescript_compiler_runtime_source_tools(artifact_quality_errors)
+    source_tools = _materialization_plannable_runtime_source_tools(
+        adapter,
+        task=task,
+        artifact_quality_errors=artifact_quality_errors,
+        candidate_source_tools=candidate_source_tools,
+        allowed_suffixes=(".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".html", ".json"),
+        caller="materialization_typescript_compiler",
+    )
+    for source_tool in source_tools:
         results.extend(
             _run_materialization_typescript_runtime_repair(
                 adapter,
@@ -474,6 +492,46 @@ def _materialization_typescript_compiler_runtime_source_tools(
     if matched_tools:
         return matched_tools
     return _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS
+
+
+def _materialization_plannable_runtime_source_tools(
+    adapter: Any,
+    *,
+    task: Mapping[str, Any] | None,
+    artifact_quality_errors: Sequence[str] | None,
+    candidate_source_tools: Sequence[str],
+    allowed_suffixes: Sequence[str],
+    caller: str,
+) -> tuple[str, ...]:
+    """Return only runtime source tools whose coverage can produce concrete patches."""
+
+    if not artifact_quality_errors or not candidate_source_tools:
+        return ()
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    base_files = _collect_materialization_runtime_base_files(
+        workspace_path,
+        artifact_quality_errors=[str(item) for item in artifact_quality_errors],
+        source_tool=str(candidate_source_tools[0]),
+        allowed_suffixes=tuple(allowed_suffixes),
+        collect_unmatched_diagnostic_paths=True,
+        task=task,
+    )
+    if not base_files:
+        return ()
+    plan_probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+            base_files=base_files,
+            source_tools=tuple(str(item) for item in candidate_source_tools),
+            mode="shadow",
+            metadata={
+                "caller": caller,
+                "read_only_plan_probe": True,
+                "coverage_is_not_planning": True,
+            },
+        )
+    )
+    return tuple(plan_probe.plannable_source_tools)
 
 
 def _run_materialization_html_entrypoint(

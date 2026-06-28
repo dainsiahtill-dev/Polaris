@@ -1915,11 +1915,15 @@ def test_deterministic_materialization_repair_routes_typescript_missing_export(
         artifact_quality_errors=errors,
     )
 
-    assert results
-    assert "deterministic_typescript_missing_export_repair" in summary["source_tools"]
+    assert results == []
+    assert summary["source_tools"] == []
+    assert summary["plan_probe_preaudit"]["status"] == "coverage_matched_but_unplannable"
+    assert (
+        "deterministic_typescript_missing_export_repair"
+        in summary["plan_probe_preaudit"]["covered_unplannable_source_tools"]
+    )
     repaired = (tmp_path / "src" / "product.ts").read_text(encoding="utf-8")
-    assert "export class GardenSimulator" in repaired
-    assert "public report(..._args: unknown[]): string" in repaired
+    assert "export class GardenSimulator" not in repaired
 
 
 def test_deterministic_typescript_number_to_string_argument_repair_wraps_argument(
@@ -10304,6 +10308,122 @@ def test_explicit_quality_repair_prefers_failed_test_named_artifact(tmp_path: An
     assert targets[0] == "README.md"
 
 
+def test_javascript_test_repair_expands_barrel_import_to_owner_modules(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _explicit_artifact_quality_repair_target_files,
+    )
+
+    src = tmp_path / "src"
+    models = src / "models"
+    tests = tmp_path / "tests"
+    models.mkdir(parents=True)
+    tests.mkdir()
+    (src / "index.ts").write_text(
+        "\n".join(
+            [
+                'export { Market } from "./models/Market";',
+                'export type { InventoryItem } from "./models/Inventory";',
+                'export type { ReputationEvent } from "./models/Reputation";',
+                'export type { FairyProfile } from "./models/Fairy";',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    for name in ("Market", "Inventory", "Reputation", "Fairy"):
+        (models / f"{name}.ts").write_text(f"export class {name} {{}}\n", encoding="utf-8")
+    (tests / "behavior.test.ts").write_text(
+        'import { Market } from "../src/index";\n'
+        'import { describe, expect, it } from "vitest";\n'
+        'describe("Market", () => it("rejects overflow", () => expect(Market).toBeDefined()));\n',
+        encoding="utf-8",
+    )
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm test):\n"
+        "FAIL  tests/behavior.test.ts > Market > rejects overflow at maxStalls (boundary)\n"
+        "AssertionError: expected [Function] to throw error matching /MARKET_FULL/ "
+        "but got '市集 Tiny 已达摊位上限 1'\n"
+        f" ❯ tests/behavior.test.ts:151:66\n"
+        f" ❯ {tmp_path / 'src' / 'models' / 'Fairy.ts'}:118:13\n"
+    )
+
+    targets = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=[
+            "src/index.ts",
+            "src/models/Market.ts",
+            "src/models/Inventory.ts",
+            "src/models/Reputation.ts",
+            "src/models/Fairy.ts",
+            "tests/behavior.test.ts",
+        ],
+        workspace_full=str(tmp_path),
+    )
+
+    assert targets[:4] == [
+        "src/models/Market.ts",
+        "src/models/Inventory.ts",
+        "src/models/Reputation.ts",
+        "src/models/Fairy.ts",
+    ], targets
+    assert targets.index("src/index.ts") > targets.index("src/models/Fairy.ts")
+
+
+def test_step_verify_environment_prep_plan_comes_from_runtime_catalog(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _step_verify_environment_prep_plans,
+    )
+
+    (tmp_path / "package.json").write_text(
+        json.dumps({"scripts": {"test": "vitest run"}, "devDependencies": {"vitest": "^1.6.0"}}) + "\n",
+        encoding="utf-8",
+    )
+
+    plans = _step_verify_environment_prep_plans("npm run test", workspace=str(tmp_path))
+
+    assert len(plans) == 1
+    assert plans[0]["schema_version"] == "director.environment_prep_plan.v1"
+    assert plans[0]["ecosystem"] == "node"
+    assert plans[0]["package_manager"] == "npm"
+    assert plans[0]["policy"]["command_source"] == "director.runtime.environment_prep_catalog"
+    assert plans[0]["policy"]["llm_generated_command_allowed"] is False
+
+
+def test_step_verify_runs_environment_prep_before_verify(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director import quality_gate as quality_gate_module
+
+    (tmp_path / "package.json").write_text(
+        json.dumps({"scripts": {"test": "vitest run"}, "devDependencies": {"vitest": "^1.6.0"}}) + "\n",
+        encoding="utf-8",
+    )
+    calls: list[tuple[str, str]] = []
+
+    def fake_environment_prep(verify: str, *, workspace: str) -> list[str]:
+        calls.append((verify, workspace))
+        (tmp_path / "node_modules").mkdir()
+        return []
+
+    def fake_run(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        assert args[0] == "npm run test"
+        assert kwargs["cwd"] == str(tmp_path)
+        assert (tmp_path / "node_modules").is_dir()
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(quality_gate_module, "_run_step_verify_environment_prep", fake_environment_prep)
+    monkeypatch.setattr(quality_gate_module.subprocess, "run", fake_run)
+
+    errors = quality_gate_module._collect_step_verify_errors(
+        SimpleNamespace(workspace=str(tmp_path)),
+        {"construction_step": {"verify": "npm run test"}},
+    )
+
+    assert errors == []
+    assert calls == [("npm run test", str(tmp_path))]
+
+
 def test_node_tap_multi_failure_quality_repair_preserves_batch(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.quality_gate import (
         _explicit_artifact_quality_repair_target_files,
@@ -11113,11 +11233,16 @@ class TestQualityRepairMissingTargetContract:
             changed_files=["src/verify.ts", "tests/verify.test.ts"],
         )
 
-        assert tool_results
-        assert summary["stage"] == "deterministic_materialization_quality_repair"
-        assert "deterministic_typescript_missing_export_repair" in summary["source_tools"]
+        assert tool_results == []
+        assert summary["stage"] == "runtime_plan_probe_unplannable"
+        assert summary["success_reason"] == "task_boundary_interface_discrepancy_required"
+        assert summary["interface_discrepancy_evidence"]["llm_fallback_blocked"] is True
+        assert (
+            "deterministic_typescript_missing_export_repair"
+            in summary["interface_discrepancy_evidence"]["covered_unplannable_source_tools"]
+        )
         repaired = (tmp_path / "src" / "verify.ts").read_text(encoding="utf-8")
-        assert "runVerification" in repaired
+        assert "runVerification" not in repaired
 
     def test_repair_targets_css_import_exact_path(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

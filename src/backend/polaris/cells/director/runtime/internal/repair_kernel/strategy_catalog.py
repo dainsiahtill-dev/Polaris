@@ -101,6 +101,7 @@ KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
         "deterministic_typescript_sourcefile_diagnostics_repair",
         "deterministic_typescript_string_literal_suggestion_repair",
         "deterministic_typescript_too_few_arguments_repair",
+        "deterministic_typescript_type_inference_required_repair",
         "deterministic_typescript_tsconfig_lib_repair",
         "deterministic_typescript_tsconfig_rootdir_repair",
         "deterministic_typescript_unknown_member_access_repair",

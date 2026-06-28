@@ -2699,6 +2699,56 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 metadata=_executable_runtime_metadata(scope="nullable_dom_global_guard"),
             ),
             RepairRuleDefinition(
+                rule_id="typescript.excess_object_property_type_inference_required",
+                source_tool="deterministic_typescript_type_inference_required_repair",
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.RUNTIME_CONTRACT,
+                priority=10,
+                diagnostic_codes=("typescript_ts2353",),
+                message_terms=("object literal", "known properties", "does not exist in type"),
+                risk_level="medium",
+                description=(
+                    "Classifies TS2353 excess object property diagnostics as interface/type-inference "
+                    "required evidence; runtime must not guess fields or rewrite domain object shapes."
+                ),
+                runtime_plan_available=False,
+                metadata={
+                    "rule_status": "metadata_rule_registered",
+                    "metadata_only": True,
+                    "executable_runtime_binding": False,
+                    "planner_helper_available": False,
+                    "blocker": "type_inference_required",
+                    "recommended_route": "task_boundary_interface_discrepancy",
+                    "unsafe_cases_fail_closed": True,
+                },
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.generic_constraint_type_inference_required",
+                source_tool="deterministic_typescript_type_inference_required_repair",
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.RUNTIME_CONTRACT,
+                priority=10,
+                diagnostic_codes=("typescript_ts2344",),
+                message_terms=("does not satisfy the constraint",),
+                risk_level="medium",
+                description=(
+                    "Classifies TS2344 generic constraint diagnostics as type-inference required evidence; "
+                    "runtime must not synthesize arbitrary generic values."
+                ),
+                runtime_plan_available=False,
+                metadata={
+                    "rule_status": "metadata_rule_registered",
+                    "metadata_only": True,
+                    "executable_runtime_binding": False,
+                    "planner_helper_available": False,
+                    "blocker": "type_inference_required",
+                    "recommended_route": "task_boundary_interface_discrepancy",
+                    "unsafe_cases_fail_closed": True,
+                },
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.number_to_string_argument",
                 source_tool=TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL,
                 language="typescript",

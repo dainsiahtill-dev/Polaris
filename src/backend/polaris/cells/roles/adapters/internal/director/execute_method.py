@@ -1890,6 +1890,23 @@ async def _execute_standard_llm_flow(
         state=state,
     )
 
+    if _cross_artifact_llm_escalation_enabled():
+        state, artifact_quality_errors = await _phase_cross_artifact_unplannable_llm_escalation(
+            adapter,
+            adapter_workspace=_adapter_workspace,
+            baseline_files=baseline_files,
+            context=context,
+            llm_call_timeout=llm_call_timeout,
+            message=message,
+            run_id=run_id,
+            target_task_id=target_task_id,
+            task=task,
+            workspace_name=workspace_name,
+            artifact_quality_errors=artifact_quality_errors,
+            quality_repair_attempts=quality_repair_attempts,
+            state=state,
+        )
+
     quality_failed_result = _phase_quality_failed(
         adapter,
         task=task,
@@ -3641,6 +3658,94 @@ def _phase_missing_write_receipt(
             "materialization_mode": materialization_mode,
         }
     return None
+
+
+def _cross_artifact_llm_escalation_enabled() -> bool:
+    """Default OFF -> byte-identical legacy behaviour. Opt in via env to escalate
+    residual cross-artifact quality errors to a bounded Director LLM re-generation
+    before the hard materialization-quality fail."""
+    raw = str(os.environ.get("KERNELONE_DIRECTOR_CROSS_ARTIFACT_LLM_ESCALATION", "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+async def _phase_cross_artifact_unplannable_llm_escalation(
+    adapter: Any,
+    *,
+    adapter_workspace: str,
+    baseline_files: dict[str, str],
+    context: dict[str, Any],
+    llm_call_timeout: float,
+    message: str,
+    run_id: str,
+    target_task_id: str,
+    task: dict[str, Any],
+    workspace_name: str,
+    artifact_quality_errors: list[str],
+    quality_repair_attempts: list[dict[str, Any]],
+    state: MaterializationState,
+) -> tuple[MaterializationState, list[str]]:
+    """Escalate deterministically-unplannable cross-artifact quality errors to a
+    bounded Director LLM re-generation before ``_phase_quality_failed`` hard-fails.
+    Cross-file symbol mismatches (consumer imports a symbol the sibling owner never
+    defines) are ``coverage_matched_but_unplannable`` for the deterministic kernel,
+    so without this the LLM is never asked to re-generate the files to cohere.
+    Reuses the semantic-repair LLM-retry + recompute pipeline. Inert when empty."""
+    if not artifact_quality_errors:
+        return state, artifact_quality_errors
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    for repair_attempt in range(1, _QUALITY_REPAIR_ATTEMPT_HARD_CAP + 1):
+        if not artifact_quality_errors:
+            break
+        repair_tool_results, repair_summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            original_message=message,
+            llm_call_timeout=llm_call_timeout,
+            artifact_quality_errors=artifact_quality_errors,
+            changed_files=all_affected_files,
+            repair_attempt=repair_attempt,
+        )
+        if isinstance(repair_summary, dict):
+            quality_repair_attempts.append({**repair_summary, "escalation": "cross_artifact_unplannable"})
+        if not repair_tool_results:
+            break
+        tool_results.extend(repair_tool_results)
+        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+            adapter,
+            baseline_files,
+            task=task,
+            workspace_name=workspace_name,
+        )
+        all_affected_files = _merge_successful_write_paths(
+            all_affected_files,
+            _extract_successful_write_paths(repair_tool_results),
+        )
+        scan_paths = _materialization_quality_scan_paths(all_affected_files, tool_results)
+        artifact_quality_errors = _collect_materialization_quality_errors(
+            adapter,
+            task=task,
+            all_affected_files=scan_paths,
+            workspace_name=workspace_name,
+            context=context,
+        )
+        artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+        artifact_quality_errors += run_python_static_smoke(adapter, all_affected_files=scan_paths)
+        artifact_quality_errors += run_python_runtime_smoke(
+            adapter,
+            task_id=target_task_id,
+            all_affected_files=scan_paths,
+        )
+        artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
+            artifact_quality_errors,
+            str(getattr(adapter, "workspace", "") or ""),
+        )
+    state = MaterializationState.from_locals(
+        current_files, new_files, modified_files, all_affected_files, tool_results
+    )
+    return state, artifact_quality_errors
 
 
 def _phase_quality_failed(

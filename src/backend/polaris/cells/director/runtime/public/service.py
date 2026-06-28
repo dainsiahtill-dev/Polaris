@@ -259,16 +259,29 @@ def query_director_repair_strategy_catalog(
     request = query or QueryDirectorRepairStrategyCatalogV1()
     raw_items = _deterministic_repair_strategy_catalog()
     runtime_source_tools = set(runtime_repair_source_tools())
+    metadata_registered_source_tools = {
+        rule.source_tool for rule in default_repair_rule_registry().rules() if not rule.runtime_plan_available
+    }
+
+    def _implementation_status(source_tool: str) -> str:
+        if source_tool in runtime_source_tools:
+            return "executable_runtime"
+        if source_tool in metadata_registered_source_tools:
+            return "metadata_rule_registered"
+        return "legacy_strategy_host"
+
+    def _execution_owner(source_tool: str) -> str:
+        if source_tool in runtime_source_tools or source_tool in metadata_registered_source_tools:
+            return "director.runtime"
+        return "roles.adapters.legacy_strategy_host"
+
     all_items = [
         {
             **dict(item),
-            "implementation_status": "executable_runtime"
-            if str(item.get("source_tool") or "") in runtime_source_tools
-            else "legacy_strategy_host",
-            "execution_owner": "director.runtime"
-            if str(item.get("source_tool") or "") in runtime_source_tools
-            else "roles.adapters.legacy_strategy_host",
-            "bench_driven_migration_required": str(item.get("source_tool") or "") not in runtime_source_tools,
+            "implementation_status": _implementation_status(str(item.get("source_tool") or "")),
+            "execution_owner": _execution_owner(str(item.get("source_tool") or "")),
+            "bench_driven_migration_required": _implementation_status(str(item.get("source_tool") or ""))
+            == "legacy_strategy_host",
         }
         for item in raw_items
     ]
@@ -1016,9 +1029,7 @@ def query_director_repair_plan_probe(query: QueryDirectorRepairPlanProbeV1) -> D
             DirectorRepairPlanProbeItemV1(
                 source_tool=source_tool,
                 status=status,
-                matched_diagnostic_ids=tuple(
-                    str(item.diagnostic.get("diagnostic_id") or "") for item in matched_items
-                ),
+                matched_diagnostic_ids=tuple(str(item.diagnostic.get("diagnostic_id") or "") for item in matched_items),
                 matched_diagnostic_count=len(matched_items),
                 patch_count=patch_count,
                 changed_paths=tuple(str(path) for path in composition.get("changed_paths") or ()),
@@ -1032,9 +1043,7 @@ def query_director_repair_plan_probe(query: QueryDirectorRepairPlanProbeV1) -> D
             )
         )
 
-    plannable_source_tools = tuple(
-        item.source_tool for item in probe_items if item.status == "covered_plannable"
-    )
+    plannable_source_tools = tuple(item.source_tool for item in probe_items if item.status == "covered_plannable")
     plannable_set = set(plannable_source_tools)
     covered_unplannable_diagnostics = tuple(
         dict(item.diagnostic)
@@ -1091,7 +1100,9 @@ def _plan_probe_candidate_source_tools(
     for item in coverage.items:
         if not item.executable_runtime_plan_matched:
             continue
-        source_tools.extend(source_tool for source_tool in item.matched_source_tools if source_tool in executable_source_tools)
+        source_tools.extend(
+            source_tool for source_tool in item.matched_source_tools if source_tool in executable_source_tools
+        )
     return tuple(_ordered_unique(source_tools))
 
 
@@ -1150,9 +1161,7 @@ def _coverage_item_is_covered_unplannable(
     if not item.known_rule_matched or not item.executable_runtime_plan_matched:
         return False
     selected_matched = {
-        source_tool
-        for source_tool in item.matched_source_tools
-        if source_tool in set(candidate_source_tools)
+        source_tool for source_tool in item.matched_source_tools if source_tool in set(candidate_source_tools)
     }
     return bool(selected_matched) and selected_matched.isdisjoint(plannable_source_tools)
 
@@ -1667,9 +1676,7 @@ def run_director_repair_convergence(
             workspace=command.workspace,
             previous_prep_receipts=_environment_prep_receipts_from_public_repair_receipts(public_receipts),
         )
-        public_environment_plans = tuple(
-            _to_public_environment_prep_plan(plan.to_dict()) for plan in environment_plans
-        )
+        public_environment_plans = tuple(_to_public_environment_prep_plan(plan.to_dict()) for plan in environment_plans)
         request = DirectorRepairConvergenceVerifierRequestV1(
             task_id=command.task_id,
             workspace=command.workspace,

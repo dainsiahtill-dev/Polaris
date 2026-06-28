@@ -3854,27 +3854,12 @@ def _missing_export_operation(
     exported = _export_existing_typescript_declaration(original, symbol)
     declaration_kind = "export_existing"
     if exported == original:
-        declaration_kind, declaration = _build_typescript_missing_export_declaration(
-            symbol=symbol,
-            importer_text=str(base_files.get(importer) or ""),
-        )
-        if not declaration:
-            return None, {}
-        operation = _append_typescript_missing_export_declaration_operation(
-            path=exporter,
-            original=original,
-            declaration=declaration,
-            symbol=symbol,
-            declaration_kind=declaration_kind,
-        )
-        return (
-            (
-                operation,
-                {"file": exporter, "symbol": symbol, "kind": declaration_kind},
-            )
-            if operation is not None
-            else (None, {})
-        )
+        return None, {
+            "file": exporter,
+            "symbol": symbol,
+            "kind": "interface_contract_required",
+            "blocked_reason": "missing_export_declaration_not_found",
+        }
     ops = _text_replace_operations_from_repair(
         path=exporter,
         original=original,

@@ -30,6 +30,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.benchmark.factory_audit import check_workspace_delivery_depth_contract
+
 from . import factory_stage_helpers as helpers
 from .factory_run_models import _WORKSPACE_VALIDATION_TIMEOUT_SECONDS
 
@@ -132,6 +134,60 @@ class WorkspaceQualityRunner:
         if not isinstance(scripts, dict):
             return {}
         return {str(key): str(value) for key, value in scripts.items() if key and value}
+
+    def delivery_depth_contract_result(self, context: dict[str, Any]) -> dict[str, Any] | None:
+        if not helpers.bool_from_context_or_env(
+            context,
+            "workspace_validation_delivery_depth_contract",
+            "qa_workspace_validation_delivery_depth_contract",
+            env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION_DELIVERY_DEPTH_CONTRACT",
+            default=True,
+        ):
+            return None
+        level_contract = self._load_delivery_depth_level_contract()
+        if level_contract is None:
+            return None
+        passed, detail = check_workspace_delivery_depth_contract(
+            str(self.workspace),
+            level_contract=level_contract,
+        )
+        trimmed_detail = helpers.trim_command_output(detail)
+        return {
+            "command": ["delivery_depth_contract"],
+            "exit_code": 0 if passed else 1,
+            "passed": passed,
+            "stdout_tail": trimmed_detail if passed else "",
+            "stderr_tail": "" if passed else trimmed_detail,
+            "error": "" if passed else f"delivery_depth_contract_failed: {trimmed_detail}",
+            "delivery_depth_contract": {
+                "schema_version": "factory.workspace_quality.delivery_depth_contract.v1",
+                "level": level_contract.get("level"),
+                "minimums": level_contract.get("minimums"),
+                "detail": detail,
+            },
+        }
+
+    def _load_delivery_depth_level_contract(self) -> dict[str, Any] | None:
+        catalog_path = self.workspace / ".polaris" / "catalog_contract.json"
+        try:
+            payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+
+        for key in ("level_contract", "factory_bench_level_contract", "delivery_depth_contract"):
+            candidate = payload.get(key)
+            if not isinstance(candidate, dict):
+                continue
+            minimums = candidate.get("minimums")
+            if not isinstance(minimums, dict) or not minimums:
+                continue
+            normalized = dict(candidate)
+            if normalized.get("level") is None and payload.get("level") is not None:
+                normalized["level"] = payload.get("level")
+            return normalized
+        return None
 
     def workspace_quality_commands(self, context: dict[str, Any]) -> list[list[str]]:
         if not helpers.bool_from_context_or_env(

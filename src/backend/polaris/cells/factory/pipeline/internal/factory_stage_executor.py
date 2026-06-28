@@ -4763,7 +4763,8 @@ class OrchestrationStageExecutor:
 
     async def _run_workspace_quality_checks(self, run: FactoryRun, context: dict[str, Any]) -> tuple[bool, str]:
         commands = self._workspace_quality_commands(context)
-        if not commands:
+        depth_result = self._workspace_quality.delivery_depth_contract_result(context)
+        if not commands and depth_result is None:
             return True, ""
 
         timeout_seconds = float(
@@ -4809,6 +4810,9 @@ class OrchestrationStageExecutor:
             result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)
             result["phase"] = "check"
             results.append(result)
+        if not prepare_failed and depth_result is not None:
+            depth_result["phase"] = "check"
+            results.append(depth_result)
         if prepare_failed:
             for command in commands:
                 results.append(
@@ -4860,6 +4864,10 @@ class OrchestrationStageExecutor:
                     )
                     rerun_result["phase"] = "check_after_deterministic_repair"
                     det_rerun.append(rerun_result)
+                det_depth_result = self._workspace_quality.delivery_depth_contract_result(context)
+                if det_depth_result is not None:
+                    det_depth_result["phase"] = "check_after_deterministic_repair"
+                    det_rerun.append(det_depth_result)
                 results.extend(det_rerun)
                 # If all checks pass after deterministic repairs — skip LLM repair loop
                 if all(bool(item.get("passed")) for item in det_rerun):
@@ -4995,6 +5003,12 @@ class OrchestrationStageExecutor:
                         results.append(result)
                         latest_check_results.append(result)
                         rerun_results.append(result)
+                    round_depth_result = self._workspace_quality.delivery_depth_contract_result(context)
+                    if round_depth_result is not None:
+                        round_depth_result["phase"] = phase
+                        results.append(round_depth_result)
+                        latest_check_results.append(round_depth_result)
+                        rerun_results.append(round_depth_result)
             residual_failures = [item for item in latest_check_results if not bool(item.get("passed"))]
             residual_errors = self._workspace_quality_repair_errors(residual_failures) if residual_failures else []
             residual_coverage_report = self._workspace_quality_repair_coverage_report(residual_errors)

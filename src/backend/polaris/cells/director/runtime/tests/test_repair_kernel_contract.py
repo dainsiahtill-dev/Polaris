@@ -3616,6 +3616,63 @@ def test_typescript_literal_union_value_facade_repairs_ts2693_enum_like_usage() 
     assert probe.plannable_source_tools == (ts_syntax.TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL,)
 
 
+def test_typescript_missing_export_without_declaration_is_covered_unplannable() -> None:
+    diagnostics = ("src/main.ts(1,10): error TS2305: Module '\"./product\"' has no exported member 'GardenSimulator'.",)
+    base_files = {
+        "src/main.ts": "import { GardenSimulator } from './product';\nnew GardenSimulator().report();\n",
+        "src/product.ts": "export function gardenReport(): string {\n  return 'ok';\n}\n",
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["composition_summary"]["patch_count"] == 0
+
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            source_tools=(ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,),
+        )
+    )
+
+    assert probe.status == "coverage_matched_but_unplannable"
+    assert probe.plannable_source_tools == ()
+    assert probe.covered_unplannable_source_tools == (ts_syntax.TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,)
+
+
+def test_typescript_type_inference_required_diagnostics_are_metadata_only() -> None:
+    diagnostics = (
+        "src/factory.ts(10,5): error TS2353: Object literal may only specify known properties, "
+        "and 'level' does not exist in type 'FairyRecord'.",
+        "src/web.ts(119,24): error TS2344: Type 'string' does not satisfy the constraint '(...args: any) => any'.",
+    )
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=diagnostics))
+    payload = coverage.to_dict()
+
+    assert payload["covered_diagnostic_count"] == 2
+    assert payload["executable_runtime_plan_diagnostic_count"] == 0
+    assert payload["metadata_only_diagnostic_count"] == 2
+    assert payload["uncovered_diagnostic_count"] == 0
+    assert all(
+        item["known_rule_matched"] is True
+        and item["executable_runtime_plan_matched"] is False
+        and item["metadata_only_match"] is True
+        and item["coverage_status"] == "metadata_only_not_executable"
+        and item["matched_source_tools"] == ["deterministic_typescript_type_inference_required_repair"]
+        for item in payload["items"]
+    )
+
+
 def test_typescript_missing_member_batches_same_type_members_without_hash_mismatch() -> None:
     diagnostic = (
         "tests/usage.ts(3,8): error TS2339: Property 'label' does not exist on type 'Widget'.\n"
@@ -9507,13 +9564,16 @@ def test_public_strategy_catalog_is_read_only_and_non_agi_authoritative() -> Non
     assert "deterministic_rust_derive_repair" in payload["summary"]["executable_runtime_source_tools"]
     assert payload["summary"]["executable_runtime_by_language"] == expected_runtime_by_language
     executable_status_count = payload["summary"]["implementation_status_counts"].get("executable_runtime", 0)
+    metadata_status_count = payload["summary"]["implementation_status_counts"].get("metadata_rule_registered", 0)
     assert executable_status_count <= payload["summary"]["executable_runtime_binding_count"]
     assert payload["summary"]["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, (
         summary_failure_message
     )
     assert payload["summary"]["legacy_strategy_host_count"] == 0, summary_failure_message
     assert legacy_source_tools == [], summary_failure_message
-    assert payload["summary"]["legacy_strategy_host_count"] == payload["summary"]["total"] - executable_status_count
+    assert payload["summary"]["legacy_strategy_host_count"] == (
+        payload["summary"]["total"] - executable_status_count - metadata_status_count
+    )
     assert payload["summary"]["bench_driven_migration_required"] is False, summary_failure_message
     assert payload["summary"]["legacy_strategy_host_owner"] == (
         "roles.adapters.internal.director.deterministic_repairs"
@@ -9546,7 +9606,8 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         or source_tool == "deterministic_javascript_typescript_annotation_repair"
     ]
     catalog_failure_message = (
-        "expected public strategy catalog ledger total=99 executable_runtime=99 legacy_strategy_host=0; "
+        "expected public strategy catalog ledger total=100 executable_runtime=99 "
+        "metadata_rule_registered=1 legacy_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
         "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
     )
@@ -9555,17 +9616,21 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
-    assert catalog_summary["total"] == 99
+    assert catalog_summary["total"] == 100
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert legacy_source_tools == [], catalog_failure_message
     assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 99, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("metadata_rule_registered", 0) == 1, (
+        catalog_failure_message
+    )
     assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, catalog_failure_message
     assert catalog_summary["executable_runtime_binding_count"] == 99, catalog_failure_message
     assert catalog_summary["legacy_strategy_host_count"] == 0, catalog_failure_message
     assert len(catalog_summary["executable_runtime_source_tools"]) == 99, catalog_failure_message
-    assert set(catalog_summary["implementation_status_counts"]).issubset({"executable_runtime", "legacy_strategy_host"})
+    assert set(catalog_summary["implementation_status_counts"]).issubset(
+        {"executable_runtime", "metadata_rule_registered", "legacy_strategy_host"}
+    )
     assert "reserved_only" not in catalog_summary["implementation_status_counts"]
-    assert "metadata_rule_registered" not in catalog_summary["implementation_status_counts"]
 
     assert slot_summary["language_count"] == 54
     assert slot_summary["implementation_status_counts"] == {

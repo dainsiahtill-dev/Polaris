@@ -1053,6 +1053,9 @@ def _collect_step_verify_errors(adapter: Any, context: dict[str, Any] | None) ->
     workspace = str(getattr(adapter, "workspace", "") or "")
     if not workspace or not os.path.isdir(workspace):
         return []
+    environment_prep_errors = _run_step_verify_environment_prep(verify, workspace=workspace)
+    if environment_prep_errors:
+        return environment_prep_errors
     try:
         proc = subprocess.run(
             verify,
@@ -1077,6 +1080,79 @@ def _collect_step_verify_errors(adapter: Any, context: dict[str, Any] | None) ->
             f"step verify failed (exit {proc.returncode}) | {clause_detail} | full: {verify} :: {output_tail}".strip()
         ]
     return [f"step verify failed (exit {proc.returncode}): {verify} :: {output_tail}".strip()]
+
+
+_STEP_VERIFY_NODE_ENV_COMMAND_RE = re.compile(
+    r"(?:^|[\s;&|()])(?:npm|pnpm|yarn|npx|vitest|jest|tsc)\b",
+    re.IGNORECASE,
+)
+
+
+def _step_verify_environment_prep_plans(verify: str, *, workspace: str) -> list[dict[str, Any]]:
+    command_text = str(verify or "").strip()
+    workspace_path = Path(str(workspace or "")).resolve()
+    if not command_text or not workspace_path.is_dir():
+        return []
+    if not _STEP_VERIFY_NODE_ENV_COMMAND_RE.search(command_text):
+        return []
+    if not (workspace_path / "package.json").is_file():
+        return []
+    if (workspace_path / "node_modules").is_dir():
+        return []
+    try:
+        from polaris.cells.director.runtime.public import (
+            QueryDirectorRepairEnvironmentRefreshRequirementsV1,
+            RepairReceiptV1,
+            query_director_repair_environment_refresh_requirements,
+        )
+
+        receipt = RepairReceiptV1(
+            receipt_id="step_verify_environment_requirement",
+            plan_id="step_verify_environment_requirement",
+            source_tool="director_step_verify_environment_requirement",
+            status="succeeded",
+            authoritative=False,
+            files_changed=("package.json",),
+            metadata={
+                "environment_refresh_reason": "step_verify_requires_package_environment",
+                "effect_boundary": "adapter_verifier_environment_prep_probe",
+            },
+        )
+        result = query_director_repair_environment_refresh_requirements(
+            QueryDirectorRepairEnvironmentRefreshRequirementsV1(
+                receipts=(receipt,),
+                workspace=str(workspace_path),
+            )
+        )
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return []
+    return [plan.to_dict() for plan in result.plans]
+
+
+def _run_step_verify_environment_prep(verify: str, *, workspace: str) -> list[str]:
+    plans = _step_verify_environment_prep_plans(verify, workspace=workspace)
+    if not plans:
+        return []
+    workspace_path = Path(workspace).resolve()
+    errors: list[str] = []
+    try:
+        from .repair_convergence_verifier import _execute_environment_prep_plan
+    except ImportError as exc:
+        return [f"step verify environment prep failed: environment_prep_runner_unavailable: {exc}"]
+    for plan in plans:
+        receipt = _execute_environment_prep_plan(
+            plan,
+            workspace_path=workspace_path,
+            log_root=None,
+            task_id="step-verify",
+            round_number=0,
+        )
+        if receipt.get("status") in {"succeeded", "skipped_fresh"}:
+            continue
+        command = " ".join(str(part) for part in receipt.get("command") or ())
+        error_code = str(receipt.get("error_code") or "environment_prep_failed")
+        errors.append(f"step verify environment prep failed: {error_code}: {command}")
+    return errors
 
 
 def _single_file_step_target(source: Any) -> str:
@@ -1446,6 +1522,43 @@ async def _run_materialization_quality_repair_retry(
     )
     if deterministic_quality_left_source_targets:
         deterministic_quality_can_short_circuit = False
+    if _materialization_plan_probe_requires_task_boundary_triage(deterministic_quality_summary):
+        summary = dict(deterministic_quality_summary or {})
+        summary.update(
+            {
+                "stage": "runtime_plan_probe_unplannable",
+                "attempted": True,
+                "attempt": repair_attempt,
+                "success": False,
+                "success_reason": "task_boundary_interface_discrepancy_required",
+                "tool_results": len(deterministic_quality_tool_results),
+                "write_tool_evidence": False,
+                "missing_target_files": missing_target_files[:12],
+                "runtime_smoke_target_files": runtime_smoke_target_files[:12],
+                "semantic_quality_target_files": semantic_quality_target_files[:12],
+                "explicit_quality_target_files": explicit_quality_target_files[:12],
+                "repair_target_files": repair_target_files[:12],
+                "rotated_repair_targets": rotate_repair_targets,
+                "interface_discrepancy_evidence": {
+                    "schema_version": "director.task_boundary.interface_discrepancy.v1",
+                    "route": "task_boundary_quality_loop",
+                    "plan_probe_status": dict(summary.get("plan_probe_preaudit") or {}).get("status"),
+                    "covered_unplannable_source_tools": dict(summary.get("plan_probe_preaudit") or {}).get(
+                        "covered_unplannable_source_tools", []
+                    ),
+                    "covered_unplannable_diagnostic_count": dict(summary.get("plan_probe_preaudit") or {}).get(
+                        "covered_unplannable_diagnostic_count", 0
+                    ),
+                    "uncovered_diagnostic_count": dict(summary.get("plan_probe_preaudit") or {}).get(
+                        "coverage_gap_count",
+                        0,
+                    ),
+                    "llm_fallback_blocked": True,
+                    "reason": "coverage_matched_but_unplannable",
+                },
+            }
+        )
+        return deterministic_quality_tool_results, summary
     if (
         deterministic_quality_tool_results
         and has_successful_write_tool(deterministic_quality_tool_results)
@@ -1708,6 +1821,25 @@ _QUALITY_REPAIR_TARGET_BATCH_LIMIT = 12
 
 
 _DEFAULT_QUALITY_REPAIR_TIMEOUT_SECONDS = 180.0
+
+
+def _materialization_plan_probe_requires_task_boundary_triage(summary: dict[str, Any]) -> bool:
+    plan_probe = summary.get("plan_probe_preaudit")
+    if not isinstance(plan_probe, dict):
+        return False
+    if str(plan_probe.get("status") or "") != "coverage_matched_but_unplannable":
+        return False
+    if bool(plan_probe.get("plannable_source_tools")):
+        return False
+    covered_unplannable_source_tools = [
+        str(item or "") for item in plan_probe.get("covered_unplannable_source_tools") or []
+    ]
+    return any(
+        source_tool.startswith("deterministic_typescript_")
+        or source_tool.startswith("deterministic_html_typescript")
+        or source_tool.startswith("deterministic_typeorm")
+        for source_tool in covered_unplannable_source_tools
+    )
 
 
 def _resolve_quality_repair_timeout_seconds(primary_timeout_seconds: float) -> float:
@@ -3046,6 +3178,10 @@ def _explicit_artifact_quality_repair_target_files(
         item.lower(): index for index, item in enumerate(_dedupe_preserve_order(traceback_source_candidates))
     }
     priority_order = {item.lower(): index for index, item in enumerate(_dedupe_preserve_order(priority_candidates))}
+    facade_reexport_penalty = {
+        item.lower(): 1 if _javascript_facade_related_source_target_files(item, workspace_root) else 0
+        for item in deduped_candidates
+    }
     return sorted(
         deduped_candidates,
         key=lambda item: (
@@ -3058,6 +3194,7 @@ def _explicit_artifact_quality_repair_target_files(
                 if item.lower() in imported_source_order
                 else 3
             ),
+            facade_reexport_penalty.get(item.lower(), 0),
             priority_order.get(item.lower(), len(priority_order)),
             traceback_source_order.get(item.lower(), len(traceback_source_order)),
             imported_source_order.get(item.lower(), len(imported_source_order)),
@@ -3207,8 +3344,49 @@ def _javascript_test_imported_source_target_files(rel_path: str, workspace_root:
         target_rel = target.relative_to(root).as_posix()
         if _is_test_like_javascript_path(target_rel):
             continue
-        candidates.append(target_rel)
+        facade_targets = _javascript_facade_related_source_target_files(target_rel, root)
+        if facade_targets:
+            candidates.extend(facade_targets)
+            candidates.append(target_rel)
+        else:
+            candidates.append(target_rel)
     return _dedupe_preserve_order(candidates)
+
+
+def _javascript_facade_related_source_target_files(rel_path: str, workspace_root: Path) -> list[str]:
+    rel = _normalize_declared_task_path(rel_path)
+    if not rel or _is_test_like_javascript_path(rel):
+        return []
+    if Path(rel).suffix.lower() not in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES:
+        return []
+    try:
+        root = workspace_root.resolve()
+        source_path = (root / rel).resolve()
+        source_path.relative_to(root)
+        text = source_path.read_text(encoding="utf-8")
+    except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+        return []
+
+    candidates: list[str] = []
+    for import_ref in _javascript_relative_reexport_refs(text):
+        target = _resolve_javascript_relative_import_target(source_path.parent, import_ref, root)
+        if target is None:
+            continue
+        target_rel = target.relative_to(root).as_posix()
+        if _is_test_like_javascript_path(target_rel):
+            continue
+        if Path(target_rel).suffix.lower() in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES:
+            candidates.append(target_rel)
+    return _dedupe_preserve_order(candidates)
+
+
+def _javascript_relative_reexport_refs(text: str) -> list[str]:
+    refs: list[str] = []
+    patterns = (re.compile(r"\bexport\s+(?:type\s+)?(?:\{[^}]*\}|\*)\s+from\s+['\"](?P<ref>\.{1,2}/[^'\"]+)['\"]"),)
+    for pattern in patterns:
+        for match in pattern.finditer(str(text or "")):
+            refs.append(str(match.group("ref") or "").strip())
+    return _dedupe_preserve_order(refs)
 
 
 def _javascript_relative_import_refs(text: str) -> list[str]:
