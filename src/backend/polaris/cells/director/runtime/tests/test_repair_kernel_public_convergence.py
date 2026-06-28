@@ -20,9 +20,15 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairConvergenceResultV1,
     DirectorRepairConvergenceVerifierRequestV1,
     DirectorRepairVerifierSnapshotInputV1,
+    QueryDirectorRepairPlanProbeV1,
     RunDirectorRepairConvergenceCommandV1,
+    RunDirectorTaskBoundaryQualityLoopCommandV1,
 )
-from polaris.cells.director.runtime.public.service import run_director_repair_convergence
+from polaris.cells.director.runtime.public.service import (
+    query_director_repair_plan_probe,
+    run_director_repair_convergence,
+    run_director_task_boundary_quality_loop,
+)
 
 _RELATIVE_PATH = "src/models/Flight.ts"
 _SOURCE_TOOL = "deterministic_typescript_return_object_semicolon_repair"
@@ -178,6 +184,108 @@ def _command(workspace: Path, *, errors: tuple[str, ...] = (_QUALITY_ERROR,)) ->
         max_rounds=3,
         metadata={"caller": "runtime_public_test"},
     )
+
+
+def test_public_plan_probe_distinguishes_coverage_from_plannable_patch() -> None:
+    plannable_probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=(_QUALITY_ERROR,),
+            base_files={_RELATIVE_PATH: _BROKEN_CONTENT},
+        )
+    )
+
+    assert plannable_probe.status == "covered_plannable"
+    assert _SOURCE_TOOL in plannable_probe.plannable_source_tools
+    assert plannable_probe.covered_unplannable_diagnostics == ()
+    target_item = next(item for item in plannable_probe.items if item.source_tool == _SOURCE_TOOL)
+    assert target_item.patch_count == 1
+    assert target_item.status == "covered_plannable"
+
+    unplannable_probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=(_QUALITY_ERROR,),
+            base_files={},
+        )
+    )
+
+    assert unplannable_probe.status == "coverage_matched_but_unplannable"
+    assert unplannable_probe.plannable_source_tools == ()
+    assert _SOURCE_TOOL in unplannable_probe.covered_unplannable_source_tools
+    assert unplannable_probe.covered_unplannable_diagnostics
+    target_item = next(item for item in unplannable_probe.items if item.source_tool == _SOURCE_TOOL)
+    assert target_item.status == "covered_unplannable"
+
+
+def test_task_boundary_quality_loop_runs_convergence_only_after_plan_probe(tmp_path: Path) -> None:
+    target = _write_initial_file(tmp_path)
+    requests: list[DirectorRepairConvergenceVerifierRequestV1] = []
+
+    def verifier(request: DirectorRepairConvergenceVerifierRequestV1) -> DirectorRepairVerifierSnapshotInputV1:
+        requests.append(request)
+        current = target.read_text(encoding="utf-8")
+        residual_errors = () if "flightTime, landed:" in current else (_QUALITY_ERROR,)
+        return DirectorRepairVerifierSnapshotInputV1(
+            residual_artifact_quality_errors=residual_errors,
+            command=("rtk", "tsc", "--noEmit"),
+            exit_code=0 if not residual_errors else 1,
+            raw_output_ref=f"runtime/verifier/task-boundary-round-{request.round_number}.log",
+            metadata=_valid_verifier_metadata(),
+        )
+
+    result = run_director_task_boundary_quality_loop(
+        RunDirectorTaskBoundaryQualityLoopCommandV1(
+            task_id="task-boundary-public-convergence",
+            workspace=str(tmp_path),
+            artifact_quality_errors=(_QUALITY_ERROR,),
+            base_files={_RELATIVE_PATH: _BROKEN_CONTENT},
+            allowed_paths=(_RELATIVE_PATH,),
+            task_interface_contract={
+                "target_files": [_RELATIVE_PATH],
+                "exports": {"src/models/Flight.ts": ["runFlight"]},
+            },
+        ),
+        writer=_writer(tmp_path),
+        verifier=verifier,
+    )
+
+    assert result.ok is True
+    assert result.status == "task_boundary_converged"
+    assert result.plan_probe.status == "covered_plannable"
+    assert result.convergence_result is not None
+    assert result.convergence_result.ok is True
+    assert [request.round_number for request in requests] == [0, 1]
+    assert result.metadata["quality_boundary"] == "ce_task"
+    assert result.metadata["task_interface_contract_present"] is True
+
+
+def test_task_boundary_quality_loop_emits_interface_discrepancy_for_unplannable() -> None:
+    verifier_called = False
+
+    def verifier(_: DirectorRepairConvergenceVerifierRequestV1) -> DirectorRepairVerifierSnapshotInputV1:
+        nonlocal verifier_called
+        verifier_called = True
+        raise AssertionError("unplannable task boundary must stop before verifier")
+
+    result = run_director_task_boundary_quality_loop(
+        RunDirectorTaskBoundaryQualityLoopCommandV1(
+            task_id="task-boundary-unplannable",
+            workspace="/tmp/polaris-task-boundary-unplannable",
+            artifact_quality_errors=(_QUALITY_ERROR,),
+            base_files={},
+        ),
+        writer=lambda path, content: {"ok": True, "file": path, "bytes_written": len(content.encode("utf-8"))},
+        verifier=verifier,
+    )
+
+    assert verifier_called is False
+    assert result.ok is False
+    assert result.status == "coverage_matched_but_unplannable"
+    assert result.error_code == "coverage_matched_but_unplannable"
+    discrepancy_receipts = result.metadata["interface_discrepancy_receipts"]
+    assert len(discrepancy_receipts) == 1
+    assert discrepancy_receipts[0]["recommended_owner"] == "chief_engineer"
+    assert discrepancy_receipts[0]["recommended_route"] == "pending_design_interface_contract"
+    assert discrepancy_receipts[0]["macro_blueprint_regeneration_allowed"] is False
 
 
 def test_public_convergence_success_uses_typed_receipts_and_revalidation_evidence(tmp_path: Path) -> None:

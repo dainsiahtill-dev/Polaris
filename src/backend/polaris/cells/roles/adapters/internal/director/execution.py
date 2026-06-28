@@ -538,13 +538,15 @@ class DirectorPatchExecutor:
             return f"Invalid patch path: {file_path}"
         if any(ch in token for ch in ('"', "'", "`", "<", ">", "|", "\0")):
             return f"Invalid patch path: {file_path}"
+        if any(ch.isspace() for ch in token):
+            return f"Invalid patch path: {file_path}"
+        if any(ch in token for ch in ("└", "├", "│", "─", "•", "…")):
+            return f"Invalid patch path: {file_path}"
         if re.search(r"^[a-zA-Z]:", token):
             return f"Absolute patch paths are not allowed: {file_path}"
         path = Path(token)
         if path.is_absolute() or any(part == ".." for part in path.parts):
             return f"Unsafe patch path: {file_path}"
-        if not Path(token).suffix and any(ch.isspace() for ch in token):
-            return f"Invalid patch path: {file_path}"
         return None
 
     @staticmethod

@@ -6,7 +6,7 @@ quality repair host and the Director runtime repair kernel receipt model.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -439,7 +439,7 @@ def _run_materialization_typescript_compiler(
     convergence_verifier: Callable[[Any], Any] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    for source_tool in _materialization_typescript_compiler_runtime_source_tools():
+    for source_tool in _materialization_typescript_compiler_runtime_source_tools(artifact_quality_errors):
         results.extend(
             _run_materialization_typescript_runtime_repair(
                 adapter,
@@ -453,8 +453,14 @@ def _run_materialization_typescript_compiler(
     return results
 
 
-def _materialization_typescript_compiler_runtime_source_tools() -> tuple[str, ...]:
-    return _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS
+def _materialization_typescript_compiler_runtime_source_tools(
+    artifact_quality_errors: Sequence[str] | None = None,
+) -> tuple[str, ...]:
+    matched_tools = _runtime_coverage_matched_source_tools(
+        artifact_quality_errors=artifact_quality_errors,
+        source_tool_prefixes=("deterministic_typescript_",),
+    )
+    return tuple(_ordered_unique((*matched_tools, *_MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS)))
 
 
 def _run_materialization_html_entrypoint(
@@ -2538,6 +2544,30 @@ def _ordered_unique(values: Any) -> list[str]:
         seen.add(text)
         unique.append(text)
     return unique
+
+
+def _runtime_coverage_matched_source_tools(
+    *,
+    artifact_quality_errors: Sequence[str] | None,
+    source_tool_prefixes: Sequence[str],
+) -> tuple[str, ...]:
+    if not artifact_quality_errors:
+        return ()
+    coverage = _project_coverage_preaudit([str(item) for item in artifact_quality_errors])
+    catalog_by_source_tool = _repair_strategy_catalog_by_source_tool()
+    source_tools: list[str] = []
+    prefixes = tuple(str(prefix or "") for prefix in source_tool_prefixes if str(prefix or ""))
+    for item in coverage.get("items") or ():
+        if not isinstance(item, Mapping):
+            continue
+        for raw_tool in item.get("matched_source_tools") or ():
+            source_tool = str(raw_tool or "").strip()
+            if not source_tool or not source_tool.startswith(prefixes):
+                continue
+            if source_tool not in catalog_by_source_tool:
+                continue
+            source_tools.append(source_tool)
+    return tuple(_ordered_unique(source_tools))
 
 
 def _project_coverage_preaudit(artifact_quality_errors: list[str]) -> dict[str, Any]:

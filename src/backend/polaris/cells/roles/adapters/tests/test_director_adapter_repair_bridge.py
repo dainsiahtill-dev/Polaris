@@ -441,6 +441,29 @@ def test_runtime_bridge_missing_progress_callback_is_fail_soft(tmp_path: Path) -
     assert repair_kernel["requires_revalidation"] is True
 
 
+def test_runtime_bridge_skips_covered_unplannable_before_executor(tmp_path: Path) -> None:
+    executor_created = False
+
+    def executor_factory(*_: Any, **__: Any) -> Any:
+        nonlocal executor_created
+        executor_created = True
+        raise AssertionError("covered-unplannable preflight must stop before Director tool executor")
+
+    results = run_runtime_repair_with_director_tools(
+        _FakeAdapter(tmp_path),
+        workspace_path=tmp_path,
+        task_id="task-covered-unplannable",
+        source_tool=_SOURCE_TOOL,
+        executor_factory=executor_factory,
+        base_files={"src/other.ts": "export const other = true;\n"},
+        artifact_quality_errors=(_QUALITY_ERROR,),
+        allowed_paths=("src/other.ts",),
+    )
+
+    assert executor_created is False
+    assert results == []
+
+
 def test_runtime_bridge_projects_delete_file_tool_result_when_deleter_available(
     tmp_path: Path,
     monkeypatch: Any,

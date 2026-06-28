@@ -18,7 +18,11 @@ TYPESCRIPT_DUPLICATE_OBJECT_PROPERTY_SOURCE_TOOL = "deterministic_typescript_dup
 TYPESCRIPT_ENUM_MEMBER_SEPARATOR_SOURCE_TOOL = "deterministic_typescript_enum_member_separator_repair"
 TYPESCRIPT_MISSING_CLOSING_BRACE_SOURCE_TOOL = "deterministic_typescript_missing_closing_brace_repair"
 TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL = "deterministic_typescript_number_to_string_argument_repair"
+TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL = "deterministic_typescript_number_property_call_repair"
 TYPESCRIPT_READONLY_ASSIGNMENT_SOURCE_TOOL = "deterministic_typescript_readonly_assignment_repair"
+TYPESCRIPT_SHORTHAND_PROPERTY_SCOPE_SOURCE_TOOL = "deterministic_typescript_shorthand_property_scope_repair"
+TYPESCRIPT_STRING_LITERAL_SUGGESTION_SOURCE_TOOL = "deterministic_typescript_string_literal_suggestion_repair"
+TYPESCRIPT_UNKNOWN_MEMBER_ACCESS_SOURCE_TOOL = "deterministic_typescript_unknown_member_access_repair"
 TYPESCRIPT_CANVAS_SCALE_RETURN_TYPE_SOURCE_TOOL = "deterministic_typescript_canvas_scale_return_type_repair"
 HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL = "deterministic_html_typescript_module_script_repair"
 JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL = "deterministic_javascript_typescript_annotation_repair"
@@ -109,10 +113,34 @@ _TS_NUMBER_TO_STRING_ARGUMENT_RAW_RE = re.compile(
     r"of\s+type\s+['\"]string['\"]",
     re.IGNORECASE,
 )
+_TS_NUMBER_PROPERTY_CALL_RAW_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2349:\s*"
+    r"This\s+expression\s+is\s+not\s+callable",
+    re.IGNORECASE,
+)
 _TS_READONLY_ASSIGNMENT_RAW_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2540:\s*"
     r"Cannot\s+assign\s+to\s+['\"](?P<property>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+"
     r"because\s+it\s+is\s+a\s+read-only\s+property",
+    re.IGNORECASE,
+)
+_TS_STRING_LITERAL_SUGGESTION_RAW_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2820:\s*"
+    r"Type\s+(?P<actual_quote>['\"])(?P<actual>.*?)(?P=actual_quote)\s+is\s+not\s+assignable\s+to\s+type\s+"
+    r"(?P<target_quote>['\"])(?P<target>.*?)(?P=target_quote)\.\s+Did\s+you\s+mean\s+"
+    r"(?P<suggestion_quote>['\"])(?P<suggestion>.*?)(?P=suggestion_quote)\?",
+    re.IGNORECASE,
+)
+_TS_SHORTHAND_PROPERTY_SCOPE_RAW_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS18004:\s*"
+    r"No\s+value\s+exists\s+in\s+scope\s+for\s+the\s+shorthand\s+property\s+"
+    r"['\"](?P<property>[A-Za-z_$][A-Za-z0-9_$]*)['\"]",
+    re.IGNORECASE,
+)
+_TS_UNKNOWN_MEMBER_ACCESS_RAW_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS18046:\s*"
+    r"['\"](?P<receiver>[A-Za-z_$][A-Za-z0-9_$]*)\.(?P<member>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+"
+    r"is\s+of\s+type\s+['\"]unknown['\"]",
     re.IGNORECASE,
 )
 _TS_NUMBER_TO_FUNCTION_ARGUMENT_RAW_RE = re.compile(
@@ -302,6 +330,7 @@ _TS_IMPORT_FROM_SPECIFIER_TEMPLATE = (
     r"(?m)^(?P<indent>\s*)import\s+(?P<clause>.*?)\s+from\s+"
     r"(?P<quote>['\"])(?P<specifier>{specifier})(?P=quote)\s*;?\s*$"
 )
+_TS_ZERO_ARG_PROPERTY_CALL_RE = re.compile(r"\b[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+\s*\(\s*\)")
 
 
 def repair_typescript_object_literal_commas(text: str) -> str:
@@ -949,6 +978,220 @@ def build_typescript_readonly_assignment_plan(
     )
 
 
+def build_typescript_string_literal_suggestion_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build a narrow TS2820 string-literal suggestion repair plan."""
+
+    normalized_base_files = {
+        _normalize_repair_path(path): str(content or "")
+        for path, content in dict(base_files or {}).items()
+        if _normalize_repair_path(path)
+    }
+    targets_by_path = _parse_string_literal_suggestion_targets(diagnostics)
+    operations: list[RepairOperation] = []
+    matched_diagnostics: list[RepairDiagnostic] = []
+    repaired_items: list[dict[str, object]] = []
+    for path in sorted(targets_by_path):
+        if path not in normalized_base_files:
+            continue
+        original = str(normalized_base_files.get(path) or "")
+        path_operations = _string_literal_suggestion_operations(
+            path=path,
+            content=original,
+            targets=targets_by_path[path],
+        )
+        if not path_operations:
+            continue
+        path_diagnostics = tuple(diagnostic for diagnostic in diagnostics if _diagnostic_targets_path(diagnostic, path))
+        matched_diagnostics.extend(path_diagnostics)
+        operations.extend(path_operations)
+        repaired_items.extend(
+            {
+                "file": path,
+                "actual": str(operation.metadata.get("actual") or ""),
+                "suggestion": str(operation.metadata.get("suggestion") or ""),
+                "line": int(operation.metadata.get("line") or 0),
+            }
+            for operation in path_operations
+        )
+    return _repair_plan_or_none(
+        rule_id="typescript.string_literal_suggestion",
+        source_tool=TYPESCRIPT_STRING_LITERAL_SUGGESTION_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        metadata={"string_literal_suggestions": repaired_items},
+    )
+
+
+def build_typescript_number_property_call_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build a narrow TS2349 repair plan for generated numeric property calls."""
+
+    normalized_base_files = {
+        _normalize_repair_path(path): str(content or "")
+        for path, content in dict(base_files or {}).items()
+        if _normalize_repair_path(path)
+    }
+    targets_by_path = _parse_number_property_call_targets(diagnostics)
+    operations: list[RepairOperation] = []
+    matched_diagnostics: list[RepairDiagnostic] = []
+    repaired_items: list[dict[str, object]] = []
+    for path in sorted(targets_by_path):
+        if path not in normalized_base_files:
+            continue
+        original = str(normalized_base_files.get(path) or "")
+        path_operations = _number_property_call_operations(
+            path=path,
+            content=original,
+            targets=targets_by_path[path],
+        )
+        if not path_operations:
+            continue
+        path_diagnostics = tuple(diagnostic for diagnostic in diagnostics if _diagnostic_targets_path(diagnostic, path))
+        matched_diagnostics.extend(path_diagnostics)
+        operations.extend(path_operations)
+        repaired_items.extend(
+            {
+                "file": path,
+                "line": int(operation.metadata.get("line") or 0),
+                "call_expression": str(operation.metadata.get("call_expression") or ""),
+            }
+            for operation in path_operations
+        )
+    return _repair_plan_or_none(
+        rule_id="typescript.number_property_call",
+        source_tool=TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        metadata={"number_property_calls": repaired_items},
+    )
+
+
+def build_typescript_shorthand_property_scope_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build a narrow TS18004 repair plan for missing object-literal shorthand values."""
+
+    normalized_base_files = {
+        _normalize_repair_path(path): str(content or "")
+        for path, content in dict(base_files or {}).items()
+        if _normalize_repair_path(path)
+    }
+    targets_by_path = _parse_shorthand_property_scope_targets(diagnostics)
+    operations: list[RepairOperation] = []
+    matched_diagnostics: list[RepairDiagnostic] = []
+    repaired_items: list[dict[str, object]] = []
+    for path in sorted(targets_by_path):
+        if path not in normalized_base_files:
+            continue
+        original = str(normalized_base_files.get(path) or "")
+        path_operations = _shorthand_property_scope_operations(
+            path=path,
+            content=original,
+            targets=targets_by_path[path],
+        )
+        if not path_operations:
+            continue
+        path_diagnostics = tuple(diagnostic for diagnostic in diagnostics if _diagnostic_targets_path(diagnostic, path))
+        matched_diagnostics.extend(path_diagnostics)
+        operations.extend(path_operations)
+        repaired_items.extend(
+            {
+                "file": path,
+                "line": int(operation.metadata.get("line") or 0),
+                "property": str(operation.metadata.get("property") or ""),
+            }
+            for operation in path_operations
+        )
+    return _repair_plan_or_none(
+        rule_id="typescript.shorthand_property_scope",
+        source_tool=TYPESCRIPT_SHORTHAND_PROPERTY_SCOPE_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        metadata={"shorthand_properties": repaired_items},
+    )
+
+
+def build_typescript_unknown_member_access_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Build a narrow TS18046 repair plan for unknown typed member access."""
+
+    normalized_base_files = {
+        _normalize_repair_path(path): str(content or "")
+        for path, content in dict(base_files or {}).items()
+        if _normalize_repair_path(path)
+    }
+    targets = _parse_unknown_member_access_targets(diagnostics)
+    operations: list[RepairOperation] = []
+    matched_diagnostics: list[RepairDiagnostic] = []
+    repaired_items: list[dict[str, str]] = []
+    for target in targets:
+        usage_path = str(target.get("file") or "")
+        usage_text = str(normalized_base_files.get(usage_path) or "")
+        line_number = _to_positive_int(target.get("line"))
+        receiver = str(target.get("receiver") or "")
+        member = str(target.get("member") or "")
+        if not usage_text or not _TS_IDENTIFIER_RE.fullmatch(receiver) or not _TS_IDENTIFIER_RE.fullmatch(member):
+            continue
+        usage_line = _typescript_line_at(usage_text, line_number)
+        replacement_type = _typescript_usage_compatible_member_type(usage_line, member)
+        if not replacement_type:
+            continue
+        type_name = _typescript_unknown_member_receiver_type(
+            base_files=normalized_base_files,
+            usage_path=usage_path,
+            receiver=receiver,
+        )
+        if not type_name:
+            continue
+        operation = _typescript_unknown_member_type_operation(
+            base_files=normalized_base_files,
+            type_name=type_name,
+            member=member,
+            replacement_type=replacement_type,
+        )
+        if operation is None:
+            continue
+        operations.append(operation)
+        matched_diagnostics.extend(
+            diagnostic for diagnostic in diagnostics if _diagnostic_targets_path(diagnostic, usage_path)
+        )
+        repaired_items.append(
+            {
+                "file": operation.path,
+                "type": type_name,
+                "member": member,
+                "replacement_type": replacement_type,
+            }
+        )
+    return _repair_plan_or_none(
+        rule_id="typescript.unknown_member_access",
+        source_tool=TYPESCRIPT_UNKNOWN_MEMBER_ACCESS_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        metadata={"unknown_member_accesses": repaired_items},
+    )
+
+
 def build_typescript_canvas_scale_return_type_plan(
     *,
     base_files: Mapping[str, str],
@@ -1013,14 +1256,18 @@ def build_typescript_runtime_plan_for_source_tool(
         TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL: _build_typescript_member_alias_plan,
         TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL: _build_typescript_missing_export_plan,
         TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL: _build_typescript_missing_member_plan,
+        TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL: build_typescript_number_property_call_plan,
         TYPESCRIPT_REEXPORT_SOURCE_TOOL: _build_typescript_reexport_plan,
         TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL: _build_typescript_reexported_type_binding_plan,
         TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL: _build_typescript_relative_import_case_plan,
         TYPESCRIPT_SCAFFOLD_SOURCE_TOOL: _build_typescript_scaffold_plan,
+        TYPESCRIPT_SHORTHAND_PROPERTY_SCOPE_SOURCE_TOOL: build_typescript_shorthand_property_scope_plan,
         TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL: _build_typescript_sourcefile_diagnostics_plan,
+        TYPESCRIPT_STRING_LITERAL_SUGGESTION_SOURCE_TOOL: build_typescript_string_literal_suggestion_plan,
         TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL: _build_typescript_too_few_arguments_plan,
         TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL: _build_typescript_tsconfig_lib_plan,
         TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL: _build_typescript_tsconfig_rootdir_plan,
+        TYPESCRIPT_UNKNOWN_MEMBER_ACCESS_SOURCE_TOOL: build_typescript_unknown_member_access_plan,
         TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL: _build_typescript_uninitialized_property_plan,
         TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL: _build_typescript_unique_export_import_plan,
         TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL: _build_typescript_unresolved_identifier_plan,
@@ -1474,7 +1721,7 @@ def _build_typescript_missing_member_plan(
         _typescript_object_literal_missing_member_operations(base_files=base_files, diagnostics=diagnostics)
     )
     members: list[dict[str, str]] = []
-    grouped_members: dict[str, dict[str, bool]] = {}
+    grouped_members: dict[str, dict[str, dict[str, object]]] = {}
     for item in _parse_typescript_missing_member_errors(diagnostics):
         type_name = _typescript_declaration_type_name(item["type"])
         member = item["member"]
@@ -1484,6 +1731,12 @@ def _build_typescript_missing_member_plan(
         usage_text = str(base_files.get(usage_path) or "")
         line_number = _to_positive_int(item.get("line"))
         member_is_call = _typescript_member_usage_is_call(usage_text, line_number, member)
+        declared_type = _typescript_missing_member_declared_type(
+            usage_text,
+            line_number,
+            member,
+            member_is_call=member_is_call,
+        )
         existing_members = _typescript_existing_member_names_for_type(base_files=base_files, type_name=type_name)
         receiver = ""
         if line_number > 0:
@@ -1497,12 +1750,24 @@ def _build_typescript_missing_member_plan(
         ):
             continue
         type_members = grouped_members.setdefault(type_name, {})
-        type_members[member] = type_members.get(member, False) or member_is_call
+        existing = type_members.get(member) or {}
+        existing_type = str(existing.get("declared_type") or "")
+        type_members[member] = {
+            "is_call": bool(existing.get("is_call")) or member_is_call,
+            "declared_type": existing_type if existing_type and existing_type != "unknown" else declared_type,
+        }
     for type_name, type_members in grouped_members.items():
         operation = _add_typescript_members_operation(
             base_files=base_files,
             type_name=type_name,
-            members=tuple(type_members.items()),
+            members=tuple(
+                (
+                    member,
+                    bool(spec.get("is_call")),
+                    str(spec.get("declared_type") or "unknown"),
+                )
+                for member, spec in type_members.items()
+            ),
         )
         if operation is None:
             continue
@@ -2742,25 +3007,33 @@ def _typescript_object_literal_missing_member_operations(
             type_name=type_name,
             members=tuple(member_lines),
         )
-        if not method_specs:
-            continue
-        operations.extend(
-            _typescript_interface_method_return_operations(
+        if method_specs:
+            operations.extend(
+                _typescript_interface_method_return_operations(
+                    path=path,
+                    content=content,
+                    type_name=type_name,
+                    method_specs=method_specs,
+                )
+            )
+            object_operation = _typescript_object_literal_method_implementation_operation(
                 path=path,
                 content=content,
                 type_name=type_name,
+                member_lines=member_lines,
                 method_specs=method_specs,
             )
-        )
-        object_operation = _typescript_object_literal_method_implementation_operation(
+            if object_operation is not None:
+                operations.append(object_operation)
+        property_operation = _typescript_object_literal_required_properties_operation(
+            base_files=base_files,
             path=path,
             content=content,
             type_name=type_name,
             member_lines=member_lines,
-            method_specs=method_specs,
         )
-        if object_operation is not None:
-            operations.append(object_operation)
+        if property_operation is not None:
+            operations.append(property_operation)
     return tuple(operations)
 
 
@@ -2961,6 +3234,185 @@ def _typescript_object_literal_method_implementation_operation(
             "expected_context_after": content[span_start : span_start + 8],
         },
     )
+
+
+def _typescript_object_literal_required_properties_operation(
+    *,
+    base_files: Mapping[str, str],
+    path: str,
+    content: str,
+    type_name: str,
+    member_lines: Mapping[str, int],
+) -> RepairOperation | None:
+    member_types = _typescript_declared_member_types_for_type(base_files=base_files, type_name=type_name)
+    if not member_types:
+        return None
+    object_bounds = _typescript_object_literal_bounds_near_line(
+        content=content,
+        line_number=max((line for line in member_lines.values() if line > 0), default=0),
+    )
+    if object_bounds is None:
+        return None
+    body_start, body_end, close_indent = object_bounds
+    object_body = content[body_start:body_end]
+    entry_indent = f"{close_indent}  "
+    declarations: list[str] = []
+    repaired_members: list[str] = []
+    for member in sorted(member_lines):
+        if not _TS_IDENTIFIER_RE.fullmatch(member):
+            continue
+        if re.search(rf"(?m)^\s*{re.escape(member)}\s*:", object_body):
+            continue
+        default_value = _typescript_default_value_for_required_property_type(member_types.get(member, ""))
+        if not default_value:
+            continue
+        declarations.append(f"{entry_indent}{member}: {default_value},\n")
+        repaired_members.append(member)
+    if not declarations:
+        return None
+    context_start = max(0, body_end - 240)
+    span_end = body_end + len(close_indent)
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=body_end,
+        span_end=span_end,
+        expected=close_indent,
+        replacement="".join(declarations) + close_indent,
+        before_hash=sha256_text(content),
+        metadata={
+            "repair_kind": "typescript_object_literal_required_properties",
+            "type": type_name,
+            "members": tuple(repaired_members),
+            "expected_context_before": content[context_start:body_end],
+            "expected_context_after": content[span_end : span_end + 8],
+        },
+    )
+
+
+def _typescript_declared_member_types_for_type(*, base_files: Mapping[str, str], type_name: str) -> dict[str, str]:
+    if not _TS_IDENTIFIER_RE.fullmatch(type_name):
+        return {}
+    escaped = re.escape(type_name)
+    member_types: dict[str, str] = {}
+    for content in base_files.values():
+        declaration_match = re.search(
+            rf"(?m)^(?:export\s+)?(?:interface|class)\s+{escaped}\b[^\n]*{{",
+            str(content or ""),
+        )
+        if not declaration_match:
+            continue
+        declaration_end = str(content or "").find("\n}", declaration_match.end())
+        if declaration_end < 0:
+            continue
+        body = str(content or "")[declaration_match.end() : declaration_end]
+        for member_match in re.finditer(
+            r"(?m)^\s*(?:(?:public|private|protected|readonly|static|abstract)\s+)*"
+            r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(?P<type>[^;=\n]+)\s*(?:;|=)",
+            body,
+        ):
+            name = str(member_match.group("name") or "")
+            ts_type = str(member_match.group("type") or "").strip()
+            if _TS_IDENTIFIER_RE.fullmatch(name) and ts_type:
+                member_types[name] = ts_type
+    return member_types
+
+
+def _typescript_object_literal_bounds_near_line(
+    *,
+    content: str,
+    line_number: int,
+) -> tuple[int, int, str] | None:
+    text = str(content or "")
+    line_offsets = _text_line_start_offsets(text)
+    search_start = line_offsets[line_number - 1] if 0 < line_number <= len(line_offsets) else 0
+    candidates: list[re.Match[str]] = []
+    for match in re.finditer(r"\breturn\s+(?:Object\.freeze\s*\(\s*)?{", text):
+        if match.start() <= search_start + 240:
+            candidates.append(match)
+    for match in re.finditer(r"=\s*{", text):
+        if abs(match.start() - search_start) <= 240:
+            candidates.append(match)
+    for match in sorted(candidates, key=lambda item: abs(item.start() - search_start)):
+        open_brace = text.find("{", match.start(), match.end())
+        if open_brace < 0:
+            continue
+        close_brace = _typescript_matching_brace_index(text, open_brace)
+        if close_brace <= open_brace:
+            continue
+        close_line_start = text.rfind("\n", 0, close_brace) + 1
+        close_indent = text[close_line_start:close_brace]
+        if close_indent.strip():
+            close_indent = ""
+        return (open_brace + 1, close_line_start, close_indent)
+    return None
+
+
+def _typescript_matching_brace_index(text: str, open_brace: int) -> int:
+    if open_brace < 0 or open_brace >= len(text) or text[open_brace] != "{":
+        return -1
+    depth = 0
+    quote = ""
+    escaped = False
+    for index in range(open_brace, len(text)):
+        char = text[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            continue
+        if char in {"'", '"', "`"}:
+            quote = char
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
+
+
+def _typescript_safe_structural_member_type(ts_type: str) -> bool:
+    normalized = " ".join(str(ts_type or "").strip().split())
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    if lowered in {"unknown", "any", "string", "number", "boolean", "object"}:
+        return True
+    if re.fullmatch(r"readonlyarray\s*<\s*unknown\s*>", lowered):
+        return True
+    if re.fullmatch(r"record\s*<\s*(?:string|number)\s*,\s*unknown\s*>", lowered):
+        return True
+    if re.fullmatch(r"\{[\w\s:;,<>|\"'[\].-]*}", normalized):
+        return True
+    if re.fullmatch(r"(?:readonly\s+)?[A-Za-z_$][A-Za-z0-9_$]*(?:\[\])+", normalized):
+        return True
+    return bool(re.fullmatch(r"(?:\"[^\"]+\"|'[^']+')(?:\s*\|\s*(?:\"[^\"]+\"|'[^']+'))*", normalized))
+
+
+def _typescript_default_value_for_required_property_type(ts_type: str) -> str:
+    normalized = " ".join(str(ts_type or "").strip().split())
+    lowered = normalized.lower()
+    if not normalized:
+        return ""
+    if "null" in {part.strip() for part in lowered.split("|")}:
+        return "null"
+    if lowered in {"unknown", "any", "object"}:
+        return "{}"
+    if "[]" in lowered or lowered.startswith("readonlyarray"):
+        return "[]"
+    if lowered.startswith("record<") or (normalized.startswith("{") and normalized.endswith("}")):
+        return "{}"
+    literal_match = re.match(r"^(?:'([^']+)'|\"([^\"]+)\")", normalized)
+    if literal_match:
+        value = str(literal_match.group(1) or literal_match.group(2) or "")
+        return json.dumps(value)
+    default_value = _typescript_default_value_for_type(normalized)
+    return default_value if default_value != "undefined" else ""
 
 
 def _text_line_start_offsets(text: str) -> list[int]:
@@ -3187,11 +3639,121 @@ def _apply_single_text_operation(content: str, operation: RepairOperation) -> st
     return content[: operation.span_start] + str(operation.replacement or "") + content[operation.span_end :]
 
 
-def _typescript_member_usage_is_call(text: str, line_number: int, member: str) -> bool:
+def _typescript_line_at(text: str, line_number: int) -> str:
     lines = str(text or "").splitlines()
     if line_number <= 0 or line_number > len(lines):
-        return False
-    return bool(re.search(rf"\.\s*{re.escape(member)}\s*\(", lines[line_number - 1]))
+        return ""
+    return lines[line_number - 1]
+
+
+def _typescript_member_usage_is_call(text: str, line_number: int, member: str) -> bool:
+    return bool(re.search(rf"\.\s*{re.escape(member)}\s*\(", _typescript_line_at(text, line_number)))
+
+
+def _typescript_missing_member_declared_type(text: str, line_number: int, member: str, *, member_is_call: bool) -> str:
+    if member_is_call:
+        return ""
+    return _typescript_usage_compatible_member_type(_typescript_line_at(text, line_number), member) or "unknown"
+
+
+def _typescript_usage_compatible_member_type(usage_line: str, member: str) -> str:
+    if not _TS_IDENTIFIER_RE.fullmatch(member):
+        return ""
+    escaped = re.escape(member)
+    line = str(usage_line or "")
+    if re.search(rf"\.\s*{escaped}\s*\[", line):
+        return "Record<string, unknown>"
+    if re.search(rf"\.\s*{escaped}\s*\.\s*(?:length|map|filter|reduce|forEach|some|every|find)\b", line):
+        return "ReadonlyArray<unknown>"
+    return ""
+
+
+def _typescript_unknown_member_receiver_type(
+    *,
+    base_files: Mapping[str, str],
+    usage_path: str,
+    receiver: str,
+) -> str:
+    usage_text = str(base_files.get(usage_path) or "")
+    if not usage_text or not _TS_IDENTIFIER_RE.fullmatch(receiver):
+        return ""
+    explicit_match = re.search(
+        rf"\b(?:const|let|var)\s+{re.escape(receiver)}\s*:\s*(?P<type>[A-Za-z_$][A-Za-z0-9_$]*)\b",
+        usage_text,
+    )
+    if explicit_match:
+        return str(explicit_match.group("type") or "")
+    initializer_match = re.search(
+        rf"\b(?:const|let|var)\s+{re.escape(receiver)}\s*=\s*(?P<callee>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(",
+        usage_text,
+    )
+    if not initializer_match:
+        return ""
+    callee = str(initializer_match.group("callee") or "")
+    if not _TS_IDENTIFIER_RE.fullmatch(callee):
+        return ""
+    for content in base_files.values():
+        return_type_match = re.search(
+            rf"\b(?:export\s+)?function\s+{re.escape(callee)}\s*\([^)]*\)\s*:\s*"
+            rf"(?P<type>[A-Za-z_$][A-Za-z0-9_$]*)\b",
+            str(content or ""),
+        )
+        if return_type_match:
+            return str(return_type_match.group("type") or "")
+    return ""
+
+
+def _typescript_unknown_member_type_operation(
+    *,
+    base_files: Mapping[str, str],
+    type_name: str,
+    member: str,
+    replacement_type: str,
+) -> RepairOperation | None:
+    if not _TS_IDENTIFIER_RE.fullmatch(type_name) or not _TS_IDENTIFIER_RE.fullmatch(member):
+        return None
+    if not _typescript_safe_structural_member_type(replacement_type):
+        return None
+    escaped_type = re.escape(type_name)
+    escaped_member = re.escape(member)
+    for path, content in base_files.items():
+        declaration_match = re.search(
+            rf"(?m)^(?:export\s+)?(?P<kind>interface|class)\s+{escaped_type}\b[^\n]*{{",
+            content,
+        )
+        if not declaration_match:
+            continue
+        declaration_end = content.find("\n}", declaration_match.end())
+        if declaration_end < 0:
+            continue
+        body = content[declaration_match.end() : declaration_end]
+        member_match = re.search(
+            rf"(?m)^(?P<indent>\s*)(?P<prefix>(?:(?:public|private|protected|readonly|static|abstract)\s+)*)"
+            rf"{escaped_member}\s*:\s*unknown\s*;",
+            body,
+        )
+        if not member_match:
+            continue
+        prefix = str(member_match.group("prefix") or "")
+        replacement = f"{member_match.group('indent')}{prefix}{member}: {replacement_type};"
+        span_start = declaration_match.end() + member_match.start()
+        span_end = declaration_match.end() + member_match.end()
+        return RepairOperation(
+            kind="text_replace",
+            path=path,
+            span_start=span_start,
+            span_end=span_end,
+            expected=str(member_match.group(0) or ""),
+            replacement=replacement,
+            before_hash=sha256_text(content),
+            metadata={
+                "repair_kind": "typescript_unknown_member_access",
+                "type": type_name,
+                "member": member,
+                "replacement_type": replacement_type,
+            },
+        )
+    return None
 
 
 def _add_typescript_member_operation(
@@ -3234,7 +3796,7 @@ def _add_typescript_members_operation(
     *,
     base_files: Mapping[str, str],
     type_name: str,
-    members: Sequence[tuple[str, bool]],
+    members: Sequence[tuple[str, bool, str]],
 ) -> RepairOperation | None:
     escaped = re.escape(type_name)
     for path, content in base_files.items():
@@ -3247,19 +3809,22 @@ def _add_typescript_members_operation(
         existing = _typescript_existing_member_names_for_type(base_files={path: content}, type_name=type_name)
         declarations: list[str] = []
         is_class = str(match.group("kind") or "") == "class"
-        for member, member_is_call in members:
+        for member, member_is_call, declared_type in members:
             if member in existing or not _TS_IDENTIFIER_RE.fullmatch(member):
                 continue
+            value_type = declared_type if _typescript_safe_structural_member_type(declared_type) else "unknown"
             if is_class and member_is_call:
                 declarations.append(
                     f"\n  public {member}(..._args: unknown[]): unknown {{\n    return undefined;\n  }}"
                 )
             elif is_class:
-                declarations.append(f"\n  public {member}: unknown = undefined;")
+                declarations.append(
+                    f"\n  public {member}: {value_type} = {_typescript_default_value_for_required_property_type(value_type)};"
+                )
             elif member_is_call:
                 declarations.append(f"\n  {member}(..._args: unknown[]): unknown;")
             else:
-                declarations.append(f"\n  {member}: unknown;")
+                declarations.append(f"\n  {member}: {value_type};")
         if not declarations:
             return None
         context_start = max(0, match.start())
@@ -3274,7 +3839,7 @@ def _add_typescript_members_operation(
             metadata={
                 "repair_kind": "typescript_missing_member",
                 "type": type_name,
-                "members": tuple(member for member, _is_call in members),
+                "members": tuple(member for member, _is_call, _declared_type in members),
                 "batched_same_type_members": True,
                 "expected_context_before": content[context_start:insert_at],
                 "expected_context_after": content[insert_at : insert_at + 2],
@@ -4697,6 +5262,24 @@ def _parse_number_to_string_argument_targets(
     return by_path
 
 
+def _parse_number_property_call_targets(
+    diagnostics: Sequence[RepairDiagnostic],
+) -> dict[str, set[tuple[int, int]]]:
+    by_path: dict[str, set[tuple[int, int]]] = {}
+    for diagnostic in diagnostics:
+        text = str(diagnostic.raw or diagnostic.message or "")
+        for match in _TS_NUMBER_PROPERTY_CALL_RAW_RE.finditer(text):
+            path = _normalize_repair_path(str(match.group("file") or ""))
+            line = _to_positive_int(match.group("line"))
+            column = _to_positive_int(match.group("col"))
+            if path and line > 0 and column > 0:
+                by_path.setdefault(path, set()).add((line, column))
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        if _is_number_property_call_diagnostic(diagnostic) and path and diagnostic.line and diagnostic.column:
+            by_path.setdefault(path, set()).add((int(diagnostic.line), int(diagnostic.column)))
+    return by_path
+
+
 def _parse_readonly_assignment_targets(
     diagnostics: Sequence[RepairDiagnostic],
 ) -> dict[str, set[tuple[int, int, str]]]:
@@ -4719,6 +5302,158 @@ def _parse_readonly_assignment_targets(
     return by_path
 
 
+def _parse_shorthand_property_scope_targets(
+    diagnostics: Sequence[RepairDiagnostic],
+) -> dict[str, set[tuple[int, int, str]]]:
+    by_path: dict[str, set[tuple[int, int, str]]] = {}
+    for diagnostic in diagnostics:
+        text = str(diagnostic.raw or diagnostic.message or "")
+        for match in _TS_SHORTHAND_PROPERTY_SCOPE_RAW_RE.finditer(text):
+            path = _normalize_repair_path(str(match.group("file") or ""))
+            line = _to_positive_int(match.group("line"))
+            column = _to_positive_int(match.group("col"))
+            prop = str(match.group("property") or "").strip()
+            if path and line > 0 and column > 0 and _TS_IDENTIFIER_RE.fullmatch(prop):
+                by_path.setdefault(path, set()).add((line, column, prop))
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        if _is_shorthand_property_scope_diagnostic(diagnostic) and path and diagnostic.line and diagnostic.column:
+            prop_match = re.search(
+                r"shorthand property ['\"](?P<property>[A-Za-z_$][A-Za-z0-9_$]*)['\"]",
+                text,
+                re.IGNORECASE,
+            )
+            prop = str(prop_match.group("property") or "").strip() if prop_match else ""
+            if _TS_IDENTIFIER_RE.fullmatch(prop):
+                by_path.setdefault(path, set()).add((int(diagnostic.line), int(diagnostic.column), prop))
+    return by_path
+
+
+def _parse_unknown_member_access_targets(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+
+    def _append_target(*, path: str, line: object, column: object, receiver: str, member: str) -> None:
+        normalized_path = _normalize_repair_path(path)
+        normalized_line = str(line or "")
+        normalized_receiver = str(receiver or "")
+        normalized_member = str(member or "")
+        key = (normalized_path, normalized_line, normalized_receiver, normalized_member)
+        if key in seen:
+            return
+        seen.add(key)
+        parsed.append(
+            {
+                "file": normalized_path,
+                "line": normalized_line,
+                "column": str(column or ""),
+                "receiver": normalized_receiver,
+                "member": normalized_member,
+            }
+        )
+
+    for diagnostic in diagnostics:
+        text = str(diagnostic.raw or diagnostic.message or "")
+        for match in _TS_UNKNOWN_MEMBER_ACCESS_RAW_RE.finditer(text):
+            _append_target(
+                path=str(match.group("file") or ""),
+                line=match.group("line"),
+                column=match.group("col"),
+                receiver=str(match.group("receiver") or ""),
+                member=str(match.group("member") or ""),
+            )
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        if diagnostic.code.lower() == "typescript_ts18046" and path and diagnostic.line:
+            inline_match = re.search(
+                r"['\"](?P<receiver>[A-Za-z_$][A-Za-z0-9_$]*)\.(?P<member>[A-Za-z_$][A-Za-z0-9_$]*)['\"]"
+                r"\s+is\s+of\s+type\s+['\"]unknown['\"]",
+                text,
+                re.IGNORECASE,
+            )
+            if inline_match:
+                _append_target(
+                    path=path,
+                    line=diagnostic.line,
+                    column=diagnostic.column,
+                    receiver=str(inline_match.group("receiver") or ""),
+                    member=str(inline_match.group("member") or ""),
+                )
+    return [
+        item
+        for item in parsed
+        if item["file"]
+        and _to_positive_int(item.get("line")) > 0
+        and _TS_IDENTIFIER_RE.fullmatch(item["receiver"])
+        and _TS_IDENTIFIER_RE.fullmatch(item["member"])
+    ]
+
+
+def _parse_string_literal_suggestion_targets(
+    diagnostics: Sequence[RepairDiagnostic],
+) -> dict[str, set[tuple[int, int, str, str]]]:
+    by_path: dict[str, set[tuple[int, int, str, str]]] = {}
+    for diagnostic in diagnostics:
+        text = str(diagnostic.raw or diagnostic.message or "")
+        for match in _TS_STRING_LITERAL_SUGGESTION_RAW_RE.finditer(text):
+            path = _normalize_repair_path(str(match.group("file") or ""))
+            line = _to_positive_int(match.group("line"))
+            column = _to_positive_int(match.group("col"))
+            actual = _strip_typescript_literal_type(str(match.group("actual") or "").strip())
+            suggestion = _strip_typescript_literal_type(str(match.group("suggestion") or "").strip())
+            if _valid_string_literal_suggestion_target(path, line, column, actual, suggestion):
+                by_path.setdefault(path, set()).add((line, column, actual, suggestion))
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        if _is_string_literal_suggestion_diagnostic(diagnostic) and path and diagnostic.line and diagnostic.column:
+            inline_match = re.search(
+                r"Type (?P<actual_quote>['\"])(?P<actual>.*?)(?P=actual_quote) is not assignable to type "
+                r"(?P<target_quote>['\"]).*?(?P=target_quote)\.\s+Did you mean "
+                r"(?P<suggestion_quote>['\"])(?P<suggestion>.*?)(?P=suggestion_quote)\?",
+                text,
+            )
+            actual = (
+                _strip_typescript_literal_type(str(inline_match.group("actual") or "").strip()) if inline_match else ""
+            )
+            suggestion = (
+                _strip_typescript_literal_type(str(inline_match.group("suggestion") or "").strip())
+                if inline_match
+                else ""
+            )
+            line = int(diagnostic.line)
+            column = int(diagnostic.column)
+            if _valid_string_literal_suggestion_target(path, line, column, actual, suggestion):
+                by_path.setdefault(path, set()).add((line, column, actual, suggestion))
+    return by_path
+
+
+def _strip_typescript_literal_type(value: str) -> str:
+    normalized = str(value or "").strip()
+    if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {"'", '"'}:
+        return normalized[1:-1]
+    return normalized
+
+
+def _valid_string_literal_suggestion_target(
+    path: str,
+    line: int,
+    column: int,
+    actual: str,
+    suggestion: str,
+) -> bool:
+    return (
+        bool(path)
+        and line > 0
+        and column > 0
+        and bool(actual)
+        and bool(suggestion)
+        and actual != suggestion
+        and "\n" not in actual
+        and "\r" not in actual
+        and "\n" not in suggestion
+        and "\r" not in suggestion
+        and len(actual) <= 160
+        and len(suggestion) <= 160
+    )
+
+
 def _is_missing_closing_brace_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     message = str(diagnostic.message or diagnostic.raw or "").lower()
     return diagnostic.code.lower() == "typescript_ts1005" and "expected" in message and "}" in message
@@ -4735,12 +5470,35 @@ def _is_number_to_string_argument(diagnostic: RepairDiagnostic) -> bool:
     )
 
 
+def _is_number_property_call_diagnostic(diagnostic: RepairDiagnostic) -> bool:
+    message = str(diagnostic.message or diagnostic.raw or "").lower()
+    return diagnostic.code.lower() == "typescript_ts2349" and "not callable" in message
+
+
 def _is_readonly_assignment_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     message = f"{diagnostic.message}\n{diagnostic.raw}".lower()
     return (
         diagnostic.code.lower() == "typescript_ts2540"
         and "cannot assign to" in message
         and "read-only property" in message
+    )
+
+
+def _is_shorthand_property_scope_diagnostic(diagnostic: RepairDiagnostic) -> bool:
+    message = f"{diagnostic.message}\n{diagnostic.raw}".lower()
+    return (
+        diagnostic.code.lower() == "typescript_ts18004"
+        and "no value exists in scope" in message
+        and "shorthand property" in message
+    )
+
+
+def _is_string_literal_suggestion_diagnostic(diagnostic: RepairDiagnostic) -> bool:
+    message = f"{diagnostic.message}\n{diagnostic.raw}".lower()
+    return (
+        diagnostic.code.lower() == "typescript_ts2820"
+        and "not assignable to type" in message
+        and "did you mean" in message
     )
 
 
@@ -4763,9 +5521,13 @@ def _diagnostic_targets_path(diagnostic: RepairDiagnostic, path: str) -> bool:
         _normalize_repair_path(str(match.group("file") or ""))
         for pattern in (
             _TS_MISSING_CLOSING_BRACE_RAW_RE,
+            _TS_NUMBER_PROPERTY_CALL_RAW_RE,
             _TS_NUMBER_TO_STRING_ARGUMENT_RAW_RE,
             _TS_NUMBER_TO_FUNCTION_ARGUMENT_RAW_RE,
             _TS_READONLY_ASSIGNMENT_RAW_RE,
+            _TS_SHORTHAND_PROPERTY_SCOPE_RAW_RE,
+            _TS_STRING_LITERAL_SUGGESTION_RAW_RE,
+            _TS_UNKNOWN_MEMBER_ACCESS_RAW_RE,
         )
         for match in pattern.finditer(str(diagnostic.raw or diagnostic.message or ""))
     }
@@ -4843,6 +5605,239 @@ def _number_to_string_argument_operations(
     return tuple(operations)
 
 
+def _number_property_call_operations(
+    *,
+    path: str,
+    content: str,
+    targets: set[tuple[int, int]],
+) -> tuple[RepairOperation, ...]:
+    if not targets:
+        return ()
+    before_hash = sha256_text(content)
+    lines = str(content or "").splitlines(keepends=True)
+    offsets = _line_start_offsets(lines)
+    columns_by_line: dict[int, set[int]] = {}
+    for line, column in targets:
+        if line > 0 and column > 0:
+            columns_by_line.setdefault(line, set()).add(column)
+    operations: list[RepairOperation] = []
+    for line_number in sorted(columns_by_line):
+        line_index = line_number - 1
+        if line_index < 0 or line_index >= len(lines):
+            continue
+        line_body = lines[line_index].rstrip("\r\n")
+        candidate = _number_property_call_candidate(line_body, columns_by_line[line_number])
+        if candidate is None:
+            continue
+        call_start, call_end, paren_start, paren_end = candidate
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=path,
+                span_start=offsets[line_index] + paren_start,
+                span_end=offsets[line_index] + paren_end,
+                expected=line_body[paren_start:paren_end],
+                replacement="",
+                before_hash=before_hash,
+                metadata={
+                    "repair_kind": "typescript_number_property_call",
+                    "line": line_number,
+                    "columns": tuple(sorted(columns_by_line[line_number])),
+                    "call_expression": line_body[call_start:call_end],
+                    "unique_context": lines[line_index],
+                },
+            )
+        )
+    return tuple(operations)
+
+
+def _number_property_call_candidate(
+    line: str,
+    columns: set[int],
+) -> tuple[int, int, int, int] | None:
+    matches = [
+        match
+        for match in _TS_ZERO_ARG_PROPERTY_CALL_RE.finditer(line)
+        if _property_call_is_near_columns(match.start(), match.end(), columns)
+    ]
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    paren_start = str(line).rfind("(", match.start(), match.end())
+    if paren_start < 0:
+        return None
+    paren_end = str(line).find(")", paren_start)
+    if paren_end < 0:
+        return None
+    return match.start(), match.end(), paren_start, paren_end + 1
+
+
+def _property_call_is_near_columns(start: int, end: int, columns: set[int]) -> bool:
+    if not columns:
+        return True
+    for column in columns:
+        zero_based = max(0, column - 1)
+        if start <= zero_based <= end:
+            return True
+        if zero_based < start and start - zero_based <= 120:
+            return True
+    return False
+
+
+def _string_literal_suggestion_operations(
+    *,
+    path: str,
+    content: str,
+    targets: set[tuple[int, int, str, str]],
+) -> tuple[RepairOperation, ...]:
+    if not targets:
+        return ()
+    before_hash = sha256_text(content)
+    lines = str(content or "").splitlines(keepends=True)
+    offsets = _line_start_offsets(lines)
+    operations: list[RepairOperation] = []
+    seen_lines: set[int] = set()
+    for line_number, column, actual, suggestion in sorted(targets):
+        if line_number in seen_lines:
+            continue
+        line_index = line_number - 1
+        if line_index < 0 or line_index >= len(lines):
+            continue
+        original_line = lines[line_index]
+        line_body = original_line.rstrip("\r\n")
+        newline = original_line[len(line_body) :]
+        matches = list(_string_literal_matches(line_body, actual))
+        if len(matches) != 1:
+            continue
+        match = matches[0]
+        if not _column_is_near_span(column, match.start(), match.end()):
+            continue
+        quote = str(match.group("quote") or '"')
+        replacement_literal = f"{quote}{_escape_typescript_string_literal(suggestion, quote)}{quote}"
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=path,
+                span_start=offsets[line_index] + match.start(),
+                span_end=offsets[line_index] + match.end(),
+                expected=match.group(0),
+                replacement=replacement_literal,
+                before_hash=before_hash,
+                metadata={
+                    "repair_kind": "typescript_string_literal_suggestion",
+                    "actual": actual,
+                    "suggestion": suggestion,
+                    "line": line_number,
+                    "column": column,
+                    "unique_context": f"{line_body}{newline}",
+                },
+            )
+        )
+        seen_lines.add(line_number)
+    return tuple(operations)
+
+
+def _shorthand_property_scope_operations(
+    *,
+    path: str,
+    content: str,
+    targets: set[tuple[int, int, str]],
+) -> tuple[RepairOperation, ...]:
+    if not targets:
+        return ()
+    before_hash = sha256_text(content)
+    lines = str(content or "").splitlines(keepends=True)
+    offsets = _line_start_offsets(lines)
+    targets_by_line: dict[int, set[str]] = {}
+    for line, _column, prop in targets:
+        if line > 0 and _TS_IDENTIFIER_RE.fullmatch(prop):
+            targets_by_line.setdefault(line, set()).add(prop)
+    operations: list[RepairOperation] = []
+    for line_number in sorted(targets_by_line):
+        line_index = line_number - 1
+        if line_index < 0 or line_index >= len(lines):
+            continue
+        original_line = lines[line_index]
+        line_body = original_line.rstrip("\r\n")
+        newline = original_line[len(line_body) :]
+        repaired_line_body, removed = _remove_shorthand_properties(line_body, targets_by_line[line_number])
+        if repaired_line_body == line_body or not removed:
+            continue
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=path,
+                span_start=offsets[line_index],
+                span_end=offsets[line_index + 1],
+                expected=original_line,
+                replacement=f"{repaired_line_body}{newline}",
+                before_hash=before_hash,
+                metadata={
+                    "repair_kind": "typescript_shorthand_property_scope",
+                    "line": line_number,
+                    "property": ",".join(sorted(removed)),
+                    "unique_context": original_line,
+                },
+            )
+        )
+    return tuple(operations)
+
+
+def _remove_shorthand_properties(line: str, properties: set[str]) -> tuple[str, tuple[str, ...]]:
+    if not properties or "{" not in line or "}" not in line:
+        return line, ()
+    open_index = line.find("{")
+    close_index = line.rfind("}")
+    if close_index <= open_index:
+        return line, ()
+    inner = line[open_index + 1 : close_index]
+    if "{" in inner or "}" in inner:
+        return line, ()
+    parts = [part.strip() for part in inner.split(",")]
+    kept: list[str] = []
+    removed: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        if part in properties and _TS_IDENTIFIER_RE.fullmatch(part):
+            removed.append(part)
+            continue
+        kept.append(part)
+    if not removed:
+        return line, ()
+    replacement_inner = f" {', '.join(kept)} " if kept else ""
+    return f"{line[: open_index + 1]}{replacement_inner}{line[close_index:]}", tuple(sorted(removed))
+
+
+def _string_literal_matches(line: str, actual: str) -> tuple[re.Match[str], ...]:
+    if not actual:
+        return ()
+    double_escaped = _escape_typescript_string_literal(actual, '"')
+    pattern = re.compile(rf"(?P<quote>['\"]){re.escape(double_escaped)}(?P=quote)")
+    matches = list(pattern.finditer(line))
+    if matches:
+        return tuple(matches)
+    single_escaped = _escape_typescript_string_literal(actual, "'")
+    pattern = re.compile(rf"(?P<quote>['\"]){re.escape(single_escaped)}(?P=quote)")
+    return tuple(pattern.finditer(line))
+
+
+def _column_is_near_span(column: int, span_start: int, span_end: int) -> bool:
+    if column <= 0:
+        return True
+    zero_based = column - 1
+    if span_start <= zero_based <= span_end:
+        return True
+    return zero_based < span_start and span_start - zero_based <= 120
+
+
+def _escape_typescript_string_literal(value: str, quote: str) -> str:
+    escaped = str(value or "").replace("\\", "\\\\")
+    if quote == "'":
+        return escaped.replace("'", "\\'")
+    return escaped.replace('"', '\\"')
+
+
 def _readonly_assignment_operations(
     *,
     path: str,
@@ -4861,6 +5856,8 @@ def _readonly_assignment_operations(
     lines = str(content or "").splitlines(keepends=True)
     operations: list[RepairOperation] = []
     for prop in sorted(by_property):
+        if not all(_line_mentions_assignment_property(lines, line, prop) for line in by_property[prop]):
+            continue
         declaration_spans = _readonly_property_declaration_spans(content, prop)
         if len(declaration_spans) != 1:
             continue
@@ -4885,6 +5882,15 @@ def _readonly_assignment_operations(
             )
         )
     return tuple(operations)
+
+
+def _line_mentions_assignment_property(lines: Sequence[str], line_number: int, prop: str) -> bool:
+    line_index = line_number - 1
+    if line_index < 0 or line_index >= len(lines):
+        return False
+    line = str(lines[line_index] or "")
+    escaped = re.escape(prop)
+    return bool(re.search(rf"(?:\.{escaped}\b|\[['\"]{escaped}['\"]\])\s*(?:[+\-*/%]?=|\+\+|--)", line))
 
 
 def _readonly_property_declaration_spans(content: str, prop: str) -> list[tuple[int, int, int]]:
@@ -5317,17 +6323,21 @@ __all__ = [
     "TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL",
     "TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL",
     "TYPESCRIPT_NULLABLE_CANVAS_CONTEXT_SOURCE_TOOL",
+    "TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL",
     "TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL",
     "TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL",
     "TYPESCRIPT_REEXPORT_SOURCE_TOOL",
     "TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL",
     "TYPESCRIPT_RETURN_OBJECT_COMMA_SOURCE_TOOL",
     "TYPESCRIPT_SCAFFOLD_SOURCE_TOOL",
+    "TYPESCRIPT_SHORTHAND_PROPERTY_SCOPE_SOURCE_TOOL",
     "TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL",
+    "TYPESCRIPT_STRING_LITERAL_SUGGESTION_SOURCE_TOOL",
     "TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL",
     "TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL",
     "TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL",
     "TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL",
+    "TYPESCRIPT_UNKNOWN_MEMBER_ACCESS_SOURCE_TOOL",
     "TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL",
     "TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL",
     "TYPESCRIPT_VITEST_GLOBALS_SOURCE_TOOL",
@@ -5338,9 +6348,13 @@ __all__ = [
     "build_typescript_hyphenated_identifier_plan",
     "build_typescript_missing_closing_brace_plan",
     "build_typescript_nullable_canvas_context_plan",
+    "build_typescript_number_property_call_plan",
     "build_typescript_number_to_string_argument_plan",
     "build_typescript_object_literal_comma_plan",
     "build_typescript_runtime_plan_for_source_tool",
+    "build_typescript_shorthand_property_scope_plan",
+    "build_typescript_string_literal_suggestion_plan",
+    "build_typescript_unknown_member_access_plan",
     "repair_typescript_nullable_canvas_context_guards",
     "repair_typescript_object_literal_commas",
 ]

@@ -48,9 +48,12 @@ from polaris.cells.director.runtime.internal.repair_kernel import (
     build_typescript_hyphenated_identifier_plan,
     build_typescript_missing_closing_brace_plan,
     build_typescript_nullable_canvas_context_plan,
+    build_typescript_number_property_call_plan,
     build_typescript_number_to_string_argument_plan,
     build_typescript_object_literal_comma_plan,
     build_typescript_readonly_assignment_plan,
+    build_typescript_shorthand_property_scope_plan,
+    build_typescript_string_literal_suggestion_plan,
     default_repair_rule_registry,
     deterministic_repair_source_tool_known,
     javascript_syntax as js_syntax,
@@ -1609,6 +1612,248 @@ def test_typescript_readonly_assignment_rule_fails_closed_for_ambiguous_declarat
     assert plan is None
 
 
+def test_typescript_readonly_assignment_rule_requires_assignment_line_context() -> None:
+    content = (
+        "export interface InventoryItem {\n"
+        "  readonly quantity: number;\n"
+        "}\n"
+        "declare const existing: InventoryItem;\n"
+        "console.log(existing.quantity);\n"
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        ["src/models/Inventory.ts(5,22): error TS2540: Cannot assign to 'quantity' because it is a read-only property."]
+    )
+
+    plan = build_typescript_readonly_assignment_plan(
+        base_files={"src/models/Inventory.ts": content},
+        diagnostics=diagnostics,
+    )
+
+    assert plan is None
+
+
+def test_typescript_string_literal_suggestion_rule_covers_ts2820_and_replaces_same_line_literal() -> None:
+    content = (
+        'export type MarketPhase = "pre-open" | "open" | "closed";\n'
+        "export function initialPhase(): MarketPhase {\n"
+        '  return "pre_open";\n'
+        "}\n"
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "src/models/Market.ts(3,5): error TS2820: Type '\"pre_open\"' is not assignable to type "
+            "'MarketPhase'. Did you mean '\"pre-open\"'?"
+        ]
+    )
+
+    coverage = build_repair_coverage_report(diagnostics)
+    assert coverage.covered_diagnostic_count == 1
+    assert coverage.executable_runtime_plan_diagnostic_count == 1
+    assert coverage.items[0].matched_rules[0].rule_id == "typescript.string_literal_suggestion"
+    assert coverage.items[0].matched_rules[0].source_tool == "deterministic_typescript_string_literal_suggestion_repair"
+
+    plan = build_typescript_string_literal_suggestion_plan(
+        base_files={"src/models/Market.ts": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert plan is not None
+    assert plan.rule_id == "typescript.string_literal_suggestion"
+    assert plan.source_tool == "deterministic_typescript_string_literal_suggestion_repair"
+    assert len(plan.operations) == 1
+    assert plan.operations[0].expected == '"pre_open"'
+    assert plan.operations[0].replacement == '"pre-open"'
+    composition = PatchComposer().compose({"src/models/Market.ts": content}, plan.operations)
+    assert composition.ok
+    assert 'return "pre-open";' in composition.patches[0].content_after
+    assert '"pre_open"' not in composition.patches[0].content_after
+
+
+def test_typescript_string_literal_suggestion_runtime_uses_editor_without_write_file(tmp_path: Path) -> None:
+    relative_path = "src/models/Market.ts"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True)
+    content = (
+        'export type MarketPhase = "pre-open" | "open" | "closed";\n'
+        "export function initialPhase(): MarketPhase {\n"
+        '  return "pre_open";\n'
+        "}\n"
+    )
+    target.write_text(content, encoding="utf-8")
+    writes: list[str] = []
+    edits: list[str] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        writes.append(path)
+        (tmp_path / path).write_text(content, encoding="utf-8")
+        return {"ok": True}
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        file_path = tmp_path / operation.path
+        original = file_path.read_text(encoding="utf-8")
+        assert operation.span_start is not None
+        assert operation.span_end is not None
+        assert original[operation.span_start : operation.span_end] == operation.expected
+        updated = original[: operation.span_start] + operation.replacement + original[operation.span_end :]
+        file_path.write_text(updated, encoding="utf-8")
+        edits.append(operation.operation_id)
+        return {"ok": True}
+
+    result = run_runtime_repair(
+        source_tool="deterministic_typescript_string_literal_suggestion_repair",
+        workspace=tmp_path,
+        base_files={relative_path: content},
+        artifact_quality_errors=(
+            "src/models/Market.ts(3,5): error TS2820: Type '\"pre_open\"' is not assignable to type "
+            "'MarketPhase'. Did you mean '\"pre-open\"'?",
+        ),
+        writer=writer,
+        editor=editor,
+        allowed_paths=(relative_path,),
+    )
+
+    assert result.ok is True
+    assert writes == []
+    assert edits
+    assert target.read_text(encoding="utf-8") == content.replace('"pre_open"', '"pre-open"')
+
+
+def test_typescript_number_property_call_and_shorthand_scope_rules_cover_r36_diagnostics() -> None:
+    index_content = (
+        "export function openStall(inventory: { size(): number }, reputation: { score: number }) {\n"
+        "  return {\n"
+        "    inventorySize: inventory.size(),\n"
+        "    reputationScore: reputation.score(),\n"
+        "  };\n"
+        "}\n"
+    )
+    inventory_content = (
+        "function createInventory() {\n"
+        "  const snapshot = () => ({ sku: 'tea' });\n"
+        "  return { snapshot };\n"
+        "}\n"
+        "export const __inventoryInternals = { snapshot };\n"
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            "src/index.ts(4,33): error TS2349: This expression is not callable.",
+            "src/models/Inventory.ts(5,39): error TS18004: No value exists in scope for the shorthand property "
+            "'snapshot'. Either declare one or provide an initializer.",
+        ]
+    )
+
+    coverage = build_repair_coverage_report(diagnostics)
+    assert coverage.covered_diagnostic_count == 2
+    assert coverage.executable_runtime_plan_diagnostic_count == 2
+    assert coverage.items[0].matched_rules[0].rule_id == "typescript.number_property_call"
+    assert coverage.items[1].matched_rules[0].rule_id == "typescript.shorthand_property_scope"
+
+    number_plan = build_typescript_number_property_call_plan(
+        base_files={"src/index.ts": index_content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+    shorthand_plan = build_typescript_shorthand_property_scope_plan(
+        base_files={"src/models/Inventory.ts": inventory_content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert number_plan is not None
+    assert number_plan.rule_id == "typescript.number_property_call"
+    assert number_plan.operations[0].expected == "()"
+    assert number_plan.operations[0].replacement == ""
+    number_composition = PatchComposer().compose({"src/index.ts": index_content}, number_plan.operations)
+    assert number_composition.ok
+    assert "reputationScore: reputation.score," in number_composition.patches[0].content_after
+    assert "inventory.size()" in number_composition.patches[0].content_after
+
+    assert shorthand_plan is not None
+    assert shorthand_plan.rule_id == "typescript.shorthand_property_scope"
+    shorthand_composition = PatchComposer().compose(
+        {"src/models/Inventory.ts": inventory_content},
+        shorthand_plan.operations,
+    )
+    assert shorthand_composition.ok
+    assert "export const __inventoryInternals = {};" in shorthand_composition.patches[0].content_after
+
+
+def test_typescript_number_property_call_and_shorthand_scope_runtime_use_editor_without_write_file(
+    tmp_path: Path,
+) -> None:
+    index_path = "src/index.ts"
+    inventory_path = "src/models/Inventory.ts"
+    index_target = tmp_path / index_path
+    inventory_target = tmp_path / inventory_path
+    index_target.parent.mkdir(parents=True)
+    inventory_target.parent.mkdir(parents=True)
+    index_content = (
+        "export function openStall(inventory: { size(): number }, reputation: { score: number }) {\n"
+        "  return {\n"
+        "    inventorySize: inventory.size(),\n"
+        "    reputationScore: reputation.score(),\n"
+        "  };\n"
+        "}\n"
+    )
+    inventory_content = (
+        "function createInventory() {\n"
+        "  const snapshot = () => ({ sku: 'tea' });\n"
+        "  return { snapshot };\n"
+        "}\n"
+        "export const __inventoryInternals = { snapshot };\n"
+    )
+    index_target.write_text(index_content, encoding="utf-8")
+    inventory_target.write_text(inventory_content, encoding="utf-8")
+    writes: list[str] = []
+    edits: list[str] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        writes.append(path)
+        (tmp_path / path).write_text(content, encoding="utf-8")
+        return {"ok": True}
+
+    def editor(operation: RepairOperation) -> dict[str, object]:
+        file_path = tmp_path / operation.path
+        original = file_path.read_text(encoding="utf-8")
+        assert operation.span_start is not None
+        assert operation.span_end is not None
+        assert original[operation.span_start : operation.span_end] == operation.expected
+        updated = original[: operation.span_start] + operation.replacement + original[operation.span_end :]
+        file_path.write_text(updated, encoding="utf-8")
+        edits.append(operation.operation_id)
+        return {"ok": True}
+
+    number_result = run_runtime_repair(
+        source_tool="deterministic_typescript_number_property_call_repair",
+        workspace=tmp_path,
+        base_files={index_path: index_content},
+        artifact_quality_errors=("src/index.ts(4,33): error TS2349: This expression is not callable.",),
+        writer=writer,
+        editor=editor,
+        allowed_paths=(index_path,),
+    )
+    shorthand_result = run_runtime_repair(
+        source_tool="deterministic_typescript_shorthand_property_scope_repair",
+        workspace=tmp_path,
+        base_files={inventory_path: inventory_content},
+        artifact_quality_errors=(
+            "src/models/Inventory.ts(5,39): error TS18004: No value exists in scope for the shorthand property "
+            "'snapshot'. Either declare one or provide an initializer.",
+        ),
+        writer=writer,
+        editor=editor,
+        allowed_paths=(inventory_path,),
+    )
+
+    assert number_result.ok is True
+    assert shorthand_result.ok is True
+    assert writes == []
+    assert len(edits) == 2
+    assert "reputationScore: reputation.score," in index_target.read_text(encoding="utf-8")
+    assert "export const __inventoryInternals = {};" in inventory_target.read_text(encoding="utf-8")
+
+
 def test_typescript_readonly_assignment_runtime_uses_editor_without_write_file(tmp_path: Path) -> None:
     relative_path = "src/models/Inventory.ts"
     target = tmp_path / relative_path
@@ -2261,7 +2506,7 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
     assert "deterministic_rust_post_repair" in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert len(runtime_repair_source_tools()) == len(bindings)
-    assert len(runtime_repair_source_tools()) == 94
+    assert len(runtime_repair_source_tools()) == 98
     assert sum(1 for binding in bindings if binding["language"] == "rust") == 21
     assert runtime_repair_source_tools() == tuple(binding["source_tool"] for binding in bindings)
     assert all(set(binding) == {"source_tool", "language", "rule_id"} for binding in bindings)
@@ -3193,6 +3438,103 @@ def test_typescript_missing_member_batches_same_type_members_without_hash_mismat
     content_after = planning["composition_summary"]["patches"][0]["content_after"]
     assert "label: unknown;" in content_after
     assert "render(..._args: unknown[]): unknown;" in content_after
+
+
+def test_typescript_missing_member_infers_indexed_property_shape() -> None:
+    diagnostic = "tests/usage.ts(3,19): error TS2339: Property 'items' does not exist on type 'Snapshot'."
+    base_files = {
+        "src/snapshot.ts": "export interface Snapshot {\n  id: string;\n}\n",
+        "tests/usage.ts": (
+            "import type { Snapshot } from '../src/snapshot.js';\n"
+            "declare const snap: Snapshot;\n"
+            "const entry = snap.items['first'];\n"
+        ),
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    content_after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "items: Record<string, unknown>;" in content_after
+    assert "items: unknown;" not in content_after
+
+
+def test_typescript_unknown_member_access_and_required_literal_cover_l2_07_residuals() -> None:
+    diagnostics = (
+        (
+            "src/main.ts(3,19): error TS18046: 'snap.items' is of type 'unknown'.\n"
+            "src/models/Market.ts(11,3): error TS2741: Property 'items' is missing in type "
+            "'{ id: string; name: string; }' but required in type 'MarketSnapshot'.\n"
+        ),
+    )
+    base_files = {
+        "src/main.ts": (
+            "import { snapshotMarket } from './models/Market.js';\n"
+            "const snap = snapshotMarket(market);\n"
+            "const entry = snap.items[inventoryId];\n"
+        ),
+        "src/models/Market.ts": (
+            "export interface MarketSnapshot {\n"
+            "  readonly id: string;\n"
+            "  readonly name: string;\n"
+            "  items: unknown;\n"
+            "}\n\n"
+            "interface MarketState {\n"
+            "  readonly id: string;\n"
+            "  readonly name: string;\n"
+            "}\n\n"
+            "export function snapshotMarket(market: MarketState): MarketSnapshot {\n"
+            "  return {\n"
+            "    id: market.id,\n"
+            "    name: market.name,\n"
+            "  };\n"
+            "}\n"
+        ),
+    }
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=diagnostics))
+    coverage_payload = coverage.to_dict()
+    assert coverage_payload["covered_diagnostic_count"] == 2
+    assert coverage_payload["uncovered_diagnostic_count"] == 0
+    assert {
+        "deterministic_typescript_unknown_member_access_repair",
+        ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
+    }.issubset({source_tool for item in coverage_payload["items"] for source_tool in item["matched_source_tools"]})
+
+    unknown_planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_UNKNOWN_MEMBER_ACCESS_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+    assert unknown_planning["ok"] is True
+    assert unknown_planning["planned"] is True
+    after_unknown = unknown_planning["composition_summary"]["patches"][0]["content_after"]
+    assert "items: Record<string, unknown>;" in after_unknown
+
+    literal_planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
+            base_files={"src/main.ts": base_files["src/main.ts"], "src/models/Market.ts": after_unknown},
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+    assert literal_planning["ok"] is True
+    assert literal_planning["planned"] is True
+    repaired = literal_planning["composition_summary"]["patches"][0]["content_after"]
+    assert "    items: {}," in repaired
+    assert "    items: {},\n  };" in repaired
 
 
 def test_typescript_object_literal_missing_member_implementation_repairs_ts2739_ts2741() -> None:
@@ -8888,7 +9230,7 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         or source_tool == "deterministic_javascript_typescript_annotation_repair"
     ]
     catalog_failure_message = (
-        "expected public strategy catalog ledger total=94 executable_runtime=94 legacy_strategy_host=0; "
+        "expected public strategy catalog ledger total=97 executable_runtime=97 legacy_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
         "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
     )
@@ -8897,14 +9239,14 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
-    assert catalog_summary["total"] == 94
+    assert catalog_summary["total"] == 98
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert legacy_source_tools == [], catalog_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 94, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 98, catalog_failure_message
     assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, catalog_failure_message
-    assert catalog_summary["executable_runtime_binding_count"] == 94, catalog_failure_message
+    assert catalog_summary["executable_runtime_binding_count"] == 98, catalog_failure_message
     assert catalog_summary["legacy_strategy_host_count"] == 0, catalog_failure_message
-    assert len(catalog_summary["executable_runtime_source_tools"]) == 94, catalog_failure_message
+    assert len(catalog_summary["executable_runtime_source_tools"]) == 98, catalog_failure_message
     assert set(catalog_summary["implementation_status_counts"]).issubset({"executable_runtime", "legacy_strategy_host"})
     assert "reserved_only" not in catalog_summary["implementation_status_counts"]
     assert "metadata_rule_registered" not in catalog_summary["implementation_status_counts"]

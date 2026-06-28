@@ -9,10 +9,12 @@ from typing import Any
 
 from polaris.cells.director.runtime.public import (
     PlanDirectorRepairCommandV1,
+    QueryDirectorRepairPlanProbeV1,
     RepairAdvisoryV1,
     RunDirectorRepairCommandV1,
     RunDirectorRepairConvergenceCommandV1,
     plan_director_repair,
+    query_director_repair_plan_probe,
     run_director_repair,
     run_director_repair_convergence,
 )
@@ -39,28 +41,22 @@ def run_runtime_repair_with_director_tools(
     if not base_files:
         return []
 
-    planning_preflight_payload: dict[str, Any] = {}
-    if convergence_verifier is None:
-        planning_preflight = plan_director_repair(
-            PlanDirectorRepairCommandV1(
+    planning_preflight_payload = _runtime_repair_planning_preflight(
+        source_tool=source_tool,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        convergence_verifier_present=convergence_verifier is not None,
+    )
+    if planning_preflight_payload is None:
+        return []
+    if planning_preflight_payload.get("error_code") or planning_preflight_payload.get("planned") is False:
+        return [
+            _project_failed_planning_preflight(
                 source_tool=source_tool,
-                artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
-                base_files=dict(base_files),
-                advisor_notes=tuple(advisor_notes),
+                planning_preflight=planning_preflight_payload,
             )
-        )
-        planning_preflight_payload = planning_preflight.to_dict()
-        if not planning_preflight.ok:
-            if planning_preflight.error_code == "repair_not_planned" or (
-                not planning_preflight.planned and not planning_preflight.error_code
-            ):
-                return []
-            return [
-                _project_failed_planning_preflight(
-                    source_tool=source_tool,
-                    planning_preflight=planning_preflight_payload,
-                )
-            ]
+        ]
 
     message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
     executor = executor_factory(
@@ -202,6 +198,82 @@ def run_runtime_repair_with_director_tools(
         workspace_path=workspace_path,
         mark_progress=_mark_progress,
     )
+
+
+def _runtime_repair_planning_preflight(
+    *,
+    source_tool: str,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisoryV1],
+    convergence_verifier_present: bool,
+) -> dict[str, Any] | None:
+    errors = tuple(str(item) for item in artifact_quality_errors if str(item or "").strip())
+    if not errors:
+        return _direct_runtime_repair_planning_preflight(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=(),
+            advisor_notes=advisor_notes,
+        )
+
+    plan_probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=errors,
+            base_files=dict(base_files),
+            advisor_notes=tuple(advisor_notes),
+        )
+    )
+    plan_probe_payload = plan_probe.to_dict()
+    probe_item = next((item for item in plan_probe.items if item.source_tool == source_tool), None)
+    if probe_item is None or probe_item.status == "not_covered_by_source_tool":
+        if convergence_verifier_present and plan_probe.status == "coverage_gap_uncovered_diagnostics":
+            return {
+                "ok": True,
+                "planned": True,
+                "source_tool": source_tool,
+                "plan_probe": plan_probe_payload,
+                "preflight_status": "defer_to_convergence_coverage_gate",
+            }
+        fallback_payload = _direct_runtime_repair_planning_preflight(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=errors,
+            advisor_notes=advisor_notes,
+        )
+        if fallback_payload is None:
+            return None
+        fallback_payload["plan_probe"] = plan_probe_payload
+        return fallback_payload
+    payload = probe_item.planning_result.to_dict() if probe_item is not None else {"source_tool": source_tool}
+    payload["plan_probe"] = plan_probe_payload
+    if probe_item.status != "covered_plannable":
+        return None
+    return payload
+
+
+def _direct_runtime_repair_planning_preflight(
+    *,
+    source_tool: str,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisoryV1],
+) -> dict[str, Any] | None:
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+            base_files=dict(base_files),
+            advisor_notes=tuple(advisor_notes),
+        )
+    )
+    payload = planning.to_dict()
+    if not planning.ok and (
+        planning.error_code == "repair_not_planned" or (not planning.planned and not planning.error_code)
+    ):
+        return None
+    return payload
 
 
 def _supports_policy_gated_delete_tool(executor: Any) -> bool:

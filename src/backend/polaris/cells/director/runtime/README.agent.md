@@ -86,6 +86,30 @@ The materialization-quality repair path follows the same rule:
 boundary, while `roles.adapters` may only bind declared `step_id` values to
 legacy runners.
 
+Task-boundary validation is the preferred quality loop for completed CE tasks.
+QA may observe intermediate evidence, but final task-level repair convergence
+must happen after Director has written the complete task file set, not after an
+individual partial file write. Cross-cell callers should use
+`query_director_repair_plan_probe` to prove that coverage-matched rules can
+produce concrete patches, and `run_director_task_boundary_quality_loop` for the
+full `coverage -> plan_probe -> convergence -> environment_prep -> revalidation
+-> receipt` loop. Coverage alone is not execution evidence:
+`known_rule_matched=true` or `executable_runtime_plan_matched=true` only means a
+rule family is known. If the planner produces no changed patch, the condition
+must be reported as `coverage_matched_but_unplannable` with an interface
+discrepancy receipt instead of pretending the task converged.
+`covered_unplannable` should route to Director retry when the CE task interface
+contract exists, or to CE local interface-contract revision when the contract is
+missing or contradictory. It must not trigger whole-blueprint regeneration by
+default.
+
+The long-term task-boundary loop reserves three hardening planes without moving
+their execution into `execute_method.py` or QA: topology-weighted convergence
+scoring backed by a `SymbolIndexSnapshot`, copy-on-write workspace isolation
+through OverlayFS/VFS diff logs, and diagnostic-driven hot/cold context slicing.
+Until those planes are implemented, the runtime public result must explicitly
+report the current policies and keep using hash-checked transactional patches.
+
 Repair receipts must close the loop with revalidation evidence. A receipt that
 claims an applied deterministic repair should be able to point at the verifier
 command, exit code, before/after diagnostics, resolved/residual diagnostic ids,

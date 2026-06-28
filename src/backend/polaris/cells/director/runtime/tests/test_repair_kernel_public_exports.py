@@ -15,6 +15,9 @@ _CONTRACT_EXPORTS = (
     "DirectorRepairEnvironmentPrepReceiptV1",
     "DirectorRepairEnvironmentRefreshRequirementV1",
     "DirectorRepairEnvironmentRefreshRequirementsResultV1",
+    "DirectorRepairPlanProbeItemV1",
+    "DirectorRepairPlanProbeResultV1",
+    "DirectorTaskBoundaryQualityResultV1",
     "DirectorRepairMaterializationQualityScheduleRunResultV1",
     "DirectorRepairPostExecutionScheduleRunResultV1",
     "DirectorRepairRevalidationInputV1",
@@ -22,7 +25,9 @@ _CONTRACT_EXPORTS = (
     "DirectorRepairVerifierSnapshotInputV1",
     "QueryDirectorRepairEnvironmentPrepCatalogV1",
     "QueryDirectorRepairEnvironmentRefreshRequirementsV1",
+    "QueryDirectorRepairPlanProbeV1",
     "RunDirectorRepairConvergenceCommandV1",
+    "RunDirectorTaskBoundaryQualityLoopCommandV1",
 )
 
 _SERVICE_EXPORTS = (
@@ -30,9 +35,11 @@ _SERVICE_EXPORTS = (
     "DirectorRepairRevalidatorFn",
     "query_director_repair_environment_prep_catalog",
     "query_director_repair_environment_refresh_requirements",
+    "query_director_repair_plan_probe",
     "run_director_materialization_quality_repair_schedule_result",
     "run_director_post_execution_repair_schedule_result",
     "run_director_repair_convergence",
+    "run_director_task_boundary_quality_loop",
 )
 
 

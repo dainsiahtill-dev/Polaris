@@ -351,6 +351,16 @@ class TestValidateRelativePatchPath:
         assert error is not None
         assert "Invalid patch path" in error
 
+    def test_rejects_markdown_tree_path(self) -> None:
+        error = DirectorPatchExecutor._validate_relative_patch_path("└── simulation.test.ts")
+        assert error is not None
+        assert "Invalid patch path" in error
+
+    def test_rejects_whitespace_path_even_with_suffix(self) -> None:
+        error = DirectorPatchExecutor._validate_relative_patch_path("tests/simulation test.ts")
+        assert error is not None
+        assert "Invalid patch path" in error
+
     def test_rejects_absolute_windows_path(self) -> None:
         error = DirectorPatchExecutor._validate_relative_patch_path("C:/Users/example/file.ts")
         assert error is not None

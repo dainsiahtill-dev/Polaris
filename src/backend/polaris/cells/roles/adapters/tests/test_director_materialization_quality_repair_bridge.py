@@ -156,3 +156,15 @@ def test_selected_materialization_step_distinguishes_missing_native_receipt_and_
     assert missing_revalidation_evidence["native_revalidation_evidence_status"] == "missing_evidence"
     assert missing_revalidation_evidence["native_revalidation_evidence_missing"] is True
     assert missing_revalidation_evidence["cutover_blockers"] == ["missing_native_revalidation_evidence"]
+
+
+def test_typescript_compiler_source_tools_follow_runtime_coverage_for_new_rules() -> None:
+    diagnostics = [
+        "src/main.ts(3,19): error TS18046: 'snap.items' is of type 'unknown'.",
+    ]
+
+    source_tools = materialization_quality_repair_bridge._materialization_typescript_compiler_runtime_source_tools(
+        diagnostics
+    )
+
+    assert source_tools == ("deterministic_typescript_unknown_member_access_repair",)

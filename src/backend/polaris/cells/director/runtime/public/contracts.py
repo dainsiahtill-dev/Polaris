@@ -2626,6 +2626,216 @@ class DirectorRepairPlanningResultV1:
         }
 
 
+@dataclass(frozen=True)
+class QueryDirectorRepairPlanProbeV1:
+    """Read-only probe that verifies coverage matches can produce concrete repair plans."""
+
+    artifact_quality_errors: tuple[str, ...]
+    base_files: Mapping[str, str] = field(default_factory=dict)
+    source_tools: tuple[str, ...] = ()
+    mode: str = "shadow"
+    advisor_notes: tuple[RepairAdvisoryV1, ...] = ()
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "artifact_quality_errors", _to_tuple_str(list(self.artifact_quality_errors)))
+        object.__setattr__(self, "base_files", dict(self.base_files or {}))
+        object.__setattr__(self, "source_tools", _to_tuple_str(list(self.source_tools)))
+        object.__setattr__(self, "mode", str(self.mode or "shadow").strip() or "shadow")
+        object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class DirectorRepairPlanProbeItemV1:
+    """One source-tool planning probe result for a covered diagnostic subset."""
+
+    source_tool: str
+    status: str
+    planning_result: DirectorRepairPlanningResultV1
+    matched_diagnostic_ids: tuple[str, ...] = ()
+    matched_diagnostic_count: int = 0
+    patch_count: int = 0
+    changed_paths: tuple[str, ...] = ()
+    error_code: str | None = None
+    error_message: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_tool", _require_non_empty("source_tool", self.source_tool))
+        object.__setattr__(self, "status", _require_non_empty("status", self.status))
+        object.__setattr__(self, "matched_diagnostic_ids", _to_tuple_str(list(self.matched_diagnostic_ids)))
+        object.__setattr__(self, "matched_diagnostic_count", max(0, int(self.matched_diagnostic_count)))
+        object.__setattr__(self, "patch_count", max(0, int(self.patch_count)))
+        object.__setattr__(self, "changed_paths", _to_tuple_str(list(self.changed_paths)))
+        object.__setattr__(self, "error_code", str(self.error_code or "").strip() or None)
+        object.__setattr__(self, "error_message", str(self.error_message or "").strip() or None)
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_tool": self.source_tool,
+            "status": self.status,
+            "matched_diagnostic_ids": list(self.matched_diagnostic_ids),
+            "matched_diagnostic_count": self.matched_diagnostic_count,
+            "patch_count": self.patch_count,
+            "changed_paths": list(self.changed_paths),
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+            "planning_result": self.planning_result.to_dict(),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class DirectorRepairPlanProbeResultV1:
+    """Coverage plus planning proof for task-boundary repair selection."""
+
+    status: str
+    coverage_report: DirectorRepairCoverageReportV1
+    items: tuple[DirectorRepairPlanProbeItemV1, ...] = ()
+    plannable_source_tools: tuple[str, ...] = ()
+    covered_unplannable_source_tools: tuple[str, ...] = ()
+    covered_unplannable_diagnostics: tuple[Mapping[str, Any], ...] = ()
+    uncovered_diagnostics: tuple[Mapping[str, Any], ...] = ()
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    schema_version: str = "director.repair_plan_probe_result.v1"
+    owner_cell: str = "director.runtime"
+    execution_boundary: str = "read_only_plan_probe_no_writes"
+    agi_execution_authority: bool = False
+    director_tool_execution_required: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "status", _require_non_empty("status", self.status))
+        object.__setattr__(self, "items", tuple(self.items or ()))
+        object.__setattr__(self, "plannable_source_tools", _to_tuple_str(list(self.plannable_source_tools)))
+        object.__setattr__(
+            self,
+            "covered_unplannable_source_tools",
+            _to_tuple_str(list(self.covered_unplannable_source_tools)),
+        )
+        object.__setattr__(
+            self,
+            "covered_unplannable_diagnostics",
+            tuple(_to_dict_copy(item) for item in self.covered_unplannable_diagnostics),
+        )
+        object.__setattr__(
+            self,
+            "uncovered_diagnostics",
+            tuple(_to_dict_copy(item) for item in self.uncovered_diagnostics),
+        )
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+        object.__setattr__(self, "agi_execution_authority", False)
+        object.__setattr__(self, "director_tool_execution_required", False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "status": self.status,
+            "owner_cell": self.owner_cell,
+            "execution_boundary": self.execution_boundary,
+            "agi_execution_authority": False,
+            "director_tool_execution_required": False,
+            "coverage_report": self.coverage_report.to_dict(),
+            "items": [item.to_dict() for item in self.items],
+            "plannable_source_tools": list(self.plannable_source_tools),
+            "covered_unplannable_source_tools": list(self.covered_unplannable_source_tools),
+            "covered_unplannable_diagnostic_count": len(self.covered_unplannable_diagnostics),
+            "covered_unplannable_diagnostics": [
+                dict(item) for item in self.covered_unplannable_diagnostics
+            ],
+            "coverage_gap_count": len(self.uncovered_diagnostics),
+            "uncovered_diagnostics": [dict(item) for item in self.uncovered_diagnostics],
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class RunDirectorTaskBoundaryQualityLoopCommandV1:
+    """Command shape for validating a complete CE task boundary through runtime repair convergence."""
+
+    task_id: str
+    workspace: str
+    artifact_quality_errors: tuple[str, ...]
+    base_files: Mapping[str, str]
+    allowed_paths: tuple[str, ...] = ()
+    source_tools: tuple[str, ...] = ()
+    advisor_notes: tuple[RepairAdvisoryV1, ...] = ()
+    mode: str = "commit"
+    max_rounds: int = 3
+    task_interface_contract: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "artifact_quality_errors", _to_tuple_str(list(self.artifact_quality_errors)))
+        object.__setattr__(self, "base_files", dict(self.base_files or {}))
+        object.__setattr__(self, "allowed_paths", _to_tuple_str(list(self.allowed_paths)))
+        object.__setattr__(self, "source_tools", _to_tuple_str(list(self.source_tools)))
+        object.__setattr__(self, "advisor_notes", tuple(self.advisor_notes or ()))
+        object.__setattr__(self, "mode", str(self.mode or "commit").strip() or "commit")
+        object.__setattr__(self, "max_rounds", max(1, int(self.max_rounds)))
+        object.__setattr__(self, "task_interface_contract", _to_dict_copy(self.task_interface_contract))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+
+
+@dataclass(frozen=True)
+class DirectorTaskBoundaryQualityResultV1:
+    """Result for the task-boundary quality loop consumed by QA and Factory validation."""
+
+    task_id: str
+    ok: bool
+    status: str
+    plan_probe: DirectorRepairPlanProbeResultV1
+    convergence_result: DirectorRepairConvergenceResultV1 | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    error_code: str | None = None
+    error_message: str | None = None
+    schema_version: str = "director.task_boundary_quality_result.v1"
+    owner_cell: str = "director.runtime"
+    execution_boundary: str = "runtime_plan_probe_then_convergence_with_adapter_effects"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(self, "ok", bool(self.ok))
+        object.__setattr__(self, "status", _require_non_empty("status", self.status))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+        object.__setattr__(self, "error_code", str(self.error_code or "").strip() or None)
+        object.__setattr__(self, "error_message", str(self.error_message or "").strip() or None)
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+        if not self.ok and not (self.error_code or self.error_message):
+            raise ValueError("failed DirectorTaskBoundaryQualityResultV1 must include error_code or error_message")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "task_id": self.task_id,
+            "ok": self.ok,
+            "status": self.status,
+            "owner_cell": self.owner_cell,
+            "execution_boundary": self.execution_boundary,
+            "plan_probe": self.plan_probe.to_dict(),
+            "convergence_result": self.convergence_result.to_dict() if self.convergence_result is not None else None,
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+            "metadata": dict(self.metadata),
+        }
+
+
 class DirectorRuntimeError(RuntimeError):
     """Structured public error for director.runtime."""
 
@@ -2663,6 +2873,8 @@ __all__ = [
     "DirectorRepairMaterializationQualityStepV1",
     "DirectorRepairMetricsResultV1",
     "DirectorRepairPatchSummaryV1",
+    "DirectorRepairPlanProbeItemV1",
+    "DirectorRepairPlanProbeResultV1",
     "DirectorRepairPlanSummaryV1",
     "DirectorRepairPlanningResultV1",
     "DirectorRepairPostExecutionScheduleResultV1",
@@ -2676,6 +2888,7 @@ __all__ = [
     "DirectorRepairStrategyCatalogResultV1",
     "DirectorRepairVerifierSnapshotInputV1",
     "DirectorRuntimeError",
+    "DirectorTaskBoundaryQualityResultV1",
     "EvaluateDirectorRepairCutoverReadinessV1",
     "PlanDirectorRepairCommandV1",
     "ProjectDirectorRepairKernelSummaryV1",
@@ -2685,6 +2898,7 @@ __all__ = [
     "QueryDirectorRepairCoverageV1",
     "QueryDirectorRepairLanguageSlotsV1",
     "QueryDirectorRepairMaterializationQualityScheduleV1",
+    "QueryDirectorRepairPlanProbeV1",
     "QueryDirectorRepairPostExecutionScheduleV1",
     "QueryDirectorRepairStrategyCatalogV1",
     "RepairAdvisoryV1",
@@ -2692,4 +2906,5 @@ __all__ = [
     "RepairReceiptV1",
     "RunDirectorRepairCommandV1",
     "RunDirectorRepairConvergenceCommandV1",
+    "RunDirectorTaskBoundaryQualityLoopCommandV1",
 ]

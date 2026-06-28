@@ -84,6 +84,8 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairMetricsResultV1,
     DirectorRepairPatchSummaryV1,
     DirectorRepairPlanningResultV1,
+    DirectorRepairPlanProbeItemV1,
+    DirectorRepairPlanProbeResultV1,
     DirectorRepairPlanSummaryV1,
     DirectorRepairPostExecutionScheduleResultV1,
     DirectorRepairPostExecutionScheduleRunResultV1,
@@ -95,6 +97,7 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairShadowComparisonResultV1,
     DirectorRepairStrategyCatalogResultV1,
     DirectorRepairVerifierSnapshotInputV1,
+    DirectorTaskBoundaryQualityResultV1,
     EvaluateDirectorRepairCutoverReadinessV1,
     PlanDirectorRepairCommandV1,
     ProjectDirectorRepairKernelSummaryV1,
@@ -106,6 +109,7 @@ from polaris.cells.director.runtime.public.contracts import (
     QueryDirectorRepairEnvironmentRefreshRequirementsV1,
     QueryDirectorRepairLanguageSlotsV1,
     QueryDirectorRepairMaterializationQualityScheduleV1,
+    QueryDirectorRepairPlanProbeV1,
     QueryDirectorRepairPostExecutionScheduleV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
@@ -113,6 +117,7 @@ from polaris.cells.director.runtime.public.contracts import (
     RepairReceiptV1,
     RunDirectorRepairCommandV1,
     RunDirectorRepairConvergenceCommandV1,
+    RunDirectorTaskBoundaryQualityLoopCommandV1,
 )
 
 WriteFileFn = Callable[[str, str], Mapping[str, Any]]
@@ -164,6 +169,18 @@ def _count_by_key(items: Sequence[Mapping[str, Any]], key: str) -> dict[str, int
         value = str(item.get(key) or "unknown").strip() or "unknown"
         counts[value] = counts.get(value, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _ordered_unique(items: Sequence[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    values: list[str] = []
+    for item in items:
+        value = str(item or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        values.append(value)
+    return tuple(values)
 
 
 def _repair_execution_error_code(error: Any) -> str | None:
@@ -965,6 +982,199 @@ def query_director_repair_coverage(query: QueryDirectorRepairCoverageV1) -> Dire
     )
 
 
+def query_director_repair_plan_probe(query: QueryDirectorRepairPlanProbeV1) -> DirectorRepairPlanProbeResultV1:
+    """Return read-only evidence that coverage-matched rules can produce concrete patches."""
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(query.artifact_quality_errors))
+    candidate_source_tools = _plan_probe_candidate_source_tools(coverage, requested_source_tools=query.source_tools)
+    probe_items: list[DirectorRepairPlanProbeItemV1] = []
+    for source_tool in candidate_source_tools:
+        matched_items = _coverage_items_for_source_tool(coverage, source_tool)
+        matched_errors = tuple(_artifact_quality_error_from_coverage_item(item) for item in matched_items)
+        planning = plan_director_repair(
+            PlanDirectorRepairCommandV1(
+                source_tool=source_tool,
+                base_files=query.base_files,
+                artifact_quality_errors=matched_errors,
+                mode=query.mode,
+                advisor_notes=query.advisor_notes,
+                metadata={
+                    **dict(query.metadata),
+                    "public_entrypoint": "query_director_repair_plan_probe",
+                    "read_only_plan_probe": True,
+                },
+            )
+        )
+        composition = planning.composition_summary.to_dict()
+        patch_count = int(composition.get("patch_count") or 0)
+        status = _plan_probe_item_status(
+            planning=planning,
+            matched_diagnostic_count=len(matched_items),
+            patch_count=patch_count,
+        )
+        probe_items.append(
+            DirectorRepairPlanProbeItemV1(
+                source_tool=source_tool,
+                status=status,
+                matched_diagnostic_ids=tuple(
+                    str(item.diagnostic.get("diagnostic_id") or "") for item in matched_items
+                ),
+                matched_diagnostic_count=len(matched_items),
+                patch_count=patch_count,
+                changed_paths=tuple(str(path) for path in composition.get("changed_paths") or ()),
+                planning_result=planning,
+                error_code=planning.error_code,
+                error_message=planning.error_message,
+                metadata={
+                    "coverage_status": "matched" if matched_items else "not_covered_by_source_tool",
+                    "read_only_plan_probe": True,
+                },
+            )
+        )
+
+    plannable_source_tools = tuple(
+        item.source_tool for item in probe_items if item.status == "covered_plannable"
+    )
+    plannable_set = set(plannable_source_tools)
+    covered_unplannable_diagnostics = tuple(
+        dict(item.diagnostic)
+        for item in coverage.items
+        if _coverage_item_is_covered_unplannable(
+            item,
+            candidate_source_tools=candidate_source_tools,
+            plannable_source_tools=plannable_set,
+        )
+    )
+    covered_unplannable_source_tools = tuple(
+        item.source_tool
+        for item in probe_items
+        if item.status == "covered_unplannable"
+    )
+    uncovered_diagnostics = tuple(dict(item.diagnostic) for item in coverage.items if not item.known_rule_matched)
+    status = _plan_probe_result_status(
+        coverage=coverage,
+        plannable_source_tools=plannable_source_tools,
+        covered_unplannable_diagnostics=covered_unplannable_diagnostics,
+        uncovered_diagnostics=uncovered_diagnostics,
+    )
+    return DirectorRepairPlanProbeResultV1(
+        status=status,
+        coverage_report=coverage,
+        items=tuple(probe_items),
+        plannable_source_tools=plannable_source_tools,
+        covered_unplannable_source_tools=tuple(_ordered_unique(covered_unplannable_source_tools)),
+        covered_unplannable_diagnostics=covered_unplannable_diagnostics,
+        uncovered_diagnostics=uncovered_diagnostics,
+        metadata={
+            "public_entrypoint": "query_director_repair_plan_probe",
+            "coverage_is_not_planning": True,
+            "read_only_plan_probe": True,
+            "candidate_source_tools": list(candidate_source_tools),
+            "requested_source_tools": list(query.source_tools),
+            "plannable_source_tool_count": len(plannable_source_tools),
+            "covered_unplannable_diagnostic_count": len(covered_unplannable_diagnostics),
+            "coverage_gap_count": len(uncovered_diagnostics),
+        },
+    )
+
+
+def _plan_probe_candidate_source_tools(
+    coverage: DirectorRepairCoverageReportV1,
+    *,
+    requested_source_tools: Sequence[str],
+) -> tuple[str, ...]:
+    requested = _ordered_unique(tuple(str(item or "").strip() for item in requested_source_tools))
+    if requested:
+        return requested
+    executable_source_tools = set(runtime_repair_source_tools())
+    source_tools: list[str] = []
+    for item in coverage.items:
+        if not item.executable_runtime_plan_matched:
+            continue
+        source_tools.extend(source_tool for source_tool in item.matched_source_tools if source_tool in executable_source_tools)
+    return tuple(_ordered_unique(source_tools))
+
+
+def _coverage_items_for_source_tool(
+    coverage: DirectorRepairCoverageReportV1,
+    source_tool: str,
+) -> tuple[DirectorRepairDiagnosticCoverageV1, ...]:
+    return tuple(
+        item
+        for item in coverage.items
+        if source_tool in item.matched_source_tools and item.executable_runtime_plan_matched
+    )
+
+
+def _artifact_quality_error_from_coverage_item(item: DirectorRepairDiagnosticCoverageV1) -> str:
+    diagnostic = dict(item.diagnostic)
+    raw = str(diagnostic.get("raw") or "").strip()
+    if raw:
+        return raw
+    path = str(diagnostic.get("path") or "").strip()
+    code = str(diagnostic.get("code") or "").strip()
+    message = str(diagnostic.get("message") or "").strip()
+    line = diagnostic.get("line")
+    column = diagnostic.get("column")
+    location = path
+    if path and line:
+        location = f"{path}({line},{column or 1})"
+    if location and code:
+        return f"{location}: error {code}: {message}"
+    if code:
+        return f"error {code}: {message}"
+    return message
+
+
+def _plan_probe_item_status(
+    *,
+    planning: DirectorRepairPlanningResultV1,
+    matched_diagnostic_count: int,
+    patch_count: int,
+) -> str:
+    if matched_diagnostic_count <= 0:
+        return "not_covered_by_source_tool"
+    if planning.planned and planning.ok and patch_count > 0:
+        return "covered_plannable"
+    if planning.error_code == "unsupported_repair_source_tool":
+        return "unsupported_repair_source_tool"
+    return "covered_unplannable"
+
+
+def _coverage_item_is_covered_unplannable(
+    item: DirectorRepairDiagnosticCoverageV1,
+    *,
+    candidate_source_tools: Sequence[str],
+    plannable_source_tools: set[str],
+) -> bool:
+    if not item.known_rule_matched or not item.executable_runtime_plan_matched:
+        return False
+    selected_matched = {
+        source_tool
+        for source_tool in item.matched_source_tools
+        if source_tool in set(candidate_source_tools)
+    }
+    return bool(selected_matched) and selected_matched.isdisjoint(plannable_source_tools)
+
+
+def _plan_probe_result_status(
+    *,
+    coverage: DirectorRepairCoverageReportV1,
+    plannable_source_tools: Sequence[str],
+    covered_unplannable_diagnostics: Sequence[Mapping[str, Any]],
+    uncovered_diagnostics: Sequence[Mapping[str, Any]],
+) -> str:
+    if coverage.total_diagnostics == 0:
+        return "already_clean"
+    if uncovered_diagnostics:
+        return "coverage_gap_uncovered_diagnostics"
+    if covered_unplannable_diagnostics:
+        return "coverage_matched_but_unplannable"
+    if plannable_source_tools:
+        return "covered_plannable"
+    return "stuck_no_executable_runtime_plan"
+
+
 def _project_director_repair_diagnostic_coverage(
     item: Any,
     coverage_gaps_by_id: Mapping[str, Mapping[str, Any]],
@@ -1564,6 +1774,183 @@ def run_director_repair_convergence(
     return _to_public_convergence_result(command, internal_result, editor=editor, deleter=deleter)
 
 
+def run_director_task_boundary_quality_loop(
+    command: RunDirectorTaskBoundaryQualityLoopCommandV1,
+    *,
+    writer: WriteFileFn,
+    verifier: DirectorRepairConvergenceVerifierFn,
+    editor: EditFileFn | None = None,
+    deleter: DeleteFileFn | None = None,
+) -> DirectorTaskBoundaryQualityResultV1:
+    """Validate one complete CE task boundary through coverage, plan probe, and convergence."""
+
+    plan_probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=command.artifact_quality_errors,
+            base_files=command.base_files,
+            source_tools=command.source_tools,
+            mode="shadow",
+            advisor_notes=command.advisor_notes,
+            metadata={
+                **dict(command.metadata),
+                "public_entrypoint": "run_director_task_boundary_quality_loop",
+                "task_boundary_phase": "plan_probe",
+            },
+        )
+    )
+    boundary_metadata = _task_boundary_quality_metadata(command, plan_probe=plan_probe)
+    if plan_probe.status == "already_clean":
+        return DirectorTaskBoundaryQualityResultV1(
+            task_id=command.task_id,
+            ok=True,
+            status="already_clean",
+            plan_probe=plan_probe,
+            metadata=boundary_metadata,
+        )
+    if not plan_probe.plannable_source_tools:
+        return DirectorTaskBoundaryQualityResultV1(
+            task_id=command.task_id,
+            ok=False,
+            status=plan_probe.status,
+            plan_probe=plan_probe,
+            metadata=boundary_metadata,
+            error_code=plan_probe.status,
+            error_message=f"Task boundary quality loop stopped before execution: {plan_probe.status}.",
+        )
+    if plan_probe.covered_unplannable_diagnostics or plan_probe.uncovered_diagnostics:
+        return DirectorTaskBoundaryQualityResultV1(
+            task_id=command.task_id,
+            ok=False,
+            status=plan_probe.status,
+            plan_probe=plan_probe,
+            metadata=boundary_metadata,
+            error_code=plan_probe.status,
+            error_message=f"Task boundary quality loop requires triage before convergence: {plan_probe.status}.",
+        )
+
+    convergence = run_director_repair_convergence(
+        RunDirectorRepairConvergenceCommandV1(
+            task_id=command.task_id,
+            workspace=command.workspace,
+            source_tools=plan_probe.plannable_source_tools,
+            artifact_quality_errors=command.artifact_quality_errors,
+            base_files=command.base_files,
+            allowed_paths=command.allowed_paths,
+            advisor_notes=command.advisor_notes,
+            mode=command.mode,
+            max_rounds=command.max_rounds,
+            metadata={
+                **dict(command.metadata),
+                "public_entrypoint": "run_director_task_boundary_quality_loop",
+                "task_boundary_phase": "convergence",
+                "plan_probe_status": plan_probe.status,
+                "plan_probe_plannable_source_tools": list(plan_probe.plannable_source_tools),
+            },
+        ),
+        writer=writer,
+        verifier=verifier,
+        editor=editor,
+        deleter=deleter,
+    )
+    status = "task_boundary_converged" if convergence.ok else f"task_boundary_{convergence.status}"
+    return DirectorTaskBoundaryQualityResultV1(
+        task_id=command.task_id,
+        ok=convergence.ok,
+        status=status,
+        plan_probe=plan_probe,
+        convergence_result=convergence,
+        metadata={
+            **boundary_metadata,
+            "convergence_status": convergence.status,
+            "convergence_ok": convergence.ok,
+            "final_diagnostic_count": len(convergence.final_diagnostics),
+            "receipt_count": len(convergence.receipts),
+        },
+        error_code=None if convergence.ok else convergence.error_code or convergence.status,
+        error_message=None if convergence.ok else convergence.error_message,
+    )
+
+
+def _task_boundary_quality_metadata(
+    command: RunDirectorTaskBoundaryQualityLoopCommandV1,
+    *,
+    plan_probe: DirectorRepairPlanProbeResultV1,
+) -> dict[str, Any]:
+    discrepancy_receipts = _interface_discrepancy_receipts_from_plan_probe(command, plan_probe)
+    return {
+        "public_entrypoint": "run_director_task_boundary_quality_loop",
+        "owner_cell": "director.runtime",
+        "quality_boundary": "ce_task",
+        "qa_final_verdict_boundary": "final_project_gate",
+        "task_boundary_validation_chain": [
+            "coverage",
+            "plan_probe",
+            "convergence",
+            "environment_prep",
+            "revalidation",
+            "receipt",
+        ],
+        "coverage_is_not_planning": True,
+        "coverage_report_status": "has_gaps" if plan_probe.uncovered_diagnostics else "covered",
+        "plan_probe_status": plan_probe.status,
+        "plannable_source_tools": list(plan_probe.plannable_source_tools),
+        "covered_unplannable_source_tools": list(plan_probe.covered_unplannable_source_tools),
+        "covered_unplannable_diagnostic_count": len(plan_probe.covered_unplannable_diagnostics),
+        "coverage_gap_count": len(plan_probe.uncovered_diagnostics),
+        "interface_discrepancy_receipts": discrepancy_receipts,
+        "interface_discrepancy_receipt_count": len(discrepancy_receipts),
+        "task_interface_contract_present": bool(command.task_interface_contract),
+        "task_interface_contract": dict(command.task_interface_contract),
+        "topology_weighted_score_policy": {
+            "status": "reserved",
+            "requires": "SymbolIndexSnapshot dependency graph",
+            "current_gate": "error_count_plus_coverage_plan_probe",
+        },
+        "transaction_isolation_policy": {
+            "current_mode": "transactional_file_patch_with_hash_rollback",
+            "reserved_modes": ["overlayfs_copy_on_write", "vfs_diff_log"],
+            "overlayfs_not_implemented_in_public_runtime": True,
+        },
+        "context_slicing_policy": {
+            "status": "reserved",
+            "hot_context": "diagnostic_spans_and_interface_contract",
+            "cold_context": "task_target_file_skeletons_read_only",
+        },
+        "command_metadata": dict(command.metadata),
+    }
+
+
+def _interface_discrepancy_receipts_from_plan_probe(
+    command: RunDirectorTaskBoundaryQualityLoopCommandV1,
+    plan_probe: DirectorRepairPlanProbeResultV1,
+) -> list[dict[str, Any]]:
+    diagnostics = [dict(item) for item in plan_probe.covered_unplannable_diagnostics]
+    if not diagnostics:
+        return []
+    recommended_owner = "chief_engineer" if not command.task_interface_contract else "director"
+    recommended_route = (
+        "pending_design_interface_contract"
+        if recommended_owner == "chief_engineer"
+        else "director_retry_with_interface_discrepancy_context"
+    )
+    return [
+        {
+            "schema_version": "director.interface_discrepancy_receipt.v1",
+            "task_id": command.task_id,
+            "status": "semantic_discrepancy_triage_required",
+            "source": "director.runtime.task_boundary_quality_loop",
+            "covered_unplannable": True,
+            "diagnostics": diagnostics,
+            "source_tools": list(plan_probe.covered_unplannable_source_tools),
+            "recommended_owner": recommended_owner,
+            "recommended_route": recommended_route,
+            "triage_policy": "ce_contract_if_missing_else_director_local_repair",
+            "macro_blueprint_regeneration_allowed": False,
+            "task_interface_contract_present": bool(command.task_interface_contract),
+        }
+    ]
+
+
 def _to_public_convergence_result(
     command: RunDirectorRepairConvergenceCommandV1,
     internal_result: Any,
@@ -2129,6 +2516,8 @@ __all__ = [
     "DirectorRepairMaterializationQualityScheduleResultV1",
     "DirectorRepairMaterializationQualityStepV1",
     "DirectorRepairMetricsResultV1",
+    "DirectorRepairPlanProbeItemV1",
+    "DirectorRepairPlanProbeResultV1",
     "DirectorRepairPostExecutionScheduleResultV1",
     "DirectorRepairPostExecutionStepV1",
     "DirectorRepairRevalidationInputV1",
@@ -2136,12 +2525,15 @@ __all__ = [
     "DirectorRepairRevalidationRequestV1",
     "DirectorRepairRevalidatorFn",
     "DirectorRepairVerifierSnapshotInputV1",
+    "DirectorTaskBoundaryQualityResultV1",
     "EvaluateDirectorRepairCutoverReadinessV1",
     "ProjectDirectorRepairKernelSummaryV1",
     "ProjectDirectorRepairMetricsV1",
     "QueryDirectorRepairEnvironmentPrepCatalogV1",
     "QueryDirectorRepairEnvironmentRefreshRequirementsV1",
+    "QueryDirectorRepairPlanProbeV1",
     "RunDirectorRepairConvergenceCommandV1",
+    "RunDirectorTaskBoundaryQualityLoopCommandV1",
     "attach_director_repair_revalidation_evidence",
     "build_director_repair_kernel_summary",
     "compare_director_repair_shadow_run",
@@ -2156,11 +2548,13 @@ __all__ = [
     "query_director_repair_environment_refresh_requirements",
     "query_director_repair_language_slots",
     "query_director_repair_materialization_quality_schedule",
+    "query_director_repair_plan_probe",
     "query_director_repair_post_execution_schedule",
     "query_director_repair_strategy_catalog",
     "run_director_materialization_quality_repair_schedule",
     "run_director_post_execution_repair_schedule",
     "run_director_repair",
     "run_director_repair_convergence",
+    "run_director_task_boundary_quality_loop",
     "validate_director_repair_advisory",
 ]

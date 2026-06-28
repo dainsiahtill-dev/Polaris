@@ -1731,6 +1731,70 @@ class TestQualityGateDeadlineHandling:
         assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).is_file()
 
     @pytest.mark.asyncio
+    async def test_quality_gate_uses_dynamic_qa_timeout_for_short_but_viable_deadline(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-short-viable-deadline",
+            config=FactoryConfig(name="short-viable-deadline-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+        workspace_checks_called = False
+        qa_started = False
+
+        async def fake_workspace_checks(_run: FactoryRun, _context: dict[str, Any]) -> tuple[bool, str]:
+            nonlocal workspace_checks_called
+            workspace_checks_called = True
+            return True, ""
+
+        class _FakeQaService:
+            async def execute_qa_run(self, **_kwargs: Any) -> object:
+                nonlocal qa_started
+                qa_started = True
+                return SimpleNamespace(status="running", message="started")
+
+        async def fake_wait_run_completion(*_args: Any, **kwargs: Any) -> object:
+            assert 1 <= int(kwargs["timeout_seconds"]) <= 44
+            report_path = Path(resolve_logical_path(tmp_path, "runtime/qa/report.json"))
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "passed": True,
+                        "score": 95,
+                        "critical_issue_count": 0,
+                        "warnings": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return SimpleNamespace(status="completed", message="qa complete")
+
+        monkeypatch.setattr(executor, "_run_workspace_quality_checks", fake_workspace_checks)
+        monkeypatch.setattr(executor, "_build_orchestration_service", lambda _context: _FakeQaService())
+        monkeypatch.setattr(executor, "_wait_run_completion", fake_wait_run_completion)
+
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 44.4
+        result = await executor._execute_quality_gate(
+            run,
+            {
+                "qa_target": "Quality gate",
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "factory_run_timeout_seconds": 540.0,
+                "factory_run_deadline_source": "test",
+            },
+        )
+
+        assert result.status == "success"
+        assert workspace_checks_called is True
+        assert qa_started is True
+        assert "deadline_insufficient" not in str(result.output)
+
+    @pytest.mark.asyncio
     async def test_quality_gate_report_missing_becomes_failed_report(
         self,
         tmp_path: Path,
