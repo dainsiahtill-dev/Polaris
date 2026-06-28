@@ -569,7 +569,7 @@ def test_runtime_bridge_projects_delete_file_tool_result_when_deleter_available(
         source_tool=_DELETE_SOURCE_TOOL,
         executor_factory=_FakeDirectorToolExecutorWithDelete,
         base_files={relative_path: original},
-        artifact_quality_errors=("test delete stale file",),
+        artifact_quality_errors=(),
         allowed_paths=(relative_path,),
     )
 
@@ -643,7 +643,7 @@ def test_runtime_bridge_uses_director_tool_executor_delete_file(
         source_tool=_DELETE_SOURCE_TOOL,
         executor_factory=DirectorToolExecutor,
         base_files={relative_path: original},
-        artifact_quality_errors=("test delete stale file",),
+        artifact_quality_errors=(),
         allowed_paths=(relative_path,),
     )
 
@@ -787,7 +787,7 @@ def test_runtime_bridge_missing_delete_tool_fails_closed_with_delete_reason(
         source_tool=_DELETE_SOURCE_TOOL,
         executor_factory=_FakeDirectorToolExecutor,
         base_files={relative_path: original},
-        artifact_quality_errors=("test delete stale file",),
+        artifact_quality_errors=(),
         allowed_paths=(relative_path,),
     )
 
@@ -902,17 +902,7 @@ def test_runtime_bridge_convergence_coverage_gap_fails_without_verifier(tmp_path
     )
 
     assert verifier_called is False
-    assert len(results) == 1
-    assert results[0]["success"] is False
-    result = results[0]["result"]
-    assert result["error_code"] == "coverage_gap_uncovered_diagnostics"
-    assert result["receipts"] == []
-    assert result["rounds"] == []
-    assert result["final_diagnostics"][0]["code"] == "declared_target_missing"
-    repair_kernel = result["repair_kernel"]
-    assert repair_kernel["convergence_status"] == "coverage_gap_uncovered_diagnostics"
-    assert repair_kernel["coverage_report"]["total_diagnostics"] == 1
-    assert repair_kernel["metadata"]["coverage_gap_count"] == 1
+    assert results == []
 
 
 def test_rust_post_execution_bridge_runs_dedicated_method_self_runtime_binding(

@@ -1720,7 +1720,13 @@ def _build_typescript_missing_member_plan(
     operations: list[RepairOperation] = list(
         _typescript_object_literal_missing_member_operations(base_files=base_files, diagnostics=diagnostics)
     )
+    inline_operations, inline_members = _typescript_inline_object_missing_member_operations(
+        base_files=base_files,
+        diagnostics=diagnostics,
+    )
+    operations.extend(inline_operations)
     members: list[dict[str, str]] = []
+    members.extend(inline_members)
     grouped_members: dict[str, dict[str, dict[str, object]]] = {}
     for item in _parse_typescript_missing_member_errors(diagnostics):
         type_name = _typescript_declaration_type_name(item["type"])
@@ -3042,6 +3048,203 @@ def _typescript_declaration_type_name(raw: str) -> str:
     return str(match.group(0) if match else "")
 
 
+def _typescript_inline_object_missing_member_operations(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+) -> tuple[tuple[RepairOperation, ...], list[dict[str, str]]]:
+    operations: list[RepairOperation] = []
+    members: list[dict[str, str]] = []
+    for item in _parse_typescript_missing_member_errors(diagnostics):
+        member = item["member"]
+        shape_members = _typescript_inline_object_shape_members(item["type"])
+        if not shape_members or member in shape_members or not _TS_IDENTIFIER_RE.fullmatch(member):
+            continue
+        usage_path = item["file"]
+        usage_text = str(base_files.get(usage_path) or "")
+        line_number = _to_positive_int(item.get("line"))
+        declared_type = _typescript_missing_member_declared_type(
+            usage_text,
+            line_number,
+            member,
+            member_is_call=False,
+        )
+        if not _typescript_safe_structural_member_type(declared_type):
+            continue
+        type_operation = _typescript_inline_object_type_member_operation(
+            base_files=base_files,
+            shape_members=shape_members,
+            member=member,
+            declared_type=declared_type,
+        )
+        if type_operation is None:
+            continue
+        operations.append(type_operation)
+        members.append({"file": type_operation.path, "type": "inline_object", "member": member})
+        literal_operation = _typescript_inline_object_literal_member_operation(
+            base_files=base_files,
+            shape_members=shape_members,
+            member=member,
+            declared_type=declared_type,
+        )
+        if literal_operation is not None:
+            operations.append(literal_operation)
+    return tuple(operations), members
+
+
+def _typescript_inline_object_shape_members(raw_type: str) -> dict[str, str]:
+    text = str(raw_type or "").strip()
+    if not text.startswith("{") or not text.endswith("}"):
+        return {}
+    members: dict[str, str] = {}
+    body = text[1:-1]
+    for segment in re.split(r";|,", body):
+        cleaned = re.sub(r"^\s*readonly\s+", "", segment.strip())
+        match = re.match(r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\??\s*:\s*(?P<type>.+)$", cleaned)
+        if not match:
+            continue
+        name = str(match.group("name") or "")
+        ts_type = str(match.group("type") or "").strip()
+        if name and ts_type:
+            members[name] = ts_type
+    return members
+
+
+def _typescript_inline_object_type_member_operation(
+    *,
+    base_files: Mapping[str, str],
+    shape_members: Mapping[str, str],
+    member: str,
+    declared_type: str,
+) -> RepairOperation | None:
+    for path, content in base_files.items():
+        for open_brace in _typescript_inline_array_object_type_braces(str(content or "")):
+            close_brace = _typescript_matching_brace_index(str(content or ""), open_brace)
+            if close_brace < 0:
+                continue
+            body = str(content or "")[open_brace + 1 : close_brace]
+            existing_members = _typescript_inline_object_shape_members(f"{{{body}}}")
+            if member in existing_members or not set(shape_members).issubset(existing_members):
+                continue
+            operation = _typescript_insert_object_member_operation(
+                path=path,
+                content=str(content or ""),
+                close_brace=close_brace,
+                member=member,
+                value=f"{declared_type};",
+                readonly=True,
+                repair_kind="typescript_inline_object_type_missing_member",
+            )
+            if operation is not None:
+                return operation
+    return None
+
+
+def _typescript_inline_array_object_type_braces(content: str) -> tuple[int, ...]:
+    starts: list[int] = []
+    for match in re.finditer(r"\b(?:ReadonlyArray|Array)\s*<\s*\{", str(content or "")):
+        open_brace = str(content or "").rfind("{", 0, match.end())
+        if open_brace >= 0:
+            close_brace = _typescript_matching_brace_index(str(content or ""), open_brace)
+            if close_brace >= 0 and str(content or "")[close_brace + 1 :].lstrip().startswith(">"):
+                starts.append(open_brace)
+    return tuple(starts)
+
+
+def _typescript_inline_object_literal_member_operation(
+    *,
+    base_files: Mapping[str, str],
+    shape_members: Mapping[str, str],
+    member: str,
+    declared_type: str,
+) -> RepairOperation | None:
+    default_value = _typescript_default_value_for_required_property_type(declared_type)
+    if not default_value:
+        return None
+    for path, content in base_files.items():
+        text = str(content or "")
+        for open_brace in (match.start() for match in re.finditer(r"\{", text)):
+            close_brace = _typescript_matching_brace_index(text, open_brace)
+            if close_brace < 0:
+                continue
+            body = text[open_brace + 1 : close_brace]
+            if len(body) > 600:
+                continue
+            object_members = _typescript_object_literal_member_names(body)
+            if member in object_members or not set(shape_members).issubset(object_members):
+                continue
+            operation = _typescript_insert_object_member_operation(
+                path=path,
+                content=text,
+                close_brace=close_brace,
+                member=member,
+                value=f"{default_value},",
+                readonly=False,
+                repair_kind="typescript_inline_object_literal_missing_member",
+            )
+            if operation is not None:
+                return operation
+    return None
+
+
+def _typescript_object_literal_member_names(body: str) -> set[str]:
+    names: set[str] = set()
+    depth = 0
+    for line in str(body or "").splitlines():
+        if depth == 0 and (match := re.match(r"\s*(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?::|,|$)", line)):
+            names.add(str(match.group("name") or ""))
+        depth += line.count("{") - line.count("}")
+        if depth < 0:
+            depth = 0
+    return names
+
+
+def _typescript_insert_object_member_operation(
+    *,
+    path: str,
+    content: str,
+    close_brace: int,
+    member: str,
+    value: str,
+    readonly: bool,
+    repair_kind: str,
+) -> RepairOperation | None:
+    close_line_start = content.rfind("\n", 0, close_brace) + 1
+    if close_line_start <= 0:
+        return None
+    close_indent_match = re.match(r"\s*", content[close_line_start:close_brace])
+    close_indent = close_indent_match.group(0) if close_indent_match else ""
+    body = content[content.rfind("{", 0, close_brace) + 1 : close_brace]
+    member_indent = _typescript_member_insert_indent(body, fallback=f"{close_indent}  ")
+    prefix = "readonly " if readonly else ""
+    declaration = f"{member_indent}{prefix}{member}: {value}\n"
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=close_line_start,
+        span_end=close_line_start,
+        expected="",
+        replacement=declaration,
+        before_hash=sha256_text(content),
+        metadata={
+            "repair_kind": repair_kind,
+            "member": member,
+            "declared_type_or_value": value,
+            "expected_context_before": content[max(0, close_line_start - 240) : close_line_start],
+            "expected_context_after": content[close_line_start : close_line_start + 80],
+        },
+    )
+
+
+def _typescript_member_insert_indent(body: str, *, fallback: str) -> str:
+    for line in reversed(str(body or "").splitlines()):
+        if not line.strip():
+            continue
+        indent_match = re.match(r"\s*", line)
+        return indent_match.group(0) if indent_match else fallback
+    return fallback
+
+
 def _typescript_receiver_for_member_access(line: str, member: str) -> str:
     match = re.search(rf"\b(?P<receiver>[A-Za-z_$][\w$]*)\s*\.\s*{re.escape(member)}\b", str(line or ""))
     return str(match.group("receiver") if match else "")
@@ -3665,6 +3868,10 @@ def _typescript_usage_compatible_member_type(usage_line: str, member: str) -> st
         return "Record<string, unknown>"
     if re.search(rf"\.\s*{escaped}\s*\.\s*(?:length|map|filter|reduce|forEach|some|every|find)\b", line):
         return "ReadonlyArray<unknown>"
+    if re.search(rf"\.\s*{escaped}\s*\.\s*(?:toFixed|toExponential|toPrecision)\s*\(", line):
+        return "number"
+    if re.search(rf"\.\s*{escaped}\s*\.\s*(?:trim|toLowerCase|toUpperCase|includes|startsWith|endsWith)\s*\(", line):
+        return "string"
     return ""
 
 

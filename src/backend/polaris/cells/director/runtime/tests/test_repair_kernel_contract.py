@@ -136,6 +136,7 @@ from polaris.cells.director.runtime.public import (
     QueryDirectorRepairCoverageV1,
     QueryDirectorRepairLanguageSlotsV1,
     QueryDirectorRepairMaterializationQualityScheduleV1,
+    QueryDirectorRepairPlanProbeV1,
     QueryDirectorRepairPostExecutionScheduleV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
@@ -153,6 +154,7 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_coverage,
     query_director_repair_language_slots,
     query_director_repair_materialization_quality_schedule,
+    query_director_repair_plan_probe,
     query_director_repair_post_execution_schedule,
     query_director_repair_strategy_catalog,
     run_director_repair,
@@ -408,8 +410,14 @@ def test_repair_rule_registry_matches_existing_multilanguage_legacy_strategy_met
     assert payload["items"][1]["diagnostic_language"] == "java"
     assert matched_source_tools[2] == ["deterministic_python_package_shadow_bridge_repair"]
     assert payload["items"][2]["diagnostic_language"] == "python"
-    assert matched_source_tools[3] == ["deterministic_node_test_script_contract_repair"]
-    assert payload["items"][3]["runtime_plan_rule_ids"] == ["javascript.cannot_find_module"]
+    assert matched_source_tools[3] == [
+        "deterministic_node_test_script_contract_repair",
+        "deterministic_npm_script_contract_repair",
+    ]
+    assert payload["items"][3]["runtime_plan_rule_ids"] == [
+        "javascript.cannot_find_module",
+        "javascript.npm_script_typescript_source_require_contract",
+    ]
     assert payload["items"][3]["diagnostic_language"] == "javascript"
     assert matched_source_tools[4] == ["deterministic_javascript_missing_export_repair"]
     assert "deterministic_typescript_missing_export_repair" in matched_source_tools[5]
@@ -2337,6 +2345,29 @@ def test_scaffold_marker_cleanup_prefers_longest_non_overlapping_marker() -> Non
     assert "TypeScript application" in composition.patches[0].content_after
 
 
+def test_scaffold_placeholder_quality_diagnostic_is_covered_plannable() -> None:
+    diagnostic = (
+        "Director output quality gate failed: generic/placeholder content detected: "
+        "main.go:(?<![.:'\"-])\\bplaceholder\\b(?!\\s*[=:])(?![-'\"])"
+    )
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=("deterministic_scaffold_marker_quality_cleanup",),
+            artifact_quality_errors=(diagnostic,),
+            base_files={
+                "main.go": (
+                    "package main\n\n// output reflects real state rather than a static placeholder.\nfunc main() {}\n"
+                )
+            },
+        )
+    )
+
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == ("deterministic_scaffold_marker_quality_cleanup",)
+    assert result.items[0].status == "covered_plannable"
+    assert result.items[0].patch_count == 1
+
+
 def test_java_test_dependency_rule_builds_whole_file_fallback_runtime_plan() -> None:
     relative_path = "src/test/java/AppTest.java"
     content = (
@@ -2968,6 +2999,34 @@ def test_public_npm_script_contract_uses_tsconfig_rootdir_for_compiled_entrypoin
     assert '"start": "npm run build && node dist/src/verify.js"' in content_after
 
 
+def test_public_npm_script_source_require_module_error_is_covered_plannable() -> None:
+    diagnostic = (
+        "Artifact quality scan failed: workspace validation command failed (npm test): "
+        "node -e \"require('./src/models/firefly')\"\n"
+        "Error: Cannot find module './src/models/firefly'"
+    )
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(js_syntax.NPM_SCRIPT_CONTRACT_SOURCE_TOOL,),
+            artifact_quality_errors=(diagnostic,),
+            base_files={
+                "package.json": (
+                    '{"scripts":{"build":"tsc","test":"node -e \\"require('
+                    "'./src/models/firefly'"
+                    ')\\""},"devDependencies":{"typescript":"^5.0.0"}}\n'
+                ),
+                "tsconfig.json": '{"compilerOptions":{"outDir":"dist","rootDir":"src"}}\n',
+                "src/models/firefly.ts": "export class Firefly {}\n",
+            },
+        )
+    )
+
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == (js_syntax.NPM_SCRIPT_CONTRACT_SOURCE_TOOL,)
+    assert result.items[0].status == "covered_plannable"
+    assert result.items[0].patch_count == 1
+
+
 def test_public_typescript_tsconfig_rootdir_repair_covers_tests_outside_src(tmp_path: Path) -> None:
     source_tool = ts_syntax.TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL
     diagnostic = (
@@ -3535,6 +3594,59 @@ def test_typescript_unknown_member_access_and_required_literal_cover_l2_07_resid
     repaired = literal_planning["composition_summary"]["patches"][0]["content_after"]
     assert "    items: {}," in repaired
     assert "    items: {},\n  };" in repaired
+
+
+def test_typescript_missing_member_repairs_inline_array_object_shape() -> None:
+    diagnostic = (
+        "src/main.ts(4,20): error TS2339: Property 'averageRating' does not exist on type "
+        "'{ readonly tier: string; readonly count: number; }'."
+    )
+    main_text = (
+        'import { summarizeMarket } from "./models/Market";\n'
+        "\n"
+        "const payload = summarizeMarket();\n"
+        "console.log(payload.summary.reputationBreakdown[0].averageRating.toFixed(2));\n"
+    )
+    market_text = (
+        "export interface MarketPayload {\n"
+        "  readonly summary: {\n"
+        "    readonly reputationBreakdown: ReadonlyArray<{\n"
+        "      readonly tier: string;\n"
+        "      readonly count: number;\n"
+        "    }>;\n"
+        "  };\n"
+        "}\n"
+        "\n"
+        "const tierCounts = new Map<string, number>();\n"
+        "\n"
+        "export function summarizeMarket(): MarketPayload {\n"
+        "  return {\n"
+        "    summary: {\n"
+        "      reputationBreakdown: [...tierCounts.entries()].map(([tier, count]) => ({\n"
+        "        tier,\n"
+        "        count,\n"
+        "      })),\n"
+        "    },\n"
+        "  };\n"
+        "}\n"
+    )
+
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,),
+            artifact_quality_errors=(diagnostic,),
+            base_files={"src/main.ts": main_text, "src/models/Market.ts": market_text},
+        )
+    )
+
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == (ts_syntax.TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,)
+    assert result.items[0].status == "covered_plannable"
+    assert result.items[0].patch_count == 1
+    planning = result.items[0].planning_result.to_dict()
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "      readonly averageRating: number;\n" in repaired
+    assert "        averageRating: 0,\n" in repaired
 
 
 def test_typescript_object_literal_missing_member_implementation_repairs_ts2739_ts2741() -> None:
@@ -4385,6 +4497,32 @@ def test_go_import_followup_rules_build_precise_plans_with_ordering_and_coverage
     assert all(item["executable_runtime_plan_matched"] is True for item in coverage_items)
 
 
+def test_go_module_import_not_in_std_diagnostic_is_covered_plannable() -> None:
+    diagnostic = (
+        "Artifact quality scan failed: workspace validation command failed (go test ./...): "
+        "engine/unlock.go:3:8: package example-app/models is not in std"
+    )
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=("deterministic_go_module_import_repair",),
+            artifact_quality_errors=(diagnostic,),
+            base_files={
+                "go.mod": "module example/app\n\ngo 1.21\n",
+                "models/capsule.go": "package models\n\ntype Capsule struct{}\n",
+                "engine/unlock.go": (
+                    'package engine\n\nimport "example-app/models"\n\n'
+                    "func Use() models.Capsule { return models.Capsule{} }\n"
+                ),
+            },
+        )
+    )
+
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == ("deterministic_go_module_import_repair",)
+    assert result.items[0].status == "covered_plannable"
+    assert result.items[0].patch_count == 1
+
+
 def test_go_unused_import_rule_removes_compiler_reported_line_with_text_replace() -> None:
     relative_path = "engine/riddle.go"
     content = (
@@ -4596,6 +4734,24 @@ def test_rust_dependency_rule_builds_canonical_plan_from_diagnostics() -> None:
     assert plan.operations[0].metadata["packages"] == ("serde", "serde_json")
     assert 'serde = { version = "1.0", features = ["derive"] }' in str(plan.operations[0].content)
     assert 'serde_json = "1.0"' in str(plan.operations[0].content)
+
+
+def test_rust_dependency_e0432_known_crate_import_is_covered_plannable() -> None:
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=("deterministic_rust_dependency_repair",),
+            artifact_quality_errors=("error[E0432]: unresolved import `serde`",),
+            base_files={
+                "Cargo.toml": '[package]\nname = "kitchen-taste-palette"\n\n[dependencies]\n',
+                "src/main.rs": ("use serde::{Deserialize, Serialize};\nfn main() { let _ = serde_json::json!({}); }\n"),
+            },
+        )
+    )
+
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == ("deterministic_rust_dependency_repair",)
+    assert result.items[0].status == "covered_plannable"
+    assert result.items[0].patch_count == 1
 
 
 def test_rust_missing_binary_entrypoint_rule_builds_create_file_plan() -> None:

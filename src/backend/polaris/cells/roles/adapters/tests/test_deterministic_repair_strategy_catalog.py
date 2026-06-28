@@ -597,6 +597,10 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         "receipt_count": 0,
         "coverage_preaudit_uncovered_diagnostic_count": 1,
         "coverage_preaudit_rule_discovery_required": True,
+        "plan_probe_status": "coverage_gap_uncovered_diagnostics",
+        "plan_probe_plannable_source_tools": [],
+        "plan_probe_covered_unplannable_source_tools": [],
+        "plan_probe_covered_unplannable_diagnostic_count": 0,
         "dark_launch_cutover_ready": False,
         "dark_launch_cutover_blockers": [
             "independent_shadow_required",

@@ -232,24 +232,7 @@ def _runtime_repair_planning_preflight(
     plan_probe_payload = plan_probe.to_dict()
     probe_item = next((item for item in plan_probe.items if item.source_tool == source_tool), None)
     if probe_item is None or probe_item.status == "not_covered_by_source_tool":
-        if convergence_verifier_present and plan_probe.status == "coverage_gap_uncovered_diagnostics":
-            return {
-                "ok": True,
-                "planned": True,
-                "source_tool": source_tool,
-                "plan_probe": plan_probe_payload,
-                "preflight_status": "defer_to_convergence_coverage_gate",
-            }
-        fallback_payload = _direct_runtime_repair_planning_preflight(
-            source_tool=source_tool,
-            base_files=base_files,
-            artifact_quality_errors=errors,
-            advisor_notes=advisor_notes,
-        )
-        if fallback_payload is None:
-            return None
-        fallback_payload["plan_probe"] = plan_probe_payload
-        return fallback_payload
+        return None
     payload = probe_item.planning_result.to_dict() if probe_item is not None else {"source_tool": source_tool}
     payload["plan_probe"] = plan_probe_payload
     if probe_item.status != "covered_plannable":
