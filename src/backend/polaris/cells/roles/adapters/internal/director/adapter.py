@@ -416,6 +416,33 @@ def _build_director_workspace_interface_lines(workspace: str) -> list[str]:
             file_count += 1
         if file_count >= 24:
             break
+    # build_symbol_index_snapshot yields only 'class' for a class (no fields), so
+    # after symbol coherence is fixed the residual runtime logic bug is the model
+    # misusing a class field/type (e.g. treating a str as an object with `.name`).
+    # Inject bounded actual file bodies so it sees the real fields/constructors/
+    # return types. These files already exist and are correct -- the model must USE
+    # their symbols, not rewrite them.
+    content_budget = 6000
+    body_lines: list[str] = []
+    for path in sorted(exports):
+        if content_budget <= 0:
+            break
+        try:
+            with open(os.path.join(workspace, path), encoding="utf-8", errors="replace") as _fh:
+                snippet = "\n".join(_fh.read().splitlines()[:60])[:content_budget]
+        except OSError:
+            continue
+        if not snippet.strip():
+            continue
+        body_lines.append(f"--- {path} (已存在文件实际内容，截断；请使用其符号，勿重写此文件) ---")
+        body_lines.append(snippet)
+        content_budget -= len(snippet)
+    if body_lines:
+        lines.append("")
+        lines.append(
+            "已生成依赖文件的实际定义（据此正确使用其类字段/构造/返回类型，避免把 str 当对象等逻辑误用）:"
+        )
+        lines.extend(body_lines)
     return lines if file_count else []
 
 
