@@ -92,6 +92,7 @@ from .typescript_syntax import (
     TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
     TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL,
     TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL,
+    TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,
     TYPESCRIPT_READONLY_ASSIGNMENT_SOURCE_TOOL,
     TYPESCRIPT_REEXPORT_SOURCE_TOOL,
     TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL,
@@ -180,6 +181,7 @@ _RUNTIME_MIGRATION_SOURCE_TOOLS = frozenset(
         TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
         TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
         TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL,
+        TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,
         TYPESCRIPT_REEXPORT_SOURCE_TOOL,
         TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL,
         TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL,
@@ -2508,6 +2510,23 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 description="Adds conservative generated TypeScript members to a traceable declaration.",
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="missing_member_declaration_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.private_constructor_access",
+                source_tool=TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_ts2673",),
+                message_terms=("constructor of class", "private", "only accessible within the class declaration"),
+                risk_level="low",
+                description=(
+                    "Repairs generated exported classes whose private constructor is called by a same-file "
+                    "factory function or other diagnostic new-expression."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="private_constructor_modifier_text_replace"),
             ),
             RepairRuleDefinition(
                 rule_id="typescript.object_literal_missing_member_implementation",

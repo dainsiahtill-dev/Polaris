@@ -49,7 +49,7 @@ _EXPLICIT_DELIVERY_MODE_MARKERS: tuple[str, ...] = (
     "[mode:analyze_only]",
 )
 _SINGLE_TARGET_QUALITY_REPAIR_RE = re.compile(
-    r"\[director_quality_repair:write_only_single_target\].*?- Target path:\s*(?P<path>[^\n\r]+)",
+    r"\[director_quality_repair:(?:write_only_single_target|edit_preferred_single_target)\].*?- Target path:\s*(?P<path>[^\n\r]+)",
     flags=re.DOTALL,
 )
 
@@ -614,10 +614,10 @@ def build_single_batch_task_contract_hint(
         if selected_write:
             if single_quality_repair_target:
                 lines.append(
-                    "Single-target quality repair is active. Emit exactly one write_file call for "
-                    f"`{single_quality_repair_target}`; do not read, list, explore, verify, or touch sibling files."
+                    "Single-target quality repair is active. Emit exactly one write/edit tool call for "
+                    f"`{single_quality_repair_target}`; prefer edit_file when an exact local replacement is enough. "
+                    "Do not read, list, explore, verify, or touch sibling files."
                 )
-                selected_write = [tool for tool in selected_write if tool == "write_file"] or selected_write
             else:
                 lines.append(
                     "This request requires mutation. Include at least one write tool in the same batch: "
@@ -642,7 +642,7 @@ def build_single_batch_task_contract_hint(
                 "'Here is the plan...' — these are rejected. Only tool calls are accepted."
             )
             if single_quality_repair_target:
-                lines.append("VALID pattern: emit exactly one write_file tool call for the named target.")
+                lines.append("VALID pattern: emit exactly one write/edit tool call for the named target.")
             else:
                 # BUG-01 compound fix: removed the self-contradicting
                 # "MULTI-TURN WORKFLOW: first turn read_file" paragraph.

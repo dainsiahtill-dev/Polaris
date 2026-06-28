@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import json
 import os
 import re
 import shlex
@@ -1098,7 +1099,9 @@ def _step_verify_environment_prep_plans(verify: str, *, workspace: str) -> list[
         return []
     if not (workspace_path / "package.json").is_file():
         return []
-    if (workspace_path / "node_modules").is_dir():
+    if (workspace_path / "node_modules").is_dir() and not _node_environment_has_missing_declared_packages(
+        workspace_path
+    ):
         return []
     try:
         from polaris.cells.director.runtime.public import (
@@ -1128,6 +1131,46 @@ def _step_verify_environment_prep_plans(verify: str, *, workspace: str) -> list[
     except (ImportError, OSError, RuntimeError, TypeError, ValueError):
         return []
     return [plan.to_dict() for plan in result.plans]
+
+
+def _node_environment_has_missing_declared_packages(workspace_path: Path) -> bool:
+    package_path = workspace_path / "package.json"
+    try:
+        payload = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+
+    declared: set[str] = set()
+    for section in ("dependencies", "devDependencies", "optionalDependencies"):
+        items = payload.get(section)
+        if isinstance(items, dict):
+            declared.update(str(name).strip() for name in items if str(name).strip())
+    if not declared:
+        return False
+
+    lock_packages: set[str] = set()
+    lock_path = workspace_path / "package-lock.json"
+    if lock_path.is_file():
+        try:
+            lock_payload = json.loads(lock_path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            lock_payload = {}
+        packages = lock_payload.get("packages") if isinstance(lock_payload, dict) else None
+        if isinstance(packages, dict):
+            for key in packages:
+                normalized = str(key or "").removeprefix("node_modules/").strip()
+                if normalized:
+                    lock_packages.add(normalized)
+
+    for package_name in declared:
+        package_dir = workspace_path / "node_modules" / package_name
+        in_node_modules = package_dir.exists()
+        in_lockfile = not lock_packages or package_name in lock_packages
+        if not in_node_modules or not in_lockfile:
+            return True
+    return False
 
 
 def _run_step_verify_environment_prep(verify: str, *, workspace: str) -> list[str]:

@@ -10,11 +10,18 @@ from typing import Any
 _TOOL_FAILURE_PROMPT_TOKENS = (
     "director_write_policy_denied",
     "handler_error_type",
-    "director_policy",
-    "package_diff",
     "**write_file**: error",
+    "**edit_file**: error",
+    '"status": "error"',
+    "'status': 'error'",
+    '"status": "failed"',
+    "'status': 'failed'",
+    '"success": false',
+    "'success': false",
+    "'success': False",
     '"ok": false',
     "'ok': false",
+    "'ok': False",
 )
 _TOOL_FAILURE_SUMMARY_PREFIX = "[tool_failure_summary]\n"
 
@@ -80,6 +87,81 @@ def _deep_get_text(value: Any, keys: tuple[str, ...], *, depth: int = 0) -> str:
     return ""
 
 
+def _deep_get_value(value: Any, keys: tuple[str, ...], *, depth: int = 0) -> Any:
+    if depth > 5:
+        return None
+    if isinstance(value, dict):
+        for key in keys:
+            if key in value:
+                return value.get(key)
+        for nested in value.values():
+            result = _deep_get_value(nested, keys, depth=depth + 1)
+            if result is not None:
+                return result
+    if isinstance(value, list):
+        for item in value:
+            result = _deep_get_value(item, keys, depth=depth + 1)
+            if result is not None:
+                return result
+    return None
+
+
+def _is_explicit_false(value: Any) -> bool:
+    if value is False:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"false", "0", "no", "failed", "error"}
+    return False
+
+
+def _is_explicit_true(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "success", "succeeded", "ok"}
+    return False
+
+
+def _status_indicates_failure(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    return value.strip().lower() in {"error", "failed", "failure", "denied", "blocked"}
+
+
+def _status_indicates_success(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    return value.strip().lower() in {"ok", "success", "succeeded", "completed"}
+
+
+def _payload_indicates_failure(payload: dict[str, Any]) -> bool:
+    if not payload:
+        return False
+    if _is_explicit_false(_deep_get_value(payload, ("ok", "success"))):
+        return True
+    if _status_indicates_failure(_deep_get_value(payload, ("status",))):
+        return True
+    if _is_explicit_false(_deep_get_value(payload, ("allowed",))):
+        return True
+    if _deep_get_text(payload, ("error_type", "handler_error_type")):
+        return True
+    if _deep_get_text(payload, ("error", "blocked_reason")):
+        return True
+    return False
+
+
+def _payload_indicates_success(payload: dict[str, Any]) -> bool:
+    if not payload or _payload_indicates_failure(payload):
+        return False
+    if _is_explicit_true(_deep_get_value(payload, ("ok", "success"))):
+        return True
+    if _status_indicates_success(_deep_get_value(payload, ("status",))):
+        return True
+    if _is_explicit_true(_deep_get_value(payload, ("allowed",))):
+        return True
+    return False
+
+
 def _infer_tool_failure_tool(text: str) -> str:
     explicit = _extract_tool_failure_field(text, "tool") or _extract_tool_failure_field(text, "tool_name")
     if explicit:
@@ -101,11 +183,15 @@ def tool_failure_summary_payload(role: str, content: str) -> dict[str, Any] | No
     lowered = text.lower()
     if str(role or "").strip().lower() not in {"assistant", "tool", "tool_result"}:
         return None
-    if not any(token in lowered for token in _TOOL_FAILURE_PROMPT_TOKENS):
-        return None
 
     tool = _infer_tool_failure_tool(text)
     payload = _extract_braced_payload(text)
+    if _payload_indicates_success(payload):
+        return None
+    has_failure_token = any(token.lower() in lowered for token in _TOOL_FAILURE_PROMPT_TOKENS)
+    if not has_failure_token and not _payload_indicates_failure(payload):
+        return None
+
     error_type = (
         _extract_tool_failure_field(text, "error_type")
         or _extract_tool_failure_field(text, "handler_error_type")

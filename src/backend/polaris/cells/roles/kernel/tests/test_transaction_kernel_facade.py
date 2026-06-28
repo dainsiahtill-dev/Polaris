@@ -133,6 +133,42 @@ def test_build_decision_messages_adds_write_verify_contract_hint() -> None:
     assert any("Mutation target files detected from user request" in text for text in system_messages)
 
 
+def test_edit_preferred_single_target_quality_repair_drops_verify_required_tool() -> None:
+    context = [
+        {
+            "role": "user",
+            "content": (
+                "[mode:materialize]\n"
+                "[director_quality_repair:edit_preferred_single_target]\n"
+                "- Target path: src/main.ts\n"
+                "Quality errors:\n"
+                "- TypeScript project typecheck failed: src/main.ts(10,10): unused import.\n"
+                "Return tool calls only for the minimal files needed."
+            ),
+            "metadata": {
+                "tool_contract": {
+                    "single_batch": True,
+                    "required_tools": ["execute_command"],
+                    "min_tool_calls": 1,
+                }
+            },
+        }
+    ]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "edit_file"}},
+        {"type": "function", "function": {"name": "write_file"}},
+        {"type": "function", "function": {"name": "execute_command"}},
+    ]
+
+    contract_text, metadata = build_single_batch_task_contract_hint(context, tool_definitions)
+
+    assert "Single-target quality repair is active" in contract_text
+    assert "prefer edit_file" in contract_text
+    assert "Contract-required tools are mandatory" not in contract_text
+    assert "execute_command" not in contract_text
+    assert metadata["expected_read_count"] == 0
+
+
 def test_build_decision_messages_treats_xinzeng_gengxin_as_mutation() -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),

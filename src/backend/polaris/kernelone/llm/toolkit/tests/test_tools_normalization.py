@@ -506,6 +506,25 @@ class TestSearchReplaceNormalization:
         assert normalized["search"] == "old text"
         assert normalized["replace"] == "new text"
 
+    def test_old_new_string_aliases_map_to_search_replace(self) -> None:
+        normalized = normalize_tool_arguments(
+            "search_replace",
+            {"path": "app.js", "old_string": "oldName", "new_string": "newName"},
+        )
+
+        assert normalized["file"] == "app.js"
+        assert normalized["search"] == "oldName"
+        assert normalized["replace"] == "newName"
+
+    def test_uppercase_search_replace_aliases_map_to_search_replace(self) -> None:
+        normalized = normalize_tool_arguments(
+            "search_replace",
+            {"file": "app.js", "SEARCH": "oldName", "REPLACE": "newName"},
+        )
+
+        assert normalized["search"] == "oldName"
+        assert normalized["replace"] == "newName"
+
 
 class TestExecuteCommandNormalization:
     """Test execute_command argument normalization."""
@@ -783,6 +802,25 @@ class TestEditFileSynonyms:
 
         assert normalized.get("replace") == "newName"
         assert "content" not in normalized
+
+    def test_old_new_string_synonyms_map_to_search_replace(self) -> None:
+        normalized = normalize_tool_arguments(
+            "edit_file",
+            {"path": "app.js", "old_string": "oldName", "new_string": "newName"},
+        )
+
+        assert normalized["file"] == "app.js"
+        assert normalized["search"] == "oldName"
+        assert normalized["replace"] == "newName"
+
+    def test_uppercase_search_replace_synonyms_map_to_search_replace(self) -> None:
+        normalized = normalize_tool_arguments(
+            "edit_file",
+            {"file": "app.js", "SEARCH": "oldName", "REPLACE": "newName"},
+        )
+
+        assert normalized["search"] == "oldName"
+        assert normalized["replace"] == "newName"
 
 
 @pytest.mark.parametrize(

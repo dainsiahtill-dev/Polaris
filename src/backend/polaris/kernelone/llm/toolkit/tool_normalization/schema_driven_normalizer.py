@@ -147,6 +147,8 @@ class SchemaDrivenNormalizer:
         For example, 'search_code' is in the aliases list of 'repo_rg'.
         This method finds the canonical tool name when given an alias.
         """
+        if tool_name in self.specs:
+            return tool_name
         for canonical, spec in self.specs.items():
             aliases = spec.get("aliases", [])
             if tool_name in aliases:

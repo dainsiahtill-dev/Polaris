@@ -10525,6 +10525,47 @@ def test_step_verify_environment_prep_plan_comes_from_runtime_catalog(tmp_path: 
     assert plans[0]["policy"]["llm_generated_command_allowed"] is False
 
 
+def test_step_verify_environment_prep_runs_when_node_modules_is_stale(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _step_verify_environment_prep_plans,
+    )
+
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "vitest").mkdir()
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {"build": "tsc -p tsconfig.json"},
+                "devDependencies": {
+                    "vitest": "^1.6.0",
+                    "@types/node": "^22.10.0",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package-lock.json").write_text(
+        json.dumps(
+            {
+                "name": "stale-env",
+                "lockfileVersion": 3,
+                "packages": {
+                    "": {"devDependencies": {"vitest": "^1.6.0", "@types/node": "^22.10.0"}},
+                    "node_modules/vitest": {"version": "1.6.0"},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    plans = _step_verify_environment_prep_plans("npm run build", workspace=str(tmp_path))
+
+    assert len(plans) == 1
+    assert plans[0]["policy"]["command_source"] == "director.runtime.environment_prep_catalog"
+
+
 def test_step_verify_runs_environment_prep_before_verify(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,

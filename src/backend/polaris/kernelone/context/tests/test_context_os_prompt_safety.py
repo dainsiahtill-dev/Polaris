@@ -14,6 +14,7 @@ from polaris.kernelone.context.control_plane_noise import (
     normalize_control_plane_text,
 )
 from polaris.kernelone.context.projection_engine import ProjectionEngine
+from polaris.kernelone.context.prompt_safety import prompt_safe_tool_failure_summary
 from polaris.kernelone.context.receipt_store import ReceiptStore
 
 
@@ -518,6 +519,34 @@ class TestProjectionEngineBuildTurns:
         assert "[Large output stored in receipt tool_evt_failure]" in turns[0]["content"]
         assert turns[0]["receipt_refs"] == ["tool_evt_failure"]
         assert raw_failure in (receipt_store.get("tool_evt_failure") or "")
+
+    def test_successful_director_policy_receipt_is_not_tool_failure_summary(self) -> None:
+        """Successful write receipts carry director_policy evidence and must not poison prompts."""
+        engine = ProjectionEngine()
+        receipt_store = ReceiptStore()
+        raw_success = (
+            "**edit_file**: {'ok': True, 'tool': 'edit_file', 'file': 'tests/behavior.test.ts', "
+            "'director_policy': {'allowed': True, 'write_gate_reason': 'Write scope validated', "
+            "'changed_files': ['tests/behavior.test.ts']}}"
+        )
+
+        assert prompt_safe_tool_failure_summary("tool", raw_success) is None
+
+        class MockEvent:
+            def __init__(self) -> None:
+                self.sequence = 1
+                self.route = "patch"
+                self.role = "tool"
+                self.content = raw_success
+                self.event_id = "evt_success"
+                self.metadata = ()
+                self.artifact_id = ""
+
+        turns = engine.build_turns([MockEvent()], receipt_store)
+
+        assert len(turns) == 1
+        assert "[tool_failure_summary]" not in turns[0]["content"]
+        assert "Write scope validated" in turns[0]["content"]
 
     def test_sort_events_by_sequence(self) -> None:
         """sort_events must sort by sequence number."""

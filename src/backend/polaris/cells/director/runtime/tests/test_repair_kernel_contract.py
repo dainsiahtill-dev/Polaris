@@ -2643,7 +2643,7 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
     assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert len(runtime_repair_source_tools()) == len(bindings)
-    assert len(runtime_repair_source_tools()) == 100
+    assert len(runtime_repair_source_tools()) == 101
     assert sum(1 for binding in bindings if binding["language"] == "rust") == 20
     assert runtime_repair_source_tools() == tuple(binding["source_tool"] for binding in bindings)
     assert all(set(binding) == {"source_tool", "language", "rule_id"} for binding in bindings)
@@ -3508,6 +3508,92 @@ def test_typescript_member_alias_maps_generated_id_suffix_to_existing_id_member(
     content_after = planning["composition_summary"]["patches"][0]["content_after"]
     assert "const a = opened.stall.id;" in content_after
     assert "const b = opened.stall!.id;" in content_after
+
+
+def test_typescript_private_constructor_access_repairs_exported_class_factory_new_expression() -> None:
+    diagnostics = (
+        "src/models/Fairy.ts(14,10): error TS2673: Constructor of class 'Fairy' "
+        "is private and only accessible within the class declaration.",
+    )
+    base_files = {
+        "src/models/Fairy.ts": (
+            "export interface FairyProfile { readonly name: string; }\n"
+            "export class Fairy {\n"
+            "  private readonly name: string;\n"
+            "\n"
+            "  private constructor(profile: FairyProfile) {\n"
+            "    this.name = profile.name;\n"
+            "  }\n"
+            "\n"
+            "  public label(): string {\n"
+            "    return this.name;\n"
+            "  }\n"
+            "}\n"
+            "export function createFairy(profile: FairyProfile): Fairy {\n"
+            "  return new Fairy(profile);\n"
+            "}\n"
+        )
+    }
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=diagnostics))
+    assert coverage.items[0].known_rule_matched is True
+    assert ts_syntax.TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL in coverage.items[0].matched_source_tools
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.private_constructor_access"
+    assert planning["plan_summary"]["operation_count"] == 1
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "  constructor(profile: FairyProfile) {" in repaired
+    assert "private constructor" not in repaired
+
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            source_tools=(ts_syntax.TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,),
+        )
+    )
+    assert probe.status == "covered_plannable"
+    assert probe.plannable_source_tools == (ts_syntax.TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,)
+
+
+def test_typescript_private_constructor_access_non_exported_class_is_covered_unplannable() -> None:
+    diagnostics = (
+        "src/models/Fairy.ts(5,10): error TS2673: Constructor of class 'Fairy' "
+        "is private and only accessible within the class declaration.",
+    )
+    base_files = {
+        "src/models/Fairy.ts": (
+            "class Fairy {\n"
+            "  private constructor() {}\n"
+            "}\n"
+            "export function createFairy(): Fairy {\n"
+            "  return new Fairy();\n"
+            "}\n"
+        )
+    }
+
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            source_tools=(ts_syntax.TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,),
+        )
+    )
+
+    assert probe.status == "coverage_matched_but_unplannable"
+    assert probe.plannable_source_tools == ()
+    assert probe.covered_unplannable_source_tools == (ts_syntax.TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,)
 
 
 def test_typescript_duplicate_export_import_binding_repairs_barrel_ts2300() -> None:
@@ -9924,7 +10010,7 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         or source_tool == "deterministic_javascript_typescript_annotation_repair"
     ]
     catalog_failure_message = (
-        "expected public strategy catalog ledger total=101 executable_runtime=100 "
+        "expected public strategy catalog ledger total=102 executable_runtime=101 "
         "metadata_rule_registered=1 legacy_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
         "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
@@ -9934,17 +10020,17 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
-    assert catalog_summary["total"] == 101
+    assert catalog_summary["total"] == 102
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert legacy_source_tools == [], catalog_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 100, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 101, catalog_failure_message
     assert catalog_summary["implementation_status_counts"].get("metadata_rule_registered", 0) == 1, (
         catalog_failure_message
     )
     assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, catalog_failure_message
-    assert catalog_summary["executable_runtime_binding_count"] == 100, catalog_failure_message
+    assert catalog_summary["executable_runtime_binding_count"] == 101, catalog_failure_message
     assert catalog_summary["legacy_strategy_host_count"] == 0, catalog_failure_message
-    assert len(catalog_summary["executable_runtime_source_tools"]) == 100, catalog_failure_message
+    assert len(catalog_summary["executable_runtime_source_tools"]) == 101, catalog_failure_message
     assert set(catalog_summary["implementation_status_counts"]).issubset(
         {"executable_runtime", "metadata_rule_registered", "legacy_strategy_host"}
     )

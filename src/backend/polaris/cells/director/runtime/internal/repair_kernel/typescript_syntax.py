@@ -35,6 +35,7 @@ TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL = "deterministic_typescript_impo
 TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL = "deterministic_typescript_member_alias_repair"
 TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL = "deterministic_typescript_missing_export_repair"
 TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL = "deterministic_typescript_missing_member_repair"
+TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL = "deterministic_typescript_private_constructor_access_repair"
 TYPESCRIPT_REEXPORT_SOURCE_TOOL = "deterministic_typescript_reexport_repair"
 TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL = "deterministic_typescript_reexported_type_binding_repair"
 TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL = "deterministic_typescript_relative_import_case_repair"
@@ -147,6 +148,17 @@ _TS_VALUE_USED_AS_TYPE_RAW_RE = re.compile(
 _TS_VALUE_USED_AS_TYPE_MESSAGE_RE = re.compile(
     r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+refers\s+to\s+a\s+value,\s+"
     r"but\s+is\s+being\s+used\s+as\s+a\s+type\s+here",
+    re.IGNORECASE,
+)
+_TS_PRIVATE_CONSTRUCTOR_ACCESS_RAW_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2673:\s*"
+    r"Constructor\s+of\s+class\s+['\"](?P<class>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+"
+    r"is\s+private\s+and\s+only\s+accessible\s+within\s+the\s+class\s+declaration",
+    re.IGNORECASE,
+)
+_TS_PRIVATE_CONSTRUCTOR_ACCESS_MESSAGE_RE = re.compile(
+    r"Constructor\s+of\s+class\s+['\"](?P<class>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+"
+    r"is\s+private\s+and\s+only\s+accessible\s+within\s+the\s+class\s+declaration",
     re.IGNORECASE,
 )
 _TS_SHORTHAND_PROPERTY_SCOPE_RAW_RE = re.compile(
@@ -1335,6 +1347,7 @@ def build_typescript_runtime_plan_for_source_tool(
         TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL: _build_typescript_member_alias_plan,
         TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL: _build_typescript_missing_export_plan,
         TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL: _build_typescript_missing_member_plan,
+        TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL: _build_typescript_private_constructor_access_plan,
         TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL: build_typescript_number_property_call_plan,
         TYPESCRIPT_REEXPORT_SOURCE_TOOL: _build_typescript_reexport_plan,
         TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL: _build_typescript_reexported_type_binding_plan,
@@ -1724,6 +1737,76 @@ def _build_typescript_member_alias_plan(
         diagnostics=diagnostics,
         mode=mode,
         metadata={"aliases": aliases},
+    )
+
+
+def _build_typescript_private_constructor_access_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+) -> RepairPlan | None:
+    operations: list[RepairOperation] = []
+    repairs: list[dict[str, object]] = []
+    seen: set[tuple[str, str, int]] = set()
+    for item in _parse_typescript_private_constructor_access_errors(diagnostics):
+        path = item["file"]
+        class_name = item["class"]
+        line_number = _to_positive_int(item.get("line"))
+        original = str(base_files.get(path) or "")
+        if not original or not class_name or line_number <= 0:
+            continue
+        lines = original.splitlines(keepends=True)
+        line_index = line_number - 1
+        if line_index < 0 or line_index >= len(lines):
+            continue
+        if not _typescript_line_invokes_constructor(lines[line_index], class_name):
+            continue
+        modifier_span = _typescript_exported_private_constructor_modifier_span(original, class_name)
+        if modifier_span is None:
+            continue
+        modifier_line_index, start, end = modifier_span
+        key = (path, class_name, start)
+        if key in seen:
+            continue
+        seen.add(key)
+        expected = original[start:end]
+        if expected != "private ":
+            continue
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=path,
+                span_start=start,
+                span_end=end,
+                expected=expected,
+                replacement="",
+                before_hash=sha256_text(original),
+                metadata={
+                    "repair_kind": "typescript_private_constructor_access",
+                    "class_name": class_name,
+                    "diagnostic_line": line_number,
+                    "constructor_line": modifier_line_index + 1,
+                    "visibility_change": "private_to_public_default",
+                    "precision_strategy": "diagnostic_new_expression_to_exported_class_private_constructor",
+                },
+            )
+        )
+        repairs.append(
+            {
+                "file": path,
+                "class_name": class_name,
+                "diagnostic_line": line_number,
+                "constructor_line": modifier_line_index + 1,
+            }
+        )
+    return _repair_plan_or_none(
+        rule_id="typescript.private_constructor_access",
+        source_tool=TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=diagnostics,
+        mode=mode,
+        metadata={"repairs": repairs},
     )
 
 
@@ -3122,6 +3205,41 @@ def _parse_typescript_missing_member_errors(diagnostics: Sequence[RepairDiagnost
     return [item for item in parsed if item["file"] and item["member"]]
 
 
+def _parse_typescript_private_constructor_access_errors(
+    diagnostics: Sequence[RepairDiagnostic],
+) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for diagnostic in diagnostics:
+        text = str(diagnostic.raw or diagnostic.message or "")
+        for match in _TS_PRIVATE_CONSTRUCTOR_ACCESS_RAW_RE.finditer(text):
+            item = {
+                "file": _normalize_repair_path(str(match.group("file") or "")),
+                "line": str(match.group("line") or ""),
+                "column": str(match.group("col") or ""),
+                "class": str(match.group("class") or ""),
+            }
+            key = (item["file"], item["line"], item["class"])
+            if item["file"] and item["line"] and item["class"] and key not in seen:
+                seen.add(key)
+                parsed.append(item)
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        line = str(diagnostic.line or "")
+        message_match = _TS_PRIVATE_CONSTRUCTOR_ACCESS_MESSAGE_RE.search(text)
+        if diagnostic.code.lower() == "typescript_ts2673" and path and line and message_match:
+            item = {
+                "file": path,
+                "line": line,
+                "column": str(diagnostic.column or ""),
+                "class": str(message_match.group("class") or ""),
+            }
+            key = (item["file"], item["line"], item["class"])
+            if item["class"] and key not in seen:
+                seen.add(key)
+                parsed.append(item)
+    return parsed
+
+
 def _parse_typescript_object_missing_member_errors(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     for diagnostic in diagnostics:
@@ -3860,6 +3978,40 @@ def _typescript_matching_brace_index(text: str, open_brace: int) -> int:
     return -1
 
 
+def _typescript_line_invokes_constructor(line: str, class_name: str) -> bool:
+    if not _TS_IDENTIFIER_RE.fullmatch(class_name):
+        return False
+    return bool(re.search(rf"\bnew\s+{re.escape(class_name)}\s*\(", str(line or "")))
+
+
+def _typescript_exported_private_constructor_modifier_span(text: str, class_name: str) -> tuple[int, int, int] | None:
+    if not _TS_IDENTIFIER_RE.fullmatch(class_name):
+        return None
+    class_pattern = re.compile(
+        rf"\bexport\s+(?:default\s+)?class\s+{re.escape(class_name)}\b[^\{{]*\{{",
+        re.MULTILINE,
+    )
+    line_offsets = _text_line_start_offsets(text)
+    for class_match in class_pattern.finditer(text):
+        open_brace = str(text or "").find("{", class_match.start(), class_match.end())
+        if open_brace < 0:
+            continue
+        close_brace = _typescript_matching_brace_index(text, open_brace)
+        if close_brace <= open_brace:
+            continue
+        body = text[open_brace + 1 : close_brace]
+        constructor_match = re.search(r"(?m)^(?P<indent>\s*)private\s+constructor\s*\(", body)
+        if constructor_match is None:
+            continue
+        start = open_brace + 1 + constructor_match.start() + len(str(constructor_match.group("indent") or ""))
+        end = start + len("private ")
+        line_index = _line_index_for_offset(line_offsets, start)
+        if line_index < 0:
+            continue
+        return line_index, start, end
+    return None
+
+
 def _typescript_safe_structural_member_type(ts_type: str) -> bool:
     normalized = " ".join(str(ts_type or "").strip().split())
     if not normalized:
@@ -3904,6 +4056,16 @@ def _text_line_start_offsets(text: str) -> list[int]:
     for match in re.finditer(r"\n", str(text or "")):
         offsets.append(match.end())
     return offsets
+
+
+def _line_index_for_offset(offsets: Sequence[int], offset: int) -> int:
+    if offset < 0:
+        return -1
+    for index, start in enumerate(offsets):
+        next_start = offsets[index + 1] if index + 1 < len(offsets) else None
+        if offset >= start and (next_start is None or offset < next_start):
+            return index
+    return -1
 
 
 def _typescript_member_alias_replacement(*, receiver: str, missing_member: str, existing_members: set[str]) -> str:
@@ -7312,6 +7474,7 @@ __all__ = [
     "TYPESCRIPT_NULLABLE_CANVAS_CONTEXT_SOURCE_TOOL",
     "TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL",
     "TYPESCRIPT_NUMBER_TO_STRING_ARGUMENT_SOURCE_TOOL",
+    "TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL",
     "TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL",
     "TYPESCRIPT_REEXPORT_SOURCE_TOOL",
     "TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL",
