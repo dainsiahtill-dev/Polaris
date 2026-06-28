@@ -50,7 +50,11 @@ def run_runtime_repair_with_director_tools(
     )
     if planning_preflight_payload is None:
         return []
-    if planning_preflight_payload.get("error_code") or planning_preflight_payload.get("planned") is False:
+    if (
+        planning_preflight_payload.get("error_code")
+        or planning_preflight_payload.get("planned") is False
+        or planning_preflight_payload.get("ok") is False
+    ):
         return [
             _project_failed_planning_preflight(
                 source_tool=source_tool,

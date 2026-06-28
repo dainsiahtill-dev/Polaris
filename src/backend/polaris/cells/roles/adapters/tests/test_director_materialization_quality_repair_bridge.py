@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from polaris.cells.roles.adapters.internal.director import materialization_quality_repair_bridge
@@ -168,3 +170,32 @@ def test_typescript_compiler_source_tools_follow_runtime_coverage_for_new_rules(
     )
 
     assert source_tools == ("deterministic_typescript_unknown_member_access_repair",)
+
+
+def test_materialization_summary_reports_coverage_matched_but_unplannable_plan_probe(tmp_path: Path) -> None:
+    diagnostics = [
+        "TypeScript syntax check failed: src/models/Flight.ts(6,47): error TS1005: ',' expected.",
+    ]
+
+    tool_results, summary = materialization_quality_repair_bridge.run_materialization_quality_repairs(
+        SimpleNamespace(workspace=str(tmp_path), _execution=SimpleNamespace(_message_bus=None)),
+        task={
+            "id": "task-materialization-unplannable",
+            "target_files": ["src/models/Flight.ts"],
+        },
+        task_id="task-materialization-unplannable",
+        artifact_quality_errors=diagnostics,
+    )
+
+    assert tool_results == []
+    plan_probe = summary["plan_probe_preaudit"]
+    assert plan_probe["schema_version"] == "director.materialization_quality_plan_probe_preaudit.v1"
+    assert plan_probe["runtime_plan_probe"]["schema_version"] == "director.repair_plan_probe_result.v1"
+    assert plan_probe["status"] == "coverage_matched_but_unplannable"
+    assert plan_probe["covered_unplannable_diagnostic_count"] == 1
+    assert "deterministic_typescript_return_object_semicolon_repair" in plan_probe[
+        "covered_unplannable_source_tools"
+    ]
+    bridge = summary["materialization_quality_bridge"]
+    assert bridge["plan_probe_status"] == "coverage_matched_but_unplannable"
+    assert bridge["plan_probe_covered_unplannable_diagnostic_count"] == 1

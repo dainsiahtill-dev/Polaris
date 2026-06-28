@@ -1048,7 +1048,7 @@ def query_director_repair_plan_probe(query: QueryDirectorRepairPlanProbeV1) -> D
     covered_unplannable_source_tools = tuple(
         item.source_tool
         for item in probe_items
-        if item.status == "covered_unplannable"
+        if item.status not in {"covered_plannable", "not_covered_by_source_tool"}
     )
     uncovered_diagnostics = tuple(dict(item.diagnostic) for item in coverage.items if not item.known_rule_matched)
     status = _plan_probe_result_status(

@@ -464,6 +464,53 @@ def test_runtime_bridge_skips_covered_unplannable_before_executor(tmp_path: Path
     assert results == []
 
 
+def test_runtime_bridge_fails_closed_when_planned_composition_preflight_is_not_ok(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    executor_created = False
+
+    def fake_plan_director_repair(_: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            ok=False,
+            planned=True,
+            error_code=None,
+            error_message=None,
+            to_dict=lambda: {
+                "ok": False,
+                "planned": True,
+                "source_tool": _DELETE_SOURCE_TOOL,
+                "composition_summary": {"ok": False, "issue_count": 1},
+            },
+        )
+
+    def executor_factory(*_: Any, **__: Any) -> Any:
+        nonlocal executor_created
+        executor_created = True
+        raise AssertionError("failed planning preflight must stop before executor")
+
+    monkeypatch.setattr(runtime_bridge_module, "plan_director_repair", fake_plan_director_repair)
+
+    results = run_runtime_repair_with_director_tools(
+        _FakeAdapter(tmp_path),
+        workspace_path=tmp_path,
+        task_id="task-preflight-composition-failure",
+        source_tool=_DELETE_SOURCE_TOOL,
+        executor_factory=executor_factory,
+        base_files={"src/stale.ts": "export const stale = true;\n"},
+        artifact_quality_errors=(),
+        allowed_paths=("src/stale.ts",),
+    )
+
+    assert executor_created is False
+    assert len(results) == 1
+    assert results[0]["success"] is False
+    repair_kernel = results[0]["result"]["repair_kernel"]
+    assert repair_kernel["execution_skipped"] is True
+    assert repair_kernel["execution_skip_reason"] == "planning_preflight_failed"
+    assert repair_kernel["planning_preflight"]["composition_summary"]["ok"] is False
+
+
 def test_runtime_bridge_projects_delete_file_tool_result_when_deleter_available(
     tmp_path: Path,
     monkeypatch: Any,

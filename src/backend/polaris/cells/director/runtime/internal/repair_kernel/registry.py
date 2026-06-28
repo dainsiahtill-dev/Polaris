@@ -1188,7 +1188,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 phase="cleanup",
                 archetype=RepairArchetype.GENERATED_RESIDUE,
                 priority=0,
-                raw_terms=("deterministic scaffold marker",),
+                raw_terms=("deterministic scaffold marker", "generic/placeholder content detected"),
                 risk_level="low",
                 description="Rewrites scaffold marker strings only in files named by quality diagnostics.",
                 runtime_plan_available=True,

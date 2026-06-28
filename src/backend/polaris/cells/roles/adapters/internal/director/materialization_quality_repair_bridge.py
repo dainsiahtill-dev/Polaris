@@ -17,12 +17,14 @@ from polaris.cells.director.runtime.public.service import (
     PlanDirectorRepairCommandV1,
     QueryDirectorRepairCoverageV1,
     QueryDirectorRepairMaterializationQualityScheduleV1,
+    QueryDirectorRepairPlanProbeV1,
     QueryDirectorRepairStrategyCatalogV1,
     RepairReceiptV1,
     compare_director_repair_shadow_run,
     plan_director_repair,
     query_director_repair_coverage,
     query_director_repair_materialization_quality_schedule,
+    query_director_repair_plan_probe,
     query_director_repair_strategy_catalog,
     run_director_materialization_quality_repair_schedule_result,
 )
@@ -196,6 +198,12 @@ def run_materialization_quality_repairs(
     """Run materialization-quality repairs through the migration bridge."""
 
     coverage_preaudit = _project_coverage_preaudit(artifact_quality_errors)
+    plan_probe_preaudit = _project_materialization_plan_probe_preaudit(
+        adapter,
+        task=task,
+        artifact_quality_errors=artifact_quality_errors,
+        coverage_preaudit=coverage_preaudit,
+    )
     convergence_verifier_present = convergence_verifier is not None
     runtime_schedule_steps = _runtime_materialization_quality_schedule_steps()
     runner_step_ids = tuple(_MATERIALIZATION_QUALITY_REPAIR_RUNNERS)
@@ -242,6 +250,7 @@ def run_materialization_quality_repairs(
         artifact_quality_errors=artifact_quality_errors,
         ordered_steps=ordered_steps,
         coverage_preaudit=coverage_preaudit,
+        plan_probe_preaudit=plan_probe_preaudit,
         schedule_summary=dict(schedule_result.summary),
         receipt_projections=receipt_projections,
         schedule_reconciliation=schedule_reconciliation,
@@ -460,7 +469,9 @@ def _materialization_typescript_compiler_runtime_source_tools(
         artifact_quality_errors=artifact_quality_errors,
         source_tool_prefixes=("deterministic_typescript_",),
     )
-    return tuple(_ordered_unique((*matched_tools, *_MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS)))
+    if matched_tools:
+        return matched_tools
+    return _MATERIALIZATION_TYPESCRIPT_COMPILER_RUNTIME_SOURCE_TOOLS
 
 
 def _run_materialization_html_entrypoint(
@@ -1158,6 +1169,7 @@ def _annotate_materialization_quality_summary(
     artifact_quality_errors: list[str],
     ordered_steps: tuple[DirectorRepairMaterializationQualityStepV1, ...],
     coverage_preaudit: dict[str, Any],
+    plan_probe_preaudit: dict[str, Any] | None = None,
     schedule_summary: dict[str, Any] | None = None,
     receipt_projections: list[dict[str, Any]] | None = None,
     schedule_reconciliation: dict[str, Any] | None = None,
@@ -1204,6 +1216,7 @@ def _annotate_materialization_quality_summary(
         "source_tool_profiles": summarize_deterministic_repair_source_tools(source_tools),
         "materialization_quality_step_summaries": step_summaries,
         "coverage_preaudit": coverage_preaudit,
+        "plan_probe_preaudit": dict(plan_probe_preaudit or {}),
         "repair_kernel_migration_debt": migration_debt,
         "adapter_projection_debt": migration_debt["adapter_projection_debt"],
         "legacy_callback_debt": migration_debt["legacy_callback_debt"],
@@ -1245,6 +1258,16 @@ def _annotate_materialization_quality_summary(
         "receipt_count": repair_kernel.get("receipt_count", 0),
         "coverage_preaudit_uncovered_diagnostic_count": coverage_preaudit.get("uncovered_diagnostic_count", 0),
         "coverage_preaudit_rule_discovery_required": coverage_preaudit.get("rule_discovery_required", False),
+        "plan_probe_status": dict(plan_probe_preaudit or {}).get("status"),
+        "plan_probe_covered_unplannable_diagnostic_count": dict(plan_probe_preaudit or {}).get(
+            "covered_unplannable_diagnostic_count",
+            0,
+        ),
+        "plan_probe_plannable_source_tools": dict(plan_probe_preaudit or {}).get("plannable_source_tools", []),
+        "plan_probe_covered_unplannable_source_tools": dict(plan_probe_preaudit or {}).get(
+            "covered_unplannable_source_tools",
+            [],
+        ),
         "dark_launch_cutover_ready": bridged_summary["dark_launch_comparison"]["cutover_ready"],
         "dark_launch_cutover_blockers": bridged_summary["dark_launch_comparison"]["cutover_blockers"],
         "coverage_uncovered_diagnostic_count": dict(repair_kernel.get("coverage_report") or {}).get(
@@ -2554,17 +2577,16 @@ def _runtime_coverage_matched_source_tools(
     if not artifact_quality_errors:
         return ()
     coverage = _project_coverage_preaudit([str(item) for item in artifact_quality_errors])
-    catalog_by_source_tool = _repair_strategy_catalog_by_source_tool()
     source_tools: list[str] = []
     prefixes = tuple(str(prefix or "") for prefix in source_tool_prefixes if str(prefix or ""))
     for item in coverage.get("items") or ():
         if not isinstance(item, Mapping):
             continue
+        if not bool(item.get("executable_runtime_plan_matched")):
+            continue
         for raw_tool in item.get("matched_source_tools") or ():
             source_tool = str(raw_tool or "").strip()
             if not source_tool or not source_tool.startswith(prefixes):
-                continue
-            if source_tool not in catalog_by_source_tool:
                 continue
             source_tools.append(source_tool)
     return tuple(_ordered_unique(source_tools))
@@ -2578,6 +2600,108 @@ def _project_coverage_preaudit(artifact_quality_errors: list[str]) -> dict[str, 
             artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
         )
     ).to_dict()
+
+
+def _project_materialization_plan_probe_preaudit(
+    adapter: Any,
+    *,
+    task: Mapping[str, Any] | None,
+    artifact_quality_errors: list[str],
+    coverage_preaudit: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project read-only coverage-vs-planning evidence for the materialization bridge."""
+
+    if not artifact_quality_errors:
+        return {
+            "schema_version": "director.materialization_quality_plan_probe_preaudit.v1",
+            "status": "already_clean",
+            "source": "roles.adapters.materialization_quality_repair_bridge",
+            "runtime_public_entrypoint": "query_director_repair_plan_probe",
+            "read_only": True,
+            "candidate_source_tools": [],
+            "base_file_count": 0,
+        }
+    candidate_source_tools = _materialization_coverage_candidate_source_tools(coverage_preaudit)
+    if not candidate_source_tools:
+        return {
+            "schema_version": "director.materialization_quality_plan_probe_preaudit.v1",
+            "status": "coverage_gap_uncovered_diagnostics"
+            if int(coverage_preaudit.get("uncovered_diagnostic_count") or 0) > 0
+            else "stuck_no_materialization_runtime_source_tool",
+            "source": "roles.adapters.materialization_quality_repair_bridge",
+            "runtime_public_entrypoint": "query_director_repair_plan_probe",
+            "read_only": True,
+            "candidate_source_tools": [],
+            "base_file_count": 0,
+            "coverage_preaudit": dict(coverage_preaudit),
+        }
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    base_files = _collect_materialization_runtime_base_files(
+        workspace_path,
+        artifact_quality_errors=artifact_quality_errors,
+        source_tool=candidate_source_tools[0],
+        allowed_suffixes=(
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".mjs",
+            ".cjs",
+            ".json",
+            ".html",
+            ".htm",
+            ".css",
+            ".py",
+            ".go",
+            ".rs",
+            ".toml",
+            ".java",
+            ".cpp",
+            ".cc",
+            ".cxx",
+            ".hpp",
+            ".h",
+        ),
+        collect_unmatched_diagnostic_paths=True,
+        task=task,
+    )
+    plan_probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+            base_files=base_files,
+            source_tools=candidate_source_tools,
+            mode="shadow",
+            metadata={
+                "caller": "materialization_quality_repair_bridge",
+                "read_only_plan_probe": True,
+            },
+        )
+    ).to_dict()
+    return {
+        **plan_probe,
+        "schema_version": "director.materialization_quality_plan_probe_preaudit.v1",
+        "source": "roles.adapters.materialization_quality_repair_bridge",
+        "runtime_public_entrypoint": "query_director_repair_plan_probe",
+        "read_only": True,
+        "candidate_source_tools": list(candidate_source_tools),
+        "base_file_count": len(base_files),
+        "runtime_plan_probe": plan_probe,
+    }
+
+
+def _materialization_coverage_candidate_source_tools(coverage_preaudit: Mapping[str, Any]) -> tuple[str, ...]:
+    materialization_source_tools = _materialization_runtime_coverage_source_tools()
+    candidates: list[str] = []
+    for item in coverage_preaudit.get("items") or ():
+        if not isinstance(item, Mapping):
+            continue
+        if not bool(item.get("executable_runtime_plan_matched")):
+            continue
+        for raw_source_tool in item.get("matched_source_tools") or ():
+            source_tool = str(raw_source_tool or "").strip()
+            if source_tool in materialization_source_tools:
+                candidates.append(source_tool)
+    return tuple(_ordered_unique(candidates))
 
 
 def _project_dark_launch_self_check(
