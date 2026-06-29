@@ -200,14 +200,20 @@ def tool_failure_summary_payload(role: str, content: str) -> dict[str, Any] | No
         (
             "error",
             "message",
-            "reason",
             "reasons",
-            "write_gate_reason",
-            "suggestion",
             "blocked_reason",
             "detail",
+            "suggestion",
         ),
     )
+    if not error:
+        reason = _extract_tool_failure_field(text, "reason") or _deep_get_text(payload, ("reason",))
+        if reason.strip().lower() not in {"write scope validated", "scope validated"}:
+            error = reason
+    if not error:
+        gate_reason = _deep_get_text(payload, ("write_gate_reason",))
+        if gate_reason.strip().lower() not in {"write scope validated", "scope validated"}:
+            error = gate_reason
     if not error and "write_file" in lowered and "error" in lowered:
         error = "write_file failed"
     scope = _deep_get_text(payload, ("allowed_scope", "allowed_write_paths", "changed_files", "file", "path"))
@@ -217,6 +223,8 @@ def tool_failure_summary_payload(role: str, content: str) -> dict[str, Any] | No
         "reason": _trim_prompt_safe_text(error or "tool execution failed"),
         **({"scope": _trim_prompt_safe_text(scope)} if scope else {}),
         "prompt_safe": True,
+        "observation_only": True,
+        "non_deliverable": True,
         "receipt_detail": "omitted; see runtime tool_result event for audit evidence",
     }
 
@@ -227,10 +235,11 @@ def parse_tool_failure_summary(content: Any) -> dict[str, Any] | None:
     text = str(content or "")
     if not text.startswith(_TOOL_FAILURE_SUMMARY_PREFIX):
         return None
+    body = text[len(_TOOL_FAILURE_SUMMARY_PREFIX) :].strip()
     try:
-        payload = json.loads(text[len(_TOOL_FAILURE_SUMMARY_PREFIX) :])
+        payload = json.loads(body)
     except json.JSONDecodeError:
-        return None
+        payload = _extract_braced_payload(body)
     if not isinstance(payload, dict):
         return None
     return dict(payload)

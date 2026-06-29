@@ -383,6 +383,102 @@ class TestChiefEngineerHandoffGuards:
         assert command.metadata["response_format_mode"] == "json"
         assert command.metadata["chief_engineer_json_contract_required"] is True
 
+    def test_chief_engineer_review_projects_blueprint_after_llm_timeout(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        delivery_plan_document = {
+            "schema_version": "polaris.delivery_plan_document.v1",
+            "language": "javascript",
+            "product_summary": {
+                "intent": "Deliver a meteor wish queue.",
+                "core_terms": ["meteor", "wish", "queue", "priority"],
+            },
+        }
+        delivery_depth_contract = {
+            "schema_version": "polaris.delivery_depth_contract.v1",
+            "language": "javascript",
+            "product_intent": {
+                "subject": "meteor wish queue",
+                "primary_entities": ["meteor", "wish", "queue", "priority"],
+            },
+        }
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-CORE",
+                        "title": "实现 流星愿望队列 - core engine/service modules",
+                        "goal": "在工作区根交付 流星愿望队列。 Scope this task to core engine/service modules only.",
+                        "target_files": ["src/engine/rules.js", "src/engine/runner.js"],
+                        "scope_paths": ["src/engine/rules.js", "src/engine/runner.js"],
+                        "acceptance_criteria": [
+                            "verify src/engine/rules.js exists",
+                            "verify src/engine/runner.js exists",
+                        ],
+                        "execution_checklist": ["Materialize only the listed core engine files."],
+                        "delivery_plan_document": delivery_plan_document,
+                        "delivery_depth_contract": delivery_depth_contract,
+                    }
+                ]
+            },
+        )
+
+        class _TimeoutRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                return SimpleNamespace(
+                    ok=False,
+                    status="failed",
+                    output="",
+                    error_code="provider_timeout",
+                    error_message="Request timeout (55.0s)",
+                    metadata={
+                        "provider_id": "kimi",
+                        "model": "kimi-for-coding",
+                        "final_request_context_audit": {
+                            "final_request_token_estimate": 2307,
+                            "context_window_utilization": 0.0088,
+                        },
+                        "context_snapshot_ref": "ctx-ce-timeout",
+                        "context_os_audit": {"ok": True},
+                    },
+                    usage={},
+                )
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _TimeoutRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-timeout-projection",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        result = asyncio.run(executor._execute_chief_engineer_review(run, {}))
+
+        assert result.status == "success"
+        review_path = Path(
+            resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run-timeout-projection.review.json")
+        )
+        review = json.loads(review_path.read_text(encoding="utf-8"))
+        assert review["generated_blueprints"] == 1
+        signal = review["signals"][0]
+        assert signal["code"] == "chief_engineer.llm_review_failed"
+        assert signal["severity"] == "warning"
+        assert signal["recoverable"] is True
+        assert signal["recovery_strategy"] == "deterministic_blueprint_projection_after_llm_timeout"
+        assert signal["context_snapshot_ref"] == "ctx-ce-timeout"
+        row = review["blueprints"][0]
+        assert row["llm_blueprint_consumed"] is False
+        assert row["llm_evidence"]["recovery_strategy"] == "deterministic_blueprint_projection_after_llm_timeout"
+        blueprint = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(row["blueprint_id"])
+        assert isinstance(blueprint, dict)
+        semantic_alignment = blueprint["contract_completeness"]["semantic_alignment"]
+        assert semantic_alignment["ready"] is True
+        assert set(semantic_alignment["planning_text_matches"]) >= {"meteor", "queue", "wish"}
+
     def test_chief_engineer_review_uses_deadline_projection_without_llm_call(
         self,
         tmp_path: Path,

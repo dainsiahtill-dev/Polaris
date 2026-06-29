@@ -892,6 +892,117 @@ class TestAutofixPmContractForQuality:
         assert stats["acceptance_added"] == 1
         assert "acceptance_criteria" in payload["tasks"][0]
 
+    def test_split_director_task_boundaries_do_not_inherit_broad_contract_text(self) -> None:
+        payload: dict[str, Any] = {
+            "overall_goal": "主语言: javascript；实现一个 npm CLI 产品",
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "实现 npm 项目骨架与核心模块",
+                    "goal": "交付 npm 项目、源代码、入口、测试和 README。",
+                    "description": "Implement package, src modules, entrypoint, tests, and docs.",
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "target_files": [
+                        "package.json",
+                        "src/engine/rules.js",
+                        "src/engine/runner.js",
+                        "src/models/meteor.js",
+                        "src/models/wish.js",
+                        "src/models/queue.js",
+                        "src/models/priority.js",
+                        "src/index.js",
+                        "tests/smoke.test.js",
+                        "README.md",
+                    ],
+                    "scope": "package.json, src/index.js, src/engine, src/models, tests, README.md",
+                    "scope_paths": [
+                        "package.json",
+                        "src/engine/rules.js",
+                        "src/engine/runner.js",
+                        "src/models/meteor.js",
+                        "src/models/wish.js",
+                        "src/models/queue.js",
+                        "src/models/priority.js",
+                        "src/index.js",
+                        "tests/smoke.test.js",
+                        "README.md",
+                    ],
+                    "steps": [
+                        "创建 package.json",
+                        "实现 src/index.js",
+                        "实现 src/models/meteor.js 与 src/models/priority.js",
+                        "执行 npm test",
+                    ],
+                    "acceptance": [
+                        "`package.json`、`src/index.js`、`src/models/`、`tests/` 和 README 均存在",
+                        "`npm run build`、`npm test` 与 `npm start` 全部通过",
+                    ],
+                    "acceptance_criteria": [
+                        "`package.json`、`src/index.js`、`src/models/`、`tests/` 和 README 均存在",
+                        "`npm run build`、`npm test` 与 `npm start` 全部通过",
+                    ],
+                }
+            ],
+        }
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")
+
+        assert stats["oversized_director_tasks_split"] == 1
+        assert stats["task_boundary_tasks_added"] == 5
+        foundation = payload["tasks"][0]
+        foundation_blob = json.dumps(foundation, ensure_ascii=False).lower()
+        assert foundation["target_files"] == ["package.json"]
+        assert foundation["scope"] == "package.json"
+        assert foundation["steps"] == [
+            "Create or update only the listed project manifest/config files: package.json.",
+            "Keep package/build/test/start script definitions internally consistent with downstream source and test tasks.",
+            "Do not materialize downstream source, test, documentation, or model files in this boundary.",
+        ]
+        assert "src/index.js" not in foundation_blob
+        assert "src/models" not in foundation_blob
+        assert "tests/smoke.test.js" not in foundation_blob
+        assert "npm test" not in foundation_blob
+
+        source_models = next(task for task in payload["tasks"] if task["metadata"]["boundary_kind"] == "source_models")
+        source_blob = json.dumps(source_models, ensure_ascii=False).lower()
+        assert "package.json" not in source_blob
+        assert "tests/smoke.test.js" not in source_blob
+        assert "readme.md" not in source_blob
+        assert "src/models/priority.js" in source_blob
+        assert source_models["metadata"]["boundary_target_files"] == [
+            "src/models/meteor.js",
+            "src/models/wish.js",
+            "src/models/queue.js",
+            "src/models/priority.js",
+        ]
+
+        source_core = next(task for task in payload["tasks"] if task["metadata"]["boundary_kind"] == "source_core")
+        source_core_blob = json.dumps(source_core, ensure_ascii=False).lower()
+        assert "src/engine/rules.js" in source_core_blob
+        assert "src/models/meteor.js" not in source_core["target_files"]
+
+    def test_flags_duplicate_javascript_domain_source_layouts(self) -> None:
+        payload: dict[str, Any] = {
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "Implement JavaScript meteor module",
+                    "goal": "Create the canonical meteor owner module.",
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "target_files": ["src/meteor.js", "src/models/meteor.js"],
+                    "scope_paths": ["src/meteor.js", "src/models/meteor.js"],
+                    "execution_checklist": ["Create source files", "Run npm test"],
+                    "acceptance_criteria": ["verify src/meteor.js exists"],
+                }
+            ]
+        }
+
+        report = evaluate_pm_task_quality(payload, workspace_full="/fake")
+
+        assert any("duplicate_domain_source_path" in item for item in report["critical_issues"])
+
     def test_hardens_existing_acceptance_with_file_evidence(self) -> None:
         payload = {
             "tasks": [
@@ -2275,21 +2386,24 @@ class TestAutofixPmContractForQuality:
         stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
 
         assert stats["oversized_director_tasks_split"] == 1
-        assert stats["task_boundary_tasks_added"] == 3
+        assert stats["task_boundary_tasks_added"] == 4
         split_tasks = [task for task in payload["tasks"] if str(task.get("id", "")).startswith("TASK-1-")]
         assert [task["id"] for task in split_tasks] == [
             "TASK-1-foundation",
-            "TASK-1-source",
+            "TASK-1-source-models",
+            "TASK-1-source-modules",
             "TASK-1-entrypoints",
             "TASK-1-tests",
         ]
         assert split_tasks[0]["target_files"] == ["package.json", "tsconfig.json"]
         assert "src/models/Market.ts".lower() in split_tasks[1]["target_files"]
-        assert "src/main.ts".lower() in split_tasks[2]["target_files"]
-        assert split_tasks[3]["target_files"] == ["tests/behavior.test.ts"]
+        assert "src/types.ts".lower() in split_tasks[2]["target_files"]
+        assert "src/main.ts".lower() in split_tasks[3]["target_files"]
+        assert split_tasks[4]["target_files"] == ["tests/behavior.test.ts"]
         assert split_tasks[1]["depends_on"] == ["TASK-1-foundation"]
-        assert split_tasks[2]["depends_on"] == ["TASK-1-source"]
-        assert split_tasks[3]["depends_on"] == ["TASK-1-entrypoints"]
+        assert split_tasks[2]["depends_on"] == ["TASK-1-source-models"]
+        assert split_tasks[3]["depends_on"] == ["TASK-1-source-modules"]
+        assert split_tasks[4]["depends_on"] == ["TASK-1-entrypoints"]
         downstream = next(task for task in payload["tasks"] if task["id"] == "TASK-2")
         assert downstream["depends_on"] == ["TASK-1-tests"]
         post_report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))

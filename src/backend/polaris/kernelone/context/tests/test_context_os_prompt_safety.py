@@ -14,7 +14,11 @@ from polaris.kernelone.context.control_plane_noise import (
     normalize_control_plane_text,
 )
 from polaris.kernelone.context.projection_engine import ProjectionEngine
-from polaris.kernelone.context.prompt_safety import prompt_safe_tool_failure_summary
+from polaris.kernelone.context.prompt_safety import (
+    parse_tool_failure_summary,
+    prompt_safe_tool_failure_summary,
+    tool_failure_summary_payload,
+)
 from polaris.kernelone.context.receipt_store import ReceiptStore
 
 
@@ -547,6 +551,37 @@ class TestProjectionEngineBuildTurns:
         assert len(turns) == 1
         assert "[tool_failure_summary]" not in turns[0]["content"]
         assert "Write scope validated" in turns[0]["content"]
+
+    def test_failed_write_with_validated_scope_reports_root_error_not_scope_gate(self) -> None:
+        """A successful write-scope check is evidence, not the root failure reason."""
+        raw_failure = (
+            "{'ok': False, 'tool': 'edit_file', 'error_type': 'tool_failure', "
+            "'error': 'exact search string was not found', "
+            "'director_policy': {'allowed': True, 'write_gate_reason': 'Write scope validated', "
+            "'changed_files': ['tests/behavior.test.ts']}}"
+        )
+
+        payload = tool_failure_summary_payload("tool", raw_failure)
+
+        assert payload is not None
+        assert payload["reason"] == "exact search string was not found"
+        assert payload["reason"] != "Write scope validated"
+        assert payload["observation_only"] is True
+        assert payload["non_deliverable"] is True
+
+    def test_parse_tool_failure_summary_accepts_receipt_placeholder_suffix(self) -> None:
+        """Projection may append receipt placeholders after summary JSON; parser must still compact it."""
+        content = (
+            '[tool_failure_summary]\n{"tool":"write_file","error_type":"tool_failure",'
+            '"reason":"write_file failed","prompt_safe":true}\n\n'
+            "[Large output stored in receipt tool_evt_123]\n\n[receipt_ref:tool_evt_123]"
+        )
+
+        payload = parse_tool_failure_summary(content)
+
+        assert payload is not None
+        assert payload["tool"] == "write_file"
+        assert payload["reason"] == "write_file failed"
 
     def test_sort_events_by_sequence(self) -> None:
         """sort_events must sort by sequence number."""

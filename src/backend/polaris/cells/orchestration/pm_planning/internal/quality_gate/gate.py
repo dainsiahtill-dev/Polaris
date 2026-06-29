@@ -114,6 +114,7 @@ _SOURCE_ENTRYPOINT_FILENAMES = frozenset(
         "cli.ts",
         "index.js",
         "index.ts",
+        "index.html",
         "main.js",
         "main.ts",
         "server.js",
@@ -122,6 +123,7 @@ _SOURCE_ENTRYPOINT_FILENAMES = frozenset(
         "web.ts",
     }
 )
+_SOURCE_BOUNDARY_BUCKETS = frozenset({"source", "source_models", "source_core", "source_modules"})
 
 
 def _contains_pm_contract_governance_task(text: str) -> bool:
@@ -220,6 +222,15 @@ def _task_file_targets(task: dict[str, Any]) -> list[str]:
     return paths
 
 
+def _task_write_file_targets(task: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    for path in _normalize_path_list(task.get("target_files") or []):
+        normalized = _normalize_path(path)
+        if normalized and _is_file_like_pm_scope_path(normalized) and normalized not in paths:
+            paths.append(normalized)
+    return paths or _task_file_targets(task)
+
+
 def _is_test_path(path: str) -> bool:
     normalized = _normalize_path(path)
     basename = os.path.basename(normalized).lower()
@@ -242,11 +253,55 @@ def _director_task_boundary_bucket(path: str) -> str:
         return "foundation"
     if basename in _SOURCE_ENTRYPOINT_FILENAMES:
         return "entrypoints"
+    if normalized.startswith(("src/models/", "models/")):
+        return "source_models"
+    if normalized.startswith(("src/engine/", "src/core/", "engine/", "core/")):
+        return "source_core"
     if normalized.startswith(("src/", "lib/", "app/", "cmd/", "pkg/", "internal/")):
-        return "source"
+        return "source_modules"
     if basename.startswith("readme") or basename.endswith(_PM_DOCUMENTATION_ONLY_SUFFIXES):
         return "docs"
+    if normalized.startswith(("src/", "lib/", "app/", "cmd/", "pkg/", "internal/")):
+        return "source"
     return "source"
+
+
+def _js_domain_source_identity(path: str) -> tuple[str, str] | None:
+    normalized = _normalize_path(path)
+    if not normalized.endswith(".js"):
+        return None
+    basename = os.path.basename(normalized).lower()
+    if basename in _SOURCE_ENTRYPOINT_FILENAMES:
+        return None
+    stem = os.path.splitext(basename)[0]
+    if not stem:
+        return None
+    if normalized.startswith("src/models/"):
+        return stem, "models"
+    if normalized.startswith("src/") and "/" not in normalized[len("src/") :]:
+        return stem, "root"
+    return None
+
+
+def _duplicate_js_domain_source_path_issues(tasks: list[dict[str, Any]]) -> list[str]:
+    by_owner: dict[str, dict[str, set[str]]] = {}
+    for task in tasks:
+        for path in _task_write_file_targets(task):
+            identity = _js_domain_source_identity(path)
+            if not identity:
+                continue
+            owner, layout = identity
+            by_owner.setdefault(owner, {}).setdefault(layout, set()).add(_normalize_path(path))
+    issues: list[str] = []
+    for owner, layouts in sorted(by_owner.items()):
+        if "root" not in layouts or "models" not in layouts:
+            continue
+        paths = sorted(layouts["root"] | layouts["models"])
+        issues.append(
+            "duplicate_domain_source_path: JS domain owner "
+            f"'{owner}' is declared in multiple source layouts ({', '.join(paths[:6])})"
+        )
+    return issues
 
 
 def _is_domain_split_repair_task(task: dict[str, Any]) -> bool:
@@ -266,10 +321,14 @@ def _director_task_is_too_broad(task: dict[str, Any]) -> bool:
         return False
     if _is_domain_split_repair_task(task):
         return False
-    paths = _task_file_targets(task)
+    paths = _task_write_file_targets(task)
     if len(paths) <= _MAX_DIRECTOR_TASK_FILE_TARGETS:
         return False
-    source_like = [path for path in paths if _director_task_boundary_bucket(path) in {"source", "entrypoints"}]
+    source_like = [
+        path
+        for path in paths
+        if _director_task_boundary_bucket(path) in {*_SOURCE_BOUNDARY_BUCKETS, "entrypoints"}
+    ]
     has_foundation = any(_director_task_boundary_bucket(path) == "foundation" for path in paths)
     has_tests = any(_director_task_boundary_bucket(path) == "tests" for path in paths)
     return len(paths) > _MAX_DIRECTOR_TASK_FILE_TARGETS or (
@@ -278,16 +337,80 @@ def _director_task_is_too_broad(task: dict[str, Any]) -> bool:
 
 
 def _director_task_split_groups(task: dict[str, Any]) -> list[tuple[str, list[str]]]:
-    grouped: dict[str, list[str]] = {"foundation": [], "source": [], "entrypoints": [], "tests": [], "docs": []}
-    for path in _task_file_targets(task):
+    grouped: dict[str, list[str]] = {
+        "foundation": [],
+        "source_models": [],
+        "source_core": [],
+        "source_modules": [],
+        "source": [],
+        "entrypoints": [],
+        "tests": [],
+        "docs": [],
+    }
+    for path in _task_write_file_targets(task):
         bucket = _director_task_boundary_bucket(path)
         grouped.setdefault(bucket, []).append(path)
     ordered: list[tuple[str, list[str]]] = []
-    for bucket in ("foundation", "source", "entrypoints", "tests", "docs"):
+    for bucket in ("foundation", "source_models", "source_core", "source_modules", "source", "entrypoints", "tests", "docs"):
         files = grouped.get(bucket) or []
         if files:
-            ordered.append((bucket, files))
+            for offset in range(0, len(files), _MAX_DIRECTOR_TASK_FILE_TARGETS):
+                ordered.append((bucket, files[offset : offset + _MAX_DIRECTOR_TASK_FILE_TARGETS]))
     return ordered
+
+
+def _director_task_boundary_steps(bucket: str, files: list[str], *, verify_command: str) -> list[str]:
+    listed = ", ".join(files[:6])
+    if bucket == "foundation":
+        return [
+            f"Create or update only the listed project manifest/config files: {listed}.",
+            "Keep package/build/test/start script definitions internally consistent with downstream source and test tasks.",
+            "Do not materialize downstream source, test, documentation, or model files in this boundary.",
+        ]
+    if bucket == "source_models":
+        return [
+            f"Create or update only the listed domain model/owner modules: {listed}.",
+            "Define canonical owner exports for downstream core, entrypoint, and test tasks.",
+            "Do not materialize manifests, runtime entrypoints, tests, documentation, or duplicate root/model mirrors in this boundary.",
+        ]
+    if bucket == "source_core":
+        return [
+            f"Create or update only the listed core engine/service modules: {listed}.",
+            "Import only canonical owner exports from already materialized domain modules.",
+            "Do not materialize manifests, runtime entrypoints, tests, documentation, or sibling owner modules in this boundary.",
+        ]
+    if bucket in {"source", "source_modules"}:
+        return [
+            f"Create or update only the listed domain/source modules: {listed}.",
+            "Export the module contracts needed by downstream entrypoints and tests.",
+            "Do not materialize manifests, runtime entrypoints, tests, or documentation in this boundary.",
+        ]
+    if bucket == "entrypoints":
+        return [
+            f"Create or update only the listed runtime entrypoint files: {listed}.",
+            "Wire the entrypoint to previously materialized source modules without duplicating domain logic.",
+            f"Run `{verify_command}` for this task boundary when the verifier is available.",
+        ]
+    if bucket == "tests":
+        return [
+            f"Create or update only the listed verification files: {listed}.",
+            "Assert real behavior across normal, boundary, and invalid inputs.",
+            f"Run `{verify_command}` for this task boundary when the verifier is available.",
+        ]
+    if bucket == "docs":
+        return [
+            f"Create or update only the listed documentation and handoff files: {listed}.",
+            "Document real build, test, and start commands observed from the implementation.",
+            "Do not modify source, test, or manifest files in this boundary.",
+        ]
+    return [f"Create or update only the listed target files: {listed}."]
+
+
+def _file_evidence_path(path: str) -> str:
+    normalized = _normalize_path(path)
+    if not normalized:
+        return str(path or "")
+    return normalized if "/" in normalized else f"./{normalized}"
 
 
 def _task_dependency_values(task: dict[str, Any]) -> list[str]:
@@ -337,13 +460,19 @@ def _split_director_task_boundary_contracts_in_place(
 
     labels = {
         "foundation": "project manifest and build contract",
-        "source": "domain/source modules",
+        "source_models": "domain owner/model modules",
+        "source_core": "core engine/service modules",
+        "source_modules": "supporting source modules",
+        "source": "additional source assets",
         "entrypoints": "runtime entrypoints and exports",
         "tests": "behavior tests and verifier contract",
         "docs": "documentation and handoff assets",
     }
     phases = {
         "foundation": "requirements",
+        "source_models": "implementation",
+        "source_core": "implementation",
+        "source_modules": "implementation",
         "source": "implementation",
         "entrypoints": "implementation",
         "tests": "verification",
@@ -371,12 +500,20 @@ def _split_director_task_boundary_contracts_in_place(
         title = str(task.get("title") or task_id).strip()
         goal = str(task.get("goal") or task.get("description") or title).strip()
         original_acceptance = [str(item) for item in task.get("acceptance_criteria") or task.get("acceptance") or []]
+        group_counts: dict[str, int] = {}
+        for bucket, _files in groups:
+            group_counts[bucket] = group_counts.get(bucket, 0) + 1
+        group_seen: dict[str, int] = {}
         for bucket, files in groups:
+            group_seen[bucket] = group_seen.get(bucket, 0) + 1
+            label = labels.get(bucket, bucket)
+            if group_counts.get(bucket, 0) > 1:
+                label = f"{label} part {group_seen[bucket]}"
             split_id = _unique_split_task_id(task_id, bucket, used_ids)
             split_task = dict(task)
             split_task["id"] = split_id
-            split_task["title"] = f"{title} - {labels.get(bucket, bucket)}"
-            split_task["goal"] = f"{goal} Scope this task to {labels.get(bucket, bucket)} only."
+            split_task["title"] = f"{title} - {label}"
+            split_task["goal"] = f"{goal} Scope this task to {label} only."
             split_task["description"] = (
                 f"Task-boundary split from {task_id}: implement only {', '.join(files[:6])} "
                 "so verification can converge before dependent files proceed."
@@ -384,19 +521,23 @@ def _split_director_task_boundary_contracts_in_place(
             split_task["phase"] = phases.get(bucket, str(task.get("phase") or "implementation"))
             split_task["target_files"] = list(files)
             split_task["scope_paths"] = list(files)
+            split_task["scope"] = ", ".join(files)
+            split_task["steps"] = _director_task_boundary_steps(bucket, files, verify_command=verify_command)
             split_task["execution_checklist"] = [
                 "Materialize only the listed target files.",
                 "Keep imports/exports consistent with prior task-boundary receipts.",
                 "Leave file evidence for this boundary before downstream tasks run.",
             ]
-            acceptance = [f"verify {path} exists" for path in files[:6]]
+            acceptance = [f"verify {_file_evidence_path(path)} exists" for path in files[:6]]
             if bucket in {"entrypoints", "tests"}:
                 acceptance.append(f"Run `{verify_command}` passes for this task boundary when available.")
             elif bucket == "foundation":
                 acceptance.append("package/test/build scripts and module settings are internally consistent.")
             if bucket == "tests" and original_acceptance:
                 acceptance.extend(original_acceptance[:4])
-            split_task["acceptance_criteria"] = _dedupe_text_items(acceptance)
+            split_acceptance = _dedupe_text_items(acceptance)
+            split_task["acceptance"] = list(split_acceptance)
+            split_task["acceptance_criteria"] = list(split_acceptance)
             metadata = dict(split_task.get("metadata") or {})
             metadata.update(
                 {
@@ -404,6 +545,7 @@ def _split_director_task_boundary_contracts_in_place(
                     "task_boundary_split_version": "pm_task_boundary.v1",
                     "original_task_id": task_id,
                     "boundary_kind": bucket,
+                    "boundary_target_files": list(files),
                 }
             )
             split_task["metadata"] = metadata
@@ -641,6 +783,8 @@ def evaluate_pm_task_quality(
 
     if task_count == 0:
         critical_issues.append("PM returned zero tasks")
+    typed_tasks = [task for task in tasks if isinstance(task, dict)]
+    critical_issues.extend(_duplicate_js_domain_source_path_issues(typed_tasks))
     unique_ratio = len(seen_signatures) / float(task_count) if task_count > 0 else 1.0
     if task_count >= 2 and unique_ratio < 0.67:
         critical_issues.append(f"task list is overly repetitive (unique_signature_ratio={unique_ratio:.2f})")
@@ -688,7 +832,6 @@ def evaluate_pm_task_quality(
         if missing_domains:
             critical_issues.append(f"game PM decomposition missing domains: {', '.join(missing_domains)}")
     if task_count >= 2:
-        typed_tasks = [task for task in tasks if isinstance(task, dict)]
         critical_issues.extend(_unknown_dependency_refs(typed_tasks))
         try:
             validate_dependency_dag(typed_tasks)

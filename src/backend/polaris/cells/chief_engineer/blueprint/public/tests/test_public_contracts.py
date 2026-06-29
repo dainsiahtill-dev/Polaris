@@ -544,7 +544,7 @@ class TestChiefEngineerBlueprintPublicService:
             "README.md",
         )
 
-    def test_generate_task_blueprint_promotes_nested_construction_plan_files(self, tmp_path) -> None:
+    def test_generate_task_blueprint_records_advisory_construction_plan_files_without_promoting(self, tmp_path) -> None:
         cmd = GenerateTaskBlueprintCommandV1(
             task_id="TASK-TS-FILES",
             workspace=str(tmp_path),
@@ -584,9 +584,10 @@ class TestChiefEngineerBlueprintPublicService:
         result = generate_task_blueprint(cmd)
 
         assert result.ok is True
-        assert "src/engine/types.ts" in result.target_files
-        assert "src/engine/simulation.ts" in result.target_files
-        assert "src/engine/renderer.ts" in result.target_files
+        assert result.target_files == ("package.json", "index.html", "src/web.ts")
+        assert "src/engine/types.ts" not in result.target_files
+        assert "src/engine/simulation.ts" not in result.target_files
+        assert "src/engine/renderer.ts" not in result.target_files
         assert "../outside.ts" not in result.target_files
         assert "/tmp/absolute.ts" not in result.target_files
         assert "npm run build" not in result.target_files
@@ -594,12 +595,14 @@ class TestChiefEngineerBlueprintPublicService:
         assert isinstance(persisted, dict)
         assert persisted["target_files"] == list(result.target_files)
         assert persisted["context"]["target_files"] == persisted["target_files"]
-        assert "src/engine/types.ts" in persisted["scope_paths"]
+        assert "src/engine/types.ts" not in persisted["scope_paths"]
         assert "src/engine/types.ts" in persisted["llm_blueprint"]["projected_target_files"]
+        assert persisted["llm_blueprint"]["projected_target_file_authority"] == "advisory_only_not_scope_authority"
+        assert "src/engine/types.ts" in persisted["llm_blueprint"]["advisory_target_files_not_promoted"]
         module_paths = {
             module["path"] for module in persisted["module_interface_contract"]["modules"] if isinstance(module, dict)
         }
-        assert "src/engine/types.ts" in module_paths
+        assert "src/engine/types.ts" not in module_paths
 
     def test_generate_task_blueprint_materializes_depth_contract_test_target(self, tmp_path) -> None:
         cmd = GenerateTaskBlueprintCommandV1(
@@ -732,6 +735,114 @@ class TestChiefEngineerBlueprintPublicService:
         governance = persisted["governance"]["quality_gate"]
         assert governance["passed"] is True
         assert governance["blockers"] == []
+
+    def test_generate_task_blueprint_allows_support_boundary_with_delivery_semantics(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-JS-SUPPORT-BOUNDARY",
+            workspace=str(tmp_path),
+            objective="在工作区根交付 流星愿望队列 的 JavaScript/npm 项目骨架。 "
+            "Scope this task to project manifest and runtime entrypoint only.",
+            context={
+                "task_title": "流星愿望队列 JavaScript/npm 项目骨架 - manifest and entrypoint",
+                "language": "javascript",
+                "target_files": ["package.json", "src/index.js"],
+                "acceptance_criteria": [
+                    "verify package.json exists",
+                    "verify src/index.js exists",
+                    "package/test/build scripts are internally consistent",
+                ],
+                "execution_checklist": [
+                    "Materialize only the listed support boundary files",
+                    "Keep downstream source modules out of this boundary",
+                ],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "language": "javascript",
+                    "product_summary": {
+                        "intent": "Deliver a meteor wish queue with observable behavior.",
+                        "core_terms": ["meteor", "wish", "queue", "priority"],
+                    },
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "language": "javascript",
+                    "product_intent": {
+                        "subject": "meteor wish queue",
+                        "primary_entities": ["meteor", "wish", "queue", "priority"],
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["contract_completeness"]["handoff_ready"] is True
+        assert persisted["handoff_ready"] is True
+        semantic_alignment = persisted["contract_completeness"]["semantic_alignment"]
+        assert semantic_alignment["support_boundary"] is True
+        assert semantic_alignment["planning_text_matches"] == []
+        assert semantic_alignment["blockers"] == []
+        assert any("support boundary" in item for item in semantic_alignment["advisory"])
+
+    def test_generate_task_blueprint_allows_blueprint_overlay_semantic_alignment(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-JS-CORE",
+            workspace=str(tmp_path),
+            objective="在工作区根交付 流星愿望队列。 Scope this task to core engine/service modules only.",
+            context={
+                "task_title": "实现 流星愿望队列 - core engine/service modules",
+                "language": "javascript",
+                "target_files": ["src/engine/rules.js", "src/engine/runner.js"],
+                "acceptance_criteria": [
+                    "verify src/engine/rules.js exists",
+                    "verify src/engine/runner.js exists",
+                ],
+                "execution_checklist": ["Materialize only the listed core engine files."],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "language": "javascript",
+                    "product_summary": {
+                        "intent": "Deliver a meteor wish queue with observable behavior.",
+                        "core_terms": ["meteor", "wish", "queue", "priority"],
+                    },
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "language": "javascript",
+                    "product_intent": {
+                        "subject": "meteor wish queue",
+                        "primary_entities": ["meteor", "wish", "queue", "priority"],
+                    },
+                },
+            },
+            llm_blueprint={
+                "construction_plan": {
+                    "rules": [
+                        "Implement meteor to wish scoring.",
+                        "Implement queue priority sorting.",
+                    ],
+                    "runner": ["Return visible queue metrics for each wish."],
+                },
+                "scope_for_apply": ["src/engine/rules.js", "src/engine/runner.js"],
+                "risk_flags": [],
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["contract_completeness"]["handoff_ready"] is True
+        assert persisted["handoff_ready"] is True
+        semantic_alignment = persisted["contract_completeness"]["semantic_alignment"]
+        assert semantic_alignment["planning_text_matches"] == []
+        assert set(semantic_alignment["blueprint_text_matches"]) >= {"meteor", "priority", "queue", "wish"}
+        assert semantic_alignment["blockers"] == []
+        assert any("CE blueprint overlay" in item for item in semantic_alignment["advisory"])
 
     def test_generate_task_blueprint_blocks_domain_mismatched_planning_text(self, tmp_path) -> None:
         cmd = GenerateTaskBlueprintCommandV1(
@@ -920,6 +1031,112 @@ class TestChiefEngineerBlueprintPublicService:
         assert forecast_module["role"] == "core_engine"
         assert "forecast" in forecast_module["planned_public_symbols"]
         assert persisted["context"]["module_interface_contract"] == interface_contract
+
+    def test_generate_task_blueprint_uses_javascript_module_symbols_not_class_stubs(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-JS-METEOR",
+            workspace=str(tmp_path),
+            objective="Implement meteor wish queue JavaScript source modules",
+            context={
+                "task_title": "Meteor wish queue source modules",
+                "language": "javascript",
+                "target_files": [
+                    "src/engine/rules.js",
+                    "src/engine/runner.js",
+                    "src/meteor.js",
+                    "src/wish.js",
+                    "src/queue.js",
+                    "src/priority.js",
+                ],
+                "acceptance_criteria": [
+                    "meteor, wish, queue, and priority behavior tests pass",
+                    "npm test returns success",
+                ],
+                "execution_checklist": [
+                    "Implement source modules",
+                    "Keep engine imports aligned with owner modules",
+                ],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "language": "javascript",
+                    "product_summary": {
+                        "intent": "Deliver a meteor wish queue with observable behavior.",
+                        "core_terms": ["meteor", "wish", "queue", "priority"],
+                    },
+                },
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "language": "javascript",
+                    "product_intent": {
+                        "subject": "meteor wish queue",
+                        "primary_entities": ["meteor", "wish", "queue", "priority"],
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        interface_contract = persisted["module_interface_contract"]
+        meteor_module = next(module for module in interface_contract["modules"] if module["path"] == "src/meteor.js")
+        assert "meteor" in meteor_module["owner_terms"]
+        assert "createMeteor" in meteor_module["planned_public_symbols"]
+        assert "validateMeteor" in meteor_module["planned_public_symbols"]
+        assert "Meteor" not in meteor_module["planned_public_symbols"]
+        assert meteor_module["symbol_source"] == "heuristic_path_guess"
+        assert meteor_module["symbol_confidence"] == 0.35
+        queue_module = next(module for module in interface_contract["modules"] if module["path"] == "src/queue.js")
+        assert "createQueue" in queue_module["planned_public_symbols"]
+        assert "Queue" in queue_module["planned_public_symbols"]
+
+    def test_generate_task_blueprint_blocks_duplicate_owner_when_existing_exports_disagree(self, tmp_path) -> None:
+        cmd = GenerateTaskBlueprintCommandV1(
+            task_id="TASK-JS-METEOR-MODELS",
+            workspace=str(tmp_path),
+            objective="Implement meteor wish queue JavaScript model mirror",
+            context={
+                "task_title": "Meteor wish queue model mirror",
+                "language": "javascript",
+                "target_files": ["src/models/meteor.js"],
+                "acceptance_criteria": ["verify src/models/meteor.js exists"],
+                "execution_checklist": ["Implement source module", "Run npm test"],
+                "existing_target_files": [
+                    {
+                        "path": "src/meteor.js",
+                        "exports": "export function createMeteor(options = {}) {}\n"
+                        "export function advanceMeteor(meteor, target) {}\n",
+                    }
+                ],
+                "delivery_plan_document": {
+                    "schema_version": "polaris.delivery_plan_document.v1",
+                    "language": "javascript",
+                    "product_summary": {
+                        "intent": "Deliver a meteor wish queue with observable behavior.",
+                        "core_terms": ["meteor", "wish"],
+                    },
+                },
+            },
+        )
+
+        result = generate_task_blueprint(cmd)
+
+        assert result.ok is True
+        persisted = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
+        assert isinstance(persisted, dict)
+        assert persisted["handoff_ready"] is False
+        assert any(
+            "module_interface_contract owner conflict" in item
+            for item in persisted["contract_completeness"]["semantic_blockers"]
+        )
+        interface_contract = persisted["module_interface_contract"]
+        assert interface_contract["interface_conflicts"][0]["planned_path"] == "src/models/meteor.js"
+        assert interface_contract["interface_conflicts"][0]["actual_owner_path"] == "src/meteor.js"
+        meteor_module = interface_contract["modules"][0]
+        assert meteor_module["symbol_source"] == "heuristic_path_guess_with_actual_owner_conflict"
+        assert meteor_module["interface_conflict"]["actual_public_symbols"] == ["createMeteor", "advanceMeteor"]
 
     def test_query_missing_task_blueprint(self, tmp_path) -> None:
         status = get_blueprint_status(

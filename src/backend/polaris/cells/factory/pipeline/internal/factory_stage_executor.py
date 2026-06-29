@@ -3080,6 +3080,28 @@ class OrchestrationStageExecutor:
         )
 
     @staticmethod
+    def _ce_llm_failure_allows_blueprint_projection(ce_result: Any) -> bool:
+        failure_text = " ".join(
+            str(value or "")
+            for value in (
+                getattr(ce_result, "error_category", None),
+                getattr(ce_result, "error_code", None),
+                getattr(ce_result, "error_message", None),
+                getattr(ce_result, "status", None),
+            )
+        ).lower()
+        return any(
+            token in failure_text
+            for token in (
+                "request timeout",
+                "provider_timeout",
+                "timed out",
+                "timeout",
+                "transport timeout",
+            )
+        )
+
+    @staticmethod
     def _attach_ce_llm_evidence(signal: dict[str, Any], evidence: dict[str, Any]) -> None:
         for key in (
             "final_request_context_audit",
@@ -3343,11 +3365,20 @@ class OrchestrationStageExecutor:
                 # Check if CE LLM call succeeded (fail-closed)
                 llm_call_skipped = bool(ce_result_metadata.get("llm_call_skipped"))
                 recovered_review_schema_failure = llm_call_skipped
+                recovered_failure_with_projection = False
                 if not ce_result.ok:
                     recovered_review_schema_failure = self._ce_review_schema_failure_is_recoverable(
                         ce_result,
                         raw_output=raw_output,
                     )
+                    if not recovered_review_schema_failure:
+                        recovered_failure_with_projection = self._ce_llm_failure_allows_blueprint_projection(ce_result)
+                        if recovered_failure_with_projection:
+                            recovered_review_schema_failure = True
+                            deadline_projection_locked = True
+                            self._enrich_chief_engineer_projection_context(task_context)
+                            ce_evidence["llm_call_failed_projection"] = True
+                            ce_evidence["recovery_strategy"] = "deterministic_blueprint_projection_after_llm_timeout"
                     error_signal: dict[str, Any] = {
                         "code": "chief_engineer.llm_review_failed",
                         "severity": "warning" if recovered_review_schema_failure else "error",
@@ -3357,6 +3388,9 @@ class OrchestrationStageExecutor:
                         "model": ce_model,
                         "recoverable": recovered_review_schema_failure,
                     }
+                    if recovered_failure_with_projection:
+                        error_signal["recovery_strategy"] = "deterministic_blueprint_projection_after_llm_timeout"
+                        error_signal["deadline_projection_locked"] = True
                     if ce_evidence.get("provider_model_unknown"):
                         error_signal["provider_model_unknown"] = True
                         error_signal["provider_model_unknown_reason"] = str(

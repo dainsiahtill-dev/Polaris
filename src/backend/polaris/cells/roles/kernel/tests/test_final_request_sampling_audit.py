@@ -142,6 +142,83 @@ def test_final_request_context_audit_flags_empty_run_card_message() -> None:
     assert "empty_run_card_message" in finding_codes
 
 
+def test_final_request_context_audit_does_not_treat_role_name_as_ce_blueprint() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="pm",
+        input="",
+        options={"temperature": 0.2, "max_tokens": 4000},
+        context={
+            "chat_messages": [
+                {"role": "system", "content": "You are PM in the PM -> Chief Engineer -> Director chain."},
+                {
+                    "role": "user",
+                    "content": (
+                        "Plan a JavaScript project. The Chief Engineer will create a blueprint later, "
+                        "but no CE handoff evidence exists yet."
+                    ),
+                },
+            ],
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {"role": "system", "content": "You are PM in the PM -> Chief Engineer -> Director chain."},
+            {
+                "role": "user",
+                "content": (
+                    "Plan a JavaScript project. The Chief Engineer will create a blueprint later, "
+                    "but no CE handoff evidence exists yet."
+                ),
+            },
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="pm", max_context_tokens=128_000),
+    )
+
+    assert audit["coverage"]["has_chief_engineer_blueprint"] is False
+
+
+def test_final_request_context_audit_does_not_treat_ce_output_contract_as_existing_blueprint() -> None:
+    content = (
+        "You are Chief Engineer. Return exactly one JSON object. "
+        "Required keys: construction_plan, scope_for_apply, risk_flags. "
+        "Task target_files: src/engine/rules.js and src/engine/runner.js."
+    )
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="chief_engineer",
+        input="",
+        options={"temperature": 0.2, "max_tokens": 4000},
+        context={"chat_messages": [{"role": "system", "content": content}]},
+    )
+    prepared = PreparedLLMRequest(
+        messages=[{"role": "system", "content": content}],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="chief_engineer", max_context_tokens=128_000),
+    )
+
+    assert audit["coverage"]["has_chief_engineer_blueprint"] is False
+
+
 def test_final_provider_snapshot_includes_execution_profile_summary_and_hash() -> None:
     execution_profile = {
         "schema_version": "task.execution_profile.v1",

@@ -400,7 +400,16 @@ def _planned_public_symbols(*, path: str, language: str, role: str, owner_terms:
     language_token = language.strip().lower()
     symbols: list[str] = []
     for term in owner_terms:
-        if role == "domain_model":
+        if language_token == "javascript" and role in {"domain_model", "module"}:
+            pascal = _pascal_case(term)
+            candidates = [f"create{pascal}", f"validate{pascal}"] if pascal else []
+            if "queue" in term.lower() and pascal:
+                candidates.append(pascal)
+            for candidate in candidates:
+                if candidate and candidate not in symbols:
+                    symbols.append(candidate)
+            candidate = ""
+        elif role == "domain_model":
             candidate = _pascal_case(term)
         elif language_token in {"python", "go", "typescript", "javascript"}:
             candidate = _snake_case(term)
@@ -409,7 +418,9 @@ def _planned_public_symbols(*, path: str, language: str, role: str, owner_terms:
         if candidate and candidate not in symbols:
             symbols.append(candidate)
     stem = _module_stem(path)
-    if role == "domain_model":
+    if language_token == "javascript" and role in {"domain_model", "module"}:
+        fallback = _snake_case(stem)
+    elif role == "domain_model":
         fallback = _pascal_case(stem)
     elif role == "entrypoint":
         fallback = "main"
@@ -418,6 +429,74 @@ def _planned_public_symbols(*, path: str, language: str, role: str, owner_terms:
     if fallback and fallback not in symbols:
         symbols.append(fallback)
     return symbols[:6]
+
+
+def _public_symbols_from_export_summary(summary: Any) -> list[str]:
+    text = str(summary or "")
+    if not text.strip():
+        return []
+    symbols: list[str] = []
+
+    def add(name: str) -> None:
+        token = str(name or "").strip()
+        if token and token not in symbols:
+            symbols.append(token)
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        for pattern in (
+            r"(?:export\s+)?(?:const\s+)?enum\s+([A-Za-z_$][\w$]*)",
+            r"(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)",
+            r"(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)",
+            r"(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)",
+            r"(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)",
+            r"(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*=",
+            r"exports\.([A-Za-z_$][\w$]*)",
+        ):
+            match = re.match(pattern, line)
+            if match:
+                add(match.group(1))
+                break
+        export_list = re.match(r"export\s+\{([^}]+)\}", line)
+        if export_list:
+            for item in export_list.group(1).split(","):
+                name = item.strip()
+                if not name:
+                    continue
+                if " as " in name:
+                    name = name.rsplit(" as ", 1)[-1].strip()
+                add(name)
+        module_exports = re.match(r"module\.exports\s*=\s*\{([^}]+)\}", line)
+        if module_exports:
+            for item in module_exports.group(1).split(","):
+                name = item.strip().split(":", 1)[0].strip()
+                add(name)
+    return symbols[:16]
+
+
+def _existing_export_symbols_by_path(context: dict[str, Any]) -> dict[str, list[str]]:
+    rows = context.get("existing_target_files")
+    if not isinstance(rows, (list, tuple)):
+        return {}
+    by_path: dict[str, list[str]] = {}
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        path = _normalize_blueprint_file_path(item.get("path"))
+        if not path:
+            continue
+        symbols = _public_symbols_from_export_summary(item.get("exports") or item.get("summary"))
+        if symbols:
+            by_path[path] = symbols
+    return by_path
+
+
+def _owner_terms_overlap(left: list[str], right: list[str]) -> bool:
+    left_set = {str(item or "").strip().lower() for item in left if str(item or "").strip()}
+    right_set = {str(item or "").strip().lower() for item in right if str(item or "").strip()}
+    return bool(left_set and right_set and left_set.intersection(right_set))
 
 
 def _module_interface_contract(
@@ -438,28 +517,56 @@ def _module_interface_contract(
         or ""
     ).strip()
     modules: list[dict[str, Any]] = []
+    interface_conflicts: list[dict[str, Any]] = []
+    existing_symbols_by_path = _existing_export_symbols_by_path(context)
+    existing_owner_entries = [
+        (path, _module_owner_terms(path, semantic_terms), symbols) for path, symbols in existing_symbols_by_path.items()
+    ]
     for path in target_files:
         normalized = str(path or "").replace("\\", "/").strip("/")
         if not normalized:
             continue
         role = _module_role_from_path(normalized)
         owner_terms = _module_owner_terms(normalized, semantic_terms)
-        modules.append(
-            {
-                "path": normalized,
-                "role": role,
-                "owner_terms": owner_terms,
-                "planned_public_symbols": _planned_public_symbols(
-                    path=normalized,
-                    language=language,
-                    role=role,
-                    owner_terms=owner_terms,
-                ),
-            }
+        planned_symbols = _planned_public_symbols(
+            path=normalized,
+            language=language,
+            role=role,
+            owner_terms=owner_terms,
         )
+        module = {
+            "path": normalized,
+            "role": role,
+            "owner_terms": owner_terms,
+            "planned_public_symbols": planned_symbols,
+            "symbol_source": "heuristic_path_guess",
+            "symbol_confidence": 0.35,
+        }
+        actual_symbols = existing_symbols_by_path.get(normalized)
+        if actual_symbols:
+            module["actual_public_symbols"] = actual_symbols
+            module["symbol_source"] = "actual_export_summary"
+            module["symbol_confidence"] = 1.0
+        else:
+            for existing_path, existing_terms, existing_symbols in existing_owner_entries:
+                if existing_path == normalized or not _owner_terms_overlap(owner_terms, existing_terms):
+                    continue
+                conflict = {
+                    "planned_path": normalized,
+                    "actual_owner_path": existing_path,
+                    "owner_terms": owner_terms,
+                    "actual_public_symbols": existing_symbols,
+                    "reason": "semantic_owner_already_has_actual_export_summary",
+                }
+                module["interface_conflict"] = conflict
+                module["symbol_source"] = "heuristic_path_guess_with_actual_owner_conflict"
+                module["symbol_confidence"] = 0.1
+                interface_conflicts.append(conflict)
+                break
+        modules.append(module)
     if not modules:
         return {}
-    return {
+    contract = {
         "schema_version": "chief_engineer.module_interface_contract.v1",
         "source": "chief_engineer.generate_task_blueprint",
         "authority": "handoff_guidance_not_scope_authority",
@@ -471,6 +578,56 @@ def _module_interface_contract(
             "When implementation needs different symbol names, update the owner module and all import sites together.",
         ],
     }
+    if interface_conflicts:
+        contract["interface_conflicts"] = interface_conflicts
+    return contract
+
+
+_SEMANTIC_SUPPORT_BOUNDARY_FILENAMES = frozenset(
+    {
+        "__init__.py",
+        "index.js",
+        "index.jsx",
+        "index.ts",
+        "index.tsx",
+        "main.go",
+        "main.js",
+        "main.py",
+        "main.rs",
+        "main.ts",
+        "package-lock.json",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pyproject.toml",
+        "requirements.txt",
+        "tsconfig.json",
+        "yarn.lock",
+    }
+)
+_SEMANTIC_SUPPORT_BOUNDARY_SUFFIXES = (
+    ".config.js",
+    ".config.mjs",
+    ".config.ts",
+    ".lock",
+    ".toml",
+    ".yaml",
+    ".yml",
+)
+
+
+def _is_semantic_support_boundary_path(path: str) -> bool:
+    normalized = str(path or "").replace("\\", "/").strip("/").casefold()
+    if not normalized:
+        return False
+    basename = normalized.rsplit("/", 1)[-1]
+    if basename in _SEMANTIC_SUPPORT_BOUNDARY_FILENAMES:
+        return True
+    return basename.endswith(_SEMANTIC_SUPPORT_BOUNDARY_SUFFIXES)
+
+
+def _is_semantic_support_boundary(*path_groups: list[str]) -> bool:
+    paths = [path for group in path_groups for path in group if str(path or "").strip()]
+    return bool(paths) and all(_is_semantic_support_boundary_path(path) for path in paths)
 
 
 def _semantic_alignment_audit(
@@ -483,6 +640,7 @@ def _semantic_alignment_audit(
     execution_checklist: list[str],
     delivery_depth_contract: dict[str, Any] | None,
     delivery_plan_document: dict[str, Any] | None,
+    llm_blueprint_overlay: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     expected_terms = _semantic_terms_from_delivery_contracts(
         delivery_depth_contract=delivery_depth_contract,
@@ -495,6 +653,7 @@ def _semantic_alignment_audit(
             "required_term_count": 0,
             "target_file_matches": [],
             "planning_text_matches": [],
+            "blueprint_text_matches": [],
             "advisory": [],
             "blockers": [],
         }
@@ -502,9 +661,12 @@ def _semantic_alignment_audit(
     required_term_count = min(len(expected_terms), 3)
     target_tokens = _semantic_tokens_from_values(target_files, scope_paths)
     planning_tokens = _semantic_tokens_from_values(objective, title, acceptance_criteria, execution_checklist)
+    blueprint_tokens = _semantic_tokens_from_values(llm_blueprint_overlay or {})
     expected_set = set(expected_terms)
     target_matches = sorted(expected_set & target_tokens)
     planning_matches = sorted(expected_set & planning_tokens)
+    blueprint_matches = sorted(expected_set & blueprint_tokens)
+    support_boundary = _is_semantic_support_boundary(target_files, scope_paths)
 
     blockers: list[str] = []
     advisory: list[str] = []
@@ -515,9 +677,25 @@ def _semantic_alignment_audit(
             f"matched {len(target_matches)}/{minimum_target_matches} required domain terms"
         )
     if len(planning_matches) < required_term_count:
-        blockers.append(
-            f"semantic_alignment.plan_text: matched {len(planning_matches)}/{required_term_count} required domain terms"
-        )
+        if len(target_matches) >= required_term_count:
+            advisory.append(
+                "semantic_alignment.plan_text covered by scoped domain target files: "
+                f"matched {len(target_matches)}/{required_term_count} required domain terms"
+            )
+        elif len(blueprint_matches) >= required_term_count:
+            advisory.append(
+                "semantic_alignment.plan_text covered by CE blueprint overlay: "
+                f"matched {len(blueprint_matches)}/{required_term_count} required domain terms"
+            )
+        elif support_boundary:
+            advisory.append(
+                "semantic_alignment.plan_text deferred to delivery context for support boundary: "
+                f"matched {len(planning_matches)}/{required_term_count} required domain terms"
+            )
+        else:
+            blockers.append(
+                f"semantic_alignment.plan_text: matched {len(planning_matches)}/{required_term_count} required domain terms"
+            )
 
     return {
         "ready": not blockers,
@@ -525,6 +703,8 @@ def _semantic_alignment_audit(
         "required_term_count": required_term_count,
         "target_file_matches": target_matches,
         "planning_text_matches": planning_matches,
+        "blueprint_text_matches": blueprint_matches,
+        "support_boundary": support_boundary,
         "advisory": advisory,
         "blockers": blockers,
     }
@@ -860,6 +1040,7 @@ def _contract_completeness(
     execution_checklist: list[str],
     delivery_depth_contract: dict[str, Any] | None = None,
     delivery_plan_document: dict[str, Any] | None = None,
+    llm_blueprint_overlay: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     missing_fields: list[str] = []
     advisory_missing_fields: list[str] = []
@@ -882,6 +1063,7 @@ def _contract_completeness(
         execution_checklist=execution_checklist,
         delivery_depth_contract=delivery_depth_contract,
         delivery_plan_document=delivery_plan_document,
+        llm_blueprint_overlay=llm_blueprint_overlay,
     )
     semantic_blockers = list(semantic_alignment["blockers"])
     return {
@@ -961,9 +1143,11 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     llm_blueprint_overlay = _normalize_llm_blueprint_overlay(command.llm_blueprint)
     llm_declared_target_files = _blueprint_declared_file_paths(_mapping(command.llm_blueprint).get("construction_plan"))
     if llm_declared_target_files:
-        target_files = _merge_string_lists(target_files, llm_declared_target_files)
-        scope_paths = _merge_string_lists(scope_paths, llm_declared_target_files)
         llm_blueprint_overlay["projected_target_files"] = llm_declared_target_files[:32]
+        llm_blueprint_overlay["projected_target_file_authority"] = "advisory_only_not_scope_authority"
+        unpromoted = [path for path in llm_declared_target_files if path not in target_files]
+        if unpromoted:
+            llm_blueprint_overlay["advisory_target_files_not_promoted"] = unpromoted[:32]
     _apply_delivery_depth_test_targets(
         target_files=target_files,
         scope_paths=scope_paths,
@@ -1001,7 +1185,27 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         execution_checklist=execution_checklist,
         delivery_depth_contract=delivery_depth_contract,
         delivery_plan_document=delivery_plan_document,
+        llm_blueprint_overlay=llm_blueprint_overlay,
     )
+    interface_conflicts = list(module_interface_contract.get("interface_conflicts") or [])
+    if interface_conflicts:
+        blocker = "module_interface_contract owner conflict: " + "; ".join(
+            f"{item.get('planned_path')} conflicts with actual owner {item.get('actual_owner_path')}"
+            for item in interface_conflicts[:4]
+            if isinstance(item, dict)
+        )
+        semantic_blockers = list(contract_completeness.get("semantic_blockers") or [])
+        if blocker not in semantic_blockers:
+            semantic_blockers.append(blocker)
+        contract_completeness["semantic_blockers"] = semantic_blockers
+        contract_completeness["handoff_ready"] = False
+        semantic_alignment = contract_completeness.get("semantic_alignment")
+        if isinstance(semantic_alignment, dict):
+            semantic_alignment["ready"] = False
+            blockers = list(semantic_alignment.get("blockers") or [])
+            if blocker not in blockers:
+                blockers.append(blocker)
+            semantic_alignment["blockers"] = blockers
     context["acceptance_criteria"] = acceptance_criteria
     context["execution_checklist"] = execution_checklist
     context["target_files"] = target_files

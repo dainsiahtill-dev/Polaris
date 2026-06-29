@@ -578,11 +578,15 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
                 if not isinstance(module, dict):
                     continue
                 path = str(module.get("path") or "").strip()
-                symbols = _string_list_payload(module.get("planned_public_symbols"), limit=8)
+                actual_symbols = _string_list_payload(module.get("actual_public_symbols"), limit=8)
+                planned_symbols = _string_list_payload(module.get("planned_public_symbols"), limit=8)
                 role = str(module.get("role") or "").strip()
-                if path and symbols:
+                if path and (actual_symbols or planned_symbols):
                     role_suffix = f" [{role}]" if role else ""
-                    lines.append(f"  - {path}{role_suffix}: exports {', '.join(symbols)}")
+                    if actual_symbols:
+                        lines.append(f"  - {path}{role_suffix}: exports {', '.join(actual_symbols)}")
+                    elif planned_symbols:
+                        lines.append(f"  - {path}{role_suffix}: planned_exports {', '.join(planned_symbols)}")
         rules = _string_list_payload(module_interface_contract.get("rules"), limit=4)
         for rule in rules:
             lines.append(f"  - interface rule: {rule}")

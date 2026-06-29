@@ -322,7 +322,20 @@ class TestFrontendTestRepairContracts:
         assert "tests/product.test.js" in targets
         assert "tests/test_product.py" in targets
         assert "README.md" in targets
-        assert any(target.startswith("src/models/") and target.endswith(".js") for target in targets)
+        assert "src/lost.js" in targets
+        assert "src/alien.js" in targets
+        assert all(not target.startswith("src/models/") for target in targets)
+        verification_task = next(item for item in contracts if item.get("id") == "TASK-2")
+        verification_targets = set(verification_task.get("target_files") or [])
+        verification_context = set(verification_task.get("context_files") or [])
+        assert "package.json" in verification_targets
+        assert "tests/product.test.js" in verification_targets
+        assert "src/index.js" not in verification_targets
+        assert "src/engine/rules.js" not in verification_targets
+        assert "src/lost.js" not in verification_targets
+        assert "src/index.js" in verification_context
+        assert "src/engine/rules.js" in verification_context
+        assert "src/lost.js" in verification_context
         assert all("src/main/java" not in target for target in targets)
         assert "RhythmMonster" not in serialized
         assert "BeatPattern" not in serialized

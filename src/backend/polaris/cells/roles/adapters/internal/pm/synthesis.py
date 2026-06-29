@@ -477,8 +477,10 @@ def _typescript_model_targets_from_keywords(keywords: list[str], *, domain_token
 
 def _javascript_model_target_from_keyword(keyword: str, *, fallback: str) -> str:
     normalized = str(keyword or "").strip().lower()
-    name = _pascal_identifier_token(normalized, fallback=fallback)
-    return f"src/models/{name}.js"
+    parts = [part.lower() for part in re.split(r"[^A-Za-z0-9]+", normalized) if part]
+    fallback_parts = [part.lower() for part in re.split(r"[^A-Za-z0-9]+", fallback) if part]
+    name = "-".join(parts or fallback_parts or ["domain"])
+    return f"src/{name}.js"
 
 
 def _javascript_model_targets_from_keywords(keywords: list[str], *, domain_token: str) -> list[str]:
@@ -1124,7 +1126,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "需求驱动的核心业务源码。"
                     ),
                     "description": (
-                        "创建 package.json、src/index.js、src/engine/ 与需求派生的 src/models/*.js，"
+                        "创建 package.json、src/index.js、src/engine/ 与需求派生的 src/*.js 领域模块，"
                         f"覆盖需求关键词和确定性检查：{keyword_summary}。"
                     ),
                     "scope": source_targets,
@@ -1133,11 +1135,11 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "创建 package.json，声明真实 build/test/start 脚本，禁止 echo-only 或 manifest-only 脚本",
                         "实现 src/index.js 作为 Node-safe CLI 或模块入口，可通过 npm start 执行",
                         "实现 src/engine/rules.js 与 src/engine/runner.js，封装核心匹配、计算或流程规则",
-                        "实现 src/models/ 下的需求派生领域模型，源码必须真实使用需求关键词",
+                        "实现 src/ 下的需求派生领域模块，源码必须真实使用需求关键词",
                         "执行 `node --check` 或等价语法检查覆盖 src/**/*.js",
                     ],
                     "acceptance": [
-                        "`package.json`、`src/index.js`、`src/engine/` 与 `src/models/` JavaScript 源码存在且非空",
+                        "`package.json`、`src/index.js`、`src/engine/` 与需求派生 `src/*.js` JavaScript 源码存在且非空",
                         "`npm run build`、`npm test` 与 `npm start` 都执行真实入口或验证逻辑",
                         f"源码或测试覆盖需求关键词：{keyword_summary}",
                         f"确定性检查进入任务验收：{check_summary}",
@@ -1155,8 +1157,9 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "补齐 tests/product.test.js、tests/test_product.py 与 README，"
                         f"确保 package_scripts、js_syntax 和 source_target_coverage 可被自动验证：{check_summary}。"
                     ),
-                    "scope": [*source_targets, *verification_targets],
-                    "target_files": [*source_targets, *verification_targets],
+                    "scope": ["package.json", *verification_targets],
+                    "target_files": ["package.json", *verification_targets],
+                    "context_files": source_targets,
                     "steps": [
                         "实现 tests/product.test.js，使用 Node 标准库 assert 或内置 test runner 验证核心规则",
                         "实现 tests/test_product.py，使用 Python unittest 检查 package.json 脚本、src/**/*.js 覆盖和 node 入口",

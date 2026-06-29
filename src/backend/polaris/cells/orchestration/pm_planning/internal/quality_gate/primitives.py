@@ -99,7 +99,7 @@ _PM_MEASURABLE_PATH_RE = re.compile(
     r"(?:[A-Za-z]:[\\/]|[\w.\-]+[\\/][\w.\-/\\]+)",
 )
 _PM_FILE_EVIDENCE_PATH_RE = re.compile(
-    r"(?:[A-Za-z]:[\\/]|[\w.\-]+[\\/][\w.\-/\\]+\.[A-Za-z0-9]+)",
+    r"(?:[A-Za-z]:[\\/]|[\w.\-]+[\\/][\w.\-/\\]+\.[A-Za-z0-9]+|\b[\w.\-]+\.[A-Za-z0-9]+\b)",
 )
 _PM_MEASURABLE_BACKTICK_RE = re.compile(r"`[^`]{2,}`")
 _DETERMINISTIC_SCAFFOLD_MARKER_ERROR_RE = re.compile(

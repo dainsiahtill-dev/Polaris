@@ -54,11 +54,23 @@ _AFFIRMATIVE_PATTERNS = (
     re.compile(r"^(需要|要|可以|行|好|好的|继续|开始|确认|是|是的|要的|请继续|请开始|嗯|对)$"),
     re.compile(r"^(yes|y|ok|okay|sure|go ahead|please do|do it|continue|start)$", re.IGNORECASE),
 )
+_TOOL_FAILURE_SUMMARY_MARKERS = ("[tool_failure_summary]", "tool_failure_summary_digest.v1")
 
 
 def _is_low_signal(text: str) -> bool:
     lowered = text.lower()
     return any(re.search(pattern, lowered, re.IGNORECASE) for pattern in _LOW_SIGNAL_PATTERNS)
+
+
+def _is_tool_failure_summary_content(text: str) -> bool:
+    return any(marker in str(text or "") for marker in _TOOL_FAILURE_SUMMARY_MARKERS)
+
+
+def _metadata_flag(event: TranscriptEvent, key: str) -> bool:
+    value = get_metadata_value(event.metadata, key)
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes"}
 
 
 def _looks_like_large_payload(text: str, *, policy: StateFirstContextOSPolicy) -> bool:
@@ -279,7 +291,14 @@ class GenericContextDomainAdapter(ContextDomainAdapter):
 
     def extract_state_hints(self, event: TranscriptEvent) -> DomainStatePatchHints:
         content = _normalize_text(event.content)
-        if not content or event.role in {"tool", "system"} or is_control_plane_noise(content):
+        if (
+            not content
+            or event.role in {"tool", "system"}
+            or is_control_plane_noise(content)
+            or _is_tool_failure_summary_content(content)
+            or _metadata_flag(event, "observation_only")
+            or _metadata_flag(event, "non_deliverable")
+        ):
             return DomainStatePatchHints()
         followup_action = _normalize_text(get_metadata_value(event.metadata, "followup_action"))
         followup_confirmed = str(get_metadata_value(event.metadata, "followup_confirmed") or "").strip().lower() in {

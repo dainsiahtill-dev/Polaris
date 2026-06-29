@@ -140,7 +140,7 @@ def test_director_blueprint_handoff_projects_module_interface_contract(tmp_path:
     text = "\n".join(lines)
 
     assert "- module_interface_contract: required" in text
-    assert "src/models/stall.ts [domain_model]: exports Stall, StallState" in text
+    assert "src/models/stall.ts [domain_model]: planned_exports Stall, StallState" in text
     assert "interface rule: Every symbol imported from a sibling target module" in text
 
 

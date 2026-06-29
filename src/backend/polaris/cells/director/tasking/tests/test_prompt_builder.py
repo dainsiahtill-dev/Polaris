@@ -431,8 +431,8 @@ def test_prompt_includes_pm_ce_contract_context() -> None:
     assert "unknown mood uses explicit fallback" in prompt
     assert "no static keyword-only output" in prompt
     assert "Module interface contract:" in prompt
-    assert "src/models/flower.ts; role=domain_model; owns=flower; exports=Flower" in prompt
-    assert "src/engine/lightRules.ts; role=core_engine; owns=firefly; exports=light_rules" in prompt
+    assert "src/models/flower.ts; role=domain_model; owns=flower; planned_exports=Flower" in prompt
+    assert "src/engine/lightRules.ts; role=core_engine; owns=firefly; planned_exports=light_rules" in prompt
     assert "Every symbol imported from a sibling target module must be defined" in prompt
 
 

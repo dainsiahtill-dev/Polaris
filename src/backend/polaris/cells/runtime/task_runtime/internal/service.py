@@ -315,6 +315,7 @@ class TaskRuntimeService:
         )
 
     def list_task_rows(self, *, include_terminal: bool = True) -> list[dict[str, Any]]:
+        self.refresh_dependency_unblocks()
         rows: list[dict[str, Any]] = []
         for task in self._board.list_all():
             row = self._augment_task_row(task.to_dict())
@@ -337,6 +338,7 @@ class TaskRuntimeService:
         use ``claim_next_execution`` so selection and claim stay in one retryable
         operation.
         """
+        self.refresh_dependency_unblocks()
         requested = self.get_task(requested_task_id) if requested_task_id else None
         if isinstance(requested, dict) and self._is_row_claimable(requested):
             return requested
@@ -388,6 +390,7 @@ class TaskRuntimeService:
             - attempts (list[dict]): Details of each claim attempt
             - reason (str): Reason for failure (if success is False)
         """
+        self.refresh_dependency_unblocks()
         rows = self.list_task_rows(include_terminal=False)
         candidates = [row for row in rows if self._is_row_claimable(row)]
         if not candidates:
@@ -869,15 +872,18 @@ class TaskRuntimeService:
         }
 
     def list_ready(self) -> list[Task]:
+        self.refresh_dependency_unblocks()
         return self._board.list_ready()
 
     def wait_ready(self, timeout: float | None = None) -> bool:
+        self.refresh_dependency_unblocks()
         return self._board.wait_ready(timeout=timeout)
 
     def add_ready_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         return self._board.add_ready_listener(listener)
 
     def get_ready_tasks(self) -> list[Task]:
+        self.refresh_dependency_unblocks()
         return self._board.get_ready_tasks()
 
     def get_stats(self) -> dict[str, Any]:
@@ -909,6 +915,69 @@ class TaskRuntimeService:
             elif status == "cancelled":
                 stats["cancelled"] += 1
         return stats
+
+    def refresh_dependency_unblocks(self) -> dict[str, Any]:
+        """Normalize stale BLOCKED rows whose dependencies are now complete."""
+
+        changed: list[int] = []
+        inspected = 0
+        tasks = self._board.list_all()
+        status_by_id = {int(task.id): task.status for task in tasks}
+        for task in tasks:
+            inspected += 1
+            if task.status != TaskStatus.BLOCKED:
+                continue
+
+            explicit_blockers = self._active_dependency_ids(task.blocked_by, status_by_id)
+            if explicit_blockers:
+                if explicit_blockers != list(task.blocked_by or []):
+                    self._board.update(int(task.id), blocked_by=explicit_blockers)
+                continue
+
+            metadata = task.metadata if isinstance(task.metadata, dict) else {}
+            resolved_dependencies = self._metadata_dependency_task_ids(metadata)
+            if resolved_dependencies and self._active_dependency_ids(resolved_dependencies, status_by_id):
+                continue
+
+            updated = self._board.update(int(task.id), status=TaskStatus.PENDING, blocked_by=[])
+            if updated is not None:
+                changed.append(int(task.id))
+
+        return {
+            "inspected_count": inspected,
+            "unblocked_count": len(changed),
+            "unblocked_task_ids": changed,
+        }
+
+    @staticmethod
+    def _active_dependency_ids(dependency_ids: list[int], status_by_id: dict[int, TaskStatus]) -> list[int]:
+        active: list[int] = []
+        for dependency_id in dependency_ids:
+            try:
+                normalized = int(dependency_id)
+            except (TypeError, ValueError):
+                continue
+            if status_by_id.get(normalized) != TaskStatus.COMPLETED:
+                active.append(normalized)
+        return active
+
+    @staticmethod
+    def _metadata_dependency_task_ids(metadata: dict[str, Any]) -> list[int]:
+        for key in ("resolved_depends_on_task_ids", "depends_on_task_ids"):
+            raw = metadata.get(key)
+            if not isinstance(raw, list):
+                continue
+            result: list[int] = []
+            for item in raw:
+                try:
+                    value = int(item)
+                except (TypeError, ValueError):
+                    continue
+                if value not in result:
+                    result.append(value)
+            if result:
+                return result
+        return []
 
     def _row_sort_key(self, row: dict[str, Any]) -> tuple[int, str]:
         task_id = self.normalize_task_id(row.get("id"))

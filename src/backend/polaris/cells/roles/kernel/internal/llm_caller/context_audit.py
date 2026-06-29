@@ -367,30 +367,15 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
         needle in lowered
         for needle in (
             "blueprint_id",
-            "construction signatures",
-            "construction target",
-            "construction verify",
-            "scope_for_apply",
-            "construction_plan",
+            "ce_blueprint",
+            "chief_engineer_blueprint",
             "handoff_ready",
             "generated_blueprints",
             'blueprints":',
             "蓝图交接",
         )
     )
-    has_chief_engineer_blueprint = strong_blueprint_evidence or (
-        not blueprint_absent
-        and any(
-            needle in lowered
-            for needle in (
-                "chief engineer",
-                "chief_engineer",
-                "blueprint",
-                "ce handoff",
-                "ce 蓝图",
-            )
-        )
-    )
+    has_chief_engineer_blueprint = bool(strong_blueprint_evidence and not blueprint_absent)
     coverage = {
         "has_pm_contract": any(
             needle in lowered

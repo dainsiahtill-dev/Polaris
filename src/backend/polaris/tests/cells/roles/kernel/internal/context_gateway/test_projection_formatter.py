@@ -310,6 +310,32 @@ def test_expand_transcript_compacts_repeated_tool_failure_summaries() -> None:
     assert payload["failures"][0]["tool"] == "write_file"
 
 
+def test_expand_transcript_compacts_tool_failure_summaries_with_receipt_suffixes() -> None:
+    """Receipt placeholders appended after summary JSON must not defeat compaction."""
+    snapshot = {
+        "transcript_log": [
+            {
+                "role": "tool_result",
+                "content": (
+                    '[tool_failure_summary]\n{"tool":"write_file","error_type":"tool_failure",'
+                    '"reason":"write_file failed","prompt_safe":true}\n\n'
+                    f"[Large output stored in receipt tool_evt_{index}]\n\n[receipt_ref:tool_evt_{index}]"
+                ),
+            }
+            for index in range(8)
+        ]
+    }
+
+    messages = ProjectionFormatter.expand_transcript_to_messages(snapshot)
+
+    assert len(messages) == 1
+    assert messages[0]["name"] == "tool_failure_summary_digest"
+    payload = json.loads(messages[0]["content"].split("\n", 1)[1])
+    assert payload["failure_count"] == 8
+    assert payload["unique_failure_count"] == 1
+    assert payload["non_deliverable"] is True
+
+
 # ---------------------------------------------------------------------------
 # 4. dedupe_messages
 # ---------------------------------------------------------------------------

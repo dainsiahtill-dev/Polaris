@@ -243,6 +243,8 @@ class ProjectionFormatter:
             "failures": included,
             "omitted_failure_kinds": max(0, len(failures) - len(included)),
             "prompt_safe": True,
+            "observation_only": True,
+            "non_deliverable": True,
             "receipt_detail": "omitted; see runtime tool_result event for audit evidence",
         }
         result[first_failure_index] = {

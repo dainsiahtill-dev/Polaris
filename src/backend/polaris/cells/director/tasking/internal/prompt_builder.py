@@ -361,8 +361,11 @@ class PromptBuilder:
                     continue
                 path = str(item.get("path") or "").strip()
                 role = str(item.get("role") or "").strip()
-                symbols = self._metadata_items(item.get("planned_public_symbols"), limit=5, max_chars=80)
+                actual_symbols = self._metadata_items(item.get("actual_public_symbols"), limit=5, max_chars=80)
+                planned_symbols = self._metadata_items(item.get("planned_public_symbols"), limit=5, max_chars=80)
                 owner_terms = self._metadata_items(item.get("owner_terms"), limit=4, max_chars=80)
+                symbol_source = str(item.get("symbol_source") or "").strip()
+                conflict = self._metadata_mapping(item.get("interface_conflict"))
                 parts: list[str] = []
                 if path:
                     parts.append(path)
@@ -370,8 +373,16 @@ class PromptBuilder:
                     parts.append("role=" + role)
                 if owner_terms:
                     parts.append("owns=" + ", ".join(owner_terms))
-                if symbols:
-                    parts.append("exports=" + ", ".join(symbols))
+                if actual_symbols:
+                    parts.append("exports=" + ", ".join(actual_symbols))
+                if planned_symbols:
+                    parts.append("planned_exports=" + ", ".join(planned_symbols))
+                if symbol_source:
+                    parts.append("symbol_source=" + symbol_source)
+                if conflict:
+                    actual_owner = str(conflict.get("actual_owner_path") or "").strip()
+                    if actual_owner:
+                        parts.append("conflict_actual_owner=" + actual_owner)
                 text = self._compact_prompt_fragment("; ".join(parts), max_chars=max_chars)
                 if text:
                     rows.append(text)

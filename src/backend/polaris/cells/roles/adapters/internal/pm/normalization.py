@@ -133,8 +133,10 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         inline_scope_paths = _pm_extract_inline_list_field(inline_field_source, "scope_paths")
         target_values = raw.get("target_files") or inline_target_files
         scope_values = raw.get("scope_paths") or inline_scope_paths or raw.get("scope")
+        context_values = raw.get("context_files") or raw.get("context_paths") or []
         target_items = self._normalize_scope_path_list(self._normalize_list(target_values))
         scope_items = self._normalize_scope_path_list(self._normalize_list(scope_values))
+        context_files = self._normalize_scope_path_list(self._normalize_list(context_values))
         target_files, target_directory_scopes = _pm_split_concrete_targets_and_scopes(target_items)
         scope_file_targets, _scope_directory_paths = _pm_split_concrete_targets_and_scopes(scope_items)
         if not target_items and scope_file_targets:
@@ -276,6 +278,7 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             "scope": scope_text,
             "scope_paths": scope_paths,
             "target_files": list(dict.fromkeys(target_files)),
+            "context_files": list(dict.fromkeys(context_files)),
             "steps": steps,
             "acceptance": acceptance,
             "acceptance_criteria": acceptance,
