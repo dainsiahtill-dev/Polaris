@@ -38,6 +38,22 @@ def _canonical_batch_receipt(receipts: list[dict]) -> dict[str, Any]:
     return merge_batch_receipts(receipts) or {"results": []}
 
 
+def _finalization_tool_call_names(tool_calls: Any) -> list[str]:
+    """Extract readable tool names from provider-native finalization tool calls."""
+    if not isinstance(tool_calls, (list, tuple)):
+        return []
+    names: list[str] = []
+    for call in tool_calls:
+        if isinstance(call, Mapping):
+            function_raw = call.get("function")
+            function = function_raw if isinstance(function_raw, Mapping) else {}
+            name = str(call.get("name") or function.get("name") or call.get("tool") or "").strip()
+            names.append(name or "<unknown>")
+        else:
+            names.append(str(call).strip() or "<unknown>")
+    return names
+
+
 class FinalizationHandler:
     """收口处理器 — 将工具执行结果转化为最终用户可见输出。"""
 
@@ -126,6 +142,92 @@ class FinalizationHandler:
                 else None
             ),
         )
+
+        finalization_tool_calls = response.get("tool_calls")
+        blocked_tool_names = _finalization_tool_call_names(finalization_tool_calls)
+        if blocked_tool_names:
+            self.guard_assert_no_finalization_tool_calls(
+                turn_id=str(turn_id or ""),
+                tool_calls=list(finalization_tool_calls)
+                if isinstance(finalization_tool_calls, (list, tuple))
+                else [finalization_tool_calls],
+                ledger=ledger,
+            )
+            blocked_detail = (
+                "LLM_ONCE finalization returned tool calls while tools are disabled; "
+                f"blocked_tools={blocked_tool_names}"
+            )
+            ledger.mutation_obligation.mark_blocked(
+                BlockedReason.SAFETY_CONSTRAINT,
+                detail=blocked_detail,
+            )
+            ledger.anomaly_flags.append(
+                {
+                    "type": "FINALIZATION_TOOL_CALLS_BLOCKED",
+                    "turn_id": turn_id,
+                    "tool_count": len(blocked_tool_names),
+                    "tool_names": blocked_tool_names,
+                }
+            )
+
+            state_machine.transition_to(TurnState.FINALIZATION_RECEIVED)
+            ledger.state_history.append(("FINALIZATION_RECEIVED", int(time.time() * 1000)))
+            self.emit_event(
+                TurnPhaseEvent.create(
+                    turn_id,
+                    "finalization_tool_calls_blocked",
+                    {"tool_count": len(blocked_tool_names), "tool_names": blocked_tool_names},
+                )
+            )
+            state_machine.transition_to(TurnState.COMPLETED)
+            ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))
+            ledger.finalize()
+
+            batch_receipt = _canonical_batch_receipt(receipts)
+            self.emit_event(
+                CompletionEvent(
+                    turn_id=turn_id,
+                    status="failed",
+                    duration_ms=ledger.get_duration_ms(),
+                    llm_calls=len(ledger.llm_calls),
+                    tool_calls=len(ledger.tool_executions),
+                    turn_kind="finalization_tool_calls_blocked",
+                    batch_receipt=batch_receipt,
+                )
+            )
+            blocked_metrics: dict[str, float] = {
+                "duration_ms": float(ledger.get_duration_ms()),
+                "llm_calls": float(len(ledger.llm_calls)),
+                "tool_calls": float(len(ledger.tool_executions)),
+            }
+            blocked_metrics.update(ledger.build_monitoring_metrics(final_kind="finalization_tool_calls_blocked"))
+            return {
+                "turn_id": turn_id,
+                "kind": "finalization_tool_calls_blocked",
+                "visible_content": str(response.get("content") or "")
+                or "[FINALIZATION_TOOL_CALLS_BLOCKED] Tool calls are forbidden during finalization.",
+                "decision": {
+                    "kind": decision.get("kind").value
+                    if hasattr(decision.get("kind"), "value")
+                    else str(decision.get("kind", "")),
+                    "finalize_mode": decision.get("finalize_mode").value
+                    if hasattr(decision.get("finalize_mode"), "value")
+                    else str(decision.get("finalize_mode", "")),
+                },
+                "metrics": blocked_metrics,
+                "batch_receipt": batch_receipt,
+                "finalization": {
+                    "turn_id": turn_id,
+                    "mode": "blocked",
+                    "error": "finalization_tool_calls_blocked",
+                    "blocked_reason": BlockedReason.SAFETY_CONSTRAINT.value,
+                    "blocked_detail": blocked_detail,
+                    "needs_followup_workflow": True,
+                    "workflow_reason": "finalization_tool_calls_blocked",
+                    "tool_calls_blocked": True,
+                    "tool_names": blocked_tool_names,
+                },
+            }
 
         finalize_thinking = response.get("thinking")
         if finalize_thinking is not None and not isinstance(finalize_thinking, str):

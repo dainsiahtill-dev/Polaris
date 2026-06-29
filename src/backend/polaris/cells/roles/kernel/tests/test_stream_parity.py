@@ -816,11 +816,8 @@ class TestErrorRecovery:
         controller = ToolLoopController.from_request(request=request, profile=profile)
         result = await engine.run(request=request, role="pm", controller=controller)
 
-        assert result.error is None
-        # Soft guard: finalization-phase tool calls are dropped, normal completion.
-        # The legacy "repeated tool intent -> handoff" path no longer triggers
-        # because TransactionKernel drops finalization hallucinations.
-        assert result.metadata.get("transaction_kind") is None
+        assert result.error == "finalization_tool_calls_blocked"
+        assert result.metadata.get("transaction_kind") == "finalization_tool_calls_blocked"
 
 
 class TestBoundaryConditions:

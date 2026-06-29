@@ -459,8 +459,10 @@ class TestLLMOnceFinalization:
             turn_id="turn_violation", context=basic_context, tool_definitions=basic_tool_definitions
         )
 
-        # Soft guard: tool calls during finalization are dropped, normal completion proceeds
-        assert result["kind"] == "tool_batch_with_receipt"
+        assert result["kind"] == "finalization_tool_calls_blocked"
+        assert result["finalization"]["mode"] == "blocked"
+        assert result["finalization"]["tool_calls_blocked"] is True
+        assert result["finalization"]["workflow_reason"] == "finalization_tool_calls_blocked"
 
 
 # ============ Test NONE Finalize Mode ============
@@ -550,14 +552,22 @@ class TestWorkflowHandoff:
         ExplorationWorkflowRuntime（synthesis_llm=None 导致无输出）。
         修复后纯读取批次始终走正常 TOOL_BATCH 流程。
         """
-        mock_llm_provider.return_value = {
-            "content": "需要读取多份文件。",
-            "tool_calls": [
-                _native_tool_call("read_file", {"path": f"file{i}.py"}, call_id=f"call_{i}") for i in range(6)
-            ],
-            "model": "claude",
-            "usage": {"prompt_tokens": 100, "completion_tokens": 30},
-        }
+        mock_llm_provider.side_effect = [
+            {
+                "content": "需要读取多份文件。",
+                "tool_calls": [
+                    _native_tool_call("read_file", {"path": f"file{i}.py"}, call_id=f"call_{i}") for i in range(6)
+                ],
+                "model": "claude",
+                "usage": {"prompt_tokens": 100, "completion_tokens": 30},
+            },
+            {
+                "content": "已读取并汇总多份文件。",
+                "tool_calls": [],
+                "model": "claude",
+                "usage": {"prompt_tokens": 100, "completion_tokens": 30},
+            },
+        ]
 
         result = await controller.execute(
             turn_id="turn_many", context=basic_context, tool_definitions=basic_tool_definitions
@@ -1065,13 +1075,13 @@ class TestMonkeypatchPropagation:
 
 
 class TestProtocolPanicHandoff:
-    """验证 finalize 阶段 LLM 违反 tool_choice=none 时软守卫行为（丢弃幻觉 tool_calls）。"""
+    """Verify finalization tool-call re-entry fails closed with prior receipts preserved."""
 
     @pytest.mark.asyncio
-    async def test_finalize_tool_reentry_soft_guard_drops_tools(
+    async def test_finalize_tool_reentry_is_blocked(
         self, mock_llm_provider, mock_tool_runtime, basic_context, basic_tool_definitions
     ) -> None:
-        """LLM 在 LLM_ONCE 收口阶段返回 tool_calls 被软守卫丢弃，正常完成。"""
+        """LLM_ONCE finalization tool calls become a blocked transaction result."""
         call_count = 0
 
         async def panic_provider(request):
@@ -1085,7 +1095,7 @@ class TestProtocolPanicHandoff:
                     "model": "claude",
                     "usage": {"prompt_tokens": 100, "completion_tokens": 30},
                 }
-            # 收口阶段：违反 tool_choice=none，返回 tool_calls（被软守卫丢弃）
+            # 收口阶段：违反 tool_choice=none，返回 tool_calls（必须 fail-closed）
             return {
                 "content": "我再调用一个工具。",
                 "tool_calls": [_native_tool_call("write_file", {"path": "out.py", "content": "x"})],
@@ -1104,10 +1114,9 @@ class TestProtocolPanicHandoff:
             turn_id="turn_panic", context=basic_context, tool_definitions=basic_tool_definitions
         )
 
-        # Soft guard: dropped hallucinated tool calls, normal completion
-        assert result["kind"] == "tool_batch_with_receipt"
-        # No workflow handoff in soft-guard mode
-        assert result.get("workflow_context") is None
+        assert result["kind"] == "finalization_tool_calls_blocked"
+        assert result["finalization"]["tool_calls_blocked"] is True
+        assert result["finalization"]["workflow_reason"] == "finalization_tool_calls_blocked"
         # 决策 + 收口 = 2 次 LLM 调用
         assert call_count == 2
 
@@ -1115,7 +1124,7 @@ class TestProtocolPanicHandoff:
     async def test_finalize_tool_reentry_includes_receipts(
         self, mock_llm_provider, mock_tool_runtime, basic_context, basic_tool_definitions
     ) -> None:
-        """软守卫下已执行工具的 receipts 仍保留在结果中。"""
+        """Finalization tool re-entry is blocked while preserving prior receipts."""
         call_count = 0
 
         async def panic_provider(request):
@@ -1146,6 +1155,6 @@ class TestProtocolPanicHandoff:
             turn_id="turn_panic_receipts", context=basic_context, tool_definitions=basic_tool_definitions
         )
 
-        assert result["kind"] == "tool_batch_with_receipt"
+        assert result["kind"] == "finalization_tool_calls_blocked"
         # batch_receipt 应存在，因为决策阶段工具已执行
         assert result.get("batch_receipt") is not None

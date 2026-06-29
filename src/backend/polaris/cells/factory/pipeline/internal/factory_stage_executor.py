@@ -74,7 +74,28 @@ _LANGUAGE_SOURCE_EXTENSIONS: dict[str, frozenset[str]] = {
 }
 # Extensions that are language-agnostic and should not trigger a mismatch.
 _LANGUAGE_NEUTRAL_EXTENSIONS: frozenset[str] = frozenset(
-    {".json", ".yaml", ".yml", ".toml", ".md", ".txt", ".html", ".css", ".xml", ".csv", ".lock"}
+    {
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".md",
+        ".txt",
+        ".html",
+        ".css",
+        ".xml",
+        ".csv",
+        ".lock",
+        # Build/QA/run helper scripts: auxiliary automation that legitimately
+        # appears in projects of ANY primary language (e.g. a Go project's
+        # scripts/qa.sh QA verifier). These are not "wrong language" source
+        # files, so they must not trip the language-consistency mismatch guard.
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".ps1",
+        ".bat",
+    }
 )
 _LANGUAGE_NEUTRAL_FILENAMES: frozenset[str] = frozenset(
     {
@@ -5263,9 +5284,27 @@ class OrchestrationStageExecutor:
                 del task_id, phase, current_file, event_code, event_status, event_reason, event_detail, event_refs
 
         target_files = self._workspace_quality_repair_target_files()
+        metadata: dict[str, Any] = {
+            "target_files": target_files,
+            "delivery_mode": "materialize_changes",
+        }
+        blueprint_artifact, blueprint_text = self._workspace_quality_repair_blueprint_evidence(run_id=run_id)
+        if blueprint_text:
+            blueprint_payload = {
+                "schema_version": "factory.workspace_quality_repair.ce_blueprint_context.v1",
+                "artifact": blueprint_artifact,
+                "evidence": blueprint_text,
+            }
+            metadata["ce_blueprint"] = blueprint_payload
+            metadata["chief_engineer_blueprint"] = blueprint_payload
+            metadata["chief_engineer_blueprint_evidence"] = blueprint_text
+            metadata["factory_workspace_quality_repair"] = {
+                "ce_blueprint_artifact": blueprint_artifact,
+                "target_files": target_files,
+            }
         return run_director_materialization_quality_repair_schedule(
             _QualityRepairAdapter(self.workspace),
-            task={"target_files": target_files, "metadata": {"target_files": target_files}},
+            task={"target_files": target_files, "metadata": metadata},
             task_id=f"factory-quality-gate:{run_id}",
             artifact_quality_errors=artifact_quality_errors,
         )
@@ -5330,6 +5369,19 @@ class OrchestrationStageExecutor:
                 text = self._read_text_artifact(candidate, min_chars=2)
             if text:
                 return candidate, self._compact_blueprint_evidence_for_repair(text)
+        for candidate in (
+            f".polaris/blueprints/{run_id}.review.json",
+            ".polaris/blueprints/latest.review.json",
+            f".polaris/roles/chief_engineer/{run_id}/review.json",
+        ):
+            text = ""
+            with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError, UnicodeDecodeError):
+                target = (self.workspace / candidate).resolve()
+                if not target.is_relative_to(self.workspace.resolve()) or not target.is_file():
+                    continue
+                text = target.read_text(encoding="utf-8").strip()
+            if len(text) >= 2:
+                return f"workspace-local:{candidate}", self._compact_blueprint_evidence_for_repair(text)
         return "", ""
 
     def _workspace_quality_repair_original_message(self, *, run_id: str, target_files: list[str]) -> str:

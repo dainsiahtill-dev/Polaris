@@ -528,16 +528,12 @@ async def test_run_and_stream_surface_workflow_handoff_for_repeated_tool_failure
     async for ev in engine.run_stream(request=st_req, role="pm", controller=st_ctrl):
         st_events.append(ev)
 
-    assert ns_result.error is None
-    # Soft guard: finalization-phase tool calls are dropped, normal completion
-    assert ns_result.metadata.get("transaction_kind") is None
+    assert ns_result.error == "finalization_tool_calls_blocked"
+    assert ns_result.metadata.get("transaction_kind") == "finalization_tool_calls_blocked"
 
     complete_event = next((event for event in st_events if event.get("type") == "complete"), None)
     assert complete_event is not None
-    # Stream path also completes normally (suspended status maps to error event
-    # in legacy compat, but here the repeated failure path no longer triggers
-    # handoff because finalization hallucinations are dropped)
-    assert complete_event.get("status") in ("success", "handoff", "suspended")
+    assert complete_event.get("status") in ("success", "failed", "handoff", "suspended")
 
 
 @pytest.mark.asyncio

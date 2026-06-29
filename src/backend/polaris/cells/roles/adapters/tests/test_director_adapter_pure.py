@@ -141,8 +141,11 @@ def test_director_blueprint_handoff_projects_module_interface_contract(tmp_path:
     lines = _build_director_blueprint_handoff_lines(str(tmp_path), "bp-interface")
     text = "\n".join(lines)
 
-    assert "- module_interface_contract: required" in text
-    assert "src/models/stall.ts [domain_model]: planned_exports Stall, StallState" in text
+    assert "- module_interface_contract: authority=handoff_guidance_not_scope_authority" in text
+    assert (
+        "src/models/stall.ts [domain_model]: tentative_exports Stall, StallState "
+        "(authority=handoff_guidance_not_scope_authority)"
+    ) in text
     assert "interface rule: Every symbol imported from a sibling target module" in text
 
 

@@ -598,7 +598,10 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
 
     module_interface_contract = payload.get("module_interface_contract")
     if isinstance(module_interface_contract, dict) and module_interface_contract:
-        lines.append("- module_interface_contract: required")
+        contract_authority = str(
+            module_interface_contract.get("authority") or "handoff_guidance_not_scope_authority"
+        ).strip()
+        lines.append(f"- module_interface_contract: authority={contract_authority}")
         modules = module_interface_contract.get("modules")
         if isinstance(modules, list):
             for module in modules[:10]:
@@ -607,13 +610,25 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
                 path = str(module.get("path") or "").strip()
                 actual_symbols = _string_list_payload(module.get("actual_public_symbols"), limit=8)
                 planned_symbols = _string_list_payload(module.get("planned_public_symbols"), limit=8)
+                consumes_symbols = _string_list_payload(module.get("consumes_symbols"), limit=8)
+                symbol_source = str(module.get("symbol_source") or "").strip()
+                confidence = module.get("symbol_confidence", module.get("selected_confidence"))
                 role = str(module.get("role") or "").strip()
-                if path and (actual_symbols or planned_symbols):
+                if path and (actual_symbols or planned_symbols or consumes_symbols):
                     role_suffix = f" [{role}]" if role else ""
+                    evidence_parts = [f"authority={contract_authority}"]
+                    if symbol_source:
+                        evidence_parts.append(f"symbol_source={symbol_source}")
+                    if confidence is not None:
+                        evidence_parts.append(f"confidence={confidence}")
+                    evidence = " (" + ", ".join(evidence_parts) + ")"
                     if actual_symbols:
-                        lines.append(f"  - {path}{role_suffix}: exports {', '.join(actual_symbols)}")
-                    elif planned_symbols:
-                        lines.append(f"  - {path}{role_suffix}: planned_exports {', '.join(planned_symbols)}")
+                        lines.append(f"  - {path}{role_suffix}: actual_exports {', '.join(actual_symbols)}{evidence}")
+                    if planned_symbols:
+                        planned_label = "planned_exports" if actual_symbols else "tentative_exports"
+                        lines.append(f"  - {path}{role_suffix}: {planned_label} {', '.join(planned_symbols)}{evidence}")
+                    if consumes_symbols:
+                        lines.append(f"  - {path}{role_suffix}: consumes {', '.join(consumes_symbols)}{evidence}")
         rules = _string_list_payload(module_interface_contract.get("rules"), limit=4)
         for rule in rules:
             lines.append(f"  - interface rule: {rule}")

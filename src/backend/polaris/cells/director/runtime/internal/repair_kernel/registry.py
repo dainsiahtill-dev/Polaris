@@ -1860,6 +1860,23 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
+                rule_id="javascript.unresolved_import_symbol_missing_export",
+                source_tool=JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+                language="javascript",
+                phase="quality_repair",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=1,
+                diagnostic_codes=("cross_artifact_unresolved_import_symbol",),
+                raw_terms=("unresolved import symbol", ".js"),
+                risk_level="low",
+                description=(
+                    "Routes JavaScript cross-artifact unresolved symbol diagnostics through the "
+                    "missing-export runtime planner."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="missing_export_unresolved_import_symbol"),
+            ),
+            RepairRuleDefinition(
                 rule_id="javascript.dom_global_runtime_guard",
                 source_tool=JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL,
                 language="javascript",

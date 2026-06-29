@@ -4691,15 +4691,41 @@ def _compact_original_message_for_quality_repair(original_message: str) -> str:
     text = str(original_message or "")
     semantic_lines: list[str] = []
     blueprint_lines: list[str] = []
+    preserve_blueprint_context = False
+    blueprint_context_lines = 0
     for raw_line in text.splitlines():
         line = " ".join(str(raw_line or "").strip().split())
         if not line:
             continue
         line_lc = line.lower()
         if line.startswith("Chief Engineer Blueprint") or line_lc.startswith(
-            ("- blueprint_id:", "- handoff_ready:", "- ce_llm_blueprint:")
+            (
+                "- blueprint_id:",
+                "- handoff_ready:",
+                "- ce_llm_blueprint:",
+                "- chief engineer blueprint evidence:",
+                "chief engineer blueprint evidence:",
+                "artifact:",
+            )
         ):
             blueprint_lines.append(line)
+            preserve_blueprint_context = True
+            continue
+        if (
+            preserve_blueprint_context
+            and blueprint_context_lines < 8
+            and (
+                "blueprint" in line_lc
+                or "task_id" in line_lc
+                or "summary" in line_lc
+                or "recommendation" in line_lc
+                or "risk" in line_lc
+            )
+            and "target_files" not in line_lc
+            and "target files" not in line_lc
+        ):
+            blueprint_lines.append(line)
+            blueprint_context_lines += 1
             continue
         if line.startswith(("[mode:", "<SESSION_PATCH>", "</SESSION_PATCH>", "PM Task Contract")):
             continue
@@ -4707,10 +4733,8 @@ def _compact_original_message_for_quality_repair(original_message: str) -> str:
             continue
         if _QUALITY_REPAIR_FILEISH_RE.search(line):
             continue
-        if line.startswith(("任务:", "任务：", "title:", "goal:", "目标:", "目标：")):
+        if line.startswith(("任务:", "任务：", "title:", "goal:", "目标:", "目标：")) and len(semantic_lines) < 4:
             semantic_lines.append(line)
-        if len(semantic_lines) >= 4:
-            break
 
     keyword_lines: list[str] = []
     for match in re.finditer(r"content_any:([A-Za-z0-9_|-]+)", text, flags=re.IGNORECASE):
@@ -4725,13 +4749,13 @@ def _compact_original_message_for_quality_repair(original_message: str) -> str:
         if terms:
             keyword_lines.append(f"需求关键词: {terms}")
 
-    lines = list(dict.fromkeys([*semantic_lines, *blueprint_lines[:4], *keyword_lines]))
+    lines = list(dict.fromkeys([*semantic_lines[:4], *blueprint_lines[:8], *keyword_lines[:2]]))
     if not lines:
         lines = ["原始任务语义已省略；以下质量修复指令是本轮唯一执行范围。"]
 
     return (
         "ORIGINAL TASK CONTEXT (semantic only; not an authorization, scope, verification, or tool sequence):\n"
-        + "\n".join(f"- {line}" for line in lines[:6])
+        + "\n".join(f"- {line}" for line in lines[:14])
     )
 
 

@@ -282,6 +282,55 @@ def test_target_scope_rule_no_targets(tmp_path) -> None:
     assert "- (model may decide)" in prompt
 
 
+def test_prompt_distinguishes_write_targets_and_read_only_context_files() -> None:
+    executor = WorkerExecutor(workspace="/tmp")
+    task = _task(
+        {
+            "target_files": ["src/app.ts"],
+            "context_files": ["src/domain.ts", "src/app.ts"],
+            "module_interface_contract": {
+                "schema_version": "chief_engineer.module_interface_contract.v1",
+                "authority": "handoff_guidance_not_scope_authority",
+                "modules": [
+                    {
+                        "path": "src/domain.ts",
+                        "role": "domain_model",
+                        "actual_public_symbols": ["DomainModel"],
+                        "planned_public_symbols": ["createDomainModel"],
+                        "consumes_symbols": ["SharedClock"],
+                        "symbol_source": "workspace_symbol_index_scan",
+                        "symbol_confidence": 1.0,
+                    },
+                    {
+                        "path": "src/app.ts",
+                        "role": "entrypoint",
+                        "planned_public_symbols": ["run"],
+                        "symbol_source": "heuristic_path_guess",
+                        "symbol_confidence": 0.35,
+                    },
+                ],
+            },
+            "consumes_symbols": ["DomainModel"],
+        }
+    )
+
+    prompt = executor._build_code_generation_prompt(task)
+
+    assert "- src/app.ts [declared_write_target]" in prompt
+    assert "Read-only context files for facts only:" in prompt
+    assert "- src/domain.ts [read_only_context]" in prompt
+    assert "- src/app.ts [context_conflicts_with_write_target]" in prompt
+    assert (
+        "authority=handoff_guidance_not_scope_authority; confidence=1.00; symbol_source=workspace_symbol_index_scan"
+        in prompt
+    )
+    assert "actual_exports=DomainModel" in prompt
+    assert "planned_exports=createDomainModel" in prompt
+    assert "tentative_exports=run" in prompt
+    assert "consumes=SharedClock" in prompt
+    assert "Cross-file consume contract: DomainModel" in prompt
+
+
 def test_target_scope_rule_verification_repair(tmp_path) -> None:
     executor = WorkerExecutor(workspace=str(tmp_path))
     task = _task(
@@ -431,8 +480,13 @@ def test_prompt_includes_pm_ce_contract_context() -> None:
     assert "unknown mood uses explicit fallback" in prompt
     assert "no static keyword-only output" in prompt
     assert "Module interface contract:" in prompt
-    assert "src/models/flower.ts; role=domain_model; owns=flower; planned_exports=Flower" in prompt
-    assert "src/engine/lightRules.ts; role=core_engine; owns=firefly; planned_exports=light_rules" in prompt
+    assert (
+        "authority=unspecified; src/models/flower.ts; role=domain_model; owns=flower; tentative_exports=Flower"
+        in prompt
+    )
+    assert (
+        "authority=unspecified; src/engine/lightRules.ts; role=core_engine; owns=firefly; tentative_exports=light_rules"
+    ) in prompt
     assert "Every symbol imported from a sibling target module must be defined" in prompt
 
 

@@ -115,6 +115,7 @@ _JS_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][\w$]*$")
 _JS_DECLARATION_RE_TEMPLATE = (
     r"(?m)^(?P<indent>\s*)(?P<decl>(?:async\s+)?(?:class|function)\s+{symbol}\b|(?:const|let|var)\s+{symbol}\b)"
 )
+_JS_EXPORTED_CLASS_RE = re.compile(r"(?m)^(?P<indent>\s*)export\s+class\s+(?P<name>[A-Za-z_$][\w$]*)\b[^\n]*\{")
 _JS_CLASS_RE_TEMPLATE = r"(?m)^(?P<indent>\s*)(?:export\s+)?class\s+{class_name}\b[^\n]*\{{"
 _JS_METHOD_RE = re.compile(r"(?m)^\s{2,}(?P<name>[A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{")
 
@@ -452,6 +453,13 @@ def build_javascript_missing_export_plan(
                 diagnostic=diagnostic,
             )
             if operation is None:
+                operation = _export_class_method_facade_operation(
+                    path=exporter_path,
+                    text=exporter_text,
+                    symbol=symbol,
+                    diagnostic=diagnostic,
+                )
+            if operation is None:
                 continue
             operations.append(operation)
             matched.append(diagnostic)
@@ -586,6 +594,8 @@ def build_javascript_missing_method_runtime_plan(
             entry_text = normalized_base.get(entry_path, "")
             class_name = _infer_constructed_class(entry_text, failure["object"])
             if not class_name:
+                class_name = _infer_iterated_imported_class(entry_text, failure["object"])
+            if not class_name:
                 continue
             class_path = _resolve_imported_class_path(normalized_base, entry_path, entry_text, class_name)
             if not class_path:
@@ -600,9 +610,12 @@ def build_javascript_missing_method_runtime_plan(
             if class_text is None:
                 continue
             operation = _missing_method_alias_operation(
+                base_files=normalized_base,
                 path=class_path,
                 text=class_text,
+                entry_text=entry_text,
                 class_name=class_name,
+                object_name=failure["object"],
                 missing_member=failure["member"],
                 call_arguments=failure.get("arguments") or "",
                 diagnostic=diagnostic,
@@ -1448,6 +1461,50 @@ def _export_existing_declaration_operation(
     )
 
 
+def _export_class_method_facade_operation(
+    *,
+    path: str,
+    text: str,
+    symbol: str,
+    diagnostic: RepairDiagnostic,
+) -> RepairOperation | None:
+    if not _JS_IDENTIFIER_RE.match(symbol):
+        return None
+    method_pattern = re.compile(rf"(?m)^[ \t]{{2,}}{re.escape(symbol)}\s*\(\s*\)\s*\{{")
+    candidates: list[tuple[str, int]] = []
+    for class_match in _JS_EXPORTED_CLASS_RE.finditer(text):
+        class_end = _find_matching_brace(text, class_match.end() - 1)
+        if class_end is None:
+            continue
+        class_body = text[class_match.end() : class_end]
+        if method_pattern.search(class_body):
+            candidates.append((str(class_match.group("name")), class_end + 1))
+    if len(candidates) != 1:
+        return None
+
+    class_name, insert_at = candidates[0]
+    replacement = f"\n\nexport const {symbol} = new {class_name}().{symbol}();\n"
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=insert_at,
+        span_end=insert_at,
+        expected="",
+        replacement=replacement,
+        before_hash=sha256_text(text),
+        metadata={
+            "repair_kind": "javascript_missing_named_export_class_method_facade",
+            "symbol": symbol,
+            "facade_class": class_name,
+            "facade_method": symbol,
+            "diagnostic_id": diagnostic.diagnostic_id,
+            "edit_file_preferred": True,
+            "expected_context_before": text[max(0, insert_at - 160) : insert_at],
+            "expected_context_after": text[insert_at : min(len(text), insert_at + 160)],
+        },
+    )
+
+
 def _is_esm_commonjs_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     raw = f"{diagnostic.message}\n{diagnostic.raw}".lower()
     return (
@@ -1815,6 +1872,59 @@ def _infer_constructed_class(entry_text: str, object_name: str) -> str:
     return str(match.group("class") or "") if match else ""
 
 
+def _infer_iterated_imported_class(entry_text: str, object_name: str) -> str:
+    if not _JS_IDENTIFIER_RE.match(object_name):
+        return ""
+    match = re.search(
+        rf"for\s*\(\s*(?:const|let|var)\s+{re.escape(object_name)}\s+of\s+this\.(?P<collection>[A-Za-z_$][\w$]*)\s*\)",
+        entry_text,
+    )
+    if not match:
+        return ""
+    imported_classes = _imported_class_names(entry_text)
+    if not imported_classes:
+        return ""
+    candidates = {
+        _upper_camel_identifier(object_name),
+        _upper_camel_identifier(_singularize_js_identifier(object_name)),
+        _upper_camel_identifier(_singularize_js_identifier(str(match.group("collection") or ""))),
+    }
+    matches = [name for name in imported_classes if name in candidates]
+    return matches[0] if len(matches) == 1 else ""
+
+
+def _imported_class_names(entry_text: str) -> tuple[str, ...]:
+    names: list[str] = []
+    for match in re.finditer(r"import\s+\{(?P<names>[^}]+)\}\s+from\s+['\"][^'\"]+['\"]", entry_text):
+        for item in str(match.group("names") or "").split(","):
+            token = item.strip()
+            if " as " in token:
+                token = token.rsplit(" as ", 1)[-1].strip()
+            if _JS_IDENTIFIER_RE.match(token):
+                names.append(token)
+    for match in re.finditer(r"import\s+(?P<name>[A-Z][A-Za-z0-9_$]*)\s+from\s+['\"][^'\"]+['\"]", entry_text):
+        name = str(match.group("name") or "")
+        if _JS_IDENTIFIER_RE.match(name):
+            names.append(name)
+    return tuple(dict.fromkeys(names))
+
+
+def _singularize_js_identifier(identifier: str) -> str:
+    text = str(identifier or "").strip()
+    if len(text) > 3 and text.endswith("ies"):
+        return text[:-3] + "y"
+    if len(text) > 1 and text.endswith("s"):
+        return text[:-1]
+    return text
+
+
+def _upper_camel_identifier(identifier: str) -> str:
+    text = str(identifier or "").strip()
+    if not text:
+        return ""
+    return text[:1].upper() + text[1:]
+
+
 def _resolve_imported_class_path(
     base_files: Mapping[str, str],
     entry_path: str,
@@ -1840,15 +1950,16 @@ def _class_declared_in_text(text: str, class_name: str) -> bool:
 
 def _missing_method_alias_operation(
     *,
+    base_files: Mapping[str, str],
     path: str,
     text: str,
+    entry_text: str,
     class_name: str,
+    object_name: str,
     missing_member: str,
     call_arguments: str,
     diagnostic: RepairDiagnostic,
 ) -> RepairOperation | None:
-    if re.search(rf"(?m)^\s+{re.escape(missing_member)}\s*\(", text):
-        return None
     class_match = re.search(_JS_CLASS_RE_TEMPLATE.format(class_name=re.escape(class_name)), text)
     if not class_match:
         return None
@@ -1860,29 +1971,70 @@ def _missing_method_alias_operation(
         match.group("name") for match in _JS_METHOD_RE.finditer(class_body) if match.group("name") != "constructor"
     ]
     existing_methods = list(dict.fromkeys(existing_methods))
-    if len(existing_methods) != 1:
+    constructor_object_keys = _constructor_object_keys_for_class(base_files, class_name)
+    class_body, constructor_fields = _augment_constructor_from_object_keys(
+        class_body,
+        constructor_object_keys,
+    )
+    call_sites = _missing_method_call_sites(entry_text, object_name)
+    if missing_member not in {site["member"] for site in call_sites}:
+        call_sites = ({"member": missing_member, "arguments": call_arguments}, *call_sites)
+    method_replacements: list[str] = []
+    aliased_methods: list[str] = []
+    selected_existing_methods: list[str] = []
+    for call_site in call_sites:
+        member = call_site["member"]
+        if member in aliased_methods or re.search(rf"(?m)^\s+{re.escape(member)}\s*\(", text):
+            continue
+        alias_args = _alias_arguments_from_call_arguments(call_site.get("arguments", ""), member)
+        expected_fields = _expected_return_fields_for_call(entry_text, object_name, member)
+        collection_field = _collection_field_for_list_method(class_body, member)
+        if collection_field and not alias_args and not expected_fields:
+            method_replacements.append(_collection_list_method_replacement(member, collection_field))
+            aliased_methods.append(member)
+            continue
+        existing = _select_existing_method_for_alias(
+            class_body=class_body,
+            existing_methods=existing_methods,
+            expected_fields=expected_fields,
+        )
+        if not existing:
+            continue
+        existing_return_fields = _return_object_fields_for_method(class_body, existing)
+        method_replacements.append(
+            _missing_method_alias_replacement(
+                missing_member=member,
+                existing_member=existing,
+                alias_args=alias_args,
+                expected_fields=expected_fields,
+                existing_return_fields=existing_return_fields,
+            )
+        )
+        aliased_methods.append(member)
+        selected_existing_methods.append(existing)
+    if not method_replacements:
         return None
-    existing = existing_methods[0]
-    alias_args = _alias_arguments_from_call_arguments(call_arguments, missing_member)
-    if alias_args:
-        replacement = f"\n  {missing_member}({alias_args}) {{\n    return this.{existing}({alias_args});\n  }}\n"
-    else:
-        replacement = f"\n  {missing_member}(...args) {{\n    return this.{existing}(...args);\n  }}\n"
-    context_before = text[max(0, class_end - 160) : class_end]
-    context_after = text[class_end : min(len(text), class_end + 160)]
+    replacement = class_body + "".join(method_replacements)
+    span_start = class_match.end()
+    span_end = class_end
+    context_before = text[max(0, span_start - 160) : span_start]
+    context_after = text[span_end : min(len(text), span_end + 160)]
     return RepairOperation(
         kind="text_replace",
         path=path,
-        span_start=class_end,
-        span_end=class_end,
-        expected="",
+        span_start=span_start,
+        span_end=span_end,
+        expected=text[span_start:span_end],
         replacement=replacement,
         before_hash=sha256_text(text),
         metadata={
             "repair_kind": "javascript_missing_method_runtime",
             "class_name": class_name,
             "missing_member": missing_member,
-            "aliased_to": existing,
+            "aliased_to": selected_existing_methods[0] if len(set(selected_existing_methods)) == 1 else "",
+            "selected_existing_methods": selected_existing_methods,
+            "aliased_methods": aliased_methods,
+            "constructor_object_fields": constructor_fields,
             "diagnostic_id": diagnostic.diagnostic_id,
             "edit_file_preferred": True,
             "unsafe_cases_fail_closed": True,
@@ -1898,6 +2050,307 @@ def _missing_method_call_arguments(raw: str, object_name: str, member: str) -> s
     )
     match = pattern.search(str(raw or ""))
     return str(match.group("args") or "").strip() if match else ""
+
+
+def _missing_method_call_sites(entry_text: str, object_name: str) -> tuple[dict[str, str], ...]:
+    if not _JS_IDENTIFIER_RE.match(object_name):
+        return ()
+    pattern = re.compile(
+        rf"\b{re.escape(object_name)}\.(?P<member>[A-Za-z_$][\w$]*)\s*"
+        r"\((?P<args>[^()\n]*(?:\([^)]*\)[^()\n]*)*)\)"
+    )
+    sites: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for match in pattern.finditer(str(entry_text or "")):
+        member = str(match.group("member") or "")
+        if member in seen:
+            continue
+        seen.add(member)
+        sites.append({"member": member, "arguments": str(match.group("args") or "").strip()})
+    return tuple(sites)
+
+
+def _expected_return_fields_for_call(entry_text: str, object_name: str, member: str) -> tuple[str, ...]:
+    if not (_JS_IDENTIFIER_RE.match(object_name) and _JS_IDENTIFIER_RE.match(member)):
+        return ()
+    escaped_call = rf"{re.escape(object_name)}\.{re.escape(member)}\s*\("
+    destructured = re.search(
+        rf"(?:const|let|var)\s*\{{(?P<fields>[^}}]+)\}}\s*=\s*{escaped_call}",
+        entry_text,
+    )
+    if destructured:
+        return _parse_js_object_field_list(str(destructured.group("fields") or ""))
+    assigned = re.search(
+        rf"(?:const|let|var)\s+(?P<var>[A-Za-z_$][\w$]*)\s*=\s*{escaped_call}",
+        entry_text,
+    )
+    if not assigned:
+        return ()
+    result_var = str(assigned.group("var") or "")
+    field_pattern = re.compile(rf"\b{re.escape(result_var)}\.(?P<field>[A-Za-z_$][\w$]*)\b")
+    fields = [str(match.group("field") or "") for match in field_pattern.finditer(entry_text[assigned.end() :])]
+    return tuple(dict.fromkeys(field for field in fields if _JS_IDENTIFIER_RE.match(field)))
+
+
+def _parse_js_object_field_list(raw_fields: str) -> tuple[str, ...]:
+    fields: list[str] = []
+    for item in _split_js_call_arguments(raw_fields):
+        token = item.strip()
+        if not token:
+            continue
+        if ":" in token:
+            token = token.split(":", 1)[0].strip()
+        token = token.lstrip(".").strip()
+        if _JS_IDENTIFIER_RE.match(token):
+            fields.append(token)
+    return tuple(dict.fromkeys(fields))
+
+
+def _return_object_fields_for_method(class_body: str, method_name: str) -> tuple[str, ...]:
+    method_match = next(
+        (match for match in _JS_METHOD_RE.finditer(class_body) if match.group("name") == method_name),
+        None,
+    )
+    if method_match is None:
+        return ()
+    method_end = _find_matching_brace(class_body, method_match.end() - 1)
+    if method_end is None:
+        return ()
+    method_body = class_body[method_match.end() : method_end]
+    return_match = re.search(r"return\s*\{(?P<fields>.*?)\}\s*;?", method_body, flags=re.DOTALL)
+    if not return_match:
+        return ()
+    return _parse_js_object_field_list(str(return_match.group("fields") or ""))
+
+
+def _select_existing_method_for_alias(
+    *,
+    class_body: str,
+    existing_methods: Sequence[str],
+    expected_fields: Sequence[str],
+) -> str:
+    candidates = [method for method in dict.fromkeys(existing_methods) if _JS_IDENTIFIER_RE.match(method)]
+    if not candidates:
+        return ""
+    if not expected_fields:
+        return candidates[0] if len(candidates) == 1 else ""
+    scored: list[tuple[int, str]] = []
+    for method in candidates:
+        return_fields = _return_object_fields_for_method(class_body, method)
+        score = _return_field_match_score(expected_fields, return_fields)
+        if score > 0:
+            scored.append((score, method))
+    if not scored:
+        return candidates[0] if len(candidates) == 1 else ""
+    scored.sort(key=lambda item: (-item[0], candidates.index(item[1])))
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return ""
+    return scored[0][1]
+
+
+def _return_field_match_score(expected_fields: Sequence[str], return_fields: Sequence[str]) -> int:
+    score = 0
+    return_set = {field for field in return_fields if _JS_IDENTIFIER_RE.match(field)}
+    for expected in expected_fields:
+        for alias in _field_alias_candidates(expected, tuple(return_set), set()):
+            if alias in return_set:
+                score += 1
+                break
+    return score
+
+
+def _collection_field_for_list_method(class_body: str, method_name: str) -> str:
+    if not _JS_IDENTIFIER_RE.match(method_name):
+        return ""
+    match = re.match(r"list(?P<tail>[A-Z][A-Za-z0-9_$]*)$", method_name)
+    if not match:
+        return ""
+    requested = _lower_camel_identifier(match.group("tail"))
+    fields = _class_collection_fields(class_body)
+    if requested in fields:
+        return requested
+    singular = _singularize_js_identifier(requested)
+    matches = [field for field in fields if _singularize_js_identifier(field) == singular]
+    return matches[0] if len(matches) == 1 else ""
+
+
+def _class_collection_fields(class_body: str) -> tuple[str, ...]:
+    fields: list[str] = []
+    for match in re.finditer(r"\bthis\.(?P<field>[A-Za-z_$][\w$]*)\s*=", class_body):
+        field = str(match.group("field") or "")
+        if _JS_IDENTIFIER_RE.match(field) and _field_is_array_like(field):
+            fields.append(field)
+    return tuple(dict.fromkeys(fields))
+
+
+def _collection_list_method_replacement(method_name: str, collection_field: str) -> str:
+    return (
+        f"\n  {method_name}() {{\n"
+        f"    return Array.isArray(this.{collection_field}) ? [...this.{collection_field}] : [];\n"
+        "  }\n"
+    )
+
+
+def _constructor_object_keys_for_class(base_files: Mapping[str, str], class_name: str) -> tuple[str, ...]:
+    if not _JS_IDENTIFIER_RE.match(class_name):
+        return ()
+    pattern = re.compile(rf"\bnew\s+(?:[A-Za-z_$][\w$]*\.)?{re.escape(class_name)}\s*\(")
+    keys: list[str] = []
+    for text in base_files.values():
+        source = str(text or "")
+        for match in pattern.finditer(source):
+            open_paren = source.find("(", match.start())
+            object_start = source.find("{", open_paren)
+            if open_paren < 0 or object_start < 0:
+                continue
+            if source[open_paren + 1 : object_start].strip():
+                continue
+            object_end = _find_matching_brace(source, object_start)
+            if object_end is None:
+                continue
+            keys.extend(_parse_js_object_field_list(source[object_start + 1 : object_end]))
+    return tuple(dict.fromkeys(key for key in keys if _JS_IDENTIFIER_RE.match(key)))
+
+
+def _augment_constructor_from_object_keys(class_body: str, object_keys: Sequence[str]) -> tuple[str, tuple[str, ...]]:
+    missing_keys = [key for key in object_keys if _JS_IDENTIFIER_RE.match(key)]
+    if not missing_keys:
+        return class_body, ()
+    constructor_match = re.search(
+        r"constructor\s*\(\s*\{(?P<fields>[^}]*)\}\s*=\s*\{\}\s*\)\s*\{",
+        class_body,
+    )
+    if constructor_match is None:
+        return class_body, ()
+    existing_fields = set(_parse_constructor_field_names(str(constructor_match.group("fields") or "")))
+    fields_to_add = [
+        key
+        for key in missing_keys
+        if key not in existing_fields and not re.search(rf"\bthis\.{re.escape(key)}\s*=", class_body)
+    ]
+    if not fields_to_add:
+        return class_body, ()
+    new_field_text = _constructor_field_text(str(constructor_match.group("fields") or ""), fields_to_add)
+    updated = (
+        class_body[: constructor_match.start("fields")] + new_field_text + class_body[constructor_match.end("fields") :]
+    )
+    insertion_at = constructor_match.end() + (len(new_field_text) - len(str(constructor_match.group("fields") or "")))
+    assignment_lines = "".join(f"\n    {_constructor_assignment_for_field(field)}" for field in fields_to_add)
+    updated = updated[:insertion_at] + assignment_lines + updated[insertion_at:]
+    return updated, tuple(fields_to_add)
+
+
+def _parse_constructor_field_names(raw_fields: str) -> tuple[str, ...]:
+    names: list[str] = []
+    for item in _split_js_call_arguments(raw_fields):
+        token = item.strip()
+        if not token:
+            continue
+        if ":" in token:
+            token = token.split(":", 1)[0].strip()
+        if "=" in token:
+            token = token.split("=", 1)[0].strip()
+        if _JS_IDENTIFIER_RE.match(token):
+            names.append(token)
+    return tuple(dict.fromkeys(names))
+
+
+def _constructor_field_text(existing_fields: str, fields_to_add: Sequence[str]) -> str:
+    fields = [item.strip() for item in _split_js_call_arguments(existing_fields) if item.strip()]
+    fields.extend(field for field in fields_to_add if _JS_IDENTIFIER_RE.match(field))
+    return ", ".join(dict.fromkeys(fields))
+
+
+def _constructor_assignment_for_field(field: str) -> str:
+    if _field_is_array_like(field):
+        return f"this.{field} = Array.isArray({field}) ? {field}.map(String) : [];"
+    if _field_is_numeric_like(field):
+        return f"this.{field} = Number.isFinite({field}) ? {field} : 0;"
+    return f"this.{field} = {field};"
+
+
+def _field_is_array_like(field: str) -> bool:
+    lower = field.lower()
+    return lower.endswith("s") or lower.endswith("ids")
+
+
+def _field_is_numeric_like(field: str) -> bool:
+    lower = field.lower()
+    return any(token in lower for token in ("count", "score", "amount", "boost", "level", "intensity"))
+
+
+def _missing_method_alias_replacement(
+    *,
+    missing_member: str,
+    existing_member: str,
+    alias_args: str,
+    expected_fields: Sequence[str],
+    existing_return_fields: Sequence[str],
+) -> str:
+    if not alias_args:
+        return f"\n  {missing_member}(...args) {{\n    return this.{existing_member}(...args);\n  }}\n"
+    if not expected_fields:
+        return f"\n  {missing_member}({alias_args}) {{\n    return this.{existing_member}({alias_args});\n  }}\n"
+    field_lines = _return_adapter_field_lines(expected_fields, existing_return_fields)
+    if not field_lines:
+        return f"\n  {missing_member}({alias_args}) {{\n    return this.{existing_member}({alias_args});\n  }}\n"
+    return (
+        f"\n  {missing_member}({alias_args}) {{\n"
+        f"    const result = this.{existing_member}({alias_args});\n"
+        "    return {\n" + "".join(f"      {line}\n" for line in field_lines) + "    };\n"
+        "  }\n"
+    )
+
+
+def _return_adapter_field_lines(
+    expected_fields: Sequence[str],
+    existing_return_fields: Sequence[str],
+) -> tuple[str, ...]:
+    existing_fields = [field for field in dict.fromkeys(existing_return_fields) if _JS_IDENTIFIER_RE.match(field)]
+    consumed_existing: set[str] = set()
+    planned: list[tuple[str, list[str]]] = []
+    for field in expected_fields:
+        if not _JS_IDENTIFIER_RE.match(field):
+            continue
+        aliases = _field_alias_candidates(field, existing_fields, consumed_existing)
+        consumed_existing.update(alias for alias in aliases if alias in existing_fields and alias != field)
+        planned.append((field, aliases))
+    lines: list[str] = []
+    for field, aliases in planned:
+        if _field_is_residual_collection(field):
+            residual_existing = [item for item in existing_fields if item not in consumed_existing]
+            aliases = [*aliases, *residual_existing]
+            consumed_existing.update(residual_existing)
+        deduped = list(dict.fromkeys(alias for alias in aliases if _JS_IDENTIFIER_RE.match(alias)))
+        if not deduped or deduped[0] != field:
+            deduped.insert(0, field)
+        expression = " ?? ".join(f"result.{alias}" for alias in deduped)
+        lines.append(f"{field}: {expression} ?? [],")
+    return tuple(lines)
+
+
+def _field_alias_candidates(field: str, existing_fields: Sequence[str], consumed_existing: set[str]) -> list[str]:
+    aliases = [field]
+    lower = field.lower()
+    if lower.endswith("cards") and lower != "cards":
+        aliases.append("cards")
+    for existing in existing_fields:
+        existing_lower = existing.lower()
+        if existing in consumed_existing or existing == field:
+            continue
+        if (
+            (lower == "cards" and existing_lower.endswith("cards"))
+            or lower.endswith(existing_lower)
+            or existing_lower.endswith(lower)
+        ):
+            aliases.append(existing)
+    if _field_is_residual_collection(field):
+        aliases.extend(["unmatched", "unconsumed"])
+    return list(dict.fromkeys(aliases))
+
+
+def _field_is_residual_collection(field: str) -> bool:
+    return field.lower() in {"untouched", "unmatched", "unconsumed", "remaining", "unused", "leftover", "leftovers"}
 
 
 def _alias_arguments_from_call_arguments(call_arguments: str, missing_member: str) -> str:

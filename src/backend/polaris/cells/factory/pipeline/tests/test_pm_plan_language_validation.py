@@ -221,6 +221,54 @@ class TestPMPlanLanguageConsistency:
             result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
         assert result == ""
 
+    def test_go_project_with_shell_qa_script_passes(self, tmp_path: Path) -> None:
+        """Regression: a Go project whose plan includes a required shell QA/build
+        helper (e.g. ``scripts/qa.sh``) must NOT be flagged as a language mismatch.
+
+        Build/QA/run scripts are language-neutral auxiliary automation that
+        legitimately appears in projects of any primary language. Before the fix,
+        ``scripts/qa.sh`` tripped the guard ('.sh' not in {'.go'}) and
+        deterministically failed PM planning for compiled-language projects whose
+        acceptance criteria require an executable verification script.
+        """
+        tasks = [
+            {
+                "id": "TASK-1",
+                "goal": "Implement ASCII pet terminal",
+                "target_files": [
+                    "go.mod",
+                    "main.go",
+                    "models/pet.go",
+                    "scripts/qa.sh",
+                    "scripts/build.sh",
+                    "README.md",
+                ],
+            }
+        ]
+        executor = self._build_executor(tmp_path, tasks, "go")
+        with patch.object(type(executor), "_load_pm_plan_tasks", return_value=tasks):
+            result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
+        assert result == ""
+
+    def test_shell_helper_does_not_mask_real_language_mismatch(self, tmp_path: Path) -> None:
+        """A neutral shell helper must not suppress a genuine wrong-language file."""
+        tasks = [
+            {
+                "id": "TASK-1",
+                "goal": "Implement Go CLI",
+                "target_files": [
+                    "main.go",
+                    "scripts/qa.sh",  # neutral helper -> allowed
+                    "src/Engine.java",  # genuine wrong language -> must still flag
+                ],
+            }
+        ]
+        executor = self._build_executor(tmp_path, tasks, "go")
+        with patch.object(type(executor), "_load_pm_plan_tasks", return_value=tasks):
+            result = executor._validate_pm_plan_language_consistency("tasks/plan.json")
+        assert result != ""
+        assert "Engine.java" in result
+
     def test_cpp_project_with_java_files_detected(self, tmp_path: Path) -> None:
         """PM plans .java files for a cpp project -> mismatch."""
         tasks = [

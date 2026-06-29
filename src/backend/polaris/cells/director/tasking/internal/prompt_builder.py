@@ -339,9 +339,96 @@ class PromptBuilder:
             text = self._compact_prompt_fragment("; ".join(parts), max_chars=max_chars)
             if text:
                 rows.append(text)
-            if len(rows) >= limit:
-                break
+                if len(rows) >= limit:
+                    break
         return rows
+
+    def _metadata_path_items(self, value: Any, *, limit: int = 24) -> list[str]:
+        paths: list[str] = []
+        seen: set[str] = set()
+        raw_items = value if isinstance(value, list | tuple) else []
+        for raw_item in raw_items:
+            path = str(raw_item or "").strip().replace("\\", "/")
+            if not path or path in seen:
+                continue
+            if not path_predicates.is_concrete_target_file_path(path):
+                continue
+            seen.add(path)
+            paths.append(path)
+            if len(paths) >= limit:
+                break
+        return paths
+
+    def _file_plan_path_items(self, value: Any, *, limit: int = 24) -> list[str]:
+        paths: list[str] = []
+        seen: set[str] = set()
+        raw_items = value if isinstance(value, list | tuple) else []
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                continue
+            path = str(raw_item.get("path") or "").strip().replace("\\", "/")
+            if not path or path in seen:
+                continue
+            if not path_predicates.is_concrete_target_file_path(path):
+                continue
+            seen.add(path)
+            paths.append(path)
+            if len(paths) >= limit:
+                break
+        return paths
+
+    def _target_file_prompt_text(
+        self,
+        task: Task,
+        target_files: list[str],
+        *,
+        round_files: list[str],
+    ) -> str:
+        if not target_files:
+            return "- (model may decide)"
+
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
+        declared = set(self._metadata_path_items(metadata.get("target_files"), limit=64))
+        file_plan = set(self._file_plan_path_items(metadata.get("file_plan"), limit=64))
+        round_scoped = set(round_files)
+        rows: list[str] = []
+        for path in target_files[:16]:
+            if path in round_scoped:
+                provenance = "round_write_target"
+            elif path in declared:
+                provenance = "declared_write_target"
+            elif path in file_plan:
+                provenance = "file_plan_write_target"
+            else:
+                provenance = "tentative_inferred_write_target"
+            rows.append(f"- {path} [{provenance}]")
+        return "\n".join(rows)
+
+    def _context_file_prompt_text(self, task: Task, target_files: list[str]) -> str:
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
+        context_files = self._metadata_path_items(metadata.get("context_files"), limit=16)
+        if not context_files:
+            return "- (not declared)"
+        target_set = set(target_files)
+        rows: list[str] = []
+        for path in context_files:
+            role = "context_conflicts_with_write_target" if path in target_set else "read_only_context"
+            rows.append(f"- {path} [{role}]")
+        return "\n".join(rows)
+
+    @staticmethod
+    def _module_confidence_text(item: dict[str, Any], contract: dict[str, Any]) -> str:
+        raw = (
+            item.get("symbol_confidence")
+            if item.get("symbol_confidence") is not None
+            else item.get("selected_confidence", contract.get("symbol_confidence"))
+        )
+        if raw is None:
+            return ""
+        try:
+            return f"{float(raw):.2f}"
+        except (TypeError, ValueError):
+            return str(raw).strip()
 
     def _module_interface_items(
         self,
@@ -354,6 +441,7 @@ class PromptBuilder:
         if not contract:
             return []
         rows: list[str] = []
+        contract_authority = str(contract.get("authority") or "").strip()
         modules = contract.get("modules")
         if isinstance(modules, list | tuple):
             for item in modules:
@@ -363,10 +451,19 @@ class PromptBuilder:
                 role = str(item.get("role") or "").strip()
                 actual_symbols = self._metadata_items(item.get("actual_public_symbols"), limit=5, max_chars=80)
                 planned_symbols = self._metadata_items(item.get("planned_public_symbols"), limit=5, max_chars=80)
+                consumes_symbols = self._metadata_items(item.get("consumes_symbols"), limit=5, max_chars=80)
                 owner_terms = self._metadata_items(item.get("owner_terms"), limit=4, max_chars=80)
                 symbol_source = str(item.get("symbol_source") or "").strip()
+                authority = str(item.get("authority") or contract_authority or "unspecified").strip()
+                confidence = self._module_confidence_text(item, contract)
                 conflict = self._metadata_mapping(item.get("interface_conflict"))
                 parts: list[str] = []
+                if authority:
+                    parts.append("authority=" + authority)
+                if confidence:
+                    parts.append("confidence=" + confidence)
+                if symbol_source:
+                    parts.append("symbol_source=" + symbol_source)
                 if path:
                     parts.append(path)
                 if role:
@@ -374,11 +471,12 @@ class PromptBuilder:
                 if owner_terms:
                     parts.append("owns=" + ", ".join(owner_terms))
                 if actual_symbols:
-                    parts.append("exports=" + ", ".join(actual_symbols))
+                    parts.append("actual_exports=" + ", ".join(actual_symbols))
                 if planned_symbols:
-                    parts.append("planned_exports=" + ", ".join(planned_symbols))
-                if symbol_source:
-                    parts.append("symbol_source=" + symbol_source)
+                    planned_label = "planned_exports" if actual_symbols else "tentative_exports"
+                    parts.append(planned_label + "=" + ", ".join(planned_symbols))
+                if consumes_symbols:
+                    parts.append("consumes=" + ", ".join(consumes_symbols))
                 if conflict:
                     actual_owner = str(conflict.get("actual_owner_path") or "").strip()
                     if actual_owner:
@@ -477,6 +575,10 @@ class PromptBuilder:
         )
         if module_interface_items:
             lines.append("- Module interface contract: " + " || ".join(module_interface_items))
+
+        consumes_symbols = self._metadata_items(metadata.get("consumes_symbols"), limit=10, max_chars=120)
+        if consumes_symbols:
+            lines.append("- Cross-file consume contract: " + ", ".join(consumes_symbols))
 
         task_context = metadata.get("task_context")
         if isinstance(task_context, dict):
@@ -577,7 +679,7 @@ class PromptBuilder:
             if path and path_predicates.is_concrete_target_file_path(path) and path not in normalized_round_files:
                 normalized_round_files.append(path)
         target_files = normalized_round_files or self._target_resolver.normalize_target_files(task)
-        target_text = "\n".join(f"- {path}" for path in target_files[:16]) if target_files else "- (model may decide)"
+        target_text = self._target_file_prompt_text(task, target_files, round_files=normalized_round_files)
         repair_records = self._verification_repair.unresolved_import_repair_records(task)
         target_scope_rule = (
             "- This is a verification repair round. Edit/create only the target files listed above, "
@@ -592,6 +694,7 @@ class PromptBuilder:
         )
         scope_paths = self._target_resolver.normalize_scope_paths(task)
         scope_text = "\n".join(f"- {path}" for path in scope_paths[:16]) if scope_paths else "- (not declared)"
+        context_text = self._context_file_prompt_text(task, target_files)
         construction_hints: list[str] = []
         for plan in self._codegen_rounds.construction_file_plans(task):
             path = str(plan.get("path") or "").strip()
@@ -754,6 +857,9 @@ Target files for this execution:
 
 Declared directory/module scopes:
 {scope_text}
+
+Read-only context files for facts only:
+{context_text}
 
 === PM/CE Contract Context ===
 {contract_context}

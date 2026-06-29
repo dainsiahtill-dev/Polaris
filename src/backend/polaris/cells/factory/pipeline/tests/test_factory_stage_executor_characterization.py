@@ -852,6 +852,149 @@ class TestTextShapingHelpers:
         assert '"metadata"' not in message
         assert '"source"' not in message
 
+    def test_workspace_quality_repair_original_message_uses_workspace_local_blueprint_summary(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "title": "Build package entrypoint",
+                        "goal": "Deliver a runnable npm project.",
+                        "target_files": ["package.json", "src/index.js"],
+                    }
+                ]
+            },
+        )
+        blueprint_dir = tmp_path / ".polaris" / "blueprints"
+        blueprint_dir.mkdir(parents=True)
+        (blueprint_dir / "latest.review.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "factory.chief_engineer_review.v1",
+                    "generated_blueprints": 1,
+                    "blueprints": [
+                        {
+                            "task_id": "TASK-1",
+                            "status": "generated",
+                            "blueprint_id": "ce_TASK-1_workspace_local",
+                            "summary": "Keep the package entrypoint aligned with declared exports.",
+                            "recommendations": ["Do not shrink the manifest around missing targets."],
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        message = executor._workspace_quality_repair_original_message(
+            run_id="factory-run",
+            target_files=["package.json", "src/index.js"],
+        )
+
+        assert "Chief Engineer blueprint evidence" in message
+        assert "workspace-local:.polaris/blueprints/latest.review.json" in message
+        assert "ce_TASK-1_workspace_local" in message
+        assert "Do not shrink the manifest" in message
+
+    def test_workspace_quality_runtime_repair_task_carries_workspace_blueprint_metadata(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "title": "Build package entrypoint",
+                        "goal": "Deliver a runnable npm project.",
+                        "target_files": ["package.json", "src/index.js"],
+                    }
+                ]
+            },
+        )
+        blueprint_dir = tmp_path / ".polaris" / "blueprints"
+        blueprint_dir.mkdir(parents=True)
+        (blueprint_dir / "factory-run.review.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "factory.chief_engineer_review.v1",
+                    "generated_blueprints": 1,
+                    "blueprints": [
+                        {
+                            "task_id": "TASK-1",
+                            "status": "generated",
+                            "blueprint_id": "ce_TASK-1_runtime_schedule",
+                            "summary": "Runtime repair must retain CE handoff evidence.",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        captured: dict[str, Any] = {}
+
+        def fake_run_schedule(adapter: Any, *, task: dict[str, Any], task_id: str, artifact_quality_errors: list[str]):
+            del adapter, task_id, artifact_quality_errors
+            captured["task"] = task
+            return [], {"attempted": False}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair_schedule",
+            fake_run_schedule,
+        )
+
+        executor._apply_workspace_quality_repairs(
+            run_id="factory-run",
+            artifact_quality_errors=["Artifact quality scan failed: workspace validation command failed"],
+        )
+
+        metadata = captured["task"]["metadata"]
+        assert metadata["ce_blueprint"]["artifact"] == "workspace-local:.polaris/blueprints/factory-run.review.json"
+        assert "ce_TASK-1_runtime_schedule" in metadata["ce_blueprint"]["evidence"]
+        assert metadata["factory_workspace_quality_repair"]["target_files"] == ["package.json", "src/index.js"]
+
+    def test_quality_repair_prompt_compaction_preserves_blueprint_after_four_goals(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        (tmp_path / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+        original_message = "\n".join(
+            [
+                "Factory workspace quality repair contract:",
+                "goal: deliver manifest",
+                "goal: deliver core engine",
+                "goal: deliver supporting modules",
+                "goal: deliver runtime entrypoint",
+                "- Chief Engineer blueprint evidence:",
+                "  artifact: workspace-local:.polaris/blueprints/latest.review.json",
+                '  "blueprint_id": "ce_TASK-1_preserve_blueprint"',
+                '  "summary": "Keep manifest scripts aligned with declared targets."',
+                '  "recommendations": ["Create missing entrypoint instead of shrinking scripts."]',
+            ]
+        )
+
+        message = director_quality_gate._build_materialization_quality_repair_message(
+            original_message=original_message,
+            artifact_quality_errors=["Artifact quality scan failed: npm run build references missing src/index.js"],
+            changed_files=["package.json"],
+            repair_target_files=["package.json"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert "Chief Engineer blueprint evidence" in message
+        assert "ce_TASK-1_preserve_blueprint" in message
+        assert "Create missing entrypoint instead of shrinking scripts" in message
+
     def test_strip_prompt_meta_lines_removes_matching_lines(self) -> None:
         text = "keep this\n这是提示词内容\nalso keep\nsystem prompt here\nfinal"
         result = OrchestrationStageExecutor._strip_prompt_meta_lines(text)
