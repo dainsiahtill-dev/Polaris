@@ -436,6 +436,51 @@ def test_prompt_includes_pm_ce_contract_context() -> None:
     assert "Every symbol imported from a sibling target module must be defined" in prompt
 
 
+def test_prompt_includes_project_declared_targets_and_manifest_entrypoint_rule() -> None:
+    executor = WorkerExecutor(workspace="/tmp")
+    task = _task(
+        {
+            "factory_bench_project_id": "L2-08",
+            "factory_bench_level": 2,
+            "target_files": ["package.json"],
+            "project_declared_target_files": [
+                "package.json",
+                "src/index.js",
+                "src/engine/rules.js",
+                "src/engine/runner.js",
+            ],
+            "project_declared_source_targets": [
+                "src/index.js",
+                "src/engine/rules.js",
+                "src/engine/runner.js",
+            ],
+            "project_declared_entrypoint_targets": ["src/index.js", "src/engine/runner.js"],
+            "manifest_entrypoint_contract": {
+                "schema_version": "polaris.manifest_entrypoint_contract.v1",
+                "allowed_local_entrypoints": [
+                    "package.json",
+                    "src/index.js",
+                    "src/engine/rules.js",
+                    "src/engine/runner.js",
+                ],
+                "rule": "Do not invent src/cli.js unless it is a declared target file.",
+            },
+        },
+        subject="Create JavaScript manifest",
+        description="Write package.json scripts for the declared entrypoint.",
+    )
+
+    prompt = executor._build_code_generation_prompt(task)
+
+    assert "Project declared target files: package.json; src/index.js; src/engine/rules.js" in prompt
+    assert "Project declared source targets: src/index.js; src/engine/rules.js; src/engine/runner.js" in prompt
+    assert "Project declared entrypoint targets: src/index.js; src/engine/runner.js" in prompt
+    assert "Manifest local entrypoint rule:" in prompt
+    assert "do not invent unowned local entrypoint files" in prompt
+    assert "allowed_local_entrypoints=package.json, src/index.js, src/engine/rules.js" in prompt
+    assert "Do not invent src/cli.js unless it is a declared target file." in prompt
+
+
 def test_prompt_includes_ce_architecture_decisions() -> None:
     executor = WorkerExecutor(workspace="/tmp")
     task = _task(

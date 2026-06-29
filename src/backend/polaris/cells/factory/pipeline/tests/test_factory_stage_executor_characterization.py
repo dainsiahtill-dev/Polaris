@@ -1840,6 +1840,65 @@ class TestArtifactStore:
         plan = json.loads(executor._artifact_path("tasks/plan.json").read_text(encoding="utf-8"))
         assert plan["tasks"][0]["id"] == "TASK-1"
 
+    def test_enrich_pm_plan_contract_artifact_injects_depth_and_declared_targets(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        catalog_path = tmp_path / ".polaris" / "catalog_contract.json"
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text(
+            json.dumps(
+                {
+                    "project_id": "L2-08",
+                    "primary_language": "javascript",
+                    "feature_keywords": ["meteor", "wish", "queue", "priority"],
+                    "level": 2,
+                    "level_contract": {
+                        "level": 2,
+                        "minimums": {
+                            "min_prod_files": 6,
+                            "min_prod_lines": 500,
+                            "min_test_assertions": 8,
+                        },
+                        "required_evidence": ["implementation_depth passes"],
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1-foundation",
+                        "goal": "Create package manifest",
+                        "target_files": ["package.json"],
+                        "context_files": ["docs/design.md"],
+                    },
+                    {
+                        "id": "TASK-2-entrypoint",
+                        "goal": "Create declared entrypoint",
+                        "target_files": ["src/index.js", "src/engine/rules.js"],
+                    },
+                ]
+            },
+        )
+
+        summary = executor._enrich_pm_plan_contract_artifact("tasks/plan.json")
+
+        assert summary["changed"] is True
+        assert summary["task_count"] == 2
+        assert summary["declared_target_count"] == 3
+        plan = json.loads(executor._artifact_path("tasks/plan.json").read_text(encoding="utf-8"))
+        for task in plan["tasks"]:
+            depth_contract = task["delivery_depth_contract"]
+            assert depth_contract["minimums"]["min_prod_files"] == 6
+            assert depth_contract["minimums"]["min_prod_lines"] == 500
+            declared_targets = task["metadata"]["project_declared_target_files"]
+            assert declared_targets == ["package.json", "src/index.js", "src/engine/rules.js"]
+            assert "docs/design.md" not in declared_targets
+            assert task["metadata"]["manifest_entrypoint_contract"]["allowed_local_entrypoints"] == declared_targets
+
     def test_ensure_chief_engineer_blueprint_artifact_present_rewrites_missing_result(
         self,
         tmp_path: Path,

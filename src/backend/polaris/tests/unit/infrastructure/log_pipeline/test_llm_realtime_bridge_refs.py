@@ -161,6 +161,44 @@ class TestBuildRefsRichFields:
         assert refs["missing_required_refs"] == ["execution_envelope"]
         assert refs["missing_required_tools"] == ["write_file"]
 
+    def test_refs_project_final_request_evidence_for_pm_ce_director(self, bridge: LogPipelineLLMRealtimeBridge) -> None:
+        writer = MagicMock()
+        audit = {
+            "schema_version": "llm.final_request_context_audit.v1",
+            "final_request_evidence_coverage": {
+                "request_hash": "request-hash-role-matrix",
+                "pass": True,
+            },
+        }
+        with patch(
+            "polaris.infrastructure.log_pipeline.llm_realtime_bridge.get_writer",
+            return_value=writer,
+        ):
+            for role in ("pm", "chief_engineer", "director"):
+                bridge.publish(
+                    LLMRealtimeEvent(
+                        workspace="/tmp/test-ws",
+                        run_id="run-final-request",
+                        role=role,
+                        event_type="llm_call_start",
+                        data={
+                            "metadata": {
+                                "context_snapshot_ref": f"runtime/contexts/{role}/snapshot.json",
+                                "final_request_context_audit": audit,
+                            }
+                        },
+                    )
+                )
+
+        calls = writer.write_event.call_args_list
+        assert len(calls) == 3
+        for role, call in zip(("pm", "chief_engineer", "director"), calls, strict=True):
+            refs = call.kwargs.get("refs") or call[1].get("refs")
+            assert refs["context_snapshot_ref"] == f"runtime/contexts/{role}/snapshot.json"
+            assert refs["final_request_evidence_hash"]
+            assert refs["final_request_context_audit_hash"]
+            assert refs["final_request_evidence_coverage_pass"] is True
+
 
 class TestRawDataPreserved:
     """raw.data must be the original event data dict, unmodified."""

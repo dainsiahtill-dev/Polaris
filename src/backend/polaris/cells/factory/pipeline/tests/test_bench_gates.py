@@ -1943,39 +1943,43 @@ def test_collect_llm_events_projects_final_request_evidence(tmp_path: Path) -> N
     runtime = tmp_path / "runtime"
     events_dir = runtime / "events"
     events_dir.mkdir(parents=True)
-    (events_dir / "director.llm.events.jsonl").write_text(
-        json.dumps(
-            {
-                "event": "llm_call_start",
-                "role": "director",
-                "context_snapshot_ref": "runtime/contexts/aa/bbbb.json",
-                "final_request_context_audit_hash": "audit-hash",
-                "final_request_evidence_hash": "evidence-hash",
-                "final_request_evidence": {
-                    "context_snapshot_ref": "runtime/contexts/aa/bbbb.json",
-                    "final_request_context_audit_present": True,
-                    "final_request_evidence_coverage_pass": False,
-                    "missing_required_refs": ["execution_envelope"],
-                    "missing_required_tools": ["write_file"],
+    for role in ("pm", "chief_engineer", "director"):
+        (events_dir / f"{role}.llm.events.jsonl").write_text(
+            json.dumps(
+                {
+                    "event": "llm_call_start",
+                    "role": role,
+                    "context_snapshot_ref": f"runtime/contexts/{role}/snapshot.json",
+                    "final_request_context_audit_hash": f"audit-hash-{role}",
+                    "final_request_evidence_hash": f"evidence-hash-{role}",
+                    "final_request_evidence": {
+                        "context_snapshot_ref": f"runtime/contexts/{role}/snapshot.json",
+                        "final_request_context_audit_present": True,
+                        "final_request_evidence_coverage_pass": False,
+                        "missing_required_refs": ["execution_envelope"],
+                        "missing_required_tools": ["write_file"],
+                    },
+                    "data": {"provider": "qwen-local", "model": "qwen3"},
                 },
-                "data": {"provider": "qwen-local", "model": "qwen3"},
-            },
-            ensure_ascii=False,
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        + "\n",
-        encoding="utf-8",
-    )
 
     events = collect_llm_events(tmp_path, runtime)
 
-    assert len(events) == 1
-    assert events[0]["context_snapshot_ref"] == "runtime/contexts/aa/bbbb.json"
-    assert events[0]["final_request_context_audit_present"] is True
-    assert events[0]["final_request_context_audit_hash"] == "audit-hash"
-    assert events[0]["final_request_evidence_hash"] == "evidence-hash"
-    assert events[0]["final_request_evidence_coverage_pass"] is False
-    assert events[0]["missing_required_refs"] == ["execution_envelope"]
-    assert events[0]["missing_required_tools"] == ["write_file"]
+    by_role = {event["role"]: event for event in events}
+    assert set(by_role) == {"pm", "chief_engineer", "director"}
+    for role in ("pm", "chief_engineer", "director"):
+        event = by_role[role]
+        assert event["context_snapshot_ref"] == f"runtime/contexts/{role}/snapshot.json"
+        assert event["final_request_context_audit_present"] is True
+        assert event["final_request_context_audit_hash"] == f"audit-hash-{role}"
+        assert event["final_request_evidence_hash"] == f"evidence-hash-{role}"
+        assert event["final_request_evidence_coverage_pass"] is False
+        assert event["missing_required_refs"] == ["execution_envelope"]
+        assert event["missing_required_tools"] == ["write_file"]
 
 
 def test_collect_llm_events_reads_multiple_runtime_candidates(tmp_path: Path) -> None:

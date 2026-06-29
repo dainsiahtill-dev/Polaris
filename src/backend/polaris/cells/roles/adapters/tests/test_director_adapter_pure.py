@@ -5371,6 +5371,17 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
             "metadata": {
                 "target_files": ["package.json", "src/modules/primary.ts", "src/modules/secondary.ts"],
                 "scope_paths": ["src/modules"],
+                "project_declared_target_files": [
+                    "package.json",
+                    "src/index.ts",
+                    "src/modules/primary.ts",
+                    "src/modules/secondary.ts",
+                ],
+                "project_declared_source_targets": [
+                    "src/index.ts",
+                    "src/modules/primary.ts",
+                    "src/modules/secondary.ts",
+                ],
                 "phase": "implementation",
                 "project_type": "typescript_service",
                 "task_id": "TASK-1",
@@ -5379,6 +5390,19 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
                 "blueprint_path": ".polaris/blueprints/ce_TASK-1.json",
                 "pm_contract_hash": "pm-contract-hash",
                 "blueprint_hash": "ce-blueprint-hash",
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "minimums": {"min_prod_files": 6, "min_prod_lines": 500},
+                },
+                "manifest_entrypoint_contract": {
+                    "schema_version": "polaris.manifest_entrypoint_contract.v1",
+                    "allowed_local_entrypoints": [
+                        "package.json",
+                        "src/index.ts",
+                        "src/modules/primary.ts",
+                        "src/modules/secondary.ts",
+                    ],
+                },
                 "ce_handoff_decision": {"allowed": True, "decision_hash": "handoff-hash"},
             },
         }
@@ -5403,14 +5427,27 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
         assert profile["task_type"] == "write_code"
         assert context["metadata"]["target_files"] == profile["target_files"]
         assert metadata["target_files"] == profile["target_files"]
+        assert metadata["delivery_depth_contract"]["minimums"]["min_prod_files"] == 6
+        assert metadata["project_declared_target_files"] == [
+            "package.json",
+            "src/index.ts",
+            "src/modules/primary.ts",
+            "src/modules/secondary.ts",
+        ]
+        assert metadata["manifest_entrypoint_contract"]["allowed_local_entrypoints"] == [
+            "package.json",
+            "src/index.ts",
+            "src/modules/primary.ts",
+            "src/modules/secondary.ts",
+        ]
         assert metadata["ce_handoff_decision"] == {"allowed": True, "decision_hash": "handoff-hash"}
         envelope = metadata["director_execution_envelope"]
         assert envelope["authorization"]["allowed_write_paths"] == [
             "package.json",
             "src/modules/primary.ts",
             "src/modules/secondary.ts",
-            "src/modules",
         ]
+        assert "src/index.ts" not in envelope["authorization"]["allowed_write_paths"]
         assert envelope["pm_contract"]["hash"] == "pm-contract-hash"
         assert envelope["ce_blueprint"]["hash"] == "ce-blueprint-hash"
         assert envelope["handoff_decision"]["allowed"] is True

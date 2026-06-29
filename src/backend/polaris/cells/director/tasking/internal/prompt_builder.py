@@ -417,6 +417,43 @@ class PromptBuilder:
         if delivery_depth_rows:
             lines.append("- Delivery depth/behavior contract: " + " || ".join(delivery_depth_rows))
 
+        declared_targets = self._metadata_items(metadata.get("project_declared_target_files"), limit=24, max_chars=140)
+        if declared_targets:
+            lines.append("- Project declared target files: " + "; ".join(declared_targets))
+        declared_source_targets = self._metadata_items(
+            metadata.get("project_declared_source_targets"),
+            limit=20,
+            max_chars=140,
+        )
+        if declared_source_targets:
+            lines.append("- Project declared source targets: " + "; ".join(declared_source_targets))
+        declared_entrypoints = self._metadata_items(
+            metadata.get("project_declared_entrypoint_targets"),
+            limit=12,
+            max_chars=140,
+        )
+        if declared_entrypoints:
+            lines.append("- Project declared entrypoint targets: " + "; ".join(declared_entrypoints))
+        manifest_policy = self._metadata_mapping(metadata.get("manifest_entrypoint_contract"))
+        if declared_targets or manifest_policy:
+            allowed = self._metadata_items(
+                manifest_policy.get("allowed_local_entrypoints"),
+                limit=20,
+                max_chars=140,
+            )
+            rule = str(manifest_policy.get("rule") or "").strip()
+            policy_parts = [
+                (
+                    "package.json scripts/bin/main/module local paths must reference existing files "
+                    "or Project declared target files; do not invent unowned local entrypoint files."
+                )
+            ]
+            if allowed:
+                policy_parts.append("allowed_local_entrypoints=" + ", ".join(allowed))
+            if rule:
+                policy_parts.append(self._compact_prompt_fragment(rule, max_chars=260))
+            lines.append("- Manifest local entrypoint rule: " + " | ".join(policy_parts))
+
         section_specs = (
             ("Acceptance criteria", "acceptance_criteria", 10),
             ("Constraints", "constraints", 8),

@@ -767,6 +767,184 @@ class OrchestrationStageExecutor:
             metadata.setdefault("factory_bench_title", title)
         context["metadata"] = metadata
 
+    @staticmethod
+    def _normalize_contract_path(value: Any) -> str:
+        path = str(value or "").strip().replace("\\", "/")
+        while path.startswith("./"):
+            path = path[2:]
+        return path
+
+    @classmethod
+    def _source_target_suffixes(cls) -> frozenset[str]:
+        suffixes: set[str] = set()
+        for extensions in _LANGUAGE_SOURCE_EXTENSIONS.values():
+            suffixes.update(extensions)
+        return frozenset(suffixes)
+
+    @classmethod
+    def _collect_pm_project_declared_target_files(cls, tasks: list[dict[str, Any]]) -> list[str]:
+        """Collect write targets from PM task contracts.
+
+        ``target_files`` is the write/materialization surface. ``context_files``
+        remains read-only evidence and must not be promoted into this union.
+        """
+
+        rows: list[str] = []
+        seen: set[str] = set()
+        for task in tasks:
+            for path in cls._task_string_list(task, "target_files"):
+                normalized = cls._normalize_contract_path(path)
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                rows.append(normalized)
+        return rows
+
+    @classmethod
+    def _filter_source_target_files(cls, paths: list[str]) -> list[str]:
+        source_suffixes = cls._source_target_suffixes()
+        rows: list[str] = []
+        for path in paths:
+            suffix = Path(path).suffix.lower()
+            if suffix and suffix in source_suffixes:
+                rows.append(path)
+        return rows
+
+    @staticmethod
+    def _filter_entrypoint_like_targets(paths: list[str]) -> list[str]:
+        rows: list[str] = []
+        for path in paths:
+            normalized = path.replace("\\", "/")
+            filename = Path(normalized).name.lower()
+            stem = Path(filename).stem.lower()
+            if filename in {"package.json", "pyproject.toml", "go.mod", "cargo.toml"}:
+                continue
+            if stem in {"index", "main", "cli", "app", "server", "runner"}:
+                rows.append(path)
+        return rows
+
+    def _inject_project_declared_target_contract(
+        self,
+        context: dict[str, Any],
+        *,
+        project_declared_target_files: list[str],
+    ) -> None:
+        if not project_declared_target_files:
+            return
+
+        source_targets = self._filter_source_target_files(project_declared_target_files)
+        entrypoint_targets = self._filter_entrypoint_like_targets(project_declared_target_files)
+        context["project_declared_target_files"] = self._merge_string_list(
+            project_declared_target_files,
+            context.get("project_declared_target_files"),
+        )
+        if source_targets:
+            context["project_declared_source_targets"] = self._merge_string_list(
+                source_targets,
+                context.get("project_declared_source_targets"),
+            )
+        if entrypoint_targets:
+            context["project_declared_entrypoint_targets"] = self._merge_string_list(
+                entrypoint_targets,
+                context.get("project_declared_entrypoint_targets"),
+            )
+
+        manifest_policy = {
+            "schema_version": "polaris.manifest_entrypoint_contract.v1",
+            "source": "factory.pm_plan_declared_targets",
+            "allowed_local_entrypoints": list(project_declared_target_files),
+            "rule": (
+                "Package manifest scripts/bin/main/module local paths must reference existing files "
+                "or project_declared_target_files; do not invent unowned local entrypoint files."
+            ),
+        }
+        existing_policy_raw = context.get("manifest_entrypoint_contract")
+        existing_policy = (
+            dict(cast(dict[str, Any], existing_policy_raw)) if isinstance(existing_policy_raw, dict) else {}
+        )
+        existing_allowed = existing_policy.get("allowed_local_entrypoints")
+        manifest_policy["allowed_local_entrypoints"] = self._merge_string_list(
+            project_declared_target_files,
+            existing_allowed,
+        )
+        context["manifest_entrypoint_contract"] = {**manifest_policy, **existing_policy}
+
+        metadata_raw = context.get("metadata")
+        metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+        metadata["project_declared_target_files"] = self._merge_string_list(
+            project_declared_target_files,
+            metadata.get("project_declared_target_files"),
+        )
+        if source_targets:
+            metadata["project_declared_source_targets"] = self._merge_string_list(
+                source_targets,
+                metadata.get("project_declared_source_targets"),
+            )
+        if entrypoint_targets:
+            metadata["project_declared_entrypoint_targets"] = self._merge_string_list(
+                entrypoint_targets,
+                metadata.get("project_declared_entrypoint_targets"),
+            )
+        metadata_policy_raw = metadata.get("manifest_entrypoint_contract")
+        metadata_policy = (
+            dict(cast(dict[str, Any], metadata_policy_raw)) if isinstance(metadata_policy_raw, dict) else {}
+        )
+        metadata_allowed = metadata_policy.get("allowed_local_entrypoints")
+        metadata["manifest_entrypoint_contract"] = {
+            **manifest_policy,
+            **metadata_policy,
+            "allowed_local_entrypoints": self._merge_string_list(project_declared_target_files, metadata_allowed),
+        }
+        context["metadata"] = metadata
+
+    def _enrich_pm_plan_contract_artifact(self, relative_path: str = "tasks/plan.json") -> dict[str, Any]:
+        target = self._artifact_path(relative_path)
+        if not target.exists() or not target.is_file():
+            return {"changed": False, "task_count": 0, "declared_target_count": 0}
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError, UnicodeDecodeError):
+            return {"changed": False, "task_count": 0, "declared_target_count": 0}
+        if not isinstance(payload, dict):
+            return {"changed": False, "task_count": 0, "declared_target_count": 0}
+        raw_tasks = payload.get("tasks")
+        if not isinstance(raw_tasks, list):
+            return {"changed": False, "task_count": 0, "declared_target_count": 0}
+
+        task_rows = [dict(item) for item in raw_tasks if isinstance(item, dict)]
+        project_declared_targets = self._collect_pm_project_declared_target_files(task_rows)
+        changed = False
+        enriched_tasks: list[Any] = []
+        dict_index = 0
+        for item in raw_tasks:
+            if not isinstance(item, dict):
+                enriched_tasks.append(item)
+                continue
+            task = dict(task_rows[dict_index])
+            dict_index += 1
+            before = json.dumps(task, sort_keys=True, ensure_ascii=False)
+            self._inject_catalog_delivery_depth_contract(task)
+            self._inject_project_declared_target_contract(
+                task,
+                project_declared_target_files=project_declared_targets,
+            )
+            after = json.dumps(task, sort_keys=True, ensure_ascii=False)
+            if before != after:
+                changed = True
+            enriched_tasks.append(task)
+
+        if changed:
+            updated_payload = dict(payload)
+            updated_payload["tasks"] = enriched_tasks
+            self._write_json_artifact(relative_path, updated_payload)
+
+        return {
+            "changed": changed,
+            "task_count": len(task_rows),
+            "declared_target_count": len(project_declared_targets),
+            "source_target_count": len(self._filter_source_target_files(project_declared_targets)),
+        }
+
     def _load_pm_plan_tasks(
         self,
         relative_path: str = "tasks/plan.json",
@@ -2979,6 +3157,18 @@ class OrchestrationStageExecutor:
                     "source_path": synced_plan_source,
                 }
             )
+        enrichment_summary = self._enrich_pm_plan_contract_artifact("tasks/plan.json")
+        if int(enrichment_summary.get("task_count") or 0) > 0:
+            stage_signals.append(
+                {
+                    "code": "pm.plan_contract_enriched_with_catalog_depth_and_declared_targets",
+                    "severity": "info",
+                    "detail": (
+                        "Merged catalog delivery depth contract and project declared target union into PM task contracts."
+                    ),
+                    **enrichment_summary,
+                }
+            )
         contract_issue = self._validate_pm_plan_contract("tasks/plan.json")
         if contract_issue:
             stage_signals.append(
@@ -3300,7 +3490,7 @@ class OrchestrationStageExecutor:
         logger.info("Executing Chief Engineer review for run %s", run.id)
 
         synced_plan_source = self._ensure_pm_plan_contract_available()
-        pm_tasks = self._load_pm_plan_tasks("tasks/plan.json")
+        self._enrich_pm_plan_contract_artifact("tasks/plan.json")
         stage_signals: list[dict[str, Any]] = []
         blueprint_rows: list[dict[str, Any]] = []
         if synced_plan_source:
@@ -3312,6 +3502,7 @@ class OrchestrationStageExecutor:
                     "source_path": synced_plan_source,
                 }
             )
+        pm_tasks = self._load_pm_plan_tasks("tasks/plan.json")
 
         if not pm_tasks:
             stage_signals.append(
@@ -3780,6 +3971,7 @@ class OrchestrationStageExecutor:
         abort_checker = self._resolve_abort_checker(context)
 
         synced_plan_source = self._ensure_pm_plan_contract_available()
+        self._enrich_pm_plan_contract_artifact("tasks/plan.json")
         pm_tasks = self._load_pm_plan_tasks("tasks/plan.json")
         plan_task_filter = self._build_director_task_filter(pm_tasks)
         configured_task_filter = str(context.get("task_filter") or "").strip()
