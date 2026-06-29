@@ -50,6 +50,7 @@ from .task_scope_paths import (
     _filter_diff_to_task_declared_paths,
     _normalize_declared_task_path,
     _path_candidate_exists_in_file_set,
+    _path_matches_any_declared_candidate,
     _task_has_declared_target_files,
     _task_text_blob,
     _workspace_path_exists_case_insensitive,
@@ -244,6 +245,12 @@ _QUALITY_SYNTAX_ERROR_PATH_RE = re.compile(
 )
 _NPM_SCRIPT_MISSING_LOCAL_ENTRYPOINT_RE = re.compile(
     r"npm package manifest script '(?P<script>[^']+)' references missing local entrypoint '(?P<path>[^']+)'",
+    re.IGNORECASE,
+)
+
+_NPM_SCRIPT_MISSING_LOCAL_MODULE_RE = re.compile(
+    r"npm package manifest script '(?P<script>[^']+)' local entrypoint '(?P<entrypoint>[^']+)' "
+    r"requires missing local module: (?P<module>\S+)",
     re.IGNORECASE,
 )
 _NPM_SCRIPT_REPAIRABLE_SOURCE_PREFIXES = (
@@ -1300,6 +1307,133 @@ def _single_file_step_target(source: Any) -> str:
     return target.removeprefix("./")
 
 
+def _task_write_scope_candidates(task: dict[str, Any], *, workspace_name: str = "") -> list[str]:
+    return _dedupe_preserve_order(
+        [
+            normalized
+            for candidate in _extract_task_target_path_candidates(task)
+            if (
+                normalized := _normalize_declared_task_path(
+                    str(candidate or ""),
+                    workspace_name=workspace_name,
+                )
+            )
+        ]
+    )
+
+
+def _path_within_task_write_scope(path: str, *, task: dict[str, Any], workspace_name: str = "") -> bool:
+    scope_candidates = _task_write_scope_candidates(task, workspace_name=workspace_name)
+    if not scope_candidates:
+        return True
+    normalized = _normalize_declared_task_path(path, workspace_name=workspace_name)
+    return bool(normalized and _path_matches_any_declared_candidate(normalized, scope_candidates))
+
+
+def _partition_paths_by_task_write_scope(
+    paths: list[str],
+    *,
+    task: dict[str, Any],
+    workspace_name: str = "",
+) -> tuple[list[str], list[str]]:
+    in_scope: list[str] = []
+    out_of_scope: list[str] = []
+    for path in _dedupe_preserve_order(paths):
+        if _path_within_task_write_scope(path, task=task, workspace_name=workspace_name):
+            in_scope.append(path)
+        else:
+            out_of_scope.append(path)
+    return in_scope, out_of_scope
+
+
+def _record_deferred_task_boundary_quality_errors(
+    context: dict[str, Any] | None,
+    *,
+    errors: list[str],
+    target_files: list[str],
+    reason: str,
+) -> None:
+    if not isinstance(context, dict) or not errors:
+        return
+    record = {
+        "schema_version": "director.task_boundary.deferred_quality_errors.v1",
+        "reason": reason,
+        "artifact_quality_errors": errors[:20],
+        "target_files": target_files[:20],
+    }
+    existing = context.get("director_task_boundary_deferred_quality_errors")
+    if isinstance(existing, list):
+        existing.append(record)
+    else:
+        context["director_task_boundary_deferred_quality_errors"] = [record]
+
+
+def _task_boundary_scope_filter_evidence(
+    task: dict[str, Any],
+    *,
+    target_files: list[str],
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "director.task_boundary.repair_scope_filter.v1",
+        "reason": reason,
+        "task_declared_write_targets": _task_write_scope_candidates(task)[:12],
+        "out_of_scope_repair_target_files": _dedupe_preserve_order(target_files)[:12],
+        "deferred": True,
+    }
+
+
+def _filter_npm_script_entrypoint_errors_to_task_write_scope(
+    errors: list[str],
+    *,
+    task: dict[str, Any],
+    workspace_name: str = "",
+    context: dict[str, Any] | None = None,
+) -> list[str]:
+    """Defer package-script entrypoint diagnostics that belong to another task."""
+
+    if not _task_write_scope_candidates(task, workspace_name=workspace_name):
+        return errors
+    retained: list[str] = []
+    deferred_errors: list[str] = []
+    deferred_targets: list[str] = []
+    for error in errors:
+        text = str(error or "")
+        entrypoint_match = _NPM_SCRIPT_MISSING_LOCAL_ENTRYPOINT_RE.search(text)
+        if entrypoint_match:
+            script_name = str(entrypoint_match.group("script") or "").strip().lower()
+            entrypoint = str(entrypoint_match.group("path") or "").strip()
+            candidates = _npm_script_entrypoint_repair_target_candidates(script_name, entrypoint)
+            in_scope, out_of_scope = _partition_paths_by_task_write_scope(
+                candidates,
+                task=task,
+                workspace_name=workspace_name,
+            )
+            if candidates and not in_scope:
+                deferred_errors.append(text)
+                deferred_targets.extend(out_of_scope)
+                continue
+        local_module_match = _NPM_SCRIPT_MISSING_LOCAL_MODULE_RE.search(text)
+        if local_module_match:
+            entrypoint = str(local_module_match.group("entrypoint") or "").strip()
+            if entrypoint and not _path_within_task_write_scope(
+                entrypoint,
+                task=task,
+                workspace_name=workspace_name,
+            ):
+                deferred_errors.append(text)
+                deferred_targets.append(entrypoint)
+                continue
+        retained.append(text)
+    _record_deferred_task_boundary_quality_errors(
+        context,
+        errors=_dedupe_preserve_order(deferred_errors),
+        target_files=_dedupe_preserve_order(deferred_targets),
+        reason="npm_script_entrypoint_outside_current_task_target_files",
+    )
+    return _dedupe_preserve_order(retained)
+
+
 def _collect_materialization_quality_errors(
     adapter: Any,
     *,
@@ -1346,7 +1480,12 @@ def _collect_materialization_quality_errors(
             workspace_name=workspace_name,
         )
     )
-    return _dedupe_preserve_order(errors)
+    return _filter_npm_script_entrypoint_errors_to_task_write_scope(
+        _dedupe_preserve_order(errors),
+        task=task,
+        workspace_name=workspace_name,
+        context=context,
+    )
 
 
 def _materialization_quality_scan_paths_with_package_manifest(
@@ -1534,6 +1673,46 @@ async def _run_materialization_quality_repair_retry(
 
     workspace_full = str(getattr(adapter, "workspace", "") or "")
     repair_quality_errors = _tool_receipt_safe_quality_errors(artifact_quality_errors)
+    deferred_scope_context: dict[str, Any] = {}
+    repair_quality_errors = _filter_npm_script_entrypoint_errors_to_task_write_scope(
+        repair_quality_errors,
+        task=task,
+        context=deferred_scope_context,
+    )
+    deferred_scope_records = deferred_scope_context.get("director_task_boundary_deferred_quality_errors")
+    deferred_scope_targets: list[str] = []
+    if isinstance(deferred_scope_records, list):
+        for record in deferred_scope_records:
+            if not isinstance(record, dict):
+                continue
+            raw_targets = record.get("target_files")
+            if isinstance(raw_targets, list):
+                deferred_scope_targets.extend(str(item) for item in raw_targets if str(item or "").strip())
+    task_scope_filter_evidence: dict[str, Any] = {}
+    if deferred_scope_targets:
+        task_scope_filter_evidence = _task_boundary_scope_filter_evidence(
+            task,
+            target_files=deferred_scope_targets,
+            reason="npm_script_entrypoint_outside_current_task_target_files",
+        )
+    if not repair_quality_errors and task_scope_filter_evidence:
+        return [], {
+            "stage": "task_boundary_repair_targets_deferred",
+            "attempted": True,
+            "attempt": repair_attempt,
+            "success": False,
+            "success_reason": "repair_targets_outside_current_task_target_files",
+            "tool_results": 0,
+            "write_tool_evidence": False,
+            "missing_target_files": [],
+            "runtime_smoke_target_files": [],
+            "semantic_quality_target_files": [],
+            "explicit_quality_target_files": [],
+            "repair_target_files": [],
+            "rotated_repair_targets": False,
+            "task_boundary_scope_filter": task_scope_filter_evidence,
+            "llm_fallback_blocked": True,
+        }
     missing_target_files = _missing_materialization_quality_repair_target_files(
         task,
         workspace_full,
@@ -1542,6 +1721,10 @@ async def _run_materialization_quality_repair_retry(
     missing_script_entrypoint_files = _missing_npm_script_entrypoint_repair_target_files(
         artifact_quality_errors=repair_quality_errors,
         workspace_full=workspace_full,
+    )
+    missing_script_entrypoint_files, out_of_scope_script_entrypoint_files = _partition_paths_by_task_write_scope(
+        missing_script_entrypoint_files,
+        task=task,
     )
     missing_target_files = _dedupe_preserve_order([*missing_target_files, *missing_script_entrypoint_files])
     runtime_smoke_target_files = _dedupe_preserve_order(
@@ -1588,6 +1771,16 @@ async def _run_materialization_quality_repair_retry(
             *missing_script_entrypoint_files,
         ]
     )
+    if out_of_scope_script_entrypoint_files:
+        merged_out_of_scope = [
+            *list(task_scope_filter_evidence.get("out_of_scope_repair_target_files", [])),
+            *out_of_scope_script_entrypoint_files,
+        ]
+        task_scope_filter_evidence = _task_boundary_scope_filter_evidence(
+            task,
+            target_files=merged_out_of_scope,
+            reason="npm_script_entrypoint_outside_current_task_target_files",
+        )
     should_merge_missing_targets = bool(explicit_missing_quality_targets) or not (
         runtime_smoke_target_files or semantic_quality_target_files or explicit_quality_target_files
     )
@@ -1612,6 +1805,24 @@ async def _run_materialization_quality_repair_retry(
             repair_target_candidates=repair_target_candidates,
         ),
     )
+    if task_scope_filter_evidence and not repair_target_files:
+        return [], {
+            "stage": "task_boundary_repair_targets_deferred",
+            "attempted": True,
+            "attempt": repair_attempt,
+            "success": False,
+            "success_reason": "repair_targets_outside_current_task_target_files",
+            "tool_results": 0,
+            "write_tool_evidence": False,
+            "missing_target_files": missing_target_files[:12],
+            "runtime_smoke_target_files": runtime_smoke_target_files[:12],
+            "semantic_quality_target_files": semantic_quality_target_files[:12],
+            "explicit_quality_target_files": explicit_quality_target_files[:12],
+            "repair_target_files": [],
+            "rotated_repair_targets": False,
+            "task_boundary_scope_filter": task_scope_filter_evidence,
+            "llm_fallback_blocked": True,
+        }
     missing_target_set = set(missing_target_files)
     missing_repair_target_files = [path for path in repair_target_files if path in missing_target_set]
     existing_repair_target_files = [path for path in repair_target_files if path not in missing_target_set]
@@ -1797,6 +2008,8 @@ async def _run_materialization_quality_repair_retry(
             "repair_target_files": repair_target_files[:12],
         },
     }
+    if task_scope_filter_evidence:
+        repair_context["director_quality_repair"]["task_boundary_scope_filter"] = task_scope_filter_evidence
     if task_boundary_discrepancy_evidence:
         repair_context["director_quality_repair"]["interface_discrepancy_evidence"] = task_boundary_discrepancy_evidence
         repair_context["task_boundary_interface_discrepancy_retry"] = {
@@ -1897,7 +2110,7 @@ async def _run_materialization_quality_repair_retry(
                     artifact_quality_errors=repair_quality_errors,
                 )
             )
-        return repair_tool_results, {
+        summary = {
             "attempted": True,
             "attempt": repair_attempt,
             "success": False,
@@ -1912,6 +2125,9 @@ async def _run_materialization_quality_repair_retry(
             "rotated_repair_targets": rotate_repair_targets,
             "deadline_decision": deadline_decision,
         }
+        if task_scope_filter_evidence:
+            summary["task_boundary_scope_filter"] = task_scope_filter_evidence
+        return repair_tool_results, summary
 
     content = str(result.get("content") or "")
     repair_tool_results = adapter._execution.extract_kernel_tool_results(result)
@@ -1979,6 +2195,8 @@ async def _run_materialization_quality_repair_retry(
     if task_boundary_discrepancy_evidence:
         summary["task_boundary_interface_discrepancy_retry_authorized"] = True
         summary["interface_discrepancy_evidence"] = task_boundary_discrepancy_evidence
+    if task_scope_filter_evidence:
+        summary["task_boundary_scope_filter"] = task_scope_filter_evidence
     guard_tool_results, guard_summary = _run_post_llm_materialization_runtime_guard(
         adapter,
         task=task,

@@ -1223,7 +1223,11 @@ class StreamOrchestrator:
         # turn — either every native tool call failed to parse, or the response
         # was completely empty. The weak model gets the exact error quoted back.
         probe_decision = self.decoder.decode(llm_response, TurnId(turn_id))
-        corrective_ask = evaluate_decode_corrective(probe_decision, llm_response)
+        corrective_ask = evaluate_decode_corrective(
+            probe_decision,
+            llm_response,
+            tool_definitions=tool_definitions,
+        )
         if corrective_ask is not None:
             logger.warning(
                 "decode_corrective_retry(stream): reason=%s turn_id=%s",

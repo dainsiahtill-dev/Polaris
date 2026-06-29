@@ -72,6 +72,14 @@ class RunCompletionWaiter:
                 await result
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("Failed to propagate factory cancellation to run %s: %s", normalized_run_id, exc)
+        except Exception as exc:
+            if exc.__class__.__name__ != "NotFoundError":
+                raise
+            logger.warning(
+                "Factory cancellation target run %s was already absent from orchestration service: %s",
+                normalized_run_id,
+                exc,
+            )
         else:
             logger.info("Propagated factory cancellation to run %s: %s", normalized_run_id, reason)
         try:

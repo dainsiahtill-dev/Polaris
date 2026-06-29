@@ -5920,10 +5920,12 @@ class TestBuildDirectorMessage:
         assert context["scope_paths"] == ["src/index.ts", "tests/behavior.test.ts"]
         assert metadata["target_files"] == ["src/index.ts", "tests/behavior.test.ts"]
         assert metadata["scope_paths"] == ["src/index.ts", "tests/behavior.test.ts"]
+        task_metadata = task["metadata"]
+        assert isinstance(task_metadata, dict)
         assert task["target_files"] == ["src/index.ts", "tests/behavior.test.ts"]
         assert task["scope_paths"] == ["src/index.ts", "tests/behavior.test.ts"]
-        assert task["metadata"]["target_files"] == ["src/index.ts", "tests/behavior.test.ts"]
-        assert task["metadata"]["scope_paths"] == ["src/index.ts", "tests/behavior.test.ts"]
+        assert task_metadata["target_files"] == ["src/index.ts", "tests/behavior.test.ts"]
+        assert task_metadata["scope_paths"] == ["src/index.ts", "tests/behavior.test.ts"]
         assert execute_method_module._declared_write_retry_target_files(task) == [
             "src/index.ts",
             "tests/behavior.test.ts",
@@ -12291,6 +12293,111 @@ class TestQualityRepairMissingTargetContract:
         assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["package.json"]
         assert "_transaction_kernel_forced_tool_choice" not in adapter.repair_context
         assert "NPM PACKAGE MANIFEST REPAIR" in adapter.repair_message
+
+    def test_package_script_entrypoint_outside_task_scope_is_deferred(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director import quality_gate as director_quality_gate
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _collect_materialization_quality_errors,
+        )
+
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"start":"node src/index.js"}}\n',
+            encoding="utf-8",
+        )
+        error = (
+            "Artifact quality scan failed: npm package manifest script "
+            "'start' references missing local entrypoint 'src/index.js'"
+        )
+        monkeypatch.setattr(
+            director_quality_gate._em,
+            "scan_workspace_artifact_quality",
+            lambda *_args, **_kwargs: [error],
+        )
+        context: dict[str, Any] = {}
+
+        errors = _collect_materialization_quality_errors(
+            SimpleNamespace(workspace=str(tmp_path)),
+            task={"target_files": ["package.json"]},
+            all_affected_files=["package.json"],
+            workspace_name=tmp_path.name,
+            context=context,
+        )
+
+        assert errors == []
+        assert context["director_task_boundary_deferred_quality_errors"] == [
+            {
+                "schema_version": "director.task_boundary.deferred_quality_errors.v1",
+                "reason": "npm_script_entrypoint_outside_current_task_target_files",
+                "artifact_quality_errors": [error],
+                "target_files": ["src/index.js"],
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_package_script_entrypoint_retry_blocks_out_of_scope_target(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                del result
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                raise AssertionError("out-of-scope package script entrypoint must not reach LLM repair")
+
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"start":"node src/index.js"}}\n',
+            encoding="utf-8",
+        )
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["package.json"]},
+            target_task_id="task-1",
+            run_id="run-1",
+            context={},
+            original_message="Create package manifest.",
+            llm_call_timeout=1.0,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: npm package manifest script "
+                "'start' references missing local entrypoint 'src/index.js'",
+            ],
+            changed_files=["package.json"],
+        )
+
+        assert tool_results == []
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
+        assert summary["repair_target_files"] == []
+        assert summary["task_boundary_scope_filter"]["out_of_scope_repair_target_files"] == ["src/index.js"]
 
     def test_node_test_directory_quality_error_targets_package_json(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (

@@ -228,13 +228,14 @@ def _control_plane_job_token(
         "scope_paths": scope_paths,
     }
     token_id = f"job-{stable_hash(token_basis)[:24]}"
-    allowed_paths = list(dict.fromkeys([*target_files, *scope_paths]))
+    allowed_write_paths = list(dict.fromkeys(target_files))
+    allowed_read_paths = list(dict.fromkeys([*allowed_write_paths, *scope_paths]))
     missing_issues = [
         issue
         for issue, missing in (
             ("missing_contract_hash", not contract_hash),
             ("missing_blueprint_hash", not blueprint_hash),
-            ("missing_allowed_paths", not allowed_paths),
+            ("missing_allowed_write_paths", not allowed_write_paths),
         )
         if missing
     ]
@@ -255,7 +256,9 @@ def _control_plane_job_token(
         project_id=project_id,
         stage="pending_exec",
         target_files=list(target_files),
-        allowed_paths=allowed_paths,
+        allowed_paths=allowed_read_paths,
+        allowed_write_paths=allowed_write_paths,
+        allowed_read_paths=allowed_read_paths,
         required_artifacts=[blueprint_path, *target_files],
         gate_policy=gate_policy,
         capability_audit={"ok": not missing_issues, "issues": missing_issues},
@@ -1009,9 +1012,7 @@ class CEConsumer:
                 import concurrent.futures
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _fission_pool:
-                    result = _fission_pool.submit(
-                        lambda: asyncio.run(runtime.execute_role_session(command))
-                    ).result()
+                    result = _fission_pool.submit(lambda: asyncio.run(runtime.execute_role_session(command))).result()
             output = str(getattr(result, "output", "") or "")
             return {
                 "success": bool(getattr(result, "ok", False)),

@@ -130,6 +130,31 @@ class TestEvaluateDecodeCorrective:
         assert ask is not None
         assert ask.reason == "empty_response"
 
+    def test_empty_response_without_tools_requests_direct_answer_only(self) -> None:
+        response = RawLLMResponse(content="", native_tool_calls=[])
+        decision = _decode(response)
+
+        ask = evaluate_decode_corrective(decision, response, tool_definitions=[])
+
+        assert ask is not None
+        assert ask.reason == "empty_response"
+        assert "No tools are available" in ask.content
+        assert "call exactly one appropriate tool" not in ask.content
+
+    def test_empty_response_with_tools_keeps_tool_or_answer_retry(self) -> None:
+        response = RawLLMResponse(content="", native_tool_calls=[])
+        decision = _decode(response)
+
+        ask = evaluate_decode_corrective(
+            decision,
+            response,
+            tool_definitions=[{"name": "write_file"}],
+        )
+
+        assert ask is not None
+        assert ask.reason == "empty_response"
+        assert "call exactly one appropriate tool" in ask.content
+
     def test_healthy_tool_batch_not_disturbed(self) -> None:
         response = RawLLMResponse(
             content="",

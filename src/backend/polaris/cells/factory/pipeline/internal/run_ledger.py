@@ -382,10 +382,15 @@ def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any
             ok=all(bool(item.get("ok")) for item in code_requirements),
             detail=", ".join(name for name in code_requirement_names if name in requirement_map),
         )
+    entrypoint = physical_evidence.get("entrypoint")
+    entrypoint_map: dict[str, Any] = entrypoint if isinstance(entrypoint, dict) else {}
+    entrypoint_kind = _clean_string(entrypoint_map.get("kind"))
+    entrypoint_is_command = bool(entrypoint_kind) and entrypoint_kind not in {"web_static", "web_playwright"}
+
     build_requirement = requirement_map.get("build_test_lint_ran")
     commands = physical_evidence.get("commands")
     command_count = int(physical_evidence.get("command_count") or 0)
-    if isinstance(build_requirement, dict) or command_count > 0 or isinstance(commands, list):
+    if isinstance(build_requirement, dict) or command_count > 0 or isinstance(commands, list) or entrypoint_is_command:
         if isinstance(build_requirement, dict):
             command_ok = bool(build_requirement.get("ok"))
             command_detail = _clean_string(build_requirement.get("detail"))
@@ -395,13 +400,33 @@ def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any
                 bool(item.get("ok")) for item in sampled_commands if isinstance(item, dict)
             )
             command_detail = f"{command_count or len(sampled_commands)} command evidence item(s)"
+        command_count_for_metadata = command_count
+        if entrypoint_is_command:
+            entrypoint_ok = bool(entrypoint_map.get("ok"))
+            entrypoint_detail = _clean_string(
+                entrypoint_map.get("detail") or entrypoint_map.get("stderr_tail") or entrypoint_kind
+            )
+            command_ok = bool(command_ok) and entrypoint_ok if command_detail else entrypoint_ok
+            command_count_for_metadata += 1
+            if not entrypoint_ok:
+                command_detail = "; ".join(
+                    item
+                    for item in (
+                        command_detail,
+                        f"entrypoint_smoke failed: {entrypoint_detail}" if entrypoint_detail else "entrypoint_smoke failed",
+                    )
+                    if item
+                )
         _merge_evidence_modality(
             modalities,
             "command",
             present=True,
             ok=command_ok,
             detail=command_detail,
-            metadata={"command_count": command_count},
+            metadata={
+                "command_count": command_count_for_metadata,
+                "entrypoint_kind": entrypoint_kind,
+            },
         )
     verifier_payloads = (
         physical_evidence.get("verifier_results"),
@@ -441,9 +466,6 @@ def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any
             detail=verifier_detail,
             metadata=verifier_metadata,
         )
-    entrypoint = physical_evidence.get("entrypoint")
-    entrypoint_map: dict[str, Any] = entrypoint if isinstance(entrypoint, dict) else {}
-    entrypoint_kind = _clean_string(entrypoint_map.get("kind"))
     if entrypoint_kind in {"web_static", "web_playwright"}:
         _merge_evidence_modality(
             modalities,

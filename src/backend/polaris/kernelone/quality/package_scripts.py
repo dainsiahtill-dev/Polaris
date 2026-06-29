@@ -31,6 +31,12 @@ _SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(
     r"(?:npm\s+run\s+(?:build|compile)|pnpm\s+(?:build|compile)|yarn\s+(?:build|compile)|\btsc\b)",
     re.IGNORECASE,
 )
+_NODE_MODULE_EXTENSIONS = (".js", ".cjs", ".mjs", ".json", ".node")
+_LOCAL_REQUIRE_RE = re.compile(r"""require\(\s*["'](?P<ref>\.{1,2}/[^"']+|/[^"']+)["']\s*\)""")
+_LOCAL_DYNAMIC_IMPORT_RE = re.compile(r"""import\(\s*["'](?P<ref>\.{1,2}/[^"']+|/[^"']+)["']\s*\)""")
+_LOCAL_STATIC_IMPORT_RE = re.compile(
+    r"""\bimport\s+(?:(?:[\w*{}\s,]+)\s+from\s+)?["'](?P<ref>\.{1,2}/[^"']+|/[^"']+)["']"""
+)
 
 
 @dataclass(frozen=True)
@@ -55,17 +61,75 @@ def _is_local_script_option_reference(token: str) -> bool:
     return normalized.startswith(("./", "../", "/")) or ext.lower() in _SCRIPT_PATH_EXTENSIONS
 
 
-def _script_reference_exists(workspace: str, token: str) -> bool:
+def _resolve_script_reference(workspace: str, token: str) -> str | None:
     normalized = token.replace("\\", "/")
     if os.path.isabs(normalized):
-        return os.path.exists(normalized)
+        return normalized if os.path.exists(normalized) else None
     exact = os.path.join(workspace, normalized)
     if os.path.exists(exact):
-        return True
+        return exact
     base, ext = os.path.splitext(exact)
     if ext:
-        return False
-    return any(os.path.exists(base + suffix) for suffix in _SCRIPT_PATH_EXTENSIONS)
+        return None
+    for suffix in _SCRIPT_PATH_EXTENSIONS:
+        candidate = base + suffix
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _script_reference_exists(workspace: str, token: str) -> bool:
+    return _resolve_script_reference(workspace, token) is not None
+
+
+def _resolve_node_module_reference(importer_dir: str, module_ref: str) -> str | None:
+    normalized = module_ref.replace("\\", "/")
+    exact = normalized if os.path.isabs(normalized) else os.path.join(importer_dir, normalized)
+    if os.path.isfile(exact):
+        return exact
+    base, ext = os.path.splitext(exact)
+    if ext:
+        return None
+    for suffix in _NODE_MODULE_EXTENSIONS:
+        candidate = base + suffix
+        if os.path.isfile(candidate):
+            return candidate
+    if os.path.isdir(exact):
+        for suffix in _NODE_MODULE_EXTENSIONS:
+            candidate = os.path.join(exact, "index" + suffix)
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
+def _local_node_module_references(source: str) -> list[str]:
+    refs: list[str] = []
+    for pattern in (_LOCAL_REQUIRE_RE, _LOCAL_DYNAMIC_IMPORT_RE, _LOCAL_STATIC_IMPORT_RE):
+        for match in pattern.finditer(source):
+            module_ref = str(match.group("ref") or "").strip()
+            if module_ref:
+                refs.append(module_ref)
+    return list(dict.fromkeys(refs))
+
+
+def _missing_local_node_module_references(workspace: str, script_name: str, entrypoint_path: str) -> list[str]:
+    try:
+        with open(entrypoint_path, encoding="utf-8") as handle:
+            source = handle.read()
+    except OSError as exc:
+        rel_entrypoint = os.path.relpath(entrypoint_path, workspace)
+        return [f"script {script_name!r} local entrypoint {rel_entrypoint!r} is unreadable: {exc}"]
+
+    importer_dir = os.path.dirname(entrypoint_path)
+    rel_entrypoint = os.path.relpath(entrypoint_path, workspace)
+    missing: list[str] = []
+    for module_ref in _local_node_module_references(source):
+        if _resolve_node_module_reference(importer_dir, module_ref) is None:
+            missing.append(
+                f"script {script_name!r} local entrypoint {rel_entrypoint!r} "
+                f"requires missing local module: {module_ref}"
+            )
+    return missing
 
 
 def _script_builds_before_interpreter(tokens: list[str], interpreter_index: int) -> bool:
@@ -119,25 +183,35 @@ def _missing_package_script_entrypoints(
             if token == "node" and candidate in {"-r", "--require", "--import", "--loader"}:
                 if index + 1 < len(tokens):
                     option_value = tokens[index + 1]
-                    if _is_local_script_option_reference(option_value) and not _script_reference_exists(
-                        workspace, option_value
-                    ):
-                        missing.append(f"script {script_name!r} references missing local entrypoint: {option_value}")
+                    if _is_local_script_option_reference(option_value):
+                        resolved_option = _resolve_script_reference(workspace, option_value)
+                        if resolved_option is None:
+                            missing.append(
+                                f"script {script_name!r} references missing local entrypoint: {option_value}"
+                            )
+                        else:
+                            missing.extend(
+                                _missing_local_node_module_references(workspace, script_name, resolved_option)
+                            )
                 index += 2
                 continue
             if candidate.startswith("-"):
                 index += 1
                 continue
-            if _is_local_script_reference(candidate) and not _script_reference_exists(workspace, candidate):
-                if _script_builds_before_interpreter(tokens, interpreter_index):
-                    break
-                if _is_build_output_reference(candidate) and _script_lifecycle_can_build_output(
-                    all_scripts,
-                    script_name,
-                    tokens,
-                ):
-                    break
-                missing.append(f"script {script_name!r} references missing local entrypoint: {candidate}")
+            if _is_local_script_reference(candidate):
+                resolved_candidate = _resolve_script_reference(workspace, candidate)
+                if resolved_candidate is None:
+                    if _script_builds_before_interpreter(tokens, interpreter_index):
+                        break
+                    if _is_build_output_reference(candidate) and _script_lifecycle_can_build_output(
+                        all_scripts,
+                        script_name,
+                        tokens,
+                    ):
+                        break
+                    missing.append(f"script {script_name!r} references missing local entrypoint: {candidate}")
+                elif token == "node":
+                    missing.extend(_missing_local_node_module_references(workspace, script_name, resolved_candidate))
             break
     return missing
 

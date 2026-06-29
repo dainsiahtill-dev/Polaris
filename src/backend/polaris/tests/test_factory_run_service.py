@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from polaris.cells.chief_engineer.blueprint.public import BlueprintPersistence
 from polaris.cells.factory.pipeline.internal import (
     factory_run_service as factory_service_module,
     factory_stage_executor as factory_stage_module,
@@ -811,6 +812,50 @@ class _DirectorCompletedMetadataProgressService(_CompletedCommandService):
         )
 
 
+class _DirectorCompletedThenTimeoutWithMaterializedTargetService(_CompletedCommandService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.workspace_path: Path | None = None
+        self.execute_calls = 0
+
+    async def execute_director_run(self, workspace: str, tasks: list | None, options: dict) -> CommandResult:
+        del tasks, options
+        self.execute_calls += 1
+        self.workspace_path = Path(workspace)
+        return CommandResult(
+            run_id=f"director-run-{self.execute_calls}",
+            status="running",
+            message="Director run started",
+        )
+
+    async def query_run_status(self, run_id: str) -> CommandResult:
+        self.query_calls += 1
+        if self.query_calls == 1:
+            assert self.workspace_path is not None
+            target_path = self.workspace_path / "src" / "account.js"
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text("module.exports = { accountId: 'acct-1' };\n", encoding="utf-8")
+            return CommandResult(
+                run_id=run_id,
+                status="completed",
+                message="Run status: completed",
+                metadata={
+                    "task_count": 1,
+                    "task_status_counts": {"completed": 1},
+                    "failed_task_count": 0,
+                },
+            )
+        return CommandResult(
+            run_id=run_id,
+            status="timeout",
+            message="Run timed out after 1 seconds",
+            metadata={
+                "cancel_signal_sent": True,
+                "cancel_reason": "factory_stage_timeout",
+            },
+        )
+
+
 class _DirectorNoMaterializedChangesAfterProgressService(_CompletedCommandService):
     async def query_run_status(self, run_id: str) -> CommandResult:
         self.query_calls += 1
@@ -884,6 +929,56 @@ class _TestStageExecutor(OrchestrationStageExecutor):
 
     def _validate_director_binding_coverage(self, additional_events=None):
         return True, []
+
+
+def _write_handoff_ready_review_for_tasks(
+    executor: OrchestrationStageExecutor,
+    *,
+    run_id: str,
+    tasks: list[dict[str, Any]],
+) -> None:
+    rows: list[dict[str, str]] = []
+    persistence = BlueprintPersistence(str(executor.workspace))
+    for index, task in enumerate(tasks, start=1):
+        task_id = str(task.get("id") or task.get("task_id") or f"TASK-{index}").strip()
+        raw_targets = task.get("target_files")
+        target_files = [str(item) for item in raw_targets if str(item).strip()] if isinstance(raw_targets, list) else []
+        if not target_files:
+            target_files = ["src/index.js"]
+        blueprint_id = f"bp-{run_id}-{task_id}"
+        persistence.save(
+            blueprint_id,
+            {
+                "schema_version": "factory.test.blueprint.v1",
+                "blueprint_id": blueprint_id,
+                "task_id": task_id,
+                "target_files": target_files,
+                "acceptance_criteria": ["workspace validation passes"],
+                "execution_checklist": ["materialize declared target files"],
+                "dependencies": [],
+                "recommendations": ["run package validation", "verify handoff evidence"],
+                "pm_contract_ref": f"runtime/tasks/{task_id}.json",
+                "pm_contract_hash": f"pm-hash-{task_id}",
+                "blueprint_hash": f"blueprint-hash-{task_id}",
+                "execution_profile_ref": f"runtime/execution-profiles/{task_id}.json",
+                "execution_profile_hash": f"profile-hash-{task_id}",
+            },
+        )
+        rows.append(
+            {
+                "task_id": task_id,
+                "blueprint_id": blueprint_id,
+                "blueprint_path": f"runtime/blueprints/{blueprint_id}.json",
+            }
+        )
+    executor._write_json_artifact(
+        f"runtime/state/blueprints/{run_id}.review.json",
+        {
+            "schema_version": "factory.chief_engineer_review.v1",
+            "factory_run_id": run_id,
+            "blueprints": rows,
+        },
+    )
 
 
 class _WorkspaceValidationStageExecutor(_TestStageExecutor):
@@ -1461,6 +1556,16 @@ class TestOrchestrationStageExecutor:
 """,
             encoding="utf-8",
         )
+        _write_handoff_ready_review_for_tasks(
+            executor,
+            run_id=run.id,
+            tasks=[
+                {
+                    "id": "TASK-1",
+                    "target_files": ["src/account.py"],
+                }
+            ],
+        )
         task_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/task_1.json"))
         task_path.parent.mkdir(parents=True, exist_ok=True)
         task_path.write_text(
@@ -1526,6 +1631,16 @@ class TestOrchestrationStageExecutor:
 """,
             encoding="utf-8",
         )
+        _write_handoff_ready_review_for_tasks(
+            executor,
+            run_id=run.id,
+            tasks=[
+                {
+                    "id": "TASK-1",
+                    "target_files": ["src/account.js"],
+                }
+            ],
+        )
         task_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/task_1.json"))
         task_path.parent.mkdir(parents=True, exist_ok=True)
         task_path.write_text(
@@ -1560,6 +1675,88 @@ class TestOrchestrationStageExecutor:
         assert "dispatch/log.json" in result.artifacts
 
     @pytest.mark.asyncio
+    async def test_director_stage_hands_off_complete_materialization_after_timeout(
+        self,
+        temp_workspace,
+    ):
+        command_service = _DirectorCompletedThenTimeoutWithMaterializedTargetService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        run = FactoryRun(
+            id="factory_test_director_timeout_handoff",
+            config=FactoryConfig(name="test-run", stages=["director_dispatch"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        plan_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/plan.json"))
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        plan_path.write_text(
+            """{
+  "tasks": [
+    {
+      "id": "TASK-1",
+      "title": "实现账户实体",
+      "goal": "完成账单核心实体与校验",
+      "scope": "src/account.js",
+      "target_files": ["src/account.js"],
+      "steps": ["实现实体"],
+      "acceptance": ["`npm test` 通过"]
+    }
+  ]
+}
+""",
+            encoding="utf-8",
+        )
+        _write_handoff_ready_review_for_tasks(
+            executor,
+            run_id=run.id,
+            tasks=[
+                {
+                    "id": "TASK-1",
+                    "target_files": ["src/account.js"],
+                }
+            ],
+        )
+        task_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/task_1.json"))
+        task_path.parent.mkdir(parents=True, exist_ok=True)
+        task_path.write_text(
+            """{
+  "id": 1,
+  "subject": "实现账户实体",
+  "description": "实现与测试",
+  "status": "pending",
+  "created_at": 1735689600.0,
+  "updated_at": 1735689600.0,
+  "blocked_by": [],
+  "blocks": [],
+  "owner": "",
+  "assignee": "",
+  "tags": [],
+  "priority": 1,
+  "estimated_hours": 2.0,
+  "result_summary": "",
+  "metadata": {}
+}
+""",
+            encoding="utf-8",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            context={"director_max_rounds": 2},
+        )
+
+        assert result.status == "success"
+        assert "handed off to workspace quality" in str(result.output)
+        assert "director.dispatch_timeout" not in str(result.output)
+        assert "dispatch/log.json" in result.artifacts
+        dispatch_log = Path(resolve_logical_path(str(temp_workspace), "workspace/dispatch/latest.log.json"))
+        payload = json.loads(dispatch_log.read_text(encoding="utf-8"))
+        assert {signal.get("code") for signal in payload.get("signals", []) if isinstance(signal, dict)} >= {
+            "director.materialized_workspace_timeout_handoff_ready"
+        }
+
+    @pytest.mark.asyncio
     async def test_director_stage_no_materialized_changes_after_progress_requires_declared_targets(
         self,
         temp_workspace,
@@ -1592,6 +1789,16 @@ class TestOrchestrationStageExecutor:
 }
 """,
             encoding="utf-8",
+        )
+        _write_handoff_ready_review_for_tasks(
+            executor,
+            run_id=run.id,
+            tasks=[
+                {
+                    "id": "TASK-1",
+                    "target_files": ["src/account.py", "tests/test_account.py"],
+                }
+            ],
         )
         task_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/task_1.json"))
         task_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1675,6 +1882,16 @@ class TestOrchestrationStageExecutor:
 """,
             encoding="utf-8",
         )
+        _write_handoff_ready_review_for_tasks(
+            executor,
+            run_id=run.id,
+            tasks=[
+                {
+                    "id": "TASK-1",
+                    "target_files": ["src/account.py"],
+                }
+            ],
+        )
         task_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/task_1.json"))
         task_path.parent.mkdir(parents=True, exist_ok=True)
         task_path.write_text(
@@ -1745,6 +1962,16 @@ class TestOrchestrationStageExecutor:
 }
 """,
             encoding="utf-8",
+        )
+        _write_handoff_ready_review_for_tasks(
+            executor,
+            run_id=run.id,
+            tasks=[
+                {
+                    "id": "TASK-1",
+                    "target_files": ["src/types/generation.ts"],
+                }
+            ],
         )
         task_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/task_1.json"))
         task_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2766,7 +2993,7 @@ class TestCEProviderModelPropagationR15A:
         finally:
             factory_stage_module.RoleRuntimeService = original_service  # type: ignore
 
-        assert result.status == "failed"
+        assert result.status == "success"
 
         signal_path = Path(
             resolve_runtime_path(
@@ -2783,6 +3010,75 @@ class TestCEProviderModelPropagationR15A:
         assert llm_signal is not None, "missing chief_engineer.llm_review_failed signal"
         assert llm_signal.get("provider") == "kimi"
         assert llm_signal.get("model") == "kimi-v1"
+
+    @pytest.mark.asyncio
+    async def test_ce_empty_response_failure_uses_blueprint_projection(self, temp_workspace: Path) -> None:
+        """A CE request with complete context can recover from a post-retry empty response."""
+        from polaris.cells.roles.runtime.public.contracts._execution_contracts import (
+            RoleExecutionResultV1,
+        )
+
+        self._write_plan(temp_workspace)
+        executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+        run = FactoryRun(
+            id="factory_test_ce_empty_projection",
+            config=FactoryConfig(name="test-run", stages=["chief_engineer_review"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        class _EmptyResponseRuntimeService:
+            async def execute_role_task(self, command: object) -> RoleExecutionResultV1:
+                return RoleExecutionResultV1(
+                    ok=False,
+                    status="failed",
+                    role="chief_engineer",
+                    workspace=str(temp_workspace),
+                    task_id="TASK-1",
+                    run_id="factory_test_ce_empty_projection",
+                    output="",
+                    error_code="clarification_needed",
+                    error_message="model returned no visible output or tool calls; awaiting user clarification",
+                    usage={},
+                    metadata={
+                        "provider_id": "kimi",
+                        "model": "kimi-for-coding",
+                        "final_request_context_audit": {
+                            "final_request_token_estimate": 2412,
+                            "context_window_utilization": 0.0092,
+                        },
+                        "context_snapshot_ref": "ctx-ce-empty-response",
+                    },
+                )
+
+        original_service = factory_stage_module.RoleRuntimeService
+        factory_stage_module.RoleRuntimeService = _EmptyResponseRuntimeService  # type: ignore
+        try:
+            result = await executor._execute_chief_engineer_review(run, context={})
+        finally:
+            factory_stage_module.RoleRuntimeService = original_service  # type: ignore
+
+        assert result.status == "success"
+
+        review_path = Path(
+            resolve_runtime_path(
+                str(temp_workspace),
+                f"runtime/state/blueprints/{run.id}.review.json",
+            )
+        )
+        review_payload = json.loads(review_path.read_text(encoding="utf-8"))
+        assert review_payload["generated_blueprints"] == 1
+        signal = next(
+            item
+            for item in review_payload["signals"]
+            if isinstance(item, dict) and item.get("code") == "chief_engineer.llm_review_failed"
+        )
+        assert signal["severity"] == "warning"
+        assert signal["recoverable"] is True
+        assert signal["recovery_strategy"] == "deterministic_blueprint_projection_after_llm_timeout"
+        assert signal["provider"] == "kimi"
+        assert signal["model"] == "kimi-for-coding"
+        assert signal["context_snapshot_ref"] == "ctx-ce-empty-response"
 
     @pytest.mark.asyncio
     async def test_ce_evidence_unknown_provider_model_marks_unknown_flag(self, temp_workspace: Path) -> None:

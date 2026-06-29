@@ -18,6 +18,8 @@ class JobToken:
     stage: str
     target_files: list[str] = field(default_factory=list)
     allowed_paths: list[str] = field(default_factory=list)
+    allowed_write_paths: list[str] = field(default_factory=list)
+    allowed_read_paths: list[str] = field(default_factory=list)
     required_artifacts: list[str] = field(default_factory=list)
     gate_policy: dict[str, Any] = field(default_factory=dict)
     capability_audit: dict[str, Any] = field(default_factory=dict)

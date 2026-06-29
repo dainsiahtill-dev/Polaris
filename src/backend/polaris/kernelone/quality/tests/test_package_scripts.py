@@ -31,6 +31,44 @@ def test_check_package_scripts_rejects_missing_local_entrypoint(tmp_path: Path) 
     assert "missing local entrypoint" in result.detail
 
 
+def test_check_package_scripts_rejects_missing_local_node_dependency(tmp_path: Path) -> None:
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "build.js").write_text(
+        "const { validateManifest } = require(\"../src/validate\");\nvalidateManifest({ name: 'demo' });\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"build":"node scripts/build.js"}}\n',
+        encoding="utf-8",
+    )
+
+    result = check_package_scripts(str(tmp_path))
+
+    assert result.ok is False
+    assert "requires missing local module: ../src/validate" in result.detail
+
+
+def test_check_package_scripts_accepts_existing_local_node_dependency(tmp_path: Path) -> None:
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "scripts" / "build.js").write_text(
+        "const { validateManifest } = require(\"../src/validate\");\nvalidateManifest({ name: 'demo' });\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "validate.js").write_text(
+        "exports.validateManifest = function validateManifest() { return { ok: true, errors: [] }; };\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"build":"node scripts/build.js"}}\n',
+        encoding="utf-8",
+    )
+
+    result = check_package_scripts(str(tmp_path))
+
+    assert result.ok is True
+
+
 def test_check_package_scripts_accepts_build_script_before_dist_entrypoint(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text(
         '{"scripts":{"build":"tsc","start":"npm run build && node dist/index.js"}}\n',

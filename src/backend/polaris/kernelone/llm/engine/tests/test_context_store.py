@@ -7,7 +7,6 @@ import os
 import tempfile
 from contextlib import ExitStack
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
@@ -537,7 +536,19 @@ class TestContextStoreInvokeFailure:
             with ExitStack() as stack:
                 for p in self._patch_provider(executor_module):
                     stack.enter_context(p)
-                stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+                stack.enter_context(
+                    patch.object(
+                        executor,
+                        "_get_provider_config",
+                        return_value={
+                            "type": "mock",
+                            "api_path": "/v1/messages",
+                            "headers": {"authorization": "Bearer secret"},
+                            "thinking": {"type": "disabled", "budget_tokens": 2048},
+                            "request_overrides": {"thinking": {"type": "disabled"}},
+                        },
+                    )
+                )
                 response = await executor._execute_invoke(request, trace_id="trace-provider-request")
 
             assert response.ok is True
@@ -556,6 +567,18 @@ class TestContextStoreInvokeFailure:
         assert provider_request["tool_schema_count"] == 2
         assert [tool["name"] for tool in provider_request["tools"]] == ["repo_tree", "read_file"]
         assert provider_request["tool_choice"] == "auto"
+        assert "headers" not in provider_request["provider_option_keys"]
+        assert "api_path" in provider_request["provider_option_keys"]
+        assert provider_request["provider_option_summary"]["thinking"] == {
+            "present": True,
+            "type": "disabled",
+            "keys": ["budget_tokens", "type"],
+        }
+        assert provider_request["provider_option_summary"]["request_overrides"]["thinking"] == {
+            "present": True,
+            "type": "disabled",
+            "keys": ["type"],
+        }
         assert provider_request["selected_prompt_profile_ids"] == [
             "builtin.language.typescript",
             "builtin.task.implement",
@@ -948,9 +971,8 @@ class TestContextViewerRouter:
     def test_retrieves_existing_context(self, client, tmp_path) -> None:
         """Stored context is returned with enriched metadata."""
         hash_key = "a1b2c3d4e5f6a7b8c9d0e1f2"
-        shard = hash_key[:2]
-        contexts_dir = tmp_path / ".polaris" / "runtime" / "contexts" / shard
-        contexts_dir.mkdir(parents=True)
+        context_path = _context_snapshot_path(tmp_path, hash_key)
+        context_path.parent.mkdir(parents=True)
         payload = {
             "schema_version": 1,
             "trace_id": "trace-abc",
@@ -958,13 +980,9 @@ class TestContextViewerRouter:
             "messages": [{"role": "system", "content": "hello"}],
             "stored_at": "2026-06-19T08:00:00+00:00",
         }
-        (contexts_dir / hash_key).write_text(json.dumps(payload), encoding="utf-8")
+        context_path.write_text(json.dumps(payload), encoding="utf-8")
 
-        with patch(
-            "polaris.delivery.http.v2.context.resolve_storage_roots",
-            return_value=SimpleNamespace(runtime_root=str(tmp_path / ".polaris" / "runtime")),
-        ):
-            response = client.get(f"/v2/context/{hash_key}")
+        response = client.get(f"/v2/context/{hash_key}", params={"workspace": str(tmp_path)})
 
         assert response.status_code == 200
         data = response.json()
@@ -990,17 +1008,12 @@ class TestContextViewerRouter:
     def test_corrupt_json_returns_500(self, client, tmp_path) -> None:
         """Corrupt JSON inside an existing context file must surface 500, not crash."""
         hash_key = "b2c3d4e5f6a7b8c9d0e1f2a3"
-        shard = hash_key[:2]
-        contexts_dir = tmp_path / ".polaris" / "runtime" / "contexts" / shard
-        contexts_dir.mkdir(parents=True)
+        context_path = _context_snapshot_path(tmp_path, hash_key)
+        context_path.parent.mkdir(parents=True)
         # Truncated JSON — opens fine but json.load raises ValueError.
-        (contexts_dir / hash_key).write_text('{"trace_id": "x"', encoding="utf-8")
+        context_path.write_text('{"trace_id": "x"', encoding="utf-8")
 
-        with patch(
-            "polaris.delivery.http.v2.context.resolve_storage_roots",
-            return_value=SimpleNamespace(runtime_root=str(tmp_path / ".polaris" / "runtime")),
-        ):
-            response = client.get(f"/v2/context/{hash_key}")
+        response = client.get(f"/v2/context/{hash_key}", params={"workspace": str(tmp_path)})
 
         assert response.status_code == 500
         detail = response.json().get("detail", {})

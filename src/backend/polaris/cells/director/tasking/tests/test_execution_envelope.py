@@ -49,6 +49,8 @@ def test_build_execution_envelope_binds_contracts_and_capability() -> None:
             "job_token": {
                 "token_id": "job-1",
                 "allowed_paths": ["src/main.py", "src"],
+                "allowed_write_paths": ["src/main.py"],
+                "allowed_read_paths": ["src/main.py", "src"],
                 "target_files": ["src/main.py"],
                 "allowed_commands": ["python --version"],
             },
@@ -68,7 +70,8 @@ def test_build_execution_envelope_binds_contracts_and_capability() -> None:
     assert payload["handoff_decision"] == {"ref": "", "hash": "handoff-hash", "allowed": True}
     assert payload["execution_profile"]["hash"] == "profile-hash"
     assert payload["authorization"]["capability_token_ref"] == "job-1"
-    assert payload["authorization"]["allowed_write_paths"] == ["src/main.py", "src"]
+    assert payload["authorization"]["allowed_write_paths"] == ["src/main.py"]
+    assert payload["authorization"]["allowed_read_paths"] == ["src/main.py", "src"]
     assert payload["authorization"]["allowed_commands"] == ["python --version"]
     assert payload["model_policy"]["temperature"] == 0.05
     assert payload["model_policy"]["max_tokens"] == 64_000
@@ -147,6 +150,49 @@ def test_build_execution_envelope_consumes_strict_handoff_bindings() -> None:
         "hash": "execution-profile-hash",
     }
     assert payload["audit_policy"]["execution_authority"]["ok"] is True
+
+
+def test_build_execution_envelope_keeps_scope_paths_read_only() -> None:
+    profile = TaskExecutionProfileV1(
+        task_type="write_code",
+        phase="implementation",
+        language="javascript",
+        target_files=("package.json",),
+        scope_paths=("src/index.js", "tests/product.test.js"),
+    )
+    strategy = TaskExecutionStrategyV1(
+        target_files=profile.target_files,
+        scope_paths=profile.scope_paths,
+    )
+    contract = build_task_execution_contract(profile, strategy, metadata={})
+
+    envelope = build_execution_envelope(
+        workspace="/workspace",
+        task_id="TASK-SCOPE",
+        run_id="run-scope",
+        trace_id="trace-scope",
+        profile=profile,
+        strategy=strategy,
+        contract=contract,
+        metadata={
+            "target_files": ["package.json"],
+            "scope_paths": ["src/index.js", "tests/product.test.js"],
+            "job_token": {
+                "token_id": "job-scope",
+                "allowed_paths": ["package.json", "src/index.js", "tests/product.test.js"],
+                "target_files": ["package.json"],
+            },
+        },
+        created_at="2026-06-27T00:00:00Z",
+    )
+
+    authorization = envelope.to_dict()["authorization"]
+    assert authorization["allowed_write_paths"] == ["package.json"]
+    assert authorization["allowed_read_paths"] == [
+        "package.json",
+        "src/index.js",
+        "tests/product.test.js",
+    ]
 
 
 def test_build_execution_envelope_marks_missing_evidence() -> None:

@@ -136,6 +136,8 @@ class TestCEConsumerPollOnce:
         assert cmd.metadata["job_token"]["token_id"] == cmd.metadata["job_token_id"]
         assert cmd.metadata["job_token"]["contract_hash"] == cmd.metadata["contract_hash"]
         assert cmd.metadata["job_token"]["blueprint_hash"] == cmd.metadata["blueprint_hash"]
+        assert cmd.metadata["job_token"]["allowed_write_paths"] == ["/src/main.py"]
+        assert cmd.metadata["job_token"]["allowed_read_paths"] == ["/src/main.py"]
         gate_policy = cmd.metadata["job_token"]["gate_policy"]
         assert {"qa", "code", "tool_receipt"} <= set(gate_policy["required_evidence_modalities"])
         assert gate_policy["evidence_policy_compiler"]["ok"] is True
@@ -220,7 +222,9 @@ class TestCEConsumerPollOnce:
             "README.md",
         ]
         assert cmd.metadata["job_token"]["target_files"] == cmd.metadata["target_files"]
+        assert cmd.metadata["job_token"]["allowed_write_paths"] == cmd.metadata["target_files"]
         assert "tests/product.test.js" in cmd.metadata["job_token"]["allowed_paths"]
+        assert "tests/product.test.js" in cmd.metadata["job_token"]["allowed_read_paths"]
         assert "tests/test_product.py" in cmd.metadata["job_token"]["required_artifacts"]
 
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")

@@ -335,6 +335,104 @@ class TestAnthropicCompatProviderToolConversion:
         assert payload["tool_choice"] == {"type": "none"}
         assert payload["tools"][0]["strict"] is True
 
+    def test_invoke_enables_required_thinking_for_kimi_coding_endpoint(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = sample_anthropic_response
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(_url: str, _headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        provider = AnthropicCompatProvider()
+        config = {
+            **anthropic_compat_config,
+            "base_url": "https://api.kimi.com/coding",
+            "provider_id": "kimi",
+        }
+        result = provider.invoke("Hello", "kimi-for-coding", config)
+
+        assert result.ok is True
+        assert captured["payload"]["thinking"] == {"type": "enabled"}
+
+    def test_invoke_omits_disabled_thinking_for_standard_endpoint(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = sample_anthropic_response
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(_url: str, _headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        provider = AnthropicCompatProvider()
+        config = {
+            **anthropic_compat_config,
+            "thinking": {"type": "disabled", "budget_tokens": 2048},
+        }
+        result = provider.invoke("Hello", "claude-3-haiku", config)
+
+        assert result.ok is True
+        assert "thinking" not in captured["payload"]
+
+    def test_request_overrides_cannot_reintroduce_invalid_thinking(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = sample_anthropic_response
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(_url: str, _headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        provider = AnthropicCompatProvider()
+        config = {
+            **anthropic_compat_config,
+            "thinking": {"type": "enabled", "budget_tokens": 2048},
+            "request_overrides": {"thinking": {"type": "disabled"}},
+        }
+        result = provider.invoke("Hello", "kimi-for-coding", config)
+
+        assert result.ok is True
+        assert captured["payload"]["thinking"] == {"type": "enabled"}
+
 
 class TestAnthropicCompatProviderEdgeCases:
     """Tests for edge cases and boundary conditions."""

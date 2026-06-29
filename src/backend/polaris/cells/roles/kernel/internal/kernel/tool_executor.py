@@ -25,18 +25,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DIRECT_SCOPE_KEYS: tuple[str, ...] = (
+_WRITE_SCOPE_KEYS: tuple[str, ...] = (
     "capability_scope",
     "allowed_scope",
     "allowed_scope_paths",
-    "allowed_paths",
     "allowed_write_paths",
-    "allowed_read_paths",
-    "authorized_paths",
-    "scope_paths",
+    "authorized_write_paths",
     "target_files",
     "pm_target_files",
     "repair_target_files",
+)
+
+_READ_ONLY_SCOPE_KEYS: tuple[str, ...] = (
+    "allowed_read_paths",
+    "context_files",
+    "scope_paths",
+)
+
+_LEGACY_SCOPE_KEYS: tuple[str, ...] = (
+    "allowed_paths",
+    "authorized_paths",
 )
 
 _SCOPE_CONTAINER_KEYS: tuple[str, ...] = (
@@ -66,7 +74,7 @@ def _scope_items(value: Any) -> list[str]:
         return [text] if text else []
     if isinstance(value, dict):
         items: list[str] = []
-        for key in _DIRECT_SCOPE_KEYS:
+        for key in (*_WRITE_SCOPE_KEYS, *_READ_ONLY_SCOPE_KEYS, *_LEGACY_SCOPE_KEYS):
             items.extend(_scope_items(value.get(key)))
         for key in ("path", "file", "target", "source"):
             raw = value.get(key)
@@ -133,9 +141,18 @@ def _normalize_scope_path(value: str) -> str | None:
 def _collect_scope_from_mapping(mapping: dict[str, Any]) -> tuple[list[str], bool]:
     candidates: list[str] = []
     saw_scope_source = False
-    for key in _DIRECT_SCOPE_KEYS:
+    direct_write_candidates: list[str] = []
+    for key in _WRITE_SCOPE_KEYS:
         if key in mapping:
             saw_scope_source = True
+            direct_write_candidates.extend(_scope_items(mapping.get(key)))
+    read_only_seen = any(key in mapping for key in _READ_ONLY_SCOPE_KEYS)
+    legacy_seen = any(key in mapping for key in _LEGACY_SCOPE_KEYS)
+    if read_only_seen or legacy_seen:
+        saw_scope_source = True
+    candidates.extend(direct_write_candidates)
+    if not direct_write_candidates and legacy_seen and not read_only_seen:
+        for key in _LEGACY_SCOPE_KEYS:
             candidates.extend(_scope_items(mapping.get(key)))
     for key in _SCOPE_CONTAINER_KEYS:
         nested = _mapping_from_value(mapping.get(key))
@@ -223,7 +240,9 @@ def _execution_envelope_capability_token(mapping: dict[str, Any]) -> dict[str, A
             "contract_hash": _hash_ref_value(envelope.get("pm_contract")),
             "blueprint_hash": _hash_ref_value(envelope.get("ce_blueprint")),
             "execution_envelope_hash": envelope_hash,
-            "allowed_paths": authorization.get("allowed_write_paths") or authorization.get("target_files") or (),
+            "allowed_paths": authorization.get("allowed_read_paths") or authorization.get("target_files") or (),
+            "allowed_write_paths": authorization.get("allowed_write_paths") or authorization.get("target_files") or (),
+            "allowed_read_paths": authorization.get("allowed_read_paths") or (),
             "target_files": authorization.get("target_files") or (),
             "allowed_commands": authorization.get("allowed_commands") or (),
             "capability_audit": {"ok": bool(handoff_decision.get("allowed"))},

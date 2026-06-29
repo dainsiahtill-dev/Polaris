@@ -438,12 +438,6 @@ class TestChiefEngineerHandoffGuards:
                     metadata={
                         "provider_id": "kimi",
                         "model": "kimi-for-coding",
-                        "final_request_context_audit": {
-                            "final_request_token_estimate": 2307,
-                            "context_window_utilization": 0.0088,
-                        },
-                        "context_snapshot_ref": "ctx-ce-timeout",
-                        "context_os_audit": {"ok": True},
                     },
                     usage={},
                 )
@@ -464,12 +458,17 @@ class TestChiefEngineerHandoffGuards:
         )
         review = json.loads(review_path.read_text(encoding="utf-8"))
         assert review["generated_blueprints"] == 1
+        assert [signal["severity"] for signal in review["signals"]] == ["warning", "warning"]
         signal = review["signals"][0]
         assert signal["code"] == "chief_engineer.llm_review_failed"
         assert signal["severity"] == "warning"
         assert signal["recoverable"] is True
         assert signal["recovery_strategy"] == "deterministic_blueprint_projection_after_llm_timeout"
-        assert signal["context_snapshot_ref"] == "ctx-ce-timeout"
+        missing_signal = review["signals"][1]
+        assert missing_signal["code"] == "chief_engineer.final_request_audit_missing"
+        assert missing_signal["severity"] == "warning"
+        assert missing_signal["recoverable"] is True
+        assert missing_signal["recovery_strategy"] == "deterministic_blueprint_projection_after_llm_timeout"
         row = review["blueprints"][0]
         assert row["llm_blueprint_consumed"] is False
         assert row["llm_evidence"]["recovery_strategy"] == "deterministic_blueprint_projection_after_llm_timeout"

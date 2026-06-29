@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.llm.provider_contract import AdapterProviderContract
@@ -174,7 +175,6 @@ _ANTHROPIC_OPTION_KEYS = (
     "output_config",
     "service_tier",
     "stop_sequences",
-    "thinking",
     "top_k",
     "top_p",
 )
@@ -202,6 +202,52 @@ def _copy_present(payload: dict[str, Any], config: dict[str, Any], keys: tuple[s
         value = config.get(key)
         if value is not None:
             payload[key] = value
+
+
+def _requires_enabled_thinking(config: dict[str, Any], model: str) -> bool:
+    token = " ".join(
+        [
+            str(config.get("base_url") or ""),
+            str(config.get("api_path") or ""),
+            str(config.get("name") or ""),
+            str(config.get("provider_id") or ""),
+            str(model or ""),
+        ]
+    ).lower()
+    return "api.kimi.com/coding" in token or "kimi-for-coding" in token
+
+
+def _normalize_anthropic_thinking(value: Any, *, require_enabled: bool = False) -> dict[str, Any] | None:
+    """Return a provider-safe Anthropic thinking config.
+
+    Anthropic-compatible endpoints diverge on the optional ``thinking`` field.
+    Kimi's Anthropic-compatible coding endpoint rejects a missing/disabled
+    thinking mode with HTTP 400 and requires ``{"type": "enabled"}``.  Other
+    endpoints should not receive disabled, falsey, string, or otherwise unknown
+    values.
+    """
+
+    if not isinstance(value, Mapping):
+        return {"type": "enabled"} if require_enabled else None
+    normalized = {str(key): item for key, item in value.items() if str(key).strip()}
+    thinking_type = str(normalized.get("type") or "").strip().lower()
+    if thinking_type != "enabled":
+        return {"type": "enabled"} if require_enabled else None
+    normalized["type"] = "enabled"
+    return normalized
+
+
+def _sanitize_anthropic_payload_options(payload: dict[str, Any], config: dict[str, Any], model: str) -> None:
+    require_enabled = _requires_enabled_thinking(config, model)
+    if "thinking" not in payload:
+        if require_enabled:
+            payload["thinking"] = {"type": "enabled"}
+        return
+    normalized = _normalize_anthropic_thinking(payload.get("thinking"), require_enabled=require_enabled)
+    if normalized is None:
+        payload.pop("thinking", None)
+        return
+    payload["thinking"] = normalized
 
 
 def _coerce_disable_parallel_tool_use(config: dict[str, Any]) -> bool | None:
@@ -364,8 +410,14 @@ def _headers(config: dict[str, Any], api_key: str | None) -> dict[str, str]:
     return headers
 
 
-def _apply_anthropic_options(payload: dict[str, Any], config: dict[str, Any]) -> None:
+def _apply_anthropic_options(payload: dict[str, Any], config: dict[str, Any], model: str) -> None:
     _copy_present(payload, config, _ANTHROPIC_OPTION_KEYS)
+    thinking = _normalize_anthropic_thinking(
+        config.get("thinking"),
+        require_enabled=_requires_enabled_thinking(config, model),
+    )
+    if thinking is not None:
+        payload["thinking"] = thinking
     system_prompt = config.get("system")
     if system_prompt is None:
         system_prompt = config.get("system_prompt")
@@ -540,11 +592,12 @@ class AnthropicCompatProvider(BaseProvider):
             "messages": messages,
             "temperature": float(config.get("temperature") or 0.2),
         }
-        _apply_anthropic_options(payload, config)
+        _apply_anthropic_options(payload, config, model)
         _apply_anthropic_tools(payload, config, model)
         overrides = config.get("request_overrides")
         if isinstance(overrides, dict):
             payload.update(overrides)
+        _sanitize_anthropic_payload_options(payload, config, model)
         api_key = config.get("api_key")
         return invoke_with_retry(
             url,
@@ -626,12 +679,13 @@ class AnthropicCompatProvider(BaseProvider):
             "temperature": float(config.get("temperature") or 0.2),
             "stream": True,
         }
-        _apply_anthropic_options(payload, config)
+        _apply_anthropic_options(payload, config, model)
         _apply_anthropic_tools(payload, config, model)
 
         overrides = config.get("request_overrides")
         if isinstance(overrides, dict):
             payload.update(overrides)
+        _sanitize_anthropic_payload_options(payload, config, model)
 
         headers = _headers(config, api_key)
         headers["Accept"] = "text/event-stream"

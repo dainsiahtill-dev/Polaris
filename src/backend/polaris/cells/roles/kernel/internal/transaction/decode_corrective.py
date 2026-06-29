@@ -51,7 +51,34 @@ def _format_failures(failures: list[Any]) -> str:
     return "\n".join(lines)
 
 
-def evaluate_decode_corrective(decision: Any, response: Any) -> CorrectiveAsk | None:
+def _has_exposed_tools(tool_definitions: list[dict[str, Any]] | None) -> bool:
+    if tool_definitions is None:
+        return True
+    return bool(tool_definitions)
+
+
+def _empty_response_corrective_content(*, tool_definitions: list[dict[str, Any]] | None) -> str:
+    if _has_exposed_tools(tool_definitions):
+        return (
+            "[EMPTY RESPONSE] Your previous response was completely empty. "
+            "Respond NOW: either call exactly one appropriate tool with valid "
+            "JSON arguments, or answer the user's request directly in text. "
+            "An empty response is never acceptable."
+        )
+    return (
+        "[EMPTY RESPONSE] Your previous response was completely empty. "
+        "Respond NOW with the requested answer directly in the required format. "
+        "No tools are available in this request; do not emit tool calls or tool-call syntax. "
+        "An empty response is never acceptable."
+    )
+
+
+def evaluate_decode_corrective(
+    decision: Any,
+    response: Any,
+    *,
+    tool_definitions: list[dict[str, Any]] | None = None,
+) -> CorrectiveAsk | None:
     """Return the corrective re-ask for a degraded decode, or None.
 
     Fires in exactly two narrow situations (fail-closed otherwise):
@@ -97,12 +124,7 @@ def evaluate_decode_corrective(decision: Any, response: Any) -> CorrectiveAsk | 
         if not content_text and not thinking_text:
             return CorrectiveAsk(
                 reason="empty_response",
-                content=(
-                    "[EMPTY RESPONSE] Your previous response was completely empty. "
-                    "Respond NOW: either call exactly one appropriate tool with valid "
-                    "JSON arguments, or answer the user's request directly in text. "
-                    "An empty response is never acceptable."
-                ),
+                content=_empty_response_corrective_content(tool_definitions=tool_definitions),
             )
 
     return None

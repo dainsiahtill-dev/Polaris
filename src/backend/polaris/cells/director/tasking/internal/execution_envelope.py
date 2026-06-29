@@ -100,13 +100,19 @@ def _allowed_paths(
         or list(profile.target_files)
     )
     scope_paths = (
-        _string_list(metadata.get("scope_paths"))
-        or _string_list(token.get("allowed_paths"))
-        or list(profile.scope_paths)
+        _string_list(metadata.get("scope_paths")) or _string_list(token.get("scope_paths")) or list(profile.scope_paths)
     )
-    allowed_write_paths = _string_list(token.get("allowed_paths")) or list(dict.fromkeys([*target_files, *scope_paths]))
-    allowed_read_paths = _string_list(metadata.get("allowed_read_paths")) or list(
-        dict.fromkeys([*allowed_write_paths, *scope_paths])
+    context_files = _string_list(metadata.get("context_files")) or _string_list(token.get("context_files"))
+    allowed_write_paths = (
+        _string_list(metadata.get("allowed_write_paths"))
+        or _string_list(token.get("allowed_write_paths"))
+        or list(target_files)
+    )
+    legacy_read_paths = _string_list(token.get("allowed_paths"))
+    allowed_read_paths = (
+        _string_list(metadata.get("allowed_read_paths"))
+        or _string_list(token.get("allowed_read_paths"))
+        or list(dict.fromkeys([*allowed_write_paths, *scope_paths, *context_files, *legacy_read_paths]))
     )
     return allowed_read_paths, allowed_write_paths
 

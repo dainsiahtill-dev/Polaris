@@ -132,6 +132,38 @@ class TestInsertOrdering:
         assert result.messages[0].get("name") == "context_override"
 
 
+class TestBlueprintOverview:
+    async def test_context_override_ce_blueprint_prevents_degraded_blueprint_fallback(self) -> None:
+        profile = _profile()
+        profile.context_policy.include_blueprint_overview = True
+        gateway = RoleContextGateway(profile, workspace=".")
+        request = ContextRequest(
+            message="Implement package.json",
+            task_id="1",
+            context_override={
+                "ce_blueprint": {
+                    "schema_version": "chief_engineer.blueprint.v1",
+                    "blueprint_id": "ce_TASK-1-foundation",
+                    "task_id": "TASK-1-foundation",
+                    "summary": "Chief Engineer blueprint for TASK-1-foundation",
+                    "objective": "Deliver the JavaScript package manifest.",
+                    "target_files": ["package.json"],
+                    "acceptance_criteria": ["package.json exists"],
+                    "execution_checklist": ["Create only package.json"],
+                    "handoff_ready": True,
+                }
+            },
+        )
+
+        result = await gateway.build_context(request, system_prompt="ROLE SYS")
+        text = "\n".join(str(message.get("content") or "") for message in result.messages)
+
+        assert "【蓝图/技术架构（降级）】" not in text
+        assert "无 CE 蓝图可用" not in text
+        assert "【蓝图/技术架构】" in text
+        assert "Chief Engineer blueprint for TASK-1-foundation" in text
+
+
 # ── history_tool_fallback branch + truncation marker ─────────────────────────
 
 

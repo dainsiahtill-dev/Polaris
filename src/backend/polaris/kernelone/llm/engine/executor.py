@@ -249,6 +249,97 @@ def _summarize_response_format(value: Any) -> dict[str, Any] | None:
     return summary
 
 
+_PROVIDER_OPTION_KEY_EXCLUSIONS = frozenset(
+    {
+        "api_key",
+        "headers",
+        "messages",
+        "chat_messages",
+        "tools",
+        "system",
+        "system_prompt",
+        "prompt",
+        "input",
+    }
+)
+_PROVIDER_OPTION_SUMMARY_KEYS = frozenset(
+    {
+        "api_path",
+        "base_url",
+        "anthropic_beta",
+        "anthropic_version",
+        "disable_tool_choice",
+        "max_tokens",
+        "metadata",
+        "model",
+        "request_overrides",
+        "response_format",
+        "service_tier",
+        "stream",
+        "temperature",
+        "thinking",
+        "tool_choice",
+        "top_k",
+        "top_p",
+    }
+)
+
+
+def _provider_option_keys(invoke_cfg: dict[str, Any]) -> list[str]:
+    return sorted(
+        key
+        for key in (str(raw_key or "").strip() for raw_key in invoke_cfg)
+        if key and key not in _PROVIDER_OPTION_KEY_EXCLUSIONS and not key.startswith("_")
+    )
+
+
+def _summarize_thinking_option(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {"present": False}
+    if isinstance(value, dict):
+        return {
+            "present": True,
+            "type": str(value.get("type") or "").strip().lower() or "unspecified",
+            "keys": sorted(str(key) for key in value if str(key).strip()),
+        }
+    if isinstance(value, bool):
+        return {"present": value, "shape": "bool"}
+    if isinstance(value, str):
+        return {"present": bool(value.strip()), "shape": "str", "value": value[:64]}
+    return {"present": True, "shape": type(value).__name__}
+
+
+def _summarize_request_overrides(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"present": value is not None, "shape": type(value).__name__ if value is not None else "none"}
+    keys = sorted(
+        key
+        for key in (str(raw_key or "").strip() for raw_key in value)
+        if key and key not in _PROVIDER_OPTION_KEY_EXCLUSIONS and not key.startswith("_")
+    )
+    summary: dict[str, Any] = {"present": True, "keys": keys}
+    if "thinking" in value:
+        summary["thinking"] = _summarize_thinking_option(value.get("thinking"))
+    return summary
+
+
+def _provider_option_summary(invoke_cfg: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for key in _provider_option_keys(invoke_cfg):
+        if key not in _PROVIDER_OPTION_SUMMARY_KEYS:
+            continue
+        value = invoke_cfg.get(key)
+        if key == "thinking":
+            summary[key] = _summarize_thinking_option(value)
+        elif key == "request_overrides":
+            summary[key] = _summarize_request_overrides(value)
+        elif key == "response_format":
+            summary[key] = _summarize_response_format(value)
+        else:
+            summary[key] = safe_observability_payload(value, max_depth=2)
+    return summary
+
+
 # ─── Global concurrency and timeout configuration ───────────────────────────────
 # Now unified via _timeout_config module
 
@@ -967,6 +1058,8 @@ class AIExecutor:
             "tools": [_summarize_tool_schema(tool) for tool in tools],
             "tool_choice": safe_observability_payload(invoke_cfg.get("tool_choice")),
             "response_format": _summarize_response_format(response_format_payload),
+            "provider_option_keys": _provider_option_keys(invoke_cfg),
+            "provider_option_summary": _provider_option_summary(invoke_cfg),
             **prompt_profile_fields,
             "final_request_context_audit": {
                 "schema_version": "llm.final_request_context_audit.v1",

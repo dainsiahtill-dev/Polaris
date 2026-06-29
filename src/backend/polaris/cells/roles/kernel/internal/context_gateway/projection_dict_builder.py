@@ -20,17 +20,72 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 from polaris.kernelone.context.receipt_store import ReceiptStore
 
+from .gateway_helpers import render_blueprint_overview
 from .projection_formatter import ProjectionFormatter
 
 if TYPE_CHECKING:
     from .gateway import RoleContextGateway
 
 logger = logging.getLogger(__name__)
+
+
+def _blueprint_overview_from_request_context(request: ContextRequest) -> str | None:
+    context_override = getattr(request, "context_override", None)
+    if not isinstance(context_override, Mapping):
+        return None
+    candidates: list[Any] = [
+        context_override.get("ce_blueprint"),
+        context_override.get("chief_engineer_blueprint"),
+    ]
+    task_contract = context_override.get("task_contract")
+    if isinstance(task_contract, Mapping):
+        candidates.extend(
+            [
+                task_contract.get("ce_blueprint"),
+                task_contract.get("chief_engineer_blueprint"),
+            ]
+        )
+    metadata = context_override.get("metadata")
+    if isinstance(metadata, Mapping):
+        candidates.extend(
+            [
+                metadata.get("ce_blueprint"),
+                metadata.get("chief_engineer_blueprint"),
+            ]
+        )
+        metadata_task = metadata.get("task")
+        if isinstance(metadata_task, Mapping):
+            candidates.extend(
+                [
+                    metadata_task.get("ce_blueprint"),
+                    metadata_task.get("chief_engineer_blueprint"),
+                ]
+            )
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping) or not candidate:
+            continue
+        result = SimpleNamespace(
+            ok=True,
+            summary=str(candidate.get("summary") or ""),
+            objective=str(candidate.get("objective") or ""),
+            target_files=tuple(candidate.get("target_files") or ()),
+            acceptance_criteria=tuple(candidate.get("acceptance_criteria") or ()),
+            execution_checklist=tuple(candidate.get("execution_checklist") or ()),
+            recommendations=tuple(candidate.get("recommendations") or ()),
+            risks=tuple(candidate.get("risks") or ()),
+            existing_target_files=tuple(candidate.get("existing_target_files") or ()),
+        )
+        overview = render_blueprint_overview(result)
+        if overview:
+            return overview
+    return None
 
 
 class ProjectionDictBuilder:
@@ -121,9 +176,13 @@ class ProjectionDictBuilder:
             get_task_history=gateway._get_task_history,
             get_repo_identity=gateway._get_repo_identity,
             get_scout_anchors=gateway._get_scout_anchors,
-            # blueprint_overview 只通过配置注入的数据源读取；roles.kernel 不认识
-            # chief_engineer.blueprint 的业务模块。
-            get_blueprint_overview=lambda: gateway._get_blueprint_overview(str(request.task_id or "")),
+            # blueprint_overview 优先消费请求中已由 Director adapter 注入的 CE
+            # handoff contract；没有内联 contract 时再通过配置注入的数据源读取。
+            # roles.kernel 不 import chief_engineer.blueprint owner Cell。
+            get_blueprint_overview=lambda: (
+                _blueprint_overview_from_request_context(request)
+                or gateway._get_blueprint_overview(str(request.task_id or ""))
+            ),
             # verdict_history 同样只走配置注入的数据源，避免 kernel 反向依赖 QA owner Cell。
             get_verdict_history=lambda: gateway._get_verdict_history(str(request.task_id or "")),
             get_blueprint_step=lambda: gateway._get_blueprint_step(request),

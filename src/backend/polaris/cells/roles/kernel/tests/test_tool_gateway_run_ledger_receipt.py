@@ -169,6 +169,30 @@ class TestRoleTurnCapabilityToken:
         assert capability_token["execution_envelope_hash"] == "env-hash"
         assert capability_token["allowed_commands"] == ["python --version"]
 
+    def test_read_scope_does_not_expand_write_capability(self) -> None:
+        request = RoleTurnRequest(
+            message="write package only",
+            metadata={
+                "execution_envelope_hash": "env-scope",
+                "job_token": {
+                    "token_id": "job-scope",
+                    "target_files": ["package.json"],
+                    "allowed_write_paths": ["package.json"],
+                    "allowed_read_paths": ["package.json", "src/index.js", "tests/product.test.js"],
+                    "allowed_paths": ["package.json", "src/index.js", "tests/product.test.js"],
+                    "scope_paths": ["src/index.js", "tests/product.test.js"],
+                    "execution_envelope_hash": "env-scope",
+                },
+            },
+        )
+
+        capability_scope = derive_role_turn_capability_scope(request)
+        capability_token = derive_role_turn_capability_token(request, capability_scope)
+
+        assert capability_scope == ("package.json",)
+        assert capability_token["token_id"] == "job-scope"
+        assert capability_token["allowed_scope"] == ["package.json"]
+
     def test_derives_capability_from_execution_envelope_authorization(self) -> None:
         request = RoleTurnRequest(
             message="run verification",

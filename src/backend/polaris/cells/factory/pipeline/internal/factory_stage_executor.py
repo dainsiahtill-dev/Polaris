@@ -302,6 +302,11 @@ class OrchestrationStageExecutor:
             return False
         if normalized in {".git", ".polaris", "runtime", "node_modules"}:
             return False
+        parts = normalized.split("/")
+        if any(part in {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"} for part in parts):
+            return False
+        if normalized.endswith((".pyc", ".pyo")):
+            return False
         return not any(normalized.startswith(prefix) for prefix in _PRE_DIRECTOR_PLATFORM_PREFIXES)
 
     def _pre_director_snapshot_dir(self) -> Path:
@@ -644,27 +649,113 @@ class OrchestrationStageExecutor:
             },
         }
 
+    @staticmethod
+    def _merge_string_list(*values: Any) -> list[str]:
+        rows: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            raw_items = value if isinstance(value, (list, tuple, set, frozenset)) else [value]
+            for item in raw_items:
+                token = str(item or "").strip()
+                if token and token not in seen:
+                    seen.add(token)
+                    rows.append(token)
+        return rows
+
+    @staticmethod
+    def _merge_catalog_delivery_depth_contract(
+        existing: dict[str, Any],
+        catalog_contract: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not existing:
+            return dict(catalog_contract)
+        if not catalog_contract:
+            return dict(existing)
+
+        merged = dict(existing)
+        for key in ("schema_version", "language", "project_type", "level"):
+            if not merged.get(key) and catalog_contract.get(key) not in (None, ""):
+                merged[key] = catalog_contract[key]
+
+        for key in ("minimums", "level_contract"):
+            existing_map = existing.get(key) if isinstance(existing.get(key), dict) else {}
+            catalog_map = catalog_contract.get(key) if isinstance(catalog_contract.get(key), dict) else {}
+            if existing_map or catalog_map:
+                merged[key] = {**catalog_map, **existing_map}
+
+        for key in ("required_evidence", "anti_hollow_delivery"):
+            merged_list = OrchestrationStageExecutor._merge_string_list(
+                catalog_contract.get(key),
+                existing.get(key),
+            )
+            if merged_list:
+                merged[key] = merged_list
+
+        for key in ("product_intent", "behavior_contract", "acceptance_contract"):
+            existing_map = existing.get(key) if isinstance(existing.get(key), dict) else {}
+            catalog_map = catalog_contract.get(key) if isinstance(catalog_contract.get(key), dict) else {}
+            if not existing_map and not catalog_map:
+                continue
+            child = {**catalog_map, **existing_map}
+            if key == "behavior_contract":
+                existing_minimums = existing_map.get("minimums") if isinstance(existing_map.get("minimums"), dict) else {}
+                catalog_minimums = catalog_map.get("minimums") if isinstance(catalog_map.get("minimums"), dict) else {}
+                if existing_minimums or catalog_minimums:
+                    child["minimums"] = {**catalog_minimums, **existing_minimums}
+            merged[key] = child
+
+        return merged
+
     def _inject_catalog_delivery_depth_contract(self, context: dict[str, Any]) -> None:
         metadata_raw = context.get("metadata")
         metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
-        if isinstance(context.get("delivery_depth_contract"), dict) or isinstance(
-            metadata.get("delivery_depth_contract"), dict
-        ):
-            return
         catalog = self._read_catalog_contract()
-        depth_contract = self._catalog_delivery_depth_contract(catalog)
+        catalog_depth_contract = self._catalog_delivery_depth_contract(catalog)
+        existing_depth_contract = (
+            dict(context.get("delivery_depth_contract"))
+            if isinstance(context.get("delivery_depth_contract"), dict)
+            else (
+                dict(metadata.get("delivery_depth_contract"))
+                if isinstance(metadata.get("delivery_depth_contract"), dict)
+                else {}
+            )
+        )
+        depth_contract = self._merge_catalog_delivery_depth_contract(existing_depth_contract, catalog_depth_contract)
         if not depth_contract:
             return
         context["delivery_depth_contract"] = depth_contract
-        context["level_contract"] = dict(depth_contract.get("level_contract") or {})
+        level_contract = dict(depth_contract.get("level_contract") or {})
+        if level_contract:
+            context["level_contract"] = level_contract
         language = str(depth_contract.get("language") or "").strip()
         if language and not str(context.get("language") or "").strip():
             context["language"] = language
+        level = depth_contract.get("level")
+        if level is not None and context.get("factory_bench_level") is None:
+            context["factory_bench_level"] = level
+        project_id = str(catalog.get("project_id") or "").strip()
+        if project_id and not str(context.get("factory_bench_project_id") or "").strip():
+            context["factory_bench_project_id"] = project_id
+        title = str(catalog.get("title") or catalog.get("name") or "").strip()
+        if title and not str(context.get("factory_bench_title") or "").strip():
+            context["factory_bench_title"] = title
         metadata = dict(metadata)
-        metadata.setdefault("delivery_depth_contract", depth_contract)
-        metadata.setdefault("level_contract", dict(depth_contract.get("level_contract") or {}))
+        metadata["delivery_depth_contract"] = self._merge_catalog_delivery_depth_contract(
+            dict(metadata.get("delivery_depth_contract"))
+            if isinstance(metadata.get("delivery_depth_contract"), dict)
+            else {},
+            depth_contract,
+        )
+        if level_contract:
+            metadata.setdefault("level_contract", level_contract)
         if language:
             metadata.setdefault("language", language)
+        if level is not None:
+            metadata.setdefault("factory_bench_level", level)
+        if project_id:
+            metadata.setdefault("factory_bench_project_id", project_id)
+        if title:
+            metadata.setdefault("factory_bench_title", title)
         context["metadata"] = metadata
 
     def _load_pm_plan_tasks(
@@ -3098,6 +3189,10 @@ class OrchestrationStageExecutor:
                 "timed out",
                 "timeout",
                 "transport timeout",
+                "empty response",
+                "no visible output",
+                "no visible output or tool calls",
+                "awaiting user clarification",
             )
         )
 
@@ -3401,7 +3496,9 @@ class OrchestrationStageExecutor:
                     if not recovered_review_schema_failure:
                         continue
 
-                task_error_count_before = len(stage_signals)
+                task_error_count_before = sum(
+                    1 for item in stage_signals if str(item.get("severity") or "").strip().lower() == "error"
+                )
                 if llm_call_skipped:
                     ce_evidence["llm_call_skipped"] = True
                     ce_evidence["deadline_projection"] = dict(deadline_decision)
@@ -3433,9 +3530,10 @@ class OrchestrationStageExecutor:
                     )
                     missing_final_request_evidence = self._ce_missing_final_request_evidence(ce_evidence)
                     if missing_final_request_evidence:
-                        missing_signal = {
+                        recovered_projection = bool(ce_evidence.get("llm_call_failed_projection"))
+                        missing_signal: dict[str, Any] = {
                             "code": "chief_engineer.final_request_audit_missing",
-                            "severity": "error",
+                            "severity": "warning" if recovered_projection else "error",
                             "detail": (
                                 "CE LLM result did not expose required final provider-request evidence: "
                                 + ", ".join(missing_final_request_evidence)
@@ -3445,6 +3543,9 @@ class OrchestrationStageExecutor:
                             "model": ce_model,
                             "missing": missing_final_request_evidence,
                         }
+                        if recovered_projection:
+                            missing_signal["recovery_strategy"] = str(ce_evidence.get("recovery_strategy") or "")
+                            missing_signal["recoverable"] = True
                         self._attach_ce_llm_evidence(missing_signal, ce_evidence)
                         stage_signals.append(missing_signal)
 
@@ -3489,7 +3590,10 @@ class OrchestrationStageExecutor:
                     elif isinstance(quality_result.data, dict):
                         ce_llm_blueprint = dict(quality_result.data)
 
-                if len(stage_signals) > task_error_count_before:
+                task_error_count_after = sum(
+                    1 for item in stage_signals if str(item.get("severity") or "").strip().lower() == "error"
+                )
+                if task_error_count_after > task_error_count_before:
                     continue
 
                 # Convert to blueprint result format (deterministic structure generator)
@@ -4160,6 +4264,39 @@ class OrchestrationStageExecutor:
                             message=(
                                 "Director made no further materialized changes after prior evidence; "
                                 "dispatch treated as idempotent"
+                            ),
+                            metadata=metadata_payload,
+                        )
+                        break
+                    if (
+                        director_status == "timeout"
+                        and prior_successful_progress
+                        and not missing_declared_targets
+                        and self._workspace_has_materialized_delivery_evidence(pm_tasks)
+                    ):
+                        requires_taskboard_convergence = False
+                        stage_signals.append(
+                            {
+                                "code": "director.materialized_workspace_timeout_handoff_ready",
+                                "severity": "warning",
+                                "detail": (
+                                    "Director timed out after prior materialization evidence, but all declared "
+                                    "delivery targets are present; stopping dispatch so workspace quality gates can "
+                                    "validate the physical artifacts instead of replaying a short-budget round"
+                                ),
+                                "requires_taskboard_convergence": False,
+                                "upstream_status": str(director_result.status or "").strip(),
+                                "round": round_index,
+                                "timeout_seconds": director_timeout_seconds,
+                                "taskboard_after": after_stats,
+                            }
+                        )
+                        final_result = CommandResult(
+                            run_id=str(director_result.run_id or command_result.run_id or ""),
+                            status="completed",
+                            message=(
+                                "Director dispatch handed off to workspace quality after complete target "
+                                "materialization and timeout"
                             ),
                             metadata=metadata_payload,
                         )

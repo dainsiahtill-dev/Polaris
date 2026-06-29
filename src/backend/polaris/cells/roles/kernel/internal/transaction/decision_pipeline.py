@@ -78,7 +78,11 @@ async def run_decision_pipeline(
     # ADR-0090 I3: one corrective re-ask before a degraded decode kills the
     # turn (all native tool calls unparseable, or a fully empty response).
     probe_decision = decoder.decode(llm_response, TurnId(turn_id))
-    corrective_ask = evaluate_decode_corrective(probe_decision, llm_response)
+    corrective_ask = evaluate_decode_corrective(
+        probe_decision,
+        llm_response,
+        tool_definitions=tool_definitions,
+    )
     if corrective_ask is not None:
         logger.warning(
             "decode_corrective_retry: reason=%s turn_id=%s",
