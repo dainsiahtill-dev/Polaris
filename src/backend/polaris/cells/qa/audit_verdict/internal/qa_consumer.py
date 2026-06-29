@@ -1380,7 +1380,7 @@ class QAConsumer:
             if shadow:
                 ack_payload["qa_verdict_engine_shadow"] = shadow
             ack_payload = _qa_control_plane_metadata(payload, ack_payload)
-            self._append_qa_gate_to_run_ledger(
+            qa_ledger_appended = self._append_qa_gate_to_run_ledger(
                 task_id=task_id,
                 payload=payload,
                 gate_name="qa_verdict",
@@ -1391,6 +1391,32 @@ class QAConsumer:
                 next_stage=next_stage,
                 terminal_status=terminal_status,
             )
+            if terminal_status in {"resolved", "rejected"} and not qa_ledger_appended:
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code="QA_run_ledger_append_missing",
+                        error_message="QA terminal verdict requires Run Ledger evidence before acknowledgement.",
+                        requeue_stage="pending_qa",
+                        metadata=_qa_control_plane_metadata(
+                            payload,
+                            {
+                                **ack_payload,
+                                "qa_terminal_ack_blocked": True,
+                                "qa_terminal_ack_blocker": "run_ledger_append_missing",
+                            },
+                        ),
+                    )
+                )
+                return {
+                    "task_id": task_id,
+                    "ok": False,
+                    "verdict": verdict,
+                    "status": "pending_qa",
+                    "reason": "run_ledger_append_missing",
+                }
 
             command_kwargs: dict[str, Any] = {
                 "workspace": self._workspace,

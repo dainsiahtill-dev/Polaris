@@ -7,7 +7,7 @@
   "capabilities": [
     {
       "type": "class",
-      "name": "InternalWorkflowConfig",
+      "name": "WorkflowConfig",
       "description": "Runtime configuration for self-hosted workflow runtime.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/config.py",
       "methods": [

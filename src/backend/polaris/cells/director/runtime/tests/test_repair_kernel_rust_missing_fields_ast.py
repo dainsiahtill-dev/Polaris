@@ -210,8 +210,16 @@ def test_rust_missing_fields_shadow_blocks_unknown_duplicate_non_marker_and_publ
 def test_public_missing_fields_metadata_source_tools_still_fail_closed(tmp_path: Path) -> None:
     base_files = {"src/lib.rs": "// Polaris marker: rust.missing_fields\nstruct Flight { name: String }\n"}
     raw_errors = {
-        RUST_MISSING_FIELDS_SOURCE_TOOL: "error[E0609]: no field `duration` on type `&Flight`",
-        "deterministic_rust_post_repair": "error[E0433]: failed to resolve: use of unresolved module `serde`",
+        RUST_MISSING_FIELDS_SOURCE_TOOL: (
+            "error[E0609]: no field `duration` on type `&Flight`",
+            None,
+            "repair_not_planned",
+        ),
+        "deterministic_rust_post_repair": (
+            "error[E0433]: failed to resolve: use of unresolved module `serde`",
+            "unsupported_repair_source_tool",
+            "unsupported_repair_source_tool",
+        ),
     }
     writes: list[tuple[str, str]] = []
 
@@ -219,7 +227,7 @@ def test_public_missing_fields_metadata_source_tools_still_fail_closed(tmp_path:
         writes.append((path, content))
         raise AssertionError("metadata-only missing_fields source_tool must not write files")
 
-    for source_tool, raw_error in raw_errors.items():
+    for source_tool, (raw_error, expected_planning_error_code, expected_run_error_code) in raw_errors.items():
         planning = plan_director_repair(
             PlanDirectorRepairCommandV1(
                 source_tool=source_tool,
@@ -232,7 +240,7 @@ def test_public_missing_fields_metadata_source_tools_still_fail_closed(tmp_path:
 
         assert planning_payload["ok"] is False
         assert planning_payload["planned"] is False
-        assert planning_payload["error_code"] == "unsupported_repair_source_tool"
+        assert planning_payload["error_code"] == expected_planning_error_code
         assert planning_payload["plan_summary"] is None
         assert planning_payload["composition_summary"]["ok"] is False
 
@@ -249,12 +257,12 @@ def test_public_missing_fields_metadata_source_tools_still_fail_closed(tmp_path:
         )
 
         assert run.ok is False
-        assert run.error_code == "unsupported_repair_source_tool"
+        assert run.error_code == expected_run_error_code
         assert run.receipts == ()
-        assert run.metadata["planning"]["error_code"] == "unsupported_repair_source_tool"
+        assert run.metadata["planning"]["error_code"] == expected_planning_error_code
     assert writes == []
     executable_source_tools = set(runtime_repair_source_tools())
-    assert RUST_MISSING_FIELDS_SOURCE_TOOL not in executable_source_tools
+    assert RUST_MISSING_FIELDS_SOURCE_TOOL in executable_source_tools
     assert "deterministic_rust_post_repair" not in executable_source_tools
     assert RUST_STRUCT_LITERAL_MISSING_FIELD_SOURCE_TOOL in executable_source_tools
 

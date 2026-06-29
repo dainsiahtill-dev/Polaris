@@ -58,7 +58,7 @@ def _scheduler_bridge(
     step = _selected_step()
     tool_results = [_tool_result_with_native_receipt(receipt) for receipt in native_receipts]
     migration_debt = {
-        "legacy_callback_debt": [
+        "adapter_projection_debt": [
             {
                 "step_id": _STEP_ID,
                 "blockers": [],
@@ -92,7 +92,7 @@ def test_selected_materialization_step_reports_native_cutover_ready_without_glob
     assert evidence["cutover_blockers"] == []
     assert scheduler_bridge["selected_step_native_cutover_ready"] is True
     assert scheduler_bridge["selected_step_native_cutover_ready_step_ids"] == [_STEP_ID]
-    assert scheduler_bridge["repair_kernel_migration_debt"]["legacy_callback_debt"][0]["step_id"] == _STEP_ID
+    assert scheduler_bridge["repair_kernel_migration_debt"]["adapter_projection_debt"][0]["step_id"] == _STEP_ID
 
 
 def test_selected_materialization_step_blocks_cutover_when_callback_projection_still_present() -> None:
@@ -193,9 +193,7 @@ def test_materialization_summary_reports_coverage_matched_but_unplannable_plan_p
     assert plan_probe["runtime_plan_probe"]["schema_version"] == "director.repair_plan_probe_result.v1"
     assert plan_probe["status"] == "coverage_matched_but_unplannable"
     assert plan_probe["covered_unplannable_diagnostic_count"] == 1
-    assert "deterministic_typescript_return_object_semicolon_repair" in plan_probe[
-        "covered_unplannable_source_tools"
-    ]
+    assert "deterministic_typescript_return_object_semicolon_repair" in plan_probe["covered_unplannable_source_tools"]
     bridge = summary["materialization_quality_bridge"]
     assert bridge["plan_probe_status"] == "coverage_matched_but_unplannable"
     assert bridge["plan_probe_covered_unplannable_diagnostic_count"] == 1

@@ -1375,7 +1375,6 @@ def _annotate_materialization_quality_summary(
         "plan_probe_preaudit": dict(plan_probe_preaudit or {}),
         "repair_kernel_migration_debt": migration_debt,
         "adapter_projection_debt": migration_debt["adapter_projection_debt"],
-        "legacy_callback_debt": migration_debt["legacy_callback_debt"],
     }
     repair_kernel = project_repair_kernel_summary(
         stage="materialization_quality_repairs",
@@ -1492,7 +1491,7 @@ def _build_materialization_scheduler_bridge_summary(
         "schedule_source": "director.runtime.public.query_director_repair_materialization_quality_schedule",
         "runner_binding_owner": "roles.adapters",
         "adapter_projection_bridge": True,
-        "legacy_callback_bridge": False,
+        "adapter_callback_bridge": False,
         "runner_binding_reconciliation": dict(schedule_reconciliation or {}),
         "step_order": [step.to_dict() for step in ordered_steps],
         "active_step_ids": _sorted_unique(_payload_step_id(payload) for payload in payloads),
@@ -1614,7 +1613,6 @@ def _build_materialization_scheduler_bridge_summary(
         "migration_blocker": _CALLBACK_RECEIPT_MIGRATION_BLOCKER,
         "repair_kernel_migration_debt": migration_debt,
         "adapter_projection_debt": list(migration_debt.get("adapter_projection_debt") or []),
-        "legacy_callback_debt": list(migration_debt.get("legacy_callback_debt") or []),
     }
 
 
@@ -1781,7 +1779,7 @@ def _payload_has_callback_receipt_projection_annotation(payload: dict[str, Any])
     if any(
         bool(payload.get(key))
         for key in (
-            "legacy_callback_bridge",
+            "adapter_callback_bridge",
             "produces_tool_results_only",
             "callback_migration_envelope",
             "migration_callback_envelope",
@@ -2172,7 +2170,7 @@ def _materialization_receipt_lifecycle_by_step(
     )
     debt_by_step = {
         str(item.get("step_id") or ""): dict(item)
-        for item in migration_debt.get("legacy_callback_debt") or ()
+        for item in migration_debt.get("adapter_projection_debt") or ()
         if isinstance(item, dict)
     }
     lifecycle_by_step: dict[str, dict[str, Any]] = {}
@@ -2438,8 +2436,8 @@ def _project_materialization_quality_migration_debt(
     native_receipts_by_step = {
         step.step_id: list((native_receipts_by_step or {}).get(step.step_id) or []) for step in ordered_steps
     }
-    legacy_callback_debt = [
-        _project_legacy_callback_debt_for_step(
+    adapter_projection_debt = [
+        _project_adapter_projection_debt_for_step(
             step,
             tool_results_by_step.get(step.step_id, []),
             callback_projections=callback_projections_by_step.get(step.step_id, []),
@@ -2449,16 +2447,18 @@ def _project_materialization_quality_migration_debt(
         )
         for step in ordered_steps
     ]
-    blockers = _ordered_unique(blocker for item in legacy_callback_debt for blocker in item.get("blockers", []))
-    blocked_steps = [item for item in legacy_callback_debt if not item.get("cutover_ready")]
+    blockers = _ordered_unique(blocker for item in adapter_projection_debt for blocker in item.get("blockers", []))
+    blocked_steps = [item for item in adapter_projection_debt if not item.get("cutover_ready")]
     remaining_callback_only_step_ids = [
-        str(item.get("step_id") or "") for item in legacy_callback_debt if bool(item.get("callback_only"))
+        str(item.get("step_id") or "") for item in adapter_projection_debt if bool(item.get("callback_only"))
     ]
     native_receipt_step_ids = [
-        str(item.get("step_id") or "") for item in legacy_callback_debt if bool(item.get("native_receipt_present"))
+        str(item.get("step_id") or "") for item in adapter_projection_debt if bool(item.get("native_receipt_present"))
     ]
     callback_projection_step_ids = [
-        str(item.get("step_id") or "") for item in legacy_callback_debt if bool(item.get("callback_projection_present"))
+        str(item.get("step_id") or "")
+        for item in adapter_projection_debt
+        if bool(item.get("callback_projection_present"))
     ]
     return {
         "schema_version": "director.materialization_quality_repair_migration_debt.v1",
@@ -2467,13 +2467,13 @@ def _project_materialization_quality_migration_debt(
         "retired_strategy_host_removed": True,
         "bridge_mode": "runtime_schedule_step_runner_adapter",
         "adapter_projection_bridge": True,
-        "legacy_callback_bridge": False,
+        "adapter_callback_bridge": False,
         "convergence_verifier_present": convergence_verifier_present,
         "authoritative_receipts_allowed": False,
-        "cutover_ready": not blocked_steps and bool(legacy_callback_debt),
-        "step_count": len(legacy_callback_debt),
+        "cutover_ready": not blocked_steps and bool(adapter_projection_debt),
+        "step_count": len(adapter_projection_debt),
         "blocked_step_count": len(blocked_steps),
-        "cutover_ready_step_count": len(legacy_callback_debt) - len(blocked_steps),
+        "cutover_ready_step_count": len(adapter_projection_debt) - len(blocked_steps),
         "native_receipt_present_step_count": len(native_receipt_step_ids),
         "callback_projection_present_step_count": len(callback_projection_step_ids),
         "adapter_projection_present_step_count": len(callback_projection_step_ids),
@@ -2485,11 +2485,10 @@ def _project_materialization_quality_migration_debt(
         "remaining_callback_only_step_ids": remaining_callback_only_step_ids,
         "remaining_adapter_projection_only_step_ids": remaining_callback_only_step_ids,
         "cutover_blockers_by_step": {
-            str(item.get("step_id") or ""): list(item.get("cutover_blockers") or ()) for item in legacy_callback_debt
+            str(item.get("step_id") or ""): list(item.get("cutover_blockers") or ()) for item in adapter_projection_debt
         },
         "blockers": blockers,
-        "adapter_projection_debt": legacy_callback_debt,
-        "legacy_callback_debt": legacy_callback_debt,
+        "adapter_projection_debt": adapter_projection_debt,
     }
 
 
@@ -2525,7 +2524,7 @@ def _summarize_materialization_schedule_steps(
     }
 
 
-def _project_legacy_callback_debt_for_step(
+def _project_adapter_projection_debt_for_step(
     step: DirectorRepairMaterializationQualityStepV1,
     tool_results: list[dict[str, Any]],
     *,
@@ -2872,8 +2871,8 @@ def _project_dark_launch_self_check(
     )
     comparison = compare_director_repair_shadow_run(
         CompareDirectorRepairShadowRunV1(
-            comparison_mode="legacy_projection_self_check",
-            legacy_tool_results=tuple(tool_results),
+            comparison_mode="receipt_projection_self_check",
+            baseline_tool_results=tuple(tool_results),
             kernel_receipts=receipts,
         )
     )
@@ -2890,8 +2889,10 @@ def _project_dark_launch_self_check(
         "independent_shadow_satisfied": payload["independent_shadow_satisfied"],
         "execution_boundary": payload["execution_boundary"],
         "writes_allowed": payload["writes_allowed"],
-        "legacy_source_tools": payload["legacy_source_tools"],
+        "baseline_source_tools": payload["baseline_source_tools"],
         "kernel_source_tools": payload["kernel_source_tools"],
+        "baseline_paths": payload["baseline_paths"],
+        "kernel_paths": payload["kernel_paths"],
         "missing_source_tools_in_kernel": payload["missing_source_tools_in_kernel"],
         "extra_source_tools_in_kernel": payload["extra_source_tools_in_kernel"],
         "missing_paths_in_kernel": payload["missing_paths_in_kernel"],

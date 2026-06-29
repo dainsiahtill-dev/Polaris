@@ -1,4 +1,4 @@
-"""Compatibility bridge from legacy deterministic repair results to receipts."""
+"""Receipt projection helpers for deterministic repair results."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ from .contracts import RepairDiagnostic, RepairReceipt, RepairRevalidationEviden
 from .diagnostics import normalize_artifact_quality_errors
 from .receipt_context import build_repair_receipt_context
 from .registry import build_repair_coverage_report
-from .shadow import compare_legacy_and_kernel_repairs
+from .shadow import compare_baseline_and_kernel_repairs
 from .strategy_catalog import summarize_deterministic_repair_source_tools
 
 
-def build_legacy_repair_kernel_summary(
+def build_repair_kernel_result_summary(
     *,
     stage: str,
     tool_results: Sequence[dict[str, Any]],
@@ -25,11 +25,11 @@ def build_legacy_repair_kernel_summary(
     diagnostics = normalize_artifact_quality_errors(list(artifact_quality_errors or []))
     receipts = _receipts_from_tool_results(stage=stage, tool_results=tool_results, diagnostics=diagnostics, mode=mode)
     coverage_report = build_repair_coverage_report(diagnostics)
-    shadow_comparison = compare_legacy_and_kernel_repairs(
-        legacy_tool_results=tool_results,
+    shadow_comparison = compare_baseline_and_kernel_repairs(
+        baseline_tool_results=tool_results,
         kernel_receipts=receipts,
     )
-    shadow_payload = _legacy_projection_shadow_payload(shadow_comparison.to_dict())
+    shadow_payload = _receipt_projection_shadow_payload(shadow_comparison.to_dict())
     revalidation_coverage = summarize_repair_revalidation_coverage(receipts)
     return {
         "version": 1,
@@ -89,14 +89,14 @@ def _attach_native_revalidation_projection(payload: dict[str, Any], evidence: Ma
     payload["residual_diagnostic_ids"] = list(evidence.get("residual_diagnostic_ids") or ())
 
 
-def _legacy_projection_shadow_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Mark legacy receipt projection comparisons as non-cutover evidence."""
+def _receipt_projection_shadow_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Mark receipt projection comparisons as non-cutover evidence."""
 
     comparison = dict(payload or {})
     metadata = dict(comparison.get("metadata") or {})
     metadata.update(
         {
-            "comparison_mode": "legacy_projection_self_check",
+            "comparison_mode": "receipt_projection_self_check",
             "cutover_ready": False,
             "cutover_blockers": ["independent_shadow_required"],
             "independent_shadow_required": True,
@@ -105,7 +105,7 @@ def _legacy_projection_shadow_payload(payload: Mapping[str, Any]) -> dict[str, A
         }
     )
     comparison["metadata"] = metadata
-    comparison["comparison_mode"] = "legacy_projection_self_check"
+    comparison["comparison_mode"] = "receipt_projection_self_check"
     comparison["cutover_ready"] = False
     comparison["cutover_blockers"] = ["independent_shadow_required"]
     comparison["independent_shadow_required"] = True
@@ -355,7 +355,7 @@ def _receipts_from_tool_results(
             source_tool = "deterministic_unknown_repair"
         file_path = str(result_payload.get("file") or "").strip()
         operation = str(result_payload.get("operation") or result_payload.get("action") or "modify")
-        plan_id = stable_id("legacy_plan", stage, source_tool, file_path, operation, index)
+        plan_id = stable_id("projection_plan", stage, source_tool, file_path, operation, index)
         before_hash = str(result_payload.get("before_hash") or "")
         after_hash = str(result_payload.get("after_hash") or "")
         revalidation_evidence = _revalidation_evidence_from_payload(result_payload.get("revalidation"))
@@ -384,7 +384,7 @@ def _receipts_from_tool_results(
                 and revalidation_evidence is not None
                 and not revalidation_failed,
                 files_changed=(file_path,) if file_path else (),
-                operation_ids=(stable_id("legacy_op", plan_id, file_path, operation),),
+                operation_ids=(stable_id("projection_op", plan_id, file_path, operation),),
                 diagnostics=diagnostics,
                 before_hashes={file_path: before_hash} if file_path and before_hash else {},
                 after_hashes={file_path: after_hash} if file_path and after_hash else {},
@@ -649,7 +649,7 @@ def _coerce_revalidation_diagnostics(value: object) -> tuple[RepairDiagnostic, .
             metadata = {str(key): value for key, value in metadata_value.items()}
         diagnostics.append(
             RepairDiagnostic(
-                source=str(item.get("source") or "legacy_revalidation"),
+                source=str(item.get("source") or "receipt_revalidation"),
                 code=str(item.get("code") or "unknown"),
                 message=str(item.get("message") or item.get("raw") or ""),
                 severity=str(item.get("severity") or "error"),

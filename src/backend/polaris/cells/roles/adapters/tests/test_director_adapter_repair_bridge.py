@@ -1576,7 +1576,7 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
     migration_debt = summary["repair_kernel_migration_debt"]
     assert migration_debt["convergence_verifier_present"] is True
     assert migration_debt["cutover_ready"] is False
-    go_debt = {item["step_id"]: item for item in migration_debt["legacy_callback_debt"]}["materialization.go_import"]
+    go_debt = {item["step_id"]: item for item in migration_debt["adapter_projection_debt"]}["materialization.go_import"]
     assert go_debt["runtime_executable_source_tools"] == ["deterministic_go_bare_import_string_repair"]
     assert go_debt["legacy_only_source_tools"] == []
     assert go_debt["convergence_path_available"] is True
@@ -1961,7 +1961,7 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     assert all(item["base_files"]["src/lib.rs"] == source.read_text(encoding="utf-8") for item in runtime_calls)
     assert all(set(item["allowed_paths"]) == {"Cargo.toml", "src/lib.rs"} for item in runtime_calls)
     assert [item["result"]["source_tool"] for item in results] == expected_source_tools
-    rust_debt = {item["step_id"]: item for item in summary["repair_kernel_migration_debt"]["legacy_callback_debt"]}[
+    rust_debt = {item["step_id"]: item for item in summary["repair_kernel_migration_debt"]["adapter_projection_debt"]}[
         "materialization.rust_compiler"
     ]
     assert "deterministic_rust_missing_lib_target_repair" in rust_debt["runtime_executable_source_tools"]
@@ -2460,7 +2460,7 @@ def test_post_execution_migration_debt_ledger_distinguishes_runtime_and_legacy(
     legacy_payload = next(
         item["result"] for item in tool_results if item["result"]["source_tool"] == "deterministic_java_post_repair"
     )
-    assert legacy_payload["repair_kernel"]["owner_cell"] == "roles.adapters.legacy_strategy_host"
+    assert legacy_payload["repair_kernel"]["owner_cell"] == "roles.adapters.strategy_host"
     assert legacy_payload["repair_kernel"]["authoritative"] is False
     assert legacy_payload["repair_kernel"]["requires_revalidation"] is True
     assert summary["legacy_callback_debt"]["legacy_only_step_count"] == 0
@@ -2984,7 +2984,8 @@ def test_post_execution_scheduler_bridge_counts_callback_receipt_projections_wit
                     "file": "src/engine/generator.cpp",
                     "bytes_written": 42,
                     "operation": "write_file",
-                    "legacy_callback_bridge": True,
+                    "adapter_projection_bridge": True,
+                    "adapter_callback_bridge": False,
                     "produces_tool_results_only": True,
                     "typed_receipt_path_available": False,
                     "revalidation": {
@@ -3517,7 +3518,7 @@ def test_materialization_scheduler_bridge_separates_native_receipts_from_callbac
     assert migration_debt["remaining_adapter_projection_only_step_ids"] == []
     assert migration_debt["remaining_callback_only_step_ids"] == []
     assert migration_debt["callback_only_step_count"] == 0
-    go_debt = {item["step_id"]: item for item in migration_debt["legacy_callback_debt"]}["materialization.go_import"]
+    go_debt = {item["step_id"]: item for item in migration_debt["adapter_projection_debt"]}["materialization.go_import"]
     assert go_debt["native_receipt_present"] is True
     assert go_debt["callback_projection_present"] is True
     assert go_debt["callback_only"] is False

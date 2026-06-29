@@ -2256,7 +2256,7 @@ def _build_typescript_missing_member_plan(
             member_is_call=member_is_call,
         )
         if not declared_type or declared_type == "unknown":
-            declared_type = "unknown"
+            continue
         existing_members = _typescript_existing_member_names_for_type(base_files=base_files, type_name=type_name)
         receiver = ""
         if line_number > 0:
@@ -5088,15 +5088,6 @@ def _missing_export_operation(
         exported = _export_existing_typescript_declaration(original, symbol)
         declaration_kind = "export_existing"
     if exported == original:
-        importer_text = str(base_files.get(importer) or "")
-        declaration = _build_typescript_missing_export_contract_declaration(
-            symbol=symbol,
-            importer_text=importer_text,
-        )
-        if declaration:
-            exported = f"{original.rstrip()}\n\n{declaration}\n"
-            declaration_kind = "contract_declaration"
-    if exported == original:
         return None, {
             "file": exporter,
             "symbol": symbol,
@@ -5123,42 +5114,6 @@ def _normalize_typescript_module_ref(raw: object) -> str:
         previous = value
         value = value.strip().strip("'\"`").strip()
     return value.rstrip(".")
-
-
-def _build_typescript_missing_export_contract_declaration(
-    *,
-    symbol: str,
-    importer_text: str,
-) -> str:
-    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
-        return ""
-    if _typescript_importer_constructs_symbol(importer_text, symbol):
-        return f"export class {symbol} {{}}"
-    if _typescript_importer_calls_symbol(importer_text, symbol):
-        return f"export function {symbol}(..._args: unknown[]): any {{\n  return _args[0] ?? {{}};\n}}"
-    if _typescript_importer_uses_symbol_as_type(importer_text, symbol):
-        return f"export type {symbol} = any;"
-    return ""
-
-
-def _typescript_importer_calls_symbol(importer_text: str, symbol: str) -> bool:
-    return bool(re.search(rf"\b{re.escape(symbol)}\s*\(", str(importer_text or "")))
-
-
-def _typescript_importer_constructs_symbol(importer_text: str, symbol: str) -> bool:
-    return bool(re.search(rf"\bnew\s+{re.escape(symbol)}\s*\(", str(importer_text or "")))
-
-
-def _typescript_importer_uses_symbol_as_type(importer_text: str, symbol: str) -> bool:
-    text = str(importer_text or "")
-    escaped = re.escape(symbol)
-    type_patterns = (
-        rf"\btype\s+[A-Za-z_$][\w$]*\s*=\s*{escaped}\b",
-        rf":\s*{escaped}\b",
-        rf"\bas\s+{escaped}\b",
-        rf"<\s*{escaped}\b",
-    )
-    return any(re.search(pattern, text) for pattern in type_patterns)
 
 
 def _reexport_imported_typescript_symbol(text: str, symbol: str) -> tuple[str, str]:
@@ -5239,65 +5194,6 @@ def _append_typescript_missing_export_declaration_operation(
             "append_declaration": True,
         },
     )
-
-
-def _build_typescript_missing_export_declaration(*, symbol: str, importer_text: str) -> tuple[str, str]:
-    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
-        return "", ""
-    if _typescript_symbol_is_constructed(importer_text, symbol):
-        return "class", _build_typescript_missing_export_class_declaration(symbol=symbol, importer_text=importer_text)
-    if _typescript_symbol_is_called(importer_text, symbol):
-        return "function", f"export function {symbol}(..._args: unknown[]): any {{\n  return undefined;\n}}"
-    if symbol[:1].isupper():
-        return "type", f"export type {symbol} = any;"
-    return "const", f"export const {symbol}: unknown = undefined;"
-
-
-def _typescript_symbol_is_constructed(text: str, symbol: str) -> bool:
-    return bool(re.search(rf"\bnew\s+{re.escape(symbol)}\s*\(", str(text or "")))
-
-
-def _typescript_symbol_is_called(text: str, symbol: str) -> bool:
-    token = str(text or "")
-    return bool(re.search(rf"(?<!new\s)\b{re.escape(symbol)}\s*\(", token))
-
-
-def _build_typescript_missing_export_class_declaration(*, symbol: str, importer_text: str) -> str:
-    methods = _typescript_methods_used_on_constructed_symbol(importer_text, symbol)
-    lines = [
-        f"export class {symbol} {{",
-        "  public constructor(..._args: unknown[]) {}",
-    ]
-    for method in methods:
-        return_type = "string" if method in {"report", "render", "toString"} else "any"
-        return_value = f'"{symbol} ready"' if return_type == "string" else "undefined"
-        lines.extend(
-            [
-                f"  public {method}(..._args: unknown[]): {return_type} {{",
-                f"    return {return_value};",
-                "  }",
-            ]
-        )
-    lines.append("}")
-    return "\n".join(lines)
-
-
-def _typescript_methods_used_on_constructed_symbol(text: str, symbol: str) -> list[str]:
-    token = str(text or "")
-    variables: list[str] = []
-    constructed_var_re = re.compile(
-        rf"\b(?:const|let|var)\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*new\s+{re.escape(symbol)}\s*\("
-    )
-    for match in constructed_var_re.finditer(token):
-        variables.append(str(match.group("name") or ""))
-    methods: list[str] = []
-    for variable in _dedupe_preserve_order([name for name in variables if name]):
-        for match in re.finditer(rf"\b{re.escape(variable)}\.(?P<method>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(", token):
-            methods.append(str(match.group("method") or ""))
-    direct_re = re.compile(rf"\bnew\s+{re.escape(symbol)}\s*\([^)]*\)\s*\.\s*(?P<method>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(")
-    for match in direct_re.finditer(token):
-        methods.append(str(match.group("method") or ""))
-    return _dedupe_preserve_order([method for method in methods if method and method != "constructor"])
 
 
 def _apply_single_text_operation(content: str, operation: RepairOperation) -> str:

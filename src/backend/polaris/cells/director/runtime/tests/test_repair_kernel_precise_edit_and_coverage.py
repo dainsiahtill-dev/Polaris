@@ -1049,7 +1049,7 @@ def test_coverage_gap_includes_reserved_slot_and_recommended_owner() -> None:
     assert payload["coverage_gap_archetypes"] == ["unknown"]
     assert payload["coverage_gap_diagnostic_codes"] == ["ruby_future_error"]
     assert payload["coverage_gap_handoff_recommendations"] == ["llm_triage_then_runtime_rule"]
-    assert payload["coverage_gap_recommended_routes"] == ["llm_repair"]
+    assert payload["coverage_gap_recommended_routes"] == ["runtime_rule"]
     assert payload["coverage_gap_slot_statuses"] == ["reserved_slot_available"]
     assert gap["language"] == "ruby"
     assert gap["diagnostic_language"] == "ruby"
@@ -1063,7 +1063,7 @@ def test_coverage_gap_includes_reserved_slot_and_recommended_owner() -> None:
     assert gap["reserved_repairer_module"].endswith(".ruby_runtime")
     assert gap["reserved_slot_registration_policy"] == "bench_verified_rule_required"
     assert gap["recommended_next_owner"] == "runtime_rule"
-    assert gap["recommended_route"] == "llm_repair"
+    assert gap["recommended_route"] == "runtime_rule"
     assert gap["handoff_recommendation"] == "llm_triage_then_runtime_rule"
     assert gap["llm_advisory_recommended"] is True
     assert gap["agi_advisory_recommended"] is False

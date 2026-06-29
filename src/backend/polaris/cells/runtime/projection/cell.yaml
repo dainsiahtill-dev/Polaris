@@ -56,7 +56,7 @@ verification:
   - tests/test_websocket_signal_hub.py
   - tests/test_runtime_projection_observability.py
   gaps:
-  - Projection still contains compatibility read-joins pending cleanup.
+  - Projection still contains projection read-joins pending cleanup.
   smoke_commands: []
 generated_artifacts:
 - generated/context.pack.json

@@ -24,7 +24,8 @@ from polaris.cells.runtime.projection.internal.io_helpers import (
 )
 from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
 from polaris.cells.runtime.projection.internal.runtime_projection_service import (
-    _read_latest_run_ledger_projection,
+    _extract_run_ledger_run_id,
+    _read_run_ledger_projection_for_run,
     build_resident_state,
     get_director_local_status,
     get_workflow_director_status,
@@ -165,7 +166,8 @@ async def build_director_status(
     del state
     local_status = await get_director_local_status()
     workflow_status = await get_workflow_director_status(workspace, cache_root)
-    run_ledger_projection = _read_latest_run_ledger_projection(workspace)
+    run_ledger_run_id = _extract_run_ledger_run_id(workflow_status, local_status)
+    run_ledger_projection = _read_run_ledger_projection_for_run(workspace, run_ledger_run_id)
     return merge_director_status(local_status, workflow_status, run_ledger_projection=run_ledger_projection)
 
 

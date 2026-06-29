@@ -20,7 +20,7 @@ async def test_runtime_projection_includes_resident_state() -> None:
         "agenda": {"pending_goal_ids": []},
     }
 
-    with patch(
+    with patch(  # noqa: SIM117 - keep the existing projection dependency patch stack readable.
         "polaris.cells.runtime.projection.internal.runtime_projection_service.get_pm_local_status",
         new_callable=AsyncMock,
         return_value={"running": False},
@@ -44,11 +44,11 @@ async def test_runtime_projection_includes_resident_state() -> None:
                         return_value={},
                     ):
                         with patch(
-                            "polaris.cells.runtime.projection.internal.artifacts.build_memory_payload",
+                            "polaris.cells.runtime.artifact_store.public.service.build_memory_payload",
                             return_value=None,
                         ):
                             with patch(
-                                "polaris.cells.runtime.projection.internal.artifacts.build_success_stats_payload",
+                                "polaris.cells.runtime.artifact_store.public.service.build_success_stats_payload",
                                 return_value={},
                             ):
                                 with patch(
@@ -82,7 +82,7 @@ def test_runtime_ws_status_payload_includes_resident_state() -> None:
         "runtime": {"active": True, "mode": "observe"},
     }
 
-    with patch(
+    with patch(  # noqa: SIM117 - keep the existing projection dependency patch stack readable.
         "polaris.cells.runtime.projection.internal.status_snapshot_builder.build_snapshot",
         return_value={"ok": True},
     ):

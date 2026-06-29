@@ -57,7 +57,7 @@ def resolve_orchestration_runtime(
 
 
 @dataclass(frozen=True)
-class InternalWorkflowConfig:
+class WorkflowConfig:
     """Runtime configuration for self-hosted workflow runtime."""
 
     enabled: bool = True
@@ -75,7 +75,7 @@ class InternalWorkflowConfig:
         *,
         environ: Mapping[str, str] | None = None,
         force_enable: bool = False,
-    ) -> InternalWorkflowConfig:
+    ) -> WorkflowConfig:
         values = dict(environ or os.environ)
         return cls(
             # workflow is the only supported runtime and is always enabled.
@@ -115,7 +115,3 @@ class InternalWorkflowConfig:
                 ),
             ),
         )
-
-
-# Backward-compatible alias - avoid name collision with kernelone.workflow.base.WorkflowConfig
-WorkflowConfig = InternalWorkflowConfig

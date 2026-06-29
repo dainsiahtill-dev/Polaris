@@ -566,7 +566,7 @@ def test_append_run_ledger_event_publishes_control_plane_projection_event(tmp_pa
     assert projection["projects"][0]["project_id"] == "P1"
 
 
-def test_read_run_ledger_projection_ignores_compat_ledgers_by_default(tmp_path: Path) -> None:
+def test_read_run_ledger_projection_ignores_migration_ledgers_by_default(tmp_path: Path) -> None:
     _write_ledger_event(tmp_path)
 
     result = read_run_ledger_projection(ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-1"))
@@ -575,11 +575,11 @@ def test_read_run_ledger_projection_ignores_compat_ledgers_by_default(tmp_path: 
     assert projection["source"] == "run_ledger_projection"
     assert projection["available"] is False
     assert projection["ok"] is False
-    assert projection["compat_ledgers_included"] is False
+    assert projection["migration_ledgers_included"] is False
     assert projection["projects"] == []
 
 
-def test_read_run_ledger_projection_can_include_compat_ledgers_explicitly_for_migration(
+def test_read_run_ledger_projection_can_include_migration_ledgers_explicitly_for_migration(
     tmp_path: Path,
 ) -> None:
     _write_ledger_event(tmp_path)
@@ -588,7 +588,7 @@ def test_read_run_ledger_projection_can_include_compat_ledgers_explicitly_for_mi
         ReadRunLedgerProjectionQueryV1(
             workspace=str(tmp_path),
             run_id="run-1",
-            include_compat_ledgers=True,
+            include_migration_ledgers=True,
         )
     )
     projection = result.projection
@@ -596,7 +596,7 @@ def test_read_run_ledger_projection_can_include_compat_ledgers_explicitly_for_mi
     assert projection["source"] == "run_ledger_projection"
     assert projection["available"] is True
     assert projection["ok"] is True
-    assert projection["compat_ledgers_included"] is True
+    assert projection["migration_ledgers_included"] is True
     assert projection["projects"][0]["project_id"] == "P1"
     assert projection["evidence_policy"]["enabled_modalities"] == ["browser"]
     assert projection["evidence_policy"]["required_modalities"] == []
@@ -609,7 +609,7 @@ def test_read_run_ledger_projection_returns_empty_when_no_ledger_exists(tmp_path
     assert projection["source"] == "run_ledger_projection"
     assert projection["available"] is False
     assert projection["status"] == "pending"
-    assert projection["compat_ledgers_included"] is False
+    assert projection["migration_ledgers_included"] is False
     assert projection["projects"] == []
 
 

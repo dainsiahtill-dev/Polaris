@@ -17,8 +17,8 @@ from .contracts import (
     sha256_text,
 )
 from .executor import EditFileFn, TransactionalRepairExecutor, WriteFileFn
-from .legacy_bridge import summarize_repair_revalidation_coverage
 from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
+from .receipt_projection import summarize_repair_revalidation_coverage
 from .receipts import attach_revalidation_evidence, build_receipt
 
 VerifierFn = Callable[[int, tuple[RepairReceipt, ...]], "RepairVerifierSnapshot"]

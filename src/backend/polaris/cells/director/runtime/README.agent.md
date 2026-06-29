@@ -63,7 +63,7 @@ write files or register new rules implicitly.
 `query_director_repair_strategy_catalog` is also the authoritative read model for
 deterministic repair migration status. Each strategy item must expose
 `implementation_status`, and the summary must count and list both
-`executable_runtime` and `legacy_strategy_host` source tools. Future migration
+`executable_runtime` and `adapter_strategy_host` source tools. Future migration
 work must use this catalog to decide what remains; grep-based counts are not
 authoritative evidence.
 
@@ -128,20 +128,22 @@ receipt ids and source tools, not just a count, so retry routing and LLM context
 can avoid blind repairs.
 
 Dark-launch comparison is read-only. Use
-`compare_director_repair_shadow_run` to compare legacy `tool_results` against
-new kernel receipts by changed files and source tools before cutting over a
-legacy path. The comparison must not write files or register rules.
+`compare_director_repair_shadow_run` to compare deterministic repair tool
+result projections against kernel receipts by changed files and source tools
+before enabling receipt cutover. The comparison must not write files or
+register rules.
 `CompareDirectorRepairShadowRunV1.comparison_mode` must explicitly distinguish
-`independent_shadow_run` from `legacy_projection_self_check`; only an
+`independent_shadow_run` from `receipt_projection_self_check`; only an
 `independent_shadow_run` with matching scope, matching before/after hashes,
 passing revalidation evidence, and authoritative applied receipts may report
 `cutover_ready=true`. The
-`dark_launch_comparison` embedded in legacy summary projection is only a
-`legacy_projection_self_check`; it is not independent cutover evidence and must
-remain `cutover_ready=false` with `independent_shadow_required` until an
-external shadow run has been compared through `compare_director_repair_shadow_run`.
+`dark_launch_comparison` embedded in receipt projection is only a
+`receipt_projection_self_check`; it is not independent cutover evidence and
+must remain `cutover_ready=false` with `independent_shadow_required` until an
+external shadow run has been compared through
+`compare_director_repair_shadow_run`.
 
-Legacy `tool_results` summary projection is a typed runtime public boundary.
+Repair `tool_results` summary projection is a typed runtime public boundary.
 Cross-cell callers must use `ProjectDirectorRepairKernelSummaryV1` with
 `project_director_repair_kernel_summary` to project legacy writes into
 repair-kernel receipts and coverage reports. `build_director_repair_kernel_summary`

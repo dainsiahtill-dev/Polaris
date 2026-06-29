@@ -18,7 +18,9 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from polaris.cells.control_plane.run_ledger.public.ledger import RunLedger, stable_hash
+from polaris.cells.control_plane.run_ledger.public.contracts import AppendRunLedgerEventCommandV1
+from polaris.cells.control_plane.run_ledger.public.ledger import stable_hash
+from polaris.cells.control_plane.run_ledger.public.service import append_run_ledger_event
 from polaris.kernelone.llm.toolkit.tool_normalization import (
     get_available_tools,
     normalize_tool_arguments,
@@ -818,7 +820,13 @@ class RoleToolGateway:
             )
             event["event_id"] = event["content_id"]
 
-            RunLedger(Path(workspace), run_id=run_id).append_event(event)
+            append_run_ledger_event(
+                AppendRunLedgerEventCommandV1(
+                    workspace=str(Path(workspace)),
+                    run_id=run_id,
+                    event=event,
+                )
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             logger.debug("Run Ledger tool receipt append failed: %s", exc)
 

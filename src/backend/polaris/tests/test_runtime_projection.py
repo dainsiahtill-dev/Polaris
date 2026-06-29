@@ -222,7 +222,7 @@ class TestRuntimeProjectionService:
         state.settings.ramdisk_root = "/tmp/cache"
         state.settings.json_log_path = "/tmp/logs/app.json"
 
-        with patch(
+        with patch(  # noqa: SIM117 - keep the existing projection dependency patch stack readable.
             "polaris.cells.runtime.projection.internal.runtime_projection_service.get_pm_local_status",
             new_callable=AsyncMock,
             return_value={"running": False},
@@ -252,11 +252,11 @@ class TestRuntimeProjectionService:
                             return_value={},
                         ):
                             with patch(
-                                "polaris.cells.runtime.projection.internal.artifacts.build_memory_payload",
+                                "polaris.cells.runtime.artifact_store.public.service.build_memory_payload",
                                 return_value=None,
                             ):
                                 with patch(
-                                    "polaris.cells.runtime.projection.internal.artifacts.build_success_stats_payload",
+                                    "polaris.cells.runtime.artifact_store.public.service.build_success_stats_payload",
                                     return_value={},
                                 ):
                                     with patch(
@@ -289,7 +289,7 @@ class TestRuntimeProjectionService:
         state.settings.ramdisk_root = "/tmp/cache"
         state.settings.json_log_path = "/tmp/logs/app.json"
 
-        with patch(
+        with patch(  # noqa: SIM117 - keep the existing projection dependency patch stack readable.
             "polaris.cells.runtime.projection.internal.runtime_projection_service.get_pm_local_status",
             new_callable=AsyncMock,
             return_value={"running": False},
@@ -313,11 +313,11 @@ class TestRuntimeProjectionService:
                             return_value={},
                         ):
                             with patch(
-                                "polaris.cells.runtime.projection.internal.artifacts.build_memory_payload",
+                                "polaris.cells.runtime.artifact_store.public.service.build_memory_payload",
                                 return_value=None,
                             ):
                                 with patch(
-                                    "polaris.cells.runtime.projection.internal.artifacts.build_success_stats_payload",
+                                    "polaris.cells.runtime.artifact_store.public.service.build_success_stats_payload",
                                     return_value={},
                                 ):
                                     with patch(
@@ -363,7 +363,7 @@ class TestRuntimeProjectionService:
             },
         }
 
-        with patch(
+        with patch(  # noqa: SIM117 - keep the existing projection dependency patch stack readable.
             "polaris.cells.runtime.projection.internal.runtime_projection_service.get_pm_local_status",
             new_callable=AsyncMock,
             return_value={"running": False},
@@ -392,11 +392,11 @@ class TestRuntimeProjectionService:
                             return_value={},
                         ):
                             with patch(
-                                "polaris.cells.runtime.projection.internal.artifacts.build_memory_payload",
+                                "polaris.cells.runtime.artifact_store.public.service.build_memory_payload",
                                 return_value=None,
                             ):
                                 with patch(
-                                    "polaris.cells.runtime.projection.internal.artifacts.build_success_stats_payload",
+                                    "polaris.cells.runtime.artifact_store.public.service.build_success_stats_payload",
                                     return_value={},
                                 ):
                                     with patch(
@@ -432,7 +432,7 @@ class TestRuntimeProjectionService:
         state.settings.ramdisk_root = "/tmp/cache"
         state.settings.json_log_path = "/tmp/logs/app.json"
 
-        with patch(
+        with patch(  # noqa: SIM117 - keep the existing projection dependency patch stack readable.
             "polaris.cells.runtime.projection.internal.runtime_projection_service.get_pm_local_status",
             new_callable=AsyncMock,
             return_value={"running": False},
@@ -456,11 +456,11 @@ class TestRuntimeProjectionService:
                             return_value={},
                         ):
                             with patch(
-                                "polaris.cells.runtime.projection.internal.artifacts.build_memory_payload",
+                                "polaris.cells.runtime.artifact_store.public.service.build_memory_payload",
                                 return_value=None,
                             ):
                                 with patch(
-                                    "polaris.cells.runtime.projection.internal.artifacts.build_success_stats_payload",
+                                    "polaris.cells.runtime.artifact_store.public.service.build_success_stats_payload",
                                     return_value={},
                                 ):
                                     with patch(

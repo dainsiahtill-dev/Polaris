@@ -1,7 +1,7 @@
 """Platform run-ledger projection service.
 
 This public boundary intentionally avoids temporary internal harness naming.
-Stress harnesses may still write compatibility ledger files while writer
+Stress harnesses may still write migration ledger files while writer
 migration is in progress; formal consumers should call this service or its
 HTTP facade.
 """
@@ -60,7 +60,7 @@ def _empty_projection(
     *,
     workspace: Path,
     status: str = "pending",
-    include_compat_ledgers: bool = False,
+    include_migration_ledgers: bool = False,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -69,7 +69,7 @@ def _empty_projection(
         "ok": False,
         "status": status,
         "audit_path": str(workspace / "runtime" / "control_plane" / "ledger"),
-        "compat_ledgers_included": bool(include_compat_ledgers),
+        "migration_ledgers_included": bool(include_migration_ledgers),
         "total": 0,
         "projected": 0,
         "missing": 0,
@@ -100,10 +100,10 @@ def _empty_projection(
     }
 
 
-def _ledger_dirs(workspace: Path, *, include_compat_ledgers: bool = False) -> list[Path]:
+def _ledger_dirs(workspace: Path, *, include_migration_ledgers: bool = False) -> list[Path]:
     runtime_root = workspace / "runtime"
     dirs = [runtime_root / "control_plane" / "ledger"]
-    if include_compat_ledgers:
+    if include_migration_ledgers:
         dirs.append(runtime_root / "factory" / "ledger")
     return dirs
 
@@ -113,18 +113,18 @@ def _ledger_paths(
     *,
     run_id: str,
     max_runs: int,
-    include_compat_ledgers: bool = False,
+    include_migration_ledgers: bool = False,
 ) -> list[Path]:
     paths: list[Path] = []
     if run_id:
         safe_run_id = _safe_token(run_id)
-        for ledger_dir in _ledger_dirs(workspace, include_compat_ledgers=include_compat_ledgers):
+        for ledger_dir in _ledger_dirs(workspace, include_migration_ledgers=include_migration_ledgers):
             path = ledger_dir / f"{safe_run_id}.ndjson"
             if path.is_file():
                 paths.append(path)
         return paths
 
-    for ledger_dir in _ledger_dirs(workspace, include_compat_ledgers=include_compat_ledgers):
+    for ledger_dir in _ledger_dirs(workspace, include_migration_ledgers=include_migration_ledgers):
         if not ledger_dir.is_dir():
             continue
         paths.extend(path for path in ledger_dir.glob("*.ndjson") if path.is_file())
@@ -313,13 +313,13 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
         workspace,
         run_id=query.run_id,
         max_runs=query.max_runs,
-        include_compat_ledgers=query.include_compat_ledgers,
+        include_migration_ledgers=query.include_migration_ledgers,
     )
     if not paths:
         return RunLedgerProjectionResultV1(
             projection=_empty_projection(
                 workspace=workspace,
-                include_compat_ledgers=query.include_compat_ledgers,
+                include_migration_ledgers=query.include_migration_ledgers,
             )
         )
 
@@ -331,7 +331,7 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
             projection=_empty_projection(
                 workspace=workspace,
                 status="empty",
-                include_compat_ledgers=query.include_compat_ledgers,
+                include_migration_ledgers=query.include_migration_ledgers,
             )
         )
 
@@ -356,7 +356,7 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
             "ok": ok,
             "status": "ready" if ok else "failed",
             "audit_path": str(workspace / "runtime" / "control_plane" / "ledger"),
-            "compat_ledgers_included": query.include_compat_ledgers,
+            "migration_ledgers_included": query.include_migration_ledgers,
             "total": projected,
             "projected": projected,
             "missing": 0,
@@ -393,7 +393,7 @@ def read_run_ledger_projection_barrier(
             workspace,
             run_id=query.run_id,
             max_runs=1,
-            include_compat_ledgers=query.include_compat_ledgers,
+            include_migration_ledgers=query.include_migration_ledgers,
         )
         events = []
         for path in paths:
@@ -411,7 +411,7 @@ def read_run_ledger_projection_barrier(
             workspace=str(workspace),
             run_id=query.run_id,
             max_runs=1,
-            include_compat_ledgers=query.include_compat_ledgers,
+            include_migration_ledgers=query.include_migration_ledgers,
         )
     ).projection
     consumed_append_ids = [
@@ -516,7 +516,7 @@ def read_run_provenance_bundle(query: ReadRunProvenanceBundleQueryV1) -> RunProv
         workspace,
         run_id=query.run_id,
         max_runs=1,
-        include_compat_ledgers=query.include_compat_ledgers,
+        include_migration_ledgers=query.include_migration_ledgers,
     )
     events: list[dict[str, Any]] = []
     for path in paths:
@@ -527,7 +527,7 @@ def read_run_provenance_bundle(query: ReadRunProvenanceBundleQueryV1) -> RunProv
         else _empty_projection(
             workspace=workspace,
             status="pending",
-            include_compat_ledgers=query.include_compat_ledgers,
+            include_migration_ledgers=query.include_migration_ledgers,
         )
     )
     return RunProvenanceBundleResultV1(

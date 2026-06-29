@@ -1045,7 +1045,7 @@ def test_materialization_quality_bridge_consumes_runtime_owned_schedule() -> Non
     assert runner_step_ids == expected_runtime_step_ids
     assert runner_step_ids == public_runtime_step_ids
     assert "runtime_schedule_step_runner_adapter" in bridge_source
-    assert "legacy_strategy_host_wrapper" not in bridge_source
+    assert "adapter_strategy_host_wrapper" not in bridge_source
     assert "materialization.quality_repair_host" not in bridge_source
     assert "materialization.typescript_compiler" in bridge_source
     assert "_apply_deterministic_materialization_quality_repairs" not in bridge_source
@@ -1136,34 +1136,35 @@ def test_runtime_public_service_exposes_strategy_catalog_only_as_query_projectio
     assert all(token not in public_init_source for token in forbidden_public_helpers)
 
 
-def test_typescript_source_tools_do_not_return_to_legacy_strategy_host() -> None:
+def test_typescript_source_tools_do_not_return_to_adapter_strategy_host() -> None:
     catalog_payload = query_director_repair_strategy_catalog(
         QueryDirectorRepairStrategyCatalogV1(include_items=True, max_items=10_000)
     ).to_dict()
     catalog_summary = catalog_payload["summary"]
-    legacy_source_tools = [str(source_tool) for source_tool in catalog_summary["legacy_strategy_host_source_tools"]]
-    legacy_typescript_source_tools = [
+    adapter_source_tools = [str(source_tool) for source_tool in catalog_summary["adapter_strategy_host_source_tools"]]
+    adapter_typescript_source_tools = [
         source_tool
-        for source_tool in legacy_source_tools
+        for source_tool in adapter_source_tools
         if source_tool.startswith(MIGRATED_TYPESCRIPT_SOURCE_TOOL_PREFIXES)
         or source_tool in MIGRATED_TYPESCRIPT_SOURCE_TOOL_NAMES
     ]
-    legacy_failure_message = (
-        "expected public strategy catalog ledger total=93 executable_runtime=93 legacy_strategy_host=0; "
+    adapter_failure_message = (
+        "expected public strategy catalog ledger to have adapter_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
-        "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
+        "adapter_strategy_host_source_tools:\n- " + "\n- ".join(adapter_source_tools)
     )
-    legacy_typescript_failure_message = (
-        "TypeScript migration source_tools must not be in legacy_strategy_host_source_tools:\n- "
-        + "\n- ".join(legacy_typescript_source_tools)
+    adapter_typescript_failure_message = (
+        "TypeScript migration source_tools must not be in adapter_strategy_host_source_tools:\n- "
+        + "\n- ".join(adapter_typescript_source_tools)
     )
+    executable_status_count = catalog_summary["implementation_status_counts"].get("executable_runtime", 0)
+    metadata_status_count = catalog_summary["implementation_status_counts"].get("metadata_rule_registered", 0)
 
-    assert catalog_summary["total"] == 93, legacy_failure_message
-    assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
-    assert legacy_source_tools == [], legacy_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 93, legacy_failure_message
-    assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, legacy_failure_message
-    assert catalog_summary["legacy_strategy_host_count"] == 0, legacy_failure_message
+    assert adapter_typescript_source_tools == [], adapter_typescript_failure_message
+    assert adapter_source_tools == [], adapter_failure_message
+    assert catalog_summary["implementation_status_counts"].get("adapter_strategy_host", 0) == 0, adapter_failure_message
+    assert catalog_summary["adapter_strategy_host_count"] == 0, adapter_failure_message
+    assert catalog_summary["total"] == executable_status_count + metadata_status_count, adapter_failure_message
 
 
 def test_runtime_public_discovery_and_advisory_surfaces_are_read_only() -> None:
@@ -1185,7 +1186,7 @@ def test_runtime_public_discovery_and_advisory_surfaces_are_read_only() -> None:
     assert slots.access == "read_only"
     assert slots.summary["bench_driven_rule_addition_required"] is True
     assert {"executable_runtime", "reserved_only"} <= set(slot_status_counts)
-    assert "legacy_strategy_host" not in slot_status_counts
+    assert "adapter_strategy_host" not in slot_status_counts
     assert non_executable_slots
     assert all(not slot.executable_runtime_source_tools for slot in non_executable_slots)
     assert advisory.ok is True

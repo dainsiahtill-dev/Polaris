@@ -824,7 +824,7 @@ class RepairDiagnosticCoverage:
             "executable_runtime_plan_matched": self.executable_runtime_plan_matched,
             "metadata_only_match": self.metadata_only_match,
             "matched_rule_ids": [rule.rule_id for rule in self.matched_rules],
-            "matched_source_tools": [rule.source_tool for rule in self.matched_rules],
+            "matched_source_tools": list(dict.fromkeys(rule.source_tool for rule in self.matched_rules)),
             "runtime_plan_rule_ids": [rule.rule_id for rule in self.matched_rules if rule.runtime_plan_available],
             "archetypes": sorted({rule.archetype.value for rule in self.matched_rules}),
             "phases": sorted({rule.phase for rule in self.matched_rules}),

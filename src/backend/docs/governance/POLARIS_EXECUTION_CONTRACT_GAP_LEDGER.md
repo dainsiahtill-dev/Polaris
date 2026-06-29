@@ -55,6 +55,41 @@ characterization currently fail in files already dirty before this change. Those
 failures are not closed by this handoff/envelope/QA reconciliation and must be
 handled by the repair-kernel owner before using those suites as release gates.
 
+## 2026-06-30 Bench Hotspot Reconciliation
+
+This reconciliation is based on the last 50 commits plus repeated Factory Bench
+agent findings. The repeated failures cluster in the same platform seams:
+Director repair runtime, Director adapter bridge, Factory/bench measurement,
+Run Ledger/QA projection, and PM/CE/Director task-boundary evidence.
+
+The architectural decision is not to replace the existing codebase. The decision
+is to make the lessons from those repairs explicit:
+
+1. Repair convergence must remain runtime-owned:
+   `Typed Diagnostic -> RepairPlan -> Patch Composer -> Policy Gate -> Execute
+   -> Receipt -> Revalidate`.
+2. Adapter code may bind schedule runners, but must not become a second repair
+   authority or duplicate runtime receipts.
+3. Factory Bench remains an internal pressure tool; production facts come from
+   Run Ledger, ReceiptStore, ContextOS, verifier policy, and QA verdicts.
+4. Final provider request evidence must be ref-based and replayable; token
+   utilization is only a health signal.
+5. Migration debt projections must use one canonical field name per fact. Old
+   compatibility aliases are treated as drift unless a named migration blocker
+   requires them.
+
+| ID | Severity | Hotspot / Drift | Resolution | Status | Verification |
+| --- | --- | --- | --- | --- | --- |
+| H-01 | P0 | Director repair strategy catalog still projected non-runtime rows as `legacy_strategy_host`, which made an adapter migration ledger look like a second repair fact source. | Public strategy catalog now names the remaining non-runtime bucket `adapter_strategy_host`; tests still assert the bucket is empty for migrated source tools. | Closed | `test_public_strategy_catalog_is_read_only_and_non_agi_authoritative`, `test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_explicit`, `test_typescript_source_tools_do_not_return_to_adapter_strategy_host`. |
+| H-02 | P0 | Materialization quality summary exposed both `adapter_projection_debt` and the older `legacy_callback_debt` alias for the same evidence. | Materialization bridge now emits only `adapter_projection_debt`; tests assert `legacy_callback_debt` is absent from this payload. | Closed | `test_materialization_quality_migration_debt_marks_legacy_only_step_blocked`, `test_materialization_quality_migration_debt_lists_remaining_callback_only_steps`. |
+| H-03 | P0 | Runtime schedule query summaries reported `adapter_callback_bridge=True` while run-result contracts forced `adapter_callback_bridge=False`, creating conflicting observability. | Schedule summaries and convergence payload defaults now report `adapter_projection_bridge=True` and `adapter_callback_bridge=False`. | Closed | Repair scheduler and adapter bridge tests cover projection bridge fields. |
+| H-04 | P1 | Post-execution Rust aggregate debt still needs migration evidence because not every subcase is native typed-receipt-backed. | Keep `legacy_aggregate*` debt fields as a named blocker only; do not treat them as an execution authority. | Open | Close only when remaining Rust aggregate subcases return native `RepairReceiptV1` and tests no longer require aggregate shadow evidence. |
+| H-05 | P1 | Factory/bench `summarize_run_ledger_projection` is close to the fact source but has weaker direct coverage than other Run Ledger projections. | Add targeted characterization before using bench projection summaries as regression evidence for Control Plane semantics. | Open | Pending coverage in `factory/pipeline/internal/run_ledger.py` consumers. |
+| H-06 | P1 | Several prompt/body injection fixes improved outcomes but are still symptoms if not backed by envelope/final-request coverage gates. | Future prompt context growth must be paired with required-ref evidence coverage and execution-envelope audit, not token-utilization-only checks. | Open | New prompt expansion should add final-request coverage tests in the same change. |
+| H-07 | P0 | Some production code appended Run Ledger events directly, bypassing public projection publish. | Role tool gateway and Factory real-run gate persistence now call public `append_run_ledger_event`; direct appends remain only in the public service and ledger primitive tests. | Closed | `test_tool_gateway_run_ledger_receipt.py`, `test_run_ledger.py`, `test_public_service.py`; grep shows production write callers use public append. |
+| H-08 | P0 | Runtime projection read the latest five Run Ledgers without binding a run id, allowing terminal overlay from another run. | Runtime projection and status snapshot builder now extract explicit `run_id/workflow_id`; without a run id they do not read a latest-run aggregate. | Closed | Runtime projection tests cover run-id extraction and no-run-id projection behavior. |
+| H-09 | P0 | QA consumer could terminal-ack `resolved/rejected` even when Run Ledger append was missing. | Terminal QA acknowledgements now require Run Ledger evidence; missing token/append requeues `pending_qa` with a blocker instead of acknowledging terminal status. | Closed | `test_terminal_verdict_without_run_ledger_evidence_requeues_qa` plus QA consumer suite. |
+
 ## Post-Closure Alignment Audit
 
 These items were discovered after the P0/P1/P2 implementation ledger was closed. They are documentation-and-contract alignment gaps: leaving them open would let future developers miss already-implemented contracts by reading only the main audit specification.

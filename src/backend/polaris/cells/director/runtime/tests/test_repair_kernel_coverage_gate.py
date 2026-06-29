@@ -323,10 +323,7 @@ def test_public_coverage_matches_rust_missing_lib_target_src_lib_as_runtime_subs
     assert rustc_item["metadata_only_match"] is False
     assert rustc_item["executable_runtime_plan_matched"] is True
     assert rustc_item["matched_rule_ids"] == ["rust.missing_lib_target", "rust.missing_lib_target_src_lib"]
-    assert rustc_item["matched_source_tools"] == [
-        RUST_MISSING_LIB_TARGET_SOURCE_TOOL,
-        RUST_MISSING_LIB_TARGET_SOURCE_TOOL,
-    ]
+    assert rustc_item["matched_source_tools"] == [RUST_MISSING_LIB_TARGET_SOURCE_TOOL]
     assert rustc_item["runtime_plan_rule_ids"] == ["rust.missing_lib_target_src_lib"]
 
     assert manifest_item["known_rule_matched"] is True

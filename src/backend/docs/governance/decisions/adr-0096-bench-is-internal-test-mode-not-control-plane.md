@@ -56,7 +56,7 @@ Bench 可以在内部测试态调用平台级 API，也可以读取平台级 pro
 
 ### 3. 兼容账本必须显式开启
 
-迁移期允许保留旧路径 `runtime/factory/ledger` 作为兼容输入，但只能通过显式开关读取，并且 projection 必须暴露来源边界，例如 `compat_ledgers_included=true`。
+迁移期允许保留旧路径 `runtime/factory/ledger` 作为兼容输入，但只能通过显式开关读取，并且 projection 必须暴露来源边界，例如 `migration_ledgers_included=true`。
 
 默认行为必须是：
 
@@ -88,7 +88,7 @@ RunLedgerProjection -> runtime/control_plane/ledger only
 
 ## 验收
 
-- `ReadRunLedgerProjectionQueryV1.include_compat_ledgers` 默认必须为 `false`。
+- `ReadRunLedgerProjectionQueryV1.include_migration_ledgers` 默认必须为 `false`。
 - `/v2/control-plane/ledger/projection` 不得默认读取 Bench/Factory 兼容账本。
 - 正式前端服务不得通过 `benchService` 获取控制面 projection。
 - Runtime realtime projection 必须走 `status.control_plane`，不得走 `event.bench`。

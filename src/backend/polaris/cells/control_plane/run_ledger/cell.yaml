@@ -41,8 +41,8 @@ state_owners:
 effects_allowed:
   - fs.write:runtime/control_plane/ledger/*
   - fs.read:runtime/control_plane/ledger/*
-  # Migration-only compatibility input. Production projection defaults must not
-  # read this path unless ReadRunLedgerProjectionQueryV1.include_compat_ledgers
+  # Migration-only ledger input. Production projection defaults must not
+  # read this path unless ReadRunLedgerProjectionQueryV1.include_migration_ledgers
   # is explicitly enabled by an internal audit/migration caller.
   - fs.read:runtime/factory/ledger/*
 verification:

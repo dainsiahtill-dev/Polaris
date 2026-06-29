@@ -139,7 +139,6 @@ from .javascript_syntax import (
     build_substantive_node_test_script,
     build_typescript_local_js_import_plan,
 )
-from .legacy_bridge import build_legacy_repair_kernel_summary
 from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
 from .python_runtime import (
     PythonRepairPlanning,
@@ -157,6 +156,7 @@ from .python_syntax import (
     build_python_unittest_smoke_content,
 )
 from .receipt_context import build_repair_receipt_context
+from .receipt_projection import build_repair_kernel_result_summary
 from .receipts import attach_revalidation_evidence
 from .registry import (
     RepairArchetype,
@@ -223,7 +223,7 @@ from .scheduler import (
     VerifierFn,
     order_repair_plans,
 )
-from .shadow import RepairShadowComparison, compare_legacy_and_kernel_repairs
+from .shadow import RepairShadowComparison, compare_baseline_and_kernel_repairs
 from .strategy_catalog import (
     KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS,
     DeterministicRepairStrategy,
@@ -432,7 +432,6 @@ __all__ = [
     "build_go_nested_import_plan",
     "build_go_subpath_import_plan",
     "build_java_accessor_alias_plan",
-    "build_legacy_repair_kernel_summary",
     "build_node_test_script_contract_plan",
     "build_npm_script_contract_plan",
     "build_patch_residue_cleanup_plan",
@@ -440,6 +439,7 @@ __all__ = [
     "build_python_unittest_missing_target_plan",
     "build_python_unittest_smoke_content",
     "build_repair_coverage_report",
+    "build_repair_kernel_result_summary",
     "build_repair_receipt_context",
     "build_rust_crate_import_rewrite_plan",
     "build_rust_dependency_plan",
@@ -459,7 +459,7 @@ __all__ = [
     "build_typescript_shorthand_property_scope_plan",
     "build_typescript_string_literal_suggestion_plan",
     "build_typescript_unknown_member_access_plan",
-    "compare_legacy_and_kernel_repairs",
+    "compare_baseline_and_kernel_repairs",
     "default_repair_rule_registry",
     "describe_deterministic_repair_strategy",
     "deterministic_repair_source_tool_known",

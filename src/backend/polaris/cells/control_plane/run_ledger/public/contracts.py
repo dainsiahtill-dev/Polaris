@@ -13,7 +13,7 @@ class ReadRunLedgerProjectionQueryV1:
     workspace: str
     run_id: str = ""
     max_runs: int = 50
-    include_compat_ledgers: bool = False
+    include_migration_ledgers: bool = False
 
     def __post_init__(self) -> None:
         workspace = str(self.workspace or "").strip()
@@ -21,11 +21,11 @@ class ReadRunLedgerProjectionQueryV1:
             raise ValueError("workspace must be a non-empty string")
         run_id = str(self.run_id or "").strip()
         max_runs = max(1, min(500, int(self.max_runs or 50)))
-        include_compat_ledgers = bool(self.include_compat_ledgers)
+        include_migration_ledgers = bool(self.include_migration_ledgers)
         object.__setattr__(self, "workspace", workspace)
         object.__setattr__(self, "run_id", run_id)
         object.__setattr__(self, "max_runs", max_runs)
-        object.__setattr__(self, "include_compat_ledgers", include_compat_ledgers)
+        object.__setattr__(self, "include_migration_ledgers", include_migration_ledgers)
 
 
 @dataclass(frozen=True)
@@ -37,7 +37,7 @@ class ReadRunLedgerProjectionBarrierQueryV1:
     min_append_id: str = ""
     min_event_hash: str = ""
     timeout_ms: int = 0
-    include_compat_ledgers: bool = False
+    include_migration_ledgers: bool = False
 
     def __post_init__(self) -> None:
         workspace = str(self.workspace or "").strip()
@@ -52,7 +52,7 @@ class ReadRunLedgerProjectionBarrierQueryV1:
         object.__setattr__(self, "min_append_id", str(self.min_append_id or "").strip())
         object.__setattr__(self, "min_event_hash", str(self.min_event_hash or "").strip())
         object.__setattr__(self, "timeout_ms", timeout_ms)
-        object.__setattr__(self, "include_compat_ledgers", bool(self.include_compat_ledgers))
+        object.__setattr__(self, "include_migration_ledgers", bool(self.include_migration_ledgers))
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,7 @@ class ReadRunProvenanceBundleQueryV1:
 
     workspace: str
     run_id: str
-    include_compat_ledgers: bool = False
+    include_migration_ledgers: bool = False
 
     def __post_init__(self) -> None:
         workspace = str(self.workspace or "").strip()
@@ -72,7 +72,7 @@ class ReadRunProvenanceBundleQueryV1:
             raise ValueError("run_id must be a non-empty string")
         object.__setattr__(self, "workspace", workspace)
         object.__setattr__(self, "run_id", run_id)
-        object.__setattr__(self, "include_compat_ledgers", bool(self.include_compat_ledgers))
+        object.__setattr__(self, "include_migration_ledgers", bool(self.include_migration_ledgers))
 
 
 @dataclass(frozen=True)

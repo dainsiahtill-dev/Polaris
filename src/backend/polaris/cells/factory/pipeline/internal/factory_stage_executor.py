@@ -5412,13 +5412,11 @@ class OrchestrationStageExecutor:
         return self._collect_declared_delivery_targets(self._load_pm_plan_tasks("tasks/plan.json"))
 
     def _workspace_quality_repair_diagnostic_target_files(self, artifact_quality_errors: list[str]) -> list[str]:
-        from polaris.cells.director.runtime.internal.repair_kernel.diagnostics import (
-            normalize_artifact_quality_errors,
-        )
+        from polaris.cells.director.runtime.public import normalize_director_repair_diagnostics
 
         workspace_root = self.workspace.resolve()
         candidates: list[str] = []
-        diagnostics = normalize_artifact_quality_errors([str(item) for item in artifact_quality_errors or []])
+        diagnostics = normalize_director_repair_diagnostics([str(item) for item in artifact_quality_errors or []])
         for diagnostic in diagnostics:
             path = str(diagnostic.path or "").strip().replace("\\", "/")
             if path and _is_workspace_quality_repair_path(path):

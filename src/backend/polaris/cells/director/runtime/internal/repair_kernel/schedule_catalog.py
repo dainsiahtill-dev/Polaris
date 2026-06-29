@@ -369,7 +369,7 @@ def _callback_schedule_summary(
             "adapter_projection_not_authoritative_receipt",
         ],
         **evidence_summary,
-        "legacy_callback_bridge": False,
+        "adapter_callback_bridge": False,
         "migration_callback_envelope": False,
         "adapter_projection_envelope": True,
         "runner_binding_owner": "roles.adapters",
@@ -842,7 +842,8 @@ def _annotate_tool_result(
     payload.setdefault("typed_receipt_path_available", False)
     payload.setdefault("callback_migration_envelope", True)
     payload.setdefault("migration_callback_envelope", True)
-    payload.setdefault("legacy_callback_bridge", True)
+    payload.setdefault("adapter_projection_bridge", True)
+    payload.setdefault("adapter_callback_bridge", False)
     payload.setdefault("produces_tool_results_only", True)
     payload.setdefault("hidden_language_loop_allowed", False)
     payload.setdefault("language_self_loop_allowed", False)
@@ -888,7 +889,8 @@ def _annotate_convergence_result(
         payload.setdefault("typed_receipt_path_available", False)
         payload.setdefault("callback_migration_envelope", True)
         payload.setdefault("migration_callback_envelope", True)
-        payload.setdefault("legacy_callback_bridge", True)
+        payload.setdefault("adapter_projection_bridge", True)
+        payload.setdefault("adapter_callback_bridge", False)
         payload.setdefault("produces_tool_results_only", True)
         payload.setdefault("callback_receipt_projection_available", True)
         payload.setdefault("callback_receipt_projection_schema_version", _CALLBACK_RECEIPT_PROJECTION_SCHEMA_VERSION)

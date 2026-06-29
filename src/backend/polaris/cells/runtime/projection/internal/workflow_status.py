@@ -16,7 +16,7 @@ from polaris.kernelone.storage import resolve_storage_roots
 logger = logging.getLogger(__name__)
 _JETSTREAM_PUBLISH_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
 
-# Note: State file uses legacy name for backward compatibility
+# Runtime workflow state file retained as the canonical persisted state path.
 WORKFLOW_STATE_FILE = "runtime/state/workflow.workflow.state.json"
 WORKFLOW_PM_TASKS_FILE = "runtime/contracts/pm_tasks.contract.json"
 _TERMINAL_STATUSES = {"completed", "failed", "terminated", "timed_out", "canceled"}
@@ -270,8 +270,8 @@ def _result_artifacts_prove_terminal_success(payloads: list[dict[str, Any]]) -> 
 def _run_ledger_terminal_status(*, workspace: str, run_id: str = "") -> str:
     """Return terminal status proven by the platform Run Ledger projection.
 
-    The local result JSON files are compatibility artifacts. They may indicate
-    what a legacy path believed, but terminal success must come from the
+    The local result JSON files are non-authoritative execution artifacts. They
+    may indicate what a role-local path observed, but terminal success must come from the
     append-only control-plane ledger.
     """
 
@@ -1324,8 +1324,3 @@ def get_workflow_runtime_status(
         "error": "" if bool(description.get("ok")) else str(description.get("error") or "").strip(),
         "state_path": str(updated_record.get("state_path") or "").strip(),
     }
-
-
-# Aliases for backward compatibility with existing code
-build_workflow_director_status_payload = build_workflow_status_payload
-build_workflow_director_task_rows = build_workflow_task_rows

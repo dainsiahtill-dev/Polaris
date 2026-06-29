@@ -1321,7 +1321,7 @@ class DirectorRepairRevalidationProjectionResultV1:
 
 @dataclass(frozen=True)
 class ProjectDirectorRepairKernelSummaryV1:
-    """Command shape for projecting legacy repair tool results into kernel receipts."""
+    """Command shape for projecting repair tool results into kernel receipts."""
 
     stage: str
     tool_results: tuple[Mapping[str, Any], ...] = ()
@@ -1352,7 +1352,7 @@ class ProjectDirectorRepairKernelSummaryV1:
 
 @dataclass(frozen=True)
 class DirectorRepairKernelSummaryProjectionResultV1:
-    """Read-only result for legacy repair summary projection."""
+    """Read-only result for repair receipt summary projection."""
 
     schema_version: str
     source: str
@@ -1772,7 +1772,7 @@ class DirectorRepairPostExecutionScheduleRunResultV1:
     stopped_reason: str = "not_run"
     owner_cell: str = "director.runtime"
     runner_binding_owner: str = "roles.adapters"
-    legacy_callback_bridge: bool = False
+    adapter_callback_bridge: bool = False
     adapter_projection_bridge: bool = True
     typed_receipt_path_available: bool = False
     authoritative_receipts_allowed: bool = False
@@ -1802,7 +1802,7 @@ class DirectorRepairPostExecutionScheduleRunResultV1:
         object.__setattr__(
             self, "runner_binding_owner", _require_non_empty("runner_binding_owner", self.runner_binding_owner)
         )
-        object.__setattr__(self, "legacy_callback_bridge", False)
+        object.__setattr__(self, "adapter_callback_bridge", False)
         object.__setattr__(self, "adapter_projection_bridge", True)
         object.__setattr__(self, "typed_receipt_path_available", False)
         object.__setattr__(self, "authoritative_receipts_allowed", False)
@@ -1818,7 +1818,7 @@ class DirectorRepairPostExecutionScheduleRunResultV1:
             "source": self.source,
             "owner_cell": self.owner_cell,
             "runner_binding_owner": self.runner_binding_owner,
-            "legacy_callback_bridge": False,
+            "adapter_callback_bridge": False,
             "adapter_projection_bridge": True,
             "ordered_steps": [item.to_dict() for item in self.ordered_steps],
             "tool_results": [dict(item) for item in self.tool_results],
@@ -1942,7 +1942,7 @@ class DirectorRepairMaterializationQualityScheduleRunResultV1:
     stopped_reason: str = "not_run"
     owner_cell: str = "director.runtime"
     runner_binding_owner: str = "roles.adapters"
-    legacy_callback_bridge: bool = False
+    adapter_callback_bridge: bool = False
     adapter_projection_bridge: bool = True
     typed_receipt_path_available: bool = False
     authoritative_receipts_allowed: bool = False
@@ -1972,7 +1972,7 @@ class DirectorRepairMaterializationQualityScheduleRunResultV1:
         object.__setattr__(
             self, "runner_binding_owner", _require_non_empty("runner_binding_owner", self.runner_binding_owner)
         )
-        object.__setattr__(self, "legacy_callback_bridge", False)
+        object.__setattr__(self, "adapter_callback_bridge", False)
         object.__setattr__(self, "adapter_projection_bridge", True)
         object.__setattr__(self, "typed_receipt_path_available", False)
         object.__setattr__(self, "authoritative_receipts_allowed", False)
@@ -1988,7 +1988,7 @@ class DirectorRepairMaterializationQualityScheduleRunResultV1:
             "source": self.source,
             "owner_cell": self.owner_cell,
             "runner_binding_owner": self.runner_binding_owner,
-            "legacy_callback_bridge": False,
+            "adapter_callback_bridge": False,
             "adapter_projection_bridge": True,
             "ordered_steps": [item.to_dict() for item in self.ordered_steps],
             "tool_results": [dict(item) for item in self.tool_results],
@@ -2155,18 +2155,20 @@ class DirectorRepairAdvisoryValidationResultV1:
 
 @dataclass(frozen=True)
 class CompareDirectorRepairShadowRunV1:
-    """Read-only command for legacy-vs-kernel deterministic repair shadow comparison."""
+    """Read-only command for deterministic repair receipt projection comparison."""
 
-    legacy_tool_results: tuple[Mapping[str, Any], ...] = ()
+    baseline_tool_results: tuple[Mapping[str, Any], ...] = ()
     kernel_receipts: tuple[RepairReceiptV1, ...] = ()
     comparison_mode: str = "independent_shadow_run"
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "legacy_tool_results", tuple(dict(item or {}) for item in self.legacy_tool_results))
+        object.__setattr__(
+            self, "baseline_tool_results", tuple(dict(item or {}) for item in self.baseline_tool_results)
+        )
         object.__setattr__(self, "kernel_receipts", tuple(self.kernel_receipts or ()))
         comparison_mode = str(self.comparison_mode or "").strip() or "independent_shadow_run"
-        if comparison_mode not in {"independent_shadow_run", "legacy_projection_self_check"}:
-            raise ValueError("comparison_mode must be independent_shadow_run or legacy_projection_self_check")
+        if comparison_mode not in {"independent_shadow_run", "receipt_projection_self_check"}:
+            raise ValueError("comparison_mode must be independent_shadow_run or receipt_projection_self_check")
         object.__setattr__(self, "comparison_mode", comparison_mode)
 
 
@@ -2178,9 +2180,9 @@ class DirectorRepairShadowComparisonResultV1:
     source: str
     access: str
     matched: bool
-    legacy_source_tools: tuple[str, ...] = ()
+    baseline_source_tools: tuple[str, ...] = ()
     kernel_source_tools: tuple[str, ...] = ()
-    legacy_paths: tuple[str, ...] = ()
+    baseline_paths: tuple[str, ...] = ()
     kernel_paths: tuple[str, ...] = ()
     missing_paths_in_kernel: tuple[str, ...] = ()
     extra_paths_in_kernel: tuple[str, ...] = ()
@@ -2202,9 +2204,9 @@ class DirectorRepairShadowComparisonResultV1:
         object.__setattr__(self, "source", _require_non_empty("source", self.source))
         object.__setattr__(self, "access", _require_non_empty("access", self.access))
         object.__setattr__(self, "matched", bool(self.matched))
-        object.__setattr__(self, "legacy_source_tools", _to_tuple_str(list(self.legacy_source_tools)))
+        object.__setattr__(self, "baseline_source_tools", _to_tuple_str(list(self.baseline_source_tools)))
         object.__setattr__(self, "kernel_source_tools", _to_tuple_str(list(self.kernel_source_tools)))
-        object.__setattr__(self, "legacy_paths", _to_tuple_str(list(self.legacy_paths)))
+        object.__setattr__(self, "baseline_paths", _to_tuple_str(list(self.baseline_paths)))
         object.__setattr__(self, "kernel_paths", _to_tuple_str(list(self.kernel_paths)))
         object.__setattr__(self, "missing_paths_in_kernel", _to_tuple_str(list(self.missing_paths_in_kernel)))
         object.__setattr__(self, "extra_paths_in_kernel", _to_tuple_str(list(self.extra_paths_in_kernel)))
@@ -2240,9 +2242,9 @@ class DirectorRepairShadowComparisonResultV1:
             "agi_execution_authority": False,
             "writes_allowed": False,
             "matched": self.matched,
-            "legacy_source_tools": list(self.legacy_source_tools),
+            "baseline_source_tools": list(self.baseline_source_tools),
             "kernel_source_tools": list(self.kernel_source_tools),
-            "legacy_paths": list(self.legacy_paths),
+            "baseline_paths": list(self.baseline_paths),
             "kernel_paths": list(self.kernel_paths),
             "missing_paths_in_kernel": list(self.missing_paths_in_kernel),
             "extra_paths_in_kernel": list(self.extra_paths_in_kernel),
@@ -2748,9 +2750,7 @@ class DirectorRepairPlanProbeResultV1:
             "plannable_source_tools": list(self.plannable_source_tools),
             "covered_unplannable_source_tools": list(self.covered_unplannable_source_tools),
             "covered_unplannable_diagnostic_count": len(self.covered_unplannable_diagnostics),
-            "covered_unplannable_diagnostics": [
-                dict(item) for item in self.covered_unplannable_diagnostics
-            ],
+            "covered_unplannable_diagnostics": [dict(item) for item in self.covered_unplannable_diagnostics],
             "coverage_gap_count": len(self.uncovered_diagnostics),
             "uncovered_diagnostics": [dict(item) for item in self.uncovered_diagnostics],
             "metadata": dict(self.metadata),

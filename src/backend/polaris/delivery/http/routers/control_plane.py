@@ -75,7 +75,7 @@ def get_control_plane_run_provenance_bundle(
     request: Request,
     workspace: str = Query(default=""),
     run_id: str = Query(default=""),
-    include_compat_ledgers: bool = Query(default=False),
+    include_migration_ledgers: bool = Query(default=False),
 ) -> dict[str, Any]:
     """Return the platform provenance bundle for one run."""
 
@@ -85,7 +85,7 @@ def get_control_plane_run_provenance_bundle(
         query = ReadRunProvenanceBundleQueryV1(
             workspace=resolved_workspace,
             run_id=run_id,
-            include_compat_ledgers=include_compat_ledgers,
+            include_migration_ledgers=include_migration_ledgers,
         )
         return read_run_provenance_bundle(query).bundle
     except ValueError as exc:

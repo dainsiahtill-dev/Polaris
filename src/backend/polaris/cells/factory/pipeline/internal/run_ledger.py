@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public.contracts import AppendRunLedgerEventCommandV1
 from polaris.cells.control_plane.run_ledger.public.job_token import JobToken
 from polaris.cells.control_plane.run_ledger.public.ledger import (
     RunLedger as PlatformRunLedger,
@@ -20,6 +21,7 @@ from polaris.cells.control_plane.run_ledger.public.projection import (
     build_run_ledger_projection as _build_platform_run_ledger_projection,
     summarize_run_ledger_projection as _summarize_platform_run_ledger_projection,
 )
+from polaris.cells.control_plane.run_ledger.public.service import append_run_ledger_event
 from polaris.cells.control_plane.verifier_policy.public import (
     ReadVerifierPolicyQueryV1,
     read_verifier_policy,
@@ -857,7 +859,13 @@ def persist_real_run_gate_ledger(
     token_record = _record_with_control_plane_verifier_policy(workspace, record)
     token = build_job_token_from_record(token_record, run_id=run_id, project_id=project_id, stage=stage)
     event = build_gate_ledger_event(token, gate, gate_name=gate_name)
-    persisted = RunLedger(workspace, run_id=token.run_id or run_id or "unknown").append_event(event)
+    persisted = append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(workspace),
+            run_id=token.run_id or run_id or "unknown",
+            event=event,
+        )
+    ).receipt
     persisted_event = persisted["event"]
     return {
         "ledger_path": persisted["ledger_path"],

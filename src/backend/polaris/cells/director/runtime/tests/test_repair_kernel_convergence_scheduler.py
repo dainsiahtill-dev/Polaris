@@ -575,7 +575,7 @@ def test_public_post_execution_schedule_run_result_exposes_summary_and_receipts(
         runner=runner,
     )
     payload = result.to_dict()
-    legacy_tool_results, legacy_ordered_steps = run_director_post_execution_repair_schedule(
+    baseline_tool_results, baseline_ordered_steps = run_director_post_execution_repair_schedule(
         runner_step_ids=runner_step_ids,
         runner=runner,
     )
@@ -584,7 +584,7 @@ def test_public_post_execution_schedule_run_result_exposes_summary_and_receipts(
     assert payload["schema_version"] == "director.repair_post_execution_schedule_run_result.v1"
     assert payload["owner_cell"] == "director.runtime"
     assert payload["runner_binding_owner"] == "roles.adapters"
-    assert payload["legacy_callback_bridge"] is False
+    assert payload["adapter_callback_bridge"] is False
     assert payload["adapter_projection_bridge"] is True
     assert payload["projection_only"] is True
     assert payload["typed_receipt_path_available"] is False
@@ -607,10 +607,10 @@ def test_public_post_execution_schedule_run_result_exposes_summary_and_receipts(
     assert payload["receipt_projections"][0]["step_id"] == "rust.dependency_resolution"
     assert payload["tool_results"][0]["result"]["source_tool"] == "deterministic_rust_dependency_repair"
     assert [step["step_id"] for step in payload["ordered_steps"]] == list(runner_step_ids)
-    assert isinstance(legacy_tool_results, list)
-    assert isinstance(legacy_ordered_steps, tuple)
-    assert legacy_tool_results[0]["result"]["source_tool"] == "deterministic_rust_dependency_repair"
-    assert [step.step_id for step in legacy_ordered_steps] == list(runner_step_ids)
+    assert isinstance(baseline_tool_results, list)
+    assert isinstance(baseline_ordered_steps, tuple)
+    assert baseline_tool_results[0]["result"]["source_tool"] == "deterministic_rust_dependency_repair"
+    assert [step.step_id for step in baseline_ordered_steps] == list(runner_step_ids)
 
 
 def test_public_callback_receipt_projection_forces_non_authoritative_payload() -> None:
@@ -700,7 +700,7 @@ def test_public_materialization_schedule_run_result_exposes_summary_and_receipts
         runner=runner,
     )
     payload = result.to_dict()
-    legacy_tool_results, legacy_ordered_steps = run_director_materialization_quality_repair_schedule(
+    baseline_tool_results, baseline_ordered_steps = run_director_materialization_quality_repair_schedule(
         runner_step_ids=runner_step_ids,
         runner=runner,
     )
@@ -709,7 +709,7 @@ def test_public_materialization_schedule_run_result_exposes_summary_and_receipts
     assert payload["schema_version"] == "director.repair_materialization_quality_schedule_run_result.v1"
     assert payload["owner_cell"] == "director.runtime"
     assert payload["runner_binding_owner"] == "roles.adapters"
-    assert payload["legacy_callback_bridge"] is False
+    assert payload["adapter_callback_bridge"] is False
     assert payload["adapter_projection_bridge"] is True
     assert payload["projection_only"] is True
     assert payload["typed_receipt_path_available"] is False
@@ -727,7 +727,7 @@ def test_public_materialization_schedule_run_result_exposes_summary_and_receipts
     assert payload["receipt_projections"][0]["step_id"] == "materialization.typescript_compiler"
     assert payload["tool_results"][0]["result"]["source_tool"] == "deterministic_typescript_materialization_repair"
     assert [step["step_id"] for step in payload["ordered_steps"]] == list(runner_step_ids)
-    assert isinstance(legacy_tool_results, list)
-    assert isinstance(legacy_ordered_steps, tuple)
-    assert legacy_tool_results[0]["result"]["source_tool"] == "deterministic_typescript_materialization_repair"
-    assert [step.step_id for step in legacy_ordered_steps] == list(runner_step_ids)
+    assert isinstance(baseline_tool_results, list)
+    assert isinstance(baseline_ordered_steps, tuple)
+    assert baseline_tool_results[0]["result"]["source_tool"] == "deterministic_typescript_materialization_repair"
+    assert [step.step_id for step in baseline_ordered_steps] == list(runner_step_ids)

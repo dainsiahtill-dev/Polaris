@@ -53,17 +53,17 @@ PM_WORKFLOW_PATH = (
 
 def test_resolve_orchestration_runtime_normalizes_to_workflow() -> None:
     runtime = resolve_orchestration_runtime(
-        "nodes",
+        "retired-runtime",
         environ={
-            "KERNELONE_ORCHESTRATION_RUNTIME": "legacy",
+            "KERNELONE_ORCHESTRATION_RUNTIME": "retired",
         },
     )
     assert runtime == "workflow"
 
 
 def test_engine_resolve_orchestration_runtime_normalizes_to_workflow(monkeypatch) -> None:
-    monkeypatch.setenv("KERNELONE_ORCHESTRATION_RUNTIME", "embedded")
-    args = argparse.Namespace(orchestration_runtime="nodes")
+    monkeypatch.setenv("KERNELONE_ORCHESTRATION_RUNTIME", "retired")
+    args = argparse.Namespace(orchestration_runtime="retired-runtime")
     assert engine._resolve_orchestration_runtime(args) == "workflow"
 
 
@@ -698,7 +698,7 @@ def test_get_workflow_runtime_status_prefers_run_ledger_success_over_stale_neste
     assert result["running"] is False
 
 
-def test_build_workflow_director_status_payload_uses_child_snapshot() -> None:
+def test_build_workflow_status_payload_uses_child_snapshot() -> None:
     workflow_status = {
         "running": True,
         "workflow_id": "wf-parent",
@@ -719,11 +719,11 @@ def test_build_workflow_director_status_payload_uses_child_snapshot() -> None:
         },
     }
 
-    status_payload = workflow_status_module.build_workflow_director_status_payload(
+    status_payload = workflow_status_module.build_workflow_status_payload(
         workflow_status,
         workspace="X:\\workspace",
     )
-    task_rows = workflow_status_module.build_workflow_director_task_rows(
+    task_rows = workflow_status_module.build_workflow_task_rows(
         workflow_status,
         workspace="X:\\workspace",
     )
@@ -738,7 +738,7 @@ def test_build_workflow_director_status_payload_uses_child_snapshot() -> None:
     assert task_rows[0]["metadata"]["pm_task_id"] == "PM-1"
 
 
-def test_build_workflow_director_status_payload_marks_queued_tasks_as_pending() -> None:
+def test_build_workflow_status_payload_marks_queued_tasks_as_pending() -> None:
     workflow_status = {
         "running": True,
         "workflow_id": "wf-parent",
@@ -759,7 +759,7 @@ def test_build_workflow_director_status_payload_marks_queued_tasks_as_pending() 
         },
     }
 
-    status_payload = workflow_status_module.build_workflow_director_status_payload(
+    status_payload = workflow_status_module.build_workflow_status_payload(
         workflow_status,
         workspace="X:\\workspace",
     )
@@ -767,7 +767,7 @@ def test_build_workflow_director_status_payload_marks_queued_tasks_as_pending() 
     assert status_payload["state"] == "PENDING"
 
 
-def test_build_workflow_director_task_rows_merges_base_contract_fields_when_run_ledger_completed(
+def test_build_workflow_task_rows_merges_base_contract_fields_when_run_ledger_completed(
     tmp_path,
 ) -> None:
     from polaris.cells.control_plane.run_ledger.public import (
@@ -840,7 +840,7 @@ def test_build_workflow_director_task_rows_merges_base_contract_fields_when_run_
         }
     ]
 
-    task_rows = workflow_status_module.build_workflow_director_task_rows(
+    task_rows = workflow_status_module.build_workflow_task_rows(
         workflow_status,
         base_tasks=base_tasks,
         workspace=str(tmp_path),
@@ -860,7 +860,7 @@ def test_build_workflow_director_task_rows_merges_base_contract_fields_when_run_
     assert task_rows[0]["metadata"]["execution_checklist"] == ["replace the lobby seed module"]
 
 
-def test_build_workflow_director_task_rows_does_not_complete_snapshot_without_run_ledger(
+def test_build_workflow_task_rows_does_not_complete_snapshot_without_run_ledger(
     tmp_path,
 ) -> None:
     workflow_status = {
@@ -880,7 +880,7 @@ def test_build_workflow_director_task_rows_does_not_complete_snapshot_without_ru
         },
     }
 
-    task_rows = workflow_status_module.build_workflow_director_task_rows(
+    task_rows = workflow_status_module.build_workflow_task_rows(
         workflow_status,
         base_tasks=[
             {
@@ -1044,7 +1044,7 @@ def test_summarize_workflow_tasks_does_not_complete_from_success_artifact_withou
                 "status": "success",
                 "exit_code": 0,
                 "qa_verdict": "PASS",
-                "qa_diagnostics": "legacy execution artifact",
+                "qa_diagnostics": "local execution artifact",
                 "changed_files": ["src/main.py"],
             }
         ),
@@ -1086,7 +1086,7 @@ def test_summarize_workflow_tasks_does_not_upgrade_failed_task_from_stale_succes
                 "status": "success",
                 "exit_code": 0,
                 "qa_verdict": "PASS",
-                "qa_diagnostics": "legacy execution artifact",
+                "qa_diagnostics": "local execution artifact",
                 "changed_files": ["src/main.py"],
             }
         ),
@@ -1131,7 +1131,7 @@ def test_director_result_task_state_prefers_explicit_failure_over_qa_pass() -> N
     )
 
 
-def test_build_workflow_director_task_rows_backfills_claimed_by_for_running_task() -> None:
+def test_build_workflow_task_rows_backfills_claimed_by_for_running_task() -> None:
     workflow_status = {
         "running": True,
         "workflow_id": "wf-parent",
@@ -1151,7 +1151,7 @@ def test_build_workflow_director_task_rows_backfills_claimed_by_for_running_task
         },
     }
 
-    task_rows = workflow_status_module.build_workflow_director_task_rows(
+    task_rows = workflow_status_module.build_workflow_task_rows(
         workflow_status,
         workspace="X:\\workspace",
     )

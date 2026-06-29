@@ -484,16 +484,6 @@ def build_javascript_missing_export_plan(
                         symbol=symbol,
                         diagnostic=diagnostic,
                     )
-                if operation is None:
-                    operation = _append_missing_export_contract_operation(
-                        path=exporter_path,
-                        text=exporter_text,
-                        symbol=symbol,
-                        importer_text=importer_text,
-                        exporter_rel_path=exporter_path,
-                        base_files=normalized_base,
-                        diagnostic=diagnostic,
-                    )
             if operation is None:
                 continue
             operations.append(operation)
@@ -514,54 +504,8 @@ def build_javascript_missing_export_plan(
 
 
 def _coalesce_javascript_append_operations(operations: list[RepairOperation]) -> list[RepairOperation]:
-    grouped: dict[tuple[str, int, int, str], list[RepairOperation]] = {}
-    passthrough: list[RepairOperation] = []
-    for operation in operations:
-        span_start = int(operation.span_start if operation.span_start is not None else -1)
-        span_end = int(operation.span_end if operation.span_end is not None else -1)
-        key = (operation.path, span_start, span_end, operation.expected or "")
-        if (
-            operation.kind == "text_replace"
-            and operation.metadata.get("repair_kind") == "javascript_missing_export_contract_declaration"
-            and span_start >= 0
-            and (operation.expected or "").strip() == ""
-        ):
-            grouped.setdefault(key, []).append(operation)
-        else:
-            passthrough.append(operation)
-    for (_path, _start, _end, _expected), items in sorted(grouped.items()):
-        if len(items) == 1:
-            passthrough.append(items[0])
-            continue
-        first = items[0]
-        passthrough.append(
-            RepairOperation(
-                kind="text_replace",
-                path=first.path,
-                span_start=first.span_start,
-                span_end=first.span_end,
-                expected=first.expected,
-                replacement="".join(item.replacement or "" for item in items),
-                before_hash=first.before_hash,
-                metadata={
-                    "repair_kind": "javascript_missing_export_contract_declaration",
-                    "symbols": [
-                        str(item.metadata.get("symbol") or "")
-                        for item in items
-                        if str(item.metadata.get("symbol") or "").strip()
-                    ],
-                    "diagnostic_ids": [
-                        str(item.metadata.get("diagnostic_id") or "")
-                        for item in items
-                        if str(item.metadata.get("diagnostic_id") or "").strip()
-                    ],
-                    "edit_file_preferred": True,
-                    "coalesced_append": True,
-                },
-            )
-        )
     return sorted(
-        passthrough,
+        operations,
         key=lambda item: (
             item.path,
             int(item.span_start if item.span_start is not None else -1),
@@ -1750,108 +1694,6 @@ def _javascript_contract_function_replacement(
     signature = _javascript_contract_replacement_signature(text[start : open_brace + 1], body)
     replacement = f"{signature}\n{body}\n}}"
     return start, close_brace + 1, replacement
-
-
-def _append_missing_export_contract_operation(
-    *,
-    path: str,
-    text: str,
-    symbol: str,
-    importer_text: str,
-    exporter_rel_path: str,
-    base_files: Mapping[str, str],
-    diagnostic: RepairDiagnostic,
-) -> RepairOperation | None:
-    declaration = _build_javascript_missing_export_declaration(
-        module_text=text,
-        symbol=symbol,
-        importer_text=importer_text,
-        exporter_rel_path=exporter_rel_path,
-        base_files=base_files,
-    )
-    if not declaration:
-        return None
-    insertion = f"\n\n{declaration.rstrip()}\n"
-    return RepairOperation(
-        kind="text_replace",
-        path=path,
-        span_start=len(text.rstrip()),
-        span_end=len(text),
-        expected=text[len(text.rstrip()) :],
-        replacement=insertion,
-        before_hash=sha256_text(text),
-        metadata={
-            "repair_kind": "javascript_missing_export_contract_declaration",
-            "symbol": symbol,
-            "diagnostic_id": diagnostic.diagnostic_id,
-            "edit_file_preferred": True,
-        },
-    )
-
-
-def _build_javascript_missing_export_declaration(
-    *,
-    module_text: str,
-    symbol: str,
-    importer_text: str,
-    exporter_rel_path: str,
-    base_files: Mapping[str, str],
-) -> str:
-    if _javascript_importer_constructs_symbol(importer_text, symbol):
-        return f"export class {symbol} {{\n  constructor(...args) {{\n    this.args = args;\n  }}\n}}"
-    constant = _build_javascript_contract_constant_declaration(
-        symbol=symbol,
-        importer_text=importer_text,
-        base_files=base_files,
-    )
-    if constant:
-        return constant
-    iterable = _build_javascript_contract_iterable_declaration(
-        module_text=module_text,
-        symbol=symbol,
-        importer_text=importer_text,
-    )
-    if iterable:
-        return iterable
-    body = _build_javascript_contract_function_body(
-        symbol=symbol,
-        importer_text=importer_text,
-        exporter_rel_path=exporter_rel_path,
-        base_files=base_files,
-    )
-    if "return undefined;" in body:
-        return ""
-    return f"export function {symbol}(...args) {{\n{body}\n}}"
-
-
-def _build_javascript_contract_constant_declaration(
-    *,
-    symbol: str,
-    importer_text: str,
-    base_files: Mapping[str, str],
-) -> str:
-    if not _javascript_symbol_contract_requires_string_value(importer_text, symbol):
-        return ""
-    literal = _javascript_contract_constant_literal(symbol, base_files, importer_text=importer_text)
-    return f"export const {symbol} = {json.dumps(literal, ensure_ascii=False)};"
-
-
-def _build_javascript_contract_iterable_declaration(
-    *,
-    module_text: str,
-    symbol: str,
-    importer_text: str,
-) -> str:
-    if not _javascript_symbol_contract_requires_iterable_value(importer_text, symbol):
-        return ""
-    owner = _javascript_class_with_method(module_text, symbol)
-    if owner:
-        return f"export const {symbol} = new {owner}().{symbol}();"
-    return f"export const {symbol} = [];"
-
-
-def _javascript_importer_constructs_symbol(importer_text: str, symbol: str) -> bool:
-    return bool(re.search(rf"\bnew\s+{re.escape(symbol)}\s*\(", str(importer_text or "")))
 
 
 def _javascript_function_bounds(module_text: str, symbol: str) -> tuple[int, int, int] | None:

@@ -96,7 +96,7 @@ def test_control_plane_ledger_projection_route_returns_pending_without_ledger(
     assert payload["status"] == "pending"
 
 
-def test_control_plane_ledger_projection_route_ignores_factory_compat_ledger_by_default(
+def test_control_plane_ledger_projection_route_ignores_factory_migration_ledger_by_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -114,7 +114,7 @@ def test_control_plane_ledger_projection_route_ignores_factory_compat_ledger_by_
     assert payload["available"] is False
     assert payload["ok"] is False
     assert payload["status"] == "pending"
-    assert payload["compat_ledgers_included"] is False
+    assert payload["migration_ledgers_included"] is False
     assert payload["projects"] == []
 
 

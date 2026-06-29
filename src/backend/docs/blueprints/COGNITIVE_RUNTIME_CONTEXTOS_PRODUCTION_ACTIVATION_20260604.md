@@ -281,9 +281,9 @@ Relevant production boundaries:
    `RuntimeProjectionPayload` now includes optional `projection_source` and
    `provenance`. Canonical, empty, partial, merged, legacy flat, and legacy
    nested projections are explicitly labeled. `toCanonicalProjection()` marks
-   legacy conversions as `transformed=true`, records the compatibility reason,
-   and lists the legacy fields that triggered the conversion. The same
-   provenance is mirrored in `snapshot_compat` for migration consumers.
+   migration conversions as `transformed=true`, records the migration reason,
+   and lists the migration fields that triggered the conversion. The same
+   provenance is mirrored in `snapshot_derived` for migration consumers.
 
 12. ContextGateway now separates control-plane from prompt-visible context.
 

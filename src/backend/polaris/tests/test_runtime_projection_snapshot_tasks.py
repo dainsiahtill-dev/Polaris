@@ -19,7 +19,7 @@ def test_snapshot_prefers_runtime_task_rows() -> None:
             "status": {
                 "tasks": {
                     "task_rows": [
-                        {"id": "local-1", "subject": "legacy local", "status": "RUNNING"},
+                        {"id": "local-1", "subject": "local runtime", "status": "RUNNING"},
                     ]
                 }
             },
@@ -94,7 +94,7 @@ def test_snapshot_projects_workflow_director_completion_over_stale_pm_state() ->
     assert snapshot["director"]["source"] == "workflow"
     assert snapshot["pm_state"]["last_director_status"] == "COMPLETED"
     assert snapshot["pm_state"]["completed_task_count"] == 2
-    assert snapshot["snapshot_compat"]["workflow_completed_tasks"] == 2
+    assert snapshot["snapshot_derived"]["workflow_completed_tasks"] == 2
 
 
 def test_snapshot_projects_director_result_when_workflow_projection_is_unavailable() -> None:
@@ -113,6 +113,7 @@ def test_snapshot_projects_director_result_when_workflow_projection_is_unavailab
         patch(
             "polaris.cells.runtime.projection.internal.runtime_projection_service.read_json",
             side_effect=[
+                {},
                 {},
                 {"completed_task_count": 0, "last_director_status": "IDLE"},
                 {"status": "success", "successes": 3},

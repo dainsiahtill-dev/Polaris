@@ -26,8 +26,8 @@ from polaris.cells.director.runtime.internal.repair_kernel.environment import (
     environment_prep_plans_from_requirements,
     environment_refresh_requirements_from_receipts,
 )
-from polaris.cells.director.runtime.internal.repair_kernel.legacy_bridge import (
-    build_legacy_repair_kernel_summary as _build_legacy_repair_kernel_summary,
+from polaris.cells.director.runtime.internal.repair_kernel.receipt_projection import (
+    build_repair_kernel_result_summary as _build_repair_kernel_result_summary,
     summarize_repair_revalidation_coverage,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.receipts import attach_revalidation_evidence
@@ -54,7 +54,7 @@ from polaris.cells.director.runtime.internal.repair_kernel.schedule_catalog impo
     run_post_execution_repair_schedule_callbacks,
 )
 from polaris.cells.director.runtime.internal.repair_kernel.scheduler import RepairVerifierSnapshot
-from polaris.cells.director.runtime.internal.repair_kernel.shadow import compare_legacy_and_kernel_repairs
+from polaris.cells.director.runtime.internal.repair_kernel.shadow import compare_baseline_and_kernel_repairs
 from polaris.cells.director.runtime.internal.repair_kernel.strategy_catalog import (
     deterministic_repair_strategy_catalog as _deterministic_repair_strategy_catalog,
 )
@@ -268,12 +268,12 @@ def query_director_repair_strategy_catalog(
             return "executable_runtime"
         if source_tool in metadata_registered_source_tools:
             return "metadata_rule_registered"
-        return "legacy_strategy_host"
+        return "adapter_strategy_host"
 
     def _execution_owner(source_tool: str) -> str:
         if source_tool in runtime_source_tools or source_tool in metadata_registered_source_tools:
             return "director.runtime"
-        return "roles.adapters.legacy_strategy_host"
+        return "roles.adapters.strategy_host"
 
     all_items = [
         {
@@ -281,16 +281,16 @@ def query_director_repair_strategy_catalog(
             "implementation_status": _implementation_status(str(item.get("source_tool") or "")),
             "execution_owner": _execution_owner(str(item.get("source_tool") or "")),
             "bench_driven_migration_required": _implementation_status(str(item.get("source_tool") or ""))
-            == "legacy_strategy_host",
+            == "adapter_strategy_host",
         }
         for item in raw_items
     ]
     visible_items = all_items[: request.max_items] if request.include_items else []
     runtime_bindings = [dict(item) for item in runtime_repair_bindings()]
-    legacy_strategy_host_source_tools = [
+    adapter_strategy_host_source_tools = [
         str(item.get("source_tool") or "")
         for item in all_items
-        if item["implementation_status"] == "legacy_strategy_host"
+        if item["implementation_status"] == "adapter_strategy_host"
     ]
     summary: dict[str, Any] = {
         "total": len(all_items),
@@ -304,11 +304,11 @@ def query_director_repair_strategy_catalog(
         "executable_runtime_source_tools": sorted(runtime_source_tools),
         "executable_runtime_bindings": runtime_bindings,
         "executable_runtime_by_language": _count_by_key(runtime_bindings, "language"),
-        "legacy_strategy_host_count": len(legacy_strategy_host_source_tools),
-        "legacy_strategy_host_source_tools": legacy_strategy_host_source_tools,
-        "legacy_strategy_host_owner": "roles.adapters.internal.director.deterministic_repairs",
+        "adapter_strategy_host_count": len(adapter_strategy_host_source_tools),
+        "adapter_strategy_host_source_tools": adapter_strategy_host_source_tools,
+        "adapter_strategy_host_owner": "roles.adapters.internal.director.deterministic_repairs",
         "migration_target_owner": "director.runtime.repair_kernel",
-        "bench_driven_migration_required": bool(legacy_strategy_host_source_tools),
+        "bench_driven_migration_required": bool(adapter_strategy_host_source_tools),
     }
     return DirectorRepairStrategyCatalogResultV1(
         schema_version="director.deterministic_repair_strategy_catalog.v1",
@@ -385,7 +385,7 @@ def project_director_repair_revalidation_evidence(
 ) -> DirectorRepairRevalidationProjectionResultV1:
     """Project post-check evidence onto a repair-kernel summary.
 
-    This is a projection helper for migrated legacy paths: the verifier has
+    This is a projection helper for migrated deterministic paths: the verifier has
     already run, and this function binds its residual diagnostics back to each
     authoritative receipt without performing writes or registering rules.
     """
@@ -791,10 +791,10 @@ def project_director_repair_metrics(command: ProjectDirectorRepairMetricsV1) -> 
 def compare_director_repair_shadow_run(
     command: CompareDirectorRepairShadowRunV1,
 ) -> DirectorRepairShadowComparisonResultV1:
-    """Compare legacy deterministic repairs against new-kernel shadow receipts without writes."""
+    """Compare baseline deterministic repair effects against kernel receipts without writes."""
 
-    comparison = compare_legacy_and_kernel_repairs(
-        legacy_tool_results=command.legacy_tool_results,
+    comparison = compare_baseline_and_kernel_repairs(
+        baseline_tool_results=command.baseline_tool_results,
         kernel_receipts=tuple(_public_receipt_to_internal(receipt) for receipt in command.kernel_receipts),
     )
     payload = comparison.to_dict()
@@ -817,9 +817,9 @@ def compare_director_repair_shadow_run(
         source="director.runtime.repair_kernel.shadow",
         access="read_only",
         matched=comparison.matched,
-        legacy_source_tools=tuple(payload["legacy_source_tools"]),
+        baseline_source_tools=tuple(payload["baseline_source_tools"]),
         kernel_source_tools=tuple(payload["kernel_source_tools"]),
-        legacy_paths=tuple(payload["legacy_paths"]),
+        baseline_paths=tuple(payload["baseline_paths"]),
         kernel_paths=tuple(payload["kernel_paths"]),
         missing_paths_in_kernel=tuple(payload["missing_paths_in_kernel"]),
         extra_paths_in_kernel=tuple(payload["extra_paths_in_kernel"]),
@@ -886,12 +886,12 @@ def _shadow_comparison_is_successful(comparison: DirectorRepairShadowComparisonR
 
 def _shadow_comparison_scope_signature(comparison: DirectorRepairShadowComparisonResultV1) -> tuple[str, ...]:
     return (
-        "legacy_paths",
-        *comparison.legacy_paths,
+        "baseline_paths",
+        *comparison.baseline_paths,
         "kernel_paths",
         *comparison.kernel_paths,
-        "legacy_source_tools",
-        *comparison.legacy_source_tools,
+        "baseline_source_tools",
+        *comparison.baseline_source_tools,
         "kernel_source_tools",
         *comparison.kernel_source_tools,
     )
@@ -904,13 +904,13 @@ def _shadow_cutover_readiness(command: CompareDirectorRepairShadowRunV1, *, matc
         blockers.append("independent_shadow_required")
     if not matched:
         blockers.append("scope_mismatch")
-    legacy_hashes = _legacy_shadow_hashes(command.legacy_tool_results)
+    baseline_hashes = _baseline_shadow_hashes(command.baseline_tool_results)
     kernel_hashes = _kernel_receipt_hashes(command.kernel_receipts)
-    if not legacy_hashes or not kernel_hashes:
+    if not baseline_hashes or not kernel_hashes:
         blockers.append("missing_before_after_hash_evidence")
         hashes_matched = False
     else:
-        hashes_matched = legacy_hashes == kernel_hashes
+        hashes_matched = baseline_hashes == kernel_hashes
         if not hashes_matched:
             blockers.append("before_after_hash_mismatch")
     revalidation_complete = bool(command.kernel_receipts) and all(
@@ -945,7 +945,7 @@ def _shadow_cutover_readiness(command: CompareDirectorRepairShadowRunV1, *, matc
     }
 
 
-def _legacy_shadow_hashes(tool_results: Sequence[Mapping[str, Any]]) -> dict[str, tuple[str, str]]:
+def _baseline_shadow_hashes(tool_results: Sequence[Mapping[str, Any]]) -> dict[str, tuple[str, str]]:
     hashes: dict[str, tuple[str, str]] = {}
     for item in tool_results or ():
         result = item.get("result")
@@ -970,6 +970,13 @@ def _kernel_receipt_hashes(receipts: Sequence[RepairReceiptV1]) -> dict[str, tup
             if normalized_path and before_hash and after_hash:
                 hashes[normalized_path] = (before_hash, after_hash)
     return hashes
+
+
+def normalize_director_repair_diagnostics(artifact_quality_errors: Sequence[str]) -> tuple[RepairDiagnosticV1, ...]:
+    """Normalize raw artifact-quality text into public repair diagnostics."""
+
+    diagnostics = normalize_artifact_quality_errors([str(item) for item in artifact_quality_errors or ()])
+    return tuple(_to_public_repair_diagnostic(diagnostic) for diagnostic in diagnostics)
 
 
 def query_director_repair_coverage(query: QueryDirectorRepairCoverageV1) -> DirectorRepairCoverageReportV1:
@@ -1201,7 +1208,7 @@ def _project_director_repair_diagnostic_coverage(
         executable_runtime_plan_matched=item.executable_runtime_plan_matched,
         metadata_only_match=item.metadata_only_match,
         matched_rule_ids=tuple(rule.rule_id for rule in item.matched_rules),
-        matched_source_tools=tuple(rule.source_tool for rule in item.matched_rules),
+        matched_source_tools=tuple(str(value) for value in coverage_payload.get("matched_source_tools") or ()),
         runtime_plan_rule_ids=tuple(rule.rule_id for rule in item.matched_rules if rule.runtime_plan_available),
         archetypes=tuple(sorted({rule.archetype.value for rule in item.matched_rules})),
         phases=tuple(sorted({rule.phase for rule in item.matched_rules})),
@@ -1360,7 +1367,8 @@ def query_director_repair_post_execution_schedule(
             "source_tools": [step.source_tool for step in ordered_steps],
             "target_scheduler": "director.runtime.repair_kernel.scheduler",
             "runner_binding_owner": "roles.adapters",
-            "legacy_callback_bridge": True,
+            "adapter_projection_bridge": True,
+            "adapter_callback_bridge": False,
             "runtime_schedule_authoritative": True,
             "default_max_rounds": DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS,
             "convergence_loop_owned_by": "director.runtime.repair_kernel.scheduler",
@@ -1438,7 +1446,8 @@ def query_director_repair_materialization_quality_schedule(
             "source_tools": [step.source_tool for step in ordered_steps],
             "target_scheduler": "director.runtime.repair_kernel.scheduler",
             "runner_binding_owner": "roles.adapters",
-            "legacy_callback_bridge": True,
+            "adapter_projection_bridge": True,
+            "adapter_callback_bridge": False,
             "runtime_schedule_authoritative": True,
             "default_max_rounds": DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS,
             "convergence_loop_owned_by": "director.runtime.repair_kernel.scheduler",
@@ -1522,7 +1531,7 @@ def build_director_repair_kernel_summary(
     artifact_quality_errors: list[str] | None = None,
     mode: str = "commit",
 ) -> dict[str, Any]:
-    """Build a public repair-kernel summary for legacy Director repair flows."""
+    """Build a public repair-kernel summary for projected Director repair effects."""
 
     result = project_director_repair_kernel_summary(
         ProjectDirectorRepairKernelSummaryV1(
@@ -1538,9 +1547,9 @@ def build_director_repair_kernel_summary(
 def project_director_repair_kernel_summary(
     command: ProjectDirectorRepairKernelSummaryV1,
 ) -> DirectorRepairKernelSummaryProjectionResultV1:
-    """Project legacy write-tool results into the runtime repair kernel receipt shape."""
+    """Project existing write-tool results into the runtime repair kernel receipt shape."""
 
-    summary = _build_legacy_repair_kernel_summary(
+    summary = _build_repair_kernel_result_summary(
         stage=command.stage,
         tool_results=[dict(item) for item in command.tool_results],
         artifact_quality_errors=list(command.artifact_quality_errors),
@@ -1548,7 +1557,7 @@ def project_director_repair_kernel_summary(
     )
     return DirectorRepairKernelSummaryProjectionResultV1(
         schema_version="director.repair_kernel_summary_projection.v1",
-        source="director.runtime.repair_kernel.legacy_bridge",
+        source="director.runtime.repair_kernel.receipt_projection",
         access="read_only",
         summary=summary,
     )

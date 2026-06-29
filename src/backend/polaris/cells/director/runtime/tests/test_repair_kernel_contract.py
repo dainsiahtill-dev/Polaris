@@ -478,6 +478,40 @@ def test_javascript_module_error_with_unquoted_export_name_stays_javascript() ->
     assert no_stack_probe.status == "covered_plannable"
 
 
+def test_javascript_missing_export_without_declaration_is_covered_unplannable() -> None:
+    diagnostics = (
+        "file:///tmp/project/src/index.js:1\n"
+        "SyntaxError: The requested module './engine/weather.js' does not provide an export named WeatherBalloon",
+    )
+    base_files = {
+        "src/index.js": "import { WeatherBalloon } from './engine/weather.js';\nnew WeatherBalloon().report();\n",
+        "src/engine/weather.js": "export function forecast() {\n  return 'cloud';\n}\n",
+    }
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool="deterministic_javascript_missing_export_repair",
+            base_files=base_files,
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            source_tools=("deterministic_javascript_missing_export_repair",),
+        )
+    )
+
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["composition_summary"]["patch_count"] == 0
+    assert probe.status == "coverage_matched_but_unplannable"
+    assert probe.plannable_source_tools == ()
+    assert probe.covered_unplannable_source_tools == ("deterministic_javascript_missing_export_repair",)
+
+
 def test_repair_rule_registry_rejects_duplicate_rule_ids_and_unknown_source_tool() -> None:
     rule = RepairRuleDefinition(
         rule_id="typescript.object_literal_missing_comma",
@@ -9368,7 +9402,7 @@ def test_public_repair_advisory_validation_rejects_authoritative_fields() -> Non
 def test_public_shadow_comparison_is_read_only_and_reports_scope_match() -> None:
     result = compare_director_repair_shadow_run(
         CompareDirectorRepairShadowRunV1(
-            legacy_tool_results=(
+            baseline_tool_results=(
                 {
                     "tool_name": "write_file",
                     "success": True,
@@ -9420,7 +9454,7 @@ def test_public_shadow_comparison_is_read_only_and_reports_scope_match() -> None
 def test_public_shadow_comparison_requires_hash_and_revalidation_for_cutover() -> None:
     result = compare_director_repair_shadow_run(
         CompareDirectorRepairShadowRunV1(
-            legacy_tool_results=(
+            baseline_tool_results=(
                 {
                     "tool_name": "write_file",
                     "success": True,
@@ -9473,9 +9507,9 @@ def _ready_shadow_comparison(path: str = "src/app.ts") -> DirectorRepairShadowCo
         source="director.runtime.repair_kernel.shadow",
         access="read_only",
         matched=True,
-        legacy_source_tools=("deterministic_typescript_missing_export_repair",),
+        baseline_source_tools=("deterministic_typescript_missing_export_repair",),
         kernel_source_tools=("deterministic_typescript_missing_export_repair",),
-        legacy_paths=(path,),
+        baseline_paths=(path,),
         kernel_paths=(path,),
         comparison_mode="independent_shadow_run",
         independent_shadow_satisfied=True,
@@ -9511,11 +9545,11 @@ def test_public_cutover_readiness_blocks_self_check_shortfall_and_scope_drift() 
         source="director.runtime.repair_kernel.shadow",
         access="read_only",
         matched=True,
-        legacy_source_tools=("deterministic_typescript_missing_export_repair",),
+        baseline_source_tools=("deterministic_typescript_missing_export_repair",),
         kernel_source_tools=("deterministic_typescript_missing_export_repair",),
-        legacy_paths=("src/app.ts",),
+        baseline_paths=("src/app.ts",),
         kernel_paths=("src/app.ts",),
-        comparison_mode="legacy_projection_self_check",
+        comparison_mode="receipt_projection_self_check",
         independent_shadow_satisfied=False,
         cutover_ready=False,
         cutover_blockers=("independent_shadow_required",),
@@ -9546,8 +9580,8 @@ def test_public_cutover_readiness_blocks_self_check_shortfall_and_scope_drift() 
 def test_public_shadow_comparison_self_check_cannot_cutover_even_when_scope_matches() -> None:
     result = compare_director_repair_shadow_run(
         CompareDirectorRepairShadowRunV1(
-            comparison_mode="legacy_projection_self_check",
-            legacy_tool_results=(
+            comparison_mode="receipt_projection_self_check",
+            baseline_tool_results=(
                 {
                     "tool_name": "write_file",
                     "success": True,
@@ -9583,13 +9617,13 @@ def test_public_shadow_comparison_self_check_cannot_cutover_even_when_scope_matc
     payload = result.to_dict()
 
     assert payload["matched"] is True
-    assert payload["comparison_mode"] == "legacy_projection_self_check"
+    assert payload["comparison_mode"] == "receipt_projection_self_check"
     assert payload["independent_shadow_required"] is True
     assert payload["independent_shadow_satisfied"] is False
     assert payload["cutover_ready"] is False
     assert payload["cutover_blockers"] == ["independent_shadow_required"]
     readiness = payload["metadata"]["cutover_readiness"]
-    assert readiness["comparison_mode"] == "legacy_projection_self_check"
+    assert readiness["comparison_mode"] == "receipt_projection_self_check"
     assert readiness["hashes_matched"] is True
     assert readiness["revalidation_evidence_complete"] is True
     assert readiness["revalidation_evidence_passed"] is True
@@ -9600,7 +9634,7 @@ def test_public_shadow_comparison_self_check_cannot_cutover_even_when_scope_matc
 def test_public_shadow_comparison_blocks_non_authoritative_shadow_receipts() -> None:
     result = compare_director_repair_shadow_run(
         CompareDirectorRepairShadowRunV1(
-            legacy_tool_results=(
+            baseline_tool_results=(
                 {
                     "tool_name": "write_file",
                     "success": True,
@@ -9647,7 +9681,7 @@ def test_public_shadow_comparison_blocks_non_authoritative_shadow_receipts() -> 
 def test_public_shadow_comparison_blocks_failed_revalidation_evidence_for_cutover() -> None:
     result = compare_director_repair_shadow_run(
         CompareDirectorRepairShadowRunV1(
-            legacy_tool_results=(
+            baseline_tool_results=(
                 {
                     "tool_name": "write_file",
                     "success": True,
@@ -9725,7 +9759,7 @@ def test_public_kernel_summary_projection_is_typed_and_read_only() -> None:
 
     assert isinstance(result, DirectorRepairKernelSummaryProjectionResultV1)
     assert payload["schema_version"] == "director.repair_kernel_summary_projection.v1"
-    assert payload["source"] == "director.runtime.repair_kernel.legacy_bridge"
+    assert payload["source"] == "director.runtime.repair_kernel.receipt_projection"
     assert payload["access"] == "read_only"
     assert payload["execution_boundary"] == "repair_kernel_summary_projection_no_writes_no_registration"
     assert payload["writes_allowed"] is False
@@ -9748,8 +9782,8 @@ def test_public_kernel_summary_projection_is_typed_and_read_only() -> None:
     assert summary["receipts"][0]["metadata"]["requires_revalidation"] is True
     assert summary["dark_launch_comparison"]["metadata"]["read_only"] is True
     assert summary["dark_launch_comparison"]["metadata"]["writes_performed"] is False
-    assert summary["dark_launch_comparison"]["metadata"]["comparison_mode"] == "legacy_projection_self_check"
-    assert summary["dark_launch_comparison"]["comparison_mode"] == "legacy_projection_self_check"
+    assert summary["dark_launch_comparison"]["metadata"]["comparison_mode"] == "receipt_projection_self_check"
+    assert summary["dark_launch_comparison"]["comparison_mode"] == "receipt_projection_self_check"
     assert summary["dark_launch_comparison"]["cutover_ready"] is False
     assert summary["dark_launch_comparison"]["cutover_blockers"] == ["independent_shadow_required"]
     assert summary["dark_launch_comparison"]["independent_shadow_required"] is True
@@ -9757,7 +9791,7 @@ def test_public_kernel_summary_projection_is_typed_and_read_only() -> None:
     assert summary["coverage_report"]["total_diagnostics"] == 1
 
 
-def test_legacy_summary_without_receipts_is_not_authoritative() -> None:
+def test_receipt_summary_without_receipts_is_not_authoritative() -> None:
     summary = build_director_repair_kernel_summary(stage="quality", tool_results=[], mode="commit")
 
     assert summary["receipt_count"] == 0
@@ -9766,12 +9800,12 @@ def test_legacy_summary_without_receipts_is_not_authoritative() -> None:
     assert summary["dark_launch_comparison"]["matched"] is True
     assert summary["dark_launch_comparison"]["metadata"]["read_only"] is True
     assert summary["dark_launch_comparison"]["metadata"]["writes_performed"] is False
-    assert summary["dark_launch_comparison"]["metadata"]["comparison_mode"] == "legacy_projection_self_check"
+    assert summary["dark_launch_comparison"]["metadata"]["comparison_mode"] == "receipt_projection_self_check"
     assert summary["dark_launch_comparison"]["cutover_ready"] is False
     assert summary["dark_launch_comparison"]["cutover_blockers"] == ["independent_shadow_required"]
 
 
-def test_legacy_summary_includes_uncovered_diagnostic_report() -> None:
+def test_receipt_summary_includes_uncovered_diagnostic_report() -> None:
     summary = build_director_repair_kernel_summary(
         stage="quality",
         tool_results=[],
@@ -9789,7 +9823,7 @@ def test_legacy_summary_includes_uncovered_diagnostic_report() -> None:
     assert coverage_report["coverage_gaps"][0]["audit_reason"] == "known_rule_matched=false"
 
 
-def test_legacy_summary_preserves_embedded_runtime_kernel_receipt_identity() -> None:
+def test_receipt_summary_preserves_embedded_runtime_kernel_receipt_identity() -> None:
     summary = build_director_repair_kernel_summary(
         stage="quality",
         mode="commit",
@@ -9841,7 +9875,7 @@ def test_legacy_summary_preserves_embedded_runtime_kernel_receipt_identity() -> 
     assert summary["dark_launch_comparison"]["kernel_source_tools"] == ["deterministic_go_bare_import_string_repair"]
 
 
-def test_legacy_summary_preserves_revalidation_evidence_counts() -> None:
+def test_receipt_summary_preserves_revalidation_evidence_counts() -> None:
     summary = build_director_repair_kernel_summary(
         stage="post_execution_language_repairs",
         mode="commit",
@@ -9894,15 +9928,15 @@ def test_legacy_summary_preserves_revalidation_evidence_counts() -> None:
     assert receipt["revalidation_evidence"]["metadata"]["max_rounds"] == 3
     shadow = summary["dark_launch_comparison"]
     assert shadow["matched"] is True
-    assert shadow["legacy_source_tools"] == ["deterministic_rust_dependency_repair"]
+    assert shadow["baseline_source_tools"] == ["deterministic_rust_dependency_repair"]
     assert shadow["kernel_source_tools"] == ["deterministic_rust_dependency_repair"]
-    assert shadow["legacy_paths"] == ["Cargo.toml"]
+    assert shadow["baseline_paths"] == ["Cargo.toml"]
     assert shadow["kernel_paths"] == ["Cargo.toml"]
     assert shadow["metadata"]["read_only"] is True
     assert shadow["metadata"]["writes_performed"] is False
 
 
-def test_legacy_summary_with_failed_revalidation_is_not_authoritative() -> None:
+def test_receipt_summary_with_failed_revalidation_is_not_authoritative() -> None:
     summary = build_director_repair_kernel_summary(
         stage="post_execution_language_repairs",
         mode="commit",
@@ -10758,11 +10792,12 @@ def test_public_strategy_catalog_is_read_only_and_non_agi_authoritative() -> Non
     for binding in runtime_repair_bindings():
         language = str(binding["language"])
         expected_runtime_by_language[language] = expected_runtime_by_language.get(language, 0) + 1
-    legacy_source_tools = payload["summary"]["legacy_strategy_host_source_tools"]
+    baseline_source_tools = payload["summary"]["adapter_strategy_host_source_tools"]
     summary_failure_message = (
-        "expected public strategy catalog ledger to have no legacy_strategy_host source_tools; "
+        "expected public strategy catalog ledger to have no adapter_strategy_host source_tools; "
         f"observed implementation_status_counts={payload['summary']['implementation_status_counts']}; "
-        "legacy_strategy_host_source_tools:\n- " + "\n- ".join(str(source_tool) for source_tool in legacy_source_tools)
+        "adapter_strategy_host_source_tools:\n- "
+        + "\n- ".join(str(source_tool) for source_tool in baseline_source_tools)
     )
     assert payload["summary"]["executable_runtime_binding_count"] == len(expected_runtime_source_tools)
     assert payload["summary"]["executable_runtime_source_tools"] == expected_runtime_source_tools
@@ -10772,21 +10807,21 @@ def test_public_strategy_catalog_is_read_only_and_non_agi_authoritative() -> Non
     executable_status_count = payload["summary"]["implementation_status_counts"].get("executable_runtime", 0)
     metadata_status_count = payload["summary"]["implementation_status_counts"].get("metadata_rule_registered", 0)
     assert executable_status_count <= payload["summary"]["executable_runtime_binding_count"]
-    assert payload["summary"]["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, (
+    assert payload["summary"]["implementation_status_counts"].get("adapter_strategy_host", 0) == 0, (
         summary_failure_message
     )
-    assert payload["summary"]["legacy_strategy_host_count"] == 0, summary_failure_message
-    assert legacy_source_tools == [], summary_failure_message
-    assert payload["summary"]["legacy_strategy_host_count"] == (
+    assert payload["summary"]["adapter_strategy_host_count"] == 0, summary_failure_message
+    assert baseline_source_tools == [], summary_failure_message
+    assert payload["summary"]["adapter_strategy_host_count"] == (
         payload["summary"]["total"] - executable_status_count - metadata_status_count
     )
     assert payload["summary"]["bench_driven_migration_required"] is False, summary_failure_message
-    assert payload["summary"]["legacy_strategy_host_owner"] == (
+    assert payload["summary"]["adapter_strategy_host_owner"] == (
         "roles.adapters.internal.director.deterministic_repairs"
     )
     assert payload["summary"]["migration_target_owner"] == "director.runtime.repair_kernel"
-    assert "deterministic_typescript_missing_export_repair" not in legacy_source_tools
-    assert "deterministic_typescript_return_object_semicolon_repair" not in legacy_source_tools
+    assert "deterministic_typescript_missing_export_repair" not in baseline_source_tools
+    assert "deterministic_typescript_return_object_semicolon_repair" not in baseline_source_tools
     assert payload["summary"]["executable_runtime_bindings"][0] == {
         "source_tool": "deterministic_cpp_include_path_repair",
         "language": "cpp",
@@ -10803,38 +10838,38 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
     ).to_dict()
     catalog_summary = catalog_payload["summary"]
     slot_summary = slots_payload["summary"]
-    legacy_source_tools = [str(source_tool) for source_tool in catalog_summary["legacy_strategy_host_source_tools"]]
+    baseline_source_tools = [str(source_tool) for source_tool in catalog_summary["adapter_strategy_host_source_tools"]]
     legacy_typescript_source_tools = [
         source_tool
-        for source_tool in legacy_source_tools
+        for source_tool in baseline_source_tools
         if source_tool.startswith(("deterministic_typescript", "deterministic_html_typescript"))
         or source_tool.startswith("deterministic_typeorm")
         or source_tool == "deterministic_javascript_typescript_annotation_repair"
     ]
     catalog_failure_message = (
         "expected public strategy catalog ledger total=108 executable_runtime=107 "
-        "metadata_rule_registered=1 legacy_strategy_host=0; "
+        "metadata_rule_registered=1 adapter_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
-        "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
+        "adapter_strategy_host_source_tools:\n- " + "\n- ".join(baseline_source_tools)
     )
     legacy_typescript_failure_message = (
-        "TypeScript migration source_tools must not be in legacy_strategy_host_source_tools:\n- "
+        "TypeScript migration source_tools must not be in adapter_strategy_host_source_tools:\n- "
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
     assert catalog_summary["total"] == 108
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
-    assert legacy_source_tools == [], catalog_failure_message
+    assert baseline_source_tools == [], catalog_failure_message
     assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 107, catalog_failure_message
     assert catalog_summary["implementation_status_counts"].get("metadata_rule_registered", 0) == 1, (
         catalog_failure_message
     )
-    assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("adapter_strategy_host", 0) == 0, catalog_failure_message
     assert catalog_summary["executable_runtime_binding_count"] == 107, catalog_failure_message
-    assert catalog_summary["legacy_strategy_host_count"] == 0, catalog_failure_message
+    assert catalog_summary["adapter_strategy_host_count"] == 0, catalog_failure_message
     assert len(catalog_summary["executable_runtime_source_tools"]) == 107, catalog_failure_message
     assert set(catalog_summary["implementation_status_counts"]).issubset(
-        {"executable_runtime", "metadata_rule_registered", "legacy_strategy_host"}
+        {"executable_runtime", "metadata_rule_registered", "adapter_strategy_host"}
     )
     assert "reserved_only" not in catalog_summary["implementation_status_counts"]
 
@@ -10845,7 +10880,7 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
     }
     assert slot_summary["executable_runtime_language_count"] == 8
     assert slot_summary["reserved_only_language_count"] == 46
-    assert "legacy_strategy_host" not in slot_summary["implementation_status_counts"]
+    assert "adapter_strategy_host" not in slot_summary["implementation_status_counts"]
     assert set(slot_summary["executable_runtime_languages"]) == {
         "cpp",
         "go",

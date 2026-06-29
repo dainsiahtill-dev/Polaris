@@ -7,18 +7,6 @@
   "capabilities": [
     {
       "type": "function",
-      "name": "build_memory_payload",
-      "description": "Build memory payload from canonical artifact store implementation.",
-      "defined_in": "polaris/cells/runtime/projection/internal/artifacts.py"
-    },
-    {
-      "type": "function",
-      "name": "build_success_stats_payload",
-      "description": "Build success statistics payload from canonical artifact store implementation.",
-      "defined_in": "polaris/cells/runtime/projection/internal/artifacts.py"
-    },
-    {
-      "type": "function",
       "name": "_read_director_service_status_sync",
       "description": "Read DirectorService status in sync context.",
       "defined_in": "polaris/cells/runtime/projection/internal/director_runtime_status.py"
@@ -610,13 +598,13 @@
     {
       "type": "function",
       "name": "_get_cached_projection",
-      "description": "Get cached projection if still valid (向后兼容包装).",
+      "description": "Get cached projection if still valid (既有调用入口包装).",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
       "type": "function",
       "name": "_set_cached_projection",
-      "description": "Cache projection with timestamp (向后兼容包装).",
+      "description": "Cache projection with timestamp (既有调用入口包装).",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
@@ -640,7 +628,7 @@
     {
       "type": "function",
       "name": "build_snapshot_payload_from_projection",
-      "description": "从 projection 生成 /state/snapshot 兼容载荷",
+      "description": "从 projection 生成 /state/snapshot 标准载荷",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },
     {
@@ -651,7 +639,7 @@
     },
     {
       "type": "function",
-      "name": "_derive_compat_fields",
+      "name": "_derive_projection_fields",
       "description": "Derive snapshot metadata fields from the current projection.",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },

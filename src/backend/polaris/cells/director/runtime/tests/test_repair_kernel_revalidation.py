@@ -6,8 +6,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.director.runtime.internal.repair_kernel.legacy_bridge import (
-    build_legacy_repair_kernel_summary,
+from polaris.cells.director.runtime.internal.repair_kernel.receipt_projection import (
+    build_repair_kernel_result_summary,
     summarize_repair_revalidation_coverage,
 )
 from polaris.cells.director.runtime.public.contracts import (
@@ -328,8 +328,8 @@ def test_run_director_repair_revalidation_hash_material_differs_for_success_and_
     assert _assert_receipt_evidence_material(failure_receipt)["exit_code"] == 1
 
 
-def test_legacy_revalidation_zero_exit_with_residual_ids_counts_failed() -> None:
-    summary = build_legacy_repair_kernel_summary(
+def test_receipt_revalidation_zero_exit_with_residual_ids_counts_failed() -> None:
+    summary = build_repair_kernel_result_summary(
         stage="materialization_quality",
         tool_results=[
             {

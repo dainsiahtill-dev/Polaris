@@ -11,11 +11,11 @@ from .contracts import RepairReceipt
 
 @dataclass(frozen=True)
 class RepairShadowComparison:
-    """Comparison between legacy repair effects and new-kernel shadow receipts."""
+    """Comparison between baseline repair effects and kernel receipts."""
 
-    legacy_source_tools: tuple[str, ...]
+    baseline_source_tools: tuple[str, ...]
     kernel_source_tools: tuple[str, ...]
-    legacy_paths: tuple[str, ...]
+    baseline_paths: tuple[str, ...]
     kernel_paths: tuple[str, ...]
     missing_paths_in_kernel: tuple[str, ...] = ()
     extra_paths_in_kernel: tuple[str, ...] = ()
@@ -35,9 +35,9 @@ class RepairShadowComparison:
     def to_dict(self) -> dict[str, Any]:
         return {
             "matched": self.matched,
-            "legacy_source_tools": list(self.legacy_source_tools),
+            "baseline_source_tools": list(self.baseline_source_tools),
             "kernel_source_tools": list(self.kernel_source_tools),
-            "legacy_paths": list(self.legacy_paths),
+            "baseline_paths": list(self.baseline_paths),
             "kernel_paths": list(self.kernel_paths),
             "missing_paths_in_kernel": list(self.missing_paths_in_kernel),
             "extra_paths_in_kernel": list(self.extra_paths_in_kernel),
@@ -47,31 +47,31 @@ class RepairShadowComparison:
         }
 
 
-def compare_legacy_and_kernel_repairs(
+def compare_baseline_and_kernel_repairs(
     *,
-    legacy_tool_results: Sequence[Mapping[str, Any]],
+    baseline_tool_results: Sequence[Mapping[str, Any]],
     kernel_receipts: Sequence[RepairReceipt],
 ) -> RepairShadowComparison:
-    """Compare legacy repair write scope against kernel shadow/commit receipts."""
+    """Compare baseline repair write scope against kernel shadow/commit receipts."""
 
-    legacy_paths, legacy_source_tools = _extract_legacy_scope(legacy_tool_results)
+    baseline_paths, baseline_source_tools = _extract_baseline_scope(baseline_tool_results)
     kernel_paths = tuple(sorted({path for receipt in kernel_receipts for path in receipt.files_changed if path}))
     kernel_source_tools = tuple(sorted({receipt.source_tool for receipt in kernel_receipts if receipt.source_tool}))
-    legacy_path_set = set(legacy_paths)
+    baseline_path_set = set(baseline_paths)
     kernel_path_set = set(kernel_paths)
-    legacy_tool_set = set(legacy_source_tools)
+    baseline_tool_set = set(baseline_source_tools)
     kernel_tool_set = set(kernel_source_tools)
     return RepairShadowComparison(
-        legacy_source_tools=legacy_source_tools,
+        baseline_source_tools=baseline_source_tools,
         kernel_source_tools=kernel_source_tools,
-        legacy_paths=legacy_paths,
+        baseline_paths=baseline_paths,
         kernel_paths=kernel_paths,
-        missing_paths_in_kernel=tuple(sorted(legacy_path_set - kernel_path_set)),
-        extra_paths_in_kernel=tuple(sorted(kernel_path_set - legacy_path_set)),
-        missing_source_tools_in_kernel=tuple(sorted(legacy_tool_set - kernel_tool_set)),
-        extra_source_tools_in_kernel=tuple(sorted(kernel_tool_set - legacy_tool_set)),
+        missing_paths_in_kernel=tuple(sorted(baseline_path_set - kernel_path_set)),
+        extra_paths_in_kernel=tuple(sorted(kernel_path_set - baseline_path_set)),
+        missing_source_tools_in_kernel=tuple(sorted(baseline_tool_set - kernel_tool_set)),
+        extra_source_tools_in_kernel=tuple(sorted(kernel_tool_set - baseline_tool_set)),
         metadata={
-            "legacy_receipt_count": len(tuple(legacy_tool_results or ())),
+            "baseline_tool_result_count": len(tuple(baseline_tool_results or ())),
             "kernel_receipt_count": len(tuple(kernel_receipts or ())),
             "read_only": True,
             "writes_performed": False,
@@ -79,7 +79,7 @@ def compare_legacy_and_kernel_repairs(
     )
 
 
-def _extract_legacy_scope(tool_results: Sequence[Mapping[str, Any]]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _extract_baseline_scope(tool_results: Sequence[Mapping[str, Any]]) -> tuple[tuple[str, ...], tuple[str, ...]]:
     paths: set[str] = set()
     source_tools: set[str] = set()
     for item in tool_results or ():
@@ -96,5 +96,5 @@ def _extract_legacy_scope(tool_results: Sequence[Mapping[str, Any]]) -> tuple[tu
 
 __all__ = [
     "RepairShadowComparison",
-    "compare_legacy_and_kernel_repairs",
+    "compare_baseline_and_kernel_repairs",
 ]

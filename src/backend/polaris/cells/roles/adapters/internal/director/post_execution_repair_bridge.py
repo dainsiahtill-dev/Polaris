@@ -2479,7 +2479,7 @@ def _build_scheduler_bridge_summary(
         "schedule_source": "director.runtime.public.query_director_repair_post_execution_schedule",
         "runner_binding_owner": "roles.adapters",
         "adapter_projection_bridge": True,
-        "legacy_callback_bridge": False,
+        "adapter_callback_bridge": False,
         "step_order": [step.to_dict() for step in ordered_steps],
         "active_step_ids": active_step_ids,
         "observed_max_round": max(
@@ -2654,7 +2654,7 @@ def _payload_has_callback_receipt_projection_annotation(payload: dict[str, Any])
     if any(
         bool(payload.get(key))
         for key in (
-            "legacy_callback_bridge",
+            "adapter_callback_bridge",
             "produces_tool_results_only",
             "callback_migration_envelope",
             "migration_callback_envelope",
@@ -2987,7 +2987,8 @@ def _build_repair_kernel_migration_debt(
         "steps": step_entries,
         "legacy_callback_debt": {
             "schema_version": "director.post_execution_legacy_callback_debt.v1",
-            "legacy_callback_bridge": True,
+            "adapter_projection_bridge": True,
+            "adapter_callback_bridge": False,
             "produces_tool_results_only": True,
             "preferred_typed_receipt_entrypoint": "run_runtime_repair_convergence",
             "runtime_bound_step_count": sum(1 for step in step_entries if step["runtime_executable_source_tools"]),
@@ -3123,7 +3124,7 @@ def _build_step_migration_debt(
 
 def _legacy_callback_repair_kernel_payload(*, source_tool: str, file_path: str) -> dict[str, Any]:
     return {
-        "owner_cell": "roles.adapters.legacy_strategy_host",
+        "owner_cell": "roles.adapters.strategy_host",
         "status": "pending_revalidation",
         "authoritative": False,
         "requires_revalidation": True,
@@ -3218,7 +3219,7 @@ def _payload_has_non_authoritative_runtime_receipt(payload: dict[str, Any]) -> b
 
 def _payload_is_legacy_callback_record(payload: dict[str, Any]) -> bool:
     repair_kernel = payload.get("repair_kernel")
-    return isinstance(repair_kernel, dict) and repair_kernel.get("owner_cell") == "roles.adapters.legacy_strategy_host"
+    return isinstance(repair_kernel, dict) and repair_kernel.get("owner_cell") == "roles.adapters.strategy_host"
 
 
 def _runner_for_post_execution_step(step: DirectorRepairPostExecutionStepV1) -> StepRunner:

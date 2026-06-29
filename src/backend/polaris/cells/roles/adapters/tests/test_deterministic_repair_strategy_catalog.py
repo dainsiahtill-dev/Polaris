@@ -515,7 +515,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
 
     monkeypatch.setattr(
         materialization_quality_repair_bridge,
-        "_run_legacy_materialization_quality_repair_step",
+        "_run_materialization_quality_repair_step",
         fake_materialization_repair_step,
     )
 
@@ -548,7 +548,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
     assert summary["coverage_preaudit"]["total_diagnostics"] == 1
     assert summary["coverage_preaudit"]["uncovered_diagnostic_count"] == 1
     assert summary["coverage_preaudit"]["rule_discovery_required"] is True
-    assert summary["dark_launch_comparison"]["comparison_mode"] == "legacy_projection_self_check"
+    assert summary["dark_launch_comparison"]["comparison_mode"] == "receipt_projection_self_check"
     assert summary["dark_launch_comparison"]["cutover_ready"] is False
     assert summary["dark_launch_comparison"]["independent_shadow_required"] is True
     assert summary["dark_launch_comparison"]["independent_shadow_satisfied"] is False
@@ -613,7 +613,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
     debt = summary["repair_kernel_migration_debt"]
     assert debt["schema_version"] == "director.materialization_quality_repair_migration_debt.v1"
     assert debt["adapter_projection_bridge"] is True
-    assert debt["legacy_callback_bridge"] is False
+    assert debt["adapter_callback_bridge"] is False
     assert debt["convergence_verifier_present"] is False
     assert debt["cutover_ready"] is False
     assert debt["step_count"] == len(expected_step_ids)
@@ -630,8 +630,8 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
     assert debt["remaining_adapter_projection_only_step_ids"] == []
     assert debt["remaining_callback_only_step_ids"] == []
     assert summary["adapter_projection_debt"] == debt["adapter_projection_debt"]
-    assert summary["legacy_callback_debt"] == debt["legacy_callback_debt"]
-    assert debt["adapter_projection_debt"] == debt["legacy_callback_debt"]
+    assert "legacy_callback_debt" not in summary
+    assert "legacy_callback_debt" not in debt
     assert [item["step_id"] for item in debt["adapter_projection_debt"]] == expected_step_ids
     for item in debt["adapter_projection_debt"]:
         assert {
@@ -747,7 +747,7 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
 
     monkeypatch.setattr(
         materialization_quality_repair_bridge,
-        "_run_legacy_materialization_quality_repair_step",
+        "_run_materialization_quality_repair_step",
         fake_materialization_repair_step,
     )
 
@@ -763,7 +763,9 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
     assert summary["convergence_verifier_present"] is True
     assert summary["materialization_quality_bridge"]["convergence_verifier_present"] is True
     assert summary["repair_kernel_migration_debt"]["convergence_verifier_present"] is True
-    debt_by_step = {item["step_id"]: item for item in summary["repair_kernel_migration_debt"]["legacy_callback_debt"]}
+    debt_by_step = {
+        item["step_id"]: item for item in summary["repair_kernel_migration_debt"]["adapter_projection_debt"]
+    }
     assert len(debt_by_step) == 9
     node_manifest_debt = debt_by_step["materialization.node_manifest"]
     assert node_manifest_debt["declared_source_tool"] == "deterministic_node_manifest_materialization_repair"
@@ -892,7 +894,7 @@ def test_materialization_hygiene_native_cutover_evidence_requires_all_selected_s
         tool_results=[],
         callback_receipt_projections=[],
         native_receipts_by_step={"materialization.hygiene_scaffold": []},
-        migration_debt={"legacy_callback_debt": [{"step_id": "materialization.hygiene_scaffold"}]},
+        migration_debt={"adapter_projection_debt": [{"step_id": "materialization.hygiene_scaffold"}]},
     )["materialization.hygiene_scaffold"]
     missing_native_evidence = missing_native_lifecycle["native_cutover_evidence"]
     assert missing_native_evidence["native_path_available"] is False
@@ -905,7 +907,7 @@ def test_materialization_hygiene_native_cutover_evidence_requires_all_selected_s
         tool_results=[],
         callback_receipt_projections=[callback_projection],
         native_receipts_by_step={"materialization.hygiene_scaffold": [native_receipt]},
-        migration_debt={"legacy_callback_debt": [{"step_id": "materialization.hygiene_scaffold"}]},
+        migration_debt={"adapter_projection_debt": [{"step_id": "materialization.hygiene_scaffold"}]},
     )["materialization.hygiene_scaffold"]
     callback_blocked_evidence = callback_blocked_lifecycle["native_cutover_evidence"]
     assert callback_blocked_evidence["native_path_available"] is True
@@ -920,7 +922,7 @@ def test_materialization_hygiene_native_cutover_evidence_requires_all_selected_s
         tool_results=[],
         callback_receipt_projections=[],
         native_receipts_by_step={"materialization.hygiene_scaffold": [native_receipt]},
-        migration_debt={"legacy_callback_debt": [{"step_id": "materialization.hygiene_scaffold"}]},
+        migration_debt={"adapter_projection_debt": [{"step_id": "materialization.hygiene_scaffold"}]},
     )["materialization.hygiene_scaffold"]
     ready_evidence = ready_lifecycle["native_cutover_evidence"]
     assert ready_evidence["native_path_available"] is True

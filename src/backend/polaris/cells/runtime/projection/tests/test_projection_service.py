@@ -19,7 +19,9 @@ from polaris.cells.runtime.projection.internal.runtime_projection_service import
     RuntimeProjection,
     RuntimeProjectionService,
     TaskSource,
+    _extract_run_ledger_run_id,
     _parse_engine_updated_at,
+    _read_run_ledger_projection_for_run,
     _safe_int,
     _state_token,
     _task_totals,
@@ -81,6 +83,24 @@ class TestStateToken:
         payload = {"state": "running", "status": {"state": "idle"}}
         assert _state_token(payload) == "RUNNING"
 
+
+class TestRunLedgerProjectionBinding:
+    def test_extract_run_ledger_run_id_prefers_explicit_workflow_status(self) -> None:
+        assert (
+            _extract_run_ledger_run_id(
+                {"status": {"run_id": "nested-run"}},
+                {"metrics": {"workflow_id": "local-workflow"}},
+            )
+            == "nested-run"
+        )
+        assert _extract_run_ledger_run_id({"metrics": {"workflow_id": "wf-1"}}) == "wf-1"
+
+    def test_read_run_ledger_projection_without_run_id_does_not_use_latest_runs(self) -> None:
+        projection = _read_run_ledger_projection_for_run("/tmp/polaris-test-workspace", "")
+
+        assert projection["available"] is False
+        assert projection["missing_required_run_id"] is True
+
     def test_whitespace_normalized(self) -> None:
         payload = {"state": "  RUNNING  "}
         assert _state_token(payload) == "RUNNING"
@@ -125,7 +145,7 @@ class TestWorkflowHasLiveRows:
 
 
 class TestParseEngineUpdatedAt:
-    def test_accepts_legacy_timestamp(self) -> None:
+    def test_accepts_space_separated_timestamp(self) -> None:
         assert _parse_engine_updated_at("2026-05-07 15:36:07") is not None
 
     def test_accepts_iso_z_timestamp(self) -> None:
@@ -282,7 +302,7 @@ class TestMergeDirectorStatus:
         assert result["run_ledger_projection"]["ok"] is True
 
 
-def test_snapshot_compat_prefers_director_execution_state_over_nested_status() -> None:
+def test_snapshot_derived_prefers_director_execution_state_over_nested_status() -> None:
     projection = RuntimeProjection(
         director_merged={
             "running": False,
@@ -294,7 +314,7 @@ def test_snapshot_compat_prefers_director_execution_state_over_nested_status() -
 
     snapshot = build_snapshot_payload_from_projection(projection, workspace="")
 
-    assert snapshot["snapshot_compat"]["director_status"] == "FAILED_PLATFORM"
+    assert snapshot["snapshot_derived"]["director_status"] == "FAILED_PLATFORM"
 
 
 def test_snapshot_task_rows_apply_run_ledger_task_boundary_overlay(

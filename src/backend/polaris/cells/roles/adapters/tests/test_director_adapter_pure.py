@@ -3681,7 +3681,7 @@ def test_materialization_quality_summary_projects_dark_launch_cutover_blocker() 
     )
     shadow = summary["dark_launch_comparison"]
 
-    assert shadow["comparison_mode"] == "legacy_projection_self_check"
+    assert shadow["comparison_mode"] == "receipt_projection_self_check"
     assert summary["coverage_preaudit"]["total_diagnostics"] == 1
     assert summary["materialization_quality_bridge"]["coverage_preaudit_uncovered_diagnostic_count"] == 0
     assert shadow["cutover_ready"] is False
@@ -3791,7 +3791,8 @@ def test_materialization_quality_scheduler_bridge_projects_callback_receipts_wit
                 "priority": 50,
                 "round_number": 2,
                 "max_rounds": 3,
-                "legacy_callback_bridge": True,
+                "adapter_projection_bridge": True,
+                "adapter_callback_bridge": False,
                 "produces_tool_results_only": True,
                 "typed_receipt_path_available": False,
                 "revalidation": {
@@ -3885,9 +3886,9 @@ def test_materialization_quality_scheduler_bridge_projects_callback_receipts_wit
         == "adapter schedule runners still return tool_results instead of RepairReceipt"
     )
     assert scheduler_bridge["repair_kernel_migration_debt"] == summary["repair_kernel_migration_debt"]
-    assert scheduler_bridge["legacy_callback_debt"] == summary["legacy_callback_debt"]
+    assert scheduler_bridge["adapter_projection_debt"] == summary["adapter_projection_debt"]
 
-    debt_by_step = {item["step_id"]: item for item in summary["legacy_callback_debt"]}
+    debt_by_step = {item["step_id"]: item for item in summary["adapter_projection_debt"]}
     assert debt_by_step["materialization.typescript_compiler"]["verifier_evidence_present"] is True
     repair_kernel_receipts = [
         receipt for receipt in summary["repair_kernel"].get("receipts", []) if isinstance(receipt, dict)
@@ -4171,11 +4172,11 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
     assert receipt["revalidation_evidence"]["metadata"]["max_rounds"] == 3
     shadow = kernel_summary["dark_launch_comparison"]
     assert shadow["matched"] is True
-    assert shadow["legacy_source_tools"] == ["deterministic_rust_dependency_repair"]
+    assert shadow["baseline_source_tools"] == ["deterministic_rust_dependency_repair"]
     assert shadow["kernel_source_tools"] == ["deterministic_rust_dependency_repair"]
     assert shadow["metadata"]["writes_performed"] is False
-    assert shadow["metadata"]["comparison_mode"] == "legacy_projection_self_check"
-    assert shadow["comparison_mode"] == "legacy_projection_self_check"
+    assert shadow["metadata"]["comparison_mode"] == "receipt_projection_self_check"
+    assert shadow["comparison_mode"] == "receipt_projection_self_check"
     assert shadow["cutover_ready"] is False
     assert shadow["cutover_blockers"] == ["independent_shadow_required"]
     assert shadow["independent_shadow_required"] is True

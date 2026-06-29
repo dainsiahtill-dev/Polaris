@@ -338,7 +338,7 @@ def _runtime_repair_summary(
             artifact_quality_errors=artifact_quality_errors,
         ),
         "repair_kernel_owner": "director.runtime",
-        "legacy_strategy_host_used": False,
+        "adapter_strategy_host_used": False,
     }
 
 

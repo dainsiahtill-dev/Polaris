@@ -113,15 +113,19 @@ class TestQAFindingsRequeue:
         claim_result.ok = True
         claim_result.task_id = "task-qa-fail2"
         claim_result.lease_token = "lease-fail2"
-        claim_result.payload = {"title": "QA task"}
+        claim_result.payload = {
+            "title": "QA task",
+            "job_token": _qa_job_token(run_id="run-qa-fail2", token_id="token-qa-fail2"),
+        }
         no_claim = MagicMock()
         no_claim.ok = False
         mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
         mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="rejected")
 
         consumer = QAConsumer(workspace="/test", worker_id="qa-fail2")
-        with patch.object(
-            consumer, "_run_qa_audit", return_value={"verdict": "FAIL", "audit_id": "a2", "findings": []}
+        with (
+            patch.object(consumer, "_run_qa_audit", return_value={"verdict": "FAIL", "audit_id": "a2", "findings": []}),
+            patch.object(qa_consumer_module, "append_run_ledger_event"),
         ):
             results = consumer.poll_once()
 
@@ -172,7 +176,10 @@ class TestQAFindingsRequeue:
         claim_result.ok = True
         claim_result.task_id = "task-qa-fail3"
         claim_result.lease_token = "lease-fail3"
-        claim_result.payload = {"title": "QA task"}
+        claim_result.payload = {
+            "title": "QA task",
+            "job_token": _qa_job_token(run_id="run-qa-fail3", token_id="token-qa-fail3"),
+        }
         no_claim = MagicMock()
         no_claim.ok = False
         mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
@@ -180,7 +187,10 @@ class TestQAFindingsRequeue:
 
         consumer = QAConsumer(workspace="/test", worker_id="qa-fail3")
         audit = {"verdict": "FAIL", "audit_id": "a3", "findings": ["[error] main.js: x"]}
-        with patch.object(consumer, "_run_qa_audit", return_value=audit):
+        with (
+            patch.object(consumer, "_run_qa_audit", return_value=audit),
+            patch.object(qa_consumer_module, "append_run_ledger_event"),
+        ):
             results = consumer.poll_once()
 
         mock_svc.fail_task_stage.assert_not_called()
@@ -199,14 +209,20 @@ class TestQAFindingsRequeue:
         claim.ok = True
         claim.task_id = "task-loop"
         claim.lease_token = "lease-loop"
-        claim.payload = {"title": "QA task"}
+        claim.payload = {
+            "title": "QA task",
+            "job_token": _qa_job_token(run_id="run-qa-loop", token_id="token-qa-loop"),
+        }
         mock_svc.claim_work_item.return_value = claim  # same task claimed each pass
         mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
         mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="rejected")
 
         consumer = QAConsumer(workspace="/test", worker_id="qa-loop")
         audit = {"verdict": "FAIL", "audit_id": "a", "findings": ["[error] main.js: unsatisfiable"]}
-        with patch.object(consumer, "_run_qa_audit", return_value=audit):
+        with (
+            patch.object(consumer, "_run_qa_audit", return_value=audit),
+            patch.object(qa_consumer_module, "append_run_ledger_event"),
+        ):
             r1 = consumer._claim_and_process_one()
             r2 = consumer._claim_and_process_one()
             r3 = consumer._claim_and_process_one()
@@ -465,6 +481,45 @@ class TestQAConsumerPollOnce:
         assert ledger_command.event["physical_evidence"]["modalities"]["qa"]["ok"] is True
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_terminal_verdict_without_run_ledger_evidence_requeues_qa(self, mock_get_svc: MagicMock) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-qa-no-ledger"
+        claim_result.lease_token = "lease-no-ledger"
+        claim_result.payload = {"title": "QA task without job token"}
+
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_qa")
+
+        consumer = QAConsumer(workspace="/test", worker_id="qa-no-ledger")
+        with (
+            patch.object(
+                consumer,
+                "_run_qa_audit",
+                return_value={"verdict": "PASS", "audit_id": "a-no-ledger", "findings": [], "metrics": {}},
+            ),
+            patch.object(qa_consumer_module, "append_run_ledger_event") as append_event,
+        ):
+            results = consumer.poll_once()
+
+        assert len(results) == 1
+        assert results[0]["ok"] is False
+        assert results[0]["status"] == "pending_qa"
+        assert results[0]["reason"] == "run_ledger_append_missing"
+        append_event.assert_not_called()
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.requeue_stage == "pending_qa"
+        assert fail_call.error_code == "QA_run_ledger_append_missing"
+        assert fail_call.metadata["qa_terminal_ack_blocked"] is True
+        assert fail_call.metadata["qa_terminal_ack_blocker"] == "run_ledger_append_missing"
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_requeue_exec_verdict_routes_to_pending_exec(self, mock_get_svc: MagicMock) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
@@ -567,7 +622,10 @@ class TestQAConsumerPollOnce:
                 task_id="task-bounce",
                 stage="pending_qa",
                 source_role="director",
-                payload={"title": "QA task"},
+                payload={
+                    "title": "QA task",
+                    "job_token": _qa_job_token(run_id="run-bounce", token_id="token-bounce"),
+                },
                 max_attempts=5,
             )
         )

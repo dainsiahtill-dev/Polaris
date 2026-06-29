@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from polaris.cells.orchestration.workflow_runtime.internal.config import (
-    InternalWorkflowConfig,
     WorkflowConfig,
     _parse_bool,
     _parse_float,
@@ -71,9 +70,9 @@ class TestResolveOrchestrationRuntime:
         assert resolve_orchestration_runtime("", environ={"KERNELONE_ORCHESTRATION_RUNTIME": "unknown"}) == "workflow"
 
 
-class TestInternalWorkflowConfig:
+class TestWorkflowConfig:
     def test_defaults(self) -> None:
-        cfg = InternalWorkflowConfig()
+        cfg = WorkflowConfig()
         assert cfg.enabled is True
         assert cfg.namespace == "polaris"
         assert cfg.task_queue == "polaris-queue"
@@ -83,7 +82,7 @@ class TestInternalWorkflowConfig:
         assert cfg.rpc_timeout_seconds == 1.0
 
     def test_from_env_defaults(self) -> None:
-        cfg = InternalWorkflowConfig.from_env(environ={})
+        cfg = WorkflowConfig.from_env(environ={})
         assert cfg.namespace == "polaris"
         assert cfg.retry_max_attempts == 3
 
@@ -94,7 +93,7 @@ class TestInternalWorkflowConfig:
             "KERNELONE_WORKFLOW_RETRY_INITIAL_INTERVAL_SECONDS": "2.5",
             "KERNELONE_WORKFLOW_RPC_TIMEOUT_SECONDS": "0.5",
         }
-        cfg = InternalWorkflowConfig.from_env(environ=env)
+        cfg = WorkflowConfig.from_env(environ=env)
         assert cfg.namespace == "test-ns"
         assert cfg.retry_max_attempts == 5
         assert cfg.retry_initial_interval_seconds == 2.5
@@ -108,12 +107,9 @@ class TestInternalWorkflowConfig:
             "KERNELONE_WORKFLOW_WORKFLOW_TIMEOUT_SECONDS": "30",
             "KERNELONE_WORKFLOW_RPC_TIMEOUT_SECONDS": "-1",
         }
-        cfg = InternalWorkflowConfig.from_env(environ=env)
+        cfg = WorkflowConfig.from_env(environ=env)
         assert cfg.retry_max_attempts == 1
         assert cfg.retry_initial_interval_seconds == 0.1
         assert cfg.retry_backoff_coefficient == 1.0
         assert cfg.workflow_execution_timeout_seconds == 60
         assert cfg.rpc_timeout_seconds == 0.1
-
-    def test_backward_compatible_alias(self) -> None:
-        assert WorkflowConfig is InternalWorkflowConfig
