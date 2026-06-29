@@ -254,6 +254,82 @@ def test_projection_exposes_task_boundary_failure() -> None:
     assert summary["detail"] == "run ledger projection task boundary failed: MISSING_ENTRYPOINT_TARGET"
 
 
+def test_public_projection_carries_task_boundary_and_tool_lifecycle(tmp_path: Path) -> None:
+    lifecycle = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=0,
+        dispatched_tool_calls_count=0,
+        receipts=[],
+        dispatch_status="dropped",
+        failure_class="TOOL_DISPATCH_DROPPED",
+    ).to_dict()
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-1",
+            event={
+                "event_type": "gate_evaluated",
+                "gate": {"name": "director", "ok": True, "summary": "started"},
+                "job_token": {
+                    "token_id": "token-1",
+                    "run_id": "run-1",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {},
+            },
+        )
+    )
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-1",
+            event={
+                "event_type": "tool_call_lifecycle",
+                "run_id": "run-1",
+                "task_id": "TASK-1",
+                "job_token": {"project_id": "P1", "capability_audit": {"ok": True, "issues": []}},
+                "tool_call_lifecycle_receipt": lifecycle,
+            },
+        )
+    )
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-1",
+            event={
+                "event_type": "task_boundary_verdict",
+                "run_id": "run-1",
+                "task_id": "TASK-1",
+                "job_token": {"project_id": "P1", "capability_audit": {"ok": True, "issues": []}},
+                "task_boundary_verdict": {
+                    "schema_version": "polaris.task_boundary_verdict.v1",
+                    "task_id": "TASK-1",
+                    "status": "deferred_followup_required",
+                    "ok": False,
+                    "failure_class": "DEFERRED_FOLLOWUP_REQUIRED",
+                    "responsible_layer": "execution_control_plane",
+                    "reason": "needs follow-up",
+                },
+            },
+        )
+    )
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-1")
+    ).projection
+
+    assert projection["tool_lifecycle"]["dropped_count"] == 1
+    assert projection["task_boundary"]["latest"]["failure_class"] == "DEFERRED_FOLLOWUP_REQUIRED"
+    assert projection["projects"][0]["tool_lifecycle"]["dropped_count"] == 1
+    assert projection["projects"][0]["task_boundary"]["latest"]["failure_class"] == "DEFERRED_FOLLOWUP_REQUIRED"
+
+
 def test_read_run_ledger_projection_evidence_policy_failed_is_not_ok(tmp_path: Path) -> None:
     append_run_ledger_event(
         AppendRunLedgerEventCommandV1(

@@ -128,6 +128,7 @@ class ArtifactStore:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             **kwargs,
         }
+        self._mirror_llm_call_audit_event(event_type, audit_entry)
         # Write to audit trail
         audit_path = self.workspace / ".polaris" / "audit" / f"{event_type}.json"
         audit_path.parent.mkdir(parents=True, exist_ok=True)
@@ -142,6 +143,39 @@ class ArtifactStore:
             )
         except (OSError, json.JSONDecodeError):
             logger.debug("Failed to write audit event: %s", event_type)
+
+    def _mirror_llm_call_audit_event(self, event_type: str, audit_entry: dict[str, Any]) -> None:
+        """Mirror legacy role LLM audit artifacts into the canonical LLM event stream."""
+
+        token = str(event_type or "").strip().lower()
+        if not token.endswith(".llm_call"):
+            return
+        role = token.removesuffix(".llm_call").strip(".")
+        run_id = str(audit_entry.get("run_id") or "").strip()
+        if not role or not run_id:
+            return
+        metadata = dict(audit_entry)
+        metadata.setdefault("workspace", str(self.workspace))
+        task_id = str(audit_entry.get("task_id") or "").strip()
+        metadata.setdefault(
+            "call_id",
+            str(audit_entry.get("call_id") or f"{event_type}:{run_id}:{task_id}:{audit_entry.get('timestamp') or ''}"),
+        )
+        try:
+            from polaris.cells.roles.kernel.internal.events import LLMEventType, emit_llm_event
+
+            emit_llm_event(
+                event_type=LLMEventType.CALL_END,
+                role=role,
+                run_id=run_id,
+                task_id=task_id or None,
+                model=str(audit_entry.get("model") or "").strip() or None,
+                provider=str(audit_entry.get("provider") or "").strip() or None,
+                metadata=metadata,
+                publish_realtime=False,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            logger.debug("Failed to mirror LLM audit event: %s", event_type, exc_info=True)
 
     def artifact_exists(self, relative_path: str, *, min_chars: int = 1) -> bool:
         target = self.artifact_path(relative_path)

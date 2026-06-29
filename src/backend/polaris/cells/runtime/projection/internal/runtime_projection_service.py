@@ -31,6 +31,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
+from polaris.cells.control_plane.run_ledger.public import (
+    ReadRunLedgerProjectionQueryV1,
+    read_run_ledger_projection,
+)
 from polaris.cells.docs.court_workflow.public.service import map_engine_to_court_state
 from polaris.cells.runtime.projection.internal.constants import DEFAULT_WORKSPACE
 from polaris.cells.runtime.projection.internal.io_helpers import (
@@ -315,6 +319,13 @@ def _state_token(payload: dict[str, Any] | None) -> str:
     if isinstance(nested, dict):
         return str(nested.get("state") or "").strip().upper()
     return ""
+
+
+def _int_value(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _task_totals(payload: dict[str, Any] | None) -> tuple[int, int]:
@@ -735,6 +746,7 @@ def merge_director_status(
     local_status: dict[str, Any] | None,
     workflow_status: dict[str, Any] | None,
     workflow_tasks: list[dict[str, Any]] | None = None,
+    run_ledger_projection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Merge Director status with single source of truth logic.
 
@@ -755,7 +767,7 @@ def merge_director_status(
         # Preserve workflow_id from local if present
         if local_payload.get("workflow_id"):
             result["workflow_id"] = local_payload.get("workflow_id")
-        return result
+        return _apply_run_ledger_director_status_overlay(result, run_ledger_projection)
 
     local_state = _state_token(local_payload)
     workflow_state = _state_token(workflow_payload)
@@ -787,7 +799,7 @@ def merge_director_status(
         # Preserve workflow_id from workflow
         if workflow_payload.get("workflow_id"):
             merged_local["workflow_id"] = workflow_payload.get("workflow_id")
-        return merged_local
+        return _apply_run_ledger_director_status_overlay(merged_local, run_ledger_projection)
 
     # Rule 2: Use workflow as source of truth
     merged = dict(workflow_payload)
@@ -835,6 +847,77 @@ def merge_director_status(
         bool(local_payload.get("running")) or bool(workflow_payload.get("running")) or merged.get("state") == "RUNNING"
     )
 
+    return _apply_run_ledger_director_status_overlay(merged, run_ledger_projection)
+
+
+def _read_latest_run_ledger_projection(workspace: str) -> dict[str, Any]:
+    try:
+        result = read_run_ledger_projection(
+            ReadRunLedgerProjectionQueryV1(
+                workspace=workspace,
+                max_runs=5,
+                include_compat_ledgers=False,
+            )
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        logger.debug("runtime projection: failed to read run ledger projection", exc_info=True)
+        return {}
+    return dict(result.projection) if isinstance(result.projection, dict) else {}
+
+
+def _apply_run_ledger_director_status_overlay(
+    status: dict[str, Any],
+    run_ledger_projection: dict[str, Any] | None,
+) -> dict[str, Any]:
+    projection = run_ledger_projection if isinstance(run_ledger_projection, dict) else {}
+    if not projection or not bool(projection.get("available")):
+        return status
+    merged = dict(status)
+    tool_lifecycle = projection.get("tool_lifecycle")
+    tool_lifecycle_map = tool_lifecycle if isinstance(tool_lifecycle, dict) else {}
+    task_boundary = projection.get("task_boundary")
+    task_boundary_map = task_boundary if isinstance(task_boundary, dict) else {}
+    latest_boundary = task_boundary_map.get("latest")
+    latest_boundary_map = latest_boundary if isinstance(latest_boundary, dict) else {}
+
+    projection_evidence: dict[str, Any] = {
+        "ok": bool(projection.get("ok")),
+        "status": str(projection.get("status") or ""),
+        "detail": str(projection.get("detail") or ""),
+        "task_boundary": task_boundary_map,
+        "tool_lifecycle": {key: value for key, value in tool_lifecycle_map.items() if key != "events"},
+    }
+    merged["run_ledger_projection"] = projection_evidence
+    if _int_value(tool_lifecycle_map.get("dropped_count")) > 0:
+        merged.update(
+            {
+                "source": "run_ledger_projection",
+                "state": "FAILED_PLATFORM",
+                "running": False,
+                "execution_state": "FAILED_PLATFORM",
+                "error_code": "tool_dispatch_dropped",
+                "last_error": "tool_dispatch_dropped",
+                "blocked_reason": "tool_dispatch_dropped",
+            }
+        )
+    elif latest_boundary_map and not bool(latest_boundary_map.get("ok", True)):
+        failure_class = str(latest_boundary_map.get("failure_class") or "TASK_BOUNDARY_FAILED").strip()
+        execution_state = "BLOCKED_WITH_REASON"
+        if failure_class in {"INCOMPLETE_MATERIALIZATION", "MISSING_ENTRYPOINT_TARGET"}:
+            execution_state = "FAILED_ARTIFACT"
+        merged.update(
+            {
+                "source": "run_ledger_projection",
+                "state": execution_state,
+                "running": False,
+                "execution_state": execution_state,
+                "error_code": failure_class.lower(),
+                "last_error": str(latest_boundary_map.get("reason") or failure_class),
+                "blocked_reason": failure_class.lower(),
+            }
+        )
+    else:
+        merged["execution_state"] = "COMPLETED_VERIFIED" if bool(projection.get("ok")) else "PENDING"
     return merged
 
 
@@ -1213,10 +1296,12 @@ async def build_runtime_projection(
                 workflow_tasks = []
 
     # Step 5: Merge Director status using single implementation
+    run_ledger_projection = _read_latest_run_ledger_projection(workspace)
     merged_director_status = merge_director_status(
         director_local_status,
         workflow_director_status,
         workflow_tasks,
+        run_ledger_projection,
     )
 
     # Step 6: Select task rows (二选一规则)

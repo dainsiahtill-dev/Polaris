@@ -4483,6 +4483,11 @@ class OrchestrationStageExecutor:
                                     "declared_target_count": len(self._collect_declared_delivery_targets(pm_tasks)),
                                     "upstream_status": str(director_result.status or "").strip(),
                                     "round": round_index,
+                                    "failure_class": "INCOMPLETE_MATERIALIZATION",
+                                    "responsible_layer": "director_orchestration",
+                                    "repairable_by_director": True,
+                                    "requires_ce_replan": False,
+                                    "requires_pm_revision": False,
                                 }
                             )
                             break

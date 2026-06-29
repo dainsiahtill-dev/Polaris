@@ -39,6 +39,13 @@ logger = logging.getLogger(__name__)
 _JETSTREAM_PUBLISH_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
 
 
+def _count_value(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _jetstream_publish_enabled() -> bool:
     raw = str(os.environ.get("KERNELONE_JETSTREAM_PUBLISH") or "").strip().lower()
     return bool(raw) and raw not in _JETSTREAM_PUBLISH_FALSE_VALUES
@@ -77,6 +84,18 @@ def _empty_projection(
             "failed_required_modalities": [],
         },
         "evidence_modalities": {},
+        "task_boundary": {"ok": True, "verdict_count": 0, "latest": {}, "failed": []},
+        "tool_lifecycle": {
+            "ok": True,
+            "event_count": 0,
+            "native_tool_calls_count": 0,
+            "decoded_tool_calls_count": 0,
+            "dispatched_tool_calls_count": 0,
+            "tool_result_count": 0,
+            "effect_receipt_count": 0,
+            "dropped_count": 0,
+            "events": [],
+        },
     }
 
 
@@ -197,6 +216,62 @@ def _merge_evidence_modalities(projects: list[dict[str, Any]]) -> dict[str, Any]
     return dict(sorted(merged.items()))
 
 
+def _merge_tool_lifecycle(projects: list[dict[str, Any]]) -> dict[str, Any]:
+    totals: dict[str, Any] = {
+        "ok": True,
+        "event_count": 0,
+        "native_tool_calls_count": 0,
+        "decoded_tool_calls_count": 0,
+        "dispatched_tool_calls_count": 0,
+        "tool_result_count": 0,
+        "effect_receipt_count": 0,
+        "dropped_count": 0,
+        "events": [],
+    }
+    for project in projects:
+        lifecycle = project.get("tool_lifecycle")
+        if not isinstance(lifecycle, dict):
+            continue
+        totals["ok"] = bool(totals["ok"]) and bool(lifecycle.get("ok", True))
+        for key in (
+            "event_count",
+            "native_tool_calls_count",
+            "decoded_tool_calls_count",
+            "dispatched_tool_calls_count",
+            "tool_result_count",
+            "effect_receipt_count",
+            "dropped_count",
+        ):
+            totals[key] = _count_value(totals.get(key)) + _count_value(lifecycle.get(key))
+        events = lifecycle.get("events")
+        if isinstance(events, list):
+            totals["events"].extend(item for item in events if isinstance(item, dict))
+    return totals
+
+
+def _merge_task_boundary(projects: list[dict[str, Any]]) -> dict[str, Any]:
+    latest: dict[str, Any] = {}
+    failed: list[dict[str, Any]] = []
+    verdict_count = 0
+    for project in projects:
+        boundary = project.get("task_boundary")
+        if not isinstance(boundary, dict):
+            continue
+        verdict_count += _count_value(boundary.get("verdict_count"))
+        boundary_latest = boundary.get("latest")
+        if isinstance(boundary_latest, dict) and boundary_latest:
+            latest = dict(boundary_latest)
+        boundary_failed = boundary.get("failed")
+        if isinstance(boundary_failed, list):
+            failed.extend(dict(item) for item in boundary_failed if isinstance(item, dict))
+    return {
+        "ok": not failed,
+        "verdict_count": verdict_count,
+        "latest": latest,
+        "failed": failed,
+    }
+
+
 def _project_from_events(project_id: str, events: list[dict[str, Any]]) -> dict[str, Any]:
     projection = build_run_ledger_projection(events)
     summary = summarize_run_ledger_projection(projection)
@@ -206,6 +281,10 @@ def _project_from_events(project_id: str, events: list[dict[str, Any]]) -> dict[
     evidence_policy_map = evidence_policy if isinstance(evidence_policy, dict) else {}
     evidence_modalities = projection.get("evidence_modalities")
     evidence_modalities_map = evidence_modalities if isinstance(evidence_modalities, dict) else {}
+    task_boundary = projection.get("task_boundary")
+    task_boundary_map = task_boundary if isinstance(task_boundary, dict) else {}
+    tool_lifecycle = projection.get("tool_lifecycle")
+    tool_lifecycle_map = tool_lifecycle if isinstance(tool_lifecycle, dict) else {}
     return {
         "project_id": project_id,
         "ok": bool(summary.get("ok")),
@@ -218,6 +297,8 @@ def _project_from_events(project_id: str, events: list[dict[str, Any]]) -> dict[
         "missing": list(summary.get("missing") or []),
         "evidence_policy": evidence_policy_map,
         "evidence_modalities": evidence_modalities_map,
+        "task_boundary": task_boundary_map,
+        "tool_lifecycle": tool_lifecycle_map,
     }
 
 
@@ -262,6 +343,8 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
     failed = sum(1 for project in projects if not bool(project.get("ok")))
     projected = len(projects)
     ok = projected > 0 and failed == 0
+    task_boundary = _merge_task_boundary(projects)
+    tool_lifecycle = _merge_tool_lifecycle(projects)
     return RunLedgerProjectionResultV1(
         projection={
             "schema_version": 1,
@@ -279,6 +362,8 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
             "detail": f"run ledger projection {projected} project(s), {failed} failed",
             "evidence_policy": _merge_evidence_policy(projects),
             "evidence_modalities": _merge_evidence_modalities(projects),
+            "task_boundary": task_boundary,
+            "tool_lifecycle": tool_lifecycle,
         }
     )
 

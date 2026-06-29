@@ -177,6 +177,77 @@ class TestMergeDirectorStatus:
         result = merge_director_status(local, workflow)
         assert result["state"] == "RUNNING"
 
+    def test_run_ledger_tool_dispatch_dropped_overrides_status(self) -> None:
+        local = {"running": False, "state": "IDLE"}
+        workflow = {"running": False, "state": "IDLE"}
+        projection = {
+            "available": True,
+            "ok": False,
+            "status": "failed",
+            "detail": "tool dispatch dropped",
+            "tool_lifecycle": {
+                "ok": False,
+                "dropped_count": 1,
+                "events": [{"dispatch_status": "dropped"}],
+            },
+            "task_boundary": {},
+        }
+
+        result = merge_director_status(local, workflow, run_ledger_projection=projection)
+
+        assert result["source"] == "run_ledger_projection"
+        assert result["state"] == "FAILED_PLATFORM"
+        assert result["running"] is False
+        assert result["execution_state"] == "FAILED_PLATFORM"
+        assert result["error_code"] == "tool_dispatch_dropped"
+        assert "events" not in result["run_ledger_projection"]["tool_lifecycle"]
+
+    def test_run_ledger_task_boundary_failure_overrides_status(self) -> None:
+        local = {"running": False, "state": "IDLE"}
+        workflow = {"running": False, "state": "IDLE"}
+        projection = {
+            "available": True,
+            "ok": False,
+            "status": "failed",
+            "detail": "task boundary failed",
+            "tool_lifecycle": {"ok": True, "dropped_count": 0},
+            "task_boundary": {
+                "ok": False,
+                "latest": {
+                    "ok": False,
+                    "failure_class": "INCOMPLETE_MATERIALIZATION",
+                    "reason": "target files were not written",
+                },
+            },
+        }
+
+        result = merge_director_status(local, workflow, run_ledger_projection=projection)
+
+        assert result["source"] == "run_ledger_projection"
+        assert result["state"] == "FAILED_ARTIFACT"
+        assert result["running"] is False
+        assert result["execution_state"] == "FAILED_ARTIFACT"
+        assert result["error_code"] == "incomplete_materialization"
+        assert result["last_error"] == "target files were not written"
+
+    def test_run_ledger_ok_projection_keeps_existing_status_source(self) -> None:
+        local = {"running": False, "state": "IDLE", "source": "v2_service"}
+        workflow = {"running": False, "state": "IDLE"}
+        projection = {
+            "available": True,
+            "ok": True,
+            "status": "ready",
+            "detail": "run ledger projection 1 project(s), 0 failed",
+            "tool_lifecycle": {"ok": True, "dropped_count": 0},
+            "task_boundary": {"ok": True, "latest": {"ok": True}},
+        }
+
+        result = merge_director_status(local, workflow, run_ledger_projection=projection)
+
+        assert result["source"] == "workflow"
+        assert result["execution_state"] == "COMPLETED_VERIFIED"
+        assert result["run_ledger_projection"]["ok"] is True
+
 
 # =============================================================================
 # select_task_rows tests

@@ -2153,6 +2153,46 @@ class TestArtifactStore:
         assert entries[0]["task_id"] == "t1"
         assert entries[1]["task_id"] == "t2"
 
+    def test_chief_engineer_llm_call_audit_mirrors_to_canonical_llm_events(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        executor._emit_audit_event(
+            "chief_engineer.llm_call",
+            task_id="TASK-1",
+            run_id="factory-run",
+            provider="openai",
+            model="gpt-5",
+            context_snapshot_ref="runtime/contexts/aa/bb.json",
+            final_request_context_audit={
+                "schema_version": "llm.final_request_context_audit.v1",
+                "final_request_token_estimate": 42000,
+            },
+        )
+        executor._emit_audit_event(
+            "chief_engineer.llm_call",
+            task_id="TASK-2",
+            run_id="factory-run",
+            provider="openai",
+            model="gpt-5",
+            context_snapshot_ref="runtime/contexts/aa/cc.json",
+            final_request_context_audit={
+                "schema_version": "llm.final_request_context_audit.v1",
+                "final_request_token_estimate": 43000,
+            },
+        )
+
+        audit_path = tmp_path / ".polaris" / "audit" / "chief_engineer.llm_call.json"
+        assert audit_path.exists()
+        events_path = Path(resolve_logical_path(str(tmp_path), "runtime/events/chief_engineer.llm.events.jsonl"))
+        rows = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+        assert len(rows) == 2
+        row = rows[0]
+        assert row["role"] == "chief_engineer"
+        assert row["event"] == "llm_call_end"
+        assert row["context_snapshot_ref"] == "runtime/contexts/aa/bb.json"
+        assert row["final_request_context_audit"]["final_request_token_estimate"] == 42000
+        assert rows[1]["context_snapshot_ref"] == "runtime/contexts/aa/cc.json"
+
 
 class TestMirrorHelpers:
     def test_mirror_docs_artifacts(self, tmp_path: Path) -> None:
