@@ -4,9 +4,9 @@ This module exposes the tool chain building capability as a public contract,
 consumable by other cells (including KernelOne) without importing internal
 implementation details.
 
-All symbols are now re-exported from ``polaris.kernelone.tool_execution``.
-This module is kept for backward compatibility and delegates to the canonical
-KernelOne location.
+The implementation lives in ``polaris.kernelone.tool_execution``. This public
+module is the supported Director-facing contract and delegates to KernelOne
+without exposing internal execution modules.
 """
 
 from __future__ import annotations

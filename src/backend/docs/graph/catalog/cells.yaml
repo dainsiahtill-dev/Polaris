@@ -2582,17 +2582,16 @@ cells:
       optional projection-oriented execution backends selected by explicit task
       contracts.
     current_modules:
-      - polaris.cells.director.execution.service
-      - polaris.cells.director.execution.logic
-      - polaris.cells.director.execution.internal.task_lifecycle_service
-      - polaris.cells.director.execution.internal.worker_pool_service
-      - polaris.cells.director.execution.internal.worker_executor
       - polaris.cells.director.execution.internal.code_generation_engine
-      - polaris.cells.director.execution.internal.file_apply_service
-      - polaris.cells.director.execution.internal.patch_apply_engine
-      - polaris.cells.director.execution.internal.bootstrap_template_catalog
-      - polaris.cells.director.execution.internal.repair_service
       - polaris.cells.director.execution.internal.tools
+      - polaris.cells.director.execution.public.contracts
+      - polaris.cells.director.execution.public.tools
+      - polaris.cells.director.tasking.internal.task_lifecycle_service
+      - polaris.cells.director.tasking.internal.worker_pool_service
+      - polaris.cells.director.tasking.internal.worker_executor
+      - polaris.cells.director.tasking.internal.bootstrap_template_catalog
+      - polaris.cells.director.tasking.internal.repair_service
+      - polaris.cells.director.planning.internal.director_logic_rules
       - polaris.delivery.cli.director.cli_thin
       - polaris.delivery.http.v2.director
     owned_paths:

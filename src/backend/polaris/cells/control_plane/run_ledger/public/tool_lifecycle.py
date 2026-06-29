@@ -7,6 +7,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from polaris.kernelone.tools.tool_kinds import is_write_tool_name
+
 
 def _stable_json(value: Any) -> str:
     return json.dumps(value, default=str, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -76,6 +78,25 @@ def _effect_receipt_refs(receipts: list[dict[str, Any]]) -> list[dict[str, Any]]
             }
         )
     return refs
+
+
+def _successful_write_results_without_effect_receipts(receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    missing: list[dict[str, Any]] = []
+    for item in _result_items(receipts):
+        tool_name = _clean_string(item.get("tool_name"))
+        status = _clean_string(item.get("status")).lower()
+        if status != "success" or not is_write_tool_name(tool_name):
+            continue
+        if _effect_receipt_from_result(item):
+            continue
+        missing.append(
+            {
+                "tool_name": tool_name,
+                "call_id": _clean_string(item.get("call_id")),
+                "reason": "successful_write_tool_without_effect_receipt",
+            }
+        )
+    return missing
 
 
 def _batch_receipt_refs(receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -161,6 +182,7 @@ def build_tool_call_lifecycle_receipt(
     receipt_rows = [dict(item) for item in receipts or [] if isinstance(item, dict)]
     batch_refs = _batch_receipt_refs(receipt_rows)
     effect_refs = _effect_receipt_refs(receipt_rows)
+    missing_write_effects = _successful_write_results_without_effect_receipts(receipt_rows)
     result_count = len(_result_items(receipt_rows))
     native_count = _int_value(native_tool_calls_count)
     decoded_count = _int_value(decoded_tool_calls_count)
@@ -176,6 +198,10 @@ def build_tool_call_lifecycle_receipt(
     elif decoded_count > 0 and not receipt_rows:
         status = status or "blocked"
         failure = failure or "MISSING_BATCH_RECEIPT"
+    elif missing_write_effects:
+        status = status or "blocked"
+        failure = failure or "MISSING_EFFECT_RECEIPT"
+        dropped.extend(missing_write_effects)
     elif result_count > 0:
         status = status or "dispatched"
     else:

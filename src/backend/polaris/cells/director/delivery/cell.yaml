@@ -8,32 +8,18 @@ purpose: 'Director CLI and terminal console transport surface. Owns the standalo
   Director CLI entry point under polaris/delivery/cli/director/**.
 
   '
-current_modules:
-- polaris.cells.director.delivery.public.contracts
+current_modules: []
 tags: []
 owned_paths:
 - polaris/cells/director/delivery/**
 - polaris/delivery/cli/director/**
 public_contracts:
-  modules:
-  - polaris.cells.director.delivery.public.contracts
-  commands:
-  - RunDirectorIterationCommandV1
-  - ExecuteDirectorTaskCommandV1
-  - CreateDirectorSessionCommandV1
-  queries:
-  - GetDirectorIterationStatusQueryV1
-  - GetReadyTasksQueryV1
+  modules: []
+  commands: []
+  queries: []
   events: []
-  results:
-  - DirectorIterationResultV1
-  - DirectorTaskExecutionResultV1
-  - DirectorSessionResultV1
-  - ReadyTasksResultV1
-  errors:
-  - DirectorDeliveryError
-  - IterationExecutionError
-  - TaskExecutionError
+  results: []
+  errors: []
 depends_on:
 - director.planning
 - director.tasking
@@ -47,8 +33,9 @@ effects_allowed:
 - fs.write:director/delivery/*
 verification:
   gaps:
-  - 'Migration in progress: implementation resides in director.execution/internal/director_cli.py
-    pending Cell extraction.'
+  - 'No independent public contract is owned by director.delivery; CLI entrypoints
+    route through polaris/delivery/cli/director/cli_thin.py and director.execution
+    public contracts.'
   smoke_commands: []
   tests: []
 generated_artifacts: []

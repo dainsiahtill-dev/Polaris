@@ -6,8 +6,9 @@
     ``polaris/kernelone/benchmark/unified_models.py`` (UnifiedBenchmarkCase,
     JudgeConfig, UnifiedJudgeVerdict).
 
-    This module is retained for backward compatibility with existing
-    evaluation cell internals and will be removed after 2026-06-30.
+    This module is retained only for evaluation cell internals that still
+    consume legacy agentic fixture shapes. New code must use the unified
+    KernelOne benchmark framework.
 """
 
 from __future__ import annotations

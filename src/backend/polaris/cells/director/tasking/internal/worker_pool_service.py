@@ -1,14 +1,8 @@
 """Worker service for managing worker lifecycle.
 
-Migrated from ``polaris.cells.director.execution.internal.worker_pool_service``.
-
 Handles worker pool management, health monitoring, and task assignment.
 
-Phase 3 note:
-    WorkerExecutor is migrated to director.tasking.internal (same Phase 3).
-    This module updates the import to point to the new location.
-
-Phase 4 note (2026-03-27):
+Runtime note:
     Task execution now uses execution_broker instead of run_in_executor() + asyncio.run().
     This provides true process isolation and cleaner integration with KernelOne runtime.
 """

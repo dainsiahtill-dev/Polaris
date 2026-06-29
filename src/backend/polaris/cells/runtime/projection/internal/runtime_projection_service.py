@@ -888,6 +888,7 @@ def _apply_run_ledger_director_status_overlay(
         "tool_lifecycle": {key: value for key, value in tool_lifecycle_map.items() if key != "events"},
     }
     merged["run_ledger_projection"] = projection_evidence
+    failed_count = _int_value(tool_lifecycle_map.get("failed_count"))
     if _int_value(tool_lifecycle_map.get("dropped_count")) > 0:
         merged.update(
             {
@@ -898,6 +899,23 @@ def _apply_run_ledger_director_status_overlay(
                 "error_code": "tool_dispatch_dropped",
                 "last_error": "tool_dispatch_dropped",
                 "blocked_reason": "tool_dispatch_dropped",
+            }
+        )
+    elif failed_count > 0:
+        events = tool_lifecycle_map.get("events")
+        event_rows = events if isinstance(events, list) else []
+        failed_events = [item for item in event_rows if isinstance(item, dict) and bool(item.get("failed"))]
+        latest_failure = failed_events[-1] if failed_events else {}
+        failure_class = str(latest_failure.get("failure_class") or "TOOL_LIFECYCLE_FAILED").strip()
+        merged.update(
+            {
+                "source": "run_ledger_projection",
+                "state": "FAILED_PLATFORM",
+                "running": False,
+                "execution_state": "FAILED_PLATFORM",
+                "error_code": failure_class.lower(),
+                "last_error": str(latest_failure.get("reason") or failure_class),
+                "blocked_reason": failure_class.lower(),
             }
         )
     elif latest_boundary_map and not bool(latest_boundary_map.get("ok", True)):

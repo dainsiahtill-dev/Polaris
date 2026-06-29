@@ -11,10 +11,10 @@ entry point under `polaris/delivery/cli/director/**`.
 
 ## Migration Status
 
-⚠️ **SKELETON ONLY — MIGRATION NOT COMPLETED** (status 2026-06-07)
+⚠️ **THIN ENTRYPOINT ONLY — MIGRATION PARTIAL** (status 2026-06-30)
 
-`director_cli.py` has NOT been migrated here. `polaris/delivery/cli/director/`
-does not contain a `director_cli.py`; the file still exists in both
-`polaris/cells/director/execution/internal/director_cli.py` and
-`polaris/cells/director/tasking/internal/director_cli.py`. The current Director
-CLI entry point is `polaris/delivery/cli/director/cli_thin.py`.
+The supported Director CLI entry point is
+`polaris/delivery/cli/director/cli_thin.py`.
+Do not restore the old execution-internal CLI shim. Internal tasking CLI helpers may exist under
+`polaris/cells/director/tasking/internal/`, but product and script entrypoints
+must route through delivery CLI or the public Director execution contracts.

@@ -952,7 +952,7 @@ class DirectorExecutionConsumer:
 
     .. deprecated::
         Use :class:`polaris.cells.director.pool.internal.director_pool.DirectorPool` instead.
-        Will be removed after 2026-06-30.
+        This compatibility adapter remains only until dispatch cutover is complete.
     """
 
     def __init__(
@@ -967,7 +967,8 @@ class DirectorExecutionConsumer:
         wake_event: threading.Event | None = None,
     ) -> None:
         warnings.warn(
-            "DirectorExecutionConsumer is deprecated. Use DirectorPool instead. Will be removed after 2026-06-30.",
+            "DirectorExecutionConsumer is deprecated. Use DirectorPool instead; "
+            "this compatibility adapter remains only until dispatch cutover is complete.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -1638,4 +1639,8 @@ __all__ = [
     "InterfaceContractRepairRequiredError",
     "UnrecoverableExecutionError",
 ]
-__deprecated__ = {"DirectorExecutionConsumer": "Use DirectorPool instead. Will be removed after 2026-06-30."}
+__deprecated__ = {
+    "DirectorExecutionConsumer": (
+        "Use DirectorPool instead; this compatibility adapter remains only until dispatch cutover is complete."
+    )
+}

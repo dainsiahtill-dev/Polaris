@@ -100,6 +100,7 @@ class TestPolarisArtifactPolicyMetadata:
             "audit.events.runtime",
             "audit.events.pm",
             "audit.events.pm_llm",
+            "audit.events.chief_engineer_llm",
             "audit.events.pm_task_history",
             "audit.events.director_llm",
             "audit.transcript",

@@ -6,7 +6,7 @@ Migration note (Task #48 Phase 2):
     DirectorStandaloneAgent. All execution goes through RoleExecutionKernel.
 
 Usage:
-    python -m polaris.cells.director.execution.internal.director_cli [options]
+    python -m polaris.delivery.cli.director.cli_thin [options]
     python director_cli.py --mode interactive --workspace ./myproject
     python director_cli.py --mode oneshot --goal "Implement a user authentication function"
     python director_cli.py --mode autonomous --goal "Create a REST API" --max-iterations 5

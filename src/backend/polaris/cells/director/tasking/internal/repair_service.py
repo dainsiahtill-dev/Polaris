@@ -24,6 +24,9 @@ if TYPE_CHECKING:
 
 QAFailureClass = Literal[
     "passed",
+    "incomplete_materialization",
+    "missing_entrypoint_target",
+    "tool_dispatch_dropped",
     "implementation_defect",
     "scope_mismatch",
     "contract_ambiguous",
@@ -35,6 +38,7 @@ QAFailureClass = Literal[
 ]
 QAFailureRoute = Literal[
     "no_action",
+    "execution_boundary_retry",
     "director_repair",
     "ce_replan_required",
     "pm_revision_required",
@@ -188,10 +192,13 @@ class RepairService:
         missing_targets = list(getattr(soft_check, "missing_targets", []) or [])
         if missing_targets:
             return QAFailureClassification(
-                failure_class="implementation_defect",
-                route="director_repair",
-                reason=f"Missing targets to create: {missing_targets}",
-                repairable_by_director=True,
+                failure_class="incomplete_materialization",
+                route="execution_boundary_retry",
+                reason=(
+                    "Required target files were not materialized; route through "
+                    f"TaskBoundary/Director execution control instead of local repair: {missing_targets}"
+                ),
+                repairable_by_director=False,
                 evidence_refs=refs,
             )
 
@@ -249,6 +256,28 @@ class RepairService:
                 repairable_by_director=False,
                 severity="high",
                 requires_pm_revision=True,
+                evidence_refs=refs,
+            )
+        if any(term in feedback for term in ("tool_dispatch_dropped", "tool dispatch dropped")):
+            return QAFailureClassification(
+                failure_class="tool_dispatch_dropped",
+                route="hard_stop",
+                reason="Execution control plane dropped provider tool calls before dispatch",
+                repairable_by_director=False,
+                severity="critical",
+                evidence_refs=refs,
+            )
+        if any(
+            term in feedback
+            for term in ("missing_entrypoint_target", "missing entrypoint", "manifest references local entrypoint")
+        ):
+            return QAFailureClassification(
+                failure_class="missing_entrypoint_target",
+                route="ce_replan_required",
+                reason="Manifest entrypoint contract requires CE replanning or downstream artifact declaration",
+                repairable_by_director=False,
+                severity="high",
+                requires_ce_replan=True,
                 evidence_refs=refs,
             )
         if any(

@@ -1,16 +1,13 @@
 """Worker executor for code generation tasks.
 
-Migrated from ``polaris.cells.director.execution.internal.worker_executor``.
-
 This module implements the task execution orchestration for Workers,
 delegating to specialized services for code generation, file I/O, and evidence.
 
 All text operations MUST explicitly use UTF-8 encoding.
 
-Phase 4 note:
-    CodeGenerationEngine and FileApplyService are Phase 4 director.runtime deps.
-    These are deferred via lazy import to avoid breaking director.execution.internal
-    consumers that still depend on the original location.
+Runtime note:
+    CodeGenerationEngine and FileApplyService are resolved lazily so tasking
+    orchestration can start without importing the heavier execution services.
 """
 
 from __future__ import annotations

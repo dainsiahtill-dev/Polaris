@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -97,6 +98,13 @@ class TestRepairContext:
 
 class TestRepairService:
     """Tests for RepairService class."""
+
+    def test_deprecated_execution_repair_service_shim_removed(self) -> None:
+        """Guard against restoring the old director.execution repair-service path."""
+
+        spec = importlib.util.find_spec("polaris.cells.director.execution.internal.repair_service")
+
+        assert spec is None
 
     def test_repair_service_initialization(self) -> None:
         """Test RepairService initialization."""
@@ -214,8 +222,8 @@ class TestRepairService:
 
         service = RepairService()
         mock_soft_check = MagicMock()
-        mock_soft_check.missing_targets = ["src/main.py"]
-        mock_soft_check.unresolved_imports = []
+        mock_soft_check.missing_targets = []
+        mock_soft_check.unresolved_imports = ["src.app.missing"]
 
         classification = service.classify_qa_failure(
             soft_check=mock_soft_check,
@@ -225,6 +233,24 @@ class TestRepairService:
         assert classification.failure_class == "implementation_defect"
         assert classification.route == "director_repair"
         assert classification.repairable_by_director is True
+
+    def test_classify_qa_failure_routes_missing_targets_to_task_boundary(self) -> None:
+        """Test missing targets return to execution boundary instead of local repair."""
+        from polaris.cells.director.tasking.internal.repair_service import RepairService
+
+        service = RepairService()
+        mock_soft_check = MagicMock()
+        mock_soft_check.missing_targets = ["src/main.py"]
+        mock_soft_check.unresolved_imports = []
+
+        classification = service.classify_qa_failure(
+            soft_check=mock_soft_check,
+            qa_feedback="ordinary unit test assertion failed",
+        )
+
+        assert classification.failure_class == "incomplete_materialization"
+        assert classification.route == "execution_boundary_retry"
+        assert classification.repairable_by_director is False
 
     @pytest.mark.asyncio
     async def test_run_repair_loop_blocks_non_director_failure_routes(self) -> None:
@@ -312,8 +338,8 @@ class TestRepairService:
         assert should_repair is False
         assert "stalled" in reason.lower()
 
-    def test_should_attempt_repair_missing_targets(self) -> None:
-        """Test should_attempt_repair when there are missing targets."""
+    def test_should_attempt_repair_missing_targets_returns_to_task_boundary(self) -> None:
+        """Test missing targets do not enter the local repair loop."""
         from polaris.cells.director.tasking.internal.repair_service import RepairContext, RepairService
 
         service = RepairService()
@@ -331,8 +357,8 @@ class TestRepairService:
             context=ctx,
         )
 
-        assert should_repair is True
-        assert "missing" in reason.lower()
+        assert should_repair is False
+        assert "taskboundary" in reason.lower()
 
     def test_should_attempt_repair_unresolved_imports(self) -> None:
         """Test should_attempt_repair when there are unresolved imports."""

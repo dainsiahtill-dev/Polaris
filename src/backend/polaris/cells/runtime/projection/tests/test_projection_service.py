@@ -203,6 +203,38 @@ class TestMergeDirectorStatus:
         assert result["error_code"] == "tool_dispatch_dropped"
         assert "events" not in result["run_ledger_projection"]["tool_lifecycle"]
 
+    def test_run_ledger_tool_lifecycle_failure_overrides_status(self) -> None:
+        local = {"running": False, "state": "IDLE"}
+        workflow = {"running": False, "state": "IDLE"}
+        projection = {
+            "available": True,
+            "ok": False,
+            "status": "failed",
+            "detail": "tool lifecycle failed",
+            "tool_lifecycle": {
+                "ok": False,
+                "dropped_count": 0,
+                "failed_count": 1,
+                "events": [
+                    {
+                        "failed": True,
+                        "failure_class": "MISSING_EFFECT_RECEIPT",
+                        "reason": "write_file success lacked an effect receipt",
+                    }
+                ],
+            },
+            "task_boundary": {},
+        }
+
+        result = merge_director_status(local, workflow, run_ledger_projection=projection)
+
+        assert result["source"] == "run_ledger_projection"
+        assert result["state"] == "FAILED_PLATFORM"
+        assert result["running"] is False
+        assert result["execution_state"] == "FAILED_PLATFORM"
+        assert result["error_code"] == "missing_effect_receipt"
+        assert result["last_error"] == "write_file success lacked an effect receipt"
+
     def test_run_ledger_task_boundary_failure_overrides_status(self) -> None:
         local = {"running": False, "state": "IDLE"}
         workflow = {"running": False, "state": "IDLE"}

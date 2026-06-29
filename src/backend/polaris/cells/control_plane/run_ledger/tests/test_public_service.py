@@ -211,8 +211,65 @@ def test_projection_exposes_tool_dispatch_dropped() -> None:
     assert projection["tool_lifecycle"]["dropped_count"] == 1
     assert projection["tool_lifecycle"]["events"][0]["provider_response_hash"] == "provider-response-hash"
     assert projection["tool_lifecycle"]["events"][0]["receipt"]["schema_version"] == "tool_call_lifecycle_receipt.v1"
-    assert summary["detail"] == "run ledger projection detected dropped tool dispatch"
-    assert summary["missing"] == ["tool_dispatch_receipt"]
+    assert summary["detail"] == "run ledger projection tool lifecycle failed: TOOL_DISPATCH_DROPPED"
+    assert summary["missing"] == ["TOOL_DISPATCH_DROPPED"]
+
+
+def test_projection_exposes_failed_tool_lifecycle_without_dropped_dispatch() -> None:
+    lifecycle = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": "batch-1",
+                "results": [
+                    {
+                        "call_id": "call-1",
+                        "tool_name": "write_file",
+                        "status": "success",
+                    }
+                ],
+                "success_count": 1,
+                "failure_count": 0,
+            }
+        ],
+    ).to_dict()
+    projection = build_run_ledger_projection(
+        [
+            {
+                "event_type": "gate_evaluated",
+                "stage": "director",
+                "gate": {"name": "director", "ok": True, "summary": "started"},
+                "job_token": {
+                    "token_id": "token-1",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {},
+            },
+            {
+                "event_type": "tool_call_lifecycle",
+                "tool_call_lifecycle_receipt": lifecycle,
+                "tool_call_lifecycle": lifecycle,
+            },
+        ]
+    )
+    summary = summarize_run_ledger_projection(projection)
+
+    assert projection["ok"] is False
+    assert projection["integrity_ok"] is False
+    assert projection["tool_lifecycle"]["ok"] is False
+    assert projection["tool_lifecycle"]["failed_count"] == 1
+    assert projection["tool_lifecycle"]["dropped_count"] == 0
+    assert projection["tool_lifecycle"]["events"][0]["failed"] is True
+    assert summary["detail"] == "run ledger projection tool lifecycle failed: MISSING_EFFECT_RECEIPT"
+    assert summary["missing"] == ["MISSING_EFFECT_RECEIPT"]
 
 
 def test_projection_exposes_task_boundary_failure() -> None:

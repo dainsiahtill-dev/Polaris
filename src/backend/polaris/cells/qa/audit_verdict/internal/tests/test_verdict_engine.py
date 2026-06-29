@@ -107,6 +107,37 @@ def test_tool_dispatch_dropped_routes_to_platform_block(tmp_path: Path) -> None:
     assert payload["classification"]["responsible_layer"] == "execution_control_plane"
 
 
+def test_tool_lifecycle_failure_routes_to_platform_block(tmp_path: Path) -> None:
+    envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
+        task_id="task-qa",
+        payload=_payload(),
+        ledger_projection={
+            "audit_path": "runtime/control_plane/ledger",
+            "evidence_policy": {},
+            "tool_lifecycle": {
+                "ok": False,
+                "dropped_count": 0,
+                "failed_count": 1,
+                "events": [
+                    {
+                        "failed": True,
+                        "failure_class": "MISSING_EFFECT_RECEIPT",
+                        "reason": "write_file success lacked an effect receipt",
+                    }
+                ],
+            },
+        },
+        artifact_quality={"errors": []},
+    )
+    payload = envelope.to_dict()
+
+    assert payload["verdict"] == "BLOCKED"
+    assert payload["next_stage"] == "waiting_human"
+    assert payload["classification"]["failure_class"] == "MISSING_EFFECT_RECEIPT"
+    assert payload["classification"]["repairable_by_director"] is False
+    assert payload["classification"]["responsible_layer"] == "execution_control_plane"
+
+
 def test_missing_entrypoint_target_routes_to_ce_replan(tmp_path: Path) -> None:
     envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
         task_id="task-qa",

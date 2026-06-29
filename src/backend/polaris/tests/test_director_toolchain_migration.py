@@ -8,61 +8,28 @@ It intentionally does not preserve or validate legacy shim paths.
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
-_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestCanonicalImports:
     """Verify canonical imports work and expose expected symbols."""
 
     def test_canonical_tools_package_has_init(self) -> None:
-        from polaris.cells.director.execution.internal import tools
+        from polaris.cells.director.execution.public import tools
 
         assert tools.__file__ is not None
 
     def test_canonical_exports_all_expected_symbols(self) -> None:
-        from polaris.cells.director.execution.internal import tools
+        from polaris.cells.director.execution.public import tools
 
         expected = [
             "ALLOWED_EXECUTION_COMMANDS",
-            "ALLOWED_TOOLS",
-            "BLOCKED_COMMAND_PATTERNS",
-            "DEFAULT_MAX_RETRIES",
-            "DEFAULT_READ_RADIUS",
-            "KV_ALLOWED_KEYS",
-            "MAX_EVENT_CONTENT_LINES",
-            "MAX_TOOL_READ_LINES",
-            "READ_ONLY_TOOLS",
-            "WRITE_TOOLS",
-            "ToolChainStep",
-            "ToolChainResult",
-            "append_log",
-            "as_list",
-            "sanitize_tool_name",
-            "safe_int",
-            "split_list_value",
-            "split_tool_step",
             "is_command_allowed",
             "is_command_blocked",
-            "extract_tool_budget",
-            "extract_tool_plan",
-            "parse_tool_plan_item",
-            "_parse_key_value_token",
-            "_normalize_tool_plan_dict_step",
             "build_tool_cli_args",
-            "analyze_slice_content",
-            "annotate_rg_output",
-            "build_refs",
-            "compact_tool_output",
-            "count_tool_output_lines",
-            "persist_tool_raw_output",
-            "score_hit",
-            "suggest_radius",
-            "normalize_tool_plan",
-            "parse_tool_chain_step",
-            "run_tool_chain",
-            "run_tool_plan",
         ]
         missing = [symbol for symbol in expected if not hasattr(tools, symbol)]
         assert not missing, f"Missing symbols: {missing}"
@@ -84,6 +51,24 @@ class TestCanonicalImports:
             ".",
         ]
 
+    def test_migrated_execution_internal_shims_are_removed(self) -> None:
+        removed_modules = [
+            "bootstrap_template_catalog",
+            "director_cli",
+            "director_logic_rules",
+            "existence_gate",
+            "file_apply_service",
+            "patch_apply_engine",
+            "repair_service",
+            "task_lifecycle_service",
+            "worker_executor",
+            "worker_pool_service",
+        ]
+
+        for module_name in removed_modules:
+            spec = importlib.util.find_spec(f"polaris.cells.director.execution.internal.{module_name}")
+            assert spec is None, module_name
+
 
 class TestCallerImports:
     """Verify callers use the canonical public port."""
@@ -94,14 +79,15 @@ class TestCallerImports:
         )
         source = director_adapter_path.read_text(encoding="utf-8")
 
-        assert "from polaris.cells.director.execution.public.tools import" in source
         assert "polaris.kernelone.tools.director" not in source
+        assert "polaris.cells.director.execution.internal.tools" not in source
 
     def test_runtime_executor_imports_public_tools(self) -> None:
-        runtime_executor_path = _BACKEND_ROOT / "polaris" / "kernelone" / "tools" / "runtime_executor.py"
+        runtime_executor_path = _BACKEND_ROOT / "polaris" / "kernelone" / "tool_execution" / "runtime_executor.py"
         source = runtime_executor_path.read_text(encoding="utf-8")
 
-        assert "from polaris.cells.director.execution.public.tools import" in source
+        assert "polaris.kernelone.tools.director" not in source
+        assert "polaris.cells.director.execution.internal.tools" not in source
 
 
 class TestGraphOwnership:

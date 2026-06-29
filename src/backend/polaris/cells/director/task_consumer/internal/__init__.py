@@ -1,11 +1,9 @@
-"""Internal implementation for director.task_consumer cell.
+"""Internal implementation for the Director task-consumer compatibility adapter.
 
-.. deprecated::
-    This module and its exports are deprecated. Use the DirectorPool cell instead.
-
-Public contracts are defined in the parent module's public contracts (if any).
-
-# TODO: remove after 2026-06-30
+The long-term execution worker is DirectorPool. This package still backs the
+current dispatch pipeline, so it is not a dead shim. Do not add new consumers;
+new orchestration should target DirectorPool/public execution contracts and keep
+this adapter as a migration boundary until dispatch cutover is complete.
 """
 
 from __future__ import annotations

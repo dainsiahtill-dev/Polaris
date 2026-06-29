@@ -1,7 +1,5 @@
 """Context gatherer — deterministic, rule-based context collection for Director.
 
-Migrated from ``polaris.cells.director.execution.internal.context_gatherer``.
-
 Instead of asking an LLM "what should I read?", this module applies fixed rules
 to collect just enough context for the CodeWriter LLM to make correct changes.
 
@@ -12,10 +10,7 @@ Design constraints:
   - Returns a plain dict suitable for JSON serialisation into a prompt.
 
 Cross-boundary dependency:
-  ``ExecutionMode`` is currently imported from
-  ``polaris.cells.director.execution.internal.existence_gate`` (the Facade cell).
-  Once director.runtime is migrated (Phase 4), update this import to:
-    ``polaris.cells.director.runtime.internal.existence_gate``
+  ``ExecutionMode`` is exposed by ``polaris.cells.director.tasking.public``.
 """
 
 from __future__ import annotations
@@ -30,9 +25,6 @@ from polaris.domain.director.context_constants import (
     MAX_SIMILAR,
     MAX_TREE_CHARS,
 )
-
-# NOTE: Once director.runtime is migrated (Phase 4), update this to:
-#   from polaris.cells.director.runtime.internal.existence_gate import ExecutionMode
 
 if TYPE_CHECKING:
     from polaris.cells.director.tasking.public import ExecutionMode

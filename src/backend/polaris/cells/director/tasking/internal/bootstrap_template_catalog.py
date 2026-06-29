@@ -1,7 +1,5 @@
 """Bootstrap template catalog for WorkerExecutor (Cell Implementation).
 
-Migrated from ``polaris.cells.director.execution.internal.bootstrap_template_catalog``.
-
 This module contains all bootstrap template generation functions,
 decoupled from the execution logic for maintainability.
 

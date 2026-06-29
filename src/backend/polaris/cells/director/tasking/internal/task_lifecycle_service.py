@@ -1,7 +1,5 @@
 """Task service for managing task lifecycle.
 
-Migrated from ``polaris.cells.director.execution.internal.task_lifecycle_service``.
-
 Handles task creation, scheduling, dependency resolution, and completion tracking.
 Integrated with 4-phase state machine for governance.
 

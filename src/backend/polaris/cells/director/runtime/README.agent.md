@@ -182,7 +182,10 @@ Remaining code still lives elsewhere:
   `polaris/cells/director/tasking/internal/patch_apply_engine.py` and
   `polaris/cells/director/tasking/internal/existence_gate.py` (there are no
   `PatchApplyEngine` / `ExistenceGate` classes).
-- The original source also remains in `polaris/cells/director/execution/internal/`.
+- Deleted compatibility shims under `polaris/cells/director/execution/internal/`
+  must not be restored. Remaining files in that package are active execution
+  implementation modules, not a compatibility surface for migrated tasking,
+  planning, runtime, or delivery symbols.
 - Legacy deterministic repair strategy functions remain in
   `polaris/cells/roles/adapters/internal/director/deterministic_repairs/`; those
   modules must remain thin migration shims or strategy hosts until the runtime

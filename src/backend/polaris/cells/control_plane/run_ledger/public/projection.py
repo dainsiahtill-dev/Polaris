@@ -457,6 +457,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     tool_lifecycle_result_count = 0
     tool_lifecycle_effect_count = 0
     tool_lifecycle_dropped_count = 0
+    tool_lifecycle_failed_count = 0
     for event in events:
         if not isinstance(event, dict):
             continue
@@ -474,6 +475,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             dropped = bool(lifecycle.get("dropped")) or str(lifecycle.get("dispatch_status") or "") == "dropped"
             if native_count > 0 and dispatched_count <= 0:
                 dropped = True
+            failed = not bool(lifecycle.get("ok", False))
             tool_lifecycle_native_count += native_count
             tool_lifecycle_decoded_count += decoded_count
             tool_lifecycle_dispatched_count += dispatched_count
@@ -481,11 +483,15 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             tool_lifecycle_effect_count += effect_count
             if dropped:
                 tool_lifecycle_dropped_count += 1
+            if failed:
+                tool_lifecycle_failed_count += 1
             tool_lifecycle_events.append(
                 {
                     "status": _clean_string(lifecycle.get("dispatch_status")) or ("dropped" if dropped else "ok"),
                     "failure_class": _clean_string(lifecycle.get("failure_class")),
                     "reason": _clean_string(lifecycle.get("reason")),
+                    "ok": not failed,
+                    "failed": failed,
                     "native_tool_calls_count": native_count,
                     "decoded_tool_calls_count": decoded_count,
                     "dispatched_tool_calls_count": dispatched_count,
@@ -612,7 +618,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     latest_task_boundary = task_boundary_verdicts[-1] if task_boundary_verdicts else {}
     failed_task_boundaries = [verdict for verdict in task_boundary_verdicts if not bool(verdict.get("ok"))]
     task_boundary_ok = not failed_task_boundaries
-    tool_lifecycle_ok = tool_lifecycle_dropped_count == 0
+    tool_lifecycle_ok = tool_lifecycle_failed_count == 0 and tool_lifecycle_dropped_count == 0
     integrity_ok = bool(gates) and capability_ok and evidence_policy_integrity_ok and tool_lifecycle_ok
     outcome_ok = bool(gates) and not failed_gates and not failed_required_modalities and task_boundary_ok
     projection_ok = integrity_ok and outcome_ok
@@ -664,6 +670,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             "tool_result_count": tool_lifecycle_result_count,
             "effect_receipt_count": tool_lifecycle_effect_count,
             "dropped_count": tool_lifecycle_dropped_count,
+            "failed_count": tool_lifecycle_failed_count,
             "events": tool_lifecycle_events,
         },
         "task_boundary": {
@@ -710,10 +717,18 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
     tool_lifecycle = value.get("tool_lifecycle")
     tool_lifecycle_map = tool_lifecycle if isinstance(tool_lifecycle, dict) else {}
     if tool_lifecycle_map and not bool(tool_lifecycle_map.get("ok", True)):
+        events = tool_lifecycle_map.get("events")
+        event_rows = events if isinstance(events, list) else []
+        failed_events = [item for item in event_rows if isinstance(item, dict) and bool(item.get("failed"))]
+        failure = (
+            str(failed_events[-1].get("failure_class") or "TOOL_LIFECYCLE_FAILED")
+            if failed_events
+            else "TOOL_LIFECYCLE_FAILED"
+        )
         return {
             "ok": False,
-            "detail": "run ledger projection detected dropped tool dispatch",
-            "missing": ["tool_dispatch_receipt"],
+            "detail": "run ledger projection tool lifecycle failed: " + failure,
+            "missing": [failure],
             "capability": capability_map,
             "tool_lifecycle": tool_lifecycle_map,
         }

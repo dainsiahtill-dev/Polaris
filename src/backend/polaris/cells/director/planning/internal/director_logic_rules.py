@@ -1,7 +1,5 @@
 """Director logic rules (Cell Implementation).
 
-Migrated from ``polaris.cells.director.execution.internal.director_logic_rules``.
-
 Logic extracted from the historical Director CLI for testability and reusability
 across director.planning and director.runtime.
 

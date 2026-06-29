@@ -94,6 +94,7 @@ def _empty_projection(
             "tool_result_count": 0,
             "effect_receipt_count": 0,
             "dropped_count": 0,
+            "failed_count": 0,
             "events": [],
         },
     }
@@ -226,6 +227,7 @@ def _merge_tool_lifecycle(projects: list[dict[str, Any]]) -> dict[str, Any]:
         "tool_result_count": 0,
         "effect_receipt_count": 0,
         "dropped_count": 0,
+        "failed_count": 0,
         "events": [],
     }
     for project in projects:
@@ -241,6 +243,7 @@ def _merge_tool_lifecycle(projects: list[dict[str, Any]]) -> dict[str, Any]:
             "tool_result_count",
             "effect_receipt_count",
             "dropped_count",
+            "failed_count",
         ):
             totals[key] = _count_value(totals.get(key)) + _count_value(lifecycle.get(key))
         events = lifecycle.get("events")

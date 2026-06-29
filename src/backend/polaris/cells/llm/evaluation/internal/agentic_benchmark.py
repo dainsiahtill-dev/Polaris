@@ -7,8 +7,9 @@
     ``polaris/kernelone/benchmark/unified_runner.py`` (UnifiedBenchmarkRunner)
     and ``polaris/kernelone/benchmark/unified_judge.py`` (UnifiedJudge).
 
-    This module is retained for backward compatibility with existing
-    evaluation cell internals and will be removed after 2026-06-30.
+    This module is retained only for evaluation cell internals that still
+    consume legacy agentic fixture shapes. New code must use the unified
+    KernelOne benchmark framework.
 
 This module provides the agentic benchmark evaluation system that runs deterministic
 test cases against the roles.runtime streaming interface. Each benchmark case defines

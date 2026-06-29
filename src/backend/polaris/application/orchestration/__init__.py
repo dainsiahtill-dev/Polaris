@@ -9,12 +9,12 @@ Call chain (canonical pattern)::
 
     delivery -> application.orchestration -> cells.*.public / kernelone
 
-Migration guide (from old ``app/orchestration/``)::
+Migration guide (from archived ``app/orchestration/``)::
 
-    # OLD (deprecated, will be removed after 2026-06-30)
+    # ARCHIVED
     from app.orchestration.pm_orchestrator import PmOrchestrator
 
-    # NEW (canonical)
+    # CANONICAL
     from polaris.application.orchestration import PmOrchestrator
 
 Public surface:

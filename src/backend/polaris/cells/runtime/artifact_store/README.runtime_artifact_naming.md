@@ -24,6 +24,7 @@ This document defines the canonical artifact keys and their corresponding logica
 | `audit.events.runtime` | `runtime/events/runtime.events.jsonl` | Runtime event stream | `RUNTIME_EVENTS` |
 | `audit.events.pm` | `runtime/events/pm.events.jsonl` | PM event stream | `PM_EVENTS` |
 | `audit.events.pm_llm` | `runtime/events/pm.llm.events.jsonl` | PM LLM interaction events | `PM_LLM_EVENTS` |
+| `audit.events.chief_engineer_llm` | `runtime/events/chief_engineer.llm.events.jsonl` | Chief Engineer LLM events | `CHIEF_ENGINEER_LLM_EVENTS` |
 | `audit.events.pm_task_history` | `runtime/events/pm.task_history.events.jsonl` | Task history events | `PM_TASK_HISTORY` |
 | `audit.events.director_llm` | `runtime/events/director.llm.events.jsonl` | Director LLM events | `DIRECTOR_LLM_EVENTS` |
 | `audit.transcript` | `runtime/events/dialogue.transcript.jsonl` | Dialogue transcript | `DIALOGUE_TRANSCRIPT` |

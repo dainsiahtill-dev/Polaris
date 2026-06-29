@@ -152,6 +152,24 @@ def _route_classification(
             evidence_refs=evidence_refs,
         )
         return "BLOCKED", False, "waiting_human", "", classification
+    if tool_lifecycle and _int_value(tool_lifecycle.get("failed_count")) > 0:
+        events = tool_lifecycle.get("events")
+        event_rows = events if isinstance(events, list) else []
+        failed_events = [item for item in event_rows if isinstance(item, dict) and bool(item.get("failed"))]
+        latest_failure = failed_events[-1] if failed_events else {}
+        failure_class = str(latest_failure.get("failure_class") or "TOOL_LIFECYCLE_FAILED").strip()
+        reason = str(latest_failure.get("reason") or "Tool lifecycle receipt failed").strip()
+        classification = QaFailureClassificationV1(
+            failure_class=failure_class,
+            route="waiting_human",
+            reason=reason,
+            repairable_by_director=False,
+            severity="critical",
+            owner="platform",
+            responsible_layer="execution_control_plane",
+            evidence_refs=evidence_refs,
+        )
+        return "BLOCKED", False, "waiting_human", "", classification
     task_boundary = _mapping(ledger.get("task_boundary"))
     latest_boundary = _mapping(task_boundary.get("latest"))
     if latest_boundary and not bool(latest_boundary.get("ok", True)):

@@ -305,6 +305,12 @@ KERNELONE_ARTIFACT_POLICY_METADATA: dict[str, dict[str, Any]] = {
         "compress": True,
         "archive_on_terminal": True,
     },
+    "audit.events.chief_engineer_llm": {
+        "category": "runtime_current",
+        "lifecycle": "active",
+        "compress": True,
+        "archive_on_terminal": True,
+    },
     "audit.events.pm_task_history": {
         "category": "runtime_current",
         "lifecycle": "active",
@@ -462,6 +468,7 @@ ARTIFACT_REGISTRY: dict[str, str] = {
     "audit.events.runtime": "runtime/events/runtime.events.jsonl",
     "audit.events.pm": "runtime/events/pm.events.jsonl",
     "audit.events.pm_llm": "runtime/events/pm.llm.events.jsonl",
+    "audit.events.chief_engineer_llm": "runtime/events/chief_engineer.llm.events.jsonl",
     "audit.events.pm_task_history": "runtime/events/pm.task_history.events.jsonl",
     "audit.events.director_llm": "runtime/events/director.llm.events.jsonl",
     "audit.transcript": "runtime/events/dialogue.transcript.jsonl",
@@ -497,6 +504,7 @@ LEGACY_KEY_MAPPING: dict[str, str] = {
     "RUNTIME_EVENTS": "audit.events.runtime",
     "PM_EVENTS": "audit.events.pm",
     "PM_LLM_EVENTS": "audit.events.pm_llm",
+    "CHIEF_ENGINEER_LLM_EVENTS": "audit.events.chief_engineer_llm",
     "PM_TASK_HISTORY": "audit.events.pm_task_history",
     "DIRECTOR_LLM_EVENTS": "audit.events.director_llm",
     "DIALOGUE_TRANSCRIPT": "audit.transcript",
@@ -918,6 +926,10 @@ class ArtifactService:
     def get_pm_llm_events_path(self) -> str:
         """Get path for PM LLM events (for appending)."""
         return self._resolve("audit.events.pm_llm")
+
+    def get_chief_engineer_llm_events_path(self) -> str:
+        """Get path for Chief Engineer LLM events (for appending)."""
+        return self._resolve("audit.events.chief_engineer_llm")
 
     def get_director_llm_events_path(self) -> str:
         """Get path for Director LLM events (for appending)."""

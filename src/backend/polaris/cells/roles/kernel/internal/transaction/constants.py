@@ -13,6 +13,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     _READONLY_TOOLS,
 )
 from polaris.kernelone.tool_execution.tool_categories import SCOUT_RECON_TOOLS as _SCOUT_RECON_TOOLS
+from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS as _KERNELONE_WRITE_TOOLS
 
 # ---------------------------------------------------------------------------
 # LLM 拒绝标记
@@ -35,7 +36,8 @@ REFUSAL_MARKERS: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 # 写工具集合（突变工具）
 # ---------------------------------------------------------------------------
-# 这是全系统唯一手动维护的写工具列表。
+# 写工具事实源位于 ``polaris.kernelone.tools.tool_kinds``。
+# 本模块只重新导出给 transaction 子系统，避免 execution/control-plane 各自维护一套。
 # 新增写工具必须同时满足：
 #   1. 在工具注册表中有真实 handler
 #   2. 会修改文件系统或外部系统状态
@@ -46,30 +48,7 @@ REFUSAL_MARKERS: tuple[str, ...] = (
 #   - write_phases.py 补充 3 个（delete_file, rename_file, apply_patch）
 #   - turn_decision_decoder.py 中的 bash/mkdir/mv/cp 被排除（非注册工具名）
 # ---------------------------------------------------------------------------
-WRITE_TOOLS: frozenset[str] = frozenset(
-    {
-        # 文件写操作（有注册 handler）
-        "precision_edit",
-        "edit_blocks",
-        "search_replace",
-        "edit_file",
-        "repo_apply_diff",
-        "append_to_file",
-        "write_file",
-        "create_file",
-        # 由 speculation/write_phases.py 声明的写语义工具
-        # 注：delete_file / rename_file / apply_patch 目前无独立 handler，
-        #     由协议层或 execute_command 代理实现；保留以维持 speculation 契约。
-        "delete_file",
-        "rename_file",
-        "apply_patch",
-        # patch_apply 是 repo_apply_diff 的别名（tool_spec_registry 注册）
-        # 必须显式包含，因为 is_write_tool 的归一化逻辑不会自动映射别名
-        "patch_apply",
-        # apply_diff 同样是 repo_apply_diff 的别名（tool_spec_registry 中 aliases: ["apply_diff", "patch_apply"]）
-        "apply_diff",
-    }
-)
+WRITE_TOOLS: frozenset[str] = _KERNELONE_WRITE_TOOLS
 
 # ---------------------------------------------------------------------------
 # 读工具集合（上下文获取）

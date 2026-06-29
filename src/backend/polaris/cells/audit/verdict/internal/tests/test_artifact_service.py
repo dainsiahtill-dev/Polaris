@@ -314,6 +314,11 @@ class TestArtifactService:
         path = service.get_pm_llm_events_path()
         assert "pm.llm.events.jsonl" in path
 
+    def test_get_chief_engineer_llm_events_path(self, workspace: Path) -> None:
+        service = ArtifactService(str(workspace))
+        path = service.get_chief_engineer_llm_events_path()
+        assert "chief_engineer.llm.events.jsonl" in path
+
     def test_get_director_llm_events_path(self, workspace: Path) -> None:
         service = ArtifactService(str(workspace))
         path = service.get_director_llm_events_path()
