@@ -3392,6 +3392,19 @@ class OrchestrationStageExecutor:
                 "no visible output",
                 "no visible output or tool calls",
                 "awaiting user clarification",
+                # Transient provider rate limiting (HTTP 429) is infrastructure
+                # back-pressure, not a CE design failure. The advisory CE LLM
+                # review is non-authoritative (the deterministic blueprint is the
+                # scope authority and has already succeeded), so a 429 must degrade
+                # to that blueprint projection rather than abort the whole chain.
+                # Live defect: under shared-provider (kimi) saturation every CE
+                # review failed on 429, was treated as fatal, and left prod=0 even
+                # though a usable deterministic blueprint existed.
+                "429",
+                "rate limit",
+                "rate_limit",
+                "rate-limited",
+                "too many requests",
             )
         )
 
@@ -5391,7 +5404,6 @@ class OrchestrationStageExecutor:
                 "tool_results": 0,
             }
         target_files = self._workspace_quality_repair_target_files()
-        task: dict[str, Any] = {"target_files": target_files or changed_files}
         repair_context: dict[str, Any] = {
             "delivery_mode": "materialize_changes",
             "target_files": (target_files or changed_files)[:80],
@@ -5401,6 +5413,27 @@ class OrchestrationStageExecutor:
                 "target_files": target_files[:80],
             },
         }
+        catalog = self._read_catalog_contract()
+        primary_language = str(catalog.get("primary_language") or "").strip()
+        project_type = str(catalog.get("project_type") or "").strip()
+        if primary_language:
+            repair_context.setdefault("language", primary_language)
+            repair_context.setdefault("programming_language", primary_language)
+            repair_context.setdefault("tech_stack", {"language": primary_language})
+        if project_type:
+            repair_context.setdefault("project_type", project_type)
+            repair_context.setdefault("project_kind", project_type)
+        blueprint_artifact, blueprint_text = self._workspace_quality_repair_blueprint_evidence(run_id=run_id)
+        if blueprint_text:
+            blueprint_payload = {
+                "schema_version": "factory.workspace_quality_repair.ce_blueprint_context.v1",
+                "artifact": blueprint_artifact,
+                "evidence": blueprint_text,
+            }
+            repair_context["ce_blueprint"] = blueprint_payload
+            repair_context["chief_engineer_blueprint"] = blueprint_payload
+            repair_context["chief_engineer_blueprint_evidence"] = blueprint_text
+            repair_context["factory_workspace_quality_repair"]["ce_blueprint_artifact"] = blueprint_artifact
         if interface_discrepancy_evidence:
             repair_context["director_interface_discrepancy_retry"] = {
                 "authorized": self._workspace_quality_interface_discrepancy_allows_director_retry(
@@ -5429,12 +5462,14 @@ class OrchestrationStageExecutor:
         ):
             if key in context:
                 repair_context[key] = context[key]
+        task_metadata = dict(repair_context)
+        task_metadata["target_files"] = target_files or changed_files
         try:
             from polaris.cells.roles.adapters.public.service import run_director_materialization_quality_repair
 
             results, summary = await run_director_materialization_quality_repair(
                 str(self.workspace),
-                task=task,
+                task={"target_files": target_files or changed_files, "metadata": task_metadata},
                 target_task_id=f"factory-quality-gate:{run_id}:llm-repair",
                 run_id=run_id,
                 context=repair_context,

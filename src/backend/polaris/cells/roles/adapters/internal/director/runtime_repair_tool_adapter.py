@@ -10,11 +10,13 @@ from typing import Any
 from polaris.cells.director.runtime.public import (
     PlanDirectorRepairCommandV1,
     QueryDirectorRepairPlanProbeV1,
+    QueryDirectorRepairStrategyCatalogV1,
     RepairAdvisoryV1,
     RunDirectorRepairCommandV1,
     RunDirectorRepairConvergenceCommandV1,
     plan_director_repair,
     query_director_repair_plan_probe,
+    query_director_repair_strategy_catalog,
     run_director_repair,
     run_director_repair_convergence,
 )
@@ -232,12 +234,37 @@ def _runtime_repair_planning_preflight(
     plan_probe_payload = plan_probe.to_dict()
     probe_item = next((item for item in plan_probe.items if item.source_tool == source_tool), None)
     if probe_item is None or probe_item.status == "not_covered_by_source_tool":
-        return None
+        if _source_tool_is_registered_runtime_repair(source_tool):
+            return None
+        return {
+            "ok": False,
+            "planned": False,
+            "source_tool": source_tool,
+            "status": "not_covered_by_source_tool",
+            "error_code": "unsupported_repair_source_tool",
+            "error_message": f"source_tool is not covered by director.runtime repair catalog: {source_tool}",
+            "plan_probe": plan_probe_payload,
+        }
     payload = probe_item.planning_result.to_dict() if probe_item is not None else {"source_tool": source_tool}
     payload["plan_probe"] = plan_probe_payload
     if probe_item.status != "covered_plannable":
         return None
     return payload
+
+
+def _source_tool_is_registered_runtime_repair(source_tool: str) -> bool:
+    normalized = str(source_tool or "").strip()
+    if not normalized:
+        return False
+    catalog = query_director_repair_strategy_catalog(QueryDirectorRepairStrategyCatalogV1(include_items=False))
+    summary = dict(catalog.summary)
+    runtime_source_tools = {str(item or "") for item in summary.get("executable_runtime_source_tools", [])}
+    metadata_source_tools = {
+        str(item.get("source_tool") or "")
+        for item in summary.get("executable_runtime_bindings", [])
+        if isinstance(item, dict)
+    }
+    return normalized in runtime_source_tools or normalized in metadata_source_tools
 
 
 def _direct_runtime_repair_planning_preflight(
@@ -479,6 +506,13 @@ def _project_receipt_kernel(
         "plan_policy": dict(canonical_result.metadata.get("plan_policy") or {}),
         "composition_policy": dict(canonical_result.metadata.get("composition_policy") or {}),
     }
+    advisor_notes = (
+        receipt_metadata.get("advisor_notes")
+        or payload["planning"].get("advisor_notes")
+        or planning_preflight.get("advisor_notes")
+    )
+    if isinstance(advisor_notes, list):
+        payload["advisor_notes"] = advisor_notes
     if convergence_result is not None:
         metadata = dict(getattr(convergence_result, "metadata", {}) or {})
         rounds = [_object_to_dict(round_result) for round_result in getattr(convergence_result, "rounds", ())]

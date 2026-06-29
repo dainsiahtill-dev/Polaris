@@ -718,6 +718,46 @@ def shrink_max_tokens_for_context_overflow(payload: dict[str, Any], error_body: 
     return True
 
 
+_RATE_LIMIT_MIN_RETRIES = 4
+
+
+def _rate_limit_min_retries() -> int:
+    """429 retry budget, env-tunable for high-saturation conditions.
+
+    Defaults to ``_RATE_LIMIT_MIN_RETRIES``. Raise
+    ``KERNELONE_LLM_RATE_LIMIT_MAX_RETRIES`` to ride out longer shared-provider
+    saturation (at the cost of slower calls while the provider rate limits).
+    """
+    raw = os.environ.get("KERNELONE_LLM_RATE_LIMIT_MAX_RETRIES", "").strip()
+    if not raw:
+        return _RATE_LIMIT_MIN_RETRIES
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return _RATE_LIMIT_MIN_RETRIES
+    return value if value >= 0 else _RATE_LIMIT_MIN_RETRIES
+
+
+def _parse_retry_after_seconds(response: Any) -> float | None:
+    """Best-effort parse of a 429 ``Retry-After`` header into seconds.
+
+    Honors the integer/float-seconds form (the common case for LLM gateways).
+    Returns ``None`` when the header is absent or non-numeric, letting the
+    caller fall back to exponential backoff.
+    """
+    headers_value = getattr(response, "headers", None)
+    if headers_value is None or not hasattr(headers_value, "get"):
+        return None
+    raw = str(headers_value.get("Retry-After") or "").strip()
+    if not raw:
+        return None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
+
+
 def invoke_with_retry(
     url: str,
     headers: dict[str, str],
@@ -748,6 +788,7 @@ def invoke_with_retry(
 
     start = _clock.time()
     overflow_heal_attempts = 0
+    rate_limit_attempt = 0
     while True:
         try:
             breaker.before_call()
@@ -819,6 +860,44 @@ def invoke_with_retry(
                             f"{status_code} Server Error from {url}: {error_body[:500] if error_body else '(empty)'}"
                         ),
                     )
+                if isinstance(status_code, int) and status_code == 429:
+                    # Rate limiting (429) is transient, NOT a hard client error:
+                    # retry with backoff (honoring Retry-After) instead of failing
+                    # the call. The provider's generic ``retries`` budget defaults
+                    # to 0, which cannot ride out shared-provider saturation, so
+                    # 429 gets its own minimum budget. Live defect: kimi-for-coding
+                    # returned persistent 429 under concurrent factory_bench load
+                    # and every CE / Director LLM call failed on the first 429,
+                    # materializing 0 source files (prod=0) — a provider-resilience
+                    # gap, not a generation-quality gap.
+                    breaker.on_failure()
+                    rate_limit_attempt += 1
+                    if rate_limit_attempt > max(retries, _rate_limit_min_retries()):
+                        latency_ms = int((_clock.time() - start) * 1000)
+                        usage = estimate_usage(prompt, "")
+                        return InvokeResult(
+                            ok=False,
+                            output="",
+                            latency_ms=latency_ms,
+                            usage=usage,
+                            error=(
+                                f"429 Rate limited by {url} after "
+                                f"{rate_limit_attempt - 1} retries: "
+                                f"{error_body[:300] if error_body else '(empty)'}"
+                            ),
+                        )
+                    retry_after = _parse_retry_after_seconds(response)
+                    delay = (
+                        retry_after
+                        if retry_after is not None
+                        else _build_backoff_seconds(
+                            attempt=rate_limit_attempt,
+                            base_delay_seconds=backoff_base_seconds,
+                            max_delay_seconds=backoff_max_seconds,
+                        )
+                    )
+                    _clock.sleep(delay)
+                    continue
                 if isinstance(status_code, int) and 400 <= status_code < 500:
                     breaker.on_failure()
                     latency_ms = int((_clock.time() - start) * 1000)

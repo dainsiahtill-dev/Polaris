@@ -529,8 +529,6 @@ _FILE_ROLE_IDENTITY_FRAGMENTS: dict[str, str] = {
 _FRAMEWORK_ALIASES: dict[str, str] = {
     "next.js": "next",
     "nextjs": "next",
-    "node.js": "express",
-    "nodejs": "express",
     "react.js": "react",
     "spring boot": "spring",
     "vue.js": "vue",
@@ -552,7 +550,7 @@ _FRAMEWORK_DISPLAY_NAMES: dict[str, str] = {
 
 _FRAMEWORK_PATTERNS: dict[str, str] = {
     "django": r"\bdjango\b",
-    "express": r"\bexpress\b|\bnode\.?js\b",
+    "express": r"\bexpress\b",
     "fastapi": r"\bfastapi\b",
     "fiber": r"\bfiber\b",
     "flask": r"\bflask\b",

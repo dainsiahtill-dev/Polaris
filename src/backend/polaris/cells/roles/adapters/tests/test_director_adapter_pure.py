@@ -33,6 +33,8 @@ from polaris.cells.roles.adapters.internal.director.adapter import (
     DirectorAdapter,
     _build_director_blueprint_handoff_lines,
     _director_actual_interface_injection_enabled,
+    _load_ce_blueprint_contract_payload,
+    _merge_ce_blueprint_contract_payload,
     _normalize_director_role_response,
 )
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
@@ -5452,6 +5454,107 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
         assert envelope["ce_blueprint"]["hash"] == "ce-blueprint-hash"
         assert envelope["handoff_decision"]["allowed"] is True
 
+    def test_ce_blueprint_does_not_expand_claimed_task_write_boundary(self, tmp_path: Any) -> None:
+        BlueprintPersistence(str(tmp_path)).save(
+            "ce_TASK-1-source-core",
+            {
+                "blueprint_id": "ce_TASK-1-source-core",
+                "task_id": "TASK-1-source-core",
+                "summary": "Blueprint includes a related test file for guidance.",
+                "target_files": [
+                    "src/engine/rules.js",
+                    "src/engine/runner.js",
+                    "tests/behavior.test.js",
+                ],
+                "scope_paths": [
+                    "src/engine/rules.js",
+                    "src/engine/runner.js",
+                    "tests/behavior.test.js",
+                ],
+                "module_interface_contract": {
+                    "schema_version": "chief_engineer.module_interface_contract.v1",
+                    "modules": [{"path": "src/engine/rules.js", "role": "core_engine"}],
+                },
+            },
+        )
+        task = {
+            "subject": "Implement core engine modules",
+            "metadata": {
+                "task_id": "TASK-1-source-core",
+                "pm_task_id": "TASK-1-source-core",
+                "external_task_id": "TASK-1-source-core",
+                "blueprint_id": "ce_TASK-1-source-core",
+                "target_files": ["src/engine/rules.js", "src/engine/runner.js"],
+                "scope_paths": ["src/engine/rules.js", "src/engine/runner.js"],
+                "language": "javascript",
+                "phase": "implementation",
+            },
+        }
+        context: dict[str, Any] = {"run_id": "RUN-1", "metadata": {"task_type": "implement"}}
+
+        DirectorAdapter._promote_task_contract_to_runtime_context(
+            task=task,
+            context=context,
+            workspace=str(tmp_path),
+        )
+        metadata = DirectorAdapter._build_role_runtime_metadata(context, max_retries=1)
+        DirectorAdapter._ensure_director_execution_profile(
+            message="Implement core engine modules.",
+            context=context,
+            metadata=metadata,
+            workspace=str(tmp_path),
+        )
+
+        assert context["target_files"] == ["src/engine/rules.js", "src/engine/runner.js"]
+        assert context["scope_paths"] == ["src/engine/rules.js", "src/engine/runner.js"]
+        assert context["metadata"]["target_files"] == ["src/engine/rules.js", "src/engine/runner.js"]
+        assert context["metadata"]["scope_paths"] == ["src/engine/rules.js", "src/engine/runner.js"]
+        assert (
+            "tests/behavior.test.js"
+            not in metadata["director_execution_envelope"]["authorization"]["allowed_write_paths"]
+        )
+        assert metadata["module_interface_contract"]["modules"][0]["path"] == "src/engine/rules.js"
+
+    def test_ce_blueprint_payload_cannot_expand_missing_task_write_boundary(self) -> None:
+        merged = _merge_ce_blueprint_contract_payload(
+            {
+                "task_id": "TASK-1-source-core",
+                "acceptance_criteria": ["Implement the core engine"],
+            },
+            {
+                "blueprint_id": "ce_TASK-1-source-core",
+                "task_id": "TASK-1-source-core",
+                "target_files": ["src/core.js", "tests/core.test.js"],
+                "scope_paths": ["src/core.js", "tests/core.test.js"],
+                "execution_checklist": ["Write source and tests"],
+            },
+        )
+
+        assert "target_files" not in merged
+        assert "scope_paths" not in merged
+        assert merged["execution_checklist"] == ["Write source and tests"]
+        assert merged["ce_blueprint"]["target_files"] == ["src/core.js", "tests/core.test.js"]
+
+    def test_explicit_ce_blueprint_id_still_requires_matching_task_token(self, tmp_path: Any) -> None:
+        BlueprintPersistence(str(tmp_path)).save(
+            "ce_TASK-2",
+            {
+                "blueprint_id": "ce_TASK-2",
+                "task_id": "TASK-2",
+                "target_files": ["src/other.js"],
+            },
+        )
+        task = {
+            "id": "TASK-1-source-core",
+            "metadata": {
+                "task_id": "TASK-1-source-core",
+                "pm_task_id": "TASK-1-source-core",
+                "blueprint_id": "ce_TASK-2",
+            },
+        }
+
+        assert _load_ce_blueprint_contract_payload(str(tmp_path), task) == {}
+
     def test_existing_director_execution_profile_is_preserved(self, tmp_path: Any) -> None:
         existing_profile = {
             "schema_version": "task.execution_profile.v1",
@@ -5922,7 +6025,7 @@ class TestBuildDirectorMessage:
         assert "- ce scope advisory: src/engine/SimulationEngine.ts" in msg
         assert "- ce risks: browser bootstrap can drift from compiled output" in msg
 
-    def test_promote_task_contract_merges_ce_blueprint_targets_into_runtime_context(self, tmp_path: Any) -> None:
+    def test_promote_task_contract_preserves_claimed_write_boundary_from_ce_blueprint(self, tmp_path: Any) -> None:
         blueprint_id = "bp-task-1-with-tests"
         BlueprintPersistence(str(tmp_path)).save(
             blueprint_id,
@@ -5953,20 +6056,17 @@ class TestBuildDirectorMessage:
         )
 
         metadata = context["metadata"]
-        assert context["target_files"] == ["src/index.ts", "tests/behavior.test.ts"]
-        assert context["scope_paths"] == ["src/index.ts", "tests/behavior.test.ts"]
-        assert metadata["target_files"] == ["src/index.ts", "tests/behavior.test.ts"]
-        assert metadata["scope_paths"] == ["src/index.ts", "tests/behavior.test.ts"]
+        assert context["target_files"] == ["src/index.ts"]
+        assert context["scope_paths"] == ["src/index.ts"]
+        assert metadata["target_files"] == ["src/index.ts"]
+        assert metadata["scope_paths"] == ["src/index.ts"]
         task_metadata = task["metadata"]
         assert isinstance(task_metadata, dict)
-        assert task["target_files"] == ["src/index.ts", "tests/behavior.test.ts"]
-        assert task["scope_paths"] == ["src/index.ts", "tests/behavior.test.ts"]
-        assert task_metadata["target_files"] == ["src/index.ts", "tests/behavior.test.ts"]
-        assert task_metadata["scope_paths"] == ["src/index.ts", "tests/behavior.test.ts"]
-        assert execute_method_module._declared_write_retry_target_files(task) == [
-            "src/index.ts",
-            "tests/behavior.test.ts",
-        ]
+        assert task["target_files"] == ["src/index.ts"]
+        assert task["scope_paths"] == ["src/index.ts"]
+        assert task_metadata["target_files"] == ["src/index.ts"]
+        assert task_metadata["scope_paths"] == ["src/index.ts"]
+        assert execute_method_module._declared_write_retry_target_files(task) == ["src/index.ts"]
         assert metadata["ce_blueprint"]["blueprint_id"] == blueprint_id
 
     def test_message_requires_unittest_and_contract_scoped_python_tests(self, tmp_path: Any) -> None:
@@ -6451,6 +6551,7 @@ class TestDirectorFailureClosure:
             context={},
             direct_fallback_summary=None,
             empty_write_content_retry_summary=None,
+            no_write_materialization_retry_summary=None,
             existing_contract_evidence={},
             primary_llm_summary={"success": True},
             requires_fresh_materialization=True,
@@ -12568,7 +12669,9 @@ class TestQualityRepairMissingTargetContract:
         assert "MISSING TARGET FILES" in adapter.repair_message
 
     @pytest.mark.asyncio
-    async def test_package_manifest_missing_test_and_verify_scripts_create_entrypoint_targets(self, tmp_path) -> None:
+    async def test_package_manifest_missing_test_and_verify_scripts_defer_out_of_scope_entrypoint_targets(
+        self, tmp_path
+    ) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -12643,17 +12746,17 @@ class TestQualityRepairMissingTargetContract:
             changed_files=["package.json"],
         )
 
-        assert summary["semantic_quality_target_files"] == ["package.json"]
-        assert summary["missing_target_files"] == ["tests/generated.test.ts", "scripts/verify.ts"]
-        assert summary["repair_target_files"] == [
+        assert summary["stage"] == "task_boundary_repair_targets_deferred"
+        assert summary["success_reason"] == "repair_targets_outside_current_task_target_files"
+        assert summary["semantic_quality_target_files"] == []
+        assert summary["missing_target_files"] == []
+        assert summary["repair_target_files"] == []
+        assert summary["llm_fallback_blocked"] is True
+        assert summary["task_boundary_scope_filter"]["out_of_scope_repair_target_files"] == [
             "tests/generated.test.ts",
             "scripts/verify.ts",
-            "package.json",
         ]
-        assert "MISSING TARGET FILES" in adapter.repair_message
-        assert "tests/generated.test.ts" in adapter.repair_message
-        assert "scripts/verify.ts" in adapter.repair_message
-        assert "NPM PACKAGE MANIFEST REPAIR" in adapter.repair_message
+        assert adapter.repair_message == ""
 
     @pytest.mark.asyncio
     async def test_package_manifest_quality_error_targets_existing_path_when_changed_files_empty(

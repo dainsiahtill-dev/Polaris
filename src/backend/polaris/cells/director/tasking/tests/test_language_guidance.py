@@ -207,6 +207,25 @@ def test_quality_repair_marker_overrides_review_words_for_precise_repair_profile
     assert profile.signal_evidence["task_type_source"] == "quality_repair_marker"
 
 
+def test_node_cli_does_not_infer_express_framework_requirement() -> None:
+    profile = resolve_director_execution_profile(
+        subject="Repair Node.js CLI package scripts",
+        description=(
+            "MATERIALIZATION QUALITY REPAIR MODE: npm test failed for a JavaScript Node.js CLI project. "
+            "Fix package.json and src/index.js without adding an HTTP framework."
+        ),
+        metadata={"project_type": "cli", "language": "javascript"},
+        target_files=["package.json", "src/index.js", "src/engine/runner.js"],
+        scope_paths=[],
+    )
+
+    strategy = resolve_director_execution_strategy(profile, metadata={})
+
+    assert profile.language == "javascript"
+    assert profile.framework == ""
+    assert "framework_best_practices" not in strategy.evidence_requirements
+
+
 def test_execution_strategy_derives_large_budget_from_profile() -> None:
     profile = resolve_director_execution_profile(
         subject="Implement TypeScript dashboard feature",

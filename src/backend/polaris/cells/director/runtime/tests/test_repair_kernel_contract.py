@@ -426,6 +426,58 @@ def test_repair_rule_registry_matches_existing_multilanguage_legacy_strategy_met
     assert matched_source_tools[6] == ["deterministic_typescript_vitest_globals_repair"]
 
 
+def test_javascript_module_error_with_unquoted_export_name_stays_javascript() -> None:
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm run start): "
+        "file:///tmp/project/src/index.js:1\n"
+        "SyntaxError: The requested module ./engine/AlchemyEngine.js "
+        "does not provide an export named default"
+    )
+    diagnostics = normalize_artifact_quality_errors(
+        [
+            error,
+        ]
+    )
+
+    payload = default_repair_rule_registry().coverage(diagnostics).to_dict()
+    probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=(error,),
+            base_files={
+                "package.json": '{"type":"module","scripts":{"start":"node src/index.js"}}',
+                "src/index.js": 'import AlchemyEngine from "./engine/AlchemyEngine.js";\n',
+                "src/engine/AlchemyEngine.js": (
+                    "class AlchemyEngine {}\n"
+                    "function buildDefaultEngine() { return {}; }\n"
+                    "module.exports = AlchemyEngine;\n"
+                    "module.exports.buildDefaultEngine = buildDefaultEngine;\n"
+                    'module.exports.VERSION = "1.0.0";\n'
+                ),
+            },
+        )
+    )
+    no_stack_probe = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            artifact_quality_errors=(
+                "SyntaxError: The requested module ./engine/AlchemyEngine.js does not provide an export named default",
+            ),
+            base_files={
+                "package.json": '{"type":"module","scripts":{"start":"node src/index.js"}}',
+                "src/index.js": 'import AlchemyEngine from "./engine/AlchemyEngine.js";\n',
+                "src/engine/AlchemyEngine.js": "class AlchemyEngine {}\nmodule.exports = AlchemyEngine;\n",
+            },
+        )
+    )
+
+    assert diagnostics[0].code == "javascript_module_error"
+    assert "The requested module ./engine/AlchemyEngine.js" in diagnostics[0].message
+    assert payload["items"][0]["diagnostic_language"] == "javascript"
+    assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in payload["items"][0]["matched_source_tools"]
+    assert probe.status == "covered_plannable"
+    assert "deterministic_javascript_esm_commonjs_entrypoint_repair" in probe.plannable_source_tools
+    assert no_stack_probe.status == "covered_plannable"
+
+
 def test_repair_rule_registry_rejects_duplicate_rule_ids_and_unknown_source_tool() -> None:
     rule = RepairRuleDefinition(
         rule_id="typescript.object_literal_missing_comma",

@@ -161,6 +161,7 @@ _TASK_CONTRACT_LIST_KEYS = (
     "execution_checklist",
     "depends_on",
 )
+_AUTHORITATIVE_TASK_BOUNDARY_LIST_KEYS = frozenset({"target_files", "scope_paths"})
 _TASK_CONTRACT_MAPPING_KEYS = (
     "pm_contract",
     "ce_blueprint",
@@ -352,9 +353,14 @@ def _load_ce_blueprint_contract_payload(workspace: str, task: dict[str, Any]) ->
         if not isinstance(payload, dict):
             continue
         payload_task = _normalize_contract_task_token(payload.get("task_id"))
-        if explicit_blueprint_ids and blueprint_id in explicit_blueprint_ids:
-            pass
-        elif (task_tokens and payload_task not in task_tokens) or (not task_tokens and not explicit_blueprint_ids):
+        payload_tokens = {
+            token
+            for value in (payload_task, _normalize_contract_task_token(blueprint_id))
+            if (token := _normalize_contract_task_token(value))
+        }
+        if task_tokens and task_tokens.isdisjoint(payload_tokens):
+            continue
+        if not task_tokens and not explicit_blueprint_ids:
             continue
         updated_at = str(payload.get("updated_at") or payload.get("created_at") or "").strip()
         candidates.append((updated_at, str(blueprint_id), payload))
@@ -372,6 +378,10 @@ def _merge_ce_blueprint_contract_payload(
         return contract_payload
     merged = dict(contract_payload)
     for key in _TASK_CONTRACT_LIST_KEYS:
+        if key in _AUTHORITATIVE_TASK_BOUNDARY_LIST_KEYS:
+            if _has_contract_value(contract_payload, key):
+                merged[key] = _contract_list(contract_payload.get(key))
+            continue
         values = _merge_contract_lists(contract_payload.get(key), blueprint_payload.get(key))
         if values:
             merged[key] = values
@@ -1292,6 +1302,12 @@ class DirectorAdapter(BaseRoleAdapter):
         for key in _TASK_CONTRACT_LIST_KEYS:
             value = contract_payload.get(key)
             if not isinstance(value, list) or not value:
+                continue
+            if key in _AUTHORITATIVE_TASK_BOUNDARY_LIST_KEYS:
+                task[key] = list(value)
+                task_metadata[key] = list(value)
+                context[key] = list(value)
+                metadata[key] = list(value)
                 continue
             merged_task = _merge_contract_lists(task.get(key), value)
             if merged_task:

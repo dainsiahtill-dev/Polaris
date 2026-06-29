@@ -56,7 +56,10 @@ _PYTHON_EXCEPTION_RE = re.compile(
     re.IGNORECASE,
 )
 _JAVASCRIPT_MODULE_ERROR_RE = re.compile(
-    r"(?P<message>Cannot find module ['\"][^'\"]+['\"]|does not provide an export named ['\"][^'\"]+['\"]|"
+    r"(?P<message>The requested module\s+['\"]?[^'\"\s]+['\"]?\s+"
+    r"does not provide an export named\s+(?:['\"][^'\"]+['\"]|[A-Za-z_$][\w$]*)|"
+    r"Cannot find module ['\"][^'\"]+['\"]|"
+    r"does not provide an export named (?:['\"][^'\"]+['\"]|[A-Za-z_$][\w$]*)|"
     r"require is not defined in ES module scope|exports is not defined in ES module scope|"
     r"Cannot require\(\) ES Module [^\n]+|ERR_REQUIRE_CYCLE_MODULE|"
     r"Cannot use import statement outside a module|"

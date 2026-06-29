@@ -58,6 +58,7 @@ from .projection_dict_builder import ProjectionDictBuilder
 from .projection_formatter import ProjectionFormatter
 from .security import SecuritySanitizer
 from .signal_sources import SignalSourceProvider
+from .task_boundary_filter import filter_context_override_for_current_task
 from .token_estimator import TokenEstimator
 
 if TYPE_CHECKING:
@@ -406,10 +407,15 @@ class RoleContextGateway:
         # ── Context Override Processing with Prompt Injection Detection ──
         context_override = getattr(request, "context_override", None)
         if context_override and isinstance(context_override, dict):
-            override_msg = self._process_context_override(context_override)
+            filtered_context_override, filtered_count = filter_context_override_for_current_task(
+                request, context_override
+            )
+            override_msg = self._process_context_override(filtered_context_override)
             if override_msg:
                 messages.insert(0, override_msg)
                 sources.append("context_override")
+                if filtered_count:
+                    sources.append("context_override_task_boundary_filter")
 
         # ── ContextOS routing audit telemetry ──
         raw_history_tokens = self._token_estimator.estimate(proj_input)

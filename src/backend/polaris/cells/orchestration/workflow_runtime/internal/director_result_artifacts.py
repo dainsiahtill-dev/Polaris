@@ -140,20 +140,46 @@ def _is_blocking_status(status: str) -> bool:
     return status in _TERMINAL_FAILURE or status in _TERMINAL_BLOCKED
 
 
+def _materialized_any_files(row: dict[str, Any] | None) -> bool:
+    """Whether a runtime row's adapter result landed at least one file on disk."""
+    if not row:
+        return False
+    adapter_result = _as_dict(_as_dict(row.get("metadata")).get("adapter_result"))
+    for key in ("new_files", "modified_files"):
+        if any(str(item).strip() for item in _as_list(adapter_result.get(key))):
+            return True
+    return False
+
+
 def _blocking_identity_tokens(
     contract_rows: list[dict[str, Any]],
     statuses: list[str],
+    matched_rows: list[dict[str, Any] | None],
 ) -> set[str]:
     tokens: set[str] = set()
     for index, status in enumerate(statuses):
-        if index < len(contract_rows) and _is_blocking_status(status):
-            tokens.update(_identity_tokens(contract_rows[index]))
+        if index >= len(contract_rows) or not _is_blocking_status(status):
+            continue
+        # A task that FAILED but still materialized its declared files must not
+        # cascade-block its dependents: the files exist on disk, so a downstream
+        # task (e.g. the entrypoint that imports them, or the test/README task)
+        # can still be created. Only a failure that produced NO artifact — or a
+        # genuinely blocked task — propagates a dependency block. Live defect: a
+        # single ``director_materialization_quality_failed`` task whose source
+        # files DID land was blocking the entrypoint + tests, so package.json's
+        # ``start`` script referenced a never-created ``src/index.js`` and the
+        # whole project was unrunnable despite most code already being on disk.
+        matched = matched_rows[index] if index < len(matched_rows) else None
+        if status in _TERMINAL_FAILURE and _materialized_any_files(matched):
+            continue
+        tokens.update(_identity_tokens(contract_rows[index]))
     return tokens
 
 
 def _propagate_dependency_blocks(
     contract_rows: list[dict[str, Any]],
     statuses: list[str],
+    matched_rows: list[dict[str, Any] | None],
 ) -> tuple[list[str], list[list[str]]]:
     """Mark pending contract tasks blocked when a dependency has failed or is blocked."""
 
@@ -162,7 +188,7 @@ def _propagate_dependency_blocks(
     changed = True
     while changed:
         changed = False
-        blocking_tokens = _blocking_identity_tokens(contract_rows, resolved_statuses)
+        blocking_tokens = _blocking_identity_tokens(contract_rows, resolved_statuses, matched_rows)
         for index, contract in enumerate(contract_rows):
             status = resolved_statuses[index]
             if status in _TERMINAL_SUCCESS or _is_blocking_status(status):
@@ -175,7 +201,7 @@ def _propagate_dependency_blocks(
             blocked_by[index] = blocked_dependencies
             changed = True
 
-    blocking_tokens = _blocking_identity_tokens(contract_rows, resolved_statuses)
+    blocking_tokens = _blocking_identity_tokens(contract_rows, resolved_statuses, matched_rows)
     for index, contract in enumerate(contract_rows):
         if resolved_statuses[index] == "blocked" and not blocked_by[index]:
             blocked_by[index] = sorted(_dependency_tokens(contract).intersection(blocking_tokens))
@@ -291,7 +317,7 @@ def build_director_result_from_runtime(
         matched_rows.append(matched_row)
 
     initial_statuses = [_row_status(row) for row in matched_rows]
-    statuses, blocked_by = _propagate_dependency_blocks(contract_rows, initial_statuses)
+    statuses, blocked_by = _propagate_dependency_blocks(contract_rows, initial_statuses, matched_rows)
 
     task_results: list[dict[str, Any]] = []
     successes = failures = blocked = pending = 0

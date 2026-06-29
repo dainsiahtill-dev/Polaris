@@ -3239,6 +3239,106 @@ class TestRunWorkspaceQualityChecks:
         assert payload["repair"]["rounds"][0]["source_tools"] == ["director_materialization_quality_repair"]
 
     @pytest.mark.asyncio
+    async def test_workspace_quality_llm_repair_context_includes_ce_blueprint_and_catalog(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / ".polaris").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".polaris" / "catalog_contract.json").write_text(
+            json.dumps(
+                {
+                    "project_id": "L2-08",
+                    "primary_language": "javascript",
+                    "project_type": "collaboration_toy",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "engine").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "src" / "engine" / "rules.js").write_text("export const meteor = 1;\n", encoding="utf-8")
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "goal": "Create source and entrypoint",
+                        "target_files": ["package.json", "src/engine/rules.js", "src/index.js"],
+                    }
+                ]
+            },
+        )
+        executor._write_json_artifact(
+            "runtime/state/blueprints/factory-context.review.json",
+            {
+                "generated_blueprints": 1,
+                "total_tasks": 1,
+                "blueprints": [
+                    {
+                        "task_id": "TASK-1",
+                        "status": "generated",
+                        "blueprint_id": "ce_TASK-1",
+                        "summary": "Chief Engineer blueprint defines source and entrypoint contracts.",
+                    }
+                ],
+            },
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_run_director_materialization_quality_repair(
+            workspace: str,
+            *,
+            task: dict[str, Any],
+            target_task_id: str,
+            run_id: str,
+            context: dict[str, Any],
+            original_message: str,
+            llm_call_timeout: float,
+            artifact_quality_errors: list[str],
+            changed_files: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            captured.update(
+                {
+                    "workspace": workspace,
+                    "task": task,
+                    "target_task_id": target_task_id,
+                    "run_id": run_id,
+                    "context": context,
+                    "original_message": original_message,
+                    "llm_call_timeout": llm_call_timeout,
+                    "artifact_quality_errors": artifact_quality_errors,
+                    "changed_files": changed_files,
+                    "repair_attempt": repair_attempt,
+                }
+            )
+            return [], {"attempted": True, "success": False, "source_tools": [], "tool_results": 0}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair",
+            fake_run_director_materialization_quality_repair,
+        )
+
+        _, summary = await executor._apply_workspace_quality_llm_repairs(
+            run_id="factory-context",
+            context={},
+            artifact_quality_errors=["npm run build failed"],
+            repair_attempt=1,
+        )
+
+        assert summary["repair_mode"] == "director_llm"
+        repair_context = captured["context"]
+        assert repair_context["language"] == "javascript"
+        assert repair_context["programming_language"] == "javascript"
+        assert repair_context["project_type"] == "collaboration_toy"
+        assert repair_context["ce_blueprint"]["artifact"] == "runtime/state/blueprints/factory-context.review.json"
+        assert "Chief Engineer blueprint" in repair_context["chief_engineer_blueprint_evidence"]
+        assert captured["task"]["metadata"]["ce_blueprint"] == repair_context["ce_blueprint"]
+
+    @pytest.mark.asyncio
     async def test_workspace_quality_ignores_deterministic_results_without_write_evidence(
         self,
         tmp_path: Path,

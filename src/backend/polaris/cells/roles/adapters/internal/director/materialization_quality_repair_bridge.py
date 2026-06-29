@@ -489,7 +489,7 @@ def _materialization_typescript_compiler_runtime_source_tools(
 ) -> tuple[str, ...]:
     matched_tools = _runtime_coverage_matched_source_tools(
         artifact_quality_errors=artifact_quality_errors,
-        source_tool_prefixes=("deterministic_typescript_",),
+        source_tool_prefixes=("deterministic_typescript_", "deterministic_javascript_"),
     )
     if matched_tools:
         return matched_tools

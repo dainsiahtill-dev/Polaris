@@ -54,8 +54,8 @@ _UNRESOLVED_IMPORT_SYMBOL_RE = re.compile(
     re.IGNORECASE,
 )
 _MISSING_NAMED_EXPORT_RE = re.compile(
-    r"The requested module ['\"](?P<module>\.[^'\"]+)['\"] does not provide an export named "
-    r"['\"](?P<symbol>[A-Za-z_$][\w$]*)['\"]",
+    r"The requested module\s+['\"]?(?P<module>\.[^'\"\s]+)['\"]?\s+does not provide an export named\s+"
+    r"['\"]?(?P<symbol>[A-Za-z_$][\w$]*)['\"]?",
 )
 _NODE_SCRIPT_SEGMENT_RE = re.compile(r"\s*(?:&&|\|\||[;|])\s*")
 _NODE_FLAGS_WITH_VALUE = frozenset(
@@ -103,6 +103,9 @@ _COMMONJS_MODULE_EXPORTS_DEFAULT_RE = re.compile(
 )
 _COMMONJS_MODULE_EXPORTS_OBJECT_RE = re.compile(
     r"^(?P<indent>\s*)module\.exports\s*=\s*\{(?P<bindings>[^}]+)\}\s*;?\s*$"
+)
+_COMMONJS_MODULE_EXPORTS_PROPERTY_RE = re.compile(
+    r"^(?P<indent>\s*)module\.exports\.(?P<name>[A-Za-z_$][\w$]*)\s*=\s*(?P<value>.+?)\s*;?\s*$"
 )
 _COMMONJS_REQUIRE_MAIN_GUARD_RE = re.compile(
     r"^(?P<indent>\s*)if\s*\(\s*require\.main\s*===\s*module\s*\)\s*\{\s*"
@@ -601,6 +604,7 @@ def build_javascript_missing_method_runtime_plan(
                 text=class_text,
                 class_name=class_name,
                 missing_member=failure["member"],
+                call_arguments=failure.get("arguments") or "",
                 diagnostic=diagnostic,
             )
             if operation is None:
@@ -1363,6 +1367,8 @@ def _missing_export_targets(
         symbol = str(named_export.group("symbol") or "").strip()
         module_ref = str(named_export.group("module") or "").strip()
         importer = _first_runtime_file(raw, base_files)
+        if not importer:
+            importer = _infer_importer_for_js_module_ref(base_files, module_ref)
         exporter = _resolve_js_module(base_files, importer, module_ref)
         if _JS_IDENTIFIER_RE.match(symbol) and exporter:
             targets.append({"exporter": exporter, "symbol": symbol})
@@ -1374,7 +1380,7 @@ def _resolve_js_module(base_files: Mapping[str, str], importer: str, module_ref:
     if not importer or not module_ref.startswith("."):
         return ""
     base_dir = PurePosixPath(importer).parent
-    raw = (base_dir / module_ref).as_posix()
+    raw = posixpath.normpath((base_dir / module_ref).as_posix())
     candidates = [raw]
     if PurePosixPath(raw).suffix:
         candidates.append(raw)
@@ -1386,6 +1392,22 @@ def _resolve_js_module(base_files: Mapping[str, str], importer: str, module_ref:
         if normalized in base_files:
             return normalized
     return ""
+
+
+def _infer_importer_for_js_module_ref(base_files: Mapping[str, str], module_ref: str) -> str:
+    normalized_ref = str(module_ref or "").strip()
+    if not normalized_ref.startswith("."):
+        return ""
+    quoted_ref = re.escape(normalized_ref)
+    import_pattern = re.compile(
+        rf"(?:\bfrom\s+|\bimport\s*\(\s*|\brequire\s*\(\s*)['\"]{quoted_ref}['\"]",
+    )
+    candidates = [
+        path
+        for path, text in base_files.items()
+        if path.endswith((".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")) and import_pattern.search(str(text or ""))
+    ]
+    return candidates[0] if len(candidates) == 1 else ""
 
 
 def _javascript_module_exports_symbol(text: str, symbol: str) -> bool:
@@ -1430,8 +1452,18 @@ def _is_esm_commonjs_diagnostic(diagnostic: RepairDiagnostic) -> bool:
     raw = f"{diagnostic.message}\n{diagnostic.raw}".lower()
     return (
         diagnostic.code == "javascript_module_error"
-        and ("require is not defined" in raw or "module is not defined" in raw)
+        and (
+            "require is not defined" in raw
+            or "module is not defined" in raw
+            or _is_missing_default_export_diagnostic(diagnostic)
+        )
     ) or "commonjs entrypoint in esm package" in raw
+
+
+def _is_missing_default_export_diagnostic(diagnostic: RepairDiagnostic) -> bool:
+    raw = f"{diagnostic.message}\n{diagnostic.raw}"
+    match = _MISSING_NAMED_EXPORT_RE.search(raw)
+    return bool(match and str(match.group("symbol") or "").strip() == "default")
 
 
 def _esm_commonjs_entrypoint_candidates(
@@ -1441,6 +1473,12 @@ def _esm_commonjs_entrypoint_candidates(
 ) -> tuple[str, ...]:
     candidates: list[str] = []
     for diagnostic in diagnostics:
+        if _is_missing_default_export_diagnostic(diagnostic):
+            candidates.extend(
+                target["exporter"]
+                for target in _missing_export_targets(diagnostic, base_files)
+                if str(target.get("symbol") or "").strip() == "default"
+            )
         runtime_file = _first_runtime_file(str(diagnostic.raw or diagnostic.message or ""), base_files)
         if runtime_file:
             candidates.append(runtime_file)
@@ -1577,10 +1615,18 @@ def _commonjs_to_esm_operations(
 ) -> tuple[tuple[RepairOperation, ...], str]:
     operations: list[RepairOperation] = []
     repaired_lines: list[str] = []
+    namespace_bindings = _commonjs_namespace_require_bindings(text)
     offset = 0
     for line in text.splitlines(keepends=True):
         line_body = line.removesuffix("\n")
-        replacement = _commonjs_line_replacement(line_body, path=path, base_files=base_files)
+        replacement = _commonjs_line_replacement(
+            line_body,
+            path=path,
+            base_files=base_files,
+            namespace_bindings=namespace_bindings,
+        )
+        if replacement is None:
+            replacement = _commonjs_namespace_constructor_replacement(line_body, namespace_bindings)
         if replacement is None:
             repaired_lines.append(line)
             offset += len(line)
@@ -1597,7 +1643,11 @@ def _commonjs_to_esm_operations(
                 replacement=repaired,
                 before_hash=sha256_text(text),
                 metadata={
-                    "repair_kind": "javascript_commonjs_esm_entrypoint",
+                    "repair_kind": (
+                        "javascript_commonjs_namespace_constructor"
+                        if line_body != replacement and "new " in line_body
+                        else "javascript_commonjs_esm_entrypoint"
+                    ),
                     "diagnostic_ids": [diagnostic.diagnostic_id for diagnostic in diagnostics],
                     "edit_file_preferred": True,
                 },
@@ -1608,7 +1658,13 @@ def _commonjs_to_esm_operations(
     return tuple(operations), "".join(repaired_lines)
 
 
-def _commonjs_line_replacement(line: str, *, path: str, base_files: Mapping[str, str]) -> str | None:
+def _commonjs_line_replacement(
+    line: str,
+    *,
+    path: str,
+    base_files: Mapping[str, str],
+    namespace_bindings: frozenset[str],
+) -> str | None:
     stripped = line.strip()
     if stripped in {'"use strict";', "'use strict';"}:
         return ""
@@ -1617,6 +1673,8 @@ def _commonjs_line_replacement(line: str, *, path: str, base_files: Mapping[str,
         binding = str(match.group("binding") or "").strip()
         raw_specifier = str(match.group("specifier") or "")
         specifier = _esm_import_specifier(raw_specifier)
+        if binding in namespace_bindings:
+            return f'{match.group("indent")}import * as {binding} from "{specifier}";'
         if _commonjs_binding_has_named_esm_export(
             base_files,
             importer=path,
@@ -1641,11 +1699,52 @@ def _commonjs_line_replacement(line: str, *, path: str, base_files: Mapping[str,
         if not bindings:
             return None
         return f"{match.group('indent')}export {{ {bindings} }};"
+    match = _COMMONJS_MODULE_EXPORTS_PROPERTY_RE.match(line)
+    if match:
+        name = str(match.group("name") or "").strip()
+        value = str(match.group("value") or "").strip()
+        if not _JS_IDENTIFIER_RE.match(name) or not value:
+            return None
+        if _JS_IDENTIFIER_RE.match(value):
+            if value == name:
+                return f"{match.group('indent')}export {{ {name} }};"
+            return f"{match.group('indent')}export {{ {value} as {name} }};"
+        return f"{match.group('indent')}export const {name} = {value};"
     match = _COMMONJS_REQUIRE_MAIN_GUARD_RE.match(line)
     if match:
         call = str(match.group("call") or "").strip()
         return f"{match.group('indent')}if (import.meta.url === `file://${{process.argv[1]}}`) {{ {call} }}"
     return None
+
+
+def _commonjs_namespace_require_bindings(text: str) -> frozenset[str]:
+    bindings: set[str] = set()
+    for line in str(text or "").splitlines():
+        match = _COMMONJS_REQUIRE_BINDING_RE.match(line)
+        if not match:
+            continue
+        binding = str(match.group("binding") or "").strip()
+        if not _JS_IDENTIFIER_RE.match(binding):
+            continue
+        if _commonjs_binding_used_as_namespace(text, binding):
+            bindings.add(binding)
+    return frozenset(bindings)
+
+
+def _commonjs_binding_used_as_namespace(text: str, binding: str) -> bool:
+    escaped = re.escape(binding)
+    return bool(
+        re.search(rf"(?m)^\s*(?:const|let|var)\s+\{{[^}}]+\}}\s*=\s*{escaped}\s*;?\s*$", text)
+        or re.search(rf"\b{escaped}\.[A-Za-z_$][\w$]*\b", text)
+    )
+
+
+def _commonjs_namespace_constructor_replacement(line: str, namespace_bindings: frozenset[str]) -> str | None:
+    updated = line
+    for binding in sorted(namespace_bindings, key=len, reverse=True):
+        escaped = re.escape(binding)
+        updated = re.sub(rf"\bnew\s+{escaped}\s*\(", f"new {binding}.{binding}(", updated)
+    return updated if updated != line else None
 
 
 def _esm_import_specifier(specifier: str) -> str:
@@ -1696,7 +1795,14 @@ def _missing_method_failures(
             obj = str(match.group("object") or "")
             member = str(match.group("member") or "")
             if rel_file and _JS_IDENTIFIER_RE.match(obj) and _JS_IDENTIFIER_RE.match(member):
-                failures.append({"file": rel_file, "object": obj, "member": member})
+                failures.append(
+                    {
+                        "file": rel_file,
+                        "object": obj,
+                        "member": member,
+                        "arguments": _missing_method_call_arguments(raw, obj, member),
+                    }
+                )
     return tuple({(item["file"], item["object"], item["member"]): item for item in failures}.values())
 
 
@@ -1738,6 +1844,7 @@ def _missing_method_alias_operation(
     text: str,
     class_name: str,
     missing_member: str,
+    call_arguments: str,
     diagnostic: RepairDiagnostic,
 ) -> RepairOperation | None:
     if re.search(rf"(?m)^\s+{re.escape(missing_member)}\s*\(", text):
@@ -1756,7 +1863,11 @@ def _missing_method_alias_operation(
     if len(existing_methods) != 1:
         return None
     existing = existing_methods[0]
-    replacement = f"\n  {missing_member}(...args) {{\n    return this.{existing}(...args);\n  }}\n"
+    alias_args = _alias_arguments_from_call_arguments(call_arguments, missing_member)
+    if alias_args:
+        replacement = f"\n  {missing_member}({alias_args}) {{\n    return this.{existing}({alias_args});\n  }}\n"
+    else:
+        replacement = f"\n  {missing_member}(...args) {{\n    return this.{existing}(...args);\n  }}\n"
     context_before = text[max(0, class_end - 160) : class_end]
     context_after = text[class_end : min(len(text), class_end + 160)]
     return RepairOperation(
@@ -1779,6 +1890,80 @@ def _missing_method_alias_operation(
             "expected_context_after": context_after,
         },
     )
+
+
+def _missing_method_call_arguments(raw: str, object_name: str, member: str) -> str:
+    pattern = re.compile(
+        rf"\b{re.escape(object_name)}\.{re.escape(member)}\s*\((?P<args>[^()\n]*(?:\([^)]*\)[^()\n]*)*)\)"
+    )
+    match = pattern.search(str(raw or ""))
+    return str(match.group("args") or "").strip() if match else ""
+
+
+def _alias_arguments_from_call_arguments(call_arguments: str, missing_member: str) -> str:
+    args = _split_js_call_arguments(call_arguments)
+    identifiers: list[str] = []
+    for index, arg in enumerate(args):
+        normalized = arg.strip()
+        if _JS_IDENTIFIER_RE.match(normalized):
+            identifiers.append(normalized)
+            continue
+        identifiers.append(_generic_alias_argument_name(index, missing_member))
+    return ", ".join(identifiers)
+
+
+def _split_js_call_arguments(call_arguments: str) -> list[str]:
+    text = str(call_arguments or "").strip()
+    if not text:
+        return []
+    args: list[str] = []
+    start = 0
+    depth = 0
+    quote = ""
+    escape = False
+    for index, char in enumerate(text):
+        if escape:
+            escape = False
+            continue
+        if char == "\\":
+            escape = True
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+            continue
+        if char in {"'", '"', "`"}:
+            quote = char
+            continue
+        if char in "([{":
+            depth += 1
+            continue
+        if char in ")]}":
+            depth = max(0, depth - 1)
+            continue
+        if char == "," and depth == 0:
+            args.append(text[start:index].strip())
+            start = index + 1
+    args.append(text[start:].strip())
+    return [arg for arg in args if arg]
+
+
+def _generic_alias_argument_name(index: int, missing_member: str) -> str:
+    if index == 0:
+        add_match = re.match(r"add(?P<name>[A-Z][A-Za-z0-9_$]*)$", str(missing_member or ""))
+        if add_match:
+            return _lower_camel_identifier(add_match.group("name"))
+    common_names = ("value", "options", "item", "context")
+    if index < len(common_names):
+        return common_names[index]
+    return f"arg{index + 1}"
+
+
+def _lower_camel_identifier(value: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9_$]", "", str(value or ""))
+    if not token:
+        return "value"
+    return token[0].lower() + token[1:]
 
 
 def _find_matching_brace(text: str, open_index: int) -> int | None:

@@ -29,6 +29,10 @@ from polaris.kernelone.context.receipt_store import ReceiptStore
 
 from .gateway_helpers import render_blueprint_overview
 from .projection_formatter import ProjectionFormatter
+from .task_boundary_filter import (
+    blueprint_matches_request_task,
+    expected_blueprint_task_tokens,
+)
 
 if TYPE_CHECKING:
     from .gateway import RoleContextGateway
@@ -40,6 +44,7 @@ def _blueprint_overview_from_request_context(request: ContextRequest) -> str | N
     context_override = getattr(request, "context_override", None)
     if not isinstance(context_override, Mapping):
         return None
+    expected_tokens = expected_blueprint_task_tokens(request, context_override)
     candidates: list[Any] = [
         context_override.get("ce_blueprint"),
         context_override.get("chief_engineer_blueprint"),
@@ -70,6 +75,8 @@ def _blueprint_overview_from_request_context(request: ContextRequest) -> str | N
             )
     for candidate in candidates:
         if not isinstance(candidate, Mapping) or not candidate:
+            continue
+        if not blueprint_matches_request_task(candidate, expected_tokens):
             continue
         result = SimpleNamespace(
             ok=True,

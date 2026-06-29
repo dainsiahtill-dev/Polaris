@@ -163,6 +163,49 @@ class TestBlueprintOverview:
         assert "【蓝图/技术架构】" in text
         assert "Chief Engineer blueprint for TASK-1-foundation" in text
 
+    async def test_context_override_skips_ce_blueprint_for_different_logical_task(self) -> None:
+        profile = _profile()
+        profile.context_policy.include_blueprint_overview = True
+        gateway = RoleContextGateway(profile, workspace=".")
+        request = ContextRequest(
+            message="Implement core modules",
+            task_id="2",
+            context_override={
+                "metadata": {
+                    "external_task_id": "TASK-1-source-core",
+                    "task_id": "TASK-1-source-core",
+                },
+                "ce_blueprint": {
+                    "schema_version": "chief_engineer.blueprint.v1",
+                    "blueprint_id": "ce_TASK-2",
+                    "task_id": "TASK-2",
+                    "summary": "Chief Engineer blueprint for TASK-2",
+                    "objective": "Write validation scripts and README.",
+                    "target_files": ["package.json", "tests/test_product.py", "README.md"],
+                    "acceptance_criteria": ["python validation passes"],
+                },
+                "task_contract": {
+                    "ce_blueprint": {
+                        "schema_version": "chief_engineer.blueprint.v1",
+                        "blueprint_id": "ce_TASK-1-source-core",
+                        "task_id": "TASK-1-source-core",
+                        "summary": "Chief Engineer blueprint for TASK-1-source-core",
+                        "objective": "Write only the core source modules.",
+                        "target_files": ["src/engine/rules.js", "src/engine/runner.js"],
+                        "acceptance_criteria": ["core source files exist"],
+                    },
+                },
+            },
+        )
+
+        result = await gateway.build_context(request, system_prompt="ROLE SYS")
+        text = "\n".join(str(message.get("content") or "") for message in result.messages)
+
+        assert "Chief Engineer blueprint for TASK-2" not in text
+        assert "python validation passes" not in text
+        assert "Chief Engineer blueprint for TASK-1-source-core" in text
+        assert "core source files exist" in text
+
 
 # ── history_tool_fallback branch + truncation marker ─────────────────────────
 
