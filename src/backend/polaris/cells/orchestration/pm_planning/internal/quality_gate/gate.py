@@ -490,10 +490,25 @@ def _split_director_task_boundary_contracts_in_place(
 
         groups = _director_task_split_groups(task)
         if len(groups) <= 1:
-            task_copy = dict(task)
-            _set_task_dependencies(task_copy, deps)
-            rewritten.append(task_copy)
-            continue
+            # Single-bucket over-count: the task exceeds the file budget but all
+            # targets share one boundary bucket, so bucket-grouping yields <=1
+            # group and a bucket split cannot reduce it — yet the count-based
+            # too-broad gate still blocks it. Chunk the single bucket into
+            # <=_MAX_DIRECTOR_TASK_FILE_TARGETS-file groups so the autofix split
+            # stays consistent with the gate; otherwise valid L3+ plans dead-lock
+            # at pm_planning (too-broad-by-count but unsplittable -> critical -> 0 tasks).
+            only_files = list(groups[0][1]) if groups else _task_file_targets(task)
+            if len(only_files) > _MAX_DIRECTOR_TASK_FILE_TARGETS:
+                only_bucket = groups[0][0] if groups else "source"
+                groups = [
+                    (only_bucket, only_files[start : start + _MAX_DIRECTOR_TASK_FILE_TARGETS])
+                    for start in range(0, len(only_files), _MAX_DIRECTOR_TASK_FILE_TARGETS)
+                ]
+            else:
+                task_copy = dict(task)
+                _set_task_dependencies(task_copy, deps)
+                rewritten.append(task_copy)
+                continue
 
         split_task_count += 1
         prev_id = ""

@@ -157,6 +157,35 @@ def test_to_contract_result_ok_failed_and_in_progress() -> None:
     assert failed.error_code == "role_runtime_error"
     assert failed.error_message == "boom"
 
+    failed_with_event_evidence = runtime_service._to_contract_result(
+        role="chief_engineer",
+        workspace=".",
+        task_id="TASK-1",
+        session_id=None,
+        run_id="run-1",
+        result=RoleTurnResult(
+            content="",
+            error="Request timeout (57.0s)",
+            turn_events_metadata=[
+                {
+                    "event": "llm_error",
+                    "metadata": {
+                        "context_snapshot_ref": "ctx-timeout",
+                        "final_request_context_audit": {
+                            "final_request_token_estimate": 2307,
+                            "context_window_utilization": 0.0088,
+                        },
+                        "context_os_audit": {"ok": True},
+                    },
+                }
+            ],
+        ),
+    )
+    assert failed_with_event_evidence.ok is False
+    assert failed_with_event_evidence.metadata["context_snapshot_ref"] == "ctx-timeout"
+    assert failed_with_event_evidence.metadata["final_request_context_audit"]["final_request_token_estimate"] == 2307
+    assert failed_with_event_evidence.metadata["context_os_audit"] == {"ok": True}
+
     in_progress = runtime_service._to_contract_result(
         role="pm",
         workspace=".",

@@ -59,6 +59,41 @@ def _copy_batch_receipt_metadata(receipt: Any) -> dict[str, Any] | None:
     return None
 
 
+def _copy_final_request_metadata_from_turn_events(items: Any) -> dict[str, Any]:
+    if not isinstance(items, list):
+        return {}
+    copied: dict[str, Any] = {}
+    for item in reversed(items):
+        if not isinstance(item, Mapping):
+            continue
+        candidates = [item]
+        metadata = item.get("metadata")
+        if isinstance(metadata, Mapping):
+            candidates.append(metadata)
+        data = item.get("data")
+        if isinstance(data, Mapping):
+            candidates.append(data)
+            data_metadata = data.get("metadata")
+            if isinstance(data_metadata, Mapping):
+                candidates.append(data_metadata)
+        for candidate in candidates:
+            final_audit = candidate.get("final_request_context_audit")
+            if isinstance(final_audit, Mapping) and "final_request_context_audit" not in copied:
+                copied["final_request_context_audit"] = dict(final_audit)
+            context_os_audit = candidate.get("context_os_audit")
+            if isinstance(context_os_audit, Mapping) and "context_os_audit" not in copied:
+                copied["context_os_audit"] = dict(context_os_audit)
+            context_ref = str(candidate.get("context_snapshot_ref") or "").strip()
+            if context_ref and "context_snapshot_ref" not in copied:
+                copied["context_snapshot_ref"] = context_ref
+        if {
+            "final_request_context_audit",
+            "context_snapshot_ref",
+        }.issubset(copied):
+            break
+    return copied
+
+
 def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     metadata = _copy_result_metadata(result.metadata)
     if isinstance(result.structured_output, Mapping) and "structured_output" not in metadata:
@@ -69,6 +104,9 @@ def _contract_result_metadata(result: RoleTurnResult) -> dict[str, Any]:
     batch_receipt = _copy_batch_receipt_metadata(result.batch_receipt)
     if batch_receipt and "batch_receipt" not in metadata:
         metadata["batch_receipt"] = batch_receipt
+    event_metadata = _copy_final_request_metadata_from_turn_events(result.turn_events_metadata)
+    for key, value in event_metadata.items():
+        metadata.setdefault(key, value)
     return metadata
 
 
