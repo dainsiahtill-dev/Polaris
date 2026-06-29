@@ -446,6 +446,31 @@ class TurnEngine(TurnEngineCompatMixin):
                 context_override["_transaction_kernel_temperature_override"] = request_payload.get(
                     "temperature_override"
                 )
+            max_tokens_floor = request_payload.get("max_tokens_floor")
+            if max_tokens_floor is not None:
+                try:
+                    floor_value = int(max_tokens_floor)
+                except (TypeError, ValueError):
+                    floor_value = 0
+                if floor_value > 0:
+                    tool_choice_value = request_payload.get("tool_choice")
+                    forced_tool_choice = tool_choice_value is not None and not (
+                        isinstance(tool_choice_value, str) and tool_choice_value.strip().lower() in {"", "auto"}
+                    )
+                    if forced_tool_choice:
+                        context_override["llm_max_tokens"] = floor_value
+                        context_override["_transaction_kernel_retry_output_budget_bounded"] = True
+                        context_override["_transaction_kernel_retry_output_budget_reason"] = (
+                            "forced_tool_retry_must_not_inherit_full_execution_budget"
+                        )
+                    else:
+                        existing_budget = 0
+                        for budget_key in ("llm_max_tokens", "max_output_tokens", "max_tokens"):
+                            try:
+                                existing_budget = max(existing_budget, int(context_override.get(budget_key) or 0))
+                            except (TypeError, ValueError):
+                                continue
+                        context_override["llm_max_tokens"] = max(floor_value, existing_budget or 0)
 
             context = ContextRequest(
                 message=getattr(request, "message", "") or "",

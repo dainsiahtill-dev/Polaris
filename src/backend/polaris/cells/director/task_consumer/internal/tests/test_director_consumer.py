@@ -147,6 +147,27 @@ class TestInterfaceContractAmendmentDetection:
 
 
 class TestDirectorExecutionConsumerHandoffGate:
+    def test_handoff_validation_requires_strict_decision(self) -> None:
+        with patch(
+            "polaris.cells.director.task_consumer.internal.director_consumer.validate_director_handoff_from_payload",
+            return_value={
+                "allowed": True,
+                "blueprint_id": "bp-1",
+                "reason": "ok",
+                "strict_decision_payload": {"decision_hash": "h1", "allowed": True},
+            },
+        ) as validate:
+            result = director_consumer_module._validated_blueprint_handoff(
+                "/workspace",
+                "TASK-1",
+                {"blueprint_id": "bp-1"},
+            )
+
+        assert result[0] is True
+        assert result[1] == "bp-1"
+        assert result[3]["strict_decision_payload"]["decision_hash"] == "h1"
+        assert validate.call_args.kwargs["require_strict"] is True
+
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_blueprint_id_without_valid_handoff_does_not_execute(
         self,
@@ -172,6 +193,57 @@ class TestDirectorExecutionConsumerHandoffGate:
         assert fail_call.error_code == "INVALID_BLUEPRINT_HANDOFF"
         assert fail_call.to_dead_letter is True
         assert "missing or unreadable" in fail_call.error_message
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_strict_handoff_decision_is_attached_before_execution(
+        self,
+        mock_get_svc: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        claim = MagicMock()
+        claim.task_id = "TASK-2"
+        claim.lease_token = "lease-2"
+        claim.payload = {"blueprint_id": "bp-2", "target_files": ["main.py"]}
+        mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="pending_qa")
+        (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
+
+        strict_decision = {
+            "schema_version": "polaris.ce_handoff_decision.v1",
+            "decision_hash": "strict-hash-2",
+            "allowed": True,
+        }
+        monkeypatch.setattr(
+            director_consumer_module,
+            "_validated_blueprint_handoff",
+            lambda _workspace, _task_id, _payload: (
+                True,
+                "bp-2",
+                "ok",
+                {
+                    "allowed": True,
+                    "blueprint_id": "bp-2",
+                    "strict_decision_payload": strict_decision,
+                    "decision_payload": {"allowed": True, "decision_id": "legacy"},
+                },
+            ),
+        )
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+
+        def _execute(_task_id: str, payload: dict[str, Any], _lease_token: str) -> dict[str, Any]:
+            assert payload["ce_handoff_decision"] == strict_decision
+            assert payload["ce_handoff_decision_hash"] == "strict-hash-2"
+            assert payload["handoff_decision_hash"] == "strict-hash-2"
+            return {"success": True, "changed_files": ["main.py"]}
+
+        with patch.object(consumer, "_execute_task", side_effect=_execute):
+            result = consumer._process_claim(claim)
+
+        assert result["ok"] is True
+        mock_svc.fail_task_stage.assert_not_called()
 
 
 class TestDirectorExecutionConsumerPollOnce:

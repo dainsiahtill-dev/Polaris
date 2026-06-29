@@ -34,12 +34,40 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
+from polaris.cells.roles.adapters.internal.director import quality_gate as director_quality_gate
 from polaris.cells.roles.adapters.public import extract_workspace_quality_summary
+from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
 
 
 def _executor(workspace: Path) -> OrchestrationStageExecutor:
     return OrchestrationStageExecutor(workspace)
+
+
+def test_materialization_quality_target_filter_prefers_ts_source_over_compiled_outputs(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir(parents=True)
+    (tmp_path / "dist").mkdir(parents=True)
+    (tmp_path / "tests" / "behavior.test.ts").write_text("export const source = 1;\n", encoding="utf-8")
+    (tmp_path / "tests" / "behavior.test.js").write_text("export const source = 1;\n", encoding="utf-8")
+    (tmp_path / "dist" / "main.js").write_text("export const compiled = 1;\n", encoding="utf-8")
+    errors = [
+        "\n".join(
+            [
+                "TypeScript project typecheck failed:",
+                "tests/behavior.test.ts(10,1): error TS1003: Identifier expected.",
+                "tests/behavior.test.js(10,1): error TS1003: Identifier expected.",
+                "dist/main.js(1,1): error TS1003: Identifier expected.",
+            ]
+        )
+    ]
+
+    targets = director_quality_gate._semantic_quality_repair_target_files(
+        artifact_quality_errors=errors,
+        changed_files=["tests/behavior.test.ts", "tests/behavior.test.js", "dist/main.js"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert targets == ["tests/behavior.test.ts"]
 
 
 def test_pm_plan_validation_contract_hygiene_defers_test_acceptance_to_validation_task() -> None:
@@ -285,9 +313,11 @@ class TestChiefEngineerHandoffGuards:
             },
         )
 
+        captured_commands: list[Any] = []
+
         class _FakeRoleRuntimeService:
             async def execute_role_task(self, command: Any) -> Any:
-                del command
+                captured_commands.append(command)
                 ce_output = {
                     "construction_plan": {
                         "preparation": ["Confirm Go module boundary"],
@@ -343,6 +373,15 @@ class TestChiefEngineerHandoffGuards:
         ]
         assert blueprint["llm_blueprint"]["verification_steps"] == ["go test ./...", "go run ."]
         assert blueprint["ce_handoff"]["llm_blueprint_consumed"] is True
+        assert len(captured_commands) == 1
+        command = captured_commands[0]
+        assert command.context["temperature"] == 0.2
+        assert command.context["response_format_mode"] == "json"
+        assert command.context["chief_engineer_json_contract_required"] is True
+        assert command.metadata["max_retries"] == 0
+        assert command.metadata["temperature"] == 0.2
+        assert command.metadata["response_format_mode"] == "json"
+        assert command.metadata["chief_engineer_json_contract_required"] is True
 
     def test_director_handoff_guard_allows_ready_blueprint(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -1730,6 +1769,61 @@ class TestQualityGateDeadlineHandling:
 
         assert 1 <= timeout <= 12
 
+    def test_director_dispatch_timeout_reserves_quality_gate_budget(self) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 300.0
+        timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(
+            {
+                "director_dispatch_timeout_seconds": 1800,
+                "llm_call_timeout_seconds": 1800,
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+            },
+            task_count=2,
+        )
+
+        assert 150 <= timeout <= 180
+
+    def test_director_dispatch_timeout_prioritizes_first_materialization_budget(self) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 190.0
+        timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(
+            {
+                "director_dispatch_timeout_seconds": 1800,
+                "llm_call_timeout_seconds": 1800,
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+            },
+            task_count=2,
+            materialization_pending=True,
+        )
+
+        assert 145 <= timeout <= 150
+
+    def test_director_dispatch_timeout_keeps_quality_reserve_after_materialization(self) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 190.0
+        timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(
+            {
+                "director_dispatch_timeout_seconds": 1800,
+                "llm_call_timeout_seconds": 1800,
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+            },
+            task_count=2,
+            materialization_pending=False,
+        )
+
+        assert 65 <= timeout <= 70
+
+    def test_director_dispatch_timeout_uses_quality_gate_reserve_override(self) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 300.0
+        timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(
+            {
+                "director_dispatch_timeout_seconds": 1800,
+                "llm_call_timeout_seconds": 1800,
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "quality_gate_reserved_budget_seconds": 60,
+            },
+            task_count=2,
+        )
+
+        assert 210 <= timeout <= 240
+
     @pytest.mark.asyncio
     async def test_quality_gate_deadline_insufficient_writes_fail_report(
         self,
@@ -1883,7 +1977,7 @@ class TestQualityGateDeadlineHandling:
         assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).is_file()
 
     @pytest.mark.asyncio
-    async def test_quality_gate_workspace_validation_failure_writes_fail_report_without_qa(
+    async def test_quality_gate_workspace_validation_failure_still_runs_qa_judgement(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -1917,24 +2011,103 @@ class TestQualityGateDeadlineHandling:
             )
             return False, "runtime/qa/workspace-validation.json"
 
-        def fail_if_qa_started(_context: dict[str, Any]) -> object:
-            raise AssertionError("QA orchestration should not start when workspace validation already failed")
+        qa_calls: list[dict[str, Any]] = []
+
+        class _CapturingQaService:
+            async def execute_qa_run(self, **kwargs: Any) -> CommandResult:
+                qa_calls.append(dict(kwargs))
+                executor._write_json_artifact(
+                    "runtime/qa/report.json",
+                    {
+                        "passed": False,
+                        "verdict": "FAIL",
+                        "score": 0,
+                        "critical_issue_count": 1,
+                        "critical_issues": ["workspace_quality_gate_failed"],
+                        "warnings": [],
+                    },
+                )
+                return CommandResult(
+                    run_id="qa-workspace-failure",
+                    status="running",
+                    message="QA run started",
+                )
+
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                return CommandResult(run_id=run_id, status="completed", message="QA completed")
 
         monkeypatch.setattr(executor, "_run_workspace_quality_checks", fake_workspace_checks)
-        monkeypatch.setattr(executor, "_build_orchestration_service", fail_if_qa_started)
+        monkeypatch.setattr(executor, "_build_orchestration_service", lambda _context: _CapturingQaService())
 
         result = await executor._execute_quality_gate(run, {"qa_target": "Quality gate"})
 
         assert result.status == "failed"
-        assert "factory_quality_gate_workspace_checks_failed" in result.output
-        assert "npm run start" in result.output
+        assert "workspace_checks_passed=False" in result.output
+        assert qa_calls
+        qa_input = str(qa_calls[0]["options"]["input"])
+        assert "Workspace quality evidence collected before QA judgement" in qa_input
+        assert "runtime/qa/workspace-validation.json" in qa_input
+        assert "ReferenceError: exports is not defined in ES module scope" in qa_input
         report_path = Path(resolve_logical_path(tmp_path, "runtime/qa/report.json"))
         report = json.loads(report_path.read_text(encoding="utf-8"))
         assert report["passed"] is False
         assert report["verdict"] == "FAIL"
-        assert report["workspace_checks_passed"] is False
-        assert "factory_quality_gate_workspace_checks_failed" in report["warnings"]
         assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).is_file()
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_repair_deadline_insufficient_writes_validation_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="run-workspace-repair-deadline",
+            config=FactoryConfig(name="workspace-repair-deadline-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["npm", "run", "build"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
+        monkeypatch.setattr(
+            executor,
+            "_run_workspace_quality_command",
+            lambda _command, _timeout: {
+                "command": ["npm", "run", "build"],
+                "exit_code": 2,
+                "passed": False,
+                "stdout_tail": "src/main.ts(1,1): error TS2353: Object literal may only specify known properties.",
+                "stderr_tail": "",
+            },
+        )
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_repairs",
+            lambda **_kwargs: ([], {"attempted": True, "source_tools": [], "tool_results": 0}),
+        )
+
+        async def fail_if_llm_repair_started(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            raise AssertionError("workspace quality LLM repair should not start when deadline is insufficient")
+
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fail_if_llm_repair_started)
+
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 20.0
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "factory_run_timeout_seconds": 540.0,
+                "factory_run_deadline_source": "test",
+            },
+        )
+
+        assert passed is False
+        assert artifact == "runtime/qa/workspace-validation.json"
+        payload = json.loads(Path(resolve_logical_path(tmp_path, artifact)).read_text(encoding="utf-8"))
+        assert payload["passed"] is False
+        assert "factory_quality_gate_workspace_repair_deadline_insufficient" in payload["warnings"]
+        assert "remaining" in payload["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -2418,6 +2591,7 @@ class TestRunWorkspaceQualityChecks:
 
         monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
         monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
 
@@ -2817,6 +2991,226 @@ class TestRunWorkspaceQualityChecks:
         assert payload["repair"]["rounds"][0]["evidence"] == [
             "repair_write:tool=director_materialization_quality_repair;file=tests/run-tests.js;operation=create"
         ]
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_projects_task_boundary_triage_without_llm_fallback(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-task-boundary-triage",
+            config=FactoryConfig(name="quality-task-boundary-triage"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-28T00:00:00+00:00",
+        )
+        llm_repair_calls = 0
+        post_repair_calls = 0
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            return {
+                "command": command,
+                "exit_code": 2,
+                "passed": False,
+                "stdout_tail": "tests/behavior.test.ts(3,10): error TS2305: Module has no exported member 'openMarket'.",
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        def fake_apply_workspace_quality_repairs(
+            *,
+            run_id: str,
+            artifact_quality_errors: list[str],
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            assert run_id == "factory-quality-task-boundary-triage"
+            assert artifact_quality_errors
+            return (
+                [],
+                {
+                    "stage": "runtime_plan_probe_unplannable",
+                    "attempted": True,
+                    "success": False,
+                    "success_reason": "task_boundary_interface_discrepancy_required",
+                    "tool_results": 0,
+                    "source_tools": [],
+                    "plan_probe_preaudit": {
+                        "status": "coverage_matched_but_unplannable",
+                        "plannable_source_tools": [],
+                        "covered_unplannable_source_tools": ["deterministic_typescript_missing_export_repair"],
+                    },
+                    "interface_discrepancy_evidence": {
+                        "schema_version": "director.task_boundary.interface_discrepancy.v1",
+                        "reason": "coverage_matched_but_unplannable",
+                        "recommended_owner": "chief_engineer",
+                        "recommended_route": "pending_design_interface_contract",
+                    },
+                },
+            )
+
+        async def fake_apply_workspace_quality_llm_repairs(
+            *,
+            run_id: str,
+            context: dict[str, Any],
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+            interface_discrepancy_evidence: dict[str, Any] | None = None,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal llm_repair_calls
+            del run_id, context, artifact_quality_errors, repair_attempt, interface_discrepancy_evidence
+            llm_repair_calls += 1
+            return [], {}
+
+        def fake_apply_workspace_quality_cpp_post_repairs() -> list[dict[str, object]]:
+            nonlocal post_repair_calls
+            post_repair_calls += 1
+            return []
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_llm_repairs",
+            fake_apply_workspace_quality_llm_repairs,
+        )
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_cpp_post_repairs",
+            fake_apply_workspace_quality_cpp_post_repairs,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 1},
+        )
+
+        assert passed is False
+        assert llm_repair_calls == 0
+        assert post_repair_calls == 0
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        assert payload["warnings"] == ["task_boundary_interface_discrepancy_required"]
+        assert payload["repair"]["task_boundary_triage_required"] is True
+        assert payload["repair"]["success_reason"] == "task_boundary_interface_discrepancy_required"
+        assert payload["repair"]["plan_probe_preaudit"]["status"] == "coverage_matched_but_unplannable"
+        assert payload["repair"]["interface_discrepancy_evidence"]["reason"] == ("coverage_matched_but_unplannable")
+        assert payload["repair"]["rounds"][0]["task_boundary_triage_required"] is True
+        assert payload["repair"]["rounds"][0]["repair_summary"]["stage"] == "runtime_plan_probe_unplannable"
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_routes_local_task_boundary_triage_to_director_repair(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-local-task-boundary-triage",
+            config=FactoryConfig(name="quality-local-task-boundary-triage"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-28T00:00:00+00:00",
+        )
+        state = {"repaired": False}
+        llm_repair_contexts: list[dict[str, Any]] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            if state["repaired"]:
+                return {
+                    "command": command,
+                    "exit_code": 0,
+                    "passed": True,
+                    "stdout_tail": "build passed",
+                    "stderr_tail": "",
+                    "error": "",
+                }
+            return {
+                "command": command,
+                "exit_code": 2,
+                "passed": False,
+                "stdout_tail": (
+                    "src/main.ts(105,55): error TS2339: Property 'revenue' does not exist on type 'TransactionResult'."
+                ),
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        def fake_apply_workspace_quality_repairs(
+            *,
+            run_id: str,
+            artifact_quality_errors: list[str],
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            assert run_id == "factory-quality-local-task-boundary-triage"
+            assert artifact_quality_errors
+            return (
+                [],
+                {
+                    "stage": "runtime_plan_probe_unplannable",
+                    "attempted": True,
+                    "success": False,
+                    "success_reason": "task_boundary_interface_discrepancy_required",
+                    "tool_results": 0,
+                    "source_tools": [],
+                    "plan_probe_preaudit": {
+                        "status": "coverage_matched_but_unplannable",
+                        "plannable_source_tools": [],
+                        "covered_unplannable_source_tools": ["deterministic_typescript_missing_member_repair"],
+                    },
+                },
+            )
+
+        async def fake_apply_workspace_quality_llm_repairs(
+            *,
+            run_id: str,
+            context: dict[str, Any],
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+            interface_discrepancy_evidence: dict[str, Any] | None = None,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            del run_id, context, artifact_quality_errors, repair_attempt
+            assert interface_discrepancy_evidence is not None
+            assert interface_discrepancy_evidence["recommended_owner"] == "director"
+            assert interface_discrepancy_evidence["director_retry_allowed"] is True
+            llm_repair_contexts.append(interface_discrepancy_evidence)
+            state["repaired"] = True
+            return (
+                [{"success": True, "tool": "write_file", "file": "src/main.ts", "operation": "update"}],
+                {
+                    "stage": "quality_repair",
+                    "attempted": True,
+                    "success": False,
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                    "source_tools": ["director_materialization_quality_repair"],
+                    "interface_discrepancy_evidence": interface_discrepancy_evidence,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_llm_repairs",
+            fake_apply_workspace_quality_llm_repairs,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 1},
+        )
+
+        assert passed is True
+        assert len(llm_repair_contexts) == 1
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        assert payload["passed"] is True
+        assert payload["repair"]["success"] is True
+        assert payload["repair"]["rounds"][0]["repair_summary"]["stage"] == "quality_repair"
 
     @pytest.mark.asyncio
     async def test_workspace_quality_reruns_prepare_after_successful_repair(
@@ -3236,6 +3630,25 @@ class TestDirectorEvidenceStatics:
             converged=False,
         )
 
+    def test_workspace_delivery_delta_counts_added_and_changed_files(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
+
+        before = executor._capture_workspace_delivery_state()
+        (tmp_path / "src" / "index.ts").write_text("export const value = 22;\n", encoding="utf-8")
+        (tmp_path / "src" / "main.ts").write_text("import './index';\n", encoding="utf-8")
+
+        delta = OrchestrationStageExecutor._workspace_delivery_delta(
+            before,
+            executor._capture_workspace_delivery_state(),
+        )
+
+        assert delta["added_count"] == 1
+        assert delta["changed_count"] == 1
+        assert delta["delta_file_count"] == 2
+        assert OrchestrationStageExecutor._workspace_delta_indicates_materialization_progress(delta) is True
+
     def test_is_director_no_materialized_changes_from_message(self) -> None:
         result = CommandResult(run_id="r", status="failed", message="error=director_no_materialized_changes")
         assert OrchestrationStageExecutor._is_director_no_materialized_changes(result) is True
@@ -3359,6 +3772,69 @@ class TestDirectorDispatchLoop:
         assert fake_orchestration.cancelled == [("run-1", True)]
         await asyncio.sleep(0)
         assert fake_orchestration.active_task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_run_completion_waiter_timeout_propagates_to_active_orchestration_run(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class _FakeOrchestrationService:
+            def __init__(self) -> None:
+                self.active_task = asyncio.create_task(asyncio.sleep(60))
+                self._active_runs = {"run-1": self.active_task}
+                self.cancelled: list[tuple[str, bool]] = []
+
+            async def cancel_run(self, run_id: str, force: bool = False) -> object:
+                self.cancelled.append((run_id, force))
+                self.active_task.cancel()
+                return object()
+
+        class _FakeCommandService:
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                return CommandResult(run_id=run_id, status="running", message="still running")
+
+        fake_orchestration = _FakeOrchestrationService()
+
+        async def _fake_get_orchestration_service() -> _FakeOrchestrationService:
+            return fake_orchestration
+
+        monkeypatch.setattr(
+            "polaris.cells.orchestration.workflow_runtime.public.get_orchestration_service",
+            _fake_get_orchestration_service,
+        )
+        task_runtime = TaskRuntimeService(str(tmp_path))
+        task = task_runtime.create(subject="late director task")
+        claim = task_runtime.claim_execution(
+            task.id,
+            worker_id="director",
+            role_id="director",
+            run_id="run-1",
+            selection_source="unit",
+        )
+        assert claim["success"] is True
+
+        result = await RunCompletionWaiter(tmp_path).wait(
+            _FakeCommandService(),
+            CommandResult(run_id="run-1", status="running", message="submitted"),
+            timeout_seconds=0,
+        )
+
+        assert result.status == "timeout"
+        assert result.message == "Run timed out after 0 seconds"
+        assert result.metadata == {
+            "cancel_signal_sent": True,
+            "cancel_reason": "factory_stage_timeout",
+        }
+        assert fake_orchestration.cancelled == [("run-1", True)]
+        await asyncio.sleep(0)
+        assert fake_orchestration.active_task.cancelled()
+        guarded_heartbeat = task_runtime.heartbeat_execution(
+            task.id,
+            session_id=str(claim["session"]["session_id"]),
+        )
+        assert guarded_heartbeat["success"] is False
+        assert guarded_heartbeat["reason"] == "session_not_active"
 
     @pytest.mark.asyncio
     async def test_director_timeout_settle_cancel_event_propagates_to_active_orchestration_run(
@@ -4995,6 +5471,78 @@ class TestDirectorDispatchLoop:
         assert "director.dispatch_timeout" in codes
         assert payload.get("error_code") == "director.dispatch_timeout"
         assert "timed out" in (payload.get("root_cause_hint") or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_timeout_after_workspace_delta_records_progress_evidence(self, tmp_path: Path) -> None:
+        class _MockService:
+            async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return CommandResult(run_id="run-1", status="running", message="submitted")
+
+        class _DeltaTimeoutExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.stats = [
+                    {"total": 1, "pending": 1, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
+                    {"total": 1, "pending": 1, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
+                    {"total": 1, "pending": 1, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
+                ]
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                return _MockService()
+
+            def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+                del context
+                return []
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                if len(self.stats) > 1:
+                    return dict(self.stats.pop(0))
+                return dict(self.stats[0])
+
+            async def _wait_run_completion(
+                self,
+                service: Any,
+                initial_result: CommandResult,
+                timeout_seconds: int = 300,
+                *,
+                cancel_event: asyncio.Event | None = None,
+                abort_checker: Any = None,
+            ) -> CommandResult:
+                del service, initial_result, timeout_seconds, cancel_event, abort_checker
+                (self.workspace / "src").mkdir(parents=True, exist_ok=True)
+                (self.workspace / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
+                return CommandResult(run_id="run-1", status="timeout", message="Run timed out after 1 seconds")
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        executor = _DeltaTimeoutExecutor(tmp_path)
+        tasks = [{"id": "TASK-1", "target_files": ["src/index.ts"]}]
+        executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
+        run = FactoryRun(
+            id="factory-timeout-delta",
+            config=FactoryConfig(name="timeout-delta"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-21T00:00:00+00:00",
+        )
+        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 1},
+        )
+
+        assert result.status == "failed"
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        codes = [item.get("code") for item in payload["signals"]]
+        assert "director.workspace_delta_progress_detected" in codes
+        assert "director.dispatch_timeout" not in codes
+        assert payload["attempts"][0]["progress_made"] is True
+        assert payload["attempts"][0]["workspace_delta_progress"] is True
+        assert payload["attempts"][0]["workspace_delta"]["added_sample"] == ["src/index.ts"]
 
     @pytest.mark.asyncio
     async def test_timeout_with_inflight_task_settles_late_director_success(self, tmp_path: Path) -> None:

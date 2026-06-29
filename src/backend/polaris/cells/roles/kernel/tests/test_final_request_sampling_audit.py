@@ -333,6 +333,65 @@ def test_final_request_context_audit_includes_execution_envelope_coverage() -> N
     assert evidence_coverage["pass"] is True
 
 
+def test_final_request_evidence_aliases_verification_failure_and_architecture_plan() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 4000},
+        context={
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "evidence_requirements": [
+                    "pm_task_contract",
+                    "chief_engineer_blueprint",
+                    "target_files_or_declared_scopes",
+                    "failed_gate_or_verification_evidence",
+                    "architecture_or_file_plan",
+                    "execution_envelope",
+                ],
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "pm_contract": {"hash": "pm-hash"},
+                "ce_blueprint": {"hash": "ce-hash"},
+            },
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "PM Task Contract / 任务合同: TASK-1 target_files src/models/Fairy.ts. "
+                    "Chief Engineer Blueprint / CE 蓝图交接: blueprint_id ce_TASK-1 construction_plan. "
+                    "MATERIALIZATION QUALITY REPAIR MODE. Quality errors: step verify failed "
+                    "(exit 1): npm run test :: failure excerpt: not ok 2 - Fairy mood starts cheerful."
+                ),
+            }
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert evidence_coverage["missing_required_refs"] == []
+    assert evidence_coverage["pass"] is True
+    assert "failed_gate_evidence" in evidence_coverage["included_refs"]
+    assert "ce_blueprint" in evidence_coverage["included_refs"]
+    assert audit["coverage"]["has_workspace_quality_evidence"] is True
+
+
 def test_final_request_evidence_coverage_is_ref_based_and_redacted_when_underutilized() -> None:
     secret = "sk-test-context-secret-should-not-leak"
     execution_profile = {

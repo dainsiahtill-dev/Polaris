@@ -252,6 +252,18 @@ class PromptBuilder:
             items = self._contract_text_items(product_intent.get(key), limit=limit, max_chars=220)
             if items:
                 rows.append(f"{label}: " + " | ".join(items))
+        level_contract = self._metadata_mapping(depth_contract.get("level_contract"))
+        minimums = self._metadata_mapping(depth_contract.get("minimums")) or self._metadata_mapping(
+            level_contract.get("minimums")
+        )
+        if minimums:
+            minimum_items = [
+                f"{key}={value}"
+                for key, value in sorted(minimums.items())
+                if str(key or "").strip() and value not in (None, "")
+            ]
+            if minimum_items:
+                rows.append("Level minimums: " + ", ".join(minimum_items))
         if behavior_contract:
             for label, key, limit in (
                 ("Rule matrix", "rule_matrix", 8),

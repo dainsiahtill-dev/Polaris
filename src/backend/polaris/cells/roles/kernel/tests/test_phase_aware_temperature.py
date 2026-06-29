@@ -455,6 +455,54 @@ class TestTransactionKernelTemperatureChannel:
         assert isinstance(context_override, dict)
         assert context_override[_FLOOR_CHANNEL_KEY] == 128000
 
+    @pytest.mark.asyncio
+    async def test_forced_retry_output_floor_bounds_execution_strategy_budget(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = SimpleNamespace(role_id="director", version="1.0", model="test-model", provider_id="openai")
+        request = SimpleNamespace(
+            message="repair existing targets",
+            run_id="run_123",
+            task_id=None,
+            workspace=".",
+            context_override={
+                "context_os_snapshot": {},
+                "director_execution_strategy": {
+                    "schema_version": "task.execution_strategy.v1",
+                    "output_budget_tokens": 128000,
+                },
+            },
+        )
+        captured_contexts: list[Any] = []
+
+        async def _fake_call(*, context: Any, **_kwargs: Any) -> Any:
+            captured_contexts.append(context)
+            return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
+
+        kernel.inject_llm_caller(SimpleNamespace(call=_fake_call))
+        tk = kernel._create_transaction_kernel("director", profile, request)
+
+        await tk.llm_provider(
+            {
+                "messages": [
+                    {"role": "system", "content": "sys"},
+                    {"role": "user", "content": "repair existing targets"},
+                ],
+                "tools": [{"type": "function", "function": {"name": "write_file"}}],
+                "tool_choice": "required",
+                "max_tokens_floor": 7000,
+            }
+        )
+
+        assert len(captured_contexts) == 1
+        context_override = getattr(captured_contexts[0], "context_override", None)
+        assert isinstance(context_override, dict)
+        assert context_override[_FLOOR_CHANNEL_KEY] == 7000
+        assert context_override["_transaction_kernel_retry_output_budget_bounded"] is True
+        assert (
+            context_override["_transaction_kernel_retry_output_budget_reason"]
+            == "forced_tool_retry_must_not_inherit_full_execution_budget"
+        )
+
 
 class TestTransactionKernelTaskRuntimeGuard:
     @pytest.mark.asyncio

@@ -705,6 +705,8 @@ def build_single_batch_task_contract_hint(
         min_tool_calls=min_calls_required,
         requires_write=_requires_write,
     )
+    if single_quality_repair_target:
+        expected_read_count = 0
 
     contract_text = "\n".join(lines)
     metadata: dict[str, Any] = {"expected_read_count": expected_read_count}

@@ -70,15 +70,45 @@ def _normalize_task_market_route(payload: dict[str, Any]) -> str:
     return _ROUTE_CHIEF_BLUEPRINT_REQUIRED
 
 
-def _validated_blueprint_handoff(workspace: str, task_id: str, payload: dict[str, Any]) -> tuple[bool, str, str]:
+def _validated_blueprint_handoff(
+    workspace: str, task_id: str, payload: dict[str, Any]
+) -> tuple[bool, str, str, dict[str, Any]]:
     payload_with_task_id = dict(payload)
     payload_with_task_id.setdefault("task_id", task_id)
-    validation = validate_director_handoff_from_payload(workspace, payload_with_task_id)
+    validation = validate_director_handoff_from_payload(workspace, payload_with_task_id, require_strict=True)
     return (
         bool(validation.get("allowed")),
         str(validation.get("blueprint_id") or ""),
         str(validation.get("reason") or ""),
+        validation,
     )
+
+
+def _normalize_handoff_validation_result(result: Any) -> tuple[bool, str, str, dict[str, Any]]:
+    """Normalize legacy test shims and the strict production validation result."""
+
+    if isinstance(result, tuple):
+        if len(result) >= 4:
+            return bool(result[0]), str(result[1] or ""), str(result[2] or ""), dict(result[3] or {})
+        if len(result) >= 3:
+            return bool(result[0]), str(result[1] or ""), str(result[2] or ""), {}
+    return False, "", "invalid Chief Engineer handoff validation result", {}
+
+
+def _attach_handoff_validation_payload(payload: dict[str, Any], validation: dict[str, Any]) -> None:
+    """Project strict handoff evidence into the Director execution payload."""
+
+    if not validation:
+        return
+    strict_decision = validation.get("strict_decision_payload")
+    if isinstance(strict_decision, dict) and strict_decision:
+        payload["ce_handoff_decision"] = dict(strict_decision)
+        payload["ce_handoff_decision_hash"] = str(strict_decision.get("decision_hash") or "")
+        payload.setdefault("handoff_decision_hash", str(strict_decision.get("decision_hash") or ""))
+    legacy_decision = validation.get("decision_payload")
+    if isinstance(legacy_decision, dict) and legacy_decision:
+        payload.setdefault("handoff_decision", dict(legacy_decision))
+    payload["director_handoff_validation"] = dict(validation)
 
 
 def _job_token_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1015,7 +1045,9 @@ class DirectorExecutionConsumer:
         # All Director execution must carry ChiefEngineer evidence. Legacy
         # direct PM task routes are parsed for compatibility, but never grant
         # execution authority without a blueprint handoff.
-        handoff_allowed, blueprint_id, handoff_error = _validated_blueprint_handoff(self._workspace, task_id, payload)
+        handoff_allowed, blueprint_id, handoff_error, handoff_validation = _normalize_handoff_validation_result(
+            _validated_blueprint_handoff(self._workspace, task_id, payload)
+        )
         if not handoff_allowed:
             self._svc.fail_task_stage(
                 FailTaskStageCommandV1(
@@ -1032,6 +1064,7 @@ class DirectorExecutionConsumer:
                 "ok": False,
                 "reason": "invalid_blueprint_handoff" if blueprint_id else "missing_blueprint",
             }
+        _attach_handoff_validation_payload(payload, handoff_validation)
 
         # Safe parallel conflict check
         if self._enable_safe_parallel:

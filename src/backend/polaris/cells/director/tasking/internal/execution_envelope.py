@@ -105,7 +105,9 @@ def _allowed_paths(
         or list(profile.scope_paths)
     )
     allowed_write_paths = _string_list(token.get("allowed_paths")) or list(dict.fromkeys([*target_files, *scope_paths]))
-    allowed_read_paths = _string_list(metadata.get("allowed_read_paths")) or list(dict.fromkeys([*allowed_write_paths, *scope_paths]))
+    allowed_read_paths = _string_list(metadata.get("allowed_read_paths")) or list(
+        dict.fromkeys([*allowed_write_paths, *scope_paths])
+    )
     return allowed_read_paths, allowed_write_paths
 
 
@@ -185,9 +187,9 @@ def build_execution_envelope(
         fallback=handoff_payload,
         missing_key="handoff_decision_hash",
     )
-    if not _metadata_has_value(normalized_metadata, "handoff_decision_hash", "ce_handoff_decision_hash") and handoff_payload.get(
-        "decision_hash"
-    ):
+    if not _metadata_has_value(
+        normalized_metadata, "handoff_decision_hash", "ce_handoff_decision_hash"
+    ) and handoff_payload.get("decision_hash"):
         handoff_hash = str(handoff_payload["decision_hash"])
     allowed_read_paths, allowed_write_paths = _allowed_paths(
         metadata=normalized_metadata,
@@ -222,12 +224,27 @@ def build_execution_envelope(
         "command_timeout_seconds": int(normalized_metadata.get("command_timeout_seconds") or 0),
         "repair_attempt_budget": int(normalized_metadata.get("repair_attempt_budget") or 0),
     }
+    missing_authority_bindings = [
+        key
+        for key, value in (
+            ("pm_contract_hash", pm_contract_hash),
+            ("blueprint_hash", ce_blueprint_hash),
+            ("handoff_decision_hash", handoff_hash),
+            ("execution_profile_hash", execution_profile_hash),
+        )
+        if str(value or "").startswith(_MISSING_PREFIX)
+    ]
     audit_policy = {
         "required_evidence": list(strategy.evidence_requirements),
         "context_snapshot_ref": _string_value(normalized_metadata, "context_snapshot_ref"),
         "final_provider_request_required": True,
         "receipt_required": True,
         "provenance_bundle_required": True,
+        "execution_authority": {
+            "ok": not missing_authority_bindings,
+            "missing_bindings": missing_authority_bindings,
+            "strict_handoff_required": True,
+        },
     }
     validity = {
         "created_at": created,
@@ -241,7 +258,9 @@ def build_execution_envelope(
         "workspace": workspace,
         "trace_id": trace_id,
         "pm_contract": _hash_ref(
-            ref=_string_value(normalized_metadata, "pm_contract_ref", default=str(handoff_bindings.get("pm_contract_ref") or "")),
+            ref=_string_value(
+                normalized_metadata, "pm_contract_ref", default=str(handoff_bindings.get("pm_contract_ref") or "")
+            ),
             hash_value=pm_contract_hash,
         ),
         "ce_blueprint": _hash_ref(

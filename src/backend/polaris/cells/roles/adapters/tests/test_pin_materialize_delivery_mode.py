@@ -149,6 +149,40 @@ class TestPinMaterializeDeliveryMode:
         assert "- ce_llm_blueprint: consumed (advisory_only)" in message
         assert "- blueprint target_files: src/index.ts, src/models/Fairy.ts" not in message
 
+    def test_multi_target_quality_repair_compacts_conflicting_original_contract(self) -> None:
+        message = _build_materialization_quality_repair_message(
+            original_message=(
+                "[mode:materialize]\n"
+                "Factory workspace quality repair contract:\n"
+                "- Delivery mode: materialize changes into the workspace.\n"
+                "- Target files:\n"
+                "  - package.json\n"
+                "  - tsconfig.json\n"
+                "  - src/index.ts\n"
+                "  - src/main.ts\n"
+                "  - src/models/Market.ts\n"
+                "  - src/models/Fairy.ts\n"
+                "任务: Build branded TypeScript market models\n"
+                "目标: Deliver a runnable TypeScript project.\n"
+                "Verification is required by the user. Include an available verification step.\n"
+            ),
+            artifact_quality_errors=[
+                "src/web.ts(44,61): error TS2339: Property 'addEventListener' does not exist",
+                "tests/behavior.test.ts(89,16): error TS2345: Argument of type 'RangeErrorConstructor'",
+            ],
+            changed_files=["src/index.ts", "src/web.ts", "tests/behavior.test.ts", "tsconfig.json"],
+            repair_target_files=["src/web.ts", "tests/behavior.test.ts", "tsconfig.json"],
+        )
+
+        assert "ORIGINAL TASK CONTEXT (semantic only" in message
+        assert "Factory workspace quality repair contract" not in message
+        assert "- Target files:\n  - package.json" not in message
+        assert "Verification is required by the user" not in message
+        assert "EXISTING FAILED TARGET FILES" in message
+        assert "- src/web.ts" in message
+        assert "- tests/behavior.test.ts" in message
+        assert "- tsconfig.json" in message
+
     def test_non_fresh_terse_goal_not_forced(self) -> None:
         # Without the pin, a pure-analysis phrasing stays out of MATERIALIZE.
         contract = resolve_delivery_mode("analyze the architecture and summarize")

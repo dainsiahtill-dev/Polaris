@@ -22,6 +22,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from polaris.cells.control_plane.run_ledger.public import stable_hash
+from polaris.cells.director.tasking.internal.execution_profile import (
+    resolve_director_execution_profile,
+)
 from polaris.cells.director.tasking.internal.task_lifecycle_service import (
     TaskQueueConfig,
     TaskService,
@@ -241,7 +245,43 @@ def query_task_result(query: TaskResultQueryV1) -> TaskResultResultV1:
     )
 
 
+def build_director_execution_profile_snapshot(
+    *,
+    subject: str,
+    description: str = "",
+    metadata: dict[str, Any] | None = None,
+    target_files: list[str] | tuple[str, ...] | None = None,
+    scope_paths: list[str] | tuple[str, ...] | None = None,
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Return the canonical Director execution profile payload and hash.
+
+    Chief Engineer handoff uses this public Director tasking surface to freeze
+    the same profile that Director later consumes. That prevents CE and
+    Director from independently re-classifying a task and drifting on
+    temperature, output protocol, or scope bindings.
+    """
+
+    profile = resolve_director_execution_profile(
+        subject=subject,
+        description=description,
+        metadata=dict(metadata or {}),
+        target_files=target_files,
+        scope_paths=scope_paths,
+        workspace=workspace,
+    )
+    payload = profile.to_dict()
+    profile_hash = stable_hash(payload)
+    return {
+        "schema_version": "director.execution_profile_snapshot.v1",
+        "profile": payload,
+        "profile_hash": profile_hash,
+        "profile_ref": f"director.tasking.execution_profile:{profile_hash[:24]}",
+    }
+
+
 __all__ = [
+    "build_director_execution_profile_snapshot",
     "cancel_task",
     "create_task",
     "get_task_service",

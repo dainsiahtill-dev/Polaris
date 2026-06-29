@@ -28,14 +28,17 @@ HTML_TYPESCRIPT_MODULE_SCRIPT_SOURCE_TOOL = "deterministic_html_typescript_modul
 JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL = "deterministic_javascript_typescript_annotation_repair"
 TYPEORM_MODEL_NORMALIZATION_SOURCE_TOOL = "deterministic_typeorm_model_normalization_repair"
 TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL = "deterministic_typescript_commonjs_package_type_repair"
+TYPESCRIPT_CONFIG_KEY_SPLIT_SOURCE_TOOL = "deterministic_typescript_config_key_split_repair"
 TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL = "deterministic_typescript_entrypoint_repair"
 TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL = "deterministic_typescript_escaped_newline_repair"
+TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL = "deterministic_typescript_expect_error_placement_repair"
 TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL = "deterministic_typescript_hyphenated_identifier_repair"
 TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL = "deterministic_typescript_import_specifier_keyword_repair"
 TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL = "deterministic_typescript_member_alias_repair"
 TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL = "deterministic_typescript_missing_export_repair"
 TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL = "deterministic_typescript_missing_member_repair"
 TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL = "deterministic_typescript_private_constructor_access_repair"
+TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL = "deterministic_typescript_export_ambiguity_repair"
 TYPESCRIPT_REEXPORT_SOURCE_TOOL = "deterministic_typescript_reexport_repair"
 TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL = "deterministic_typescript_reexported_type_binding_repair"
 TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL = "deterministic_typescript_relative_import_case_repair"
@@ -51,9 +54,11 @@ TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL = "deterministic_typescript_branded_
 TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL = "deterministic_typescript_literal_union_value_facade_repair"
 TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL = "deterministic_typescript_unresolved_identifier_repair"
 TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL = "deterministic_typescript_unused_import_repair"
+TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL = "deterministic_typescript_test_block_residue_repair"
 TYPESCRIPT_VITEST_GLOBALS_SOURCE_TOOL = "deterministic_typescript_vitest_globals_repair"
 TYPESCRIPT_ZOD_TYPE_CLASS_COLLISION_SOURCE_TOOL = "deterministic_typescript_zod_type_class_collision_repair"
 TYPESCRIPT_HTML_CONTAINER_SELECTOR_SOURCE_TOOL = "deterministic_typescript_html_container_selector_repair"
+TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL = "deterministic_typescript_dom_local_shim_cleanup_repair"
 
 _TS_INLINE_OBJECT_MISSING_COMMA_RE = re.compile(
     r"(?P<value>\b[A-Za-z_$][A-Za-z0-9_$]*\b|\)|\]|\}|['\"][^'\"]*['\"]|-?\d+(?:\.\d+)?)"
@@ -68,6 +73,36 @@ _TS_OBJECT_PROPERTY_VALUE_SEMICOLON_LINE_RE = re.compile(
 _TS_RETURN_OBJECT_START_RE = re.compile(r"\breturn\s*\{\s*$")
 _TS_OBJECT_LITERAL_START_RE = re.compile(r"(?:\breturn\s*|=\s*)\{\s*$")
 _TS_IDENTIFIER_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
+_TS_CONFIG_SPLIT_KEY_LINE_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<left>[A-Za-z_$][A-Za-z0-9_$]*)\s+"
+    r"(?P<right>[A-Za-z_$][A-Za-z0-9_$]*)(?P<suffix>\s*:.*)$"
+)
+_TS_TEST_BLOCK_RESIDUE_STATEMENT_RE = re.compile(r"^\s{2,}(?:assert\.|expect\(|it\(|test\()")
+_TS_TEST_BLOCK_RESIDUE_CLOSER_RE = re.compile(r"^\s*\}\s*\)\s*;?\s*$")
+_TS_CONFIG_JOINABLE_KEYS = frozenset(
+    {
+        "allowJs",
+        "allowSyntheticDefaultImports",
+        "assetsDir",
+        "baseUrl",
+        "cacheDir",
+        "checkJs",
+        "declarationMap",
+        "emptyOutDir",
+        "envDir",
+        "esModuleInterop",
+        "forceConsistentCasingInFileNames",
+        "moduleResolution",
+        "noEmit",
+        "outDir",
+        "publicDir",
+        "resolveJsonModule",
+        "rootDir",
+        "skipLibCheck",
+        "sourceMap",
+        "strictPort",
+    }
+)
 _TS_HYPHENATED_VARIABLE_DECLARATION_RE = re.compile(
     r"\b(?:const|let|var)\s+(?P<left>[A-Za-z_$][A-Za-z0-9_$]*)-(?P<right>[A-Za-z_$][A-Za-z0-9_$]*)"
     r"\b(?=\s*(?::|=))"
@@ -315,6 +350,12 @@ _TS_NAMED_IMPORT_RE = re.compile(
     r"import\s*\{(?P<symbols>[^}]+)\}\s*from\s*['\"](?P<module>\.{1,2}/[^'\"]+)['\"]",
     re.DOTALL,
 )
+_TS_NAMED_IMPORT_BLOCK_START_LINE_RE = re.compile(r"^\s*import\s*\{\s*$")
+_TS_NAMED_IMPORT_BLOCK_END_LINE_RE = re.compile(r"^\s*}\s*from\s*['\"][^'\"]+['\"]\s*;?\s*$")
+_TS_EMBEDDED_IMPORT_TYPE_LINE_RE = re.compile(
+    r"^(?P<indent>\s*)import\s+type\s+\{\s*(?P<symbols>[^}]+?)\s*\}\s+from\s+"
+    r"(?P<quote>['\"])(?P<module>[^'\"]+)(?P=quote)\s*;?\s*$"
+)
 _TS_IMPORT_SPECIFIER_KEYWORD_RE = re.compile(
     r"(?P<prefix>(?:^|,)\s*)(?P<keyword>export|import)\s+type\s+(?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)",
     re.MULTILINE,
@@ -334,6 +375,14 @@ _TS_LOCAL_TYPE_NAMED_EXPORT_RE = re.compile(
 _TS_DUPLICATE_IDENTIFIER_MESSAGE_RE = re.compile(
     r"Duplicate identifier\s+['\"]?(?P<name>[A-Za-z_$][\w$]*)['\"]?",
     re.IGNORECASE,
+)
+_TS_EXPORT_AMBIGUITY_MESSAGE_RE = re.compile(
+    r"Module\s+['\"](?P<module>[^'\"]+)['\"]\s+has\s+already\s+exported\s+a\s+member\s+named\s+"
+    r"['\"](?P<symbol>[A-Za-z_$][\w$]*)['\"]",
+    re.IGNORECASE,
+)
+_TS_EXPORT_STAR_RE = re.compile(
+    r"(?m)^(?P<indent>\s*)export\s+\*\s+from\s+(?P<quote>['\"])(?P<module>[^'\"]+)(?P=quote)\s*;?\s*$"
 )
 _TS_BRANDED_STRING_ASSIGNMENT_MESSAGE_RE = re.compile(
     r"(?:Argument of type ['\"]?string['\"]? is not assignable to parameter of type|"
@@ -392,7 +441,39 @@ _TS_IMPORT_FROM_SPECIFIER_TEMPLATE = (
     r"(?m)^(?P<indent>\s*)import\s+(?P<clause>.*?)\s+from\s+"
     r"(?P<quote>['\"])(?P<specifier>{specifier})(?P=quote)\s*;?\s*$"
 )
+_TS_IMPORT_FROM_ANY_RE = re.compile(
+    r"(?m)^(?P<indent>\s*)import\s+(?P<clause>.*?)\s+from\s+"
+    r"(?P<quote>['\"])(?P<specifier>[^'\"]+)(?P=quote)\s*;?\s*$"
+)
+_TS_UNUSED_LOCAL_DECLARATION_LINE_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<kind>const|let|var)\s+"
+    r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=;]+)?=\s*(?P<expr>.+);\s*$"
+)
+_TS_UNUSED_FUNCTION_DECLARATION_LINE_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<async>async\s+)?function\s*\*?\s*(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*\("
+)
 _TS_ZERO_ARG_PROPERTY_CALL_RE = re.compile(r"\b[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+\s*\(\s*\)")
+_TS_UNRESOLVED_ARRAY_ASSERTION_LENGTH_ASSIGNMENT_TEMPLATE = r"\bas\s+{symbol}\s*\[\s*\]\s*\)\s*\.\s*length\s*="
+_TS_LOCAL_DOM_DECLARE_CONST_START_RE = re.compile(
+    r"^\s*declare\s+const\s+(?P<name>document|window)\s*:\s*\{",
+)
+_TS_LOCAL_DOM_INTERFACE_START_RE = re.compile(
+    r"^\s*interface\s+"
+    r"(?P<name>Document|HTMLElement|HTMLCanvasElement|CanvasRenderingContext2D|HTMLCollection|Element)"
+    r"\b[^{]*\{",
+)
+_TS_LOCAL_DOM_SHIM_NAMES = frozenset(
+    {
+        "document",
+        "window",
+        "Document",
+        "Element",
+        "HTMLElement",
+        "HTMLCanvasElement",
+        "CanvasRenderingContext2D",
+        "HTMLCollection",
+    }
+)
 
 
 def repair_typescript_object_literal_commas(text: str) -> str:
@@ -1324,6 +1405,195 @@ def build_typescript_canvas_scale_return_type_plan(
     )
 
 
+def _build_typescript_config_key_split_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+) -> RepairPlan | None:
+    """Repair generated TypeScript config keys split by whitespace."""
+
+    if not any(_is_typescript_config_key_split_diagnostic(diagnostic) for diagnostic in diagnostics):
+        return None
+
+    operations: list[RepairOperation] = []
+    matched_diagnostics: list[RepairDiagnostic] = []
+    repaired_items: list[dict[str, object]] = []
+    seen_spans: set[tuple[str, int, int]] = set()
+    target_paths = {
+        _normalize_repair_path(str(diagnostic.path or ""))
+        for diagnostic in diagnostics
+        if _is_typescript_config_key_split_diagnostic(diagnostic)
+    }
+    target_paths = {path for path in target_paths if path in base_files}
+    candidate_paths = target_paths or {path for path in base_files if _is_typescript_config_file(path)}
+
+    for path in sorted(candidate_paths):
+        if not _is_typescript_config_file(path):
+            continue
+        original = str(base_files.get(path) or "")
+        if not original:
+            continue
+        diagnostic_line_numbers = {
+            int(diagnostic.line or 0)
+            for diagnostic in diagnostics
+            if _is_typescript_config_key_split_diagnostic(diagnostic)
+            and _normalize_repair_path(str(diagnostic.path or "")) == path
+            and int(diagnostic.line or 0) > 0
+        }
+        path_operations = _typescript_config_key_split_operations(
+            path=path,
+            content=original,
+            line_numbers=diagnostic_line_numbers,
+            seen_spans=seen_spans,
+        )
+        if not path_operations:
+            continue
+        operations.extend(path_operations)
+        matched_diagnostics.extend(
+            diagnostic
+            for diagnostic in diagnostics
+            if _is_typescript_config_key_split_diagnostic(diagnostic)
+            and (not diagnostic.path or _normalize_repair_path(str(diagnostic.path or "")) == path)
+        )
+        repaired_items.extend(
+            {
+                "file": path,
+                "line": int(operation.metadata.get("line") or 0),
+                "original_key": str(operation.metadata.get("original_key") or ""),
+                "replacement_key": str(operation.metadata.get("replacement_key") or ""),
+            }
+            for operation in path_operations
+        )
+
+    return _repair_plan_or_none(
+        rule_id="typescript.config_key_split",
+        source_tool=TYPESCRIPT_CONFIG_KEY_SPLIT_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        metadata={"config_key_splits": repaired_items},
+    )
+
+
+def _build_typescript_test_block_residue_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+) -> RepairPlan | None:
+    """Remove trailing duplicated test-block residue that leaves TS1128 closers."""
+
+    if not any(_is_typescript_test_block_residue_diagnostic(diagnostic) for diagnostic in diagnostics):
+        return None
+
+    operations: list[RepairOperation] = []
+    matched_diagnostics: list[RepairDiagnostic] = []
+    repaired_items: list[dict[str, object]] = []
+    seen_spans: set[tuple[str, int, int]] = set()
+    target_paths = {
+        _normalize_repair_path(str(diagnostic.path or ""))
+        for diagnostic in diagnostics
+        if _is_typescript_test_block_residue_diagnostic(diagnostic)
+    }
+    target_paths = {path for path in target_paths if path in base_files}
+    candidate_paths = target_paths or {path for path in base_files if _is_typescript_test_file(path)}
+
+    for path in sorted(candidate_paths):
+        if not _is_typescript_test_file(path):
+            continue
+        original = str(base_files.get(path) or "")
+        if not original:
+            continue
+        diagnostic_line_numbers = {
+            int(diagnostic.line or 0)
+            for diagnostic in diagnostics
+            if _is_typescript_test_block_residue_diagnostic(diagnostic)
+            and _normalize_repair_path(str(diagnostic.path or "")) == path
+            and int(diagnostic.line or 0) > 0
+        }
+        path_operations = _typescript_test_block_residue_operations(
+            path=path,
+            content=original,
+            line_numbers=diagnostic_line_numbers,
+            seen_spans=seen_spans,
+        )
+        if not path_operations:
+            continue
+        operations.extend(path_operations)
+        matched_diagnostics.extend(
+            diagnostic
+            for diagnostic in diagnostics
+            if _is_typescript_test_block_residue_diagnostic(diagnostic)
+            and (not diagnostic.path or _normalize_repair_path(str(diagnostic.path or "")) == path)
+        )
+        repaired_items.extend(
+            {
+                "file": path,
+                "start_line": int(operation.metadata.get("start_line") or 0),
+                "end_line": int(operation.metadata.get("end_line") or 0),
+            }
+            for operation in path_operations
+        )
+
+    return _repair_plan_or_none(
+        rule_id="typescript.test_block_residue",
+        source_tool=TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        metadata={"test_block_residue_removals": repaired_items},
+    )
+
+
+def _build_typescript_expect_error_placement_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+) -> RepairPlan | None:
+    operations: list[RepairOperation] = []
+    moved_comments: list[dict[str, int | str]] = []
+    diagnostics_by_path = _typescript_expect_error_diagnostics_by_path(diagnostics)
+    for path in sorted(diagnostics_by_path):
+        original = str(base_files.get(path) or "")
+        if not original:
+            continue
+        repaired, moved = _repair_typescript_expect_error_placement(
+            original,
+            diagnostics=diagnostics_by_path[path],
+        )
+        if repaired == original or not moved:
+            continue
+        operations.extend(
+            _text_replace_operations_from_repair(
+                path=path,
+                original=original,
+                repaired=repaired,
+                metadata={
+                    "repair_kind": "typescript_expect_error_placement",
+                    "moved_expect_error_comments": tuple(moved),
+                },
+            )
+        )
+        moved_comments.extend({"file": path, **item} for item in moved)
+
+    matched_diagnostics = tuple(
+        diagnostic
+        for path_diagnostics in diagnostics_by_path.values()
+        for diagnostic in path_diagnostics
+        if _is_typescript_expect_error_placement_diagnostic(diagnostic)
+    )
+    return _repair_plan_or_none(
+        rule_id="typescript.expect_error_placement",
+        source_tool=TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        metadata={"moved_comments": moved_comments},
+    )
+
+
 def build_typescript_runtime_plan_for_source_tool(
     *,
     source_tool: str,
@@ -1339,9 +1609,12 @@ def build_typescript_runtime_plan_for_source_tool(
         JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL: _build_javascript_typescript_annotation_plan,
         TYPEORM_MODEL_NORMALIZATION_SOURCE_TOOL: _build_typeorm_model_normalization_plan,
         TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL: _build_typescript_commonjs_package_type_plan,
+        TYPESCRIPT_CONFIG_KEY_SPLIT_SOURCE_TOOL: _build_typescript_config_key_split_plan,
         TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL: _build_typescript_entrypoint_plan,
         TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL: _build_typescript_escaped_newline_plan,
+        TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL: _build_typescript_expect_error_placement_plan,
         TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL: build_typescript_hyphenated_identifier_plan,
+        TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL: _build_typescript_dom_local_shim_cleanup_plan,
         TYPESCRIPT_HTML_CONTAINER_SELECTOR_SOURCE_TOOL: _build_typescript_html_container_selector_plan,
         TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL: _build_typescript_import_specifier_keyword_plan,
         TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL: _build_typescript_member_alias_plan,
@@ -1349,6 +1622,7 @@ def build_typescript_runtime_plan_for_source_tool(
         TYPESCRIPT_MISSING_MEMBER_SOURCE_TOOL: _build_typescript_missing_member_plan,
         TYPESCRIPT_PRIVATE_CONSTRUCTOR_ACCESS_SOURCE_TOOL: _build_typescript_private_constructor_access_plan,
         TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL: build_typescript_number_property_call_plan,
+        TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL: _build_typescript_export_ambiguity_plan,
         TYPESCRIPT_REEXPORT_SOURCE_TOOL: _build_typescript_reexport_plan,
         TYPESCRIPT_REEXPORTED_TYPE_BINDING_SOURCE_TOOL: _build_typescript_reexported_type_binding_plan,
         TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL: _build_typescript_relative_import_case_plan,
@@ -1356,6 +1630,7 @@ def build_typescript_runtime_plan_for_source_tool(
         TYPESCRIPT_SHORTHAND_PROPERTY_SCOPE_SOURCE_TOOL: build_typescript_shorthand_property_scope_plan,
         TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL: _build_typescript_sourcefile_diagnostics_plan,
         TYPESCRIPT_STRING_LITERAL_SUGGESTION_SOURCE_TOOL: build_typescript_string_literal_suggestion_plan,
+        TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL: _build_typescript_test_block_residue_plan,
         TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL: _build_typescript_too_few_arguments_plan,
         TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL: _build_typescript_tsconfig_lib_plan,
         TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL: _build_typescript_tsconfig_rootdir_plan,
@@ -1484,6 +1759,56 @@ def _build_typescript_html_container_selector_plan(
         diagnostics=matched_diagnostics,
         mode=mode,
         metadata={"selectors": repaired},
+    )
+
+
+def _build_typescript_dom_local_shim_cleanup_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+) -> RepairPlan | None:
+    diagnostics_by_path: dict[str, list[RepairDiagnostic]] = {}
+    for diagnostic in diagnostics:
+        if not _is_typescript_dom_local_shim_diagnostic(diagnostic, base_files=base_files):
+            continue
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        if not path or path not in base_files:
+            continue
+        diagnostics_by_path.setdefault(path, []).append(diagnostic)
+
+    operations: list[RepairOperation] = []
+    matched_diagnostics: list[RepairDiagnostic] = []
+    cleaned_files: list[dict[str, object]] = []
+    for path in sorted(diagnostics_by_path):
+        original = str(base_files.get(path) or "")
+        repaired, removed_symbols = _remove_typescript_local_dom_shims(original)
+        if repaired == original or not removed_symbols:
+            continue
+        path_diagnostics = tuple(diagnostics_by_path[path])
+        operations.extend(
+            _text_replace_operations_from_repair(
+                path=path,
+                original=original,
+                repaired=repaired,
+                metadata={
+                    "repair_kind": "typescript_dom_local_shim_cleanup",
+                    "removed_symbols": tuple(removed_symbols),
+                    "diagnostic_ids": tuple(diagnostic.diagnostic_id for diagnostic in path_diagnostics),
+                },
+            )
+        )
+        matched_diagnostics.extend(path_diagnostics)
+        cleaned_files.append({"file": path, "removed_symbols": tuple(removed_symbols)})
+
+    return _repair_plan_or_none(
+        rule_id="typescript.dom_local_shim_cleanup",
+        source_tool=TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        risk_level="low",
+        metadata={"cleaned_files": cleaned_files},
     )
 
 
@@ -2012,6 +2337,95 @@ def _build_typescript_reexport_plan(
         diagnostics=diagnostics,
         mode=mode,
         metadata={"reexports": reexports},
+    )
+
+
+def _build_typescript_export_ambiguity_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+) -> RepairPlan | None:
+    targets = _typescript_export_ambiguity_targets(diagnostics)
+    if not targets:
+        return None
+
+    grouped: dict[tuple[str, int, int, str], list[str]] = {}
+    grouped_metadata: dict[tuple[str, int, int, str], list[dict[str, object]]] = {}
+    matched_diagnostics: list[RepairDiagnostic] = []
+    for target in targets:
+        path = str(target["path"])
+        module = str(target["module"])
+        symbol = str(target["symbol"])
+        diagnostic = target["diagnostic"]
+        if not isinstance(diagnostic, RepairDiagnostic):
+            continue
+        content = str(base_files.get(path) or "")
+        if not content:
+            continue
+        star_match = next(
+            (match for match in _TS_EXPORT_STAR_RE.finditer(content) if str(match.group("module") or "") == module),
+            None,
+        )
+        if star_match is None:
+            continue
+        if _typescript_file_has_named_reexport(content, module=module, symbol=symbol):
+            continue
+        source_path = _resolve_relative_ts_module_path(path, module, base_files)
+        if not source_path:
+            continue
+        source_text = str(base_files.get(source_path) or "")
+        if not source_text or not _typescript_module_exports_symbol(source_text, symbol):
+            continue
+        export_keyword = "export type" if _typescript_exported_symbol_is_type_only(source_text, symbol) else "export"
+        export_line = (
+            f"{star_match.group('indent')}{export_keyword} {{ {symbol} }} "
+            f"from {star_match.group('quote')}{module}{star_match.group('quote')};"
+        )
+        key = (path, star_match.start(), star_match.end(), str(star_match.group(0) or ""))
+        lines = grouped.setdefault(key, [])
+        if export_line not in lines:
+            lines.append(export_line)
+            grouped_metadata.setdefault(key, []).append(
+                {
+                    "file": path,
+                    "module": module,
+                    "symbol": symbol,
+                    "source": source_path,
+                    "type_only": export_keyword == "export type",
+                }
+            )
+        matched_diagnostics.append(diagnostic)
+
+    operations: list[RepairOperation] = []
+    repaired: list[dict[str, object]] = []
+    for (path, start, end, expected), export_lines in sorted(grouped.items()):
+        content = str(base_files.get(path) or "")
+        key = (path, start, end, expected)
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=path,
+                span_start=start,
+                span_end=end,
+                expected=expected,
+                replacement=f"{expected}\n" + "\n".join(export_lines),
+                before_hash=sha256_text(content),
+                metadata={
+                    "repair_kind": "typescript_export_ambiguity",
+                    "exports": tuple(grouped_metadata.get(key, ())),
+                },
+            )
+        )
+        repaired.extend(grouped_metadata.get(key, ()))
+
+    return _repair_plan_or_none(
+        rule_id="typescript.export_ambiguity",
+        source_tool=TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        metadata={"explicit_reexports": repaired},
     )
 
 
@@ -2794,9 +3208,90 @@ def _typescript_syntax_error_paths(diagnostics: Sequence[RepairDiagnostic]) -> t
     return tuple(paths)
 
 
-def _repair_typescript_import_specifier_keywords(original: str) -> tuple[str, tuple[dict[str, str], ...]]:
-    text = str(original or "")
+def _line_ending(line: str) -> str:
+    if line.endswith("\r\n"):
+        return "\r\n"
+    if line.endswith("\n"):
+        return "\n"
+    return "\n"
+
+
+def _repair_typescript_embedded_import_type_declarations(
+    original: str,
+) -> tuple[str, tuple[dict[str, str], ...]]:
+    lines = str(original or "").splitlines(keepends=True)
+    if not lines:
+        return str(original or ""), ()
+
+    output: list[str] = []
     replacements: list[dict[str, str]] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not _TS_NAMED_IMPORT_BLOCK_START_LINE_RE.match(line.rstrip("\r\n")):
+            output.append(line)
+            index += 1
+            continue
+
+        original_segment = [line]
+        repaired_segment = [line]
+        moved_imports: list[tuple[str, dict[str, str]]] = []
+        index += 1
+        block_closed = False
+        while index < len(lines):
+            inner_line = lines[index]
+            original_segment.append(inner_line)
+            stripped_inner = inner_line.rstrip("\r\n")
+            embedded_match = _TS_EMBEDDED_IMPORT_TYPE_LINE_RE.match(stripped_inner)
+            if embedded_match is not None:
+                symbols = " ".join(str(embedded_match.group("symbols") or "").strip().split())
+                module = str(embedded_match.group("module") or "").strip()
+                quote = str(embedded_match.group("quote") or '"')
+                import_line = f"import type {{ {symbols} }} from {quote}{module}{quote};{_line_ending(inner_line)}"
+                moved_imports.append(
+                    (
+                        import_line,
+                        {
+                            "keyword": "import type",
+                            "symbol": symbols,
+                            "module": module,
+                            "repair_kind": "embedded_import_type_declaration",
+                        },
+                    )
+                )
+                index += 1
+                continue
+
+            repaired_segment.append(inner_line)
+            if _TS_NAMED_IMPORT_BLOCK_END_LINE_RE.match(stripped_inner):
+                block_closed = True
+                index += 1
+                break
+            index += 1
+
+        if not block_closed or not moved_imports:
+            output.extend(original_segment)
+            continue
+
+        seen_moved: set[str] = set()
+        for import_line, metadata in moved_imports:
+            normalized = " ".join(import_line.strip().rstrip(";").split())
+            if normalized in seen_moved:
+                continue
+            seen_moved.add(normalized)
+            output.append(import_line)
+            replacements.append(metadata)
+        output.extend(repaired_segment)
+
+    if not replacements:
+        return str(original or ""), ()
+    return "".join(output), tuple(replacements)
+
+
+def _repair_typescript_import_specifier_keywords(original: str) -> tuple[str, tuple[dict[str, str], ...]]:
+    text, embedded_replacements = _repair_typescript_embedded_import_type_declarations(str(original or ""))
+    replacements: list[dict[str, str]] = []
+    replacements.extend(embedded_replacements)
     pieces: list[str] = []
     cursor = 0
     for match in _TS_NAMED_IMPORT_RE.finditer(text):
@@ -2816,7 +3311,7 @@ def _repair_typescript_import_specifier_keywords(original: str) -> tuple[str, tu
                 }
             )
     if not pieces:
-        return text, ()
+        return text, tuple(replacements)
     pieces.append(text[cursor:])
     return "".join(pieces), tuple(replacements)
 
@@ -3272,17 +3767,20 @@ def _parse_typescript_object_missing_member_errors(diagnostics: Sequence[RepairD
 
 def _parse_typescript_unused_declaration_errors(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
     for diagnostic in diagnostics:
         raw = str(diagnostic.raw or diagnostic.message or "")
         for match in _TS_UNUSED_DECLARATION_ERROR_RE.finditer(raw):
-            parsed.append(
-                {
-                    "file": _normalize_repair_path(str(match.group("file") or "")),
-                    "line": str(match.group("line") or ""),
-                    "column": str(match.group("col") or ""),
-                    "name": str(match.group("name") or ""),
-                }
-            )
+            item = {
+                "file": _normalize_repair_path(str(match.group("file") or "")),
+                "line": str(match.group("line") or ""),
+                "column": str(match.group("col") or ""),
+                "name": str(match.group("name") or ""),
+            }
+            key = (item["file"], item["line"], item["column"], item["name"])
+            if item["file"] and item["line"] and item["name"] and key not in seen:
+                seen.add(key)
+                parsed.append(item)
     return [item for item in parsed if item["file"] and item["line"] and item["name"]]
 
 
@@ -3293,28 +3791,405 @@ def _typescript_unused_parameter_operations(
 ) -> tuple[tuple[RepairOperation, ...], list[dict[str, str]]]:
     operations: list[RepairOperation] = []
     repairs: list[dict[str, str]] = []
-    updated = dict(base_files)
-    for item in _parse_typescript_unused_declaration_errors(diagnostics):
+    items = _parse_typescript_unused_declaration_errors(diagnostics)
+    named_import_operations, named_import_repairs, consumed_item_keys = (
+        _typescript_unused_named_import_binding_group_operations(base_files=base_files, items=items)
+    )
+    operations.extend(named_import_operations)
+    repairs.extend(named_import_repairs)
+    for item in items:
+        if _typescript_unused_declaration_item_key(item) in consumed_item_keys:
+            continue
         path = item["file"]
         name = item["name"]
-        if name.startswith("_"):
-            continue
-        content = str(updated.get(path) or "")
+        content = str(base_files.get(path) or "")
         line_number = _to_positive_int(item.get("line"))
         column = _to_positive_int(item.get("column"))
-        operation = _typescript_unused_parameter_operation(
+        operation = _typescript_unused_import_declaration_operation(
             path=path,
             content=content,
             name=name,
             line_number=line_number,
-            column=column,
         )
         if operation is None:
+            operation = _typescript_unused_parameter_operation(
+                path=path,
+                content=content,
+                name=name,
+                line_number=line_number,
+                column=column,
+            )
+        if operation is None:
+            operation = _typescript_unused_function_declaration_operation(
+                path=path,
+                content=content,
+                name=name,
+                line_number=line_number,
+            )
+        if operation is None:
+            operation = _typescript_unused_local_declaration_operation(
+                path=path,
+                content=content,
+                name=name,
+                line_number=line_number,
+            )
+        if operation is None:
             continue
-        updated[path] = _apply_single_text_operation(content, operation)
         operations.append(operation)
-        repairs.append({"file": path, "parameter": name, "replacement": f"_{name}"})
+        repairs.append({"file": path, "parameter": name, "replacement": str(operation.replacement or "")})
     return tuple(operations), repairs
+
+
+def _typescript_unused_declaration_item_key(item: Mapping[str, str]) -> tuple[str, str, str, str]:
+    return (
+        str(item.get("file") or ""),
+        str(item.get("line") or ""),
+        str(item.get("column") or ""),
+        str(item.get("name") or ""),
+    )
+
+
+def _typescript_unused_named_import_binding_group_operations(
+    *,
+    base_files: Mapping[str, str],
+    items: Sequence[Mapping[str, str]],
+) -> tuple[tuple[RepairOperation, ...], list[dict[str, str]], set[tuple[str, str, str, str]]]:
+    grouped: dict[tuple[str, int, int], dict[str, object]] = {}
+    consumed_item_keys: set[tuple[str, str, str, str]] = set()
+    for item in items:
+        path = str(item.get("file") or "")
+        name = str(item.get("name") or "")
+        line_number = _to_positive_int(item.get("line"))
+        content = str(base_files.get(path) or "")
+        if not path or not content or line_number <= 0 or not _TS_IDENTIFIER_RE.fullmatch(name):
+            continue
+        for match in _TS_REEXPORTABLE_NAMED_IMPORT_RE.finditer(content):
+            start_line = content.count("\n", 0, match.start()) + 1
+            end_line = content.count("\n", 0, match.end()) + 1
+            if line_number < start_line or line_number > end_line:
+                continue
+            pairs = _typescript_import_pairs_from_clause("{" + str(match.group("names") or "") + "}")
+            if len(pairs) <= 1 or not any(local == name for _, local in pairs):
+                continue
+            group_key = (path, match.start(), match.end())
+            group = grouped.setdefault(
+                group_key,
+                {
+                    "content": content,
+                    "import_text": content[match.start() : match.end()],
+                    "module_specifier": str(match.group("module") or ""),
+                    "names": set(),
+                    "lines": [],
+                },
+            )
+            names = group["names"]
+            lines = group["lines"]
+            if isinstance(names, set):
+                names.add(name)
+            if isinstance(lines, list):
+                lines.append(line_number)
+            consumed_item_keys.add(_typescript_unused_declaration_item_key(item))
+            break
+
+    operations: list[RepairOperation] = []
+    repairs: list[dict[str, str]] = []
+    for (path, start, end), group in sorted(grouped.items()):
+        content = str(group.get("content") or "")
+        import_text = str(group.get("import_text") or "")
+        raw_names = group.get("names", set())
+        raw_lines = group.get("lines", [])
+        names = {str(name) for name in raw_names if str(name)} if isinstance(raw_names, set) else set()
+        diagnostic_lines = (
+            [int(line) for line in raw_lines if isinstance(line, int) and int(line) > 0]
+            if isinstance(raw_lines, list)
+            else []
+        )
+        if not content or not import_text or not names:
+            continue
+        replacement = _remove_typescript_named_import_bindings(import_text=import_text, names=names)
+        if replacement == import_text:
+            continue
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=path,
+                span_start=start,
+                span_end=end,
+                expected=import_text,
+                replacement=replacement,
+                before_hash=sha256_text(content),
+                metadata={
+                    "repair_kind": "typescript_unused_import_specifier",
+                    "compiler_reported_unused_binding": True,
+                    "bindings": tuple(sorted(names)),
+                    "module_specifier": str(group.get("module_specifier") or ""),
+                    "diagnostic_lines": tuple(diagnostic_lines),
+                },
+            )
+        )
+        repairs.extend({"file": path, "parameter": name, "replacement": replacement} for name in sorted(names))
+    return tuple(operations), repairs, consumed_item_keys
+
+
+def _typescript_unused_import_declaration_operation(
+    *,
+    path: str,
+    content: str,
+    name: str,
+    line_number: int,
+) -> RepairOperation | None:
+    if not path or not content or line_number <= 0 or not _TS_IDENTIFIER_RE.fullmatch(name):
+        return None
+    operation = _typescript_unused_named_import_binding_operation(
+        path=path,
+        content=content,
+        name=name,
+        line_number=line_number,
+    )
+    if operation is not None:
+        return operation
+    for match in _TS_IMPORT_FROM_ANY_RE.finditer(content):
+        start_line = content.count("\n", 0, match.start()) + 1
+        end_line = content.count("\n", 0, match.end()) + 1
+        if line_number < start_line or line_number > end_line:
+            continue
+        pairs = _typescript_import_pairs_from_clause(str(match.group("clause") or ""))
+        if len(pairs) != 1 or pairs[0][1] != name:
+            continue
+        start, end = match.span()
+        if end < len(content) and content[end : end + 1] == "\n":
+            end += 1
+        return RepairOperation(
+            kind="text_replace",
+            path=path,
+            span_start=start,
+            span_end=end,
+            expected=content[start:end],
+            replacement="",
+            before_hash=sha256_text(content),
+            metadata={
+                "repair_kind": "typescript_unused_import",
+                "compiler_reported_unused_binding": True,
+                "binding": name,
+                "module_specifier": str(match.group("specifier") or ""),
+                "diagnostic_line": line_number,
+            },
+        )
+    return None
+
+
+def _typescript_unused_named_import_binding_operation(
+    *,
+    path: str,
+    content: str,
+    name: str,
+    line_number: int,
+) -> RepairOperation | None:
+    for match in _TS_REEXPORTABLE_NAMED_IMPORT_RE.finditer(content):
+        start_line = content.count("\n", 0, match.start()) + 1
+        end_line = content.count("\n", 0, match.end()) + 1
+        if line_number < start_line or line_number > end_line:
+            continue
+        import_text = content[match.start() : match.end()]
+        pairs = _typescript_import_pairs_from_clause("{" + str(match.group("names") or "") + "}")
+        if len(pairs) <= 1 or not any(local == name for _, local in pairs):
+            continue
+        replacement = _remove_typescript_named_import_binding(import_text=import_text, name=name)
+        if not replacement or replacement == import_text:
+            continue
+        return RepairOperation(
+            kind="text_replace",
+            path=path,
+            span_start=match.start(),
+            span_end=match.end(),
+            expected=import_text,
+            replacement=replacement,
+            before_hash=sha256_text(content),
+            metadata={
+                "repair_kind": "typescript_unused_import_specifier",
+                "compiler_reported_unused_binding": True,
+                "binding": name,
+                "module_specifier": str(match.group("module") or ""),
+                "diagnostic_line": line_number,
+            },
+        )
+    return None
+
+
+def _remove_typescript_named_import_binding(*, import_text: str, name: str) -> str:
+    return _remove_typescript_named_import_bindings(import_text=import_text, names={name})
+
+
+def _remove_typescript_named_import_bindings(*, import_text: str, names: set[str]) -> str:
+    normalized_names = {name for name in names if _TS_IDENTIFIER_RE.fullmatch(name)}
+    if not normalized_names:
+        return import_text
+    if "\n" in import_text:
+        replacement = _remove_typescript_multiline_named_import_bindings(
+            import_text=import_text,
+            names=normalized_names,
+        )
+        if replacement != import_text:
+            return replacement
+    match = _TS_REEXPORTABLE_NAMED_IMPORT_RE.fullmatch(import_text)
+    if match is None:
+        return import_text
+    names_clause = str(match.group("names") or "")
+    kept_parts: list[str] = []
+    removed = False
+    for raw_part in names_clause.split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        local = _typescript_named_import_local_name(part)
+        if local in normalized_names:
+            removed = True
+            continue
+        kept_parts.append(part)
+    if not removed:
+        return import_text
+    if not kept_parts:
+        return ""
+    return (
+        f"{match.group('indent') or ''}import "
+        f"{match.group('type_only') or ''}{{ {', '.join(kept_parts)} }} "
+        f"from {match.group('quote')}{match.group('module')}{match.group('quote')};"
+    )
+
+
+def _remove_typescript_multiline_named_import_bindings(*, import_text: str, names: set[str]) -> str:
+    lines = import_text.splitlines(keepends=True)
+    kept_lines: list[str] = []
+    removed = False
+    for line in lines:
+        line_body = line.rstrip("\r\n")
+        part = line_body.strip().rstrip(",").strip()
+        if not part or _typescript_named_import_local_name(part) not in names:
+            kept_lines.append(line)
+            continue
+        removed = True
+    if not removed:
+        return import_text
+    remaining_names = [
+        _typescript_named_import_local_name(line.strip().rstrip(",").strip())
+        for line in kept_lines
+        if _typescript_named_import_local_name(line.strip().rstrip(",").strip())
+    ]
+    if not remaining_names:
+        return ""
+    return "".join(kept_lines)
+
+
+def _typescript_named_import_local_name(part: str) -> str:
+    normalized = str(part or "").strip().rstrip(",").strip()
+    if normalized.startswith("type "):
+        normalized = normalized[5:].strip()
+    alias_parts = re.split(r"\s+as\s+", normalized, maxsplit=1, flags=re.IGNORECASE)
+    local = alias_parts[-1].strip()
+    return local if _TS_IDENTIFIER_RE.fullmatch(local) else ""
+
+
+def _typescript_unused_local_declaration_operation(
+    *,
+    path: str,
+    content: str,
+    name: str,
+    line_number: int,
+) -> RepairOperation | None:
+    if not path or not content or line_number <= 0 or not _TS_IDENTIFIER_RE.fullmatch(name):
+        return None
+    lines = content.splitlines(keepends=True)
+    line_index = line_number - 1
+    if line_index < 0 or line_index >= len(lines):
+        return None
+    original_line = lines[line_index]
+    line_body = original_line.rstrip("\r\n")
+    newline = original_line[len(line_body) :]
+    match = _TS_UNUSED_LOCAL_DECLARATION_LINE_RE.match(line_body)
+    if match is None or str(match.group("name") or "") != name:
+        return None
+    expression = str(match.group("expr") or "").strip()
+    if not expression or _typescript_unused_local_expression_requires_binding(expression):
+        return None
+    replacement = f"{match.group('indent') or ''!s}{expression};{newline}"
+    if replacement == original_line:
+        return None
+    return _line_text_replace_operation(
+        path=path,
+        content=content,
+        line_index=line_index,
+        replacement=replacement,
+        metadata={
+            "repair_kind": "typescript_unused_local_declaration",
+            "binding": name,
+            "diagnostic_line": line_number,
+            "replacement_strategy": "initializer_expression_statement",
+        },
+    )
+
+
+def _typescript_unused_function_declaration_operation(
+    *,
+    path: str,
+    content: str,
+    name: str,
+    line_number: int,
+) -> RepairOperation | None:
+    if not path or not content or line_number <= 0 or not _TS_IDENTIFIER_RE.fullmatch(name):
+        return None
+    lines = content.splitlines(keepends=True)
+    line_index = line_number - 1
+    if line_index < 0 or line_index >= len(lines):
+        return None
+    first_line = lines[line_index].rstrip("\r\n")
+    if first_line.lstrip().startswith("export "):
+        return None
+    match = _TS_UNUSED_FUNCTION_DECLARATION_LINE_RE.match(first_line)
+    if match is None or str(match.group("name") or "") != name:
+        return None
+    offsets = _line_start_offsets(lines)
+    brace_depth = 0
+    saw_open_brace = False
+    end_line_index = -1
+    for current_index in range(line_index, len(lines)):
+        line = lines[current_index]
+        if "{" in line:
+            saw_open_brace = True
+        brace_depth += line.count("{") - line.count("}")
+        if saw_open_brace and brace_depth <= 0:
+            end_line_index = current_index
+            break
+    if not saw_open_brace or end_line_index < line_index:
+        return None
+    span_start = offsets[line_index]
+    span_end = offsets[end_line_index + 1]
+    expected = content[span_start:span_end]
+    if not expected.strip():
+        return None
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=span_start,
+        span_end=span_end,
+        expected=expected,
+        replacement="",
+        before_hash=sha256_text(content),
+        metadata={
+            "repair_kind": "typescript_unused_function_declaration",
+            "binding": name,
+            "diagnostic_line": line_number,
+            "replacement_strategy": "delete_non_exported_function_declaration",
+        },
+    )
+
+
+def _typescript_unused_local_expression_requires_binding(expression: str) -> bool:
+    stripped = str(expression or "").lstrip()
+    if not stripped:
+        return True
+    if stripped.startswith(("{", "function ", "class ", "interface ", "type ")):
+        return True
+    return "=>" in stripped
 
 
 def _typescript_unused_parameter_operation(
@@ -4690,6 +5565,25 @@ def _typescript_duplicate_identifier_targets(diagnostics: Sequence[RepairDiagnos
     return targets
 
 
+def _typescript_export_ambiguity_targets(diagnostics: Sequence[RepairDiagnostic]) -> tuple[dict[str, object], ...]:
+    targets: list[dict[str, object]] = []
+    for diagnostic in diagnostics:
+        if diagnostic.code != "typescript_ts2308":
+            continue
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        if not path:
+            continue
+        match = _TS_EXPORT_AMBIGUITY_MESSAGE_RE.search(str(diagnostic.message or diagnostic.raw or ""))
+        if not match:
+            continue
+        module = str(match.group("module") or "").strip()
+        symbol = str(match.group("symbol") or "").strip()
+        if not module.startswith(".") or not _TS_IDENTIFIER_RE.fullmatch(symbol):
+            continue
+        targets.append({"path": path, "module": module, "symbol": symbol, "diagnostic": diagnostic})
+    return tuple(targets)
+
+
 def _typescript_duplicate_export_import_operations(
     *,
     path: str,
@@ -5171,6 +6065,17 @@ def _typescript_module_exports_symbol(module_text: str, symbol: str) -> bool:
     )
 
 
+def _typescript_exported_symbol_is_type_only(module_text: str, symbol: str) -> bool:
+    escaped = re.escape(symbol)
+    return bool(re.search(rf"\bexport\s+(?:interface|type)\s+{escaped}\b", module_text))
+
+
+def _typescript_file_has_named_reexport(content: str, *, module: str, symbol: str) -> bool:
+    value_reexports = _typescript_named_reexports_by_module(content, type_only=False)
+    type_reexports = _typescript_named_reexports_by_module(content, type_only=True)
+    return symbol in value_reexports.get(module, set()) or symbol in type_reexports.get(module, set())
+
+
 def _find_unique_runtime_export_source(base_files: Mapping[str, str], module_path: str, symbol: str) -> str:
     matches = [
         path
@@ -5465,7 +6370,11 @@ def _typescript_import_pairs_for_specifier(content: str, specifier: str) -> list
     match = _typescript_import_statement_for_specifier(content, specifier)
     if match is None:
         return []
-    clause = str(match.group("clause") or "").strip()
+    return _typescript_import_pairs_from_clause(str(match.group("clause") or ""))
+
+
+def _typescript_import_pairs_from_clause(clause: str) -> list[tuple[str, str]]:
+    clause = str(clause or "").strip()
     if clause.startswith("type "):
         clause = clause[5:].strip()
     pairs: list[tuple[str, str]] = []
@@ -5998,10 +6907,20 @@ def _select_typescript_unresolved_identifier_replacement(
     target_index: int,
     missing_symbol: str,
 ) -> str:
+    line = str(lines[target_index] or "") if 0 <= target_index < len(lines) else ""
+    if _typescript_unresolved_identifier_is_array_length_assertion(line, missing_symbol):
+        return "unknown"
     for param in _typescript_function_param_names_for_line(lines, target_index):
         if _typescript_identifier_alias_matches(missing_symbol, param):
             return param
     return ""
+
+
+def _typescript_unresolved_identifier_is_array_length_assertion(line: str, missing_symbol: str) -> bool:
+    if not _TS_IDENTIFIER_RE.fullmatch(missing_symbol):
+        return False
+    pattern = _TS_UNRESOLVED_ARRAY_ASSERTION_LENGTH_ASSIGNMENT_TEMPLATE.format(symbol=re.escape(missing_symbol))
+    return bool(re.search(pattern, str(line or "")))
 
 
 def _typescript_function_param_names_for_line(lines: Sequence[str], target_index: int) -> list[str]:
@@ -7406,6 +8325,372 @@ def _text_replace_operations_from_repair(
     return tuple(operations)
 
 
+def _typescript_config_key_split_operations(
+    *,
+    path: str,
+    content: str,
+    line_numbers: set[int],
+    seen_spans: set[tuple[str, int, int]],
+) -> tuple[RepairOperation, ...]:
+    lines = str(content or "").splitlines(keepends=True)
+    offsets = _line_start_offsets(lines)
+    before_hash = sha256_text(content)
+    operations: list[RepairOperation] = []
+    candidate_indexes = (
+        {line_number - 1 for line_number in line_numbers if 0 < line_number <= len(lines)}
+        if line_numbers
+        else set(range(len(lines)))
+    )
+    for index in sorted(candidate_indexes):
+        line = lines[index]
+        line_without_newline = line.rstrip("\r\n")
+        match = _TS_CONFIG_SPLIT_KEY_LINE_RE.match(line_without_newline)
+        if match is None:
+            continue
+        left = str(match.group("left") or "")
+        right = str(match.group("right") or "")
+        replacement_key = f"{left}{right}"
+        if replacement_key not in _TS_CONFIG_JOINABLE_KEYS:
+            continue
+        start = offsets[index] + match.start("left")
+        end = offsets[index] + match.end("right")
+        span_key = (path, start, end)
+        if span_key in seen_spans:
+            continue
+        seen_spans.add(span_key)
+        expected = content[start:end]
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=path,
+                span_start=start,
+                span_end=end,
+                expected=expected,
+                replacement=replacement_key,
+                before_hash=before_hash,
+                metadata={
+                    "repair_kind": "typescript_config_key_split",
+                    "edit_strategy": "text_replace",
+                    "line": index + 1,
+                    "original_key": expected,
+                    "replacement_key": replacement_key,
+                },
+            )
+        )
+    return tuple(operations)
+
+
+def _is_typescript_dom_local_shim_diagnostic(
+    diagnostic: RepairDiagnostic,
+    *,
+    base_files: Mapping[str, str],
+) -> bool:
+    code = str(diagnostic.code or "").lower()
+    if code not in {"typescript_ts2339", "typescript_ts2739", "typescript_ts2740", "typescript_ts2741"}:
+        return False
+    path = _normalize_repair_path(str(diagnostic.path or ""))
+    if not path.endswith((".ts", ".tsx")):
+        return False
+    text = f"{diagnostic.message}\n{diagnostic.raw}".lower()
+    if _is_typescript_dom_local_shim_type_conflict(code=code, text=text):
+        return True
+    return _is_typescript_dom_local_shim_member_gap(code=code, text=text) and _typescript_base_files_have_dom_lib(
+        base_files
+    )
+
+
+def _is_typescript_dom_local_shim_type_conflict(*, code: str, text: str) -> bool:
+    if code not in {"typescript_ts2739", "typescript_ts2740", "typescript_ts2741"}:
+        return False
+    return "missing" in text and any(name.lower() in text for name in _TS_LOCAL_DOM_SHIM_NAMES)
+
+
+def _is_typescript_dom_local_shim_member_gap(*, code: str, text: str) -> bool:
+    if code != "typescript_ts2339":
+        return False
+    return ("property 'createelement'" in text and ("getelementbyid" in text or "document" in text)) or (
+        "property 'queryselector'" in text and "htmlelement" in text
+    )
+
+
+def _typescript_base_files_have_dom_lib(base_files: Mapping[str, str]) -> bool:
+    for path, content in base_files.items():
+        basename = _normalize_repair_path(str(path or "")).rsplit("/", maxsplit=1)[-1].lower()
+        if not basename.startswith("tsconfig") or not basename.endswith(".json"):
+            continue
+        payload = _json_object(str(content or ""))
+        compiler_options = payload.get("compilerOptions")
+        if not isinstance(compiler_options, dict):
+            continue
+        libs = compiler_options.get("lib")
+        if isinstance(libs, list) and any(str(lib).strip().lower() == "dom" for lib in libs):
+            return True
+    return False
+
+
+def _remove_typescript_local_dom_shims(text: str) -> tuple[str, tuple[str, ...]]:
+    lines = str(text or "").splitlines(keepends=True)
+    kept: list[str] = []
+    removed: list[str] = []
+    index = 0
+    while index < len(lines):
+        symbol = _typescript_local_dom_shim_start_symbol(lines[index])
+        if symbol:
+            end_index = _typescript_block_end(lines, index)
+            removed.append(symbol)
+            index = end_index
+            continue
+        kept.append(lines[index])
+        index += 1
+    if not removed:
+        return str(text or ""), ()
+    repaired = "".join(kept)
+    repaired = re.sub(r"\n{3,}", "\n\n", repaired)
+    return repaired, tuple(dict.fromkeys(removed))
+
+
+def _typescript_local_dom_shim_start_symbol(line: str) -> str:
+    declare_match = _TS_LOCAL_DOM_DECLARE_CONST_START_RE.match(line)
+    if declare_match:
+        return str(declare_match.group("name") or "").strip()
+    interface_match = _TS_LOCAL_DOM_INTERFACE_START_RE.match(line)
+    if interface_match:
+        return str(interface_match.group("name") or "").strip()
+    return ""
+
+
+def _typescript_block_end(lines: Sequence[str], start_index: int) -> int:
+    depth = 0
+    saw_open = False
+    for index in range(start_index, len(lines)):
+        line = str(lines[index] or "")
+        open_count = line.count("{")
+        close_count = line.count("}")
+        saw_open = saw_open or open_count > 0
+        depth += open_count - close_count
+        if saw_open and depth <= 0:
+            return index + 1
+    return start_index + 1
+
+
+def _typescript_expect_error_diagnostics_by_path(
+    diagnostics: Sequence[RepairDiagnostic],
+) -> dict[str, list[RepairDiagnostic]]:
+    grouped: dict[str, list[RepairDiagnostic]] = {}
+    for diagnostic in diagnostics:
+        if not _is_typescript_expect_error_placement_diagnostic(diagnostic):
+            continue
+        path = _normalize_repair_path(str(diagnostic.path or ""))
+        if not path.endswith((".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx")):
+            continue
+        grouped.setdefault(path, []).append(diagnostic)
+    return grouped
+
+
+def _is_typescript_expect_error_placement_diagnostic(diagnostic: RepairDiagnostic) -> bool:
+    code = str(diagnostic.code or "").lower()
+    text = f"{diagnostic.message}\n{diagnostic.raw}".lower()
+    if code == "typescript_ts2578":
+        return "@ts-expect-error" in text and "unused" in text
+    if code == "typescript_ts2345":
+        return "argument of type" in text and "not assignable to parameter of type" in text
+    return False
+
+
+def _repair_typescript_expect_error_placement(
+    text: str,
+    *,
+    diagnostics: Sequence[RepairDiagnostic],
+) -> tuple[str, tuple[dict[str, int | str], ...]]:
+    lines = str(text or "").splitlines(keepends=True)
+    unused_lines = sorted(
+        {
+            int(diagnostic.line or 0)
+            for diagnostic in diagnostics
+            if str(diagnostic.code or "").lower() == "typescript_ts2578" and int(diagnostic.line or 0) > 0
+        }
+    )
+    assignability_lines = sorted(
+        {
+            int(diagnostic.line or 0)
+            for diagnostic in diagnostics
+            if str(diagnostic.code or "").lower() == "typescript_ts2345" and int(diagnostic.line or 0) > 0
+        }
+    )
+    if not unused_lines or not assignability_lines:
+        return str(text or ""), ()
+
+    remove_indices: set[int] = set()
+    insertions: dict[int, list[str]] = {}
+    moved: list[dict[str, int | str]] = []
+    for unused_line in unused_lines:
+        unused_index = unused_line - 1
+        if unused_index < 0 or unused_index >= len(lines):
+            continue
+        comment_line = lines[unused_index]
+        if "@ts-expect-error" not in comment_line:
+            continue
+        target_line = next((line for line in assignability_lines if unused_line < line <= unused_line + 5), 0)
+        target_index = target_line - 1
+        if target_index < 0 or target_index >= len(lines):
+            continue
+        if _typescript_previous_line_is_expect_error(lines, target_index):
+            continue
+        target_indent = re.match(r"^\s*", lines[target_index])
+        indent = target_indent.group(0) if target_indent else ""
+        comment_text = comment_line.strip()
+        newline = "\n" if comment_line.endswith("\n") else ""
+        insertions.setdefault(target_index, []).append(f"{indent}{comment_text}{newline}")
+        remove_indices.add(unused_index)
+        moved.append({"from_line": unused_line, "to_line": target_line, "comment": comment_text})
+
+    if not moved:
+        return str(text or ""), ()
+
+    repaired_lines: list[str] = []
+    for index, line in enumerate(lines):
+        repaired_lines.extend(insertions.get(index, ()))
+        if index not in remove_indices:
+            repaired_lines.append(line)
+    return "".join(repaired_lines), tuple(moved)
+
+
+def _typescript_previous_line_is_expect_error(lines: Sequence[str], target_index: int) -> bool:
+    previous_index = target_index - 1
+    while previous_index >= 0:
+        previous = str(lines[previous_index] or "").strip()
+        if not previous:
+            previous_index -= 1
+            continue
+        return "@ts-expect-error" in previous
+    return False
+
+
+def _is_typescript_config_key_split_diagnostic(diagnostic: RepairDiagnostic) -> bool:
+    if diagnostic.code.lower() == "typescript_config_key_syntax":
+        return True
+    text = f"{diagnostic.message}\n{diagnostic.raw}".lower()
+    return bool(
+        _is_typescript_config_file(str(diagnostic.path or ""))
+        and "expected" in text
+        and "found" in text
+        and "config" in text
+    )
+
+
+def _is_typescript_config_file(path: str) -> bool:
+    normalized = _normalize_repair_path(path).lower()
+    if not normalized:
+        return False
+    basename = normalized.rsplit("/", maxsplit=1)[-1]
+    return basename.endswith((".config.ts", ".config.tsx"))
+
+
+def _is_typescript_test_block_residue_diagnostic(diagnostic: RepairDiagnostic) -> bool:
+    message = f"{diagnostic.message}\n{diagnostic.raw}".lower()
+    return diagnostic.code.lower() == "typescript_ts1128" and "declaration or statement expected" in message
+
+
+def _is_typescript_test_file(path: str) -> bool:
+    normalized = _normalize_repair_path(path).lower()
+    if not normalized:
+        return False
+    basename = normalized.rsplit("/", maxsplit=1)[-1]
+    return "/__tests__/" in f"/{normalized}" or basename.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx"))
+
+
+def _typescript_test_block_residue_operations(
+    *,
+    path: str,
+    content: str,
+    line_numbers: set[int],
+    seen_spans: set[tuple[str, int, int]],
+) -> tuple[RepairOperation, ...]:
+    if not line_numbers:
+        return ()
+    lines = str(content or "").splitlines(keepends=True)
+    offsets = _line_start_offsets(lines)
+    before_hash = sha256_text(content)
+    operations: list[RepairOperation] = []
+    for line_number in sorted(line_numbers):
+        diagnostic_index = line_number - 1
+        if diagnostic_index < 0 or diagnostic_index >= len(lines):
+            continue
+        residue_start = _find_typescript_test_block_residue_suffix_start(lines, diagnostic_index)
+        if residue_start is None:
+            continue
+        start = offsets[residue_start]
+        end = offsets[len(lines)]
+        span_key = (path, start, end)
+        if span_key in seen_spans:
+            continue
+        expected = content[start:end]
+        if not expected.strip():
+            continue
+        seen_spans.add(span_key)
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=path,
+                span_start=start,
+                span_end=end,
+                expected=expected,
+                replacement="",
+                before_hash=before_hash,
+                metadata={
+                    "repair_kind": "typescript_test_block_residue",
+                    "edit_strategy": "text_replace",
+                    "start_line": residue_start + 1,
+                    "end_line": len(lines),
+                    "diagnostic_line": line_number,
+                },
+            )
+        )
+    return tuple(operations)
+
+
+def _find_typescript_test_block_residue_suffix_start(lines: Sequence[str], diagnostic_index: int) -> int | None:
+    diagnostic_line = lines[diagnostic_index].rstrip("\r\n")
+    if not _TS_TEST_BLOCK_RESIDUE_CLOSER_RE.match(diagnostic_line):
+        return None
+    search_start = max(0, diagnostic_index - 24)
+    for index in range(search_start, diagnostic_index + 1):
+        line_body = lines[index].rstrip("\r\n")
+        if not re.match(r"^\s{2,}(?:assert\.|expect\()", line_body):
+            continue
+        if _typescript_test_block_residue_suffix_is_safe(lines, index, diagnostic_index):
+            return index
+    return None
+
+
+def _typescript_test_block_residue_suffix_is_safe(
+    lines: Sequence[str],
+    start_index: int,
+    diagnostic_index: int,
+) -> bool:
+    prefix = "".join(lines[:start_index])
+    suffix = "".join(lines[start_index:])
+    if _typescript_brace_balance_delta(prefix) != 0:
+        return False
+    if _typescript_brace_balance_delta(suffix) >= 0:
+        return False
+    residue_lines = [line.rstrip("\r\n") for line in lines[start_index:]]
+    nonblank_lines = [line for line in residue_lines if line.strip()]
+    if not nonblank_lines:
+        return False
+    if not any(_TS_TEST_BLOCK_RESIDUE_CLOSER_RE.match(line) for line in nonblank_lines):
+        return False
+    if not any(
+        index >= diagnostic_index and _TS_TEST_BLOCK_RESIDUE_CLOSER_RE.match(lines[index].rstrip("\r\n"))
+        for index in range(start_index, len(lines))
+    ):
+        return False
+    return all(
+        _TS_TEST_BLOCK_RESIDUE_STATEMENT_RE.match(line) or _TS_TEST_BLOCK_RESIDUE_CLOSER_RE.match(line)
+        for line in nonblank_lines
+    )
+
+
 def _line_start_offsets(lines: Sequence[str]) -> list[int]:
     offsets: list[int] = [0]
     current = 0
@@ -7460,10 +8745,14 @@ __all__ = [
     "TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL",
     "TYPESCRIPT_CANVAS_SCALE_RETURN_TYPE_SOURCE_TOOL",
     "TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL",
+    "TYPESCRIPT_CONFIG_KEY_SPLIT_SOURCE_TOOL",
+    "TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL",
     "TYPESCRIPT_DUPLICATE_OBJECT_PROPERTY_SOURCE_TOOL",
     "TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL",
     "TYPESCRIPT_ENUM_MEMBER_SEPARATOR_SOURCE_TOOL",
     "TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL",
+    "TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL",
+    "TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL",
     "TYPESCRIPT_HTML_CONTAINER_SELECTOR_SOURCE_TOOL",
     "TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL",
     "TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL",
@@ -7483,6 +8772,7 @@ __all__ = [
     "TYPESCRIPT_SHORTHAND_PROPERTY_SCOPE_SOURCE_TOOL",
     "TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL",
     "TYPESCRIPT_STRING_LITERAL_SUGGESTION_SOURCE_TOOL",
+    "TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL",
     "TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL",
     "TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL",
     "TYPESCRIPT_UNINITIALIZED_PROPERTY_SOURCE_TOOL",

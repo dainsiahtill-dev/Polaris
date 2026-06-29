@@ -562,7 +562,7 @@ class TestToolNameNormalization:
         from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
 
         # search_code and list_directory are now aliases, not canonical
-        canonical = ["repo_rg", "glob", "repo_tree", "read_file"]
+        canonical = ["repo_rg", "glob", "repo_tree", "read_file", "search_replace"]
         for name in canonical:
             assert normalize_tool_name(name) == name
 

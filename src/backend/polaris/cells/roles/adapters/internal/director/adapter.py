@@ -435,12 +435,37 @@ def _build_director_workspace_interface_lines(workspace: str) -> list[str]:
     # source files too, entrypoint first, skipping the test files the task itself
     # writes and build/vendor dirs.
     _src_ext = (
-        ".py", ".go", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".rb",
-        ".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".kt", ".swift", ".php",
+        ".py",
+        ".go",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".rs",
+        ".java",
+        ".rb",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".cs",
+        ".kt",
+        ".swift",
+        ".php",
     )
     _skip_seg = {
-        "node_modules", ".git", "dist", "build", "target", "__pycache__",
-        "vendor", ".venv", "venv", ".polaris", ".mypy_cache",
+        "node_modules",
+        ".git",
+        "dist",
+        "build",
+        "target",
+        "__pycache__",
+        "vendor",
+        ".venv",
+        "venv",
+        ".polaris",
+        ".mypy_cache",
     }
 
     def _looks_like_test(rel: str) -> bool:
@@ -485,9 +510,7 @@ def _build_director_workspace_interface_lines(workspace: str) -> list[str]:
         content_budget -= len(snippet)
     if body_lines:
         lines.append("")
-        lines.append(
-            "已生成依赖文件的实际定义（据此正确使用其类字段/构造/返回类型，避免把 str 当对象等逻辑误用）:"
-        )
+        lines.append("已生成依赖文件的实际定义（据此正确使用其类字段/构造/返回类型，避免把 str 当对象等逻辑误用）:")
         lines.extend(body_lines)
     return lines if file_count else []
 
@@ -512,7 +535,11 @@ def _build_director_blueprint_handoff_lines(workspace: str, blueprint_id: str) -
         lines.append("- blueprint_payload: missing or unreadable")
         return lines
 
-    validation = validate_director_handoff_from_payload(workspace, {"blueprint_id": resolved_blueprint_id})
+    validation = validate_director_handoff_from_payload(
+        workspace,
+        {"blueprint_id": resolved_blueprint_id},
+        require_strict=True,
+    )
     lines.append(f"- handoff_ready: {'yes' if validation.get('allowed') else 'no'} ({validation.get('reason')})")
     decision_payload = validation.get("decision_payload")
     if isinstance(decision_payload, dict):

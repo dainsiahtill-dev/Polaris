@@ -4178,7 +4178,7 @@ def test_phase_pre_materialization_quality_records_post_execution_kernel_summary
     assert quality_repair_attempts[0]["schema_version"] == "director.post_execution_repair_kernel.v1"
     scheduler_bridge = quality_repair_attempts[0]["scheduler_bridge"]
     assert scheduler_bridge["schema_version"] == "director.post_execution_scheduler_bridge.v1"
-    assert scheduler_bridge["mode"] == "legacy_callback_bridge"
+    assert scheduler_bridge["mode"] == "adapter_projection_bridge"
     assert scheduler_bridge["target_scheduler"] == "director.runtime.repair_kernel.scheduler"
     assert (
         scheduler_bridge["schedule_source"] == "director.runtime.public.query_director_repair_post_execution_schedule"
@@ -4608,6 +4608,7 @@ def test_no_write_materialization_retry_message_pins_declared_targets() -> None:
     assert "previous Director turn completed without any write/edit receipt" in message
     assert "Allowed target files: package.json, src/index.ts." in message
     assert "Do not call read, search, tree, or shell tools" in message
+    assert "write_file or edit_file" in message
 
 
 def test_target_candidates_include_explicit_scope_directories_with_target_files() -> None:
@@ -4797,6 +4798,101 @@ async def test_execute_retries_no_write_probe_with_write_only_materialize_prompt
     assert seen_contexts[1]["director_no_write_materialization_retry"]["write_only_declared_targets"] == {
         "tool": "write_file",
         "target_files": ["src/app.py"],
+    }
+    assert result.get("error_code") != "director_no_materialized_changes"
+
+
+@pytest.mark.asyncio
+async def test_execute_retries_multi_file_no_write_with_mutation_tools_only(tmp_path: Any) -> None:
+    adapter = _make_adapter(tmp_path)
+    task = adapter.task_board.create(
+        subject="Create application modules",
+        description="Create src/app.py and src/utils.py with a runnable entry point.",
+        metadata={
+            "target_files": ["src/app.py", "src/utils.py"],
+            "scope_paths": ["src/app.py", "src/utils.py"],
+            "phase": "implementation",
+        },
+    )
+    seen_messages: list[str] = []
+    seen_contexts: list[dict[str, Any]] = []
+
+    async def _dialogue(message: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args
+        seen_messages.append(message)
+        raw_context = kwargs.get("context")
+        seen_contexts.append(raw_context if isinstance(raw_context, dict) else {})
+        if len(seen_messages) == 1:
+            return {
+                "content": "I inspected the workspace and will implement next.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "repo_tree",
+                        "tool_name": "repo_tree",
+                        "status": "success",
+                        "success": True,
+                        "result": {"tree": ".\n"},
+                    }
+                ],
+            }
+        return {
+            "content": (
+                "src/utils.py\n"
+                "```python\n"
+                "def status() -> str:\n"
+                "    return 'ok'\n"
+                "```\n"
+                "src/app.py\n"
+                "```python\n"
+                "from src.utils import status\n"
+                "\n"
+                "\n"
+                "def main() -> str:\n"
+                "    return status()\n"
+                "```\n"
+            ),
+            "success": True,
+            "tool_results": [],
+        }
+
+    async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+    adapter._invoke_role_dialogue_with_timeout = _dialogue  # type: ignore[method-assign]
+    adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+
+    result = await adapter.execute(
+        task_id=str(task.id),
+        input_data={"task_id": str(task.id)},
+        context={"run_id": "run-multi-no-write-probe-retry"},
+    )
+
+    assert (tmp_path / "src" / "utils.py").read_text(encoding="utf-8") == ("def status() -> str:\n    return 'ok'\n")
+    assert (tmp_path / "src" / "app.py").read_text(encoding="utf-8") == (
+        "from src.utils import status\n\n\ndef main() -> str:\n    return status()\n"
+    )
+    assert len(seen_messages) == 2
+    assert "completed without any write/edit receipt" in seen_messages[1]
+    assert "Do not call read, search, tree, or shell tools" in seen_messages[1]
+    assert "write_file or edit_file" in seen_messages[1]
+    assert seen_contexts[1]["_transaction_kernel_forced_tool_choice"] == "required"
+    assert seen_contexts[1].get("_transaction_kernel_force_exact_tools") is not True
+    forced_defs = seen_contexts[1]["_transaction_kernel_forced_tool_definitions"]
+    forced_names = {
+        item["function"]["name"]
+        for item in forced_defs
+        if isinstance(item, dict) and isinstance(item.get("function"), dict)
+    }
+    assert forced_names == {"write_file", "edit_file"}
+    write_def = next(item for item in forced_defs if item["function"]["name"] == "write_file")
+    edit_def = next(item for item in forced_defs if item["function"]["name"] == "edit_file")
+    assert write_def["function"]["parameters"]["properties"]["file"]["enum"] == ["src/app.py", "src/utils.py"]
+    assert edit_def["function"]["parameters"]["properties"]["file"]["enum"] == ["src/app.py", "src/utils.py"]
+    assert seen_contexts[1]["director_no_write_materialization_retry"]["multi_file_declared_targets"] == {
+        "required_write_tools": ["edit_file", "write_file"],
+        "target_files": ["src/app.py", "src/utils.py"],
     }
     assert result.get("error_code") != "director_no_materialized_changes"
 
@@ -5726,6 +5822,8 @@ class TestBuildDirectorMessage:
                     "tests/behavior.test.ts",
                 ],
                 "scope_paths": ["src/engine/SimulationEngine.ts", "tests/behavior.test.ts"],
+                "pm_contract_hash": "pm-contract-hash",
+                "execution_profile_hash": "execution-profile-hash",
                 "acceptance_criteria": ["npm run build passes"],
                 "execution_checklist": ["Write the simulation engine"],
                 "recommendations": ["Run build", "Run smoke test"],
@@ -14562,6 +14660,85 @@ class TestQualityRepairMissingTargetContract:
 
         assert targets == ["src/index.ts", "tests/index.test.ts"]
 
+    def test_explicit_quality_repair_maps_node_test_dist_stack_to_typescript_sources(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _explicit_artifact_quality_repair_target_files,
+        )
+
+        models_dir = tmp_path / "src" / "models"
+        models_dir.mkdir(parents=True)
+        (models_dir / "Market.ts").write_text("export class Market {}\n", encoding="utf-8")
+        (models_dir / "Inventory.ts").write_text("export class Inventory {}\n", encoding="utf-8")
+        (models_dir / "Market.test.ts").write_text(
+            "import { Market } from './Market';\n"
+            "import { Inventory } from './Inventory';\n"
+            "void Market;\n"
+            "void Inventory;\n",
+            encoding="utf-8",
+        )
+        error = (
+            "Artifact quality scan failed: workspace validation command failed (npm test):\n"
+            "not ok 7 - Inventory behavior\n"
+            "  ---\n"
+            "  failureType: 'testCodeFailure'\n"
+            "  error: |-\n"
+            "    Expected values to be strictly equal:\n"
+            "    'c' !== 'b'\n"
+            "  code: 'ERR_ASSERTION'\n"
+            "  name: 'AssertionError'\n"
+            "  stack: |-\n"
+            f"    TestContext.<anonymous> ({tmp_path}/dist/models/Market.test.js:121:22)\n"
+            "  ...\n"
+        )
+
+        targets = _explicit_artifact_quality_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=[
+                "package.json",
+                "tsconfig.json",
+                "src/models/Inventory.ts",
+                "src/models/Market.test.ts",
+                "src/models/Market.ts",
+            ],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/models/Inventory.ts", "src/models/Market.test.ts", "src/models/Market.ts"]
+
+    def test_explicit_quality_repair_uses_changed_node_test_imports_when_output_tail_loses_stack(
+        self, tmp_path
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _explicit_artifact_quality_repair_target_files,
+        )
+
+        models_dir = tmp_path / "src" / "models"
+        models_dir.mkdir(parents=True)
+        (models_dir / "Market.ts").write_text("export class Market {}\n", encoding="utf-8")
+        (models_dir / "Inventory.ts").write_text("export class Inventory {}\n", encoding="utf-8")
+        (models_dir / "Market.test.ts").write_text(
+            "import { Market } from './Market';\n"
+            "import { Inventory } from './Inventory';\n"
+            "void Market;\n"
+            "void Inventory;\n",
+            encoding="utf-8",
+        )
+        error = "step verify failed (exit 1): npm run test ::\n1..13\n# tests 13\n# pass 10\n# fail 3\n"
+
+        targets = _explicit_artifact_quality_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=[
+                "package.json",
+                "tsconfig.json",
+                "src/models/Inventory.ts",
+                "src/models/Market.test.ts",
+                "src/models/Market.ts",
+            ],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/models/Market.ts", "src/models/Inventory.ts", "src/models/Market.test.ts"]
+
     def test_explicit_quality_repair_targets_python_unittest_imported_source(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _explicit_artifact_quality_repair_target_files,
@@ -14911,6 +15088,35 @@ class TestQualityRepairMissingTargetContract:
         assert "src/engine/plating_rules.rs" not in message
         assert "SINGLE MISSING TARGET REPAIR" in message
 
+    def test_existing_quality_repair_keeps_full_verifier_diagnostics_context(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+            _filter_materialization_quality_errors_for_repair_targets,
+        )
+
+        errors = [
+            'src/models/Market.ts(162,27): error TS2322: Type "not_found" is not assignable to type "unknown_sku".',
+            "src/models/Market.ts(244,34): error TS2552: Cannot find name '_updated'. Did you mean 'updated'?",
+            "src/web.ts(52,11): error TS2322: Type 'Document' is not assignable to type '{ readonly body: { appendChild: (n: unknown) => void; }; }'.",
+        ]
+        scoped_errors = _filter_materialization_quality_errors_for_repair_targets(
+            errors,
+            ["src/models/Market.ts"],
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="Implement a TypeScript market project.",
+            artifact_quality_errors=scoped_errors,
+            directive_artifact_quality_errors=errors,
+            changed_files=["src/models/Market.ts", "src/web.ts"],
+            repair_target_files=["src/models/Market.ts"],
+        )
+
+        assert "FULL VERIFIER DIAGNOSTICS" in message
+        assert "src/web.ts(52,11)" in message
+        assert "TS2552" in message
+        assert "EXISTING FAILED TARGET FILES" in message
+
     def test_repair_message_names_missing_targets_and_hides_changed_paths(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _build_materialization_quality_repair_message,
@@ -14936,7 +15142,7 @@ class TestQualityRepairMissingTargetContract:
         assert "src/styles.css" in extracted
         assert "src/main.js" not in extracted
 
-    def test_repair_message_missing_targets_augment_declared_contract_targets(self) -> None:
+    def test_repair_message_missing_targets_do_not_replay_declared_contract_targets(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _build_materialization_quality_repair_message,
         )
@@ -14962,13 +15168,11 @@ class TestQualityRepairMissingTargetContract:
         extracted = extract_target_files_from_message(message)
 
         assert extracted == [
-            "tests/test_planet.py",
-            "tests/test_weather.py",
-            "tests/test_simulation.py",
             "src/planet.py",
             "src/weather.py",
             "src/simulation.py",
         ]
+        assert "target_files: tests/test_planet.py" not in message
 
     def test_single_missing_target_repair_forces_one_write_without_reads(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
@@ -16317,6 +16521,51 @@ class TestCollectStepVerifyErrors:
         assert len(errors) == 1
         assert "step verify failed" in errors[0]
         assert "game-canvas" in errors[0]
+
+    def test_step_verify_preserves_tap_failure_block_before_summary(self, tmp_path: Any, monkeypatch: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director import quality_gate
+
+        tap_output = """TAP version 13
+# Subtest: Fairy rejects bad skill levels and empty identifiers
+ok 1 - Fairy rejects bad skill levels and empty identifiers
+# Subtest: Fairy mood starts cheerful and degrades with poor performance
+not ok 2 - Fairy mood starts cheerful and degrades with poor performance
+  ---
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    'tired' !== 'neutral'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  stack: |-
+    TestContext.<anonymous> (/workspace/src/models/Fairy.test.ts:57:10)
+  ...
+# Subtest: Fairy successRate handles zero shifts without dividing by zero
+ok 3 - Fairy successRate handles zero shifts without dividing by zero
+1..19
+# tests 19
+# pass 18
+# fail 1
+"""
+
+        def _run(command: str, **kwargs: Any) -> Any:
+            assert kwargs.get("encoding") == "utf-8"
+            assert kwargs.get("errors") == "replace"
+            return SimpleNamespace(returncode=1, stdout=tap_output, stderr="")
+
+        monkeypatch.setattr(quality_gate.subprocess, "run", _run)
+        monkeypatch.setattr(quality_gate, "_first_failing_verify_clause", lambda _verify, *, cwd: "")
+
+        context = {"construction_step": {"verify": "grep -q ready ./index.html"}}
+        errors = self._collect(context, str(tmp_path))
+
+        assert len(errors) == 1
+        assert "step verify failed" in errors[0]
+        assert "Fairy mood starts cheerful and degrades with poor performance" in errors[0]
+        assert "Expected values to be strictly equal" in errors[0]
+        assert "'tired' !== 'neutral'" in errors[0]
+        assert "# pass 18" not in errors[0].split("failure excerpt:", 1)[1]
 
     def test_unsafe_verify_rejected_before_shell_or_clause_diagnosis(self, tmp_path: Any, monkeypatch: Any) -> None:
         from polaris.cells.roles.adapters.internal.director import quality_gate

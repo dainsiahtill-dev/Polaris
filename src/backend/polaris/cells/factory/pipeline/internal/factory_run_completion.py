@@ -74,6 +74,28 @@ class RunCompletionWaiter:
             logger.warning("Failed to propagate factory cancellation to run %s: %s", normalized_run_id, exc)
         else:
             logger.info("Propagated factory cancellation to run %s: %s", normalized_run_id, reason)
+        try:
+            from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+
+            suspend_result = TaskRuntimeService(str(self.workspace)).suspend_active_executions_for_run(
+                normalized_run_id,
+                reason=reason,
+                metadata={
+                    "cancelled_by": "factory_run_completion",
+                    "cancel_reason": reason,
+                },
+            )
+            logger.info(
+                "Suspended task runtime leases for run %s: %s",
+                normalized_run_id,
+                suspend_result,
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Failed to suspend task runtime leases for cancelled run %s: %s",
+                normalized_run_id,
+                exc,
+            )
 
     async def wait(
         self,
@@ -143,10 +165,15 @@ class RunCompletionWaiter:
                 )
 
             if completed_reason == "timeout":
+                await self.cancel_active_run(run_id, reason="factory_stage_timeout")
                 return CommandResult(
                     run_id=run_id,
                     status="timeout",
                     message=f"Run timed out after {timeout_seconds} seconds",
+                    metadata={
+                        "cancel_signal_sent": True,
+                        "cancel_reason": "factory_stage_timeout",
+                    },
                 )
 
             if completed_waiter is None:

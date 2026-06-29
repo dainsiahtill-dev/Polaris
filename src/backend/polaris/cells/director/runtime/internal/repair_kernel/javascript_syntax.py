@@ -23,6 +23,10 @@ _MISSING_NPM_SCRIPT_ENTRYPOINT_RE = re.compile(
     r"npm package manifest script '([^']+)' references missing local entrypoint '([^']+)'",
     re.IGNORECASE,
 )
+_MISSING_NPM_SCRIPT_ENTRYPOINT_GATE_RE = re.compile(
+    r"script '([^']+)' references missing local entrypoint:\s*(\S+)",
+    re.IGNORECASE,
+)
 _NODE_CANNOT_FIND_MODULE_DIST_RE = re.compile(
     r"Cannot find module ['\"](?P<path>[^'\"]*/dist/[^'\"]+\.js)['\"]",
     re.IGNORECASE,
@@ -167,6 +171,11 @@ def build_npm_script_contract_plan(
             replacement = _http_server_dynamic_port_script(script_text)
             if replacement and replacement != script_text:
                 updates[("scripts", script_name)] = replacement
+
+    if has_typescript_context and _has_typescript_source_loader_start_error(raw_errors):
+        replacement = _fallback_script_for_recursive_script("start", normalized_base, package_payload)
+        if replacement:
+            updates[("scripts", "start")] = replacement
 
     if has_typescript_context and _missing_entrypoint(raw_errors, script_name="verify"):
         updates[("scripts", "verify")] = "npm run build"
@@ -815,10 +824,13 @@ def _is_npm_script_contract_diagnostic(diagnostic: RepairDiagnostic) -> bool:
         or "npm placeholder test script" in raw
         or "npm manifest-only test script" in raw
         or "npm package manifest script" in raw
+        or "references missing local entrypoint:" in raw
         or "test script must use node --test" in raw
         or "cannot find module './src/" in raw
         or ("cannot find module" in raw and "/dist/" in raw)
         or "node --import tsx/esm" in raw
+        or "err_require_cycle_module" in raw
+        or "cannot require() es module" in raw
         or ("npm run test" in raw and "strip-types" in raw)
         or _has_fixed_port_start_script_error((raw,))
     )
@@ -857,6 +869,14 @@ def _has_fixed_port_start_script_error(errors: Sequence[str]) -> bool:
     return start_invoked and port_conflict
 
 
+def _has_typescript_source_loader_start_error(errors: Sequence[str]) -> bool:
+    joined = "\n".join(str(error or "") for error in errors).lower()
+    start_invoked = "npm run start" in joined or "npm start" in joined
+    source_loader = "ts-node" in joined or "node --loader" in joined or ".ts" in joined
+    require_cycle = "err_require_cycle_module" in joined or "cannot require() es module" in joined
+    return start_invoked and source_loader and require_cycle
+
+
 def _http_server_dynamic_port_script(script_text: str) -> str:
     script = str(script_text or "").strip()
     if "http-server" not in script or "PORT" in script:
@@ -875,6 +895,7 @@ def _has_repairable_test_script_error(errors: Sequence[str]) -> bool:
         "npm package manifest script 'test' has invalid node eval syntax",
         "npm package manifest script 'test' uses shell command substitution",
         "npm package manifest script 'test' references missing local entrypoint",
+        "script 'test' references missing local entrypoint",
         "npm package manifest script 'test' is a placeholder command",
         "npm package manifest script 'test' swallows command failures",
         "cannot find module './src/",
@@ -907,7 +928,10 @@ def _missing_entrypoint(errors: Sequence[str], *, script_name: str) -> str:
 def _missing_entrypoints(errors: Sequence[str]) -> dict[str, str]:
     entrypoints: dict[str, str] = {}
     for error in errors:
-        match = _MISSING_NPM_SCRIPT_ENTRYPOINT_RE.search(str(error or ""))
+        raw_error = str(error or "")
+        match = _MISSING_NPM_SCRIPT_ENTRYPOINT_RE.search(raw_error)
+        if not match:
+            match = _MISSING_NPM_SCRIPT_ENTRYPOINT_GATE_RE.search(raw_error)
         if not match:
             continue
         script_name = str(match.group(1) or "").strip()

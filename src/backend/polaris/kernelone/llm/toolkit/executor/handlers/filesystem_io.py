@@ -61,6 +61,36 @@ _SUGGEST_MAX_RESULTS = 5
 # to repo_rg/repo_tree exploration guidance — for a weak model, no hint beats
 # a wrong hint.
 _SUGGEST_BARE_NAME_MAX_DEPTH = 2
+_JS_TO_TS_SOURCE_EXTENSIONS: dict[str, tuple[str, ...]] = {
+    ".js": (".ts", ".tsx", ".mts", ".cts"),
+    ".mjs": (".mts", ".ts"),
+    ".cjs": (".cts", ".ts"),
+    ".jsx": (".tsx", ".ts"),
+}
+
+
+def _source_basename_candidates(basename: str) -> set[str]:
+    """Return accepted basename variants for source-map-like JS import paths.
+
+    TypeScript ESM source often imports ``./Foo.js`` while the editable source
+    file is ``Foo.ts``.  When an LLM asks to read the import path inside the
+    source workspace, the not-found response should teach the real source path
+    instead of letting it create out-of-scope ``.js`` files.
+    """
+    normalized = str(basename or "").strip().lower()
+    if not normalized:
+        return set()
+    stem, ext = os.path.splitext(normalized)
+    candidates = {normalized}
+    for companion_ext in _JS_TO_TS_SOURCE_EXTENSIONS.get(ext, ()):
+        candidates.add(f"{stem}{companion_ext}")
+    return candidates
+
+
+def _path_parts_equivalent_for_suggestion(requested_part: str, candidate_part: str) -> bool:
+    if requested_part == candidate_part:
+        return True
+    return candidate_part in _source_basename_candidates(requested_part)
 
 
 def _suggest_similar_paths(self: AgentAccelToolExecutor, requested: str) -> list[str]:
@@ -80,6 +110,7 @@ def _suggest_similar_paths(self: AgentAccelToolExecutor, requested: str) -> list
     basename = normalized.rsplit("/", 1)[-1].strip().lower()
     if not basename:
         return []
+    accepted_basenames = _source_basename_candidates(basename)
     requested_parts = [part.lower() for part in normalized.split("/") if part and part != "."]
 
     matches: list[tuple[int, int, str]] = []
@@ -92,7 +123,7 @@ def _suggest_similar_paths(self: AgentAccelToolExecutor, requested: str) -> list
                 scanned += 1
                 if scanned > _SUGGEST_MAX_FILES:
                     raise StopIteration
-                if filename.lower() != basename:
+                if filename.lower() not in accepted_basenames:
                     continue
                 absolute = os.path.join(current_root, filename)
                 rel_path = os.path.relpath(absolute, workspace_root).replace("\\", "/")
@@ -100,7 +131,7 @@ def _suggest_similar_paths(self: AgentAccelToolExecutor, requested: str) -> list
                 # Count consecutive matching components from the end (basename inclusive).
                 overlap = 0
                 for req_part, cand_part in zip(reversed(requested_parts), reversed(candidate_parts), strict=False):
-                    if req_part != cand_part:
+                    if not _path_parts_equivalent_for_suggestion(req_part, cand_part):
                         break
                     overlap += 1
                 matches.append((-overlap, len(candidate_parts), rel_path))

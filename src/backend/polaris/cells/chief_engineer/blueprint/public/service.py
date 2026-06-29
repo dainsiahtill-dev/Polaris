@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import stable_hash
+from polaris.cells.director.tasking.public.service import (
+    build_director_execution_profile_snapshot,
+)
 
 from ..internal.adr_log import ADRDecisionLog, build_adr_event
 from ..internal.architecture_decisions import (
@@ -1020,6 +1023,29 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "Verify delivery_depth_contract behavior rules and edge cases before marking the task complete.",
     )
     risks = tuple(_merge_string_lists(contract_fields["risks"], llm_blueprint_overlay.get("risk_flags")))
+    pm_contract_hash = str(context.get("pm_contract_hash") or context.get("contract_hash") or "").strip()
+    if not pm_contract_hash:
+        pm_contract_hash = _blueprint_hash(dict(contract_fields["task"]))
+    profile_metadata = {
+        **context,
+        "contract_hash": pm_contract_hash,
+        "pm_contract_hash": pm_contract_hash,
+        "target_files": target_files,
+        "scope_paths": scope_paths,
+        "acceptance_criteria": acceptance_criteria,
+        "execution_checklist": execution_checklist,
+    }
+    profile_snapshot = build_director_execution_profile_snapshot(
+        subject=title,
+        description=command.objective,
+        metadata=profile_metadata,
+        target_files=target_files,
+        scope_paths=scope_paths,
+        workspace=command.workspace,
+    )
+    director_execution_profile = dict(profile_snapshot["profile"])
+    execution_profile_hash = str(profile_snapshot["profile_hash"])
+    execution_profile_ref = str(profile_snapshot["profile_ref"])
     payload: dict[str, Any] = {
         "schema_version": "chief_engineer.blueprint.v1",
         "role": "ChiefEngineer",
@@ -1045,6 +1071,14 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "constraints": constraints,
         "context": context,
         "pm_task": contract_fields["task"],
+        "pm_contract_hash": pm_contract_hash,
+        "contract_hash": pm_contract_hash,
+        "director_execution_profile": director_execution_profile,
+        "task_execution_profile": director_execution_profile,
+        "execution_profile_ref": execution_profile_ref,
+        "execution_profile_hash": execution_profile_hash,
+        "director_execution_profile_hash": execution_profile_hash,
+        "task_execution_profile_hash": execution_profile_hash,
         "llm_blueprint": llm_blueprint_overlay,
         "ce_handoff": {
             "schema_version": "chief_engineer.handoff_context.v1",

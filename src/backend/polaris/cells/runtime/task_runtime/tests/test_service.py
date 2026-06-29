@@ -290,6 +290,60 @@ def test_task_runtime_service_surfaces_resumable_task_and_reclaims_it(tmp_path: 
     assert completed["task"]["status"] == "completed"
 
 
+def test_task_runtime_service_suspends_active_sessions_for_cancelled_run(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    cancelled_task = service.create(subject="cancelled run task")
+    other_task = service.create(subject="other run task")
+    cancelled_claim = service.claim_execution(
+        cancelled_task.id,
+        worker_id="director",
+        role_id="director",
+        run_id="director-cancelled",
+        selection_source="task_id_lookup",
+    )
+    other_claim = service.claim_execution(
+        other_task.id,
+        worker_id="director",
+        role_id="director",
+        run_id="director-other",
+        selection_source="task_id_lookup",
+    )
+    assert cancelled_claim["success"] is True
+    assert other_claim["success"] is True
+
+    suspended = service.suspend_active_executions_for_run(
+        "director-cancelled",
+        reason="factory_stage_timeout",
+        metadata={"cancelled_by": "unit-test"},
+    )
+
+    assert suspended["success"] is True
+    assert suspended["reason"] == "suspended"
+    assert suspended["suspended_count"] == 1
+    assert suspended["task_ids"] == [str(cancelled_task.id)]
+
+    cancelled_heartbeat = service.heartbeat_execution(
+        cancelled_task.id,
+        session_id=str(cancelled_claim["session"]["session_id"]),
+    )
+    assert cancelled_heartbeat["success"] is False
+    assert cancelled_heartbeat["reason"] == "session_not_active"
+    cancelled_row = service.get_task(cancelled_task.id)
+    assert cancelled_row is not None
+    assert cancelled_row["status"] == "pending"
+    assert cancelled_row["resume_state"] == "resumable"
+    assert cancelled_row["metadata"]["cancellation_reason"] == "factory_stage_timeout"
+
+    other_heartbeat = service.heartbeat_execution(
+        other_task.id,
+        session_id=str(other_claim["session"]["session_id"]),
+    )
+    assert other_heartbeat["success"] is True
+
+
 def test_task_runtime_service_persists_sessions_under_canonical_task_namespace(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

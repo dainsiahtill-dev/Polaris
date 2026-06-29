@@ -73,6 +73,8 @@ def test_build_execution_envelope_binds_contracts_and_capability() -> None:
     assert payload["model_policy"]["temperature"] == 0.05
     assert payload["model_policy"]["max_tokens"] == 64_000
     assert payload["audit_policy"]["final_provider_request_required"] is True
+    assert payload["audit_policy"]["execution_authority"]["ok"] is True
+    assert payload["audit_policy"]["execution_authority"]["missing_bindings"] == []
 
 
 def test_build_execution_envelope_consumes_strict_handoff_bindings() -> None:
@@ -144,6 +146,7 @@ def test_build_execution_envelope_consumes_strict_handoff_bindings() -> None:
         "ref": "runtime/contracts/profile.json",
         "hash": "execution-profile-hash",
     }
+    assert payload["audit_policy"]["execution_authority"]["ok"] is True
 
 
 def test_build_execution_envelope_marks_missing_evidence() -> None:
@@ -169,3 +172,12 @@ def test_build_execution_envelope_marks_missing_evidence() -> None:
     assert payload["handoff_decision"]["hash"] == "missing:handoff_decision_hash"
     assert payload["handoff_decision"]["allowed"] is False
     assert payload["authorization"]["capability_token_hash"] == "missing:capability_token"
+    assert payload["audit_policy"]["execution_authority"] == {
+        "ok": False,
+        "missing_bindings": [
+            "pm_contract_hash",
+            "blueprint_hash",
+            "handoff_decision_hash",
+        ],
+        "strict_handoff_required": True,
+    }

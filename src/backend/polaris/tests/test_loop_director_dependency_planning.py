@@ -92,7 +92,7 @@ async def test_runner_uses_planned_order_for_single_iteration(monkeypatch) -> No
     monkeypatch.setattr(
         loop_director,
         "validate_director_handoff_from_payload",
-        lambda _workspace, _payload: {"allowed": True},
+        lambda _workspace, _payload, **_kwargs: {"allowed": True},
     )
     monkeypatch.setattr(
         loop_director,

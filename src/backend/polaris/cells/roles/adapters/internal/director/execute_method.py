@@ -33,6 +33,7 @@ from polaris.kernelone.fs.materialization import materialized_file_paths
 from polaris.kernelone.quality import (
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
 )
+from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 from .contract_verify import resolve_contract_step_verify_command
 from .execution_tools import (
@@ -489,6 +490,76 @@ def _empty_write_retry_tool_definition(
     }
 
 
+_NO_WRITE_MULTI_TARGET_RETRY_TOOL_NAMES = ("write_file", "edit_file")
+
+_NO_WRITE_MULTI_TARGET_FALLBACK_TOOL_NAMES = frozenset({"write_file", "edit_file"})
+
+
+def _pin_file_schema_to_declared_targets(definition: dict[str, Any], target_files: list[str]) -> dict[str, Any]:
+    """Pin a file-parameter tool schema to the declared task boundary."""
+
+    if not target_files:
+        return dict(definition)
+    pinned = json.loads(json.dumps(definition, ensure_ascii=False))
+    function_payload = pinned.get("function")
+    if not isinstance(function_payload, dict):
+        return pinned
+    parameters = function_payload.get("parameters")
+    if not isinstance(parameters, dict):
+        return pinned
+    properties = parameters.get("properties")
+    if not isinstance(properties, dict):
+        return pinned
+    file_schema = properties.get("file")
+    if not isinstance(file_schema, dict):
+        return pinned
+    file_schema["enum"] = list(dict.fromkeys(target_files[:32]))
+    return pinned
+
+
+def _registered_tool_definition(tool_name: str) -> dict[str, Any] | None:
+    spec = ToolSpecRegistry.get(tool_name)
+    if spec is None:
+        return None
+    return spec.to_openai_function()
+
+
+def _no_write_materialization_retry_tool_definitions(
+    target_files: list[str],
+    *,
+    strict_write_only: bool,
+) -> list[dict[str, Any]]:
+    if strict_write_only:
+        return [_empty_write_retry_tool_definition("write_file", target_files, pin_file_enum=True)]
+
+    definitions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for tool_name in _NO_WRITE_MULTI_TARGET_RETRY_TOOL_NAMES:
+        definition = _registered_tool_definition(tool_name)
+        if definition is None:
+            continue
+        function_payload = definition.get("function")
+        canonical_name = ""
+        if isinstance(function_payload, dict):
+            canonical_name = str(function_payload.get("name") or "").strip()
+        if not canonical_name or canonical_name in seen:
+            continue
+        if canonical_name in {"write_file", "edit_file"}:
+            definition = _pin_file_schema_to_declared_targets(definition, target_files)
+        definitions.append(definition)
+        seen.add(canonical_name)
+
+    if not any(
+        isinstance(item.get("function"), dict) and item["function"].get("name") == "write_file" for item in definitions
+    ):
+        definitions.append(_empty_write_retry_tool_definition("write_file", target_files, pin_file_enum=True))
+    return definitions
+
+
+def _no_write_retry_strict_write_only(target_files: list[str]) -> bool:
+    return len(target_files) <= 1
+
+
 def _declared_write_retry_target_files(task: dict[str, Any]) -> list[str]:
     """Return declared file targets without inventing project-specific paths."""
 
@@ -526,8 +597,10 @@ def _build_no_write_materialization_retry_message(
     original_message: str,
     tool_results: list[dict[str, Any]],
     forced_tool_name: str = "write_file",
+    strict_write_only: bool | None = None,
 ) -> str:
     target_files = _declared_write_retry_target_files(task)
+    strict_retry = _no_write_retry_strict_write_only(target_files) if strict_write_only is None else strict_write_only
     target_line = ""
     if target_files:
         target_line = "Allowed target files: " + ", ".join(target_files[:32]) + ".\n"
@@ -541,13 +614,26 @@ def _build_no_write_materialization_retry_message(
             seen_tools.add(tool_name)
             observed_tools.append(tool_name)
     observed_line = ", ".join(observed_tools) if observed_tools else "(none)"
+    if strict_retry:
+        tool_instruction = (
+            f"Emit valid {forced_tool_name} tool calls now. "
+            "Do not call read, search, tree, or shell tools in this retry.\n"
+            "Each write_file call must use a complete non-empty UTF-8 file body. "
+            "For multi-file tasks, create every declared target file with separate write_file calls when "
+            "the provider supports multiple tool calls.\n"
+        )
+    else:
+        tool_instruction = (
+            "Emit valid write_file or edit_file tool calls now. Do not call read, search, tree, or shell tools "
+            "in this retry; this recovery turn exists only to materialize declared files.\n"
+            "Each write_file call must use a complete non-empty UTF-8 file body; each edit_file call must "
+            "contain a precise non-empty edit.\n"
+        )
     return (
         "[mode:materialize]\n"
         "RETRY: previous Director turn completed without any write/edit receipt and produced no files.\n"
         f"Observed tools: {observed_line}.\n"
-        f"Emit valid {forced_tool_name} tool calls now. Do not call read, search, tree, or shell tools in this retry.\n"
-        "Each write_file call must use a complete non-empty UTF-8 file body. "
-        "For multi-file tasks, create every declared target file with separate write_file calls when the provider supports multiple tool calls.\n"
+        f"{tool_instruction}"
         "Use only task-scoped relative paths. Do not write TODO/FIXME/placeholder content.\n"
         f"{target_line}"
         "Original task follows:\n"
@@ -583,27 +669,41 @@ async def _run_no_write_materialization_retry(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     forced_tool_name = "write_file"
     target_files = _declared_write_retry_target_files(task)
+    strict_write_only = _no_write_retry_strict_write_only(target_files)
     retry_message = _build_no_write_materialization_retry_message(
         task,
         original_message=original_message,
         tool_results=tool_results,
         forced_tool_name=forced_tool_name,
+        strict_write_only=strict_write_only,
     )
     retry_context = _pin_materialize_context_delivery_mode(dict(context), True)
-    retry_context["_transaction_kernel_forced_tool_choice"] = {
-        "type": "function",
-        "function": {"name": forced_tool_name},
-    }
-    retry_context["_transaction_kernel_forced_tool_definitions"] = [
-        _empty_write_retry_tool_definition(forced_tool_name, target_files, pin_file_enum=True)
-    ]
-    retry_context["_transaction_kernel_force_exact_tools"] = True
-    retry_context["director_no_write_materialization_retry"] = {
-        "write_only_declared_targets": {
-            "tool": forced_tool_name,
-            "target_files": target_files[:32],
+    retry_context["_transaction_kernel_forced_tool_definitions"] = _no_write_materialization_retry_tool_definitions(
+        target_files,
+        strict_write_only=strict_write_only,
+    )
+    if strict_write_only:
+        retry_context["_transaction_kernel_forced_tool_choice"] = {
+            "type": "function",
+            "function": {"name": forced_tool_name},
         }
-    }
+        retry_context["_transaction_kernel_force_exact_tools"] = True
+        retry_context["director_no_write_materialization_retry"] = {
+            "write_only_declared_targets": {
+                "tool": forced_tool_name,
+                "target_files": target_files[:32],
+            }
+        }
+        fallback_allowed_tool_names = {forced_tool_name}
+    else:
+        retry_context["_transaction_kernel_forced_tool_choice"] = "required"
+        retry_context["director_no_write_materialization_retry"] = {
+            "multi_file_declared_targets": {
+                "required_write_tools": sorted(_NO_WRITE_MULTI_TARGET_FALLBACK_TOOL_NAMES),
+                "target_files": target_files[:32],
+            }
+        }
+        fallback_allowed_tool_names = set(_NO_WRITE_MULTI_TARGET_FALLBACK_TOOL_NAMES)
     try:
         retry_result = await adapter._invoke_role_dialogue_with_timeout(
             retry_message,
@@ -630,7 +730,7 @@ async def _run_no_write_materialization_retry(
         fallback_tool_results = await adapter._execute_tools(
             retry_content,
             target_task_id,
-            allowed_tool_names={forced_tool_name},
+            allowed_tool_names=fallback_allowed_tool_names,
             allow_patch_fallback=True,
         )
         if fallback_tool_results:
@@ -639,6 +739,7 @@ async def _run_no_write_materialization_retry(
     retry_summary["attempted"] = True
     retry_summary["tool_results"] = len(retry_tool_results)
     retry_summary["forced_tool"] = forced_tool_name
+    retry_summary["strict_write_only"] = strict_write_only
     retry_summary["target_files"] = target_files[:32]
     retry_summary["write_args"] = _diag_write_results_summary(retry_tool_results)
     retry_summary["recovered_write_tool_evidence"] = has_successful_write_tool(retry_tool_results)
@@ -3792,9 +3893,7 @@ async def _phase_cross_artifact_unplannable_llm_escalation(
             artifact_quality_errors,
             str(getattr(adapter, "workspace", "") or ""),
         )
-    state = MaterializationState.from_locals(
-        current_files, new_files, modified_files, all_affected_files, tool_results
-    )
+    state = MaterializationState.from_locals(current_files, new_files, modified_files, all_affected_files, tool_results)
     return state, artifact_quality_errors
 
 

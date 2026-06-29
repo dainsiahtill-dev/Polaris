@@ -113,6 +113,105 @@ class QualityReworkStageExecutor(FakeStageExecutor):
         )
 
 
+class TaskBoundaryQualityReworkStageExecutor(FakeStageExecutor):
+    """Executor that emits runtime plan-probe evidence requiring task-boundary rework."""
+
+    def __init__(self, workspace: Path) -> None:
+        self.workspace = workspace
+        self.director_calls = 0
+        self.qa_calls = 0
+
+    def _write_workspace_validation(self) -> None:
+        target = Path(resolve_logical_path(str(self.workspace), "workspace/qa/latest.workspace-validation.json"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(
+                {
+                    "passed": False,
+                    "warnings": ["task_boundary_interface_discrepancy_required"],
+                    "errors": [
+                        {
+                            "path": "src/main.ts",
+                            "line": 69,
+                            "message": "Property 'displayName' does not exist on type 'string'.",
+                            "code": "TS2339",
+                        }
+                    ],
+                    "repair": {
+                        "task_boundary_triage_required": True,
+                        "success_reason": "task_boundary_interface_discrepancy_required",
+                        "plan_probe_preaudit": {
+                            "status": "coverage_matched_but_unplannable",
+                            "plannable_source_tools": [],
+                        },
+                        "interface_discrepancy_evidence": {
+                            "reason": "coverage_matched_but_unplannable",
+                            "plan_probe_status": "coverage_matched_but_unplannable",
+                        },
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def _materialize_failed_director_task(self) -> None:
+        task_board = TaskRuntimeService(str(self.workspace))
+        row = task_board.ensure_task_row(
+            external_task_id="TASK-1",
+            subject="Implement cross-file contract",
+            metadata={
+                "external_task_id": "TASK-1",
+                "adapter_result": {
+                    "quality_repair": {
+                        "stage": "runtime_plan_probe_unplannable",
+                        "success_reason": "task_boundary_interface_discrepancy_required",
+                        "plan_probe_preaudit": {"status": "coverage_matched_but_unplannable"},
+                        "interface_discrepancy_evidence": {
+                            "reason": "coverage_matched_but_unplannable",
+                            "plan_probe_status": "coverage_matched_but_unplannable",
+                        },
+                    }
+                },
+                "last_execution_error": "director_materialization_quality_failed",
+            },
+            priority=1,
+        )
+        task_board.update(
+            row["id"],
+            status="failed",
+            assignee="director",
+            metadata={"last_execution_error": "director_materialization_quality_failed"},
+        )
+
+    async def execute(self, stage, run, context):
+        del run, context
+        if stage == "director_dispatch":
+            self.director_calls += 1
+        if stage == "quality_gate":
+            self.qa_calls += 1
+            if self.qa_calls == 1:
+                self._materialize_failed_director_task()
+                self._write_workspace_validation()
+                return StageResult(
+                    stage=stage,
+                    status="failed",
+                    output=(
+                        "Quality gate completed: Run status: failed; qa_passed=False; "
+                        "qa_gate_blocker=task_boundary_interface_discrepancy_required"
+                    ),
+                    artifacts=["runtime/qa/workspace-validation.json"],
+                )
+        return StageResult(
+            stage=stage,
+            status="success",
+            output=f"{stage} completed",
+            artifacts=[f"artifacts/{stage}.json"],
+        )
+
+
 def test_orchestration_stage_executor_maps_docs_artifacts_to_workspace_prefix(tmp_path: Path) -> None:
     executor = OrchestrationStageExecutor(tmp_path)
 
@@ -568,6 +667,31 @@ def test_quality_gate_rework_summary_reads_taskboard_requests(temp_workspace: Pa
     assert summary["tasks"][0]["reason"] == "qa_score_below_threshold"
 
 
+def test_quality_gate_task_boundary_validation_reopens_failed_director_task(temp_workspace: Path) -> None:
+    executor = TaskBoundaryQualityReworkStageExecutor(temp_workspace)
+    executor._materialize_failed_director_task()
+    executor._write_workspace_validation()
+
+    bridge_summary = factory_router_module._apply_quality_gate_task_boundary_rework_requests(str(temp_workspace))
+    rework_summary = factory_router_module._read_quality_gate_rework_summary(str(temp_workspace))
+
+    assert bridge_summary["requested"] is True
+    assert bridge_summary["reopened_count"] == 1
+    assert bridge_summary["exhausted_count"] == 0
+    assert rework_summary["requested"] is True
+    assert rework_summary["requested_count"] == 1
+    assert rework_summary["ready_count"] == 1
+    assert rework_summary["tasks"][0]["reason"] == "task_boundary_interface_discrepancy_required"
+
+    rows = TaskRuntimeService(str(temp_workspace)).list_task_rows()
+    assert rows[0]["status"] == "pending"
+    metadata = rows[0]["metadata"]
+    assert metadata["qa_rework_requested"] is True
+    assert metadata["task_boundary_rework_requested"] is True
+    evidence = metadata["task_boundary_rework_evidence"]
+    assert evidence["plan_probe_preaudit"]["status"] == "coverage_matched_but_unplannable"
+
+
 def test_execute_run_reenters_director_when_quality_gate_requests_rework(temp_workspace: Path) -> None:
     executor = QualityReworkStageExecutor(temp_workspace)
     service = FactoryRunService(
@@ -599,6 +723,39 @@ def test_execute_run_reenters_director_when_quality_gate_requests_rework(temp_wo
     summary_json = updated.metadata.get("summary_json")
     assert isinstance(summary_json, dict)
     assert summary_json.get("status") == "PASS"
+
+
+def test_execute_run_reenters_director_when_quality_gate_reports_task_boundary_triage(temp_workspace: Path) -> None:
+    executor = TaskBoundaryQualityReworkStageExecutor(temp_workspace)
+    service = FactoryRunService(
+        temp_workspace,
+        executor=executor,
+    )
+    run = asyncio.run(
+        service.create_run(FactoryConfig(name="task-boundary-rework-run", stages=["director_dispatch", "quality_gate"]))
+    )
+    asyncio.run(service.start_run(run.id))
+    payload = FactoryStartRequest(
+        workspace=str(temp_workspace),
+        start_from="director",
+        directive="Repair task boundary discrepancy",
+        run_director=True,
+    )
+    state = SimpleNamespace(settings=Settings(workspace=str(temp_workspace)))
+
+    asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
+
+    updated = asyncio.run(service.get_run(run.id))
+    assert updated is not None
+    assert updated.status == FactoryRunStatus.COMPLETED
+    assert executor.director_calls == 2
+    assert executor.qa_calls == 2
+    history = updated.metadata.get("quality_rework_history")
+    assert isinstance(history, list) and len(history) == 1
+    summary = history[0]["summary"]
+    assert summary["requested_count"] == 1
+    assert summary["task_boundary_rework_bridge"]["reopened_count"] == 1
+    assert summary["tasks"][0]["reason"] == "task_boundary_interface_discrepancy_required"
 
 
 def test_execute_run_preserves_qa_llm_unavailable_root_cause(temp_workspace: Path) -> None:

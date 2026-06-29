@@ -90,6 +90,7 @@ _LANGUAGE_NEUTRAL_FILENAMES: frozenset[str] = frozenset(
 _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
 _WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_ENV = "KERNELONE_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS"
 _DEFAULT_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS = 90.0
+_WORKSPACE_QUALITY_REPAIR_MIN_LLM_START_BUDGET_SECONDS = 45.0
 _WORKSPACE_QUALITY_REPAIR_SOURCE_SUFFIXES = frozenset(
     {
         ".css",
@@ -116,6 +117,10 @@ _DIRECTOR_BINDING_TIMEOUT_QUARANTINE_ENV = "KERNELONE_FACTORY_DIRECTOR_BINDING_T
 _DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT = 4
 _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS = 60
 _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS = 5
+_DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_ENV = "POLARIS_FACTORY_DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_SECONDS"
+_DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_SECONDS = 150.0
+_QUALITY_GATE_RESERVED_BUDGET_ENV = "POLARIS_FACTORY_QUALITY_GATE_RESERVED_BUDGET_SECONDS"
+_QUALITY_GATE_RESERVED_BUDGET_SECONDS = 120.0
 _QUALITY_GATE_MIN_PASS_SCORE = 70
 _QUALITY_GATE_MIN_START_BUDGET_SECONDS = 15.0
 _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS = 15.0
@@ -397,6 +402,48 @@ class OrchestrationStageExecutor:
             "file_count": len(restored),
             "snapshot_created_at": manifest.get("created_at"),
         }
+
+    def _capture_workspace_delivery_state(self) -> dict[str, tuple[int, int]]:
+        state: dict[str, tuple[int, int]] = {}
+        for path in self._iter_pre_director_snapshot_files():
+            try:
+                relative = path.relative_to(self.workspace).as_posix()
+                stat_result = path.stat()
+            except OSError:
+                continue
+            state[relative] = (int(stat_result.st_size), int(stat_result.st_mtime_ns))
+        return state
+
+    @staticmethod
+    def _workspace_delivery_delta(
+        before: dict[str, tuple[int, int]],
+        after: dict[str, tuple[int, int]],
+        *,
+        max_samples: int = 12,
+    ) -> dict[str, Any]:
+        before_paths = set(before)
+        after_paths = set(after)
+        added = sorted(after_paths - before_paths)
+        deleted = sorted(before_paths - after_paths)
+        changed = sorted(path for path in before_paths & after_paths if before[path] != after[path])
+        return {
+            "added_count": len(added),
+            "changed_count": len(changed),
+            "deleted_count": len(deleted),
+            "delta_file_count": len(added) + len(changed),
+            "added_sample": added[:max_samples],
+            "changed_sample": changed[:max_samples],
+            "deleted_sample": deleted[:max_samples],
+        }
+
+    @staticmethod
+    def _workspace_delta_indicates_materialization_progress(delta: dict[str, Any]) -> bool:
+        try:
+            added = int(delta.get("added_count") or 0)
+            changed = int(delta.get("changed_count") or 0)
+        except (TypeError, ValueError):
+            return False
+        return (added + changed) > 0
 
     def _artifact_exists(self, relative_path: str, *, min_chars: int = 1) -> bool:
         target = self._artifact_path(relative_path)
@@ -1108,6 +1155,7 @@ class OrchestrationStageExecutor:
             validation = validate_director_handoff_from_payload(
                 str(self.workspace),
                 {"task_id": task_id, "blueprint_id": blueprint_id},
+                require_strict=True,
             )
             handoff_payload_raw = validation.get("decision_payload")
             handoff_payload: dict[str, Any] = handoff_payload_raw if isinstance(handoff_payload_raw, dict) else {}
@@ -1603,7 +1651,12 @@ class OrchestrationStageExecutor:
         return result
 
     @staticmethod
-    def _director_dispatch_timeout_seconds(context: dict[str, Any], *, task_count: int) -> int:
+    def _director_dispatch_timeout_seconds(
+        context: dict[str, Any],
+        *,
+        task_count: int,
+        materialization_pending: bool = False,
+    ) -> int:
         del task_count
         resolved_timeout: int | None = None
         raw_override = context.get("director_dispatch_timeout_seconds")
@@ -1641,10 +1694,59 @@ class OrchestrationStageExecutor:
 
         remaining_seconds = OrchestrationStageExecutor._factory_deadline_remaining_seconds(context)
         if remaining_seconds is not None:
-            deadline_timeout = int(max(1.0, remaining_seconds - _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS))
+            quality_gate_reserve = OrchestrationStageExecutor._quality_gate_reserved_budget_seconds(context)
+            safety_budget = (
+                quality_gate_reserve
+                if remaining_seconds > quality_gate_reserve
+                else _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS
+            )
+            if materialization_pending:
+                min_materialization_budget = (
+                    OrchestrationStageExecutor._director_first_materialization_min_budget_seconds(context)
+                )
+                if remaining_seconds > min_materialization_budget + _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS:
+                    max_reserve_before_first_materialization = max(
+                        float(_DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS),
+                        remaining_seconds - min_materialization_budget,
+                    )
+                    safety_budget = min(safety_budget, max_reserve_before_first_materialization)
+                else:
+                    safety_budget = float(_DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS)
+            deadline_timeout = int(max(1.0, remaining_seconds - safety_budget))
             return max(1, min(resolved_timeout, deadline_timeout))
 
         return resolved_timeout
+
+    @staticmethod
+    def _director_first_materialization_min_budget_seconds(context: dict[str, Any]) -> float:
+        raw_value = context.get("director_first_materialization_min_budget_seconds")
+        if raw_value is None:
+            raw_value = context.get("factory_director_first_materialization_min_budget_seconds")
+        if raw_value is None:
+            raw_value = os.getenv(_DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_ENV)
+        try:
+            value = (
+                float(str(raw_value).strip())
+                if raw_value is not None
+                else _DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_SECONDS
+            )
+        except (TypeError, ValueError):
+            value = _DIRECTOR_FIRST_MATERIALIZATION_MIN_BUDGET_SECONDS
+        return max(30.0, min(value, 600.0))
+
+    @staticmethod
+    def _quality_gate_reserved_budget_seconds(context: dict[str, Any]) -> float:
+        raw_value = context.get("quality_gate_reserved_budget_seconds")
+        if raw_value is None:
+            raw_value = context.get("factory_quality_gate_reserved_budget_seconds")
+        if raw_value is None:
+            raw_value = os.getenv(_QUALITY_GATE_RESERVED_BUDGET_ENV)
+        try:
+            value = float(str(raw_value).strip()) if raw_value is not None else _QUALITY_GATE_RESERVED_BUDGET_SECONDS
+        except (TypeError, ValueError):
+            value = _QUALITY_GATE_RESERVED_BUDGET_SECONDS
+        minimum = _QUALITY_GATE_MIN_START_BUDGET_SECONDS + _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS
+        return max(minimum, min(value, 600.0))
 
     @staticmethod
     def _director_dispatch_timeout_settle_grace_seconds(context: dict[str, Any]) -> int:
@@ -3015,6 +3117,9 @@ class OrchestrationStageExecutor:
                         "disable_internal_tool_rounds": True,
                         "_transaction_kernel_forced_tool_definitions": [],
                         "_transaction_kernel_forced_tool_choice": "none",
+                        "temperature": 0.2,
+                        "response_format_mode": "json",
+                        "chief_engineer_json_contract_required": True,
                         "chief_engineer_llm_timeout_seconds": ce_timeout_seconds,
                         "llm_call_timeout_seconds": ce_timeout_seconds,
                         "request_timeout_seconds": ce_timeout_seconds,
@@ -3039,7 +3144,10 @@ class OrchestrationStageExecutor:
                         "cognitive_runtime_required": False,
                         "llm_call_timeout_seconds": ce_timeout_seconds,
                         "validate_output": True,
-                        "max_retries": 1,
+                        "max_retries": 0,
+                        "temperature": 0.2,
+                        "response_format_mode": "json",
+                        "chief_engineer_json_contract_required": True,
                     },
                 )
 
@@ -3227,6 +3335,7 @@ class OrchestrationStageExecutor:
             handoff_validation = validate_director_handoff_from_payload(
                 str(self.workspace),
                 {"task_id": task_id, "blueprint_id": result.blueprint_id},
+                require_strict=True,
             )
             handoff_payload_raw = handoff_validation.get("decision_payload")
             handoff_payload: dict[str, Any] = handoff_payload_raw if isinstance(handoff_payload_raw, dict) else {}
@@ -3491,6 +3600,7 @@ class OrchestrationStageExecutor:
 
             for round_index in range(1, max_rounds + 1):
                 before_stats = self._read_taskboard_stats()
+                workspace_state_before = self._capture_workspace_delivery_state()
                 if self._is_taskboard_converged(before_stats):
                     stage_signals.append(
                         {
@@ -3524,9 +3634,20 @@ class OrchestrationStageExecutor:
                         "director_binding_skips": director_binding_skips,
                     },
                 }
+                missing_declared_targets = self._missing_declared_delivery_targets(pm_tasks)
+                materialization_pending = bool(missing_declared_targets)
                 director_timeout_seconds = self._director_dispatch_timeout_seconds(
                     context,
                     task_count=len(pm_tasks),
+                    materialization_pending=materialization_pending,
+                )
+                base_options["metadata"].update(
+                    {
+                        "director_dispatch_timeout_seconds": director_timeout_seconds,
+                        "director_first_materialization_pending": materialization_pending,
+                        "director_missing_declared_target_count": len(missing_declared_targets),
+                        "director_missing_declared_target_sample": missing_declared_targets[:12],
+                    }
                 )
                 requested_llm_timeout = int(context.get("llm_call_timeout_seconds") or director_timeout_seconds)
                 requested_director_timeout = int(
@@ -3548,6 +3669,13 @@ class OrchestrationStageExecutor:
                     if settle_result is not None:
                         final_result = settle_result
                         settled_stats = self._read_taskboard_stats()
+                        workspace_delta = self._workspace_delivery_delta(
+                            workspace_state_before,
+                            self._capture_workspace_delivery_state(),
+                        )
+                        workspace_delta_progress = self._workspace_delta_indicates_materialization_progress(
+                            workspace_delta
+                        )
                         settled_metadata = settle_result.metadata if isinstance(settle_result.metadata, dict) else {}
                         settled_status = str(settle_result.status or "").strip().lower()
                         attempts.append(
@@ -3560,11 +3688,27 @@ class OrchestrationStageExecutor:
                                 "taskboard_before": before_stats,
                                 "taskboard_after": settled_stats,
                                 "progress_made": self._has_director_progress(before_stats, settled_stats)
-                                or settled_status in {"completed", "success"},
+                                or settled_status in {"completed", "success"}
+                                or workspace_delta_progress,
                                 "metadata_progress": self._metadata_indicates_execution(settled_metadata),
+                                "workspace_delta_progress": workspace_delta_progress,
+                                "workspace_delta": workspace_delta,
                                 "settled_after_timeout": True,
                             }
                         )
+                        if workspace_delta_progress:
+                            stage_signals.append(
+                                {
+                                    "code": "director.workspace_delta_progress_detected",
+                                    "severity": "info",
+                                    "detail": (
+                                        "Detected added or changed delivery files while settling Director run "
+                                        "after timeout"
+                                    ),
+                                    "round": round_index,
+                                    **workspace_delta,
+                                }
+                            )
                         stage_signals.append(
                             {
                                 "code": "director.inflight_timeout_settled",
@@ -3648,10 +3792,6 @@ class OrchestrationStageExecutor:
                         options=base_options,
                     )
                     last_command_result = command_result
-                    director_timeout_seconds = self._director_dispatch_timeout_seconds(
-                        context,
-                        task_count=len(pm_tasks),
-                    )
                     director_result = await self._wait_run_completion(
                         service,
                         command_result,
@@ -3664,6 +3804,11 @@ class OrchestrationStageExecutor:
                     break
 
                 after_stats = self._read_taskboard_stats()
+                workspace_delta = self._workspace_delivery_delta(
+                    workspace_state_before,
+                    self._capture_workspace_delivery_state(),
+                )
+                workspace_delta_progress = self._workspace_delta_indicates_materialization_progress(workspace_delta)
                 metadata_payload = director_result.metadata if isinstance(director_result.metadata, dict) else {}
                 metadata_progress = self._metadata_indicates_execution(metadata_payload)
                 # When upstream is non-success, only count metadata progress if there
@@ -3674,7 +3819,11 @@ class OrchestrationStageExecutor:
                     counts = metadata_payload.get("task_status_counts")
                     has_completed = isinstance(counts, dict) and int(counts.get("completed") or 0) > 0
                     metadata_progress = has_completed
-                progress_made = self._has_director_progress(before_stats, after_stats) or metadata_progress
+                progress_made = (
+                    self._has_director_progress(before_stats, after_stats)
+                    or metadata_progress
+                    or workspace_delta_progress
+                )
                 attempt_entry = {
                     "round": round_index,
                     "run_id": str(command_result.run_id or "").strip(),
@@ -3683,10 +3832,25 @@ class OrchestrationStageExecutor:
                     "metadata": metadata_payload,
                     "taskboard_before": before_stats,
                     "taskboard_after": after_stats,
+                    "timeout_seconds": director_timeout_seconds,
+                    "materialization_pending": materialization_pending,
+                    "missing_declared_target_count": len(missing_declared_targets),
                     "progress_made": progress_made,
                     "metadata_progress": metadata_progress,
+                    "workspace_delta_progress": workspace_delta_progress,
+                    "workspace_delta": workspace_delta,
                 }
                 attempts.append(attempt_entry)
+                if workspace_delta_progress:
+                    stage_signals.append(
+                        {
+                            "code": "director.workspace_delta_progress_detected",
+                            "severity": "info",
+                            "detail": "Detected added or changed delivery files during Director dispatch",
+                            "round": round_index,
+                            **workspace_delta,
+                        }
+                    )
 
                 director_status = str(director_result.status or "").strip().lower()
                 if director_status not in {"completed", "success"}:
@@ -3784,22 +3948,22 @@ class OrchestrationStageExecutor:
                         )
                         break
                     if director_status == "timeout":
+                        attempt_timeout_seconds = director_timeout_seconds
                         stage_signals.append(
                             {
                                 "code": "director.dispatch_timeout",
                                 "severity": "error",
                                 "detail": (
                                     "Director dispatch timed out after "
-                                    f"{self._director_dispatch_timeout_seconds(context, task_count=len(pm_tasks))} "
+                                    f"{attempt_timeout_seconds} "
                                     "seconds; "
                                     "no further progress possible"
                                 ),
                                 "upstream_status": director_status,
                                 "round": round_index,
-                                "timeout_seconds": self._director_dispatch_timeout_seconds(
-                                    context,
-                                    task_count=len(pm_tasks),
-                                ),
+                                "timeout_seconds": attempt_timeout_seconds,
+                                "materialization_pending": materialization_pending,
+                                "missing_declared_target_count": len(missing_declared_targets),
                             }
                         )
                     else:
@@ -4646,7 +4810,12 @@ class OrchestrationStageExecutor:
             value = float(str(raw))
         except (TypeError, ValueError):
             value = _DEFAULT_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS
-        return max(30.0, min(value, 3600.0))
+        configured = max(30.0, min(value, 3600.0))
+        remaining_seconds = OrchestrationStageExecutor._factory_deadline_remaining_seconds(context)
+        if remaining_seconds is None:
+            return configured
+        capped = max(1.0, remaining_seconds - _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS)
+        return max(1.0, min(configured, capped))
 
     async def _apply_workspace_quality_llm_repairs(
         self,
@@ -4655,6 +4824,7 @@ class OrchestrationStageExecutor:
         context: dict[str, Any],
         artifact_quality_errors: list[str],
         repair_attempt: int,
+        interface_discrepancy_evidence: dict[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         changed_files = self._workspace_quality_repair_changed_files()
         if not changed_files:
@@ -4667,7 +4837,7 @@ class OrchestrationStageExecutor:
             }
         target_files = self._workspace_quality_repair_target_files()
         task: dict[str, Any] = {"target_files": target_files or changed_files}
-        repair_context = {
+        repair_context: dict[str, Any] = {
             "delivery_mode": "materialize_changes",
             "target_files": (target_files or changed_files)[:80],
             "changed_files": changed_files[:80],
@@ -4676,6 +4846,20 @@ class OrchestrationStageExecutor:
                 "target_files": target_files[:80],
             },
         }
+        if interface_discrepancy_evidence:
+            repair_context["director_interface_discrepancy_retry"] = {
+                "authorized": self._workspace_quality_interface_discrepancy_allows_director_retry(
+                    interface_discrepancy_evidence
+                ),
+                "recommended_owner": interface_discrepancy_evidence.get("recommended_owner"),
+                "recommended_route": interface_discrepancy_evidence.get("recommended_route"),
+                "reason": interface_discrepancy_evidence.get("reason"),
+                "interface_discrepancy_evidence": interface_discrepancy_evidence,
+            }
+            repair_context["factory_task_boundary_interface_discrepancy"] = interface_discrepancy_evidence
+            repair_context["factory_workspace_quality_repair"]["interface_discrepancy_evidence"] = (
+                interface_discrepancy_evidence
+            )
         for key in (
             "language",
             "prompt_language",
@@ -4730,6 +4914,36 @@ class OrchestrationStageExecutor:
         return [dict(item) for item in results], normalized_summary
 
     @staticmethod
+    def _workspace_quality_repair_result_has_mutation(item: dict[str, Any]) -> bool:
+        if not isinstance(item, dict) or not bool(item.get("success")):
+            return False
+        raw_result = item.get("result")
+        result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
+        tool_name = str(
+            item.get("tool")
+            or item.get("tool_name")
+            or result.get("tool")
+            or result.get("tool_name")
+            or result.get("operation")
+            or ""
+        ).strip()
+        operation = str(result.get("operation") or "").strip()
+        mutation_tokens = {
+            "append_to_file",
+            "create_file",
+            "edit_file",
+            "precision_edit",
+            "repo_apply_diff",
+            "text_replace",
+            "write_file",
+        }
+        if tool_name in mutation_tokens or operation in mutation_tokens:
+            return True
+        before_hash = str(result.get("before_sha256") or "").strip()
+        after_hash = str(result.get("after_sha256") or "").strip()
+        return bool(before_hash and after_hash and before_hash != after_hash)
+
+    @staticmethod
     def _workspace_quality_repair_evidence(repair_results: list[dict[str, Any]]) -> list[str]:
         evidence: list[str] = []
         for item in repair_results:
@@ -4760,6 +4974,174 @@ class OrchestrationStageExecutor:
             if len(evidence) >= 12:
                 break
         return evidence
+
+    @staticmethod
+    def _workspace_quality_summary_requires_task_boundary_triage(summary: dict[str, Any]) -> bool:
+        if bool(summary.get("task_boundary_interface_discrepancy_retry_authorized")):
+            return False
+        stage = str(summary.get("stage") or "").strip()
+        if stage == "runtime_plan_probe_unplannable":
+            return True
+        evidence = summary.get("interface_discrepancy_evidence")
+        if (
+            isinstance(evidence, dict)
+            and str(evidence.get("reason") or "") == "coverage_matched_but_unplannable"
+            and not bool(evidence.get("director_retry_allowed"))
+        ):
+            return True
+        plan_probe = summary.get("plan_probe_preaudit")
+        if not isinstance(plan_probe, dict):
+            return False
+        return str(plan_probe.get("status") or "").strip() == "coverage_matched_but_unplannable" and not bool(
+            plan_probe.get("plannable_source_tools")
+        )
+
+    @staticmethod
+    def _workspace_quality_interface_discrepancy_evidence(
+        summary: dict[str, Any],
+        artifact_quality_errors: list[str] | None = None,
+    ) -> dict[str, Any]:
+        raw_evidence = summary.get("interface_discrepancy_evidence")
+        evidence: dict[str, Any] = dict(raw_evidence) if isinstance(raw_evidence, dict) else {}
+        plan_probe = summary.get("plan_probe_preaudit")
+        plan_probe_payload = plan_probe if isinstance(plan_probe, dict) else {}
+        covered_unplannable_source_tools = [
+            str(item)
+            for item in plan_probe_payload.get(
+                "covered_unplannable_source_tools",
+                evidence.get("covered_unplannable_source_tools", []),
+            )
+            if str(item or "").strip()
+        ]
+        if not evidence:
+            evidence = {
+                "schema_version": "director.task_boundary.interface_discrepancy.v1",
+                "route": "task_boundary_quality_loop",
+                "plan_probe_status": str(plan_probe_payload.get("status") or ""),
+                "covered_unplannable_source_tools": covered_unplannable_source_tools,
+                "covered_unplannable_diagnostic_count": int(
+                    plan_probe_payload.get("covered_unplannable_diagnostic_count") or 0
+                ),
+                "coverage_gap_count": int(plan_probe_payload.get("coverage_gap_count") or 0),
+                "reason": "coverage_matched_but_unplannable",
+            }
+        diagnostic_blob = "\n".join(
+            [
+                json.dumps(plan_probe_payload, ensure_ascii=False, sort_keys=True),
+                json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+                *[str(item or "") for item in artifact_quality_errors or []],
+            ]
+        ).lower()
+        cross_artifact_markers = (
+            "unresolved import",
+            "unresolved relative import",
+            "cannot find module",
+            "has no exported member",
+            "module has no exported member",
+            "does not provide an export",
+            "sibling module does not define",
+            "is not exported",
+            "ts2305",
+            "ts2306",
+            "ts2307",
+            "ts2459",
+        )
+        local_implementation_markers = (
+            "ts2322",
+            "ts2339",
+            "ts2345",
+            "ts2552",
+            "property ",
+            "does not exist on type",
+            "cannot find name",
+            "type ",
+            "is not assignable to type",
+        )
+        cross_artifact = any(marker in diagnostic_blob for marker in cross_artifact_markers)
+        local_implementation = any(marker in diagnostic_blob for marker in local_implementation_markers)
+        if cross_artifact:
+            recommended_owner = "chief_engineer"
+            recommended_route = "pending_design_interface_contract"
+            cross_artifact_route = "contract_amendment_request"
+        elif local_implementation:
+            recommended_owner = "director"
+            recommended_route = "director_retry_with_interface_discrepancy_context"
+            cross_artifact_route = "director_repair_within_contract"
+        else:
+            recommended_owner = str(evidence.get("recommended_owner") or "chief_engineer")
+            recommended_route = str(evidence.get("recommended_route") or "pending_design_interface_contract")
+            cross_artifact_route = (
+                "director_repair_within_contract" if recommended_owner == "director" else "contract_amendment_request"
+            )
+        director_retry_allowed = (
+            recommended_owner == "director" and recommended_route == "director_retry_with_interface_discrepancy_context"
+        )
+        evidence.update(
+            {
+                "schema_version": "director.task_boundary.interface_discrepancy.v1",
+                "route": "task_boundary_quality_loop",
+                "plan_probe_status": str(evidence.get("plan_probe_status") or plan_probe_payload.get("status") or ""),
+                "covered_unplannable_source_tools": covered_unplannable_source_tools,
+                "recommended_owner": recommended_owner,
+                "recommended_route": recommended_route,
+                "cross_artifact_route": cross_artifact_route,
+                "director_retry_allowed": director_retry_allowed,
+                "llm_fallback_blocked": not director_retry_allowed,
+                "reason": "coverage_matched_but_unplannable",
+            }
+        )
+        return evidence
+
+    @staticmethod
+    def _workspace_quality_interface_discrepancy_allows_director_retry(evidence: dict[str, Any]) -> bool:
+        return bool(evidence.get("director_retry_allowed")) and (
+            str(evidence.get("recommended_owner") or "") == "director"
+            and str(evidence.get("recommended_route") or "") == "director_retry_with_interface_discrepancy_context"
+        )
+
+    @staticmethod
+    def _workspace_quality_repair_summary_projection(
+        summary: dict[str, Any],
+        artifact_quality_errors: list[str] | None = None,
+    ) -> dict[str, Any]:
+        projected: dict[str, Any] = {}
+        for key in (
+            "stage",
+            "attempt",
+            "success",
+            "success_reason",
+            "reason",
+            "error_code",
+            "error",
+            "repair_mode",
+            "missing_target_files",
+            "runtime_smoke_target_files",
+            "semantic_quality_target_files",
+            "explicit_quality_target_files",
+            "repair_target_files",
+            "rotated_repair_targets",
+            "plan_probe_preaudit",
+            "interface_discrepancy_evidence",
+            "deterministic_no_materialized_evidence",
+            "repair_kernel",
+            "deadline_decision",
+        ):
+            if key in summary:
+                projected[key] = summary[key]
+        if projected:
+            task_boundary_triage_required = (
+                OrchestrationStageExecutor._workspace_quality_summary_requires_task_boundary_triage(summary)
+            )
+            projected["task_boundary_triage_required"] = task_boundary_triage_required
+            if task_boundary_triage_required:
+                projected["triage_stage"] = "runtime_plan_probe_unplannable"
+                projected["interface_discrepancy_evidence"] = (
+                    OrchestrationStageExecutor._workspace_quality_interface_discrepancy_evidence(
+                        summary,
+                        artifact_quality_errors,
+                    )
+                )
+        return projected
 
     async def _run_workspace_quality_checks(self, run: FactoryRun, context: dict[str, Any]) -> tuple[bool, str]:
         commands = self._workspace_quality_commands(context)
@@ -4836,6 +5218,46 @@ class OrchestrationStageExecutor:
             "tool_results": 0,
             "rounds": [],
         }
+
+        def write_workspace_validation_failure(
+            reason_code: str,
+            detail: str,
+            *,
+            repair_override: dict[str, Any] | None = None,
+        ) -> tuple[bool, str]:
+            payload = {
+                "schema_version": "factory.workspace_quality_checks.v1",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "source": "factory_stage_executor",
+                "factory_run_id": run.id,
+                "workspace": str(self.workspace),
+                "passed": False,
+                "commands": results,
+                "repair": repair_override if repair_override is not None else repair_summary,
+                "warnings": [reason_code],
+                "error": detail,
+                "deadline": {
+                    "remaining_seconds": self._factory_deadline_remaining_seconds(context),
+                    "deadline_epoch_seconds": context.get("factory_run_deadline_epoch_seconds"),
+                    "timeout_seconds": context.get("factory_run_timeout_seconds"),
+                    "source": context.get("factory_run_deadline_source"),
+                },
+            }
+            artifact = "runtime/qa/workspace-validation.json"
+            self._write_json_artifact(artifact, payload)
+            return False, artifact
+
+        def workspace_repair_deadline_blocker(phase: str) -> str:
+            remaining_seconds = self._factory_deadline_remaining_seconds(context)
+            if remaining_seconds is None:
+                return ""
+            if remaining_seconds >= _WORKSPACE_QUALITY_REPAIR_MIN_LLM_START_BUDGET_SECONDS:
+                return ""
+            return (
+                f"Workspace quality repair skipped at {phase} because the factory run deadline has only "
+                f"{remaining_seconds:.1f}s remaining"
+            )
+
         rerun_results: list[dict[str, Any]] = []
         if run_commands and not prepare_failed and not all(bool(item.get("passed")) for item in results):
             # Deterministic repairs before LLM repair loop.
@@ -4895,6 +5317,46 @@ class OrchestrationStageExecutor:
             source_tools: list[str] = []
             evidence: list[str] = []
             write_tool_evidence = False
+            task_boundary_triage_required = False
+            task_boundary_triage_summary: dict[str, Any] = {}
+
+            def current_workspace_repair_summary(
+                *,
+                residual_errors: list[str] | None = None,
+                deadline_detail: str = "",
+            ) -> dict[str, Any]:
+                partial_summary = {
+                    "attempted": bool(repair_rounds),
+                    "success": False,
+                    "revalidated": bool(rerun_results),
+                    "residual_error_count": len(residual_errors or []),
+                    "residual_errors": (residual_errors or [])[:10],
+                    "director_runtime_repair_coverage": self._workspace_quality_repair_coverage_report(
+                        residual_errors or []
+                    ),
+                    "source_tools": list(dict.fromkeys(source_tools)),
+                    "tool_results": len(repair_results),
+                    "write_tool_evidence": write_tool_evidence,
+                    "artifact_quality_errors": repair_errors[:10],
+                    "evidence": evidence[:12],
+                    "max_rounds": max_rounds,
+                    "rounds": repair_rounds,
+                }
+                if deadline_detail:
+                    partial_summary["deadline_blocker"] = deadline_detail
+                if task_boundary_triage_required:
+                    partial_summary.update(
+                        {
+                            "task_boundary_triage_required": True,
+                            "success_reason": "task_boundary_interface_discrepancy_required",
+                            "plan_probe_preaudit": task_boundary_triage_summary.get("plan_probe_preaudit"),
+                            "interface_discrepancy_evidence": task_boundary_triage_summary.get(
+                                "interface_discrepancy_evidence"
+                            ),
+                        }
+                    )
+                return partial_summary
+
             for round_index in range(max_rounds):
                 if latest_check_results and all(bool(item.get("passed")) for item in latest_check_results):
                     break
@@ -4906,13 +5368,68 @@ class OrchestrationStageExecutor:
                     run_id=run.id,
                     artifact_quality_errors=repair_errors,
                 )
+                round_requires_task_boundary_triage = self._workspace_quality_summary_requires_task_boundary_triage(
+                    dict(round_summary)
+                )
                 round_repair_evidence = self._workspace_quality_repair_evidence(round_repair_results)
                 round_write_tool_evidence = any(
-                    bool(item.get("success")) and str(item.get("tool") or item.get("tool_name") or "") == "write_file"
-                    for item in round_repair_results
+                    self._workspace_quality_repair_result_has_mutation(item) for item in round_repair_results
                 )
-                if round_repair_results and not round_write_tool_evidence and not round_repair_evidence:
+                if round_requires_task_boundary_triage:
+                    interface_discrepancy_evidence = self._workspace_quality_interface_discrepancy_evidence(
+                        dict(round_summary),
+                        repair_errors,
+                    )
+                    if self._workspace_quality_interface_discrepancy_allows_director_retry(
+                        interface_discrepancy_evidence
+                    ):
+                        deterministic_noop_summary = dict(round_summary)
+                        deadline_detail = workspace_repair_deadline_blocker(
+                            f"before_interface_discrepancy_llm_repair_round_{round_index + 1}"
+                        )
+                        if deadline_detail:
+                            return write_workspace_validation_failure(
+                                "factory_quality_gate_workspace_repair_deadline_insufficient",
+                                deadline_detail,
+                                repair_override=current_workspace_repair_summary(
+                                    residual_errors=repair_errors,
+                                    deadline_detail=deadline_detail,
+                                ),
+                            )
+                        round_repair_results, round_summary = await self._apply_workspace_quality_llm_repairs(
+                            run_id=run.id,
+                            context=context,
+                            artifact_quality_errors=repair_errors,
+                            repair_attempt=round_index + 1,
+                            interface_discrepancy_evidence=interface_discrepancy_evidence,
+                        )
+                        if not round_repair_results:
+                            round_summary = dict(round_summary)
+                            round_summary["deterministic_no_materialized_evidence"] = deterministic_noop_summary
+                        round_requires_task_boundary_triage = (
+                            self._workspace_quality_summary_requires_task_boundary_triage(dict(round_summary))
+                        )
+                        round_repair_evidence = self._workspace_quality_repair_evidence(round_repair_results)
+                        round_write_tool_evidence = any(
+                            self._workspace_quality_repair_result_has_mutation(item) for item in round_repair_results
+                        )
+                if (
+                    not round_requires_task_boundary_triage
+                    and round_repair_results
+                    and not round_write_tool_evidence
+                    and not round_repair_evidence
+                ):
                     deterministic_noop_summary = dict(round_summary)
+                    deadline_detail = workspace_repair_deadline_blocker(f"before_llm_repair_round_{round_index + 1}")
+                    if deadline_detail:
+                        return write_workspace_validation_failure(
+                            "factory_quality_gate_workspace_repair_deadline_insufficient",
+                            deadline_detail,
+                            repair_override=current_workspace_repair_summary(
+                                residual_errors=repair_errors,
+                                deadline_detail=deadline_detail,
+                            ),
+                        )
                     round_repair_results, round_summary = await self._apply_workspace_quality_llm_repairs(
                         run_id=run.id,
                         context=context,
@@ -4922,14 +5439,32 @@ class OrchestrationStageExecutor:
                     if not round_repair_results:
                         round_summary = dict(round_summary)
                         round_summary["deterministic_no_materialized_evidence"] = deterministic_noop_summary
-                elif not round_repair_results:
+                    round_requires_task_boundary_triage = self._workspace_quality_summary_requires_task_boundary_triage(
+                        dict(round_summary)
+                    )
+                elif not round_requires_task_boundary_triage and not round_repair_results:
+                    deadline_detail = workspace_repair_deadline_blocker(f"before_llm_repair_round_{round_index + 1}")
+                    if deadline_detail:
+                        return write_workspace_validation_failure(
+                            "factory_quality_gate_workspace_repair_deadline_insufficient",
+                            deadline_detail,
+                            repair_override=current_workspace_repair_summary(
+                                residual_errors=repair_errors,
+                                deadline_detail=deadline_detail,
+                            ),
+                        )
                     round_repair_results, round_summary = await self._apply_workspace_quality_llm_repairs(
                         run_id=run.id,
                         context=context,
                         artifact_quality_errors=repair_errors,
                         repair_attempt=round_index + 1,
                     )
-                cpp_post_repair_results = await asyncio.to_thread(self._apply_workspace_quality_cpp_post_repairs)
+                    round_requires_task_boundary_triage = self._workspace_quality_summary_requires_task_boundary_triage(
+                        dict(round_summary)
+                    )
+                cpp_post_repair_results: list[dict[str, Any]] = []
+                if not round_requires_task_boundary_triage:
+                    cpp_post_repair_results = await asyncio.to_thread(self._apply_workspace_quality_cpp_post_repairs)
                 if cpp_post_repair_results:
                     round_repair_results.extend(cpp_post_repair_results)
                     round_summary = dict(round_summary)
@@ -4946,26 +5481,34 @@ class OrchestrationStageExecutor:
                 ]
                 round_evidence = self._workspace_quality_repair_evidence(round_repair_results)
                 round_write_tool_evidence = any(
-                    bool(item.get("success")) and str(item.get("tool") or item.get("tool_name") or "") == "write_file"
-                    for item in round_repair_results
+                    self._workspace_quality_repair_result_has_mutation(item) for item in round_repair_results
                 )
                 source_tools.extend(round_source_tools)
                 evidence.extend(round_evidence)
                 write_tool_evidence = write_tool_evidence or round_write_tool_evidence
-                repair_rounds.append(
-                    {
-                        "round": round_index + 1,
-                        "attempted": True,
-                        "artifact_quality_errors": repair_errors[:10],
-                        "director_runtime_repair_coverage": self._workspace_quality_repair_coverage_report(
-                            repair_errors
-                        ),
-                        "tool_results": len(round_repair_results),
-                        "source_tools": round_source_tools,
-                        "write_tool_evidence": round_write_tool_evidence,
-                        "evidence": round_evidence,
-                    }
+                summary_projection = self._workspace_quality_repair_summary_projection(
+                    normalized_round_summary,
+                    repair_errors,
                 )
+                round_payload = {
+                    "round": round_index + 1,
+                    "attempted": True,
+                    "artifact_quality_errors": repair_errors[:10],
+                    "director_runtime_repair_coverage": self._workspace_quality_repair_coverage_report(repair_errors),
+                    "tool_results": len(round_repair_results),
+                    "source_tools": round_source_tools,
+                    "write_tool_evidence": round_write_tool_evidence,
+                    "evidence": round_evidence,
+                }
+                if summary_projection:
+                    round_payload["repair_summary"] = summary_projection
+                    if round_requires_task_boundary_triage:
+                        task_boundary_triage_required = True
+                        task_boundary_triage_summary = summary_projection
+                        round_payload["task_boundary_triage_required"] = True
+                repair_rounds.append(round_payload)
+                if round_requires_task_boundary_triage:
+                    break
                 if not round_repair_results:
                     break
                 latest_check_results = []
@@ -5028,10 +5571,25 @@ class OrchestrationStageExecutor:
                 "max_rounds": max_rounds,
                 "rounds": repair_rounds,
             }
+            if task_boundary_triage_required:
+                repair_summary.update(
+                    {
+                        "task_boundary_triage_required": True,
+                        "success_reason": "task_boundary_interface_discrepancy_required",
+                        "plan_probe_preaudit": task_boundary_triage_summary.get("plan_probe_preaudit"),
+                        "interface_discrepancy_evidence": task_boundary_triage_summary.get(
+                            "interface_discrepancy_evidence"
+                        ),
+                    }
+                )
 
         effective_results = rerun_results if rerun_results else results
         if rerun_results:
             effective_results = [item for item in results if str(item.get("phase") or "") == "prepare"] + rerun_results
+
+        payload_warnings = []
+        if bool(repair_summary.get("task_boundary_triage_required")):
+            payload_warnings.append("task_boundary_interface_discrepancy_required")
 
         payload = {
             "schema_version": "factory.workspace_quality_checks.v1",
@@ -5043,6 +5601,8 @@ class OrchestrationStageExecutor:
             "commands": results,
             "repair": repair_summary,
         }
+        if payload_warnings:
+            payload["warnings"] = payload_warnings
         artifact = "runtime/qa/workspace-validation.json"
         self._write_json_artifact(artifact, payload)
         return bool(payload["passed"]), artifact
@@ -5266,15 +5826,6 @@ class OrchestrationStageExecutor:
             workspace_checks_artifact,
             run_id=run.id,
         )
-        if not workspace_checks_passed:
-            return self._build_quality_gate_failure_stage(
-                run,
-                reason_code="factory_quality_gate_workspace_checks_failed",
-                detail=self._workspace_quality_failure_detail(workspace_checks_artifact),
-                context=context,
-                workspace_checks_artifact=workspace_checks_artifact,
-                workspace_checks_passed=False,
-            )
 
         abort_reason = await self._quality_gate_abort_reason(abort_checker)
         if abort_reason:

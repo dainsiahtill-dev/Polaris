@@ -55,6 +55,12 @@ _EVIDENCE_REQUIREMENT_TO_REF = {
     "run_ledger": "run_ledger",
     "workspace_quality_evidence": "workspace_quality_evidence",
     "failed_gate_evidence": "failed_gate_evidence",
+    "failed_gate_or_verification_evidence": "failed_gate_evidence",
+    "verification_evidence": "failed_gate_evidence",
+    "verification_failure_evidence": "failed_gate_evidence",
+    "architecture_or_file_plan": "ce_blueprint",
+    "architecture_plan": "ce_blueprint",
+    "file_plan": "ce_blueprint",
 }
 
 
@@ -421,6 +427,9 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
                 "failed",
                 "error",
                 "retry",
+                "step verify failed",
+                "quality errors:",
+                "artifact quality",
                 "工具执行返回失败",
             )
         ),
@@ -431,6 +440,9 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
                 "workspace quality",
                 "npm run build",
                 "npm test",
+                "step verify failed",
+                "quality errors:",
+                "artifact quality",
                 "real_run_gate",
             )
         ),

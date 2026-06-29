@@ -145,9 +145,7 @@ def _payload_indicates_failure(payload: dict[str, Any]) -> bool:
         return True
     if _deep_get_text(payload, ("error_type", "handler_error_type")):
         return True
-    if _deep_get_text(payload, ("error", "blocked_reason")):
-        return True
-    return False
+    return bool(_deep_get_text(payload, ("error", "blocked_reason")))
 
 
 def _payload_indicates_success(payload: dict[str, Any]) -> bool:
@@ -157,9 +155,7 @@ def _payload_indicates_success(payload: dict[str, Any]) -> bool:
         return True
     if _status_indicates_success(_deep_get_value(payload, ("status",))):
         return True
-    if _is_explicit_true(_deep_get_value(payload, ("allowed",))):
-        return True
-    return False
+    return _is_explicit_true(_deep_get_value(payload, ("allowed",)))
 
 
 def _infer_tool_failure_tool(text: str) -> str:

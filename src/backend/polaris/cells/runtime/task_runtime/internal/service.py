@@ -787,6 +787,87 @@ class TaskRuntimeService:
             "session": session.to_dict(),
         }
 
+    def suspend_active_executions_for_run(
+        self,
+        run_id: str,
+        *,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Suspend every active task lease owned by an orchestration run.
+
+        Factory and orchestration cancellation is not allowed to leave task
+        leases active. The role kernel guard checks these leases immediately
+        before tool execution; suspending here makes late LLM responses
+        fail-closed instead of writing files after the run has been cancelled.
+        """
+
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            return {"success": False, "reason": "invalid_run_id", "suspended_count": 0, "task_ids": []}
+
+        suspended_rows: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        for task in self._board.list_all():
+            task_id = self.normalize_task_id(task.id)
+            if task_id is None:
+                continue
+            session_lock = self._get_session_lock(task_id)
+            with session_lock:
+                session = self._read_session(task_id)
+                if session is None:
+                    continue
+                if str(session.run_id or "").strip() != normalized_run_id:
+                    continue
+                if session.status != "active":
+                    continue
+
+                session.mark_suspended(reason=reason, resumable=True)
+                self._write_session(session)
+
+            task_row = task.to_dict()
+            existing_metadata = dict(task_row.get("metadata") or {})
+            updated = self._board.update(
+                task_id,
+                status=TaskStatus.BLOCKED,
+                assignee="",
+                metadata=self._build_runtime_metadata(
+                    session=session,
+                    effective_status="pending",
+                    resume_state="resumable",
+                    extra_metadata={
+                        **existing_metadata,
+                        **dict(metadata or {}),
+                        "cancellation_run_id": normalized_run_id,
+                        "cancellation_reason": str(reason or "").strip(),
+                    },
+                ),
+            )
+            if updated is None:
+                failed.append({"task_id": task_id, "reason": "task_update_failed"})
+                continue
+            row = self._augment_task_row(updated.to_dict())
+            suspended_rows.append(row)
+            self._append_execution_event(
+                "suspended",
+                task_row=row,
+                session=session,
+                details={
+                    "reason": sanitize_summary(reason),
+                    "run_id": normalized_run_id,
+                    "source": "runtime.task_runtime.suspend_active_executions_for_run",
+                },
+            )
+
+        return {
+            "success": not failed,
+            "reason": "suspended" if suspended_rows else "no_active_sessions_for_run",
+            "run_id": normalized_run_id,
+            "suspended_count": len(suspended_rows),
+            "task_ids": [str(row.get("id") or "") for row in suspended_rows],
+            "failed": failed,
+        }
+
     def list_ready(self) -> list[Task]:
         return self._board.list_ready()
 

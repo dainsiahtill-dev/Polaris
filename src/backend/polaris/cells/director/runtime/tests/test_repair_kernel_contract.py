@@ -1216,6 +1216,58 @@ def test_typescript_import_specifier_keyword_rule_repairs_named_import_clause() 
     assert "import type ReputationRecord" not in repaired
 
 
+def test_typescript_import_specifier_keyword_rule_repairs_embedded_import_type_block() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL
+    content = (
+        'import { test } from "node:test";\n'
+        'import assert from "node:assert/strict";\n'
+        "\n"
+        "import {\n"
+        'import type { StallId } from "../src/types";\n'
+        "  DomainError,\n"
+        "  Inventory,\n"
+        "  Market,\n"
+        '} from "../src/index";\n'
+        "\n"
+        'const stallId = "stall-src" as StallId;\n'
+        'assert.equal(stallId, "stall-src");\n'
+    )
+    diagnostics = (
+        "tests/behavior.test.ts(5,1): error TS1003: Identifier expected.",
+        "tests/behavior.test.ts(5,13): error TS1005: 'from' expected.",
+        "tests/behavior.test.ts(10,1): error TS1109: Declaration or statement expected.",
+        "tests/behavior.test.ts(10,3): error TS1434: Unexpected keyword or identifier.",
+    )
+
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=diagnostics,
+            base_files={"tests/behavior.test.ts": content},
+        )
+    )
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={"tests/behavior.test.ts": content},
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    )
+    payload = planning_result.to_dict()
+
+    assert result.status == "covered_plannable"
+    assert result.uncovered_diagnostics == ()
+    assert result.plannable_source_tools == (source_tool,)
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    assert payload["composition_summary"]["patch_count"] == 1
+    repaired = payload["composition_summary"]["patches"][0]["content_after"]
+    assert 'import type { StallId } from "../src/types";\nimport {\n' in repaired
+    assert "import {\nimport type" not in repaired
+    assert 'StallId } from "../src/types";\n  DomainError' not in repaired
+
+
 def test_public_typescript_import_specifier_keyword_repair_plans_precise_text_replace() -> None:
     source_tool = ts_syntax.TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL
     content = 'import {\n  Reputation,\n  export type ReputationTier,\n} from "./Reputation";\n'
@@ -2451,6 +2503,360 @@ def test_typescript_ts2584_dom_lib_diagnostic_is_covered_plannable() -> None:
     assert result.items[0].patch_count == 1
 
 
+def test_typescript_config_key_split_diagnostic_is_covered_plannable() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_CONFIG_KEY_SPLIT_SOURCE_TOOL
+    diagnostic = (
+        "Artifact quality scan failed: workspace validation command failed (npm run build):\n"
+        '✘ [ERROR] Expected "}" but found "Dir"\n\n'
+        "    vite.config.ts:5:9:\n"
+        "      5 │   public Dir: false,\n"
+        "        │          ~~~\n"
+        "        ╵          }\n"
+    )
+    base_files = {
+        "vite.config.ts": (
+            "import { defineConfig } from 'vite';\n\n"
+            "export default defineConfig({\n"
+            '  root: ".",\n'
+            "  public Dir: false,\n"
+            "});\n"
+        )
+    }
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,))
+    ).to_dict()
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=(diagnostic,),
+            base_files=base_files,
+        )
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            artifact_quality_errors=(diagnostic,),
+            base_files=base_files,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert coverage["covered_diagnostic_count"] == 1
+    assert coverage["uncovered_diagnostic_count"] == 0
+    assert source_tool in coverage["items"][0]["matched_source_tools"]
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == (source_tool,)
+    assert result.items[0].status == "covered_plannable"
+    assert result.items[0].patch_count == 1
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["composition_summary"]["patch_count"] == 1
+    assert "publicDir: false" in planning["composition_summary"]["patches"][0]["content_after"]
+
+
+def test_typescript_ts1128_test_block_residue_is_covered_plannable() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL
+    diagnostic = "src/models/__tests__/market.sim.test.ts(18,3): error TS1128: Declaration or statement expected."
+    base_files = {
+        "src/models/__tests__/market.sim.test.ts": (
+            "import assert from 'node:assert/strict';\n"
+            "import { isFairySpecies, isItemCategory } from '../market.js';\n"
+            "\n"
+            "describe('type guards', () => {\n"
+            "  it('isItemCategory accepts only known categories', () => {\n"
+            "    assert.equal(isItemCategory('herb'), true);\n"
+            "    assert.equal(isItemCategory('potion'), true);\n"
+            "    assert.equal(isItemCategory('not-a-category'), false);\n"
+            "  });\n"
+            "\n"
+            "  it('isFairySpecies accepts only known species', () => {\n"
+            "    assert.equal(isFairySpecies('moon'), true);\n"
+            "    assert.equal(isFairySpecies('not-a-species'), false);\n"
+            "  });\n"
+            "});\n"
+            "    assert.equal(isItemCategory('herb'), true);\n"
+            "    assert.equal(isItemCategory('rock'), false);\n"
+            "  });\n"
+            "  it('isFairySpecies accepts only known species', () => {\n"
+            "    assert.equal(isFairySpecies('moon'), true);\n"
+            "    assert.equal(isFairySpecies('dragon'), false);\n"
+            "  });\n"
+            "});\n"
+        )
+    }
+    coverage = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,))
+    ).to_dict()
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=(diagnostic,),
+            base_files=base_files,
+        )
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            artifact_quality_errors=(diagnostic,),
+            base_files=base_files,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert coverage["covered_diagnostic_count"] == 1
+    assert coverage["uncovered_diagnostic_count"] == 0
+    assert source_tool in coverage["items"][0]["matched_source_tools"]
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == (source_tool,)
+    assert result.items[0].status == "covered_plannable"
+    assert result.items[0].patch_count == 1
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["composition_summary"]["patch_count"] == 1
+    content_after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "assert.equal(isItemCategory('not-a-category'), false);" in content_after
+    assert "assert.equal(isItemCategory('rock'), false);" not in content_after
+    assert content_after.rstrip().endswith("});")
+
+
+def test_typescript_ts6133_unused_import_and_local_declaration_are_covered_plannable() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL
+    diagnostics = (
+        "src/main.ts(2,1): error TS6133: 'Reputation' is declared but its value is never read.",
+        "src/models/Inventory.test.ts(4,9): error TS6133: 'inv' is declared but its value is never read.",
+    )
+    base_files = {
+        "src/main.ts": (
+            'import { Market } from "./models/Market.js";\n'
+            'import { Reputation } from "./models/Reputation.js";\n'
+            "const market = new Market('night');\n"
+            "console.log(market);\n"
+        ),
+        "src/models/Inventory.test.ts": (
+            "import { Inventory } from './Inventory.js';\n"
+            "test('quantity guard', () => {\n"
+            "  const before = 1;\n"
+            "  const inv = new Inventory();\n"
+            "  assert.equal(before, 1);\n"
+            "});\n"
+        ),
+    }
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+        )
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == (source_tool,)
+    assert result.items[0].status == "covered_plannable"
+    assert result.items[0].patch_count == 2
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    patches = {patch["path"]: patch["content_after"] for patch in planning["composition_summary"]["patches"]}
+    assert "Reputation" not in patches["src/main.ts"]
+    assert "new Inventory();" in patches["src/models/Inventory.test.ts"]
+    assert "const inv" not in patches["src/models/Inventory.test.ts"]
+
+
+def test_typescript_ts6133_unused_function_declaration_is_covered_plannable() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL
+    diagnostic = "src/models/Market.ts(7,10): error TS6133: 'findFairy' is declared but its value is never read."
+    source = (
+        "export class MarketError extends Error {\n"
+        "  constructor(message: string) {\n"
+        "    super(message);\n"
+        "  }\n"
+        "}\n"
+        "\n"
+        "function findFairy(market: Market, fairyId: string): Fairy {\n"
+        "  const found = market.fairies.find((f) => f.id === fairyId);\n"
+        "  if (!found) {\n"
+        "    throw new MarketError(`Fairy ${fairyId} is not registered in market ${market.id}`);\n"
+        "  }\n"
+        "  return found;\n"
+        "}\n"
+        "\n"
+        "export function createMarket(): Market {\n"
+        '  return { id: "night", fairies: [] } as Market;\n'
+        "}\n"
+    )
+
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=(diagnostic,),
+            base_files={"src/models/Market.ts": source},
+        )
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            artifact_quality_errors=(diagnostic,),
+            base_files={"src/models/Market.ts": source},
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert result.status == "covered_plannable"
+    assert result.items[0].patch_count == 1
+    assert planning["ok"] is True
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "function findFairy" not in repaired
+    assert "export function createMarket" in repaired
+    assert "export class MarketError" in repaired
+
+
+def test_typescript_ts6133_underscore_unused_local_declaration_is_covered_plannable() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL
+    diagnostic = "src/main.ts(5,9): error TS6133: '_unusedTreasury' is declared but its value is never read."
+    source = (
+        "function renderTreasury(value: { coins: number }): string {\n"
+        "  return String(value.coins);\n"
+        "}\n"
+        "export function runDemo(): void {\n"
+        "  const _unusedTreasury = renderTreasury({ coins: 3 });\n"
+        '  console.log("demo");\n'
+        "}\n"
+    )
+
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=(diagnostic,),
+            base_files={"src/main.ts": source},
+        )
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            artifact_quality_errors=(diagnostic,),
+            base_files={"src/main.ts": source},
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == (source_tool,)
+    assert planning["ok"] is True
+    assert planning["composition_summary"]["patch_count"] == 1
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "const _unusedTreasury" not in repaired
+    assert "  renderTreasury({ coins: 3 });\n" in repaired
+    assert 'console.log("demo");' in repaired
+
+
+def test_typescript_ts6133_multispecifier_import_bindings_are_covered_plannable() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL
+    diagnostics = (
+        "src/main.ts(3,3): error TS6133: 'MarketError' is declared but its value is never read.",
+        "src/main.ts(4,3): error TS6133: 'StallState' is declared but its value is never read.",
+        "src/main.ts(7,17): error TS6133: 'FairyError' is declared but its value is never read.",
+    )
+    base_files = {
+        "src/main.ts": (
+            "import {\n"
+            "  Market,\n"
+            "  MarketError,\n"
+            "  StallState,\n"
+            "  type StallId,\n"
+            "} from './models/Market';\n"
+            "import { Fairy, FairyError, FairyRole } from './models/Fairy';\n"
+            "export { MarketError, StallState } from './models/Market';\n"
+            "export { FairyError } from './models/Fairy';\n"
+            "const market = new Market();\n"
+            "const fairy = new Fairy();\n"
+            "console.log(market, fairy, FairyRole.Worker);\n"
+        ),
+    }
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+        )
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == (source_tool,)
+    assert result.items[0].status == "covered_plannable"
+    assert result.items[0].patch_count == 1
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    content_after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "  MarketError,\n" not in content_after
+    assert "  StallState,\n" not in content_after
+    assert "import { Fairy, FairyRole } from './models/Fairy';" in content_after
+    assert "export { MarketError, StallState } from './models/Market';" in content_after
+    assert "export { FairyError } from './models/Fairy';" in content_after
+
+
+def test_typescript_ts6133_duplicate_diagnostics_do_not_overlap_same_span() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_UNUSED_IMPORT_SOURCE_TOOL
+    diagnostics = (
+        "Artifact quality scan failed: workspace validation command failed (npm run build): "
+        "src/main.ts(2,1): error TS6133: 'Inventory' is declared but its value is never read.\n"
+        "src/main.ts(3,1): error TS6133: 'Reputation' is declared but its value is never read.",
+        "Artifact quality scan failed: workspace validation command failed (npm run start): "
+        "src/main.ts(2,1): error TS6133: 'Inventory' is declared but its value is never read.\n"
+        "src/main.ts(3,1): error TS6133: 'Reputation' is declared but its value is never read.",
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/main.ts(2,1): error TS6133: 'Inventory' is declared but its value is never read.",
+    )
+    base_files = {
+        "src/main.ts": (
+            'import { Market } from "./models/Market.js";\n'
+            'import { Inventory } from "./models/Inventory.js";\n'
+            'import { Reputation } from "./models/Reputation.js";\n'
+            "const market = new Market('night');\n"
+            "console.log(market);\n"
+        ),
+    }
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+        )
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            artifact_quality_errors=diagnostics,
+            base_files=base_files,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert result.status == "covered_plannable"
+    assert result.items[0].status == "covered_plannable"
+    assert planning["ok"] is True
+    assert planning["composition_summary"]["issue_count"] == 0
+    assert planning["composition_summary"]["patch_count"] == 1
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "Inventory" not in repaired
+    assert "Reputation" not in repaired
+    assert "Market" in repaired
+
+
 def test_typescript_ts2304_dom_html_type_diagnostic_is_covered_plannable() -> None:
     source_tool = ts_syntax.TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL
     diagnostic = "src/web.ts(18,18): error TS2304: Cannot find name 'HTMLElementTagNameMap'."
@@ -2643,7 +3049,7 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
     assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert len(runtime_repair_source_tools()) == len(bindings)
-    assert len(runtime_repair_source_tools()) == 101
+    assert len(runtime_repair_source_tools()) == 106
     assert sum(1 for binding in bindings if binding["language"] == "rust") == 20
     assert runtime_repair_source_tools() == tuple(binding["source_tool"] for binding in bindings)
     assert all(set(binding) == {"source_tool", "language", "rule_id"} for binding in bindings)
@@ -2700,6 +3106,21 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
         "source_tool": ts_syntax.TYPESCRIPT_LITERAL_UNION_VALUE_FACADE_SOURCE_TOOL,
         "language": "typescript",
         "rule_id": "typescript.literal_union_value_facade",
+    }
+    assert bindings_by_tool[ts_syntax.TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL] == {
+        "source_tool": ts_syntax.TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL,
+        "language": "typescript",
+        "rule_id": "typescript.test_block_residue",
+    }
+    assert bindings_by_tool[ts_syntax.TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL] == {
+        "source_tool": ts_syntax.TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL,
+        "language": "typescript",
+        "rule_id": "typescript.dom_local_shim_cleanup",
+    }
+    assert bindings_by_tool[ts_syntax.TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL] == {
+        "source_tool": ts_syntax.TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL,
+        "language": "typescript",
+        "rule_id": "typescript.expect_error_placement",
     }
 
 
@@ -3115,6 +3536,40 @@ def test_public_npm_script_contract_uses_tsconfig_rootdir_for_compiled_entrypoin
     assert '"start": "npm run build && node dist/src/verify.js"' in content_after
 
 
+def test_public_npm_script_contract_covers_bench_missing_local_entrypoint_shape() -> None:
+    source_tool = js_syntax.NPM_SCRIPT_CONTRACT_SOURCE_TOOL
+    diagnostic = "script 'test' references missing local entrypoint: ./tests/register-ts.js"
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,)))
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={
+                "package.json": (
+                    '{"type":"commonjs","scripts":{'
+                    '"build":"tsc -p tsconfig.json",'
+                    '"test":"npm run build && node --test --require ./tests/register-ts.js tests/behavior.test.ts",'
+                    '"start":"npm run build && node dist/main.js"'
+                    '},"devDependencies":{"typescript":"5.5.4"}}\n'
+                ),
+                "tsconfig.json": '{"compilerOptions":{"outDir":"dist","rootDir":"src"}}\n',
+                "tests/behavior.test.ts": "import test from 'node:test';\ntest('ok', () => {});\n",
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    coverage_payload = coverage.to_dict()
+    assert coverage_payload["covered_diagnostic_count"] == 1
+    assert coverage_payload["items"][0]["matched_source_tools"] == [source_tool]
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    content_after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "register-ts.js" not in content_after
+    assert '"test": "npm run build"' in content_after
+
+
 def test_public_npm_script_source_require_module_error_is_covered_plannable() -> None:
     diagnostic = (
         "Artifact quality scan failed: workspace validation command failed (npm test): "
@@ -3141,6 +3596,52 @@ def test_public_npm_script_source_require_module_error_is_covered_plannable() ->
     assert result.plannable_source_tools == (js_syntax.NPM_SCRIPT_CONTRACT_SOURCE_TOOL,)
     assert result.items[0].status == "covered_plannable"
     assert result.items[0].patch_count == 1
+
+
+def test_public_npm_start_typescript_source_loader_require_cycle_is_covered_plannable() -> None:
+    diagnostic = (
+        "Artifact quality scan failed: workspace validation command failed (npm run start):\n"
+        "> node --loader ts-node/esm src/main.ts || node -r ts-node/register src/main.ts\n"
+        "Error [ERR_REQUIRE_CYCLE_MODULE]: Cannot require() ES Module /tmp/demo/src/main.ts in a cycle.\n"
+        "src/main.ts(2,1): error TS6133: 'Unused' is declared but its value is never read."
+    )
+    base_files = {
+        "package.json": (
+            '{"scripts":{"build":"tsc -p tsconfig.json","start":"node --loader ts-node/esm src/main.ts || '
+            'node -r ts-node/register src/main.ts"},"devDependencies":{"typescript":"^5.0.0","ts-node":"^10.9.2"}}\n'
+        ),
+        "tsconfig.json": '{"compilerOptions":{"outDir":"dist","rootDir":"src"}}\n',
+        "src/main.ts": "export function main(): void {}\n",
+    }
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,)))
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(js_syntax.NPM_SCRIPT_CONTRACT_SOURCE_TOOL,),
+            artifact_quality_errors=(diagnostic,),
+            base_files=base_files,
+        )
+    )
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=js_syntax.NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
+            artifact_quality_errors=(diagnostic,),
+            base_files=base_files,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert coverage.covered_diagnostic_count == 2
+    assert js_syntax.NPM_SCRIPT_CONTRACT_SOURCE_TOOL in {
+        source_tool for item in coverage.items for source_tool in item.matched_source_tools
+    }
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == (js_syntax.NPM_SCRIPT_CONTRACT_SOURCE_TOOL,)
+    assert result.items[0].status == "covered_plannable"
+    assert result.items[0].patch_count == 1
+    assert planning["ok"] is True
+    content_after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert '"start": "npm run build && node dist/main.js"' in content_after
 
 
 def test_public_typescript_tsconfig_rootdir_repair_covers_tests_outside_src(tmp_path: Path) -> None:
@@ -3393,6 +3894,153 @@ def test_public_typescript_html_container_selector_covers_html5_verifier_contrac
     assert planning["plan_summary"]["rule_id"] == "typescript.html_container_selector"
     content_after = planning["composition_summary"]["patches"][0]["content_after"]
     assert "/id=[\"'][^\"']*(market|stall|sim|app)[^\"']*[\"']/i" in content_after
+
+
+def test_public_typescript_dom_local_shim_cleanup_removes_generated_dom_shims() -> None:
+    diagnostic = (
+        "src/web.ts(48,25): error TS2339: Property 'createElement' does not exist on type "
+        "'{ getElementById(id: string): HTMLElement | null; addEventListener(type: string, listener: () => void): void; }'.\n"
+        "src/web.ts(86,34): error TS2740: Type 'HTMLCanvasElement' is missing the following "
+        "properties from type 'HTMLCanvasElement': captureStream, toBlob, toDataURL, transferControlToOffscreen.\n"
+    )
+    web_source = (
+        "declare const document: {\n"
+        "  getElementById(id: string): HTMLElement | null;\n"
+        "  addEventListener(type: string, listener: () => void): void;\n"
+        "};\n"
+        "\n"
+        "interface HTMLElement {\n"
+        "  textContent: string;\n"
+        "  appendChild(child: HTMLElement): void;\n"
+        "  children: HTMLCollection;\n"
+        "}\n"
+        "\n"
+        "interface HTMLCanvasElement extends HTMLElement {\n"
+        "  width: number;\n"
+        "  height: number;\n"
+        "  getContext(type: '2d'): CanvasRenderingContext2D | null;\n"
+        "}\n"
+        "\n"
+        "interface CanvasRenderingContext2D {\n"
+        "  clearRect(x: number, y: number, width: number, height: number): void;\n"
+        "}\n"
+        "\n"
+        "interface HTMLCollection {\n"
+        "  length: number;\n"
+        "}\n"
+        "\n"
+        "const root = document.createElement('section');\n"
+        "const canvas = document.getElementById('board') as HTMLCanvasElement;\n"
+        "const query = root.querySelector('canvas');\n"
+        "console.log(canvas.width, query);\n"
+    )
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,)))
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL,
+            base_files={
+                "src/web.ts": web_source,
+                "tsconfig.web.json": '{"compilerOptions":{"lib":["ES2022","DOM"]}}\n',
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+    coverage_payload = coverage.to_dict()
+    ts2740_item = next(item for item in coverage_payload["items"] if item["diagnostic"]["code"] == "typescript_ts2740")
+
+    assert ts_syntax.TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL in ts2740_item["matched_source_tools"]
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.dom_local_shim_cleanup"
+    content_after = planning["composition_summary"]["patches"][0]["content_after"]
+    assert "declare const document" not in content_after
+    assert "interface HTMLCanvasElement" not in content_after
+    assert "interface CanvasRenderingContext2D" not in content_after
+    assert "document.createElement('section')" in content_after
+
+
+def test_public_typescript_unresolved_identifier_repairs_array_length_type_assertion() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_UNRESOLVED_IDENTIFIER_SOURCE_TOOL
+    diagnostic = "src/models/Market.test.ts(4,20): error TS2304: Cannot find name 'ReputationDeltaInternal'."
+    content = (
+        "import { Reputation } from './Reputation';\n"
+        "const rep = new Reputation();\n"
+        "const snap = rep.snapshot();\n"
+        "(snap.history as ReputationDeltaInternal[]).length = 0;\n"
+    )
+
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=(diagnostic,),
+            base_files={"src/models/Market.test.ts": content},
+        )
+    )
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={"src/models/Market.test.ts": content},
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == (source_tool,)
+    assert planning_result["ok"] is True
+    assert planning_result["planned"] is True
+    assert planning_result["composition_summary"]["patch_count"] == 1
+    content_after = planning_result["composition_summary"]["patches"][0]["content_after"]
+    assert "(snap.history as unknown[]).length = 0;" in content_after
+
+
+def test_public_typescript_expect_error_placement_moves_comment_to_error_line() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL
+    diagnostics = (
+        "tests/behavior.test.ts(2,3): error TS2578: Unused '@ts-expect-error' directive.",
+        "tests/behavior.test.ts(4,31): error TS2345: Argument of type '\"dragon\"' "
+        "is not assignable to parameter of type 'FairyRole'.",
+    )
+    content = (
+        "test('invalid role', () => {\n"
+        "  // @ts-expect-error -- exercising runtime guard against unknown role\n"
+        "  assert.throws(\n"
+        "    () => new Fairy('x', 'X', 'dragon', { charm: 50, reliability: 50 }),\n"
+        "    /unknown role/,\n"
+        "  );\n"
+        "});\n"
+    )
+
+    result = query_director_repair_plan_probe(
+        QueryDirectorRepairPlanProbeV1(
+            source_tools=(source_tool,),
+            artifact_quality_errors=diagnostics,
+            base_files={"tests/behavior.test.ts": content},
+        )
+    )
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files={"tests/behavior.test.ts": content},
+            artifact_quality_errors=diagnostics,
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert result.status == "covered_plannable"
+    assert result.plannable_source_tools == (source_tool,)
+    assert planning_result["ok"] is True
+    assert planning_result["planned"] is True
+    assert planning_result["composition_summary"]["patch_count"] == 1
+    content_after = planning_result["composition_summary"]["patches"][0]["content_after"]
+    assert (
+        "  assert.throws(\n    // @ts-expect-error -- exercising runtime guard against unknown role\n" in content_after
+    )
+    assert (
+        "  // @ts-expect-error -- exercising runtime guard against unknown role\n  assert.throws" not in content_after
+    )
 
 
 def test_typescript_aggregate_diagnostics_expand_each_compiler_line() -> None:
@@ -3730,6 +4378,40 @@ def test_typescript_duplicate_export_import_binding_repairs_barrel_value_and_typ
     assert 'export { Fairy } from "./models/Fairy";' in repaired
     assert 'export type { FairyId, FairySpecialty, FairyRole } from "./models/Fairy";' in repaired
     assert "FairyRole, Fairy }" not in repaired
+
+
+def test_typescript_export_ambiguity_adds_explicit_reexport_for_ts2308() -> None:
+    diagnostic = (
+        'src/index.ts(2,1): error TS2308: Module "./models/A" has already exported '
+        "a member named 'SharedId'. Consider explicitly re-exporting to resolve the ambiguity."
+    )
+    index_text = 'export * from "./models/A";\nexport * from "./models/B";\n'
+    base_files = {
+        "src/index.ts": index_text,
+        "src/models/A.ts": 'export type SharedId = string & { readonly __brand: "A" };\nexport const makeA = () => 1;\n',
+        "src/models/B.ts": 'export type SharedId = string & { readonly __brand: "B" };\nexport const makeB = () => 2;\n',
+    }
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,)))
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=ts_syntax.TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+    coverage_payload = coverage.to_dict()
+
+    assert coverage_payload["covered_diagnostic_count"] == 1
+    assert coverage_payload["items"][0]["coverage_status"] == "executable_runtime"
+    assert "typescript.export_ambiguity" in coverage_payload["items"][0]["matched_rule_ids"]
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.export_ambiguity"
+    repaired = planning["composition_summary"]["patches"][0]["content_after"]
+    assert 'export * from "./models/A";\nexport type { SharedId } from "./models/A";' in repaired
+    assert 'export * from "./models/B";' in repaired
 
 
 def test_typescript_duplicate_export_import_binding_repairs_local_type_export_duplicates() -> None:
@@ -10010,7 +10692,7 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         or source_tool == "deterministic_javascript_typescript_annotation_repair"
     ]
     catalog_failure_message = (
-        "expected public strategy catalog ledger total=102 executable_runtime=101 "
+        "expected public strategy catalog ledger total=107 executable_runtime=106 "
         "metadata_rule_registered=1 legacy_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
         "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
@@ -10020,17 +10702,17 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
-    assert catalog_summary["total"] == 102
+    assert catalog_summary["total"] == 107
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert legacy_source_tools == [], catalog_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 101, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 106, catalog_failure_message
     assert catalog_summary["implementation_status_counts"].get("metadata_rule_registered", 0) == 1, (
         catalog_failure_message
     )
     assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, catalog_failure_message
-    assert catalog_summary["executable_runtime_binding_count"] == 101, catalog_failure_message
+    assert catalog_summary["executable_runtime_binding_count"] == 106, catalog_failure_message
     assert catalog_summary["legacy_strategy_host_count"] == 0, catalog_failure_message
-    assert len(catalog_summary["executable_runtime_source_tools"]) == 101, catalog_failure_message
+    assert len(catalog_summary["executable_runtime_source_tools"]) == 106, catalog_failure_message
     assert set(catalog_summary["implementation_status_counts"]).issubset(
         {"executable_runtime", "metadata_rule_registered", "legacy_strategy_host"}
     )

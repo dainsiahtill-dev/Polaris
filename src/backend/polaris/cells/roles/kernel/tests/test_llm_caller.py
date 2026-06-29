@@ -1147,6 +1147,57 @@ class TestPreparedRequestArchitecture:
         assert prepared.request_options["tool_choice"] == forced_choice
 
     @pytest.mark.asyncio
+    async def test_prepare_llm_request_carries_execution_envelope_from_context_override(self, monkeypatch) -> None:
+        caller = LLMCaller(workspace="C:/workspace")
+        profile = MockProfile(role_id="director", model="gpt-5", provider_id="openai")
+        profile.tool_policy = SimpleNamespace(whitelist=["read_file"])
+
+        class _FakeGateway:
+            def __init__(self, _profile, _workspace) -> None:
+                pass
+
+            async def build_context(self, _context, *, system_prompt=None):
+                return _turn_context_result("PM Task Contract TASK-1 target_files src/main.py")
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",
+            _FakeGateway,
+        )
+        monkeypatch.setattr(
+            LLMCaller,
+            "_build_native_tool_schemas",
+            staticmethod(lambda _profile: [{"type": "function", "function": {"name": "read_file"}}]),
+        )
+
+        envelope = {
+            "schema_version": "polaris.execution_envelope.v1",
+            "envelope_hash": "env-hash-1",
+            "authorization": {"allowed_write_paths": ["src/main.py"]},
+        }
+        context = SimpleNamespace(
+            task_id=None,
+            context_override={
+                "director_execution_profile": {"schema_version": "task.execution_profile.v1"},
+                "director_execution_strategy": {"schema_version": "task.execution_strategy.v1"},
+                "director_execution_envelope": envelope,
+                "execution_envelope_hash": "env-hash-1",
+            },
+        )
+
+        prepared = await caller._prepare_llm_request(
+            profile=cast("RoleProfile", profile),
+            system_prompt="system",
+            context=cast("ContextRequest", context),
+            temperature=0.2,
+            max_tokens=256,
+            stream=False,
+        )
+
+        assert prepared.ai_request.context["director_execution_envelope"] == envelope
+        assert prepared.ai_request.context["task_execution_envelope"] == envelope
+        assert prepared.ai_request.context["execution_envelope_hash"] == "env-hash-1"
+
+    @pytest.mark.asyncio
     async def test_prepare_llm_request_quality_repair_forced_tools_keep_read_locate_context(
         self,
         monkeypatch,

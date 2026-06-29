@@ -2459,7 +2459,17 @@ def _check_failures(record: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _contains_context_budget_signal(text: str) -> bool:
-    return bool(re.search(r"budget|context[_ -]?window|max[_ -]?tokens|truncat|token budget", text, re.IGNORECASE))
+    return bool(
+        re.search(
+            r"context[_ -]?(?:window|budget|length|limit)|"
+            r"token[_ -]?budget|max[_ -]?tokens|"
+            r"context_length_exceeded|prompt[_ -]?too[_ -]?long|"
+            r"input[_ -]?tokens?[^.]{0,80}(?:exceed|limit)|"
+            r"(?:context|prompt|message)[_ -]?truncated",
+            text,
+            re.IGNORECASE,
+        )
+    )
 
 
 def _first_real_run_failure(real_run_gate: dict[str, Any]) -> str:
@@ -2813,6 +2823,22 @@ def _record_has_chief_engineer_blueprint_failure(record: dict[str, Any]) -> bool
     )
 
 
+def _run_ledger_projection_integrity_available(record: dict[str, Any]) -> bool:
+    projection = record.get("run_ledger_projection")
+    if not isinstance(projection, dict):
+        return False
+    if projection.get("source") != "run_ledger":
+        return False
+    if int(projection.get("gate_count") or 0) <= 0:
+        return False
+    if not bool(projection.get("integrity_ok")):
+        return False
+    evidence_policy = projection.get("evidence_policy")
+    evidence_policy_map = evidence_policy if isinstance(evidence_policy, dict) else {}
+    missing_required = evidence_policy_map.get("missing_required_modalities")
+    return not (isinstance(missing_required, list) and bool(missing_required))
+
+
 def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     """Assign one stable root-cause category to a per-project bench record."""
     if record.get("all_checks_passed"):
@@ -2839,7 +2865,7 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
             ledger_detail = str(ledger_status.get("detail") or "run ledger projection missing").strip()
             if ledger_detail:
                 evidence.append(f"secondary_run_ledger:{ledger_detail}")
-    elif run_ledger_gate_failed:
+    elif run_ledger_gate_failed and not _run_ledger_projection_integrity_available(record):
         ledger_status = summarize_run_ledger_projection(record.get("run_ledger_projection"))
         category, reason = "control_plane", "run_ledger_projection_missing"
         evidence.append(str(ledger_status.get("detail") or "run ledger projection missing"))
@@ -2942,9 +2968,7 @@ def aggregate_goal_audit(records: list[dict[str, Any]]) -> dict[str, Any]:
     real_passed = sum(
         1 for record in records if isinstance(record.get("real_run_gate"), dict) and record["real_run_gate"].get("ok")
     )
-    ledger_projected = sum(
-        1 for record in records if summarize_run_ledger_projection(record.get("run_ledger_projection")).get("ok")
-    )
+    ledger_projected = sum(1 for record in records if _run_ledger_projection_integrity_available(record))
     route_passed = sum(
         1
         for record in records

@@ -233,10 +233,11 @@ def _qa_verdict_engine_mode() -> str:
 def _qa_verdict_engine_shadow_payload(envelope: dict[str, Any], diff: dict[str, Any]) -> dict[str, Any]:
     classification = envelope.get("classification")
     classification_map = classification if isinstance(classification, dict) else {}
+    mode = _qa_verdict_engine_mode()
     return {
         "schema_version": "qa.verdict_engine_shadow.v1",
-        "authoritative": False,
-        "mode": _qa_verdict_engine_mode(),
+        "authoritative": mode == "engine",
+        "mode": mode,
         "content_hash": str(envelope.get("content_hash") or ""),
         "verdict": str(envelope.get("verdict") or ""),
         "next_stage": str(envelope.get("next_stage") or ""),
@@ -246,6 +247,36 @@ def _qa_verdict_engine_shadow_payload(envelope: dict[str, Any], diff: dict[str, 
         "repairable_by_director": bool(classification_map.get("repairable_by_director")),
         "diff": diff,
     }
+
+
+def _apply_authoritative_verdict_engine_route(
+    *,
+    legacy_verdict: str,
+    legacy_next_stage: str,
+    legacy_terminal_status: str,
+    engine_payload: dict[str, Any],
+) -> tuple[str, str, str]:
+    """Use the verdict engine route only when explicitly promoted.
+
+    Shadow remains the default migration mode. In authoritative mode the engine
+    must either provide a route or fail closed back to QA infrastructure instead
+    of silently falling through to legacy routing.
+    """
+
+    if _qa_verdict_engine_mode() != "engine":
+        return legacy_verdict, legacy_next_stage, legacy_terminal_status
+    if not engine_payload or engine_payload.get("error"):
+        return "BLOCKED", "pending_qa", ""
+    verdict = str(engine_payload.get("verdict") or "BLOCKED").strip().upper() or "BLOCKED"
+    next_stage = str(engine_payload.get("next_stage") or "").strip().lower()
+    terminal_status = str(engine_payload.get("terminal_status") or "").strip().lower()
+    if next_stage and next_stage not in _VALID_ROUTE_STAGES:
+        return "BLOCKED", "pending_qa", ""
+    if not next_stage and not terminal_status:
+        terminal_status = "resolved" if verdict == "PASS" else ""
+        if not terminal_status:
+            next_stage = "pending_qa"
+    return verdict, next_stage, terminal_status
 
 
 def _qa_llm_audit_timeout_seconds() -> float:
@@ -1224,6 +1255,14 @@ class QAConsumer:
             )
             if shadow:
                 audit_result["qa_verdict_engine_shadow"] = shadow
+                verdict, next_stage, terminal_status = _apply_authoritative_verdict_engine_route(
+                    legacy_verdict=verdict,
+                    legacy_next_stage=next_stage,
+                    legacy_terminal_status=terminal_status,
+                    engine_payload=shadow,
+                )
+                if shadow.get("authoritative"):
+                    audit_result["qa_verdict_engine_authoritative"] = shadow
 
             # RANK 1 (Reflexion/Actor-Critic): a content FAIL with actionable findings
             # must hand them to the Director, not die in a terminal reject. acknowledge_

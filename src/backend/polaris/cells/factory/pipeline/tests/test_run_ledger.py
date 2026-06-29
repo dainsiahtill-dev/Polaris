@@ -314,6 +314,8 @@ def test_run_ledger_projection_tracks_user_verifier_modalities(tmp_path: Path) -
     assert projection["ok"] is True
     assert projection["evidence_policy"] == {
         "ok": True,
+        "integrity_ok": True,
+        "outcome_ok": True,
         "enabled_modalities": [],
         "required_modalities": ["physics"],
         "missing_required_modalities": [],
@@ -578,6 +580,8 @@ def test_run_ledger_policy_tracks_enabled_browser_without_requiring_it(tmp_path:
     assert projection["ok"] is True
     assert projection["evidence_policy"] == {
         "ok": True,
+        "integrity_ok": True,
+        "outcome_ok": True,
         "enabled_modalities": ["browser", "visual"],
         "required_modalities": [],
         "missing_required_modalities": [],
@@ -637,6 +641,8 @@ def test_run_ledger_projection_tracks_browser_and_visual_entrypoint_evidence(tmp
     assert projection["ok"] is True
     assert projection["evidence_policy"] == {
         "ok": True,
+        "integrity_ok": True,
+        "outcome_ok": True,
         "enabled_modalities": ["browser", "visual"],
         "required_modalities": ["code", "command", "browser", "visual"],
         "missing_required_modalities": [],
@@ -645,7 +651,9 @@ def test_run_ledger_projection_tracks_browser_and_visual_entrypoint_evidence(tmp
     assert projection["evidence_modalities"]["browser"]["ok"] == 1
     assert projection["evidence_modalities"]["visual"]["ok"] == 1
     assert projection["gates"][0]["evidence_modalities"]["browser"]["metadata"]["url"] == "http://127.0.0.1:8123/"
-    assert projection["gates"][0]["evidence_modalities"]["visual"]["metadata"]["screenshot_hash"] == "sha256:visual-proof"
+    assert (
+        projection["gates"][0]["evidence_modalities"]["visual"]["metadata"]["screenshot_hash"] == "sha256:visual-proof"
+    )
 
 
 def test_run_ledger_policy_can_explicitly_require_browser_evidence(tmp_path: Path) -> None:

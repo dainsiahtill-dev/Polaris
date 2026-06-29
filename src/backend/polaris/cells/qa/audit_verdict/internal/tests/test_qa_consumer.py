@@ -131,6 +131,39 @@ class TestQAFindingsRequeue:
         assert results[0]["verdict"] == "FAIL"
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_authoritative_verdict_engine_requeues_implementation_defect(
+        self,
+        mock_get_svc: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("KERNELONE_QA_VERDICT_ENGINE_MODE", "engine")
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-qa-engine"
+        claim_result.lease_token = "lease-engine"
+        claim_result.payload = {"title": "QA task"}
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+
+        consumer = QAConsumer(workspace="/test", worker_id="qa-engine")
+        with patch.object(
+            consumer,
+            "_run_qa_audit",
+            return_value={"verdict": "FAIL", "audit_id": "a-engine", "findings": []},
+        ):
+            results = consumer.poll_once()
+
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.requeue_stage == "pending_exec"
+        assert fail_call.metadata["qa_verdict_engine_shadow"]["authoritative"] is True
+        assert results[0]["reason"] == "qa_requeue"
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_env_off_keeps_terminal_reject(self, mock_get_svc: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("KERNELONE_QA_FINDINGS_REQUEUE", "off")
         mock_svc = MagicMock()

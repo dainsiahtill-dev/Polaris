@@ -400,6 +400,7 @@ class TurnEngineExecutor:
             tool_definitions: list[dict[str, Any]] | None = None,
             tool_choice: Any | None = None,
             temperature_override: Any | None = None,
+            max_tokens_floor: Any | None = None,
         ) -> dict[str, Any]:
             override: dict[str, Any]
             if isinstance(getattr(provider_request, "context_override", None), dict):
@@ -435,6 +436,29 @@ class TurnEngineExecutor:
             # ADR-0090 W2.6: phase-aware low temperature rides the same channel.
             if temperature_override is not None:
                 override["_transaction_kernel_temperature_override"] = temperature_override
+            if max_tokens_floor is not None:
+                try:
+                    floor_value = int(max_tokens_floor)
+                except (TypeError, ValueError):
+                    floor_value = 0
+                if floor_value > 0:
+                    forced_tool_choice = tool_choice is not None and not (
+                        isinstance(tool_choice, str) and tool_choice.strip().lower() in {"", "auto"}
+                    )
+                    if forced_tool_choice:
+                        override["llm_max_tokens"] = floor_value
+                        override["_transaction_kernel_retry_output_budget_bounded"] = True
+                        override["_transaction_kernel_retry_output_budget_reason"] = (
+                            "forced_tool_retry_must_not_inherit_full_execution_budget"
+                        )
+                    else:
+                        existing_budget = 0
+                        for budget_key in ("llm_max_tokens", "max_output_tokens", "max_tokens"):
+                            try:
+                                existing_budget = max(existing_budget, int(override.get(budget_key) or 0))
+                            except (TypeError, ValueError):
+                                continue
+                        override["llm_max_tokens"] = max(floor_value, existing_budget or 0)
             return override
 
         def _extract_model_override_from_request_payload(request_payload: dict[str, Any]) -> str | None:
@@ -501,6 +525,7 @@ class TurnEngineExecutor:
                         cast("list[dict[str, Any]] | None", request_payload.get("tools")),
                         request_payload.get("tool_choice"),
                         request_payload.get("temperature_override"),
+                        request_payload.get("max_tokens_floor"),
                     ),
                 )
 
@@ -624,6 +649,7 @@ class TurnEngineExecutor:
                         cast("list[dict[str, Any]] | None", request_payload.get("tools")),
                         request_payload.get("tool_choice"),
                         request_payload.get("temperature_override"),
+                        request_payload.get("max_tokens_floor"),
                     ),
                 )
 

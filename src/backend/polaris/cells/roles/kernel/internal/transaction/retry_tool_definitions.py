@@ -373,6 +373,7 @@ def build_forced_write_only_retry_tool_definitions(
     include_verification_tools: bool = False,
     forbidden_tool_names: set[str] | None = None,
     allow_write_file_companion_for_edit_blocks: bool = True,
+    include_mutation_companion_tools: bool = False,
 ) -> list[dict]:
     """Builds the strict forced-write tool definitions.
 
@@ -383,6 +384,8 @@ def build_forced_write_only_retry_tool_definitions(
     if not forced_write_tool_name:
         return [item for item in tool_definitions if extract_tool_name_from_definition(item) not in _forbidden]
     companion_tool_names: set[str] = {forced_write_tool_name}
+    if include_mutation_companion_tools and forced_write_tool_name in {"write_file", "edit_file"}:
+        companion_tool_names.update({"write_file", "edit_file"})
     if forced_write_tool_name in {"repo_apply_diff"}:
         companion_tool_names.update({"read_file", "repo_read_head"})
     elif _forced_write_allow_read_companions_enabled():

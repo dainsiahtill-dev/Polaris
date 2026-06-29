@@ -273,6 +273,7 @@ def resolve_retry_escalation(
     strict_tool_definitions: list[dict] | None,
     forced_write_tool_name: str | None,
     force_write_immediately: bool = False,
+    force_required_tool_choice: bool = False,
 ) -> tuple[list[dict] | None, Any | None]:
     """ADR-0090: API-level escalation ladder for mutation-contract retries.
 
@@ -307,6 +308,9 @@ def resolve_retry_escalation(
     definitions_override = strict_tool_definitions
     tool_choice_override: Any | None = None
     force_from_index = escalation_start if force_write_immediately else max_retry_attempts - 1
+    if attempt_index >= force_from_index and force_required_tool_choice:
+        tool_choice_override = "required"
+        return definitions_override, tool_choice_override
     if attempt_index >= force_from_index and forced_write_tool_name:
         tool_choice_override = {
             "type": "function",

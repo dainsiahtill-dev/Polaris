@@ -115,6 +115,45 @@ def _sanitize_materialize_positive_task_contract_line(line: str) -> str | None:
     return line
 
 
+def _infer_role_id_from_context(context: list[dict[str, Any]]) -> str:
+    for message in context:
+        if not isinstance(message, dict):
+            continue
+        metadata = message.get("metadata")
+        if isinstance(metadata, dict):
+            for key in ("role", "role_id", "actor", "expected_role_id"):
+                value = str(metadata.get(key) or "").strip().lower()
+                if value:
+                    return value
+        content = str(message.get("content") or "")
+        lowered = content.lower()
+        if "polaris 体系中的 **qa**" in lowered or "你是 polaris 体系中的 **qa**" in lowered:
+            return "qa"
+        if "polaris 体系中的 **director**" in lowered or "你是 polaris 体系中的 **director**" in lowered:
+            return "director"
+        if "polaris 体系中的 **chief engineer**" in lowered:
+            return "chief_engineer"
+        if "polaris 体系中的 **pm**" in lowered:
+            return "pm"
+    return ""
+
+
+def _is_readonly_qa_judgement_turn(context: list[dict[str, Any]], latest_user: str) -> bool:
+    role_id = _infer_role_id_from_context(context)
+    if role_id != "qa":
+        return False
+    joined = "\n".join(str(message.get("content") or "") for message in context if isinstance(message, dict)).lower()
+    latest = str(latest_user or "").lower()
+    readonly_markers = (
+        "do not inspect the workspace. do not call tools",
+        "review the qa target using only the deterministic evidence already collected",
+        "using only the deterministic evidence already collected by polaris",
+        "code writing: forbidden",
+        "代码写入: 禁止",
+    )
+    return any(marker in joined or marker in latest for marker in readonly_markers)
+
+
 def build_decision_messages(
     context: list[dict[str, Any]],
     tool_definitions: list[dict[str, Any]],
@@ -156,6 +195,16 @@ def build_decision_messages(
             "Do not include progress notes, execution narration, or write-tool instructions."
         )
         messages.append({"role": "system", "content": proposal_guard, "metadata": {"plane": "control"}})
+        return messages
+
+    if _is_readonly_qa_judgement_turn(context, _latest_user_for_guard):
+        qa_guard = (
+            "SYSTEM CONSTRAINT (QA Readonly): This is a QA evidence-judgement turn, not a mutation turn. "
+            "Use only the deterministic evidence already supplied in the prompt. "
+            "Do NOT inject or follow write/edit task-contract guidance, do NOT create mutation target files, "
+            "and do NOT call tools when the QA output contract forbids tool use."
+        )
+        messages.append({"role": "system", "content": qa_guard, "metadata": {"plane": "control"}})
         return messages
 
     if _is_super_readonly_stage:

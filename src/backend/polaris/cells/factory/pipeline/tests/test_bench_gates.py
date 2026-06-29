@@ -121,6 +121,63 @@ def test_failure_taxonomy_classifies_missing_run_ledger_gate_as_control_plane() 
     assert taxonomy["evidence"] == ["run ledger projection missing"]
 
 
+def test_failure_taxonomy_does_not_mask_real_run_failure_when_ledger_projection_exists() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "checks": [],
+        "factory_gates": [
+            {
+                "gate": "real_run_gate",
+                "ok": False,
+                "detail": "real run gate failed: build_test_lint_ran",
+            },
+            {
+                "gate": "run_ledger_projection",
+                "ok": False,
+                "detail": "run ledger projection required evidence failed: command",
+            },
+        ],
+        "real_run_gate": {
+            "ok": False,
+            "summary": "real run gate failed: build_test_lint_ran",
+            "commands_truncated": False,
+            "requirements": {
+                "artifact_landed": {"ok": True},
+                "source_files_present": {"ok": True},
+                "build_test_lint_ran": {"ok": False, "detail": "npm run test failed"},
+                "entrypoint_smoke": {"ok": True},
+            },
+        },
+        "run_ledger_projection": {
+            "schema_version": 1,
+            "source": "run_ledger",
+            "ok": False,
+            "integrity_ok": True,
+            "outcome_ok": False,
+            "event_count": 1,
+            "gate_count": 1,
+            "missing": [],
+            "failed_gates": [{"name": "real_run_gate", "ok": False}],
+            "capability": {"ok": True, "issues": [], "latest_token_id": "token-1"},
+            "evidence_policy": {
+                "ok": False,
+                "integrity_ok": True,
+                "outcome_ok": False,
+                "required_modalities": ["code", "command"],
+                "missing_required_modalities": [],
+                "failed_required_modalities": ["command"],
+            },
+            "physical_evidence": {"command_count": 2, "sampled_command_count": 2},
+        },
+    }
+
+    taxonomy = apply_factory_bench_failure_taxonomy(record)
+
+    assert taxonomy["category"] == "llm_output"
+    assert taxonomy["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
+    assert record["goal_audit"]["run_ledger"] == {"projected": 1, "total": 1, "missing": 0}
+
+
 def test_failure_taxonomy_prioritizes_event_wait_timeout_over_run_ledger_projection() -> None:
     record: dict[str, Any] = {
         "all_checks_passed": False,
@@ -2522,14 +2579,39 @@ def test_aggregate_goal_audit_counts_real_route_ledger_and_root_causes(tmp_path:
                 "root_cause_signature": "target_project_baseline:real_run_gate.entrypoint_smoke",
             },
         },
+        {
+            "real_run_gate": {"ok": False},
+            "run_ledger_projection": {
+                "source": "run_ledger",
+                "integrity_ok": True,
+                "outcome_ok": False,
+                "ok": False,
+                "event_count": 1,
+                "gate_count": 1,
+                "failed_gates": [{"name": "real_run_gate", "ok": False}],
+                "capability": {"ok": True, "issues": [], "latest_token_id": "j2"},
+                "evidence_policy": {
+                    "missing_required_modalities": [],
+                    "failed_required_modalities": ["command"],
+                },
+                "physical_evidence": {"command_count": 1},
+            },
+            "llm_route_audit": {"ok": True},
+            "failure_taxonomy": {
+                "ok": False,
+                "category": "llm_output",
+                "root_cause_signature": "llm_output:real_run_gate.build_test_lint_ran",
+            },
+        },
     ]
 
     aggregate = aggregate_goal_audit(records)
 
-    assert aggregate["real_run_gate"] == {"passed": 1, "total": 2}
-    assert aggregate["run_ledger"] == {"projected": 1, "total": 2, "missing": 1}
-    assert aggregate["llm_route_audit"] == {"passed": 1, "total": 2}
+    assert aggregate["real_run_gate"] == {"passed": 1, "total": 3}
+    assert aggregate["run_ledger"] == {"projected": 2, "total": 3, "missing": 1}
+    assert aggregate["llm_route_audit"] == {"passed": 2, "total": 3}
     assert aggregate["failure_categories"]["target_project_baseline"] == 1
+    assert aggregate["failure_categories"]["llm_output"] == 1
 
 
 def test_nested_roles_kernel_events_passes_with_model_only_and_expected_binding() -> None:

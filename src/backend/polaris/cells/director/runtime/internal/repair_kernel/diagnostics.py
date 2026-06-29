@@ -15,6 +15,12 @@ _TS_ROOTDIR_FILE_ERROR_RE = re.compile(
     r"['\"]rootDir['\"]\s+['\"](?P<root_dir>[^'\"]+)['\"]",
     re.IGNORECASE,
 )
+_ESBUILD_CONFIG_SYNTAX_RE = re.compile(
+    r"(?:✘\s*)?\[ERROR\]\s*Expected\s+[\"'`](?P<expected>[^\"'`]+)[\"'`]\s+"
+    r"but\s+found\s+[\"'`](?P<found>[^\"'`]+)[\"'`].*?"
+    r"(?P<path>[^\s:\n]+\.config\.tsx?):(?P<line>\d+):(?P<column>\d+):",
+    re.IGNORECASE | re.DOTALL,
+)
 _TS_RETURN_OBJECT_SEMICOLON_RE = re.compile(
     r"TypeScript return object contains semicolon-terminated property in (?P<path>\S+)",
     re.IGNORECASE,
@@ -52,6 +58,7 @@ _PYTHON_EXCEPTION_RE = re.compile(
 _JAVASCRIPT_MODULE_ERROR_RE = re.compile(
     r"(?P<message>Cannot find module ['\"][^'\"]+['\"]|does not provide an export named ['\"][^'\"]+['\"]|"
     r"require is not defined in ES module scope|exports is not defined in ES module scope|"
+    r"Cannot require\(\) ES Module [^\n]+|ERR_REQUIRE_CYCLE_MODULE|"
     r"Cannot use import statement outside a module|"
     r"[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\s+is not a function)",
     re.IGNORECASE,
@@ -138,7 +145,50 @@ def _normalize_typescript_errors(text: str) -> list[RepairDiagnostic]:
                 metadata={"raw_path": raw_path, "root_dir": root_dir},
             )
         )
+    for match in _ESBUILD_CONFIG_SYNTAX_RE.finditer(text):
+        found = str(match.group("found") or "").strip()
+        expected = str(match.group("expected") or "").strip()
+        diagnostics.append(
+            RepairDiagnostic(
+                source="compiler",
+                code="typescript_config_key_syntax",
+                message=f"Expected {expected!r} but found {found!r} in TypeScript config.",
+                path=str(match.group("path") or "").strip(),
+                line=_to_int(match.group("line")),
+                column=_to_int(match.group("column")),
+                raw=str(match.group(0) or text).strip(),
+                metadata={"language": "typescript", "expected": expected, "found": found},
+            )
+        )
+    javascript_module_error = _JAVASCRIPT_MODULE_ERROR_RE.search(text)
+    if javascript_module_error and _should_preserve_embedded_javascript_module_error(text, javascript_module_error):
+        diagnostics.append(
+            RepairDiagnostic(
+                source="runtime_smoke",
+                code="javascript_module_error",
+                message=str(javascript_module_error.group("message") or text).strip(),
+                raw=text,
+                metadata={"embedded_in_compiler_output": bool(diagnostics)},
+            )
+        )
     return diagnostics
+
+
+def _should_preserve_embedded_javascript_module_error(text: str, match: re.Match[str]) -> bool:
+    del match
+    lowered = str(text or "").lower()
+    return "err_require_cycle_module" in lowered or "cannot require() es module" in lowered
+
+
+def _looks_like_typescript_commonjs_package_type_runtime(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return (
+        "exports is not defined in es module scope" in lowered
+        and "package.json" in lowered
+        and "type" in lowered
+        and "module" in lowered
+        and "commonjs" in lowered
+    )
 
 
 def _normalize_one_error(text: str) -> RepairDiagnostic:
@@ -167,6 +217,21 @@ def _normalize_one_error(text: str) -> RepairDiagnostic:
             path=rel_path or None,
             raw=text,
             metadata={"raw_path": raw_path, "root_dir": root_dir},
+        )
+
+    match = _ESBUILD_CONFIG_SYNTAX_RE.search(text)
+    if match:
+        found = str(match.group("found") or "").strip()
+        expected = str(match.group("expected") or "").strip()
+        return RepairDiagnostic(
+            source="compiler",
+            code="typescript_config_key_syntax",
+            message=f"Expected {expected!r} but found {found!r} in TypeScript config.",
+            path=str(match.group("path") or "").strip(),
+            line=_to_int(match.group("line")),
+            column=_to_int(match.group("column")),
+            raw=text,
+            metadata={"language": "typescript", "expected": expected, "found": found},
         )
 
     match = _TS_RETURN_OBJECT_SEMICOLON_RE.search(text)
@@ -230,7 +295,7 @@ def _normalize_one_error(text: str) -> RepairDiagnostic:
         )
 
     match = _TYPESCRIPT_COMMONJS_PACKAGE_TYPE_RUNTIME_RE.search(text)
-    if match:
+    if match or _looks_like_typescript_commonjs_package_type_runtime(text):
         return RepairDiagnostic(
             source="runtime_smoke",
             code="typescript_commonjs_package_type",

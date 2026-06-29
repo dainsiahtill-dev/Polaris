@@ -813,6 +813,8 @@ class LLMCaller:
         selected_prompt_profile_ids: list[str] = []
         director_execution_profile: dict[str, Any] = {}
         director_execution_strategy: dict[str, Any] = {}
+        director_execution_envelope: dict[str, Any] = {}
+        execution_envelope_hash = ""
         resident_agi_audit_context: dict[str, Any] = {}
         prompt_profile_context_override = getattr(context, "context_override", None)
         if isinstance(prompt_profile_context_override, dict):
@@ -825,6 +827,20 @@ class LLMCaller:
             ) or prompt_profile_context_override.get("task_execution_strategy")
             if isinstance(raw_director_execution_strategy, dict):
                 director_execution_strategy = dict(raw_director_execution_strategy)
+            raw_director_execution_envelope = (
+                prompt_profile_context_override.get("director_execution_envelope")
+                or prompt_profile_context_override.get("task_execution_envelope")
+                or prompt_profile_context_override.get("execution_envelope")
+            )
+            if isinstance(raw_director_execution_envelope, dict):
+                director_execution_envelope = dict(raw_director_execution_envelope)
+            execution_envelope_hash = str(
+                prompt_profile_context_override.get("execution_envelope_hash")
+                or prompt_profile_context_override.get("director_execution_envelope_hash")
+                or prompt_profile_context_override.get("task_execution_envelope_hash")
+                or director_execution_envelope.get("envelope_hash")
+                or ""
+            ).strip()
             raw_prompt_profile_audit = prompt_profile_context_override.get("prompt_profile_audit")
             if isinstance(raw_prompt_profile_audit, dict):
                 prompt_profile_audit = dict(raw_prompt_profile_audit)
@@ -857,6 +873,9 @@ class LLMCaller:
                 "context_result_id": context_result_id,
                 "director_execution_profile": director_execution_profile,
                 "director_execution_strategy": director_execution_strategy,
+                "director_execution_envelope": director_execution_envelope,
+                "task_execution_envelope": director_execution_envelope,
+                "execution_envelope_hash": execution_envelope_hash,
                 "resident_agi_audit_context": resident_agi_audit_context,
                 "prompt_profile_audit": prompt_profile_audit,
                 "selected_prompt_profile_ids": selected_prompt_profile_ids,

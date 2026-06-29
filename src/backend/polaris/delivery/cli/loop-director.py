@@ -254,7 +254,7 @@ def extract_pm_tasks(pm_contract: dict) -> list[dict]:
 
 
 def _has_chief_engineer_handoff(workspace: str, task: dict[str, Any]) -> bool:
-    return bool(validate_director_handoff_from_payload(workspace, task).get("allowed"))
+    return bool(validate_director_handoff_from_payload(workspace, task, require_strict=True).get("allowed"))
 
 
 def _normalize_dependency_ids(value: Any) -> list[str]:

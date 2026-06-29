@@ -237,6 +237,11 @@ def test_prompt_includes_shared_execution_contract() -> None:
                 "acceptance_contract": {
                     "deterministic_checks": ["cargo_test", "source_target_coverage"],
                 },
+                "minimums": {
+                    "min_prod_files": 6,
+                    "min_prod_lines": 500,
+                    "min_test_assertions": 8,
+                },
             },
         },
         subject="Build pirate treasure budget planner",
@@ -254,6 +259,7 @@ def test_prompt_includes_shared_execution_contract() -> None:
     assert "- quality_gates: cargo test" in prompt
     assert "- verification_commands: cargo test --all" in prompt
     assert "- deterministic_checks: cargo_test, source_target_coverage" in prompt
+    assert "Level minimums: min_prod_files=6, min_prod_lines=500, min_test_assertions=8" in prompt
 
 
 # --------------------------------------------------------------------------

@@ -85,8 +85,13 @@ def _relative_import_repair_target_candidates(
 
     suffix_order = _relative_import_suffix_order(importer_rel)
     raw_candidates: list[Path]
+    importer_suffix = importer_path.suffix.lower()
     if base.suffix:
-        raw_candidates = [base]
+        raw_candidates = []
+        if importer_suffix in {".ts", ".tsx"} and base.suffix.lower() in {".cjs", ".js", ".jsx", ".mjs"}:
+            source_suffixes = (".tsx", ".ts") if importer_suffix == ".tsx" else (".ts", ".tsx")
+            raw_candidates.extend(base.with_suffix(suffix) for suffix in source_suffixes)
+        raw_candidates.append(base)
     else:
         raw_candidates = [base.with_suffix(suffix) for suffix in suffix_order]
         raw_candidates.extend(base / f"index{suffix}" for suffix in suffix_order)

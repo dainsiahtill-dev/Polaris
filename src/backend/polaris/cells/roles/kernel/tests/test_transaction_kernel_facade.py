@@ -257,6 +257,25 @@ def test_build_forced_write_only_retry_tool_definitions_keeps_execute_command_wh
     assert strict_names == {"write_file", "execute_command"}
 
 
+def test_build_forced_write_only_retry_tool_definitions_keeps_mutation_companions_for_multi_target_create() -> None:
+    tool_definitions = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "write_file"}},
+        {"type": "function", "function": {"name": "edit_file"}},
+        {"type": "function", "function": {"name": "execute_command"}},
+    ]
+
+    strict_definitions = build_forced_write_only_retry_tool_definitions(
+        tool_definitions,
+        "write_file",
+        include_verification_tools=False,
+        include_mutation_companion_tools=True,
+    )
+    strict_names = extract_allowed_tool_names_from_definitions(strict_definitions)
+
+    assert strict_names == {"write_file", "edit_file"}
+
+
 def test_forced_edit_blocks_retry_adds_scoped_write_file_companion() -> None:
     tool_definitions = [
         {
@@ -1896,6 +1915,52 @@ def test_build_decision_messages_omits_task_contract_for_read_only_request() -> 
     system_messages = [str(item.get("content") or "") for item in messages if item.get("role") == "system"]
     assert any("SYSTEM CONSTRAINT (Execution)" in text for text in system_messages)
     assert not any("TASK CONTRACT (single-batch planning)" in text for text in system_messages)
+
+
+def test_build_decision_messages_omits_mutation_contract_for_readonly_qa_judgement() -> None:
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+    )
+    context = [
+        {
+            "role": "system",
+            "content": (
+                "<role_definition>\n"
+                "你是 Polaris 体系中的 **QA**。\n"
+                "</role_definition>\n"
+                "Polaris QA output contract:\n"
+                "Return exactly one JSON object and nothing else.\n"
+                "Do not inspect the workspace. Do not call tools.\n"
+                "代码写入: 禁止"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Review the QA target using only the deterministic evidence already collected by Polaris.\n"
+                "src/main.ts(29,18): error TS2339\n"
+                "src/models/Inventory.ts(74,10): error TS2540\n"
+                "tsconfig.json is present."
+            ),
+        },
+    ]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "execute_command"}},
+    ]
+    ledger = TurnLedger(turn_id="turn_qa_readonly")
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+
+    messages = controller._build_decision_messages(context, tool_definitions, ledger)
+
+    system_messages = [str(item.get("content") or "") for item in messages if item.get("role") == "system"]
+    assert any("SYSTEM CONSTRAINT (QA Readonly)" in text for text in system_messages)
+    assert not any("SINGLE-BATCH execution" in text for text in system_messages)
+    assert not any("TASK CONTRACT (single-batch planning)" in text for text in system_messages)
+    assert not any("Mutation target files detected from user request" in text for text in system_messages)
+    assert not any("write/edit tools" in text for text in system_messages)
 
 
 def test_build_decision_messages_uses_single_batch_guard_for_materialize_contract() -> None:

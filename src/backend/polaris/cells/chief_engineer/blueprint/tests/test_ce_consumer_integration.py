@@ -69,6 +69,15 @@ class TestCEConsumerTaskMarketHandoffIntegration:
         assert cmd.metadata.get("route") == "chief_blueprint_required"
         assert cmd.metadata.get("blueprint_required") is True
         assert cmd.metadata.get("target_files") == ["/src/main.py"]
+        profile = cmd.metadata.get("director_execution_profile")
+        assert isinstance(profile, dict)
+        assert profile["target_files"] == ["src/main.py"]
+        assert cmd.metadata.get("execution_profile_hash")
+        assert cmd.metadata.get("director_execution_profile_hash") == cmd.metadata.get("execution_profile_hash")
+        assert cmd.metadata.get("execution_profile_ref", "").startswith("director.tasking.execution_profile:")
+        blueprint_payload = mock_adr_store.create_blueprint.call_args[0][1]
+        assert blueprint_payload["director_execution_profile"] == profile
+        assert blueprint_payload["execution_profile_hash"] == cmd.metadata["execution_profile_hash"]
 
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.run_pre_dispatch_chief_engineer_ctx")
@@ -170,6 +179,8 @@ class TestCEConsumerHandoffGate:
         meta = mock_svc.acknowledge_task_stage.call_args[0][0].metadata
         assert meta["handoff_decision"]["allowed"] is False
         assert meta["handoff_decision"]["blocker_count"] >= 1
+        assert meta["execution_profile_hash"]
+        assert meta["director_execution_profile"]["target_files"] == ["src/main.py"]
 
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
     @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.run_pre_dispatch_chief_engineer_ctx")

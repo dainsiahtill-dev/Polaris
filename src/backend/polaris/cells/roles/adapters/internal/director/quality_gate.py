@@ -1043,6 +1043,72 @@ def _step_verify_target_mismatch_error(step: dict[str, Any], verify: str) -> str
     )
 
 
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_STEP_VERIFY_FAILURE_EXCERPT_MAX_CHARS = 1400
+_STEP_VERIFY_FAILURE_EXCERPT_MAX_LINES = 42
+
+
+def _strip_ansi_for_step_verify_output(text: str) -> str:
+    return _ANSI_ESCAPE_RE.sub("", str(text or "")).replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _step_verify_failure_excerpt(stdout: str, stderr: str) -> str:
+    """Return the actionable failure block instead of a blind output tail.
+
+    Node's TAP runner, Jest/Vitest, and pytest often print the failed assertion
+    near the first failure and end with a long pass/fail summary. A tail-only
+    excerpt leaves the repair model with "1 failed" but no expected/actual
+    values, which causes blind edits.
+    """
+
+    output = _strip_ansi_for_step_verify_output(f"{stdout or ''}\n{stderr or ''}").strip()
+    if not output:
+        return ""
+
+    lines = output.splitlines()
+    blocks: list[str] = []
+    for index, line in enumerate(lines):
+        normalized = line.strip().lower()
+        is_failure_start = (
+            normalized.startswith("not ok ")
+            or normalized.startswith("fail ")
+            or normalized.startswith("failed ")
+            or "assertionerror" in normalized
+            or "err_assertion" in normalized
+            or "expected values to be strictly equal" in normalized
+            or normalized.startswith("e   ")
+        )
+        if not is_failure_start:
+            continue
+
+        start = max(0, index - 2)
+        end = min(len(lines), index + _STEP_VERIFY_FAILURE_EXCERPT_MAX_LINES)
+        for cursor in range(index + 1, min(len(lines), index + _STEP_VERIFY_FAILURE_EXCERPT_MAX_LINES)):
+            next_line = lines[cursor].strip().lower()
+            if cursor > index + 2 and (
+                next_line.startswith("# subtest:")
+                or next_line.startswith("ok ")
+                or next_line.startswith("not ok ")
+                or next_line.startswith("fail ")
+                or next_line.startswith("failed ")
+            ):
+                end = cursor
+                break
+        block = "\n".join(lines[start:end]).strip()
+        if block:
+            blocks.append(block)
+        if len(blocks) >= 2:
+            break
+
+    if not blocks:
+        return output[-_STEP_VERIFY_FAILURE_EXCERPT_MAX_CHARS:]
+
+    excerpt = "\n--- next failure ---\n".join(blocks)
+    if len(excerpt) > _STEP_VERIFY_FAILURE_EXCERPT_MAX_CHARS:
+        excerpt = excerpt[: _STEP_VERIFY_FAILURE_EXCERPT_MAX_CHARS - 14].rstrip() + "\n...[truncated]"
+    return excerpt
+
+
 def _collect_step_verify_errors(adapter: Any, context: dict[str, Any] | None) -> list[str]:
     """写后即查（三层裂变 DO 层自查）: run the construction step's machine
     verify inside the execution turn so the repair ladder sees the failure
@@ -1079,6 +1145,8 @@ def _collect_step_verify_errors(adapter: Any, context: dict[str, Any] | None) ->
             cwd=workspace,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
             check=False,
         )
@@ -1086,16 +1154,16 @@ def _collect_step_verify_errors(adapter: Any, context: dict[str, Any] | None) ->
         return [f"step verify could not run: {exc} :: {verify!r}"]
     if proc.returncode == 0:
         return []
-    output_tail = ((proc.stdout or "") + (proc.stderr or ""))[-300:]
+    output_excerpt = _step_verify_failure_excerpt(proc.stdout or "", proc.stderr or "")
     clause_detail = _first_failing_verify_clause(verify, cwd=workspace)
     # The actionable clause goes FIRST: downstream teaching channels truncate
     # (fail_task_stage 600 chars, blueprint step card 240) and a long verify
     # command would push the diagnosis off the visible end.
     if clause_detail:
         return [
-            f"step verify failed (exit {proc.returncode}) | {clause_detail} | full: {verify} :: {output_tail}".strip()
+            f"step verify failed (exit {proc.returncode}) | {clause_detail} | failure excerpt: {output_excerpt} | full: {verify}".strip()
         ]
-    return [f"step verify failed (exit {proc.returncode}): {verify} :: {output_tail}".strip()]
+    return [f"step verify failed (exit {proc.returncode}): {verify} :: failure excerpt: {output_excerpt}".strip()]
 
 
 _STEP_VERIFY_NODE_ENV_COMMAND_RE = re.compile(
@@ -1568,6 +1636,7 @@ async def _run_materialization_quality_repair_retry(
         }
     deterministic_quality_tool_results: list[dict[str, Any]] = []
     deterministic_quality_summary: dict[str, Any] = {}
+    task_boundary_discrepancy_evidence: dict[str, Any] = {}
     if not missing_repair_target_files and (
         _has_scaffold_marker_quality_error(repair_quality_errors)
         or has_materialization_quality_runtime_repair_coverage(repair_quality_errors)
@@ -1601,41 +1670,39 @@ async def _run_materialization_quality_repair_retry(
         deterministic_quality_can_short_circuit = False
     if _materialization_plan_probe_requires_task_boundary_triage(deterministic_quality_summary):
         summary = dict(deterministic_quality_summary or {})
-        summary.update(
-            {
-                "stage": "runtime_plan_probe_unplannable",
-                "attempted": True,
-                "attempt": repair_attempt,
-                "success": False,
-                "success_reason": "task_boundary_interface_discrepancy_required",
-                "tool_results": len(deterministic_quality_tool_results),
-                "write_tool_evidence": False,
-                "missing_target_files": missing_target_files[:12],
-                "runtime_smoke_target_files": runtime_smoke_target_files[:12],
-                "semantic_quality_target_files": semantic_quality_target_files[:12],
-                "explicit_quality_target_files": explicit_quality_target_files[:12],
-                "repair_target_files": repair_target_files[:12],
-                "rotated_repair_targets": rotate_repair_targets,
-                "interface_discrepancy_evidence": {
-                    "schema_version": "director.task_boundary.interface_discrepancy.v1",
-                    "route": "task_boundary_quality_loop",
-                    "plan_probe_status": dict(summary.get("plan_probe_preaudit") or {}).get("status"),
-                    "covered_unplannable_source_tools": dict(summary.get("plan_probe_preaudit") or {}).get(
-                        "covered_unplannable_source_tools", []
-                    ),
-                    "covered_unplannable_diagnostic_count": dict(summary.get("plan_probe_preaudit") or {}).get(
-                        "covered_unplannable_diagnostic_count", 0
-                    ),
-                    "uncovered_diagnostic_count": dict(summary.get("plan_probe_preaudit") or {}).get(
-                        "coverage_gap_count",
-                        0,
-                    ),
-                    "llm_fallback_blocked": True,
-                    "reason": "coverage_matched_but_unplannable",
-                },
-            }
+        task_boundary_discrepancy_evidence = _materialization_interface_discrepancy_evidence(
+            task=task,
+            plan_probe=dict(summary.get("plan_probe_preaudit") or {}),
+            repair_target_files=repair_target_files,
+            artifact_quality_errors=repair_quality_errors,
         )
-        return deterministic_quality_tool_results, summary
+        if _materialization_interface_discrepancy_retry_authorized(
+            context=context,
+            evidence=task_boundary_discrepancy_evidence,
+        ):
+            summary["task_boundary_interface_discrepancy_retry_authorized"] = True
+            summary["interface_discrepancy_evidence"] = task_boundary_discrepancy_evidence
+        else:
+            summary.update(
+                {
+                    "stage": "runtime_plan_probe_unplannable",
+                    "attempted": True,
+                    "attempt": repair_attempt,
+                    "success": False,
+                    "success_reason": "task_boundary_interface_discrepancy_required",
+                    "tool_results": len(deterministic_quality_tool_results),
+                    "write_tool_evidence": False,
+                    "missing_target_files": missing_target_files[:12],
+                    "runtime_smoke_target_files": runtime_smoke_target_files[:12],
+                    "semantic_quality_target_files": semantic_quality_target_files[:12],
+                    "explicit_quality_target_files": explicit_quality_target_files[:12],
+                    "repair_target_files": repair_target_files[:12],
+                    "rotated_repair_targets": rotate_repair_targets,
+                    "interface_discrepancy_evidence": task_boundary_discrepancy_evidence,
+                    "llm_fallback_blocked": True,
+                }
+            )
+            return deterministic_quality_tool_results, summary
     if (
         deterministic_quality_tool_results
         and has_successful_write_tool(deterministic_quality_tool_results)
@@ -1713,6 +1780,7 @@ async def _run_materialization_quality_repair_retry(
         missing_target_files=missing_repair_target_files,
         repair_target_files=existing_repair_target_files,
         workspace_full=workspace_full,
+        interface_discrepancy_evidence=task_boundary_discrepancy_evidence,
     )
     repair_context = {
         **dict(context or {}),
@@ -1729,6 +1797,12 @@ async def _run_materialization_quality_repair_retry(
             "repair_target_files": repair_target_files[:12],
         },
     }
+    if task_boundary_discrepancy_evidence:
+        repair_context["director_quality_repair"]["interface_discrepancy_evidence"] = task_boundary_discrepancy_evidence
+        repair_context["task_boundary_interface_discrepancy_retry"] = {
+            "authorized": True,
+            "interface_discrepancy_evidence": task_boundary_discrepancy_evidence,
+        }
     if repair_target_files:
         repair_context["repair_target_files"] = repair_target_files[:12]
     repair_metadata = repair_context.get("metadata")
@@ -1902,6 +1976,9 @@ async def _run_materialization_quality_repair_retry(
             "deadline_decision": deadline_decision,
         }
     )
+    if task_boundary_discrepancy_evidence:
+        summary["task_boundary_interface_discrepancy_retry_authorized"] = True
+        summary["interface_discrepancy_evidence"] = task_boundary_discrepancy_evidence
     guard_tool_results, guard_summary = _run_post_llm_materialization_runtime_guard(
         adapter,
         task=task,
@@ -2006,6 +2083,109 @@ def _materialization_plan_probe_requires_task_boundary_triage(summary: dict[str,
         or source_tool.startswith("deterministic_typeorm")
         for source_tool in covered_unplannable_source_tools
     )
+
+
+def _materialization_interface_discrepancy_evidence(
+    *,
+    task: dict[str, Any],
+    plan_probe: dict[str, Any],
+    repair_target_files: list[str],
+    artifact_quality_errors: list[str],
+) -> dict[str, Any]:
+    task_interface_contract = _extract_task_interface_contract(task)
+    recommended_owner = "director" if task_interface_contract else "chief_engineer"
+    recommended_route = (
+        "director_retry_with_interface_discrepancy_context"
+        if recommended_owner == "director"
+        else "pending_design_interface_contract"
+    )
+    return {
+        "schema_version": "director.task_boundary.interface_discrepancy.v1",
+        "route": "task_boundary_quality_loop",
+        "plan_probe_status": str(plan_probe.get("status") or ""),
+        "covered_unplannable_source_tools": list(plan_probe.get("covered_unplannable_source_tools") or []),
+        "covered_unplannable_diagnostic_count": int(plan_probe.get("covered_unplannable_diagnostic_count") or 0),
+        "covered_unplannable_diagnostics": list(plan_probe.get("covered_unplannable_diagnostics") or [])[:20],
+        "coverage_gap_count": int(plan_probe.get("coverage_gap_count") or 0),
+        "repair_target_files": repair_target_files[:12],
+        "artifact_quality_errors": artifact_quality_errors[:8],
+        "recommended_owner": recommended_owner,
+        "recommended_route": recommended_route,
+        "triage_policy": "ce_contract_if_missing_else_director_local_repair",
+        "macro_blueprint_regeneration_allowed": False,
+        "task_interface_contract_present": bool(task_interface_contract),
+        "task_interface_contract_keys": sorted(str(key) for key in task_interface_contract),
+        "llm_fallback_blocked": True,
+        "reason": "coverage_matched_but_unplannable",
+    }
+
+
+def _materialization_interface_discrepancy_retry_authorized(
+    *,
+    context: dict[str, Any],
+    evidence: dict[str, Any],
+) -> bool:
+    """Return true only when the caller explicitly routes this gap to Director.
+
+    ``covered_unplannable`` means the runtime catalog recognized the diagnostic
+    family but could not safely compose a patch for the current file state. That
+    must stay fail-closed unless the task-boundary controller has already
+    classified the discrepancy as an implementation-local Director retry.
+    """
+
+    raw_authorization = context.get("director_interface_discrepancy_retry")
+    if not isinstance(raw_authorization, dict) or not bool(raw_authorization.get("authorized")):
+        return False
+    raw_authorized_evidence = raw_authorization.get("interface_discrepancy_evidence")
+    authorized_evidence = raw_authorized_evidence if isinstance(raw_authorized_evidence, dict) else {}
+    owner = str(
+        raw_authorization.get("recommended_owner")
+        or authorized_evidence.get("recommended_owner")
+        or evidence.get("recommended_owner")
+        or ""
+    ).strip()
+    route = str(
+        raw_authorization.get("recommended_route")
+        or authorized_evidence.get("recommended_route")
+        or evidence.get("recommended_route")
+        or ""
+    ).strip()
+    reason = str(
+        raw_authorization.get("reason") or authorized_evidence.get("reason") or evidence.get("reason") or ""
+    ).strip()
+    if reason != "coverage_matched_but_unplannable":
+        return False
+    return owner == "director" and route == "director_retry_with_interface_discrepancy_context"
+
+
+def _extract_task_interface_contract(task: dict[str, Any]) -> dict[str, Any]:
+    candidates: list[Any] = [
+        task.get("interface_contract"),
+        task.get("task_interface_contract"),
+        task.get("execution_interface_contract"),
+    ]
+    metadata = task.get("metadata")
+    if isinstance(metadata, dict):
+        candidates.extend(
+            [
+                metadata.get("interface_contract"),
+                metadata.get("task_interface_contract"),
+                metadata.get("execution_interface_contract"),
+            ]
+        )
+        public_symbols = metadata.get("public_symbols")
+        consumes_symbols = metadata.get("consumes_symbols")
+        if public_symbols or consumes_symbols:
+            candidates.append(
+                {
+                    "public_symbols": public_symbols or [],
+                    "consumes_symbols": consumes_symbols or [],
+                }
+            )
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate:
+            return dict(candidate)
+    return {}
 
 
 def _resolve_quality_repair_timeout_seconds(primary_timeout_seconds: float) -> float:
@@ -3209,7 +3389,10 @@ _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES: frozenset[str] = frozenset(
 _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS: tuple[str, ...] = (
     "assertionerror",
     "failed tests",
+    "step verify failed",
     "test failed",
+    "not ok ",
+    "# fail ",
     "vitest",
     "jest",
     "prettier",
@@ -3255,6 +3438,7 @@ def _explicit_artifact_quality_repair_target_files(
             for item in changed_files
             if (rel := _normalize_declared_task_path(str(item or "")))
             and Path(rel).suffix.lower() in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES
+            and not _is_generated_quality_repair_target(rel, workspace_root)
         ]
     )
     changed_source_set = set(changed_source_files)
@@ -3301,6 +3485,14 @@ def _explicit_artifact_quality_repair_target_files(
             candidates.extend(harness_sources)
             imported_source_candidates.extend(harness_sources)
             explicit_paths.extend(traceback_targets)
+        if _looks_like_javascript_test_behavior_failure(text) and not explicit_paths and not failed_title_targets:
+            for rel in changed_source_files:
+                if not _is_test_like_javascript_path(rel):
+                    continue
+                imported_sources = _javascript_test_imported_source_target_files(rel, workspace_root)
+                candidates.extend(imported_sources)
+                imported_source_candidates.extend(imported_sources)
+                candidates.append(rel)
         for raw_path in explicit_paths:
             rel = _map_quality_error_path_to_changed_file(raw_path, changed_by_lower)
             if not rel:
@@ -3332,7 +3524,15 @@ def _explicit_artifact_quality_repair_target_files(
                     imported_source_candidates.extend(imported_sources)
                 if not appended_rel:
                     candidates.append(rel)
-    deduped_candidates = _dedupe_preserve_order(candidates)
+    deduped_candidates = [
+        rel
+        for rel in _dedupe_preserve_order(candidates)
+        if not _is_generated_quality_repair_target(rel, workspace_root)
+    ]
+    if imported_source_candidates:
+        non_config_candidates = [rel for rel in deduped_candidates if not _is_typescript_command_config_path(rel)]
+        if non_config_candidates:
+            deduped_candidates = non_config_candidates
     if not changed_source_files:
         return deduped_candidates
     changed_order = {item.lower(): index for index, item in enumerate(changed_source_files)}
@@ -3404,7 +3604,31 @@ def _map_quality_error_path_to_changed_file(raw_path: str, changed_by_lower: dic
     for candidate_lower, candidate in changed_by_lower.items():
         if normalized_lower == candidate_lower or normalized_lower.endswith(f"/{candidate_lower}"):
             return candidate
+    for compiled_candidate in _compiled_javascript_stack_source_candidates(normalized_lower):
+        if compiled_candidate in changed_by_lower:
+            return changed_by_lower[compiled_candidate]
     return rel
+
+
+def _compiled_javascript_stack_source_candidates(normalized_lower_path: str) -> tuple[str, ...]:
+    normalized = str(normalized_lower_path or "").strip("/")
+    if ".js" not in normalized:
+        return ()
+    dist_marker = "/dist/"
+    if normalized.startswith("dist/"):
+        relative = normalized.removeprefix("dist/")
+    elif dist_marker in normalized:
+        relative = normalized.rsplit(dist_marker, 1)[1]
+    else:
+        return ()
+    stem = re.sub(r"\.(?:mjs|cjs|js)(?:\.map)?$", "", relative)
+    if not stem or stem == relative:
+        return ()
+    candidates = []
+    for suffix in (".ts", ".tsx", ".js", ".jsx"):
+        candidates.append(f"src/{stem}{suffix}")
+        candidates.append(f"{stem}{suffix}")
+    return tuple(candidates)
 
 
 def _artifact_quality_failed_test_count(artifact_quality_errors: list[str]) -> int:
@@ -3423,7 +3647,20 @@ def _artifact_quality_failed_test_count(artifact_quality_errors: list[str]) -> i
 
 def _looks_like_javascript_test_behavior_failure(text: str) -> bool:
     token = str(text or "").lower()
-    return any(hint in token for hint in ("assertionerror", "failed tests", "test failed", "vitest", "jest"))
+    return any(
+        hint in token
+        for hint in (
+            "assertionerror",
+            "err_assertion",
+            "failed tests",
+            "step verify failed",
+            "test failed",
+            "not ok ",
+            "# fail ",
+            "vitest",
+            "jest",
+        )
+    )
 
 
 def _looks_like_javascript_module_system_failure(text: str) -> bool:
@@ -3751,13 +3988,26 @@ def _is_typescript_command_config_path(rel_path: str) -> bool:
     return Path(str(rel_path or "")).name.lower() in {"tsconfig.json", "jsconfig.json"}
 
 
-def _is_generated_quality_repair_target(rel_path: str) -> bool:
+def _is_generated_quality_repair_target(rel_path: str, workspace_root: Path | None = None) -> bool:
     normalized = _normalize_declared_task_path(rel_path).lower()
     if not normalized:
         return False
-    parts = set(Path(normalized).parts)
-    if parts.intersection({"dist", "build", "out", "coverage", "node_modules"}):
+    if normalized.startswith(_NPM_SCRIPT_GENERATED_OUTPUT_PREFIXES):
         return True
+    parts = set(Path(normalized).parts)
+    if parts.intersection({".cache", "dist", "build", "out", "coverage", "node_modules"}):
+        return True
+    if workspace_root is not None and Path(normalized).suffix in {".cjs", ".js", ".jsx", ".mjs"}:
+        try:
+            workspace = Path(workspace_root).resolve()
+            candidate = Path(normalized)
+            for source_suffix in (".ts", ".tsx"):
+                source_candidate = (workspace / candidate.with_suffix(source_suffix)).resolve()
+                source_candidate.relative_to(workspace)
+                if source_candidate.is_file():
+                    return True
+        except (OSError, RuntimeError, ValueError):
+            return False
     return normalized.endswith(".d.ts")
 
 
@@ -3826,13 +4076,19 @@ def _semantic_quality_repair_target_files(
         workspace_root,
     )
     type_only_usage_files = _typescript_type_only_usage_files(artifact_quality_errors)
-    diagnostic_targets = _typescript_diagnostic_target_files(artifact_quality_errors, workspace_root)
+    diagnostic_targets = [
+        rel
+        for rel in _typescript_diagnostic_target_files(artifact_quality_errors, workspace_root)
+        if not _is_generated_quality_repair_target(rel, workspace_root)
+    ]
     candidates: list[str] = []
     for item in changed_files:
         rel = _normalize_declared_task_path(str(item or ""))
         if not rel:
             continue
         if Path(rel).suffix.lower() not in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES:
+            continue
+        if _is_generated_quality_repair_target(rel, workspace_root):
             continue
         if _workspace_path_exists_case_insensitive(workspace_root, rel):
             candidates.append(rel)
@@ -3852,10 +4108,15 @@ def _semantic_quality_repair_target_files(
             if (
                 rel
                 and Path(rel).suffix.lower() in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES
+                and not _is_generated_quality_repair_target(rel, workspace_root)
                 and _workspace_path_exists_case_insensitive(workspace_root, rel)
             ):
                 explicit_candidates.append(rel)
-    explicit_unique = _dedupe_preserve_order(explicit_candidates)
+    explicit_unique = [
+        rel
+        for rel in _dedupe_preserve_order(explicit_candidates)
+        if not _is_generated_quality_repair_target(rel, workspace_root)
+    ]
     if exporting_targets:
         coupled_importers = [
             rel
@@ -4256,6 +4517,36 @@ def _compact_original_message_for_quality_repair(original_message: str) -> str:
     )
 
 
+def _build_full_verifier_diagnostics_block(
+    *,
+    scoped_quality_errors: list[str],
+    directive_quality_errors: list[str],
+    include: bool,
+) -> str:
+    if not include:
+        return ""
+    scoped_formatted = {
+        _format_quality_error_for_repair_prompt(item) for item in scoped_quality_errors[:20] if str(item or "").strip()
+    }
+    full_formatted = _dedupe_preserve_order(
+        [
+            _format_quality_error_for_repair_prompt(item)
+            for item in directive_quality_errors[:20]
+            if str(item or "").strip()
+        ]
+    )
+    if not full_formatted or set(full_formatted).issubset(scoped_formatted):
+        return ""
+    full_lines = "\n".join(f"- {item}" for item in full_formatted)
+    return (
+        "FULL VERIFIER DIAGNOSTICS (context, not extra target scope):\n"
+        "These are all verifier/artifact failures for this repair round, including failures outside "
+        "the current target batch. Keep the named repair target scope unless a coherent type fix in "
+        "that scope must account for these diagnostics.\n"
+        f"{full_lines}\n"
+    )
+
+
 def _build_materialization_quality_repair_message(
     *,
     original_message: str,
@@ -4265,6 +4556,7 @@ def _build_materialization_quality_repair_message(
     missing_target_files: list[str] | None = None,
     repair_target_files: list[str] | None = None,
     workspace_full: str = "",
+    interface_discrepancy_evidence: dict[str, Any] | None = None,
 ) -> str:
     directive_quality_errors = (
         directive_artifact_quality_errors if directive_artifact_quality_errors is not None else artifact_quality_errors
@@ -4466,9 +4758,37 @@ def _build_materialization_quality_repair_message(
             )
     original_context = (
         _compact_original_message_for_quality_repair(original_message)
-        if single_missing_block or single_existing_repair_block
+        if missing_target_files or existing_repair_target_files
         else str(original_message or "")
     )
+    full_verifier_diagnostics_block = _build_full_verifier_diagnostics_block(
+        scoped_quality_errors=artifact_quality_errors,
+        directive_quality_errors=directive_quality_errors,
+        include=bool(existing_repair_target_files and not missing_target_files),
+    )
+    interface_discrepancy_block = ""
+    if interface_discrepancy_evidence:
+        source_tools = [
+            str(item)
+            for item in interface_discrepancy_evidence.get("covered_unplannable_source_tools", [])
+            if str(item or "").strip()
+        ]
+        route = str(interface_discrepancy_evidence.get("recommended_route") or "").strip()
+        target_lines = "\n".join(
+            f"- {item}" for item in interface_discrepancy_evidence.get("repair_target_files", [])[:12]
+        )
+        source_tool_line = ", ".join(source_tools[:8]) if source_tools else "none"
+        interface_discrepancy_block = (
+            "TASK BOUNDARY INTERFACE DISCREPANCY REPAIR:\n"
+            "- Runtime coverage matched these diagnostics, but plan probe could not safely compose a patch.\n"
+            f"- Authorized route: {route or 'director_retry_with_interface_discrepancy_context'}.\n"
+            f"- Covered-unplannable source tools: {source_tool_line}.\n"
+            "- Repair only the existing failed target file(s) named for this quality turn.\n"
+            "- Do not invent new public contracts, placeholder members, or empty compatibility stubs.\n"
+            "- Make the implementation consistent with the existing task contract and verifier diagnostics.\n"
+        )
+        if target_lines:
+            interface_discrepancy_block += f"Authorized repair targets:\n{target_lines}\n"
     return (
         "[mode:materialize]\n"
         '<SESSION_PATCH>{"delivery_mode":"materialize_changes","task_progress":"implementing"}</SESSION_PATCH>\n'
@@ -4489,11 +4809,13 @@ def _build_materialization_quality_repair_message(
         f"{cli_entrypoint_block}"
         f"{npm_manifest_block}"
         f"{forbidden_marker_block}"
+        f"{interface_discrepancy_block}"
         "Do not repeat the same package/script/test scaffold. Replace the bad artifact with concrete runnable code, "
         "source files, and executable tests required by the task contract.\n"
-        "If package.json has an npm test script, it must run a real local test/check and must not contain "
+        "If the npm manifest has a test script, it must run a real local test/check and must not contain "
         "`no test specified`, structural-only success output, TODO, placeholder, stub, or audit seed text.\n"
         f"{changed_line}\n"
+        f"{full_verifier_diagnostics_block}"
         "Quality errors:\n"
         f"{error_lines}\n"
         "Return tool calls only for the minimal files needed to make the task materially complete."

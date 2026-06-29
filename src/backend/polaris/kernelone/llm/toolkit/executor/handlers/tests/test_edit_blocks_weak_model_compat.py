@@ -377,6 +377,20 @@ def test_suggest_similar_paths_ranks_by_trailing_overlap(tmp_path: Path) -> None
     assert "docs/model_checks.py" not in candidates
 
 
+def test_read_file_not_found_suggests_typescript_source_for_js_import_path(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "models" / "Market.ts"
+    target.parent.mkdir(parents=True)
+    target.write_text("export function createMarket() {}\n", encoding="utf-8")
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+
+    result = _handle_read_file(ex, file="src/models/Market.js")
+
+    assert result.get("ok") is False
+    assert "Did you mean" in result.get("error", "")
+    assert "src/models/Market.ts" in result.get("error", "")
+    assert "src/models/Market.ts" in result.get("suggestion", "")
+
+
 def test_not_found_without_candidates_keeps_exploration_advice(tmp_path: Path) -> None:
     ex = _nested_workspace(tmp_path)
     result = _handle_read_file(ex, file="totally/unknown_module_xyz.py")

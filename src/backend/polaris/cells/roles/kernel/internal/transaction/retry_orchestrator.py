@@ -454,7 +454,7 @@ class RetryOrchestrator:
         requires_verification: bool,
         requires_mutation: bool,
         forbidden_tool_names: set[str] | None = None,
-    ) -> tuple[list[dict], list[dict], set[str], set[str], str | None, dict[str, Any] | None, list[dict], bool]:
+    ) -> tuple[list[dict], list[dict], set[str], set[str], str | None, dict[str, Any] | None, list[dict], bool, bool]:
         """构建重试上下文和工具定义。
 
         ``forbidden_tool_names`` is threaded through all narrowing helpers so
@@ -482,11 +482,13 @@ class RetryOrchestrator:
         # breaker dead-letters the step), so force the write by name from the
         # first retry escalation instead of only the last attempt.
         from_scratch_create = detect_creation_mode(_retry_workspace, _retry_target_files)
+        multi_target_create = from_scratch_create and len(dict.fromkeys(_retry_target_files)) > 1
         _strict_retry_tool_definitions = build_forced_write_only_retry_tool_definitions(
             retry_tool_definitions,
             forced_write_tool_name,
-            include_verification_tools=requires_verification,
+            include_verification_tools=requires_verification and not multi_target_create,
             forbidden_tool_names=_forbidden,
+            include_mutation_companion_tools=multi_target_create,
         )
         strict_allowed_retry_tool_names = extract_allowed_tool_names_from_definitions(_strict_retry_tool_definitions)
         # The first retry must not force a single write tool. The model still
@@ -516,6 +518,7 @@ class RetryOrchestrator:
             forced_tool_choice,
             _strict_retry_tool_definitions,
             from_scratch_create,
+            multi_target_create,
         )
 
     async def _execute_retry_batch(
@@ -695,6 +698,7 @@ class RetryOrchestrator:
             forced_tool_choice,
             strict_retry_tool_defs,
             from_scratch_create,
+            multi_target_create,
         ) = self._build_retry_context(
             turn_id=turn_id,
             context=context,
@@ -758,6 +762,7 @@ class RetryOrchestrator:
                 strict_tool_definitions=strict_retry_tool_defs,
                 forced_write_tool_name=forced_write_tool_name,
                 force_write_immediately=from_scratch_create,
+                force_required_tool_choice=multi_target_create,
             )
             if escalated_definitions is not None:
                 attempt_tool_definitions = escalated_definitions

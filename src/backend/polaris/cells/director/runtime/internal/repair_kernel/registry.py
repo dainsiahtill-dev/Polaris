@@ -80,8 +80,12 @@ from .typescript_syntax import (
     TYPESCRIPT_BRANDED_LITERAL_CAST_SOURCE_TOOL,
     TYPESCRIPT_CANVAS_SCALE_RETURN_TYPE_SOURCE_TOOL,
     TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL,
+    TYPESCRIPT_CONFIG_KEY_SPLIT_SOURCE_TOOL,
+    TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL,
     TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
     TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL,
+    TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL,
+    TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL,
     TYPESCRIPT_HTML_CONTAINER_SELECTOR_SOURCE_TOOL,
     TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL,
     TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
@@ -102,6 +106,7 @@ from .typescript_syntax import (
     TYPESCRIPT_SHORTHAND_PROPERTY_SCOPE_SOURCE_TOOL,
     TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL,
     TYPESCRIPT_STRING_LITERAL_SUGGESTION_SOURCE_TOOL,
+    TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL,
     TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL,
     TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
     TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL,
@@ -174,8 +179,12 @@ _RUNTIME_MIGRATION_SOURCE_TOOLS = frozenset(
         JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL,
         TYPEORM_MODEL_NORMALIZATION_SOURCE_TOOL,
         TYPESCRIPT_COMMONJS_PACKAGE_TYPE_SOURCE_TOOL,
+        TYPESCRIPT_CONFIG_KEY_SPLIT_SOURCE_TOOL,
+        TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL,
         TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
         TYPESCRIPT_ESCAPED_NEWLINE_SOURCE_TOOL,
+        TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL,
+        TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL,
         TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL,
         TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
         TYPESCRIPT_MEMBER_ALIAS_SOURCE_TOOL,
@@ -187,6 +196,7 @@ _RUNTIME_MIGRATION_SOURCE_TOOLS = frozenset(
         TYPESCRIPT_RELATIVE_IMPORT_CASE_SOURCE_TOOL,
         TYPESCRIPT_SCAFFOLD_SOURCE_TOOL,
         TYPESCRIPT_SOURCEFILE_DIAGNOSTICS_SOURCE_TOOL,
+        TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL,
         TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL,
         TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
         TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL,
@@ -1652,7 +1662,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
-                rule_id="javascript.npm_script_contract",
+                rule_id="javascript.npm_script_contract.bench_missing_entrypoint",
                 source_tool=NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
                 language="javascript",
                 phase="test_contract",
@@ -1661,6 +1671,18 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 raw_terms=("npm package manifest script",),
                 risk_level="low",
                 description="Repairs package.json script contracts through structured JSON operations.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="javascript.npm_script_contract",
+                source_tool=NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
+                language="javascript",
+                phase="test_contract",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                raw_terms=("references missing local entrypoint",),
+                risk_level="low",
+                description="Repairs package.json script contracts from bench package-script diagnostics.",
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
@@ -1703,6 +1725,22 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 raw_terms=("cannot find module", "./src/"),
                 risk_level="low",
                 description="Repairs npm test scripts that require TypeScript source paths without a loader.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="javascript.npm_script_typescript_source_loader_start_contract",
+                source_tool=NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
+                language="javascript",
+                phase="runtime_smoke",
+                archetype=RepairArchetype.RUNTIME_CONTRACT,
+                priority=1,
+                diagnostic_codes=("javascript_module_error",),
+                raw_terms=("npm run start", "err_require_cycle_module"),
+                risk_level="low",
+                description=(
+                    "Repairs npm start scripts that execute TypeScript sources through unstable "
+                    "Node loaders instead of the compiled JavaScript entrypoint."
+                ),
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(
@@ -2441,6 +2479,23 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 metadata=_executable_runtime_metadata(scope="package_json_type_json_set"),
             ),
             RepairRuleDefinition(
+                rule_id="typescript.config_key_split",
+                source_tool=TYPESCRIPT_CONFIG_KEY_SPLIT_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_config_key_syntax",),
+                message_terms=("expected", "found", "config"),
+                risk_level="low",
+                description=(
+                    "Repairs generated TypeScript config object keys split by whitespace, "
+                    "such as public Dir -> publicDir."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="typescript_config_key_split_text_replace"),
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.entrypoint",
                 source_tool=TYPESCRIPT_ENTRYPOINT_SOURCE_TOOL,
                 language="typescript",
@@ -2465,6 +2520,41 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 description="Repairs generated escaped newline residue in TypeScript line comments.",
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="escaped_newline_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.expect_error_placement",
+                source_tool=TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL,
+                language="typescript",
+                phase="test_contract",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_ts2578",),
+                message_terms=("unused", "@ts-expect-error"),
+                risk_level="low",
+                description=(
+                    "Moves generated @ts-expect-error comments to the actual following TypeScript error line "
+                    "inside tests instead of leaving them on an assertion wrapper line."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="test_expect_error_comment_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.expect_error_string_argument",
+                source_tool=TYPESCRIPT_EXPECT_ERROR_PLACEMENT_SOURCE_TOOL,
+                language="typescript",
+                phase="test_contract",
+                archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
+                priority=1,
+                diagnostic_codes=("typescript_ts2345",),
+                message_terms=("argument of type", "not assignable to parameter of type"),
+                excluded_message_terms=("number",),
+                risk_level="low",
+                description=(
+                    "Pairs nearby string-literal parameter type errors with an unused @ts-expect-error "
+                    "so runtime guard tests can compile while still exercising invalid values."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="test_expect_error_comment_text_replace"),
             ),
             RepairRuleDefinition(
                 rule_id="typescript.member_alias",
@@ -2493,6 +2583,57 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 description=(
                     "Normalizes generated TypeScript named import specifiers that incorrectly include "
                     "export/import type keywords inside the import clause."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="named_import_specifier_keyword_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.import_specifier_keyword.expected_token",
+                source_tool=TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.GENERATED_RESIDUE,
+                priority=1,
+                diagnostic_codes=("typescript_ts1005",),
+                message_terms=("'from' expected",),
+                risk_level="low",
+                description=(
+                    "Routes TypeScript import-clause expected-from syntax errors from malformed named import clauses "
+                    "to the runtime import specifier keyword planner without claiming unrelated TS1005 diagnostics."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="named_import_specifier_keyword_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.import_specifier_keyword.statement_expected",
+                source_tool=TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.GENERATED_RESIDUE,
+                priority=1,
+                diagnostic_codes=("typescript_ts1109",),
+                message_terms=("declaration or statement expected",),
+                risk_level="low",
+                description=(
+                    "Routes statement-boundary syntax fallout from malformed named import clauses to the runtime "
+                    "import specifier keyword planner."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="named_import_specifier_keyword_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.import_specifier_keyword.unexpected_keyword",
+                source_tool=TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.GENERATED_RESIDUE,
+                priority=1,
+                diagnostic_codes=("typescript_ts1434",),
+                message_terms=("unexpected keyword or identifier",),
+                risk_level="low",
+                description=(
+                    "Routes unexpected-keyword syntax fallout from malformed named import clauses to the runtime "
+                    "import specifier keyword planner."
                 ),
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="named_import_specifier_keyword_text_replace"),
@@ -2600,6 +2741,41 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 ),
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="html_container_selector_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.dom_local_shim_cleanup",
+                source_tool=TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
+                priority=1,
+                diagnostic_codes=("typescript_ts2740",),
+                message_terms=("missing", "htmlcanvaselement"),
+                risk_level="low",
+                description=(
+                    "Removes generated local DOM type shims when the TypeScript DOM lib is already active "
+                    "and those shims conflict with built-in HTMLElement/HTMLCanvasElement types."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="local_dom_shim_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.dom_local_shim_member_gap",
+                source_tool=TYPESCRIPT_DOM_LOCAL_SHIM_CLEANUP_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.NULLABLE_TYPE_MISMATCH,
+                priority=1,
+                diagnostic_codes=("typescript_ts2339",),
+                message_terms=("property", "does not exist"),
+                raw_terms=("createelement", "getelementbyid"),
+                risk_level="low",
+                description=(
+                    "Covers DOM member errors caused by generated declare-const document shims; "
+                    "the runtime planner only patches when DOM lib evidence or a DOM type conflict is present."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="local_dom_shim_text_replace"),
             ),
             RepairRuleDefinition(
                 rule_id="typescript.scaffold",
@@ -3046,6 +3222,23 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 metadata=_executable_runtime_metadata(scope="unique_export_import_text_replace"),
             ),
             RepairRuleDefinition(
+                rule_id="typescript.export_ambiguity",
+                source_tool=TYPESCRIPT_EXPORT_AMBIGUITY_SOURCE_TOOL,
+                language="typescript",
+                phase="export_resolution",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=1,
+                diagnostic_codes=("typescript_ts2308",),
+                message_terms=("already exported a member named", "consider explicitly re-exporting"),
+                risk_level="low",
+                description=(
+                    "Resolves TypeScript barrel export ambiguity by adding an explicit named re-export "
+                    "for the compiler-reported symbol from the reported module."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="typescript_export_ambiguity_text_insert"),
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.duplicate_export_import_binding",
                 source_tool=TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
                 language="typescript",
@@ -3112,6 +3305,27 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 description="Removes generated unused TypeScript import residue through span-based text replacement.",
                 runtime_plan_available=True,
                 metadata=_executable_runtime_metadata(scope="unused_import_text_replace"),
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.test_block_residue",
+                source_tool=TYPESCRIPT_TEST_BLOCK_RESIDUE_SOURCE_TOOL,
+                language="typescript",
+                phase="quality_repair",
+                archetype=RepairArchetype.GENERATED_RESIDUE,
+                priority=1,
+                diagnostic_codes=("typescript_ts1128",),
+                message_terms=("declaration or statement expected",),
+                risk_level="low",
+                description=(
+                    "Removes trailing duplicated TypeScript test-block residue when an unmatched generated "
+                    "test fragment leaves TS1128 closers at file end."
+                ),
+                runtime_plan_available=True,
+                metadata={
+                    **_executable_runtime_metadata(scope="typescript_test_block_residue_text_replace"),
+                    "requires_suffix_only_patch": True,
+                    "unsafe_cases_fail_closed": True,
+                },
             ),
             RepairRuleDefinition(
                 rule_id="typescript.unused_parameter",

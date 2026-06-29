@@ -114,7 +114,7 @@ def _validated_chief_engineer_handoff(
     workspace: str,
     payload: dict[str, Any],
 ) -> tuple[bool, str, dict[str, Any]]:
-    validation = validate_director_handoff_from_payload(workspace, payload)
+    validation = validate_director_handoff_from_payload(workspace, payload, require_strict=True)
     decision_payload_raw = validation.get("decision_payload")
     decision_payload: dict[str, Any] = decision_payload_raw if isinstance(decision_payload_raw, dict) else {}
     return bool(validation.get("allowed")), str(validation.get("reason") or ""), decision_payload

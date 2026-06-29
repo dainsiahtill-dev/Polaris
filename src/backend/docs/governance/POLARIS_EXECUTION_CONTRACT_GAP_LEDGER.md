@@ -37,6 +37,23 @@ The target chain is:
 | P2-12 | P2 | AGI decision handoff consumes evidence but does not yet share the same envelope/capability ledger end-to-end. | Resident AGI handoff contracts and inbox projections now expose platform contract refs, missing platform refs, and blocked authority fields while forcing advisory-only authority. | AGI reads the same execution profile/envelope/audit/provenance contracts and can request governed actions without becoming a second authority source. | Closed | Resident contract/service tests show AGI handoff refs include execution profile, envelope, final request audit, provenance, and malicious authority fields are stripped. |
 | P2-13 | P2 | AGI cockpit UI is too dense for users and not yet a task-control console. | Resident workspace now defaults to a Chinese AGI cockpit plus tactical console; raw matrices/registries are hidden behind advanced audit, and chat/quick commands emit evidence/action receipts. | Chinese-first AGI cockpit: robot-like command console, concise status push, chat pull-and-act, evidence cards, governed action receipts. | Closed | ResidentWorkspace tests cover shell readability, hidden dense audit by default, tactical chat, quick commands, and governed action receipts; frontend typecheck passes. |
 
+## 2026-06-29 Enforcement Reconciliation
+
+This audit reopened the difference between "implemented capability" and
+"authoritative execution path." The following wiring is now enforced in code:
+
+| ID | Area | Previous Drift | Enforced State | Verification |
+| --- | --- | --- | --- | --- |
+| R-01 | CE handoff authority | Strict `ce_handoff_decision.v1` existed, but CE handoff payloads could omit `execution_profile_hash`, and Director dispatch still validated with `require_strict=False`. | CE consumer and public blueprint generation freeze `director_execution_profile` plus hash/ref; Director TaskMarket, orchestration, factory handoff probes, adapter projection, and loop-director call the shared validator with `require_strict=True`. | `test_ce_consumer_integration.py`, `test_orchestration_command_service.py`, `test_director_consumer.py::TestDirectorExecutionConsumerHandoffGate`, `test_loop_director_dependency_planning.py`, `test_service_governance.py`. |
+| R-02 | Execution envelope audit | Missing authority hashes were visible only indirectly through missing-ref values. | `audit_policy.execution_authority` records `ok`, `missing_bindings`, and `strict_handoff_required` for machine-readable ContextOS/final-request audit. | `test_execution_envelope.py`. |
+| R-03 | QA verdict authority | `QAVerdictEngine` ran as shadow comparison while legacy QA routing stayed authoritative even when mode was set to `engine`. | `KERNELONE_QA_VERDICT_ENGINE_MODE=engine` now promotes the verdict engine route; engine errors fail closed to `pending_qa`, and authoritative payload is recorded in QA metadata. | `test_qa_consumer.py::test_authoritative_verdict_engine_requeues_implementation_defect`. |
+
+Known unrelated active worktree risk: repair-kernel/advisory-overlay tests in
+`test_director_adapter_pure.py` and factory workspace-quality repair
+characterization currently fail in files already dirty before this change. Those
+failures are not closed by this handoff/envelope/QA reconciliation and must be
+handled by the repair-kernel owner before using those suites as release gates.
+
 ## Post-Closure Alignment Audit
 
 These items were discovered after the P0/P1/P2 implementation ledger was closed. They are documentation-and-contract alignment gaps: leaving them open would let future developers miss already-implemented contracts by reading only the main audit specification.

@@ -261,7 +261,17 @@ def create_transaction_kernel(
                 floor_value = 0
             if floor_value > 0:
                 existing_budget = _resolve_existing_output_budget_tokens(override)
-                override["llm_max_tokens"] = max(floor_value, existing_budget or 0)
+                forced_tool_choice = tool_choice is not None and not (
+                    isinstance(tool_choice, str) and tool_choice.strip().lower() in {"", "auto"}
+                )
+                if forced_tool_choice:
+                    override["llm_max_tokens"] = floor_value
+                    override["_transaction_kernel_retry_output_budget_bounded"] = True
+                    override["_transaction_kernel_retry_output_budget_reason"] = (
+                        "forced_tool_retry_must_not_inherit_full_execution_budget"
+                    )
+                else:
+                    override["llm_max_tokens"] = max(floor_value, existing_budget or 0)
         return override
 
     def _extract_model_override_from_request_payload(request_payload: dict[str, Any]) -> str | None:
