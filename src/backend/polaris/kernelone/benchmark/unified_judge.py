@@ -30,6 +30,7 @@ from polaris.domain.verification.business_validators import (
     validate_director_safe_scope as _validate_director_safe_scope_domain,
 )
 from polaris.kernelone.tool_execution.tool_categories import SCOUT_RECON_TOOLS
+from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 from .unified_models import (
     SCORE_WEIGHTS,
@@ -765,15 +766,13 @@ class OrderedToolSequenceValidator:
             "repo_tree",
             "glob",
         }
-        write_tools = {"search_replace", "precision_edit", "edit_file", "write_file"}
-
         first_write_index = None
         last_read_index = None
 
         for i, call in enumerate(observed.tool_calls):
             if call.tool in read_tools:
                 last_read_index = i
-            if call.tool in write_tools and first_write_index is None:
+            if is_write_tool_name(call.tool) and first_write_index is None:
                 first_write_index = i
 
         if first_write_index is not None and last_read_index is not None and last_read_index > first_write_index:

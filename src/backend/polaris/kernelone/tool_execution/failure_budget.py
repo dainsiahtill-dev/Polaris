@@ -33,6 +33,7 @@ from polaris.kernelone.constants import (
     FAILURE_BUDGET_MAX_TOTAL_PER_TURN,
 )
 from polaris.kernelone.tool_execution.error_classifier import ToolErrorClassifier, ToolErrorPattern
+from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 if TYPE_CHECKING:
     pass
@@ -276,9 +277,7 @@ class FailureBudget:
         """
         if pattern.error_type not in {"not_found", "no_match"}:
             return False
-        from polaris.kernelone.tool_execution.constants import WRITE_TOOLS
-
-        return pattern.tool_name not in WRITE_TOOLS
+        return not is_write_tool_name(pattern.tool_name)
 
     def _is_retryable_error_type(self, error_type: str, *, tool_name: str = "") -> bool:
         """Determine whether the error type is retryable.
@@ -295,9 +294,7 @@ class FailureBudget:
         if error_type in retryable_types:
             return True
         if error_type == "no_match":
-            from polaris.kernelone.tool_execution.constants import WRITE_TOOLS
-
-            return tool_name not in WRITE_TOOLS
+            return not is_write_tool_name(tool_name)
         return False
 
     def _escalate_suggestion(self, pattern: ToolErrorPattern) -> str:

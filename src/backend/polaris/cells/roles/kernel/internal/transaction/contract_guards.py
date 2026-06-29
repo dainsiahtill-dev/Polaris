@@ -26,7 +26,6 @@ from polaris.cells.roles.kernel.internal.transaction.constants import (
     RECON_TOOLS,
     SAFE_READ_BOOTSTRAP_TOOLS,
     TOOL_ALIASES,
-    WRITE_TOOLS,
 )
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
@@ -46,6 +45,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnDecision,
     TurnDecisionKind,
 )
+from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 logger = logging.getLogger(__name__)
 
@@ -483,7 +483,7 @@ def is_write_invocation(invocation: Any) -> bool:
     tool_name = extract_invocation_tool_name(invocation)
     if _is_materializing_execute_command_invocation(invocation):
         return True
-    if tool_name in WRITE_TOOLS:
+    if is_write_tool_name(tool_name):
         return True
     mode = extract_invocation_execution_mode(invocation)
     return mode == str(ToolExecutionMode.WRITE_SERIAL)
@@ -903,7 +903,7 @@ def tool_batch_has_write_invocation(invocations: list[dict[str, Any]] | list[Any
         tool_name = extract_invocation_tool_name(invocation)
         if _is_materializing_execute_command_invocation(invocation):
             return True
-        if tool_name in WRITE_TOOLS:
+        if is_write_tool_name(tool_name):
             return True
         mode = extract_invocation_execution_mode(invocation)
         if mode == str(ToolExecutionMode.WRITE_SERIAL):
@@ -926,7 +926,7 @@ def has_available_write_tool(tool_definitions: list[dict[str, Any]] | list[Any])
             tool_name = str(function_payload.get("name") or "").strip()
         else:
             tool_name = str(item.get("name") or "").strip()
-        if tool_name in WRITE_TOOLS:
+        if is_write_tool_name(tool_name):
             return True
     return False
 
@@ -1030,7 +1030,7 @@ def batch_write_results_all_failed_on_argument_shape(batch_receipt: Mapping[str,
         if not isinstance(item, Mapping):
             continue
         tool_name = str(item.get("tool_name") or "").strip()
-        if tool_name not in WRITE_TOOLS:
+        if not is_write_tool_name(tool_name):
             continue
         write_seen = True
         status = str(item.get("status") or "").strip().lower()

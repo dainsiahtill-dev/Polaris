@@ -50,6 +50,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.tools.tool_kinds import is_write_tool_name
+
 if TYPE_CHECKING:
     pass
 
@@ -196,19 +198,17 @@ class RecoveryStateMachine:
 
         self.recovery_attempts += 1
 
-        # Check for write operations
-        write_tools = {
-            "write_file",
-            "append_to_file",
-            "edit_file",
-            "precision_edit",
-            "delete_file",
-            "move_file",
-            "create_directory",
-            "execute_command",
-        }
+        # Check for materializing operations. execute_command and directory moves
+        # are not write tools in ToolSpec terms, but they can still mutate the
+        # workspace during recovery.
+        mutating_non_write_tools = frozenset({"move_file", "create_directory", "execute_command"})
 
-        has_write = any(str(r.get("tool", "")).strip() in write_tools for r in tool_results if isinstance(r, dict))
+        def _is_mutating_result(result: dict[str, Any]) -> bool:
+            tool_name = result.get("tool") or result.get("tool_name") or ""
+            normalized = str(tool_name or "").strip().lower().replace("-", "_")
+            return is_write_tool_name(normalized) or normalized in mutating_non_write_tools
+
+        has_write = any(_is_mutating_result(r) for r in tool_results if isinstance(r, dict))
 
         if has_write:
             self._workspace_modified_after_recovery = True
@@ -241,9 +241,7 @@ class RecoveryStateMachine:
         has_ack = any(m in assistant_content.lower() for m in acknowledgment_markers)
 
         # Track read-only streak after recovery attempt
-        all_read_only = all(
-            str(r.get("tool", "")).strip() not in write_tools for r in tool_results if isinstance(r, dict)
-        )
+        all_read_only = all(not _is_mutating_result(r) for r in tool_results if isinstance(r, dict))
 
         if all_read_only and tool_results:
             self._consecutive_read_only_after_recovery += 1

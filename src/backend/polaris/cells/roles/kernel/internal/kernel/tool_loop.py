@@ -15,7 +15,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
-from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
+from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal._tool_gateway_di import _DelegatingToolGateway
@@ -220,8 +220,8 @@ class ToolLoop:
         deferred: list[ToolCallResult] = []
         write_calls_seen = 0
         for call in tool_calls:
-            tool_name = str(getattr(call, "tool", "") or "").strip().lower()
-            is_write_tool = tool_name in WRITE_TOOLS
+            tool_name = getattr(call, "tool", "") or ""
+            is_write_tool = is_write_tool_name(tool_name)
             if is_write_tool and write_calls_seen >= write_limit:
                 deferred.append(call)
                 continue

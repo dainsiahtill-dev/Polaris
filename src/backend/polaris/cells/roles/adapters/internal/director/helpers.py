@@ -12,6 +12,7 @@ from typing import Any
 
 from polaris.cells.roles.kernel.public.service import is_authoritative_write_result
 from polaris.kernelone.constants import DIRECTOR_TIMEOUT_SECONDS
+from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 # -----------------------------------------------------------------------------
 # 配置解析辅助函数
@@ -343,22 +344,13 @@ def is_timeout_failure(error_text: str) -> bool:
 
 def has_successful_write_tool(tool_results: list[dict[str, Any]]) -> bool:
     """Check whether tool results contain an authoritative successful write."""
-    write_tools = {
-        "append_to_file",
-        "edit_blocks",
-        "edit_file",
-        "patch_apply",
-        "precision_edit",
-        "repo_apply_diff",
-        "write_file",
-    }
     for item in tool_results:
         if not isinstance(item, dict):
             continue
         if not _is_successful_tool_result(item):
             continue
-        tool_name = str(item.get("tool_name") or item.get("tool") or "").strip().lower()
-        if tool_name in write_tools and _has_tool_execution_receipt(item) and is_authoritative_write_result(item):
+        tool_name = item.get("tool_name") or item.get("tool") or ""
+        if is_write_tool_name(tool_name) and _has_tool_execution_receipt(item) and is_authoritative_write_result(item):
             return True
     return False
 

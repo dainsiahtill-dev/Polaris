@@ -20,6 +20,7 @@ import time
 from typing import Any, NoReturn
 
 from polaris.kernelone.llm.toolkit.write_policy import parse_agents_write_policy
+from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 logger = logging.getLogger(__name__)
 
@@ -1013,10 +1014,9 @@ class CodeGenerationEngine:
     def _extract_written_files_from_tool_results(tool_results: list[dict[str, Any]]) -> list[dict[str, str]]:
         files: list[dict[str, str]] = []
         seen: set[str] = set()
-        write_tools = {"write_file", "edit_file", "patch_apply", "append_to_file", "search_replace"}
         for item in tool_results:
-            tool_name = str(item.get("tool") or item.get("name") or "").strip().lower()
-            if tool_name not in write_tools or not bool(item.get("success")):
+            tool_name = item.get("tool") or item.get("tool_name") or item.get("name") or ""
+            if not is_write_tool_name(tool_name) or not bool(item.get("success")):
                 continue
             result = item.get("result")
             candidates: list[Any] = []

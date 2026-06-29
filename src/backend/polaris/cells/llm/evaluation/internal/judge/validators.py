@@ -24,6 +24,7 @@ from polaris.domain.verification.business_validators import (
     validate_pm_plan_json,
     validate_qa_passfail,
 )
+from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 from ..benchmark_models import ObservedBenchmarkRun
 from ..utils import looks_like_structured_steps
@@ -505,15 +506,13 @@ def _validator_ordered_tool_sequence(
         "repo_tree",
         "glob",
     }
-    write_tools = {"search_replace", "precision_edit", "edit_file", "write_file"}
-
     first_write_index = None
     last_read_index = None
 
     for i, call in enumerate(observed.tool_calls):
         if call.tool in read_tools:
             last_read_index = i
-        if call.tool in write_tools and first_write_index is None:
+        if is_write_tool_name(call.tool) and first_write_index is None:
             first_write_index = i
 
     # If we have both read and write, read should come before write

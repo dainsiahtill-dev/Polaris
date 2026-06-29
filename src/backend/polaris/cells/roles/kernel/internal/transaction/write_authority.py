@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
+from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 _PATH_KEYS: tuple[str, ...] = ("file", "filepath", "path", "target", "target_file", "file_path")
 _NESTED_PATH_KEYS: tuple[str, ...] = (
@@ -91,7 +91,7 @@ def is_authoritative_write_invocation(invocation: Any) -> bool:
     """Return True when an invocation is a write aimed at authoritative targets."""
     tool_name = _extract_tool_name(invocation)
     mode = _extract_execution_mode(invocation)
-    if tool_name not in WRITE_TOOLS and mode != "write_serial":
+    if not is_write_tool_name(tool_name) and mode != "write_serial":
         return False
     target_path = extract_target_path_from_payload(
         invocation.get("arguments") if isinstance(invocation, Mapping) else getattr(invocation, "arguments", None)
@@ -104,7 +104,7 @@ def is_authoritative_write_result(result_item: Any) -> bool:
     if not isinstance(result_item, Mapping):
         return False
     tool_name = _extract_tool_name(result_item)
-    if tool_name not in WRITE_TOOLS:
+    if not is_write_tool_name(tool_name):
         return False
     target_path = extract_target_path_from_payload(result_item)
     return is_authoritative_write_path(target_path)
