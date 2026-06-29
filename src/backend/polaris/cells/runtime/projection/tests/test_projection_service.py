@@ -249,6 +249,21 @@ class TestMergeDirectorStatus:
         assert result["run_ledger_projection"]["ok"] is True
 
 
+def test_snapshot_compat_prefers_director_execution_state_over_nested_status() -> None:
+    projection = RuntimeProjection(
+        director_merged={
+            "running": False,
+            "state": "FAILED_PLATFORM",
+            "execution_state": "FAILED_PLATFORM",
+            "status": {"state": "IDLE"},
+        }
+    )
+
+    snapshot = build_snapshot_payload_from_projection(projection, workspace="")
+
+    assert snapshot["snapshot_compat"]["director_status"] == "FAILED_PLATFORM"
+
+
 # =============================================================================
 # select_task_rows tests
 # =============================================================================

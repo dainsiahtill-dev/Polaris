@@ -249,16 +249,41 @@ export function parseDirectorStateToken(
   const nested = root && isRecord(root.status) ? root.status : null;
   const deepNested = nested && isRecord(nested.status) ? nested.status : null;
   
-  const token =
+  const rawToken =
+    toStringValue(root?.execution_state) ||
     toStringValue(root?.state) ||
+    toStringValue(nested?.execution_state) ||
     toStringValue(nested?.state) ||
+    toStringValue(deepNested?.execution_state) ||
     toStringValue(deepNested?.state);
+  const token = normalizeDirectorRuntimeStateToken(rawToken);
     
   const running =
-    Boolean((directorStatus as BackendStatus | null | undefined)?.running) ||
-    token.toUpperCase() === 'RUNNING';
+    (Boolean((directorStatus as BackendStatus | null | undefined)?.running) &&
+      !['error', 'failed', 'blocked'].includes(token)) ||
+    token === 'running' ||
+    token === 'recovering';
     
-  return { running, state: token.toLowerCase() };
+  return { running, state: token };
+}
+
+function normalizeDirectorRuntimeStateToken(value: unknown): string {
+  const token = toStringValue(value).toLowerCase();
+  if (!token) return '';
+  if (['running', 'working', 'active', 'executing', 'in_progress', 'in-progress'].includes(token)) return 'running';
+  if (['recovering', 'retrying'].includes(token)) return 'recovering';
+  if (['completed', 'complete', 'done', 'success', 'succeeded', 'stopped', 'completed_verified'].includes(token)) return 'completed';
+  if (
+    ['failed', 'failure', 'error', 'failed_platform', 'failed_artifact', 'blocked_with_reason'].includes(token) ||
+    token.startsWith('failed_') ||
+    token.includes('failure') ||
+    token.includes('error')
+  ) {
+    return 'error';
+  }
+  if (['blocked', 'waiting_human'].includes(token)) return 'blocked';
+  if (['pending', 'idle', 'ready', 'waiting'].includes(token)) return 'idle';
+  return token;
 }
 
 export function inferDirectorPhase(directorStatus: BackendStatus | null | undefined): string {
@@ -269,7 +294,7 @@ export function inferDirectorPhase(directorStatus: BackendStatus | null | undefi
   );
   
   const hasFailed = taskStates.some((token) => token === 'failed' || token === 'blocked' || token === 'error');
-  if (hasFailed || state === 'failed' || state === 'error') return 'error';
+  if (hasFailed || state === 'failed' || state === 'error' || state === 'blocked') return 'error';
   
   const hasRunningTask = taskStates.some((token) =>
     token === 'running' || token === 'in_progress' || token === 'claimed' || token === 'executing'

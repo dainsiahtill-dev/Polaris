@@ -1682,16 +1682,18 @@ def _derive_compat_fields(projection: RuntimeProjection) -> dict[str, Any]:
     """Derive snapshot metadata fields from the current projection."""
 
     def _director_state(payload: dict[str, Any]) -> str:
+        for key in ("execution_state", "state"):
+            token = str(payload.get(key) or "").strip()
+            if token:
+                return token
         status_value = payload.get("status")
         if isinstance(status_value, dict):
-            nested_state = str(status_value.get("state") or "").strip()
-            if nested_state:
-                return nested_state
+            for key in ("execution_state", "state"):
+                nested_state = str(status_value.get(key) or "").strip()
+                if nested_state:
+                    return nested_state
         elif status_value:
             return str(status_value).strip()
-        state_token = str(payload.get("state") or "").strip()
-        if state_token:
-            return state_token
         return "running" if bool(payload.get("running")) else "idle"
 
     def _director_tasks(payload: dict[str, Any]) -> dict[str, Any]:

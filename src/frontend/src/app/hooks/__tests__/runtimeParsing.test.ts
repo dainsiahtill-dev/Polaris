@@ -3,6 +3,8 @@ import {
   extractFileEditEvents,
   extractRuntimeFileEditEvent,
   firstDisplayString,
+  inferDirectorPhase,
+  parseDirectorStateToken,
   toDisplayString,
 } from '../runtimeParsing';
 
@@ -22,6 +24,38 @@ describe('runtimeParsing display string normalization', () => {
 
   it('serializes objects with no display scalar as compact JSON', () => {
     expect(toDisplayString({ phase: 'director_dispatch', status: 'running' })).toBe('{"phase":"director_dispatch","status":"running"}');
+  });
+});
+
+describe('runtimeParsing director state normalization', () => {
+  it('treats Run Ledger platform failures as error and suppresses stale running', () => {
+    const status = {
+      running: true,
+      execution_state: 'FAILED_PLATFORM',
+      state: 'FAILED_PLATFORM',
+      status: {
+        state: 'IDLE',
+      },
+    };
+
+    expect(parseDirectorStateToken(status)).toEqual({
+      running: false,
+      state: 'error',
+    });
+    expect(inferDirectorPhase(status)).toBe('error');
+  });
+
+  it('treats failed artifact task-boundary states as error', () => {
+    const status = {
+      running: false,
+      execution_state: 'FAILED_ARTIFACT',
+    };
+
+    expect(parseDirectorStateToken(status)).toEqual({
+      running: false,
+      state: 'error',
+    });
+    expect(inferDirectorPhase(status)).toBe('error');
   });
 });
 

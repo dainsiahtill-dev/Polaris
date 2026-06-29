@@ -115,6 +115,7 @@ interface DirectorServiceMetrics {
 
 interface DirectorServiceStatus {
   state?: string;
+  execution_state?: string;
   run_id?: string;
   current_run_id?: string;
   id?: string;
@@ -132,6 +133,8 @@ interface NestedStatusResponse {
   } | null;
   director_status?: {
     running?: boolean;
+    state?: string;
+    execution_state?: string;
     phase?: string;
     active_tasks?: number;
     completed_tasks?: number;
@@ -280,10 +283,15 @@ function normalizeDirectorStateToken(value: unknown, runningHint: boolean): stri
   if (["running", "working", "active", "executing", "in_progress", "in-progress"].includes(state)) {
     return "running";
   }
-  if (["completed", "complete", "done", "success", "succeeded", "stopped"].includes(state)) {
+  if (["completed", "complete", "done", "success", "succeeded", "stopped", "completed_verified"].includes(state)) {
     return "completed";
   }
-  if (["failed", "failure", "error"].includes(state)) {
+  if (
+    ["failed", "failure", "error", "failed_platform", "failed_artifact", "blocked_with_reason"].includes(state) ||
+    state.startsWith("failed_") ||
+    state.includes("failure") ||
+    state.includes("error")
+  ) {
     return "error";
   }
   if (["paused", "pause"].includes(state)) {
@@ -464,13 +472,12 @@ function normalizeDirectorStatus(legacy: LegacyResponse, nested?: NestedStatusRe
     const failedTasks = directorNested.failed_tasks ?? metricValue(metrics, "tasks_failed") ?? 0;
     const activeTasks = directorNested.active_tasks ?? deriveOutstandingTasks(metrics, completedTasks, failedTasks) ?? 0;
     const queueDepth = directorNested.queue_depth ?? deriveOutstandingTasks(metrics, completedTasks, failedTasks) ?? 0;
-    const running = Boolean(directorNested.running)
-      || Boolean(serviceStatus?.is_running)
-      || activeTasks > 0
-      || normalizeDirectorStateToken(serviceStatus?.state, false) === "running";
-    const phase = normalizeDirectorPhase(
-      directorNested.phase || normalizeDirectorStateToken(serviceStatus?.state, running)
+    const stateToken = normalizeDirectorStateToken(
+      directorNested.execution_state || directorNested.state || serviceStatus?.execution_state || serviceStatus?.state,
+      Boolean(directorNested.running) || Boolean(serviceStatus?.is_running) || activeTasks > 0
     );
+    const running = stateToken === "running" || stateToken === "recovering";
+    const phase = normalizeDirectorPhase(directorNested.phase || stateToken);
 
     return {
       running,

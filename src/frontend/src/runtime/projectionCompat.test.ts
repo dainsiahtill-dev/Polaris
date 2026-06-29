@@ -307,6 +307,34 @@ describe('Runtime Projection Compatibility', () => {
         director_active: 4,
       }));
     });
+
+    it('should map Run Ledger director failure states to canonical error instead of running', () => {
+      const websocketPayload = {
+        director_status: {
+          running: true,
+          state: 'FAILED_PLATFORM',
+          execution_state: 'FAILED_PLATFORM',
+          active_tasks: 3,
+          status: {
+            state: 'IDLE',
+          },
+          run_ledger_projection: {
+            tool_lifecycle: {
+              dropped_count: 1,
+            },
+          },
+        },
+      };
+
+      const result = toCanonicalProjection(websocketPayload);
+
+      expect(result.director).toEqual(expect.objectContaining({
+        running: false,
+        phase: 'error',
+        active_tasks: 3,
+      }));
+      expect(result.snapshot_compat.director_status).toBe('error');
+    });
   });
 
   describe('createEmptyProjection', () => {
