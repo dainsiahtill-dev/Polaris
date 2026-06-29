@@ -119,6 +119,11 @@ def test_run_ledger_appends_gate_evidence(tmp_path: Path) -> None:
     assert events[0]["physical_evidence"]["sampled_command_count"] == 1
     assert events[0]["physical_evidence"]["commands_truncated"] is True
     assert events[0]["job_token"]["token_id"] == token.token_id
+    projection = build_run_ledger_projection(events)
+    assert projection["gates"][0]["evidence_modalities"]["command"]["ok"] is False
+    assert projection["evidence_modalities"]["command"]["ok"] == 0
+    assert projection["evidence_modalities"]["command"]["failed"] == 1
+    assert projection["evidence_policy"]["failed_required_modalities"] == ["command"]
 
 
 def test_real_run_gate_persists_ledger_event_from_single_token_source(tmp_path: Path) -> None:

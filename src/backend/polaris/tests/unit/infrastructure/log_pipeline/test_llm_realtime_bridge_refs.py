@@ -124,6 +124,43 @@ class TestBuildRefsRichFields:
         assert refs["model"] == "claude-4"
         assert refs["provider"] == "anthropic"
 
+    def test_refs_include_final_request_audit_projection(self, bridge: LogPipelineLLMRealtimeBridge) -> None:
+        writer = MagicMock()
+        audit = {
+            "schema_version": "llm.final_request_context_audit.v1",
+            "final_request_evidence_coverage": {
+                "request_hash": "request-hash-4",
+                "pass": False,
+                "missing_required_refs": ["execution_envelope"],
+                "missing_required_tools": ["write_file"],
+            },
+        }
+        event = LLMRealtimeEvent(
+            workspace="/tmp/test-ws",
+            run_id="run-final-request",
+            role="director",
+            event_type="llm_call_start",
+            data={
+                "metadata": {
+                    "context_snapshot_ref": "runtime/contexts/aa/bbbb.json",
+                    "final_request_context_audit": audit,
+                }
+            },
+        )
+        with patch(
+            "polaris.infrastructure.log_pipeline.llm_realtime_bridge.get_writer",
+            return_value=writer,
+        ):
+            bridge.publish(event)
+
+        refs = writer.write_event.call_args.kwargs.get("refs") or writer.write_event.call_args[1].get("refs")
+        assert refs["context_snapshot_ref"] == "runtime/contexts/aa/bbbb.json"
+        assert refs["final_request_evidence_hash"]
+        assert refs["final_request_context_audit_hash"]
+        assert refs["final_request_evidence_coverage_pass"] is False
+        assert refs["missing_required_refs"] == ["execution_envelope"]
+        assert refs["missing_required_tools"] == ["write_file"]
+
 
 class TestRawDataPreserved:
     """raw.data must be the original event data dict, unmodified."""

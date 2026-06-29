@@ -270,6 +270,69 @@ class TestChiefEngineerHandoffGuards:
         assert depth_contract["minimums"]["min_test_assertions"] == 8
         assert context["metadata"]["delivery_depth_contract"] == depth_contract
 
+    def test_task_blueprint_context_merges_catalog_minimums_into_existing_depth_contract(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        executor = _executor(tmp_path)
+        catalog_path = tmp_path / ".polaris" / "catalog_contract.json"
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        catalog_path.write_text(
+            json.dumps(
+                {
+                    "project_id": "L2-08",
+                    "primary_language": "javascript",
+                    "project_type": "collaboration_toy",
+                    "feature_keywords": ["meteor", "wish", "queue", "priority"],
+                    "level": 2,
+                    "level_contract": {
+                        "schema_version": "factory-bench.level_contract.v1",
+                        "level": 2,
+                        "minimums": {
+                            "min_prod_files": 6,
+                            "min_prod_lines": 500,
+                            "min_test_assertions": 8,
+                        },
+                        "required_evidence": ["Factory audit implementation_depth passes"],
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        context = executor._task_blueprint_context(
+            {
+                "id": "TASK-1",
+                "title": "Build meteor wish queue",
+                "target_files": ["src/index.js"],
+                "acceptance_criteria": ["src/index.js exists"],
+                "delivery_depth_contract": {
+                    "schema_version": "polaris.delivery_depth_contract.v1",
+                    "source": "pm.deterministic_synthesis",
+                    "product_intent": {
+                        "subject": "流星愿望队列",
+                        "primary_entities": ["meteor", "wish", "queue", "priority"],
+                    },
+                    "behavior_contract": {
+                        "rule_matrix": ["priority queue ordering is observable"],
+                    },
+                },
+            },
+            run_id="factory_test",
+            index=1,
+        )
+
+        depth_contract = context["delivery_depth_contract"]
+        assert depth_contract["source"] == "pm.deterministic_synthesis"
+        assert depth_contract["minimums"]["min_prod_files"] == 6
+        assert depth_contract["minimums"]["min_prod_lines"] == 500
+        assert depth_contract["level_contract"]["minimums"]["min_test_assertions"] == 8
+        assert depth_contract["product_intent"]["subject"] == "流星愿望队列"
+        assert context["level_contract"]["level"] == 2
+        assert context["metadata"]["factory_bench_level"] == 2
+        assert context["metadata"]["factory_bench_project_id"] == "L2-08"
+
     def test_chief_engineer_review_consumes_llm_blueprint_overlay(
         self,
         tmp_path: Path,
@@ -3896,6 +3959,23 @@ class TestDirectorEvidenceStatics:
         assert delta["changed_count"] == 1
         assert delta["delta_file_count"] == 2
         assert OrchestrationStageExecutor._workspace_delta_indicates_materialization_progress(delta) is True
+
+    def test_workspace_delivery_delta_ignores_python_runtime_cache(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        before = executor._capture_workspace_delivery_state()
+        cache_dir = tmp_path / "tests" / "__pycache__"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "test_product.cpython-312.pyc").write_bytes(b"cache")
+
+        delta = OrchestrationStageExecutor._workspace_delivery_delta(
+            before,
+            executor._capture_workspace_delivery_state(),
+        )
+
+        assert delta["added_count"] == 0
+        assert delta["changed_count"] == 0
+        assert delta["delta_file_count"] == 0
+        assert OrchestrationStageExecutor._workspace_delta_indicates_materialization_progress(delta) is False
 
     def test_is_director_no_materialized_changes_from_message(self) -> None:
         result = CommandResult(run_id="r", status="failed", message="error=director_no_materialized_changes")

@@ -1967,6 +1967,26 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
     data_metadata = _as_dict(data.get("metadata"))
     extra_fields = _as_dict(data_metadata.get("extra_fields"))
     tokens = _as_dict(raw.get("tokens"))
+    audit_refs = _as_dict(raw.get("audit_refs"))
+    final_request_evidence = _as_dict(raw.get("final_request_evidence"))
+    if not final_request_evidence:
+        final_request_evidence = _as_dict(data.get("final_request_evidence"))
+    if not final_request_evidence:
+        final_request_evidence = _as_dict(data_metadata.get("final_request_evidence"))
+    final_request_context_audit = _as_dict(raw.get("final_request_context_audit"))
+    if not final_request_context_audit:
+        final_request_context_audit = _as_dict(data.get("final_request_context_audit"))
+    if not final_request_context_audit:
+        final_request_context_audit = _as_dict(data_metadata.get("final_request_context_audit"))
+    context_snapshot_ref = _first_string(
+        raw.get("context_snapshot_ref"),
+        data.get("context_snapshot_ref"),
+        metadata.get("context_snapshot_ref"),
+        data_metadata.get("context_snapshot_ref"),
+        extra_fields.get("context_snapshot_ref"),
+        audit_refs.get("context_snapshot_ref"),
+        final_request_evidence.get("context_snapshot_ref"),
+    )
 
     event_name = _first_string(
         raw.get("event_type"), raw.get("event"), raw.get("type"), raw.get("name"), data.get("event_type")
@@ -2077,6 +2097,21 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
         "skipped": skipped,
         "skip_reason": skip_reason,
         "fail_closed": fail_closed,
+        "context_snapshot_ref": context_snapshot_ref,
+        "final_request_context_audit_present": bool(final_request_context_audit),
+        "final_request_context_audit_hash": _first_string(
+            raw.get("final_request_context_audit_hash"),
+            data.get("final_request_context_audit_hash"),
+            audit_refs.get("final_request_context_audit_hash"),
+            final_request_evidence.get("final_request_context_audit_hash"),
+        ),
+        "final_request_evidence_hash": _first_string(
+            raw.get("final_request_evidence_hash"),
+            data.get("final_request_evidence_hash"),
+            audit_refs.get("final_request_evidence_hash"),
+            final_request_evidence.get("final_request_evidence_hash"),
+        ),
+        "final_request_evidence_coverage_pass": final_request_evidence.get("final_request_evidence_coverage_pass"),
         "source_path": source_path,
         "raw": raw,
     }

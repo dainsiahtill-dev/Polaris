@@ -17,6 +17,7 @@ from polaris.kernelone._runtime_config import (
     get_workspace_metadata_dir_name,
     resolve_env_float,
 )
+from polaris.kernelone.events.final_request_evidence import attach_final_request_evidence
 from polaris.kernelone.events.message_bus import Message, MessageType
 from polaris.kernelone.events.realtime_bridge import (
     LLMRealtimeEvent,
@@ -736,6 +737,7 @@ def emit_llm_event(
         "event": event_name,
         "data": event_data,
     }
+    attach_final_request_evidence(payload, event_data)
 
     # Store llm_events_path for MessageBus publish (not part of JSONL payload)
     payload["llm_events_path"] = llm_events_path

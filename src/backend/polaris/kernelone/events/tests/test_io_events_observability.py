@@ -185,6 +185,48 @@ def test_emit_llm_event_redacts_prompt_payload_before_persistence(tmp_path: Path
     assert data["metadata"]["response_content"]["redacted"] is True
 
 
+def test_emit_llm_event_projects_final_request_evidence_refs(tmp_path: Path) -> None:
+    """Generic JSONL LLM events must expose final-request audit refs directly."""
+    from polaris.kernelone.events import io_events
+
+    events_path = tmp_path / "director.llm.events.jsonl"
+    audit = {
+        "schema_version": "llm.final_request_context_audit.v1",
+        "final_request_token_estimate": 4096,
+        "final_request_evidence_coverage": {
+            "request_hash": "request-hash-3",
+            "pass": False,
+            "missing_required_refs": ["execution_envelope"],
+        },
+    }
+
+    with (
+        patch("polaris.kernelone.events.io_events._publish_llm_event_to_realtime_bridge"),
+        patch("polaris.kernelone.events.io_events._publish_runtime_event_to_bus"),
+    ):
+        io_events.emit_llm_event(
+            str(events_path),
+            event="llm_call_start",
+            role="director",
+            run_id="run-final-request",
+            data={
+                "metadata": {
+                    "context_snapshot_ref": "runtime/contexts/22/3333.json",
+                    "final_request_context_audit": audit,
+                    "messages": [{"role": "user", "content": "secret prompt"}],
+                },
+            },
+        )
+
+    row = json.loads(events_path.read_text(encoding="utf-8").splitlines()[0])
+    assert row["context_snapshot_ref"] == "runtime/contexts/22/3333.json"
+    assert row["final_request_context_audit"] == audit
+    assert row["audit_refs"]["context_snapshot_ref"] == "runtime/contexts/22/3333.json"
+    assert row["audit_refs"]["request_hash"] == "request-hash-3"
+    assert row["final_request_evidence"]["missing_required_refs"] == ["execution_envelope"]
+    assert "secret prompt" not in events_path.read_text(encoding="utf-8")
+
+
 def test_message_bus_sync_publish_without_loop_skips_without_warning(caplog) -> None:
     """Synchronous CLI mode without an event loop must not pollute stderr."""
     from polaris.kernelone.events import io_events

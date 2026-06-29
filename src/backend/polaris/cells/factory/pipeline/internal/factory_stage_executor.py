@@ -678,8 +678,10 @@ class OrchestrationStageExecutor:
                 merged[key] = catalog_contract[key]
 
         for key in ("minimums", "level_contract"):
-            existing_map = existing.get(key) if isinstance(existing.get(key), dict) else {}
-            catalog_map = catalog_contract.get(key) if isinstance(catalog_contract.get(key), dict) else {}
+            existing_raw = existing.get(key)
+            catalog_raw = catalog_contract.get(key)
+            existing_map = cast(dict[str, Any], existing_raw) if isinstance(existing_raw, dict) else {}
+            catalog_map = cast(dict[str, Any], catalog_raw) if isinstance(catalog_raw, dict) else {}
             if existing_map or catalog_map:
                 merged[key] = {**catalog_map, **existing_map}
 
@@ -692,14 +694,22 @@ class OrchestrationStageExecutor:
                 merged[key] = merged_list
 
         for key in ("product_intent", "behavior_contract", "acceptance_contract"):
-            existing_map = existing.get(key) if isinstance(existing.get(key), dict) else {}
-            catalog_map = catalog_contract.get(key) if isinstance(catalog_contract.get(key), dict) else {}
+            existing_raw = existing.get(key)
+            catalog_raw = catalog_contract.get(key)
+            existing_map = cast(dict[str, Any], existing_raw) if isinstance(existing_raw, dict) else {}
+            catalog_map = cast(dict[str, Any], catalog_raw) if isinstance(catalog_raw, dict) else {}
             if not existing_map and not catalog_map:
                 continue
             child = {**catalog_map, **existing_map}
             if key == "behavior_contract":
-                existing_minimums = existing_map.get("minimums") if isinstance(existing_map.get("minimums"), dict) else {}
-                catalog_minimums = catalog_map.get("minimums") if isinstance(catalog_map.get("minimums"), dict) else {}
+                existing_minimums_raw = existing_map.get("minimums")
+                catalog_minimums_raw = catalog_map.get("minimums")
+                existing_minimums = (
+                    cast(dict[str, Any], existing_minimums_raw) if isinstance(existing_minimums_raw, dict) else {}
+                )
+                catalog_minimums = (
+                    cast(dict[str, Any], catalog_minimums_raw) if isinstance(catalog_minimums_raw, dict) else {}
+                )
                 if existing_minimums or catalog_minimums:
                     child["minimums"] = {**catalog_minimums, **existing_minimums}
             merged[key] = child
@@ -711,20 +721,20 @@ class OrchestrationStageExecutor:
         metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
         catalog = self._read_catalog_contract()
         catalog_depth_contract = self._catalog_delivery_depth_contract(catalog)
-        existing_depth_contract = (
-            dict(context.get("delivery_depth_contract"))
-            if isinstance(context.get("delivery_depth_contract"), dict)
-            else (
-                dict(metadata.get("delivery_depth_contract"))
-                if isinstance(metadata.get("delivery_depth_contract"), dict)
-                else {}
-            )
-        )
+        context_depth_raw = context.get("delivery_depth_contract")
+        metadata_depth_raw = metadata.get("delivery_depth_contract")
+        if isinstance(context_depth_raw, dict):
+            existing_depth_contract = dict(cast(dict[str, Any], context_depth_raw))
+        elif isinstance(metadata_depth_raw, dict):
+            existing_depth_contract = dict(cast(dict[str, Any], metadata_depth_raw))
+        else:
+            existing_depth_contract = {}
         depth_contract = self._merge_catalog_delivery_depth_contract(existing_depth_contract, catalog_depth_contract)
         if not depth_contract:
             return
         context["delivery_depth_contract"] = depth_contract
-        level_contract = dict(depth_contract.get("level_contract") or {})
+        level_contract_raw = depth_contract.get("level_contract")
+        level_contract = dict(cast(dict[str, Any], level_contract_raw)) if isinstance(level_contract_raw, dict) else {}
         if level_contract:
             context["level_contract"] = level_contract
         language = str(depth_contract.get("language") or "").strip()
@@ -740,10 +750,9 @@ class OrchestrationStageExecutor:
         if title and not str(context.get("factory_bench_title") or "").strip():
             context["factory_bench_title"] = title
         metadata = dict(metadata)
+        metadata_depth_raw = metadata.get("delivery_depth_contract")
         metadata["delivery_depth_contract"] = self._merge_catalog_delivery_depth_contract(
-            dict(metadata.get("delivery_depth_contract"))
-            if isinstance(metadata.get("delivery_depth_contract"), dict)
-            else {},
+            dict(cast(dict[str, Any], metadata_depth_raw)) if isinstance(metadata_depth_raw, dict) else {},
             depth_contract,
         )
         if level_contract:

@@ -312,9 +312,13 @@ def _enabled_evidence_modalities_from_record(record: dict[str, Any]) -> list[str
         bool(policy.get("visual_enabled")) for policy in verifier_policies
     ):
         enabled.append("visual")
-    if any(bool(policy.get("llm_judge_enabled") or policy.get("multimodal_llm_enabled")) for policy in verifier_policies):
+    if any(
+        bool(policy.get("llm_judge_enabled") or policy.get("multimodal_llm_enabled")) for policy in verifier_policies
+    ):
         enabled.append("llm_judge")
-    if any(bool(policy.get("custom_script_enabled") or policy.get("user_scripts_enabled")) for policy in verifier_policies):
+    if any(
+        bool(policy.get("custom_script_enabled") or policy.get("user_scripts_enabled")) for policy in verifier_policies
+    ):
         enabled.append("custom_script")
     if any(bool(policy.get("domain_verifiers_enabled")) for policy in verifier_policies):
         enabled.append("domain")
@@ -413,7 +417,9 @@ def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any
                     item
                     for item in (
                         command_detail,
-                        f"entrypoint_smoke failed: {entrypoint_detail}" if entrypoint_detail else "entrypoint_smoke failed",
+                        f"entrypoint_smoke failed: {entrypoint_detail}"
+                        if entrypoint_detail
+                        else "entrypoint_smoke failed",
                     )
                     if item
                 )

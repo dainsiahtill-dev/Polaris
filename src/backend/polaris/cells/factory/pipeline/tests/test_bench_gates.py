@@ -1939,6 +1939,39 @@ def test_collect_llm_events_reads_runtime_role_jsonl(tmp_path: Path) -> None:
     assert events[0]["terminal"] is True
 
 
+def test_collect_llm_events_projects_final_request_evidence(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    events_dir = runtime / "events"
+    events_dir.mkdir(parents=True)
+    (events_dir / "director.llm.events.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "llm_call_start",
+                "role": "director",
+                "context_snapshot_ref": "runtime/contexts/aa/bbbb.json",
+                "final_request_context_audit_hash": "audit-hash",
+                "final_request_evidence_hash": "evidence-hash",
+                "final_request_evidence": {
+                    "context_snapshot_ref": "runtime/contexts/aa/bbbb.json",
+                    "final_request_evidence_coverage_pass": False,
+                },
+                "data": {"provider": "qwen-local", "model": "qwen3"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    events = collect_llm_events(tmp_path, runtime)
+
+    assert len(events) == 1
+    assert events[0]["context_snapshot_ref"] == "runtime/contexts/aa/bbbb.json"
+    assert events[0]["final_request_context_audit_hash"] == "audit-hash"
+    assert events[0]["final_request_evidence_hash"] == "evidence-hash"
+    assert events[0]["final_request_evidence_coverage_pass"] is False
+
+
 def test_collect_llm_events_reads_multiple_runtime_candidates(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     runtime_a = tmp_path / "runtime-a"

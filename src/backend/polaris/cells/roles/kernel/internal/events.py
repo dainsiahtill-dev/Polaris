@@ -24,6 +24,7 @@ from polaris.kernelone.events.constants import (
     EVENT_TYPE_TOOL_CALL,
     EVENT_TYPE_TOOL_RESULT,
 )
+from polaris.kernelone.events.final_request_evidence import attach_final_request_evidence
 from polaris.kernelone.events.realtime_bridge import (
     LLMRealtimeEvent,
     publish_llm_realtime_event,
@@ -607,6 +608,7 @@ def _emit_llm_event_to_disk(event: LLMCallEvent) -> None:
             "event": str(event.event_type or "").strip(),
             "data": data,
         }
+        attach_final_request_evidence(payload, data)
 
         with open(llm_events_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")

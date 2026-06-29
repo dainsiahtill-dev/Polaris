@@ -88,6 +88,7 @@ def test_emit_llm_event_to_disk_preserves_final_request_context_audit(monkeypatc
         metadata={
             "workspace": str(tmp_path),
             "call_id": "call-context-audit",
+            "context_snapshot_ref": "runtime/contexts/aa/bbbb.json",
             "messages": [{"role": "user", "content": "secret prompt"}],
             "final_request_context_audit": audit,
             "context_tokens_after": 2560,
@@ -101,6 +102,12 @@ def test_emit_llm_event_to_disk_preserves_final_request_context_audit(monkeypatc
     payload = json.loads(event_path.read_text(encoding="utf-8").strip())
     metadata = payload["data"]["metadata"]
 
+    assert payload["context_snapshot_ref"] == "runtime/contexts/aa/bbbb.json"
+    assert payload["final_request_context_audit"] == audit
+    assert payload["audit_refs"]["context_snapshot_ref"] == "runtime/contexts/aa/bbbb.json"
+    assert payload["audit_refs"]["final_request_context_audit_hash"]
+    assert payload["final_request_evidence"]["final_request_context_audit_present"] is True
+    assert payload["final_request_evidence"]["context_snapshot_ref"] == "runtime/contexts/aa/bbbb.json"
     assert metadata["messages"] == {"redacted": True, "type": "list", "count": 1}
     assert metadata["final_request_context_audit"] == audit
     assert metadata["context_tokens_after"] == 2560
