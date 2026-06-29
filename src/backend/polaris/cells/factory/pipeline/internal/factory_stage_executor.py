@@ -180,6 +180,43 @@ Chief Engineer output contract:
 """
 
 
+def _dedupe_workspace_repair_paths(paths: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw_path in paths:
+        normalized = os.path.normpath(str(raw_path or "").strip().replace("\\", "/")).replace("\\", "/")
+        if not normalized or normalized == "." or normalized.startswith("../") or normalized.startswith("/"):
+            continue
+        if not _is_workspace_quality_repair_path(normalized):
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
+def _is_workspace_quality_repair_path(path: str) -> bool:
+    normalized = os.path.normpath(str(path or "").strip().replace("\\", "/")).replace("\\", "/")
+    if not normalized or normalized == "." or normalized.startswith("../") or normalized.startswith("/"):
+        return False
+    candidate = Path(normalized)
+    return (
+        candidate.suffix.lower() in _WORKSPACE_QUALITY_REPAIR_SOURCE_SUFFIXES
+        or candidate.name.lower() in _LANGUAGE_NEUTRAL_FILENAMES
+    )
+
+
+_LANGUAGE_NEUTRAL_REPAIR_FILENAMES: tuple[str, ...] = (
+    "go.mod",
+    "go.sum",
+    "package.json",
+    "requirements.txt",
+    "pyproject.toml",
+    "CMakeLists.txt",
+)
+
+
 class OrchestrationStageExecutor:
     """Production executor backed by OrchestrationCommandService."""
 
@@ -4285,6 +4322,22 @@ class OrchestrationStageExecutor:
                                 "taskboard_after": settled_stats,
                             }
                         )
+                        if not self._is_taskboard_converged(settled_stats):
+                            stage_signals.append(
+                                {
+                                    "code": "director.no_claimable_tasks_after_progress",
+                                    "severity": "warning",
+                                    "detail": (
+                                        "TaskBoard has no claimable Director tasks after previous dispatch attempt "
+                                        "settled; stopping dispatch instead of replaying terminal or blocked PM tasks"
+                                    ),
+                                    "round": round_index,
+                                    "taskboard_before": before_stats,
+                                    "taskboard_after": settled_stats,
+                                    "failure_class": "TASKBOARD_DEADLOCK",
+                                    "responsible_layer": "execution_control_plane",
+                                }
+                            )
                         break
                     stage_signals.append(
                         {
@@ -4696,6 +4749,23 @@ class OrchestrationStageExecutor:
         if fanout_quality_handoff:
             self._downgrade_quality_handoff_blocking_signals(stage_signals)
         stage_signals.extend(snapshot_signals)
+        if (
+            requires_taskboard_convergence
+            and not converged
+            and not fanout_quality_handoff
+            and not any(
+                str(item.get("code") or "") == "director.taskboard_not_converged"
+                for item in stage_signals
+                if isinstance(item, dict)
+            )
+        ):
+            stage_signals.append(
+                {
+                    "code": "director.taskboard_not_converged",
+                    "severity": "error",
+                    "detail": f"TaskBoard not converged after dispatch rounds; final_stats={final_stats}",
+                }
+            )
 
         stage_status = "success"
         if (
@@ -5289,6 +5359,8 @@ class OrchestrationStageExecutor:
                 del task_id, phase, current_file, event_code, event_status, event_reason, event_detail, event_refs
 
         target_files = self._workspace_quality_repair_target_files()
+        if not target_files:
+            target_files = self._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
         metadata: dict[str, Any] = {
             "target_files": target_files,
             "delivery_mode": "materialize_changes",
@@ -5338,6 +5410,75 @@ class OrchestrationStageExecutor:
 
     def _workspace_quality_repair_target_files(self) -> list[str]:
         return self._collect_declared_delivery_targets(self._load_pm_plan_tasks("tasks/plan.json"))
+
+    def _workspace_quality_repair_diagnostic_target_files(self, artifact_quality_errors: list[str]) -> list[str]:
+        from polaris.cells.director.runtime.internal.repair_kernel.diagnostics import (
+            normalize_artifact_quality_errors,
+        )
+
+        workspace_root = self.workspace.resolve()
+        candidates: list[str] = []
+        diagnostics = normalize_artifact_quality_errors([str(item) for item in artifact_quality_errors or []])
+        for diagnostic in diagnostics:
+            path = str(diagnostic.path or "").strip().replace("\\", "/")
+            if path and _is_workspace_quality_repair_path(path):
+                candidates.append(path)
+        joined_errors = "\n".join(str(item or "") for item in artifact_quality_errors).lower()
+        for filename in _LANGUAGE_NEUTRAL_REPAIR_FILENAMES:
+            if filename.lower() in joined_errors and (workspace_root / filename).is_file():
+                candidates.append(filename)
+        if ("include 'dom'" in joined_errors or "compiler option" in joined_errors or "tsconfig" in joined_errors) and (
+            workspace_root / "tsconfig.json"
+        ).is_file():
+            candidates.append("tsconfig.json")
+        if "package.json" in joined_errors and (workspace_root / "package.json").is_file():
+            candidates.append("package.json")
+        for source_path in list(candidates):
+            candidates.extend(self._workspace_quality_relative_import_targets(source_path))
+        return _dedupe_workspace_repair_paths(candidates)
+
+    def _workspace_quality_relative_import_targets(self, source_path: str) -> list[str]:
+        workspace_root = self.workspace.resolve()
+        normalized_source = str(source_path or "").strip().replace("\\", "/")
+        source = (workspace_root / normalized_source).resolve()
+        try:
+            if not source.is_relative_to(workspace_root) or not source.is_file():
+                return []
+        except ValueError:
+            return []
+        if source.suffix.lower() not in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}:
+            return []
+        with contextlib.suppress(OSError, UnicodeDecodeError):
+            text = source.read_text(encoding="utf-8")
+            targets: list[str] = []
+            for match in re.finditer(
+                r"(?:\bfrom\s+|\brequire\s*\(\s*|\bimport\s*\(\s*)['\"](?P<module>\.{1,2}/[^'\"]+)['\"]",
+                text,
+            ):
+                targets.extend(
+                    self._workspace_quality_resolve_relative_module(normalized_source, match.group("module"))
+                )
+            return targets
+        return []
+
+    def _workspace_quality_resolve_relative_module(self, importer: str, module_ref: str) -> list[str]:
+        workspace_root = self.workspace.resolve()
+        importer_dir = Path(importer).parent
+        raw = (importer_dir / module_ref).as_posix()
+        root, suffix = os.path.splitext(raw)
+        candidates = [raw] if suffix else []
+        candidates.extend(f"{root}{ext}" for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"))
+        candidates.extend(f"{root}/index{ext}" for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"))
+        resolved: list[str] = []
+        for candidate in candidates:
+            normalized = os.path.normpath(candidate).replace("\\", "/")
+            path = (workspace_root / normalized).resolve()
+            try:
+                if path.is_relative_to(workspace_root) and path.is_file():
+                    resolved.append(path.relative_to(workspace_root).as_posix())
+            except ValueError:
+                continue
+        return resolved
 
     def _workspace_quality_repair_changed_files(self) -> list[str]:
         workspace_root = self.workspace.resolve()

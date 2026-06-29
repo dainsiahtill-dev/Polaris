@@ -11,6 +11,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from .contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
+from .javascript_syntax import repair_javascript_export_contract_placeholders
 
 TYPESCRIPT_RETURN_OBJECT_COMMA_SOURCE_TOOL = "deterministic_typescript_return_object_semicolon_repair"
 TYPESCRIPT_NULLABLE_CANVAS_CONTEXT_SOURCE_TOOL = "deterministic_typescript_nullable_canvas_context_repair"
@@ -1828,6 +1829,11 @@ def _build_javascript_typescript_annotation_plan(
     for path in _javascript_annotation_candidate_paths(base_files, diagnostics):
         original = str(base_files.get(path) or "")
         repaired = _strip_typescript_annotations_from_javascript(original)
+        repaired = repair_javascript_export_contract_placeholders(
+            path=path,
+            text=repaired,
+            base_files={**base_files, path: repaired},
+        )
         if repaired == original:
             continue
         operations.extend(
@@ -2179,9 +2185,9 @@ def _build_typescript_missing_export_plan(
     diagnostics: Sequence[RepairDiagnostic],
     mode: str,
 ) -> RepairPlan | None:
-    operations: list[RepairOperation] = []
     exports: list[dict[str, str]] = []
     updated: dict[str, str] = {}
+    exports_by_path: dict[str, list[dict[str, str]]] = {}
     for item in _parse_typescript_missing_export_errors(diagnostics):
         operation, meta = _missing_export_operation(base_files={**base_files, **updated}, item=item)
         if operation is None:
@@ -2189,8 +2195,24 @@ def _build_typescript_missing_export_plan(
         updated[operation.path] = _apply_single_text_operation(
             updated.get(operation.path) or base_files[operation.path], operation
         )
-        operations.append(operation)
         exports.append(meta)
+        exports_by_path.setdefault(operation.path, []).append(meta)
+    operations: list[RepairOperation] = []
+    for path, repaired in sorted(updated.items()):
+        original = str(base_files.get(path) or "")
+        symbols = [item.get("symbol", "") for item in exports_by_path.get(path, []) if item.get("symbol")]
+        operations.extend(
+            _text_replace_operations_from_repair(
+                path=path,
+                original=original,
+                repaired=repaired,
+                metadata={
+                    "repair_kind": "typescript_missing_export",
+                    "symbols": symbols,
+                    "batched_same_file_exports": True,
+                },
+            )
+        )
     return _repair_plan_or_none(
         rule_id="typescript.missing_export",
         source_tool=TYPESCRIPT_MISSING_EXPORT_SOURCE_TOOL,
@@ -2234,7 +2256,7 @@ def _build_typescript_missing_member_plan(
             member_is_call=member_is_call,
         )
         if not declared_type or declared_type == "unknown":
-            continue
+            declared_type = "unknown"
         existing_members = _typescript_existing_member_names_for_type(base_files=base_files, type_name=type_name)
         receiver = ""
         if line_number > 0:
@@ -4992,7 +5014,7 @@ def _parse_typescript_missing_export_errors(diagnostics: Sequence[RepairDiagnost
             _TS_DECLARES_LOCALLY_NOT_EXPORTED_ERROR_RE,
         ):
             for match in pattern.finditer(text):
-                module = str(match.group("module") or "").strip().strip("'\"`").rstrip(".")
+                module = _normalize_typescript_module_ref(match.group("module"))
                 parsed.append(
                     {
                         "file": _normalize_repair_path(
@@ -5066,6 +5088,15 @@ def _missing_export_operation(
         exported = _export_existing_typescript_declaration(original, symbol)
         declaration_kind = "export_existing"
     if exported == original:
+        importer_text = str(base_files.get(importer) or "")
+        declaration = _build_typescript_missing_export_contract_declaration(
+            symbol=symbol,
+            importer_text=importer_text,
+        )
+        if declaration:
+            exported = f"{original.rstrip()}\n\n{declaration}\n"
+            declaration_kind = "contract_declaration"
+    if exported == original:
         return None, {
             "file": exporter,
             "symbol": symbol,
@@ -5083,6 +5114,51 @@ def _missing_export_operation(
         },
     )
     return (ops[0], {"file": exporter, "symbol": symbol, "kind": declaration_kind}) if len(ops) == 1 else (None, {})
+
+
+def _normalize_typescript_module_ref(raw: object) -> str:
+    value = str(raw or "").strip().rstrip(".")
+    previous = None
+    while value != previous:
+        previous = value
+        value = value.strip().strip("'\"`").strip()
+    return value.rstrip(".")
+
+
+def _build_typescript_missing_export_contract_declaration(
+    *,
+    symbol: str,
+    importer_text: str,
+) -> str:
+    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
+        return ""
+    if _typescript_importer_constructs_symbol(importer_text, symbol):
+        return f"export class {symbol} {{}}"
+    if _typescript_importer_calls_symbol(importer_text, symbol):
+        return f"export function {symbol}(..._args: unknown[]): any {{\n  return _args[0] ?? {{}};\n}}"
+    if _typescript_importer_uses_symbol_as_type(importer_text, symbol):
+        return f"export type {symbol} = any;"
+    return ""
+
+
+def _typescript_importer_calls_symbol(importer_text: str, symbol: str) -> bool:
+    return bool(re.search(rf"\b{re.escape(symbol)}\s*\(", str(importer_text or "")))
+
+
+def _typescript_importer_constructs_symbol(importer_text: str, symbol: str) -> bool:
+    return bool(re.search(rf"\bnew\s+{re.escape(symbol)}\s*\(", str(importer_text or "")))
+
+
+def _typescript_importer_uses_symbol_as_type(importer_text: str, symbol: str) -> bool:
+    text = str(importer_text or "")
+    escaped = re.escape(symbol)
+    type_patterns = (
+        rf"\btype\s+[A-Za-z_$][\w$]*\s*=\s*{escaped}\b",
+        rf":\s*{escaped}\b",
+        rf"\bas\s+{escaped}\b",
+        rf"<\s*{escaped}\b",
+    )
+    return any(re.search(pattern, text) for pattern in type_patterns)
 
 
 def _reexport_imported_typescript_symbol(text: str, symbol: str) -> tuple[str, str]:
@@ -5400,6 +5476,8 @@ def _add_typescript_members_operation(
             continue
         insert_at = content.find("\n}", match.end())
         if insert_at < 0:
+            insert_at = _typescript_matching_brace_index(content, match.end() - 1)
+        if insert_at < 0:
             continue
         existing = _typescript_existing_member_names_for_type(base_files={path: content}, type_name=type_name)
         declarations: list[str] = []
@@ -5409,9 +5487,7 @@ def _add_typescript_members_operation(
                 continue
             value_type = declared_type if _typescript_safe_structural_member_type(declared_type) else "unknown"
             if is_class and member_is_call:
-                declarations.append(
-                    f"\n  public {member}(..._args: unknown[]): unknown {{\n    return undefined;\n  }}"
-                )
+                declarations.append(f"\n  public {member}(..._args: unknown[]): unknown {{\n    return {{}};\n  }}")
             elif is_class:
                 declarations.append(
                     f"\n  public {member}: {value_type} = {_typescript_default_value_for_required_property_type(value_type)};"

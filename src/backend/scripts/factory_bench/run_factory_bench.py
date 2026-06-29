@@ -618,6 +618,7 @@ def _safe_mtime(path: Path) -> float:
 
 _RUNTIME_WORKSPACE_EVIDENCE_RELATIVE_PATHS = (
     "events/director.llm.events.jsonl",
+    "events/chief_engineer.llm.events.jsonl",
     "events/pm.llm.events.jsonl",
     "events/task_runtime.execution.jsonl",
     "events/roles.kernel.events.jsonl",

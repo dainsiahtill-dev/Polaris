@@ -1877,6 +1877,22 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 metadata=_executable_runtime_metadata(scope="missing_export_unresolved_import_symbol"),
             ),
             RepairRuleDefinition(
+                rule_id="javascript.export_contract_assertion",
+                source_tool=JAVASCRIPT_MISSING_EXPORT_SOURCE_TOOL,
+                language="javascript",
+                phase="quality_repair",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=1,
+                raw_terms=("assertionerror", "npm test"),
+                risk_level="low",
+                description=(
+                    "Routes JavaScript assertion-based import/export contract drift through "
+                    "the missing-export runtime planner."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="javascript_export_contract_assertion"),
+            ),
+            RepairRuleDefinition(
                 rule_id="javascript.dom_global_runtime_guard",
                 source_tool=JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL,
                 language="javascript",
@@ -1901,6 +1917,22 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 risk_level="medium",
                 description="Adds conservative method aliases for traceable JavaScript runtime TypeError failures.",
                 runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="javascript.constructor_object_contract_runtime",
+                source_tool=JAVASCRIPT_MISSING_METHOD_RUNTIME_SOURCE_TOOL,
+                language="javascript",
+                phase="runtime_smoke",
+                archetype=RepairArchetype.RUNTIME_CONTRACT,
+                priority=1,
+                raw_terms=(".js", "requires", " at new "),
+                risk_level="medium",
+                description=(
+                    "Repairs existing JavaScript object-constructor contracts when runtime "
+                    "evidence shows required fields conflict with observed constructor usage."
+                ),
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="javascript_constructor_object_contract"),
             ),
             RepairRuleDefinition(
                 rule_id="python.unittest_missing_target",
@@ -2284,7 +2316,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                     "executable_runtime_binding": True,
                     "planner_helper_available": True,
                     "runtime_plan_scope": "single_pub_use_export_insert_after_declared_module",
-                    "legacy_materialization_runner": True,
+                    "legacy_materialization_runner": False,
                 },
             ),
             RepairRuleDefinition(
@@ -2493,7 +2525,7 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 phase="quality_repair",
                 archetype=RepairArchetype.OBJECT_LITERAL_SYNTAX,
                 priority=1,
-                raw_terms=("unexpected token ':'",),
+                raw_terms=(".js:", "unexpected token"),
                 risk_level="low",
                 description="Removes generated TypeScript annotations that leaked into JavaScript files.",
                 runtime_plan_available=True,
@@ -3200,6 +3232,20 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 metadata=_executable_runtime_metadata(scope="tsconfig_json_compiler_options_json_set"),
             ),
             RepairRuleDefinition(
+                rule_id="typescript.tsconfig_dom_window_globals",
+                source_tool=TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
+                language="typescript",
+                phase="dependency_resolution",
+                archetype=RepairArchetype.MISSING_DEPENDENCY,
+                priority=1,
+                diagnostic_codes=("typescript_ts2304",),
+                raw_terms=("cannot find name", "window", "include 'dom'"),
+                risk_level="medium",
+                description="Adds DOM lib support when TypeScript cannot resolve browser globals such as window.",
+                runtime_plan_available=True,
+                metadata=_executable_runtime_metadata(scope="tsconfig_json_compiler_options_json_set"),
+            ),
+            RepairRuleDefinition(
                 rule_id="typescript.tsconfig_rootdir",
                 source_tool=TYPESCRIPT_TSCONFIG_ROOTDIR_SOURCE_TOOL,
                 language="typescript",
@@ -3534,6 +3580,8 @@ def _infer_diagnostic_language(diagnostic: RepairDiagnostic) -> str:
     code = diagnostic.code.lower()
     path = str(diagnostic.path or "").lower()
     message = f"{diagnostic.message}\n{diagnostic.raw}".lower()
+    if re.search(r"(?:file://)?[^\s:]+\.(?:cjs|js|mjs):\d+", message):
+        return "javascript"
     slot_language = _infer_language_from_slots(code=code, path=path, message=message)
     if slot_language:
         return slot_language

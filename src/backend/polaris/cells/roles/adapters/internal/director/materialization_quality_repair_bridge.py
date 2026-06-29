@@ -1,7 +1,7 @@
 """Materialization-quality deterministic repair bridge for Director adapter.
 
-This module is the migration-time boundary between the legacy materialization
-quality repair host and the Director runtime repair kernel receipt model.
+This module is the adapter boundary between materialization quality hooks and
+the Director runtime repair kernel receipt model.
 """
 
 from __future__ import annotations
@@ -215,7 +215,7 @@ def run_materialization_quality_repairs(
     )
 
     def _run_step(step: DirectorRepairMaterializationQualityStepV1) -> list[dict[str, Any]]:
-        tool_results = _run_legacy_materialization_quality_repair_step(
+        tool_results = _run_materialization_quality_repair_step(
             step.step_id,
             adapter,
             task=task,
@@ -294,7 +294,7 @@ def run_typescript_semantic_quality_repairs(
     return results
 
 
-def _run_legacy_materialization_quality_repair_step(
+def _run_materialization_quality_repair_step(
     step_id: str,
     adapter: Any,
     *,
@@ -375,7 +375,7 @@ def _run_legacy_materialization_quality_repair_step(
             artifact_quality_errors=artifact_quality_errors,
             convergence_verifier=convergence_verifier,
         )
-    raise RuntimeError(f"materialization quality repair step has no legacy runner: {step_id}")
+    raise RuntimeError(f"materialization quality repair step has no runtime runner: {step_id}")
 
 
 def _run_materialization_hygiene_scaffold(

@@ -70,6 +70,23 @@ def test_materialization_quality_target_filter_prefers_ts_source_over_compiled_o
     assert targets == ["tests/behavior.test.ts"]
 
 
+def test_workspace_quality_diagnostic_targets_include_language_neutral_manifests(tmp_path: Path) -> None:
+    (tmp_path / "go.mod").write_text("module example.com/demo\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.20)\n", encoding="utf-8")
+    executor = _executor(tmp_path)
+
+    targets = executor._workspace_quality_repair_diagnostic_target_files(
+        [
+            "go.mod: malformed module path",
+            "pyproject.toml: invalid project scripts table",
+            "CMakeLists.txt: CMake configure failed",
+        ]
+    )
+
+    assert targets == ["go.mod", "pyproject.toml", "CMakeLists.txt"]
+
+
 def test_pm_plan_validation_contract_hygiene_defers_test_acceptance_to_validation_task() -> None:
     payload = {
         "tasks": [

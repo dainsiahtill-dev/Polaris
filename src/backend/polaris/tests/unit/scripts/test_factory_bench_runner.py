@@ -377,6 +377,14 @@ def test_runtime_dir_candidates_prefer_exact_workspace_evidence(
     assert runtime_dirs == [current_runtime]
 
 
+def test_runtime_workspace_evidence_paths_include_chief_engineer_llm_events() -> None:
+    """Runtime matching evidence must include every canonical role LLM stream."""
+
+    assert "events/pm.llm.events.jsonl" in bench._RUNTIME_WORKSPACE_EVIDENCE_RELATIVE_PATHS
+    assert "events/chief_engineer.llm.events.jsonl" in bench._RUNTIME_WORKSPACE_EVIDENCE_RELATIVE_PATHS
+    assert "events/director.llm.events.jsonl" in bench._RUNTIME_WORKSPACE_EVIDENCE_RELATIVE_PATHS
+
+
 def test_clean_chain_preserves_static_pass() -> None:
     record = _record(
         real_run_gate={"ok": True, "summary": "real run gate passed"},
