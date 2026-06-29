@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public.task_boundary import (
+    normalize_task_boundary_verdict,
+)
+
 
 def _clean_string(value: Any) -> str:
     return str(value or "").strip()
@@ -31,6 +35,13 @@ def _modality_list(value: Any) -> list[str]:
 
 def _dict_value(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _int_value(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _merge_evidence_modality(
@@ -435,10 +446,62 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     tool_receipt_count = 0
     tool_receipt_tools: list[str] = []
     tool_receipt_hash_deltas: list[dict[str, Any]] = []
+    task_boundary_verdicts: list[dict[str, Any]] = []
+    tool_lifecycle_events: list[dict[str, Any]] = []
+    tool_lifecycle_native_count = 0
+    tool_lifecycle_decoded_count = 0
+    tool_lifecycle_dispatched_count = 0
+    tool_lifecycle_result_count = 0
+    tool_lifecycle_effect_count = 0
+    tool_lifecycle_dropped_count = 0
     for event in events:
         if not isinstance(event, dict):
             continue
         event_type = event.get("event_type")
+        if event_type == "tool_call_lifecycle":
+            lifecycle_raw = event.get("tool_call_lifecycle")
+            lifecycle = lifecycle_raw if isinstance(lifecycle_raw, dict) else event
+            native_count = _int_value(lifecycle.get("native_tool_calls_count"))
+            decoded_count = _int_value(lifecycle.get("decoded_tool_calls_count"))
+            dispatched_count = _int_value(lifecycle.get("dispatched_tool_calls_count"))
+            result_count = _int_value(lifecycle.get("tool_result_count"))
+            effect_count = _int_value(lifecycle.get("effect_receipt_count"))
+            dropped = bool(lifecycle.get("dropped")) or str(lifecycle.get("dispatch_status") or "") == "dropped"
+            if native_count > 0 and dispatched_count <= 0:
+                dropped = True
+            tool_lifecycle_native_count += native_count
+            tool_lifecycle_decoded_count += decoded_count
+            tool_lifecycle_dispatched_count += dispatched_count
+            tool_lifecycle_result_count += result_count
+            tool_lifecycle_effect_count += effect_count
+            if dropped:
+                tool_lifecycle_dropped_count += 1
+            tool_lifecycle_events.append(
+                {
+                    "status": _clean_string(lifecycle.get("dispatch_status")) or ("dropped" if dropped else "ok"),
+                    "failure_class": _clean_string(lifecycle.get("failure_class")),
+                    "reason": _clean_string(lifecycle.get("reason")),
+                    "native_tool_calls_count": native_count,
+                    "decoded_tool_calls_count": decoded_count,
+                    "dispatched_tool_calls_count": dispatched_count,
+                    "tool_result_count": result_count,
+                    "effect_receipt_count": effect_count,
+                    "dropped": dropped,
+                    "append_id": _clean_string(event.get("append_id")),
+                    "content_id": _clean_string(event.get("content_id") or event.get("event_id")),
+                }
+            )
+            continue
+        task_boundary_raw = event.get("task_boundary_verdict")
+        if event_type == "task_boundary_verdict" or isinstance(task_boundary_raw, dict):
+            verdict = normalize_task_boundary_verdict(
+                task_boundary_raw if isinstance(task_boundary_raw, dict) else event
+            )
+            verdict.setdefault("append_id", _clean_string(event.get("append_id")))
+            verdict.setdefault("content_id", _clean_string(event.get("content_id") or event.get("event_id")))
+            task_boundary_verdicts.append(verdict)
+            if event_type == "task_boundary_verdict":
+                continue
         if event_type == "tool_receipt":
             tool_receipt_count += 1
             receipt_tool = _clean_string(event.get("tool"))
@@ -532,8 +595,12 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     evidence_policy_integrity_ok = bool(gates) and not missing_required_modalities
     evidence_policy_outcome_ok = bool(gates) and not failed_required_modalities
     evidence_policy_ok = evidence_policy_integrity_ok and evidence_policy_outcome_ok
-    integrity_ok = bool(gates) and capability_ok and evidence_policy_integrity_ok
-    outcome_ok = bool(gates) and not failed_gates and not failed_required_modalities
+    latest_task_boundary = task_boundary_verdicts[-1] if task_boundary_verdicts else {}
+    failed_task_boundaries = [verdict for verdict in task_boundary_verdicts if not bool(verdict.get("ok"))]
+    task_boundary_ok = not failed_task_boundaries
+    tool_lifecycle_ok = tool_lifecycle_dropped_count == 0
+    integrity_ok = bool(gates) and capability_ok and evidence_policy_integrity_ok and tool_lifecycle_ok
+    outcome_ok = bool(gates) and not failed_gates and not failed_required_modalities and task_boundary_ok
     projection_ok = integrity_ok and outcome_ok
     return {
         "schema_version": 1,
@@ -574,6 +641,23 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             "tools": list(dict.fromkeys(tool_receipt_tools)),
             "hash_deltas": tool_receipt_hash_deltas,
         },
+        "tool_lifecycle": {
+            "ok": tool_lifecycle_ok,
+            "event_count": len(tool_lifecycle_events),
+            "native_tool_calls_count": tool_lifecycle_native_count,
+            "decoded_tool_calls_count": tool_lifecycle_decoded_count,
+            "dispatched_tool_calls_count": tool_lifecycle_dispatched_count,
+            "tool_result_count": tool_lifecycle_result_count,
+            "effect_receipt_count": tool_lifecycle_effect_count,
+            "dropped_count": tool_lifecycle_dropped_count,
+            "events": tool_lifecycle_events,
+        },
+        "task_boundary": {
+            "ok": task_boundary_ok,
+            "verdict_count": len(task_boundary_verdicts),
+            "latest": latest_task_boundary,
+            "failed": failed_task_boundaries,
+        },
     }
 
 
@@ -608,6 +692,29 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
             "detail": "run ledger projection capability invalid: " + ", ".join(issue_list),
             "missing": issue_list,
             "capability": capability_map,
+        }
+    tool_lifecycle = value.get("tool_lifecycle")
+    tool_lifecycle_map = tool_lifecycle if isinstance(tool_lifecycle, dict) else {}
+    if tool_lifecycle_map and not bool(tool_lifecycle_map.get("ok", True)):
+        return {
+            "ok": False,
+            "detail": "run ledger projection detected dropped tool dispatch",
+            "missing": ["tool_dispatch_receipt"],
+            "capability": capability_map,
+            "tool_lifecycle": tool_lifecycle_map,
+        }
+    task_boundary = value.get("task_boundary")
+    task_boundary_map = task_boundary if isinstance(task_boundary, dict) else {}
+    if task_boundary_map and not bool(task_boundary_map.get("ok", True)):
+        latest = task_boundary_map.get("latest")
+        latest_map = latest if isinstance(latest, dict) else {}
+        failure = str(latest_map.get("failure_class") or "TASK_BOUNDARY_FAILED")
+        return {
+            "ok": False,
+            "detail": "run ledger projection task boundary failed: " + failure,
+            "missing": [failure],
+            "capability": capability_map,
+            "task_boundary": task_boundary_map,
         }
     evidence_policy = value.get("evidence_policy")
     evidence_policy_map = evidence_policy if isinstance(evidence_policy, dict) else {}

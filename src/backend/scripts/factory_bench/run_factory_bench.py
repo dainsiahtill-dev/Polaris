@@ -38,6 +38,11 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 
+from polaris.cells.control_plane.run_ledger.public import (
+    AppendRunLedgerEventCommandV1,
+    append_run_ledger_event,
+    evaluate_task_boundary_verdict,
+)
 from polaris.cells.factory.pipeline.internal.bench_gates import (
     aggregate_goal_audit,
     apply_factory_bench_failure_taxonomy,
@@ -2271,6 +2276,67 @@ def build_bench_backend_audit_context(
     }
 
 
+def _url_port(value: str) -> int | None:
+    parsed = urlparse(str(value or "").strip())
+    if parsed.port is not None:
+        return parsed.port
+    if parsed.scheme == "https":
+        return 443
+    if parsed.scheme == "http":
+        return 80
+    return None
+
+
+def _append_task_boundary_verdict_to_run_ledger(
+    *,
+    workspace: Path,
+    run_id: str,
+    project_id: str,
+    record: Mapping[str, Any],
+) -> dict[str, Any]:
+    declared_targets = record.get("declared_source_targets")
+    target_files = (
+        [str(item) for item in declared_targets if str(item).strip()] if isinstance(declared_targets, list) else []
+    )
+    completed_artifacts: list[str] = []
+    for key in ("source_files", "code_files"):
+        values = record.get(key)
+        if isinstance(values, list):
+            completed_artifacts.extend(str(item) for item in values if str(item).strip())
+    verdict = evaluate_task_boundary_verdict(
+        workspace=workspace,
+        task_id=str(record.get("task_id") or project_id),
+        run_id=run_id,
+        target_files=target_files,
+        completed_artifacts=completed_artifacts,
+    ).to_dict()
+    try:
+        append_run_ledger_event(
+            AppendRunLedgerEventCommandV1(
+                workspace=str(workspace),
+                run_id=run_id,
+                event={
+                    "event_type": "task_boundary_verdict",
+                    "stage": "task_boundary",
+                    "run_id": run_id,
+                    "task_id": str(record.get("task_id") or project_id),
+                    "task_boundary_verdict": verdict,
+                    "job_token": {
+                        "token_id": f"task-boundary-{project_id}",
+                        "run_id": run_id,
+                        "task_id": str(record.get("task_id") or project_id),
+                        "project_id": project_id,
+                        "capability_audit": {"ok": True, "issues": []},
+                        "gate_policy": {},
+                    },
+                },
+            )
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
+        _logger.debug("failed to append task boundary verdict", exc_info=True)
+    return verdict
+
+
 def apply_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> None:
     """Fold full-chain gates into ``all_checks_passed`` in-place."""
 
@@ -3581,7 +3647,17 @@ def main() -> int:
         record.update(project_backend_audit_context)
         record["run_id"] = run_id
         record["project_id"] = pid
+        record["requested_project_id"] = requested_pid
+        record["canonical_project_id"] = canonical_pid
+        record["canonical_catalog_project_id"] = canonical_pid
         record["factory_run_id"] = str(chain.get("run_id") or run_id)
+        record["instance_id"] = str(launcher_instance_meta.get("instance_id") or "")
+        record["workspace"] = project_workspace
+        record["project_workspace"] = project_workspace
+        record["backend_url"] = project_backend_url
+        record["backend_port"] = _url_port(project_backend_url)
+        record["frontend_url"] = str(launcher_instance_meta.get("frontend_url") or "")
+        record["frontend_port"] = _url_port(str(launcher_instance_meta.get("frontend_url") or ""))
         if chain_is_terminal:
             record["real_run_gate"] = build_real_run_gate(
                 workspace,
@@ -3611,6 +3687,12 @@ def main() -> int:
                 stage=chain_phase_raw or chain_status_raw or "chain_non_terminal",
                 gate_name="chain_non_terminal",
             )
+        record["task_boundary_verdict"] = _append_task_boundary_verdict_to_run_ledger(
+            workspace=workspace,
+            run_id=run_id,
+            project_id=pid,
+            record=record,
+        )
         record["run_ledger_projection"] = load_run_ledger_projection(workspace, run_id=run_id)
         required_llm_roles = required_llm_roles_for_factory_record(chain=chain, record=record)
         record["required_llm_roles"] = list(required_llm_roles)

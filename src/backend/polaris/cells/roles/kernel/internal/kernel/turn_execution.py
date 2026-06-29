@@ -162,6 +162,11 @@ def _llm_metadata_from_ledger_on_error(
     context_os_audit_summary = summarize_context_os_audit_from_ledger(ledger)
     if context_os_audit_summary:
         metadata.setdefault("context_os_audit", context_os_audit_summary)
+    anomaly_flags = getattr(ledger, "anomaly_flags", None)
+    if isinstance(anomaly_flags, list) and anomaly_flags:
+        metadata["anomaly_flags"] = [dict(item) for item in anomaly_flags if isinstance(item, dict)]
+        if any(str(item.get("type") or "") == "TOOL_DISPATCH_DROPPED" for item in metadata["anomaly_flags"]):
+            metadata["tool_dispatch_dropped"] = True
     metadata["transaction_kernel_error_audit_available"] = bool(
         isinstance(metadata.get("final_request_context_audit"), dict)
         or str(metadata.get("context_snapshot_ref") or "").strip()
@@ -388,6 +393,50 @@ async def execute_transaction_kernel_turn(
             messages=messages,
             tool_definitions=tool_definitions,
         )
+        if bool(error_metadata.get("tool_dispatch_dropped")):
+            try:
+                from polaris.cells.control_plane.run_ledger.public import (
+                    AppendRunLedgerEventCommandV1,
+                    append_run_ledger_event,
+                )
+
+                native_count = 1
+                for flag in error_metadata.get("anomaly_flags", []):
+                    if isinstance(flag, dict) and str(flag.get("type") or "") == "TOOL_DISPATCH_DROPPED":
+                        native_count = max(1, int(flag.get("native_tool_calls_count") or 1))
+                        break
+                append_run_ledger_event(
+                    AppendRunLedgerEventCommandV1(
+                        workspace=str(request.workspace or kernel.workspace or "."),
+                        run_id=str(request.run_id or turn_id),
+                        event={
+                            "event_type": "tool_call_lifecycle",
+                            "stage": "director_tool_dispatch",
+                            "task_id": str(request.task_id or ""),
+                            "run_id": str(request.run_id or turn_id),
+                            "tool_call_lifecycle": {
+                                "dispatch_status": "dropped",
+                                "failure_class": "TOOL_DISPATCH_DROPPED",
+                                "reason": str(exc),
+                                "native_tool_calls_count": native_count,
+                                "decoded_tool_calls_count": 0,
+                                "dispatched_tool_calls_count": 0,
+                                "tool_result_count": 0,
+                                "effect_receipt_count": 0,
+                                "dropped": True,
+                            },
+                            "job_token": {
+                                "run_id": str(request.run_id or turn_id),
+                                "task_id": str(request.task_id or ""),
+                                "project_id": str(request.task_id or "unknown"),
+                                "capability_audit": {"ok": True, "issues": []},
+                                "gate_policy": {},
+                            },
+                        },
+                    )
+                )
+            except (OSError, RuntimeError, TypeError, ValueError):
+                logger.debug("failed to append tool_dispatch_dropped ledger event", exc_info=True)
         if profile.provider_id:
             error_metadata["provider_id"] = str(profile.provider_id).strip()
         if profile.model:

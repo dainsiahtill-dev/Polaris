@@ -292,6 +292,7 @@ class QaFailureClassificationV1:
     requires_ce_replan: bool = False
     requires_pm_revision: bool = False
     owner: str = ""
+    responsible_layer: str = ""
     evidence_refs: tuple[str, ...] = field(default_factory=tuple)
     schema_version: str = "polaris.qa_failure_classification.v1"
 
@@ -301,6 +302,7 @@ class QaFailureClassificationV1:
         object.__setattr__(self, "reason", _require_non_empty("reason", self.reason))
         object.__setattr__(self, "severity", _require_non_empty("severity", self.severity))
         object.__setattr__(self, "owner", str(self.owner or "").strip())
+        object.__setattr__(self, "responsible_layer", str(self.responsible_layer or "").strip())
         object.__setattr__(self, "evidence_refs", _to_string_tuple(list(self.evidence_refs)))
 
     def to_dict(self) -> dict[str, Any]:
@@ -314,6 +316,7 @@ class QaFailureClassificationV1:
             "requires_ce_replan": bool(self.requires_ce_replan),
             "requires_pm_revision": bool(self.requires_pm_revision),
             "owner": self.owner,
+            "responsible_layer": self.responsible_layer,
             "evidence_refs": list(self.evidence_refs),
         }
 

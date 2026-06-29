@@ -23,6 +23,12 @@ from .service import (
     read_run_ledger_projection_barrier,
     read_run_provenance_bundle,
 )
+from .task_boundary import (
+    TaskBoundaryVerdictV1,
+    build_completed_task_boundary_verdict,
+    evaluate_task_boundary_verdict,
+    normalize_task_boundary_verdict,
+)
 
 __all__ = [
     "AppendRunLedgerEventCommandV1",
@@ -36,9 +42,13 @@ __all__ = [
     "RunLedgerProjectionBarrierResultV1",
     "RunLedgerProjectionResultV1",
     "RunProvenanceBundleResultV1",
+    "TaskBoundaryVerdictV1",
     "append_run_ledger_event",
+    "build_completed_task_boundary_verdict",
     "build_run_ledger_projection",
     "build_run_provenance_bundle",
+    "evaluate_task_boundary_verdict",
+    "normalize_task_boundary_verdict",
     "read_run_ledger_projection",
     "read_run_ledger_projection_barrier",
     "read_run_provenance_bundle",

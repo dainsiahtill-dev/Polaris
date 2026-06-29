@@ -48,6 +48,11 @@ from polaris.cells.roles.kernel.public.turn_events import TurnEvent, TurnPhaseEv
 logger = logging.getLogger(__name__)
 
 
+def _native_tool_call_count(response: RawLLMResponse) -> int:
+    native_calls = getattr(response, "native_tool_calls", None)
+    return len(native_calls) if isinstance(native_calls, list) else 0
+
+
 async def run_decision_pipeline(
     *,
     turn_id: str,
@@ -101,6 +106,20 @@ async def run_decision_pipeline(
 
     # === Phase 3: 解码决策 ===
     decision = probe_decision if corrective_ask is None else decoder.decode(llm_response, TurnId(turn_id))
+    native_tool_call_count = _native_tool_call_count(llm_response)
+    if native_tool_call_count > 0 and tool_definitions and not decision.get("tool_batch"):
+        ledger.anomaly_flags.append(
+            {
+                "type": "TOOL_DISPATCH_DROPPED",
+                "turn_id": turn_id,
+                "native_tool_calls_count": native_tool_call_count,
+                "reason": "provider_emitted_tool_calls_but_no_decoded_tool_batch",
+            }
+        )
+        raise RuntimeError(
+            "tool_dispatch_dropped: provider emitted "
+            f"{native_tool_call_count} tool call(s), but no executable tool batch was decoded"
+        )
 
     # PROPOSE_PATCH / ANALYZE_ONLY 边界保护：过滤 write tools
     decision = apply_delivery_mode_filter(decision, ledger)

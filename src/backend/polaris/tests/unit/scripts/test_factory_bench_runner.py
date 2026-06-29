@@ -213,6 +213,34 @@ def _ok_run_ledger_projection(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
     }
 
 
+def test_task_boundary_verdict_is_appended_to_run_ledger(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "package.json").write_text(
+        json.dumps({"scripts": {"start": "node src/index.js"}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    record = {
+        "task_id": "TASK-1",
+        "declared_source_targets": ["package.json"],
+        "source_files": ["package.json"],
+        "code_files": ["package.json"],
+    }
+
+    verdict = bench._append_task_boundary_verdict_to_run_ledger(
+        workspace=workspace,
+        run_id="run-task-boundary",
+        project_id="L1-01",
+        record=record,
+    )
+    projection = bench.load_run_ledger_projection(workspace, run_id="run-task-boundary")
+
+    assert verdict["ok"] is False
+    assert verdict["failure_class"] == "MISSING_ENTRYPOINT_TARGET"
+    assert projection["task_boundary"]["ok"] is False
+    assert projection["task_boundary"]["latest"]["failure_class"] == "MISSING_ENTRYPOINT_TARGET"
+
+
 def test_chain_failure_overrides_static_artifact_checks() -> None:
     record = _record(
         chain_state="fail",

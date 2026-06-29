@@ -43,6 +43,13 @@ def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _int_value(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _string_list(value: Any) -> list[str]:
     if isinstance(value, str):
         raw_items = value.replace(";", ",").split(",")
@@ -128,9 +135,86 @@ def _route_classification(
             reason="Run Ledger projection barrier was not satisfied before QA verdict",
             repairable_by_director=False,
             owner="qa_infra",
+            responsible_layer="qa_infra",
             evidence_refs=evidence_refs,
         )
         return "BLOCKED", False, "pending_qa", "", classification
+    tool_lifecycle = _mapping(ledger.get("tool_lifecycle"))
+    if tool_lifecycle and _int_value(tool_lifecycle.get("dropped_count")) > 0:
+        classification = QaFailureClassificationV1(
+            failure_class="TOOL_DISPATCH_DROPPED",
+            route="waiting_human",
+            reason="LLM emitted tool calls but the execution control plane did not commit dispatch receipts",
+            repairable_by_director=False,
+            severity="critical",
+            owner="platform",
+            responsible_layer="execution_control_plane",
+            evidence_refs=evidence_refs,
+        )
+        return "BLOCKED", False, "waiting_human", "", classification
+    task_boundary = _mapping(ledger.get("task_boundary"))
+    latest_boundary = _mapping(task_boundary.get("latest"))
+    if latest_boundary and not bool(latest_boundary.get("ok", True)):
+        boundary_failure_class = str(latest_boundary.get("failure_class") or "TASK_BOUNDARY_FAILED").strip()
+        boundary_reason = str(latest_boundary.get("reason") or "Task boundary verdict failed").strip()
+        responsible_layer = str(latest_boundary.get("responsible_layer") or "execution_control_plane").strip()
+        if boundary_failure_class == "INCOMPLETE_MATERIALIZATION":
+            classification = QaFailureClassificationV1(
+                failure_class="INCOMPLETE_MATERIALIZATION",
+                route="pending_exec",
+                reason=boundary_reason,
+                repairable_by_director=True,
+                owner="director",
+                responsible_layer=responsible_layer or "director",
+                evidence_refs=evidence_refs,
+            )
+            return "FAIL", False, "pending_exec", "", classification
+        if boundary_failure_class == "MISSING_ENTRYPOINT_TARGET":
+            classification = QaFailureClassificationV1(
+                failure_class="MISSING_ENTRYPOINT_TARGET",
+                route="pending_design",
+                reason=boundary_reason,
+                repairable_by_director=False,
+                requires_ce_replan=True,
+                owner="chief_engineer",
+                responsible_layer=responsible_layer or "task_boundary",
+                evidence_refs=evidence_refs,
+            )
+            return "FAIL", False, "pending_design", "", classification
+        if boundary_failure_class == "TOOL_DISPATCH_DROPPED":
+            classification = QaFailureClassificationV1(
+                failure_class="TOOL_DISPATCH_DROPPED",
+                route="waiting_human",
+                reason=boundary_reason,
+                repairable_by_director=False,
+                severity="critical",
+                owner="platform",
+                responsible_layer=responsible_layer or "execution_control_plane",
+                evidence_refs=evidence_refs,
+            )
+            return "BLOCKED", False, "waiting_human", "", classification
+        if boundary_failure_class == "TASKBOARD_DEADLOCK":
+            classification = QaFailureClassificationV1(
+                failure_class="TASKBOARD_DEADLOCK",
+                route="waiting_human",
+                reason=boundary_reason,
+                repairable_by_director=False,
+                severity="critical",
+                owner="platform",
+                responsible_layer=responsible_layer or "execution_control_plane",
+                evidence_refs=evidence_refs,
+            )
+            return "BLOCKED", False, "waiting_human", "", classification
+        classification = QaFailureClassificationV1(
+            failure_class=boundary_failure_class,
+            route="waiting_human",
+            reason=boundary_reason,
+            repairable_by_director=False,
+            owner="platform",
+            responsible_layer=responsible_layer,
+            evidence_refs=evidence_refs,
+        )
+        return "BLOCKED", False, "waiting_human", "", classification
     if artifact_quality.get("contract_amendment_request"):
         classification = QaFailureClassificationV1(
             failure_class="BLUEPRINT_SCOPE_MISMATCH",
@@ -139,6 +223,7 @@ def _route_classification(
             repairable_by_director=False,
             requires_ce_replan=True,
             owner="chief_engineer",
+            responsible_layer="chief_engineer",
             evidence_refs=evidence_refs,
         )
         return "FAIL", False, "pending_design", "", classification
@@ -149,6 +234,7 @@ def _route_classification(
             reason="Missing required QA evidence modalities: " + ", ".join(missing_required),
             repairable_by_director=True,
             owner="director",
+            responsible_layer="director",
             evidence_refs=evidence_refs,
         )
         return "FAIL", False, "pending_exec", "", classification
@@ -159,6 +245,7 @@ def _route_classification(
             reason="Required QA evidence modalities failed: " + ", ".join(failed_required),
             repairable_by_director=True,
             owner="director",
+            responsible_layer="director",
             evidence_refs=evidence_refs,
         )
         return "FAIL", False, "pending_exec", "", classification
@@ -170,6 +257,7 @@ def _route_classification(
             repairable_by_director=False,
             requires_ce_replan=True,
             owner="chief_engineer",
+            responsible_layer="chief_engineer",
             evidence_refs=evidence_refs,
         )
         return "FAIL", False, "pending_design", "", classification
@@ -181,6 +269,7 @@ def _route_classification(
             repairable_by_director=False,
             requires_pm_revision=True,
             owner="pm",
+            responsible_layer="pm",
             evidence_refs=evidence_refs,
         )
         return "NEEDS_REVIEW", False, "waiting_human", "", classification
@@ -192,6 +281,7 @@ def _route_classification(
             repairable_by_director=False,
             severity="critical",
             owner="security",
+            responsible_layer="security_policy",
             evidence_refs=evidence_refs,
         )
         return "BLOCKED", False, "waiting_human", "", classification
@@ -205,6 +295,7 @@ def _route_classification(
                 repairable_by_director=False,
                 requires_ce_replan=True,
                 owner="chief_engineer",
+                responsible_layer="chief_engineer",
                 evidence_refs=evidence_refs,
             )
             return "FAIL", False, "pending_design", "", classification
@@ -214,6 +305,7 @@ def _route_classification(
             reason=gate_summary or "QA failed with implementation defects",
             repairable_by_director=True,
             owner="director",
+            responsible_layer="director",
             evidence_refs=evidence_refs,
         )
         return "FAIL", False, "pending_exec", "", classification
@@ -225,6 +317,7 @@ def _route_classification(
             repairable_by_director=False,
             requires_pm_revision=True,
             owner="human",
+            responsible_layer="human",
             evidence_refs=evidence_refs,
         )
         return "NEEDS_REVIEW", False, "waiting_human", "", classification
@@ -235,6 +328,7 @@ def _route_classification(
         repairable_by_director=False,
         severity="info",
         owner="qa",
+        responsible_layer="qa",
         evidence_refs=evidence_refs,
     )
     return "PASS", True, "", "resolved", classification

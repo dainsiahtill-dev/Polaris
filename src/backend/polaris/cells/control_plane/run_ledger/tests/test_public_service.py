@@ -166,6 +166,84 @@ def test_required_evidence_distinguishes_missing_from_failed() -> None:
     assert missing_projection["evidence_policy"]["failed_required_modalities"] == []
 
 
+def test_projection_exposes_tool_dispatch_dropped() -> None:
+    projection = build_run_ledger_projection(
+        [
+            {
+                "event_type": "gate_evaluated",
+                "stage": "director",
+                "gate": {"name": "director", "ok": True, "summary": "started"},
+                "job_token": {
+                    "token_id": "token-1",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {},
+            },
+            {
+                "event_type": "tool_call_lifecycle",
+                "tool_call_lifecycle": {
+                    "dispatch_status": "dropped",
+                    "failure_class": "TOOL_DISPATCH_DROPPED",
+                    "native_tool_calls_count": 1,
+                    "decoded_tool_calls_count": 0,
+                    "dispatched_tool_calls_count": 0,
+                    "tool_result_count": 0,
+                    "effect_receipt_count": 0,
+                },
+            },
+        ]
+    )
+    summary = summarize_run_ledger_projection(projection)
+
+    assert projection["ok"] is False
+    assert projection["integrity_ok"] is False
+    assert projection["tool_lifecycle"]["ok"] is False
+    assert projection["tool_lifecycle"]["dropped_count"] == 1
+    assert summary["detail"] == "run ledger projection detected dropped tool dispatch"
+    assert summary["missing"] == ["tool_dispatch_receipt"]
+
+
+def test_projection_exposes_task_boundary_failure() -> None:
+    projection = build_run_ledger_projection(
+        [
+            {
+                "event_type": "gate_evaluated",
+                "stage": "director",
+                "gate": {"name": "director", "ok": True, "summary": "started"},
+                "job_token": {
+                    "token_id": "token-1",
+                    "project_id": "P1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+                "physical_evidence": {},
+            },
+            {
+                "event_type": "task_boundary_verdict",
+                "task_boundary_verdict": {
+                    "schema_version": "polaris.task_boundary_verdict.v1",
+                    "task_id": "TASK-1",
+                    "status": "missing_entrypoint_target",
+                    "ok": False,
+                    "failure_class": "MISSING_ENTRYPOINT_TARGET",
+                    "responsible_layer": "task_boundary",
+                    "reason": "package.json references src/index.js",
+                    "missing_entrypoint_targets": ["src/index.js"],
+                },
+            },
+        ]
+    )
+    summary = summarize_run_ledger_projection(projection)
+
+    assert projection["ok"] is False
+    assert projection["outcome_ok"] is False
+    assert projection["task_boundary"]["ok"] is False
+    assert projection["task_boundary"]["latest"]["failure_class"] == "MISSING_ENTRYPOINT_TARGET"
+    assert summary["detail"] == "run ledger projection task boundary failed: MISSING_ENTRYPOINT_TARGET"
+
+
 def test_read_run_ledger_projection_evidence_policy_failed_is_not_ok(tmp_path: Path) -> None:
     append_run_ledger_event(
         AppendRunLedgerEventCommandV1(

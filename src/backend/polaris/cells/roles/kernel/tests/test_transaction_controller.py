@@ -219,6 +219,43 @@ class TestFinalAnswerPath:
         assert any(flag.get("type") == "TEXT_ONLY_TOOL_BATCH_SUPPRESSED" for flag in ledger.anomaly_flags)
 
     @pytest.mark.asyncio
+    async def test_native_tool_calls_that_never_decode_fail_closed(self, mock_llm_provider, mock_tool_runtime) -> None:
+        invalid_tool_call = {
+            "id": "call_bad_read",
+            "type": "function",
+            "function": {"name": "read_file", "arguments": "[]"},
+        }
+        mock_llm_provider.side_effect = [
+            {
+                "content": "",
+                "tool_calls": [invalid_tool_call],
+                "model": "claude",
+                "usage": {"prompt_tokens": 100, "completion_tokens": 10},
+            },
+            {
+                "content": "",
+                "tool_calls": [invalid_tool_call],
+                "model": "claude",
+                "usage": {"prompt_tokens": 120, "completion_tokens": 10},
+            },
+        ]
+        controller = TurnTransactionController(
+            llm_provider=mock_llm_provider,
+            tool_runtime=mock_tool_runtime,
+            config=TransactionConfig(domain="code"),
+        )
+
+        with pytest.raises(RuntimeError, match="tool_dispatch_dropped"):
+            await controller.execute(
+                turn_id="turn_bad_native_tool",
+                context=[{"role": "user", "content": "Read main.py"}],
+                tool_definitions=[{"type": "function", "function": {"name": "read_file"}}],
+            )
+
+        assert mock_llm_provider.call_count == 2
+        assert mock_tool_runtime.call_count == 0
+
+    @pytest.mark.asyncio
     async def test_final_answer_no_llm_continuation(
         self, controller, mock_llm_provider, mock_tool_runtime, basic_context, basic_tool_definitions
     ) -> None:
