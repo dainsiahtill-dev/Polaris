@@ -169,6 +169,18 @@ def _route_classification(
                 evidence_refs=evidence_refs,
             )
             return "FAIL", False, "pending_exec", "", classification
+        if boundary_failure_class == "DEFERRED_FOLLOWUP_REQUIRED":
+            classification = QaFailureClassificationV1(
+                failure_class="DEFERRED_FOLLOWUP_REQUIRED",
+                route="pending_exec",
+                reason=boundary_reason,
+                repairable_by_director=True,
+                severity="medium",
+                owner="director",
+                responsible_layer=responsible_layer,
+                evidence_refs=evidence_refs,
+            )
+            return "FAIL", False, "pending_exec", "", classification
         if boundary_failure_class == "MISSING_ENTRYPOINT_TARGET":
             classification = QaFailureClassificationV1(
                 failure_class="MISSING_ENTRYPOINT_TARGET",

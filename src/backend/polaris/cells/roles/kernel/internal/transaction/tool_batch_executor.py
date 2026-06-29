@@ -18,6 +18,7 @@ from typing import Any, NoReturn, cast
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     append_run_ledger_event,
+    build_tool_call_lifecycle_receipt,
 )
 from polaris.cells.roles.kernel.internal.speculation.models import CancelToken
 from polaris.cells.roles.kernel.internal.speculation.write_phases import WriteToolPhases
@@ -456,6 +457,13 @@ def _mapping_value(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _int_value(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _normalize_capability_token(value: dict[str, Any]) -> dict[str, Any]:
     token_id = str(value.get("token_id") or "").strip()
     if not token_id:
@@ -506,11 +514,47 @@ def _append_tool_batch_receipts_to_run_ledger(
     role_id: str,
     task_id: str,
     turn_id: str,
+    invocations: list[Any] | None,
     receipts: list[dict],
     capability_token: dict[str, Any] | None = None,
     execution_envelope_hash: str = "",
+    provider_response_hash: str = "",
+    native_tool_calls_count: int = 0,
 ) -> None:
+    decoded_count = len(invocations or [])
+    dispatched_count = decoded_count
     merged_receipt = _merge_batch_receipts(receipts)
+    lifecycle = build_tool_call_lifecycle_receipt(
+        run_id=str(run_id or turn_id or ""),
+        task_id=task_id,
+        turn_id=turn_id,
+        role=role_id,
+        provider_response_hash=provider_response_hash,
+        native_tool_calls_count=native_tool_calls_count,
+        decoded_tool_calls_count=decoded_count,
+        dispatched_tool_calls_count=dispatched_count,
+        receipts=receipts,
+        dispatch_status="" if merged_receipt else "blocked",
+        failure_class="" if merged_receipt else "MISSING_BATCH_RECEIPT",
+        reason="" if merged_receipt else "Decoded tool batch produced no authoritative batch receipt",
+    )
+    resolved_lifecycle_run_id = str(run_id or lifecycle.run_id or turn_id or "").strip()
+    if resolved_lifecycle_run_id:
+        append_run_ledger_event(
+            AppendRunLedgerEventCommandV1(
+                workspace=workspace,
+                run_id=resolved_lifecycle_run_id,
+                event={
+                    "event_type": "tool_call_lifecycle",
+                    "stage": "tool_batch",
+                    "task_id": task_id,
+                    "run_id": resolved_lifecycle_run_id,
+                    "tool_call_lifecycle_receipt": lifecycle.to_dict(),
+                    # Compatibility projection for existing readers.
+                    "tool_call_lifecycle": lifecycle.to_dict(),
+                },
+            )
+        )
     if not merged_receipt:
         return
     effect_receipts = _effect_receipts_from_batch_receipts(receipts)
@@ -1485,9 +1529,12 @@ class ToolBatchExecutor:
             role_id=str(getattr(self.config, "role_id", "") or ""),
             task_id=str(metadata.get("task_id") or ""),
             turn_id=turn_id,
+            invocations=invocations,
             receipts=receipts_as_dicts,
             capability_token=_capability_token_from_metadata(metadata),
             execution_envelope_hash=_execution_envelope_hash_from_metadata(metadata),
+            provider_response_hash=str(metadata.get("provider_response_hash") or ""),
+            native_tool_calls_count=_int_value(metadata.get("native_tool_calls_count")),
         )
 
         # 本 turn 的工具批裁决已完成（adopt/join/replay 全部计入 metrics）；在此

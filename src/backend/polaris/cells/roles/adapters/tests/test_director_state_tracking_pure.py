@@ -8,9 +8,12 @@ Covers:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from polaris.cells.roles.adapters.internal.director.state_tracking import DirectorStateTracker
+from polaris.kernelone.storage import resolve_runtime_path
 
 # ---------------------------------------------------------------------------
 # QA state derivation
@@ -218,3 +221,31 @@ class TestBuildTaskboardTaskRef:
 
         result = tracker.build_taskboard_task_ref("1", _get_task)
         assert result["subject"] == "My Title"
+
+
+def test_append_director_llm_event_projects_final_request_audit(tmp_path: Any) -> None:
+    tracker = DirectorStateTracker(str(tmp_path))
+    final_audit = {
+        "schema_version": "llm.final_request_context_audit.v1",
+        "final_request_token_estimate": 1234,
+    }
+
+    tracker.append_director_llm_event(
+        "TASK-1",
+        "llm_call_end",
+        {
+            "provider_id": "provider-1",
+            "context_snapshot_ref": "runtime/contexts/aa/hash.json",
+            "final_request_context_audit": final_audit,
+        },
+    )
+
+    event_path = Path(resolve_runtime_path(str(tmp_path), "runtime/events/director.llm.events.jsonl"))
+    row = json.loads(event_path.read_text(encoding="utf-8").splitlines()[0])
+
+    assert row["role"] == "director"
+    assert row["task_id"] == "TASK-1"
+    assert row["context_snapshot_ref"] == "runtime/contexts/aa/hash.json"
+    assert row["final_request_context_audit"] == final_audit
+    assert row["final_request_context_audit_present"] is True
+    assert row["final_request_context_audit_hash"]

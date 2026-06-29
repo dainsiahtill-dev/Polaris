@@ -12,6 +12,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     RunLedger,
     append_run_ledger_event,
     build_run_ledger_projection,
+    build_tool_call_lifecycle_receipt,
     read_run_ledger_projection,
     read_run_ledger_projection_barrier,
     read_run_provenance_bundle,
@@ -167,6 +168,20 @@ def test_required_evidence_distinguishes_missing_from_failed() -> None:
 
 
 def test_projection_exposes_tool_dispatch_dropped() -> None:
+    lifecycle = build_tool_call_lifecycle_receipt(
+        run_id="run-1",
+        task_id="TASK-1",
+        turn_id="turn-1",
+        role="director",
+        provider_response_hash="provider-response-hash",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=0,
+        dispatched_tool_calls_count=0,
+        receipts=[],
+        dispatch_status="dropped",
+        failure_class="TOOL_DISPATCH_DROPPED",
+        reason="decode failed",
+    ).to_dict()
     projection = build_run_ledger_projection(
         [
             {
@@ -183,15 +198,8 @@ def test_projection_exposes_tool_dispatch_dropped() -> None:
             },
             {
                 "event_type": "tool_call_lifecycle",
-                "tool_call_lifecycle": {
-                    "dispatch_status": "dropped",
-                    "failure_class": "TOOL_DISPATCH_DROPPED",
-                    "native_tool_calls_count": 1,
-                    "decoded_tool_calls_count": 0,
-                    "dispatched_tool_calls_count": 0,
-                    "tool_result_count": 0,
-                    "effect_receipt_count": 0,
-                },
+                "tool_call_lifecycle_receipt": lifecycle,
+                "tool_call_lifecycle": lifecycle,
             },
         ]
     )
@@ -201,6 +209,8 @@ def test_projection_exposes_tool_dispatch_dropped() -> None:
     assert projection["integrity_ok"] is False
     assert projection["tool_lifecycle"]["ok"] is False
     assert projection["tool_lifecycle"]["dropped_count"] == 1
+    assert projection["tool_lifecycle"]["events"][0]["provider_response_hash"] == "provider-response-hash"
+    assert projection["tool_lifecycle"]["events"][0]["receipt"]["schema_version"] == "tool_call_lifecycle_receipt.v1"
     assert summary["detail"] == "run ledger projection detected dropped tool dispatch"
     assert summary["missing"] == ["tool_dispatch_receipt"]
 

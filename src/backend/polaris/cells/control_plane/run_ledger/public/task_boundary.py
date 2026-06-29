@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import tomllib
+
 _LOCAL_ENTRYPOINT_SUFFIXES = (
     ".js",
     ".mjs",
@@ -115,6 +117,78 @@ def _package_json_entrypoints(workspace: Path) -> list[str]:
     return rows
 
 
+def _html_script_entrypoints(workspace: Path) -> list[str]:
+    candidates: list[str] = []
+    for html_path in workspace.rglob("*.html"):
+        relative = _clean_path(html_path.relative_to(workspace))
+        if relative.startswith((".polaris/", "runtime/", "node_modules/")):
+            continue
+        try:
+            content = html_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for match in re.finditer(r"<script\b[^>]*\bsrc=[\"']([^\"']+)[\"']", content, re.IGNORECASE):
+            src = _clean_path(match.group(1).split("#", 1)[0].split("?", 1)[0])
+            if not src or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", src):
+                continue
+            candidates.append(_clean_path(html_path.parent.relative_to(workspace) / src))
+    return _dedupe_paths(candidates)
+
+
+def _go_entrypoints(workspace: Path) -> list[str]:
+    if not (workspace / "go.mod").is_file():
+        return []
+    if (workspace / "main.go").is_file() or any(workspace.glob("cmd/*/main.go")):
+        return []
+    return ["main.go"]
+
+
+def _pyproject_entrypoints(workspace: Path) -> list[str]:
+    manifest = workspace / "pyproject.toml"
+    if not manifest.is_file():
+        return []
+    try:
+        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return []
+    scripts = project.get("scripts")
+    if not isinstance(scripts, dict):
+        return []
+    candidates: list[str] = []
+    for value in scripts.values():
+        if not isinstance(value, str):
+            continue
+        module = value.split(":", 1)[0].strip().replace(".", "/")
+        if module:
+            candidates.append(f"{module}.py")
+    return _dedupe_paths(candidates)
+
+
+def _dedupe_paths(values: list[str]) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        token = _clean_path(value)
+        if token and token not in seen:
+            rows.append(token)
+            seen.add(token)
+    return rows
+
+
+def _workspace_entrypoint_targets(workspace: Path) -> list[str]:
+    return _dedupe_paths(
+        [
+            *_package_json_entrypoints(workspace),
+            *_html_script_entrypoints(workspace),
+            *_go_entrypoints(workspace),
+            *_pyproject_entrypoints(workspace),
+        ]
+    )
+
+
 @dataclass(frozen=True)
 class TaskBoundaryVerdictV1:
     """Canonical task-boundary completion verdict.
@@ -183,6 +257,27 @@ def build_completed_task_boundary_verdict(
     )
 
 
+def build_deferred_followup_task_boundary_verdict(
+    *,
+    task_id: str,
+    run_id: str = "",
+    reason: str = "",
+    evidence_refs: list[str] | tuple[str, ...] | None = None,
+) -> TaskBoundaryVerdictV1:
+    """Return a verdict for work that requires another governed execution step."""
+
+    return TaskBoundaryVerdictV1(
+        task_id=str(task_id or "").strip(),
+        run_id=str(run_id or "").strip(),
+        status="deferred_followup_required",
+        ok=False,
+        failure_class="DEFERRED_FOLLOWUP_REQUIRED",
+        responsible_layer="execution_control_plane",
+        reason=str(reason or "Execution requires a governed follow-up workflow before completion").strip(),
+        evidence_refs=tuple(_string_list(evidence_refs)),
+    )
+
+
 def evaluate_task_boundary_verdict(
     *,
     workspace: str | Path,
@@ -240,7 +335,7 @@ def evaluate_task_boundary_verdict(
     known_artifacts = set(targets) | set(completed) | set(downstream)
     missing_entrypoints = tuple(
         entrypoint
-        for entrypoint in _package_json_entrypoints(workspace_path)
+        for entrypoint in _workspace_entrypoint_targets(workspace_path)
         if not _path_exists(workspace_path, entrypoint) and entrypoint not in known_artifacts
     )
     if missing_entrypoints:
@@ -295,6 +390,7 @@ def normalize_task_boundary_verdict(value: Any) -> dict[str, Any]:
 __all__ = [
     "TaskBoundaryVerdictV1",
     "build_completed_task_boundary_verdict",
+    "build_deferred_followup_task_boundary_verdict",
     "evaluate_task_boundary_verdict",
     "normalize_task_boundary_verdict",
 ]

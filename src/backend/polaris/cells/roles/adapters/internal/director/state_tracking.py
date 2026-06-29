@@ -22,6 +22,73 @@ from polaris.kernelone.storage import resolve_runtime_path
 logger = logging.getLogger(__name__)
 
 
+def _stable_hash(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _first_string(*values: Any) -> str:
+    for value in values:
+        token = str(value or "").strip()
+        if token:
+            return token
+    return ""
+
+
+def _final_request_audit_projection(payload: dict[str, Any]) -> dict[str, Any]:
+    metadata = _mapping(payload.get("metadata"))
+    data = _mapping(payload.get("data"))
+    data_metadata = _mapping(data.get("metadata"))
+    audit_refs = _mapping(payload.get("audit_refs"))
+    final_request_evidence = _mapping(
+        payload.get("final_request_evidence")
+        or data.get("final_request_evidence")
+        or metadata.get("final_request_evidence")
+        or data_metadata.get("final_request_evidence")
+    )
+    final_audit = _mapping(
+        payload.get("final_request_context_audit")
+        or data.get("final_request_context_audit")
+        or metadata.get("final_request_context_audit")
+        or data_metadata.get("final_request_context_audit")
+    )
+    projection: dict[str, Any] = {}
+    context_snapshot_ref = _first_string(
+        payload.get("context_snapshot_ref"),
+        data.get("context_snapshot_ref"),
+        metadata.get("context_snapshot_ref"),
+        data_metadata.get("context_snapshot_ref"),
+        audit_refs.get("context_snapshot_ref"),
+        final_request_evidence.get("context_snapshot_ref"),
+    )
+    if context_snapshot_ref:
+        projection["context_snapshot_ref"] = context_snapshot_ref
+    if final_audit:
+        projection["final_request_context_audit"] = final_audit
+        projection["final_request_context_audit_present"] = True
+        projection["final_request_context_audit_hash"] = _stable_hash(final_audit)
+    elif final_request_evidence.get("final_request_context_audit_present") is not None:
+        projection["final_request_context_audit_present"] = bool(
+            final_request_evidence.get("final_request_context_audit_present")
+        )
+    for key in (
+        "final_request_context_audit_hash",
+        "final_request_evidence_hash",
+        "final_request_evidence_authority_hash",
+    ):
+        value = _first_string(payload.get(key), data.get(key), audit_refs.get(key), final_request_evidence.get(key))
+        if value:
+            projection[key] = value
+    if final_request_evidence:
+        projection["final_request_evidence"] = final_request_evidence
+    return projection
+
+
 class DirectorStateTracker:
     """Director 状态追踪服务。
 
@@ -145,7 +212,9 @@ class DirectorStateTracker:
                 "task_id": str(task_id or "").strip(),
                 "payload": payload if isinstance(payload, dict) else {},
             }
-            append_jsonl(event_path, record, buffered=False)
+            if isinstance(payload, dict):
+                record.update(_final_request_audit_projection(payload))
+            append_jsonl(str(event_path), record, buffered=False)
         except (OSError, RuntimeError, TypeError, ValueError):
             return
 

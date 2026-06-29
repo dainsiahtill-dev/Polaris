@@ -7,6 +7,9 @@ from typing import Any
 from polaris.cells.control_plane.run_ledger.public.task_boundary import (
     normalize_task_boundary_verdict,
 )
+from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
+    normalize_tool_call_lifecycle_receipt,
+)
 
 
 def _clean_string(value: Any) -> str:
@@ -459,8 +462,10 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         event_type = event.get("event_type")
         if event_type == "tool_call_lifecycle":
-            lifecycle_raw = event.get("tool_call_lifecycle")
-            lifecycle = lifecycle_raw if isinstance(lifecycle_raw, dict) else event
+            lifecycle_raw = event.get("tool_call_lifecycle_receipt") or event.get("tool_call_lifecycle")
+            lifecycle = normalize_tool_call_lifecycle_receipt(
+                lifecycle_raw if isinstance(lifecycle_raw, dict) else event
+            )
             native_count = _int_value(lifecycle.get("native_tool_calls_count"))
             decoded_count = _int_value(lifecycle.get("decoded_tool_calls_count"))
             dispatched_count = _int_value(lifecycle.get("dispatched_tool_calls_count"))
@@ -487,6 +492,15 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
                     "tool_result_count": result_count,
                     "effect_receipt_count": effect_count,
                     "dropped": dropped,
+                    "provider_response_hash": _clean_string(lifecycle.get("provider_response_hash")),
+                    "batch_receipt_hash": _clean_string(lifecycle.get("batch_receipt_hash")),
+                    "batch_receipt_refs": lifecycle.get("batch_receipt_refs")
+                    if isinstance(lifecycle.get("batch_receipt_refs"), list)
+                    else [],
+                    "effect_receipt_refs": lifecycle.get("effect_receipt_refs")
+                    if isinstance(lifecycle.get("effect_receipt_refs"), list)
+                    else [],
+                    "receipt": lifecycle,
                     "append_id": _clean_string(event.get("append_id")),
                     "content_id": _clean_string(event.get("content_id") or event.get("event_id")),
                 }

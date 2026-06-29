@@ -164,6 +164,34 @@ def test_incomplete_materialization_routes_to_director_retry(tmp_path: Path) -> 
     assert payload["classification"]["repairable_by_director"] is True
 
 
+def test_deferred_followup_routes_to_director_retry(tmp_path: Path) -> None:
+    envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
+        task_id="task-qa",
+        payload=_payload(),
+        ledger_projection={
+            "audit_path": "runtime/control_plane/ledger",
+            "evidence_policy": {},
+            "task_boundary": {
+                "ok": False,
+                "latest": {
+                    "status": "deferred_followup_required",
+                    "ok": False,
+                    "failure_class": "DEFERRED_FOLLOWUP_REQUIRED",
+                    "responsible_layer": "execution_control_plane",
+                    "reason": "mutation_bypass_blocked",
+                },
+            },
+        },
+        artifact_quality={"errors": []},
+    )
+    payload = envelope.to_dict()
+
+    assert payload["verdict"] == "FAIL"
+    assert payload["next_stage"] == "pending_exec"
+    assert payload["classification"]["failure_class"] == "DEFERRED_FOLLOWUP_REQUIRED"
+    assert payload["classification"]["repairable_by_director"] is True
+
+
 def test_verdict_diff_reports_shadow_mismatch(tmp_path: Path) -> None:
     envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
         task_id="task-qa",

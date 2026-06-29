@@ -22,6 +22,8 @@ monkeypatching the facade still penetrates.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -51,6 +53,30 @@ logger = logging.getLogger(__name__)
 def _native_tool_call_count(response: RawLLMResponse) -> int:
     native_calls = getattr(response, "native_tool_calls", None)
     return len(native_calls) if isinstance(native_calls, list) else 0
+
+
+def _provider_response_hash(response: RawLLMResponse) -> str:
+    payload = {
+        "content": getattr(response, "content", ""),
+        "model": getattr(response, "model", ""),
+        "native_tool_calls": getattr(response, "native_tool_calls", []),
+        "thinking": getattr(response, "thinking", None),
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _with_decision_metadata(decision: TurnDecision, metadata: dict[str, Any]) -> TurnDecision:
+    return TurnDecision(
+        turn_id=decision["turn_id"],
+        kind=decision["kind"],
+        visible_message=decision["visible_message"],
+        reasoning_summary=decision.get("reasoning_summary"),
+        tool_batch=decision.get("tool_batch"),
+        finalize_mode=decision["finalize_mode"],
+        domain=decision["domain"],
+        metadata=metadata,
+    )
 
 
 async def run_decision_pipeline(
@@ -107,6 +133,10 @@ async def run_decision_pipeline(
     # === Phase 3: 解码决策 ===
     decision = probe_decision if corrective_ask is None else decoder.decode(llm_response, TurnId(turn_id))
     native_tool_call_count = _native_tool_call_count(llm_response)
+    decision_metadata = dict(decision.get("metadata") or {})
+    decision_metadata.setdefault("provider_response_hash", _provider_response_hash(llm_response))
+    decision_metadata.setdefault("native_tool_calls_count", native_tool_call_count)
+    decision = _with_decision_metadata(decision, decision_metadata)
     if native_tool_call_count > 0 and tool_definitions and not decision.get("tool_batch"):
         ledger.anomaly_flags.append(
             {

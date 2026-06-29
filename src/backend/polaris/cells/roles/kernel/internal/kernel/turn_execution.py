@@ -398,6 +398,7 @@ async def execute_transaction_kernel_turn(
                 from polaris.cells.control_plane.run_ledger.public import (
                     AppendRunLedgerEventCommandV1,
                     append_run_ledger_event,
+                    build_tool_call_lifecycle_receipt,
                 )
 
                 native_count = 1
@@ -405,6 +406,20 @@ async def execute_transaction_kernel_turn(
                     if isinstance(flag, dict) and str(flag.get("type") or "") == "TOOL_DISPATCH_DROPPED":
                         native_count = max(1, int(flag.get("native_tool_calls_count") or 1))
                         break
+                lifecycle = build_tool_call_lifecycle_receipt(
+                    run_id=str(request.run_id or turn_id),
+                    task_id=str(request.task_id or ""),
+                    turn_id=turn_id,
+                    role=str(profile.role_id or ""),
+                    provider_response_hash="",
+                    native_tool_calls_count=native_count,
+                    decoded_tool_calls_count=0,
+                    dispatched_tool_calls_count=0,
+                    receipts=[],
+                    dispatch_status="dropped",
+                    failure_class="TOOL_DISPATCH_DROPPED",
+                    reason=str(exc),
+                )
                 append_run_ledger_event(
                     AppendRunLedgerEventCommandV1(
                         workspace=str(request.workspace or kernel.workspace or "."),
@@ -414,17 +429,8 @@ async def execute_transaction_kernel_turn(
                             "stage": "director_tool_dispatch",
                             "task_id": str(request.task_id or ""),
                             "run_id": str(request.run_id or turn_id),
-                            "tool_call_lifecycle": {
-                                "dispatch_status": "dropped",
-                                "failure_class": "TOOL_DISPATCH_DROPPED",
-                                "reason": str(exc),
-                                "native_tool_calls_count": native_count,
-                                "decoded_tool_calls_count": 0,
-                                "dispatched_tool_calls_count": 0,
-                                "tool_result_count": 0,
-                                "effect_receipt_count": 0,
-                                "dropped": True,
-                            },
+                            "tool_call_lifecycle_receipt": lifecycle.to_dict(),
+                            "tool_call_lifecycle": lifecycle.to_dict(),
                             "job_token": {
                                 "run_id": str(request.run_id or turn_id),
                                 "task_id": str(request.task_id or ""),
@@ -585,6 +591,41 @@ async def execute_transaction_kernel_turn(
         tool_results=tool_results,
         ledger=ledger,
     )
+    if bool(metadata.get("needs_followup_workflow")):
+        try:
+            from polaris.cells.control_plane.run_ledger.public import (
+                AppendRunLedgerEventCommandV1,
+                append_run_ledger_event,
+                build_deferred_followup_task_boundary_verdict,
+            )
+
+            verdict = build_deferred_followup_task_boundary_verdict(
+                task_id=str(request.task_id or ""),
+                run_id=str(request.run_id or turn_id),
+                reason=str(metadata.get("workflow_reason") or error_msg or "needs_followup_workflow"),
+            ).to_dict()
+            append_run_ledger_event(
+                AppendRunLedgerEventCommandV1(
+                    workspace=str(request.workspace or kernel.workspace or "."),
+                    run_id=str(request.run_id or turn_id),
+                    event={
+                        "event_type": "task_boundary_verdict",
+                        "stage": "task_boundary",
+                        "task_id": str(request.task_id or ""),
+                        "run_id": str(request.run_id or turn_id),
+                        "task_boundary_verdict": verdict,
+                        "job_token": {
+                            "run_id": str(request.run_id or turn_id),
+                            "task_id": str(request.task_id or ""),
+                            "project_id": str(request.task_id or "unknown"),
+                            "capability_audit": {"ok": True, "issues": []},
+                            "gate_policy": {},
+                        },
+                    },
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            logger.debug("failed to append deferred follow-up task boundary verdict", exc_info=True)
 
     return RoleTurnResult(
         content=visible_content,
