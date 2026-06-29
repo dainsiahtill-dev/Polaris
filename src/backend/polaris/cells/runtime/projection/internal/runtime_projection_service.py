@@ -921,6 +921,103 @@ def _apply_run_ledger_director_status_overlay(
     return merged
 
 
+def _task_boundary_execution_state(failure_class: str) -> str:
+    normalized = str(failure_class or "").strip().upper()
+    if normalized in {"INCOMPLETE_MATERIALIZATION", "MISSING_ENTRYPOINT_TARGET"}:
+        return "FAILED_ARTIFACT"
+    if normalized in {"TOOL_DISPATCH_DROPPED", "TASKBOARD_DEADLOCK", "LEDGER_PROJECTION_INCOMPLETE"}:
+        return "FAILED_PLATFORM"
+    if normalized:
+        return "BLOCKED_WITH_REASON"
+    return "PENDING"
+
+
+def _latest_task_boundary(run_ledger_projection: dict[str, Any] | None) -> dict[str, Any]:
+    projection = run_ledger_projection if isinstance(run_ledger_projection, dict) else {}
+    if not projection:
+        return {}
+    task_boundary = projection.get("task_boundary")
+    task_boundary_map = task_boundary if isinstance(task_boundary, dict) else {}
+    latest = task_boundary_map.get("latest")
+    return dict(latest) if isinstance(latest, dict) else {}
+
+
+def _row_task_id(row: dict[str, Any]) -> str:
+    metadata = row.get("metadata")
+    metadata_map = metadata if isinstance(metadata, dict) else {}
+    return str(
+        row.get("task_id")
+        or row.get("id")
+        or row.get("taskId")
+        or metadata_map.get("task_id")
+        or metadata_map.get("pm_task_id")
+        or metadata_map.get("workflow_task_id")
+        or ""
+    ).strip()
+
+
+def _apply_run_ledger_task_rows_overlay(
+    rows: list[dict[str, Any]],
+    run_ledger_projection: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Overlay terminal task-boundary verdicts onto visible task rows.
+
+    TaskBoard rows can come from workflow archives, local live Director state, or
+    runtime task files. The Run Ledger is the terminal execution fact source, so
+    failed task-boundary verdicts must win in projections without mutating the
+    stored TaskBoard rows.
+    """
+    if not rows:
+        return rows
+    latest_boundary = _latest_task_boundary(run_ledger_projection)
+    if not latest_boundary:
+        return rows
+
+    boundary_task_id = str(latest_boundary.get("task_id") or latest_boundary.get("taskId") or "").strip()
+    if not boundary_task_id and len(rows) != 1:
+        return rows
+
+    boundary_ok = bool(latest_boundary.get("ok", True))
+    failure_class = str(latest_boundary.get("failure_class") or "TASK_BOUNDARY_FAILED").strip().upper()
+    execution_state = "COMPLETED_VERIFIED" if boundary_ok else _task_boundary_execution_state(failure_class)
+    reason = str(latest_boundary.get("reason") or failure_class or execution_state).strip()
+    overlay_metadata = {
+        "status_source": "run_ledger_projection",
+        "run_ledger_task_boundary": latest_boundary,
+    }
+
+    overlaid: list[dict[str, Any]] = []
+    for row in rows:
+        row_map = dict(row)
+        row_task_id = _row_task_id(row_map)
+        should_overlay = bool(boundary_task_id and row_task_id == boundary_task_id) or (
+            not boundary_task_id and len(rows) == 1
+        )
+        if not should_overlay:
+            overlaid.append(row_map)
+            continue
+
+        metadata = row_map.get("metadata")
+        metadata_map = dict(metadata) if isinstance(metadata, dict) else {}
+        metadata_map.update(overlay_metadata)
+        row_map.update(
+            {
+                "status": execution_state,
+                "state": execution_state,
+                "execution_state": execution_state,
+                "running": False,
+                "failure_class": "" if boundary_ok else failure_class,
+                "responsible_layer": str(latest_boundary.get("responsible_layer") or "").strip(),
+                "blocked_reason": "" if boundary_ok else failure_class.lower(),
+                "error_message": "" if boundary_ok else reason,
+                "run_ledger_projection": {"task_boundary": latest_boundary},
+                "metadata": metadata_map,
+            }
+        )
+        overlaid.append(row_map)
+    return overlaid
+
+
 # =============================================================================
 # Task List Selection - Single Source
 # =============================================================================
@@ -1309,6 +1406,7 @@ async def build_runtime_projection(
         workflow_tasks if isinstance(workflow_tasks, list) else None,
         director_local_status,
     )
+    task_rows = _apply_run_ledger_task_rows_overlay(task_rows, run_ledger_projection)
 
     # Step 7: Build engine status (fallback only)
     engine_status = build_engine_status(
@@ -1549,6 +1647,12 @@ def build_snapshot_payload_from_projection(
         if not tasks:
             tasks = _read_factory_latest_plan_tasks(workspace)
     tasks = _enrich_tasks_with_factory_blueprints(tasks, workspace)
+    run_ledger_task_projection = (
+        projection.director_merged.get("run_ledger_projection")
+        if isinstance(projection.director_merged, dict)
+        else None
+    )
+    tasks = _apply_run_ledger_task_rows_overlay(tasks, run_ledger_task_projection)
 
     pm_state = _read_first_json_candidate(
         _resolve_runtime_artifact_candidates(

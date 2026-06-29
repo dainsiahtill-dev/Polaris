@@ -13,6 +13,7 @@ from polaris.cells.orchestration.workflow_runtime.public.service import (
     TaskPhase,
     TaskSnapshot,
 )
+from polaris.cells.runtime.projection.internal import runtime_projection_service as projection_service
 from polaris.cells.runtime.projection.internal.runtime_projection_service import (
     ProjectionCache,
     RuntimeProjection,
@@ -262,6 +263,48 @@ def test_snapshot_compat_prefers_director_execution_state_over_nested_status() -
     snapshot = build_snapshot_payload_from_projection(projection, workspace="")
 
     assert snapshot["snapshot_compat"]["director_status"] == "FAILED_PLATFORM"
+
+
+def test_snapshot_task_rows_apply_run_ledger_task_boundary_overlay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        projection_service,
+        "load_runtime_task_rows",
+        lambda workspace: [
+            {
+                "id": "TASK-1",
+                "task_id": "TASK-1",
+                "status": "RUNNING",
+                "running": True,
+                "metadata": {"source": "runtime_task_file"},
+            }
+        ],
+    )
+    projection = RuntimeProjection(
+        director_merged={
+            "run_ledger_projection": {
+                "task_boundary": {
+                    "latest": {
+                        "task_id": "TASK-1",
+                        "ok": False,
+                        "failure_class": "INCOMPLETE_MATERIALIZATION",
+                        "responsible_layer": "director",
+                        "reason": "target files were not written",
+                    }
+                }
+            }
+        }
+    )
+
+    snapshot = build_snapshot_payload_from_projection(projection, workspace=str(tmp_path))
+
+    assert snapshot["tasks"][0]["status"] == "FAILED_ARTIFACT"
+    assert snapshot["tasks"][0]["running"] is False
+    assert snapshot["tasks"][0]["failure_class"] == "INCOMPLETE_MATERIALIZATION"
+    assert snapshot["tasks"][0]["error_message"] == "target files were not written"
+    assert snapshot["tasks"][0]["metadata"]["status_source"] == "run_ledger_projection"
 
 
 # =============================================================================
