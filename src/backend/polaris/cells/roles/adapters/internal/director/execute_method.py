@@ -3489,9 +3489,15 @@ def _phase_no_materialized_changes(
         if out_of_scope_files and (write_tool_evidence or direct_side_effect_success):
             error = "director_materialized_out_of_scope"
             materialization_mode = "materialized_out_of_scope"
+            public_error_code = error
+            failure_class = "BLUEPRINT_SCOPE_MISMATCH"
+            responsible_layer = "director_scope_guard"
         else:
             error = "director_no_materialized_changes"
             materialization_mode = "no_materialized_changes"
+            public_error_code = "incomplete_materialization"
+            failure_class = "INCOMPLETE_MATERIALIZATION"
+            responsible_layer = "director"
         # Wall 2 diagnostic (F16 follow-up): the forced write emitted but the
         # workspace diff is empty. Surface the discriminating signals so a single
         # solo rerun reveals whether the write content ARG was empty (prose lands
@@ -3521,6 +3527,9 @@ def _phase_no_materialized_changes(
                 "modified_files": modified_files[:20],
                 "modified_file_count": len(modified_files),
                 "materialization_error": error,
+                "materialization_error_code": public_error_code,
+                "failure_class": failure_class,
+                "responsible_layer": responsible_layer,
                 "materialization_mode": materialization_mode,
                 "out_of_scope_files": out_of_scope_files[:20],
                 "out_of_scope_file_count": len(out_of_scope_files),
@@ -3548,6 +3557,9 @@ def _phase_no_materialized_changes(
             payload={
                 "status": "failed",
                 "error": error,
+                "error_code": public_error_code,
+                "failure_class": failure_class,
+                "responsible_layer": responsible_layer,
                 "materialization_mode": materialization_mode,
                 "changed_files": out_of_scope_files if out_of_scope_files else [],
                 "out_of_scope_files": out_of_scope_files[:20],
@@ -3572,14 +3584,18 @@ def _phase_no_materialized_changes(
             "tools_executed": len(tool_results),
             "tool_results": tool_results,
             "error": error,
-            "error_code": error,
+            "error_code": public_error_code,
+            "failure_class": failure_class,
+            "responsible_layer": responsible_layer,
             "failure_stage": "director_materialization",
             "root_cause_hint": "no_changed_files",
             "cognitive_runtime_receipt": cognitive_receipt,
             "decision_signals": [
                 {
-                    "code": error,
+                    "code": public_error_code,
                     "severity": "error",
+                    "failure_class": failure_class,
+                    "responsible_layer": responsible_layer,
                     "detail": (
                         "Director returned no workspace file changes; "
                         "fresh materialization is required for repair/update tasks."

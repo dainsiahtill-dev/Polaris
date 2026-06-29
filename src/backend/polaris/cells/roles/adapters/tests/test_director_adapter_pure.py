@@ -6509,7 +6509,8 @@ class TestDirectorFailureClosure:
         )
 
         assert result["success"] is False
-        assert result["error_code"] == "director_no_materialized_changes"
+        assert result["error_code"] == "incomplete_materialization"
+        assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
         updated = adapter.task_board.get_task(str(task.id))
         assert updated is not None
         raw_metadata = updated.get("metadata")
@@ -6517,6 +6518,8 @@ class TestDirectorFailureClosure:
         raw_adapter_result = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
         assert adapter_result.get("materialization_error") == "director_no_materialized_changes"
+        assert adapter_result.get("materialization_error_code") == "incomplete_materialization"
+        assert adapter_result.get("failure_class") == "INCOMPLETE_MATERIALIZATION"
         assert adapter_result.get("out_of_scope_files") == ["scripts/verify.js"]
 
     def test_no_materialized_changes_ignores_sibling_diff_after_failed_write_tool(self, tmp_path: Any) -> None:
@@ -6569,7 +6572,8 @@ class TestDirectorFailureClosure:
 
         assert result is not None
         assert result["success"] is False
-        assert result["error_code"] == "director_no_materialized_changes"
+        assert result["error_code"] == "incomplete_materialization"
+        assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
 
     @pytest.mark.asyncio
     async def test_execute_fails_when_changed_test_file_keeps_placeholder_arithmetic(self, tmp_path: Any) -> None:
@@ -7639,7 +7643,8 @@ export function summary() {
 
         target = tmp_path / "src" / "renderer" / "game-view.tsx"
         assert result["success"] is False
-        assert result["error_code"] == "director_no_materialized_changes"
+        assert result["error_code"] == "incomplete_materialization"
+        assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
         assert target.exists() is False
         updated = adapter.task_board.get_task(str(task.id))
         assert updated is not None
@@ -7648,6 +7653,8 @@ export function summary() {
         raw_adapter_result = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
         assert adapter_result.get("materialization_error") == "director_no_materialized_changes"
+        assert adapter_result.get("materialization_error_code") == "incomplete_materialization"
+        assert adapter_result.get("failure_class") == "INCOMPLETE_MATERIALIZATION"
         assert adapter_result.get("new_files") == []
         assert adapter_result.get("primary_llm", {}).get("error") == "role_model_not_configured"
         assert adapter_result.get("direct_fallback", {}).get("skipped_reason") == "direct_runtime_provider_removed"
@@ -8383,7 +8390,8 @@ export function summary() {
         )
 
         assert result["success"] is False
-        assert result["error_code"] == "director_no_materialized_changes"
+        assert result["error_code"] == "incomplete_materialization"
+        assert result["failure_class"] == "INCOMPLETE_MATERIALIZATION"
         updated = adapter.task_board.get_task(str(task.id))
         assert updated is not None
         raw_metadata = updated.get("metadata")
@@ -8391,6 +8399,8 @@ export function summary() {
         raw_adapter_result = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
         assert adapter_result.get("materialization_error") == "director_no_materialized_changes"
+        assert adapter_result.get("materialization_error_code") == "incomplete_materialization"
+        assert adapter_result.get("failure_class") == "INCOMPLETE_MATERIALIZATION"
         assert adapter_result.get("modified_files") == []
         assert adapter_result.get("primary_llm", {}).get("error") == "role_model_not_configured"
 
