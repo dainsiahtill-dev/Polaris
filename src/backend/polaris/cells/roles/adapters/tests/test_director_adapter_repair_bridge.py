@@ -2423,8 +2423,11 @@ def test_post_execution_migration_debt_ledger_distinguishes_runtime_and_legacy(
     assert summary is not None
     assert len(tool_results) == 2
     migration_debt = summary["repair_kernel"]["repair_kernel_migration_debt"]
+    assert "legacy_callback_debt" not in summary
+    assert "legacy_callback_debt" not in summary["repair_kernel"]
+    assert "legacy_callback_debt" not in summary["scheduler_bridge"]
     assert migration_debt["legacy_aggregate_remaining_source_tools"] == []
-    assert summary["legacy_callback_debt"]["legacy_aggregate_remaining_source_tools"] == []
+    assert migration_debt["legacy_callback_debt"]["legacy_aggregate_remaining_source_tools"] == []
     assert migration_debt["remaining_legacy_subcases"] == []
     assert migration_debt["runtime_migrated_subcases"] == [
         "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
@@ -2463,7 +2466,7 @@ def test_post_execution_migration_debt_ledger_distinguishes_runtime_and_legacy(
     assert legacy_payload["repair_kernel"]["owner_cell"] == "roles.adapters.strategy_host"
     assert legacy_payload["repair_kernel"]["authoritative"] is False
     assert legacy_payload["repair_kernel"]["requires_revalidation"] is True
-    assert summary["legacy_callback_debt"]["legacy_only_step_count"] == 0
+    assert migration_debt["legacy_callback_debt"]["legacy_only_step_count"] == 0
 
 
 def test_go_post_execution_uses_runtime_source_tool_sequence_without_legacy_aggregate(

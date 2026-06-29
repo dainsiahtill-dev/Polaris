@@ -14,6 +14,7 @@ from .response_types import PreparedLLMRequest
 _UNDERUTILIZED_WINDOW_THRESHOLD = 8192
 _UNDERUTILIZED_RATIO = 0.15
 _RECEIPT_REF_RE = re.compile(r"receipt://([A-Za-z0-9_.:/-]+)")
+_UNTRUSTED_USER_MESSAGE_RE = re.compile(r"\[UNTRUSTED_USER_MESSAGE\].*", re.IGNORECASE | re.DOTALL)
 _REF_BASED_SUPERSEDED_FINDING_CODES = frozenset(
     {
         "missing_context_coverage",
@@ -357,7 +358,7 @@ def _resident_agi_coverage_flags(text: str, ai_request: Any | None) -> dict[str,
 
 
 def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bool]:
-    lowered = text.lower()
+    lowered = _trusted_coverage_text(text).lower()
     blueprint_absent = any(
         marker in lowered
         for marker in (
@@ -457,6 +458,12 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
     }
     coverage.update(_resident_agi_coverage_flags(text, ai_request))
     return coverage
+
+
+def _trusted_coverage_text(text: str) -> str:
+    """Drop explicitly untrusted user-message bodies before scanning evidence terms."""
+
+    return _UNTRUSTED_USER_MESSAGE_RE.sub("", str(text or ""))
 
 
 def _context_quality_findings(

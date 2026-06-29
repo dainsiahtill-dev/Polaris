@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public.projection import (
+    summarize_run_ledger_projection as summarize_platform_run_ledger_projection,
+)
 from polaris.cells.control_plane.verifier_policy.public import (
     UpdateVerifierPolicyCommandV1,
     update_verifier_policy,
@@ -16,6 +19,7 @@ from polaris.cells.factory.pipeline.internal.run_ledger import (
     load_run_ledger_projection,
     persist_real_run_gate_ledger,
     summarize_run_ledger_meta,
+    summarize_run_ledger_projection,
 )
 
 
@@ -276,6 +280,36 @@ def test_run_ledger_projection_is_canonical_read_model(tmp_path: Path) -> None:
     assert projection["evidence_policy"]["ok"] is True
     assert projection["evidence_policy"]["enabled_modalities"] == []
     assert projection["evidence_policy"]["required_modalities"] == ["code", "command"]
+
+
+def test_factory_projection_summary_delegates_to_control_plane_public_contract(tmp_path: Path) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "code_files": ["main.py"],
+        "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "run cli"},
+    }
+    token = build_job_token_from_record(record, run_id="bench_1", project_id="P1")
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": False,
+            "summary": "real run gate failed: command",
+            "requirements": {"build_test_lint_ran": {"ok": False}},
+            "commands": [{"ok": False, "tool": "python -m pytest"}],
+            "command_count_total": 1,
+        },
+    )
+    RunLedger(tmp_path, run_id="bench_1").append_event(event)
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
+
+    assert summarize_run_ledger_projection(projection) == summarize_platform_run_ledger_projection(projection)
+    assert summarize_run_ledger_projection({"source": "other"}) == summarize_platform_run_ledger_projection(
+        {"source": "other"}
+    )
 
 
 def test_run_ledger_projection_tracks_user_verifier_modalities(tmp_path: Path) -> None:

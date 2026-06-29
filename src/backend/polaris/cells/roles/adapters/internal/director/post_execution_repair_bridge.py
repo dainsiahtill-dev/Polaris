@@ -187,7 +187,6 @@ def run_post_execution_language_repairs(
         convergence_verifier_present=convergence_verifier is not None,
     )
     repair_kernel["repair_kernel_migration_debt"] = migration_debt
-    repair_kernel["legacy_callback_debt"] = migration_debt["legacy_callback_debt"]
     rust_legacy_aggregate_cutover_evidence = dict(
         migration_debt.get("legacy_aggregate_cutover_readiness_evidence") or {}
     )
@@ -207,7 +206,6 @@ def run_post_execution_language_repairs(
         "repair_kernel": repair_kernel,
         "scheduler_bridge": scheduler_bridge,
         "repair_kernel_migration_debt": migration_debt,
-        "legacy_callback_debt": migration_debt["legacy_callback_debt"],
         "legacy_aggregate_cutover_readiness_evidence": rust_legacy_aggregate_cutover_evidence,
         "resident_agi_repair_advisory_overlay": agi_advisory_overlay,
     }
@@ -2532,7 +2530,6 @@ def _build_scheduler_bridge_summary(
         "resident_agi_suggested_rule_count": int(agi_overlay.get("suggested_rule_count") or 0),
         "repair_kernel_migration_debt": migration_debt,
         "adapter_projection_debt": dict(migration_debt.get("adapter_projection_debt") or {}),
-        "legacy_callback_debt": dict(migration_debt.get("legacy_callback_debt") or {}),
         **_legacy_aggregate_cutover_projection_fields(legacy_aggregate_cutover_evidence),
     }
 
