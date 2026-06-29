@@ -230,6 +230,7 @@ def test_execution_strategy_derives_large_budget_from_profile() -> None:
     assert strategy.input_budget_tokens >= 128_000
     assert strategy.prompt_max_chars >= strategy.input_budget_tokens * 4
     assert "architecture_or_file_plan" in strategy.evidence_requirements
+    assert "module_interface_contract" in strategy.evidence_requirements
 
 
 def test_execution_strategy_overrides_project_to_context_gateway_controls() -> None:

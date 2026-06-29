@@ -23,6 +23,7 @@ _REF_BASED_SUPERSEDED_FINDING_CODES = frozenset(
 _COVERAGE_FLAG_TO_REF = {
     "has_pm_contract": "pm_contract",
     "has_chief_engineer_blueprint": "ce_blueprint",
+    "has_module_interface_contract": "module_interface_contract",
     "has_target_files": "target_files",
     "has_failure_feedback": "failed_gate_evidence",
     "has_workspace_quality_evidence": "workspace_quality_evidence",
@@ -43,6 +44,12 @@ _EVIDENCE_REQUIREMENT_TO_REF = {
     "behavior_matrix": "delivery_depth_contract",
     "chief_engineer_blueprint": "ce_blueprint",
     "ce_blueprint": "ce_blueprint",
+    "module_interface_contract": "module_interface_contract",
+    "cross_file_interface_contract": "module_interface_contract",
+    "cross_artifact_interface_contract": "module_interface_contract",
+    "cross_artifact.interface_contract.v1": "module_interface_contract",
+    "public_symbols": "module_interface_contract",
+    "consumes_symbols": "module_interface_contract",
     "target_files_or_declared_scopes": "target_files",
     "target_files": "target_files",
     "declared_scopes": "target_files",
@@ -369,6 +376,7 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
             "blueprint_id",
             "ce_blueprint",
             "chief_engineer_blueprint",
+            "chief engineer blueprint",
             "handoff_ready",
             "generated_blueprints",
             'blueprints":',
@@ -394,6 +402,21 @@ def _coverage_flags(text: str, *, ai_request: Any | None = None) -> dict[str, bo
             )
         ),
         "has_chief_engineer_blueprint": has_chief_engineer_blueprint,
+        "has_module_interface_contract": any(
+            needle in lowered
+            for needle in (
+                "module_interface_contract",
+                "cross_file_interface_contract",
+                "cross_artifact_interface_contract",
+                "cross_artifact.interface_contract.v1",
+                "public_symbols",
+                "consumes_symbols",
+                "consumed_interfaces",
+                "interface_names",
+                "本文件必须定义/导出",
+                "跨文件导入/调用必须逐字匹配",
+            )
+        ),
         "has_target_files": any(
             needle in lowered
             for needle in (
@@ -1227,6 +1250,7 @@ def _coverage_source(
         "pm_contract": workflow_chain.get("pm_contract_hash", ""),
         "ce_blueprint": workflow_chain.get("ce_blueprint_hash", ""),
         "handoff_decision": workflow_chain.get("handoff_decision_hash", ""),
+        "module_interface_contract": str(request_metadata_summary.get("module_interface_contract_hash") or ""),
         "execution_profile": workflow_chain.get("execution_profile_hash", ""),
         "execution_envelope": workflow_chain.get("execution_envelope_hash", ""),
         "execution_contract": str(request_metadata_summary.get("execution_contract_hash") or ""),

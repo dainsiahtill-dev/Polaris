@@ -1953,7 +1953,10 @@ def test_collect_llm_events_projects_final_request_evidence(tmp_path: Path) -> N
                 "final_request_evidence_hash": "evidence-hash",
                 "final_request_evidence": {
                     "context_snapshot_ref": "runtime/contexts/aa/bbbb.json",
+                    "final_request_context_audit_present": True,
                     "final_request_evidence_coverage_pass": False,
+                    "missing_required_refs": ["execution_envelope"],
+                    "missing_required_tools": ["write_file"],
                 },
                 "data": {"provider": "qwen-local", "model": "qwen3"},
             },
@@ -1967,9 +1970,12 @@ def test_collect_llm_events_projects_final_request_evidence(tmp_path: Path) -> N
 
     assert len(events) == 1
     assert events[0]["context_snapshot_ref"] == "runtime/contexts/aa/bbbb.json"
+    assert events[0]["final_request_context_audit_present"] is True
     assert events[0]["final_request_context_audit_hash"] == "audit-hash"
     assert events[0]["final_request_evidence_hash"] == "evidence-hash"
     assert events[0]["final_request_evidence_coverage_pass"] is False
+    assert events[0]["missing_required_refs"] == ["execution_envelope"]
+    assert events[0]["missing_required_tools"] == ["write_file"]
 
 
 def test_collect_llm_events_reads_multiple_runtime_candidates(tmp_path: Path) -> None:

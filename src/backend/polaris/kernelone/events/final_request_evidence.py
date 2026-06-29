@@ -89,24 +89,39 @@ def build_final_request_evidence(data: Mapping[str, Any]) -> dict[str, Any]:
         existing_evidence.get("final_request_evidence_coverage"),
         final_request_context_audit.get("final_request_evidence_coverage"),
     )
-    context_quality = _first_mapping(final_request_context_audit.get("context_quality"))
-    coverage_flags = _first_mapping(final_request_context_audit.get("coverage"))
-    audit_hash = _stable_hash(final_request_context_audit) if final_request_context_audit else ""
+    context_quality = _first_mapping(
+        final_request_context_audit.get("context_quality"), existing_evidence.get("context_quality")
+    )
+    coverage_flags = _first_mapping(final_request_context_audit.get("coverage"), existing_evidence.get("coverage"))
+    audit_hash = _first_text(existing_evidence.get("final_request_context_audit_hash"))
+    if not audit_hash and final_request_context_audit:
+        audit_hash = _stable_hash(final_request_context_audit)
     request_hash = _first_text(
         existing_evidence.get("request_hash"),
         evidence_coverage.get("request_hash"),
         final_request_context_audit.get("request_hash"),
     )
-    missing_required_refs = _string_list(evidence_coverage.get("missing_required_refs"))
-    missing_required_tools = _string_list(evidence_coverage.get("missing_required_tools"))
+    missing_required_refs = _string_list(
+        evidence_coverage.get("missing_required_refs") or existing_evidence.get("missing_required_refs")
+    )
+    missing_required_tools = _string_list(
+        evidence_coverage.get("missing_required_tools") or existing_evidence.get("missing_required_tools")
+    )
+    coverage_pass = (
+        evidence_coverage.get("pass")
+        if evidence_coverage
+        else existing_evidence.get("final_request_evidence_coverage_pass")
+    )
 
     payload: dict[str, Any] = {
         "schema_version": FINAL_REQUEST_EVIDENCE_SCHEMA,
         "context_snapshot_ref": context_snapshot_ref,
-        "final_request_context_audit_present": bool(final_request_context_audit),
+        "final_request_context_audit_present": bool(
+            final_request_context_audit or existing_evidence.get("final_request_context_audit_present")
+        ),
         "final_request_context_audit_hash": audit_hash,
         "request_hash": request_hash,
-        "final_request_evidence_coverage_pass": evidence_coverage.get("pass") if evidence_coverage else None,
+        "final_request_evidence_coverage_pass": coverage_pass,
         "missing_required_refs": missing_required_refs,
         "missing_required_tools": missing_required_tools,
         "coverage": coverage_flags,

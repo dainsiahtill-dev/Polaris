@@ -48,6 +48,34 @@ _DEFAULT_INPUT_BUDGETS: dict[str, int] = {
     "write_code": 128_000,
 }
 
+_SOURCE_FILE_SUFFIXES = frozenset(
+    {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cs",
+        ".dart",
+        ".ex",
+        ".exs",
+        ".go",
+        ".h",
+        ".hpp",
+        ".java",
+        ".js",
+        ".jsx",
+        ".kt",
+        ".mjs",
+        ".php",
+        ".py",
+        ".rb",
+        ".rs",
+        ".scala",
+        ".swift",
+        ".ts",
+        ".tsx",
+    }
+)
+
 
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
@@ -110,12 +138,29 @@ def _scale_budget(base: int, bonus: int, *, hard_cap: int, maximize_at_bonus: in
     return min(max(int(base * multiplier), base), hard_cap)
 
 
+def _requires_module_interface_contract(profile: TaskExecutionProfileV1) -> bool:
+    """Require CE interface evidence when Director must coordinate multiple source files."""
+
+    source_targets = [
+        path for path in profile.target_files if "." + str(path).rsplit(".", 1)[-1].lower() in _SOURCE_FILE_SUFFIXES
+    ]
+    if len(source_targets) < 2:
+        return False
+    if profile.task_type in {"config", "docs"}:
+        return False
+    return profile.task_type in {"write_code", "integration", "refactor", "bugfix", "tests", "validation"} or bool(
+        profile.language and profile.language != "generic"
+    )
+
+
 def _evidence_requirements(profile: TaskExecutionProfileV1) -> tuple[str, ...]:
     requirements = ["pm_task_contract", "chief_engineer_blueprint", "target_files_or_declared_scopes"]
     if profile.task_type in {"bugfix", "tests", "validation"} or "repair" in profile.phase:
         requirements.append("failed_gate_or_verification_evidence")
     if profile.task_type in {"write_code", "integration", "refactor"} or len(profile.target_files) >= 3:
         requirements.append("architecture_or_file_plan")
+    if _requires_module_interface_contract(profile):
+        requirements.append("module_interface_contract")
     if profile.language != "generic":
         requirements.append("language_best_practices")
     if profile.framework:
@@ -260,7 +305,9 @@ def apply_execution_strategy_overrides(
     execution_contract_payload = execution_contract.to_dict()
     merged_evidence = {**context, **metadata}
     execution_envelope = build_execution_envelope(
-        workspace=_string_value(merged_evidence, "workspace", "factory_bench_project_workspace", default="unknown-workspace"),
+        workspace=_string_value(
+            merged_evidence, "workspace", "factory_bench_project_workspace", default="unknown-workspace"
+        ),
         task_id=_string_value(merged_evidence, "task_id", "pm_task_id", "backlog_ref", default="unknown-task"),
         run_id=_string_value(merged_evidence, "run_id", "factory_run_id", default="unknown-run"),
         trace_id=_string_value(merged_evidence, "trace_id", "call_id", default="unknown-trace"),

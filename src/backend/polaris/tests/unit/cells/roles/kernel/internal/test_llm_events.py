@@ -114,6 +114,46 @@ def test_emit_llm_event_to_disk_preserves_final_request_context_audit(monkeypatc
     assert metadata["contextTokens"] == 2560
 
 
+def test_emit_llm_event_to_disk_projects_final_request_evidence_for_pm_ce_director(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    runtime_root = tmp_path / "runtime"
+
+    def _fake_roots(_workspace: str) -> SimpleNamespace:
+        return SimpleNamespace(runtime_root=str(runtime_root))
+
+    monkeypatch.setattr("polaris.cells.storage.layout.resolve_polaris_roots", _fake_roots)
+
+    audit = {
+        "schema_version": "llm.final_request_context_audit.v1",
+        "final_request_evidence_coverage": {
+            "request_hash": "request-hash-role-matrix",
+            "pass": True,
+        },
+    }
+
+    for role in ("pm", "chief_engineer", "director"):
+        event = events.LLMCallEvent(
+            event_type=events.LLMEventType.CALL_START,
+            role=role,
+            run_id="run-role-matrix",
+            metadata={
+                "workspace": str(tmp_path),
+                "context_snapshot_ref": f"runtime/contexts/{role}/snapshot.json",
+                "final_request_context_audit": audit,
+            },
+        )
+        events._emit_llm_event_to_disk(event)
+
+    for role in ("pm", "chief_engineer", "director"):
+        event_path = runtime_root / "events" / f"{role}.llm.events.jsonl"
+        payload = json.loads(event_path.read_text(encoding="utf-8").strip())
+        assert payload["context_snapshot_ref"] == f"runtime/contexts/{role}/snapshot.json"
+        assert payload["final_request_context_audit"] == audit
+        assert payload["audit_refs"]["request_hash"] == "request-hash-role-matrix"
+        assert payload["final_request_evidence"]["final_request_evidence_coverage_pass"] is True
+
+
 def test_publish_to_realtime_bridge_preserves_local_workbench_content(monkeypatch: Any, tmp_path: Path) -> None:
     captured: list[Any] = []
     monkeypatch.setenv("KERNELONE_WORKSPACE", str(tmp_path))

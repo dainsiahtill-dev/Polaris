@@ -63,3 +63,27 @@ def test_attach_final_request_evidence_adds_stable_top_level_audit_refs() -> Non
     assert isinstance(payload["final_request_evidence"], dict)
     assert isinstance(payload["audit_refs"], dict)
     assert payload["audit_refs"]["request_hash"] == "request-hash-2"
+
+
+def test_build_final_request_evidence_preserves_existing_lightweight_projection() -> None:
+    evidence = build_final_request_evidence(
+        {
+            "final_request_evidence": {
+                "context_snapshot_ref": "runtime/contexts/44/5555.json",
+                "final_request_context_audit_present": True,
+                "final_request_context_audit_hash": "audit-hash-light",
+                "final_request_evidence_coverage_pass": False,
+                "request_hash": "request-hash-light",
+                "missing_required_refs": ["ce_blueprint"],
+                "missing_required_tools": ["repo_tree"],
+            }
+        }
+    )
+
+    assert evidence["context_snapshot_ref"] == "runtime/contexts/44/5555.json"
+    assert evidence["final_request_context_audit_present"] is True
+    assert evidence["final_request_context_audit_hash"] == "audit-hash-light"
+    assert evidence["final_request_evidence_coverage_pass"] is False
+    assert evidence["request_hash"] == "request-hash-light"
+    assert evidence["missing_required_refs"] == ["ce_blueprint"]
+    assert evidence["missing_required_tools"] == ["repo_tree"]

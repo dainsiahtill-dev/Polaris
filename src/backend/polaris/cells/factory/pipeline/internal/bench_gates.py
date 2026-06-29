@@ -2098,7 +2098,9 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
         "skip_reason": skip_reason,
         "fail_closed": fail_closed,
         "context_snapshot_ref": context_snapshot_ref,
-        "final_request_context_audit_present": bool(final_request_context_audit),
+        "final_request_context_audit_present": bool(
+            final_request_context_audit or final_request_evidence.get("final_request_context_audit_present")
+        ),
         "final_request_context_audit_hash": _first_string(
             raw.get("final_request_context_audit_hash"),
             data.get("final_request_context_audit_hash"),
@@ -2112,6 +2114,12 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
             final_request_evidence.get("final_request_evidence_hash"),
         ),
         "final_request_evidence_coverage_pass": final_request_evidence.get("final_request_evidence_coverage_pass"),
+        "missing_required_refs": final_request_evidence.get("missing_required_refs")
+        if isinstance(final_request_evidence.get("missing_required_refs"), list)
+        else [],
+        "missing_required_tools": final_request_evidence.get("missing_required_tools")
+        if isinstance(final_request_evidence.get("missing_required_tools"), list)
+        else [],
         "source_path": source_path,
         "raw": raw,
     }

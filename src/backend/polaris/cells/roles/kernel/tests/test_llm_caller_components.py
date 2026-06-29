@@ -271,7 +271,8 @@ def test_final_request_context_audit_marks_complete_context_as_reasonable() -> N
                 "workspace/meta/resident/decision_trace.jsonl "
                 "resident_agi_capability_surface resident.agi_capability_surface.v1 "
                 "runtime_foundation: roles.runtime + ContextOS + TurnEngine "
-                "resident.agi_decision_boundary.v1 decision_boundaries platform_hard_rule agi_decision_scope"
+                "resident.agi_decision_boundary.v1 decision_boundaries platform_hard_rule agi_decision_scope "
+                "public_symbols: buildPlanetWeatherReport consumes_symbols: src/models/weather.ts"
             ),
         },
     ]

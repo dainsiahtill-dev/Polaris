@@ -410,6 +410,118 @@ def test_final_request_context_audit_includes_execution_envelope_coverage() -> N
     assert evidence_coverage["pass"] is True
 
 
+def test_final_request_evidence_tracks_module_interface_contract() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 48000},
+        context={
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "evidence_requirements": [
+                    "pm_task_contract",
+                    "chief_engineer_blueprint",
+                    "target_files_or_declared_scopes",
+                    "module_interface_contract",
+                ],
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "pm_contract": {"hash": "pm-hash"},
+                "ce_blueprint": {"hash": "ce-hash"},
+            },
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "PM Task Contract / 任务合同: TASK-1 target_files src/models/weather.py, "
+                    "src/engine/forecast.py. Chief Engineer Blueprint / CE 蓝图交接: "
+                    "blueprint_id ce_TASK-1 construction_plan. "
+                    "public_symbols: WeatherReport, forecast_for. "
+                    "consumes_symbols: src/models/weather.py -> WeatherReport, forecast_for."
+                ),
+            }
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    assert audit["coverage"]["has_module_interface_contract"] is True
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert "module_interface_contract" in evidence_coverage["required_refs"]
+    assert "module_interface_contract" in evidence_coverage["included_refs"]
+    assert evidence_coverage["missing_required_refs"] == []
+    assert evidence_coverage["pass"] is True
+
+
+def test_final_request_evidence_reports_missing_module_interface_contract() -> None:
+    ai_request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role="director",
+        input="",
+        options={"temperature": 0.1, "max_tokens": 48000},
+        context={
+            "director_execution_strategy": {
+                "schema_version": "task.execution_strategy.v1",
+                "evidence_requirements": [
+                    "pm_task_contract",
+                    "chief_engineer_blueprint",
+                    "target_files_or_declared_scopes",
+                    "module_interface_contract",
+                ],
+            },
+            "director_execution_envelope": {
+                "schema_version": "polaris.execution_envelope.v1",
+                "envelope_hash": "envelope-hash",
+                "pm_contract": {"hash": "pm-hash"},
+                "ce_blueprint": {"hash": "ce-hash"},
+            },
+        },
+    )
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "PM Task Contract / 任务合同: TASK-1 target_files src/models/weather.py, "
+                    "src/engine/forecast.py. Chief Engineer Blueprint / CE 蓝图交接: "
+                    "blueprint_id ce_TASK-1 construction_plan."
+                ),
+            }
+        ],
+        input_text="test",
+        context_result=None,
+        context_summary="test",
+        request_options=dict(ai_request.options),
+        ai_request=ai_request,
+    )
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=ai_request,
+        prepared=prepared,
+        profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
+    )
+
+    assert audit["coverage"]["has_module_interface_contract"] is False
+    evidence_coverage = audit["final_request_evidence_coverage"]
+    assert "module_interface_contract" in evidence_coverage["missing_required_refs"]
+    assert evidence_coverage["pass"] is False
+
+
 def test_final_request_evidence_aliases_verification_failure_and_architecture_plan() -> None:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
