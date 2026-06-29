@@ -45,6 +45,7 @@ from .javascript_syntax import (
     JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL,
     NODE_TEST_SCRIPT_CONTRACT_SOURCE_TOOL,
     NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
+    TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL,
 )
 from .python_syntax import (
     PYTHON_PACKAGE_CHILD_REEXPORT_SOURCE_TOOL,
@@ -1646,6 +1647,22 @@ def default_repair_rule_registry() -> RepairRuleRegistry:
                 message_terms=("require is not defined",),
                 risk_level="medium",
                 description="Covers generated JavaScript entrypoints that mix CommonJS with ESM package mode.",
+                runtime_plan_available=True,
+            ),
+            RepairRuleDefinition(
+                rule_id="typescript.local_js_import_extension",
+                source_tool=TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL,
+                language="javascript",
+                phase="runtime_smoke",
+                archetype=RepairArchetype.WRONG_IMPORT_PATH,
+                priority=1,
+                diagnostic_codes=("javascript_module_error",),
+                message_terms=("cannot find module", ".js"),
+                risk_level="low",
+                description=(
+                    "Repairs TypeScript source files whose local .js import specifiers break "
+                    "CommonJS ts-node/tsx runtime execution."
+                ),
                 runtime_plan_available=True,
             ),
             RepairRuleDefinition(

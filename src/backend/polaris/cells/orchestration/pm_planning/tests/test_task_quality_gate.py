@@ -2210,6 +2210,136 @@ class TestAutofixPmContractForQuality:
         assert stats["game_domain_tasks_added"] == 0
         assert len(payload["tasks"]) == 1
 
+    def test_autofix_splits_oversized_director_task_boundaries(self, tmp_path: Any) -> None:
+        payload: dict[str, Any] = {
+            "workspace": str(tmp_path),
+            "overall_goal": "Build a TypeScript market simulation with models, CLI, web entry, and tests.",
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "Implement TypeScript market project",
+                    "goal": "Create package, config, models, entries, and behavior tests for the market project.",
+                    "description": "One broad task intentionally includes manifest, source, entrypoints, and tests.",
+                    "acceptance_criteria": [
+                        "`npm run build` exits 0",
+                        "`npm run test` exits 0",
+                        "`npm start` exits 0",
+                    ],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Create files", "Run tests"],
+                    "scope_paths": [
+                        "package.json",
+                        "tsconfig.json",
+                        "src/types.ts",
+                        "src/models/Market.ts",
+                        "src/models/Fairy.ts",
+                        "src/models/Inventory.ts",
+                        "src/index.ts",
+                        "src/main.ts",
+                        "src/web.ts",
+                        "tests/behavior.test.ts",
+                    ],
+                    "target_files": [
+                        "package.json",
+                        "tsconfig.json",
+                        "src/types.ts",
+                        "src/models/Market.ts",
+                        "src/models/Fairy.ts",
+                        "src/models/Inventory.ts",
+                        "src/index.ts",
+                        "src/main.ts",
+                        "src/web.ts",
+                        "tests/behavior.test.ts",
+                    ],
+                },
+                {
+                    "id": "TASK-2",
+                    "title": "Add README handoff",
+                    "goal": "Document how to run the market simulation.",
+                    "acceptance_criteria": ["verify README.md exists"],
+                    "assigned_to": "director",
+                    "phase": "verification",
+                    "depends_on": ["TASK-1"],
+                    "execution_checklist": ["Write README"],
+                    "scope_paths": ["README.md"],
+                    "target_files": ["README.md"],
+                },
+            ],
+        }
+
+        initial_report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))
+        assert any("Director task boundary is too broad" in item for item in initial_report["critical_issues"])
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+
+        assert stats["oversized_director_tasks_split"] == 1
+        assert stats["task_boundary_tasks_added"] == 3
+        split_tasks = [task for task in payload["tasks"] if str(task.get("id", "")).startswith("TASK-1-")]
+        assert [task["id"] for task in split_tasks] == [
+            "TASK-1-foundation",
+            "TASK-1-source",
+            "TASK-1-entrypoints",
+            "TASK-1-tests",
+        ]
+        assert split_tasks[0]["target_files"] == ["package.json", "tsconfig.json"]
+        assert "src/models/Market.ts".lower() in split_tasks[1]["target_files"]
+        assert "src/main.ts".lower() in split_tasks[2]["target_files"]
+        assert split_tasks[3]["target_files"] == ["tests/behavior.test.ts"]
+        assert split_tasks[1]["depends_on"] == ["TASK-1-foundation"]
+        assert split_tasks[2]["depends_on"] == ["TASK-1-source"]
+        assert split_tasks[3]["depends_on"] == ["TASK-1-entrypoints"]
+        downstream = next(task for task in payload["tasks"] if task["id"] == "TASK-2")
+        assert downstream["depends_on"] == ["TASK-1-tests"]
+        post_report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))
+        assert not any("Director task boundary is too broad" in item for item in post_report["critical_issues"])
+
+    def test_autofix_does_not_split_documentation_only_director_task(self, tmp_path: Any) -> None:
+        payload: dict[str, Any] = {
+            "workspace": str(tmp_path),
+            "overall_goal": "Create documentation handoff assets.",
+            "tasks": [
+                {
+                    "id": "TASK-docs",
+                    "title": "Write documentation handoff",
+                    "goal": "Create all markdown handoff assets for the project.",
+                    "acceptance_criteria": ["verify docs/overview.md exists"],
+                    "assigned_to": "director",
+                    "phase": "verification",
+                    "depends_on": [],
+                    "execution_checklist": ["Write documentation"],
+                    "scope_paths": [
+                        "README.md",
+                        "docs/overview.md",
+                        "docs/setup.md",
+                        "docs/api.md",
+                        "docs/usage.md",
+                        "docs/testing.md",
+                        "docs/release.md",
+                    ],
+                    "target_files": [
+                        "README.md",
+                        "docs/overview.md",
+                        "docs/setup.md",
+                        "docs/api.md",
+                        "docs/usage.md",
+                        "docs/testing.md",
+                        "docs/release.md",
+                    ],
+                },
+            ],
+        }
+
+        initial_report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))
+        assert not any("Director task boundary is too broad" in item for item in initial_report["critical_issues"])
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+
+        assert stats["oversized_director_tasks_split"] == 0
+        assert stats["task_boundary_tasks_added"] == 0
+        assert [task["id"] for task in payload["tasks"]] == ["TASK-docs"]
+
     def test_enterprise_task_management_terms_do_not_trigger_game_domain_expansion(self, tmp_path: Any) -> None:
         payload: dict[str, Any] = {
             "workspace": str(tmp_path),

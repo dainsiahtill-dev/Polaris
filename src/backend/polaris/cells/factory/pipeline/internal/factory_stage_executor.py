@@ -125,6 +125,7 @@ _QUALITY_GATE_MIN_PASS_SCORE = 70
 _QUALITY_GATE_MIN_START_BUDGET_SECONDS = 15.0
 _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS = 15.0
 _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS = 5.0
+_CHIEF_ENGINEER_MIN_LLM_START_BUDGET_SECONDS = 45.0
 _PRE_DIRECTOR_SNAPSHOT_RELATIVE_DIR = ".polaris/factory_snapshots/pre_director"
 _PRE_DIRECTOR_SNAPSHOT_KIND = "pre_director_workspace"
 _PRE_DIRECTOR_PLATFORM_PREFIXES = (
@@ -1791,6 +1792,104 @@ class OrchestrationStageExecutor:
         return _DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS
 
     @staticmethod
+    def _chief_engineer_deadline_projection_decision(
+        context: dict[str, Any],
+        *,
+        requested_timeout_seconds: int,
+        remaining_task_count: int = 1,
+    ) -> dict[str, Any]:
+        remaining_tasks = max(1, int(remaining_task_count))
+        remaining_seconds = OrchestrationStageExecutor._factory_deadline_remaining_seconds(context)
+        if remaining_seconds is None:
+            return {
+                "use_deadline_projection": False,
+                "remaining_seconds": None,
+                "reserved_downstream_seconds": None,
+                "remaining_task_count": remaining_tasks,
+                "llm_timeout_seconds": max(1, int(requested_timeout_seconds)),
+            }
+
+        reserved_downstream = (
+            OrchestrationStageExecutor._director_first_materialization_min_budget_seconds(context)
+            + OrchestrationStageExecutor._quality_gate_reserved_budget_seconds(context)
+            + _DIRECTOR_DISPATCH_DEADLINE_SAFETY_SECONDS
+        )
+        available_for_ce = remaining_seconds - reserved_downstream
+        available_for_this_task = available_for_ce / float(remaining_tasks)
+        if available_for_this_task < _CHIEF_ENGINEER_MIN_LLM_START_BUDGET_SECONDS:
+            return {
+                "use_deadline_projection": True,
+                "reason": "insufficient_factory_deadline_for_remaining_ce_tasks",
+                "remaining_seconds": remaining_seconds,
+                "reserved_downstream_seconds": reserved_downstream,
+                "available_for_ce_seconds": available_for_ce,
+                "available_for_this_task_seconds": available_for_this_task,
+                "remaining_task_count": remaining_tasks,
+                "llm_timeout_seconds": 0,
+            }
+        return {
+            "use_deadline_projection": False,
+            "remaining_seconds": remaining_seconds,
+            "reserved_downstream_seconds": reserved_downstream,
+            "available_for_ce_seconds": available_for_ce,
+            "available_for_this_task_seconds": available_for_this_task,
+            "remaining_task_count": remaining_tasks,
+            "llm_timeout_seconds": max(1, min(int(requested_timeout_seconds), int(available_for_this_task))),
+        }
+
+    @staticmethod
+    def _chief_engineer_projection_semantic_terms(task_context: dict[str, Any]) -> list[str]:
+        def _mapping(value: Any) -> dict[str, Any]:
+            return dict(value) if isinstance(value, dict) else {}
+
+        def _extend_terms(raw: Any, terms: list[str]) -> None:
+            values = raw if isinstance(raw, (list, tuple, set)) else [raw]
+            for item in values:
+                token = str(item or "").strip()
+                if token and token not in terms:
+                    terms.append(token)
+
+        terms: list[str] = []
+        depth_contract = _mapping(task_context.get("delivery_depth_contract"))
+        plan_document = _mapping(task_context.get("delivery_plan_document"))
+        product_intent = _mapping(depth_contract.get("product_intent"))
+        product_summary = _mapping(plan_document.get("product_summary"))
+        _extend_terms(product_intent.get("primary_entities"), terms)
+        _extend_terms(product_summary.get("core_terms"), terms)
+        _extend_terms(task_context.get("feature_keywords"), terms)
+        return terms[:8]
+
+    @staticmethod
+    def _enrich_chief_engineer_projection_context(task_context: dict[str, Any]) -> None:
+        terms = OrchestrationStageExecutor._chief_engineer_projection_semantic_terms(task_context)
+        if not terms:
+            return
+
+        semantic_phrase = ", ".join(terms[:4])
+
+        def _string_list(raw: Any) -> list[str]:
+            if isinstance(raw, (list, tuple)):
+                return [str(item).strip() for item in raw if str(item or "").strip()]
+            token = str(raw or "").strip()
+            return [token] if token else []
+
+        def _append_unique(key: str, value: str) -> None:
+            rows = _string_list(task_context.get(key))
+            if value not in rows:
+                rows.append(value)
+            task_context[key] = rows
+
+        _append_unique(
+            "acceptance_criteria",
+            f"Preserve and verify domain behavior for {semantic_phrase}.",
+        )
+        _append_unique(
+            "execution_checklist",
+            f"Carry the PM domain terms through the implementation plan: {semantic_phrase}.",
+        )
+        task_context["chief_engineer_projection_semantic_terms"] = terms
+
+    @staticmethod
     def _director_binding_timeout_quarantine_count() -> int:
         raw = os.environ.get(_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_ENV, "")
         try:
@@ -3097,15 +3196,63 @@ class OrchestrationStageExecutor:
                 }
             )
 
-        # Use RoleRuntimeService for real LLM invocation
+        # Use RoleRuntimeService for real LLM invocation while preserving enough
+        # deadline for Director materialization and the final quality gate.
         ce_service = RoleRuntimeService()
-        ce_timeout_seconds = self._chief_engineer_llm_timeout_seconds(context)
+        base_ce_timeout_seconds = self._chief_engineer_llm_timeout_seconds(context)
+        cancel_event = self._resolve_cancel_event(context)
+        abort_checker = self._resolve_abort_checker(context)
+        cancelled_by_factory = False
+        deadline_projection_locked = False
 
         for index, task in enumerate(pm_tasks, start=1):
             task_id = self._task_id(task, index)
             objective = self._task_objective(task)
             task_constraints = self._task_blueprint_constraints(task)
             try:
+                if cancel_event is not None and cancel_event.is_set():
+                    cancelled_by_factory = True
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.cancelled_before_task",
+                            "severity": "warning",
+                            "detail": "Factory cancel event was set before starting CE review for the next task.",
+                            "task_id": task_id,
+                        }
+                    )
+                    break
+                abort_reason = ""
+                if abort_checker is not None:
+                    with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                        abort_reason = str(await abort_checker() or "").strip()
+                if abort_reason:
+                    cancelled_by_factory = True
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.cancelled_before_task",
+                            "severity": "warning",
+                            "detail": f"Factory abort was requested before CE review: {abort_reason}",
+                            "task_id": task_id,
+                            "abort_reason": abort_reason,
+                        }
+                    )
+                    break
+
+                deadline_decision = self._chief_engineer_deadline_projection_decision(
+                    context,
+                    requested_timeout_seconds=base_ce_timeout_seconds,
+                    remaining_task_count=len(pm_tasks) - index + 1,
+                )
+                if deadline_projection_locked:
+                    deadline_decision = {
+                        **deadline_decision,
+                        "use_deadline_projection": True,
+                        "reason": "prior_ce_deadline_projection_locked_for_stage",
+                        "projection_lock": True,
+                        "llm_timeout_seconds": 0,
+                    }
+                deadline_projection_used = bool(deadline_decision.get("use_deadline_projection"))
+                ce_timeout_seconds = int(deadline_decision.get("llm_timeout_seconds") or base_ce_timeout_seconds)
                 task_context = self._task_blueprint_context(task, run_id=run.id, index=index)
                 task_context.update(
                     {
@@ -3123,36 +3270,68 @@ class OrchestrationStageExecutor:
                         "chief_engineer_llm_timeout_seconds": ce_timeout_seconds,
                         "llm_call_timeout_seconds": ce_timeout_seconds,
                         "request_timeout_seconds": ce_timeout_seconds,
+                        "chief_engineer_deadline_decision": dict(deadline_decision),
                     }
                 )
                 ce_objective = f"{objective.strip()}{_CE_BLUEPRINT_OUTPUT_CONTRACT}"
 
-                # Build command for RoleRuntimeService
-                command = ExecuteRoleTaskCommandV1(
-                    role="chief_engineer",
-                    task_id=task_id,
-                    workspace=str(self.workspace),
-                    objective=ce_objective,
-                    run_id=run.id,
-                    context=task_context,
-                    timeout_seconds=ce_timeout_seconds,
-                    metadata={
-                        "constraints": task_constraints,
-                        "source": "factory_stage_executor.chief_engineer_review",
-                        "cognitive_runtime_mode": "off",
-                        "cognitive_runtime_enabled": False,
-                        "cognitive_runtime_required": False,
-                        "llm_call_timeout_seconds": ce_timeout_seconds,
-                        "validate_output": True,
-                        "max_retries": 0,
-                        "temperature": 0.2,
-                        "response_format_mode": "json",
-                        "chief_engineer_json_contract_required": True,
-                    },
-                )
+                if deadline_projection_used:
+                    deadline_projection_locked = True
+                    self._enrich_chief_engineer_projection_context(task_context)
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.deadline_projection_used",
+                            "severity": "warning",
+                            "detail": (
+                                "Skipped a CE LLM call and generated a deterministic blueprint projection because "
+                                "the remaining factory deadline was insufficient to safely start another CE call "
+                                "while preserving Director and QA budget."
+                            ),
+                            "task_id": task_id,
+                            "deadline_decision": dict(deadline_decision),
+                        }
+                    )
+                    ce_result = SimpleNamespace(
+                        ok=True,
+                        output="",
+                        error_message="",
+                        error_code="",
+                        metadata={
+                            "provider": "deterministic_projection",
+                            "model": "chief_engineer_blueprint_projection",
+                            "structured_output": {},
+                            "llm_call_skipped": True,
+                            "deadline_projection": dict(deadline_decision),
+                        },
+                        usage={},
+                    )
+                else:
+                    # Build command for RoleRuntimeService
+                    command = ExecuteRoleTaskCommandV1(
+                        role="chief_engineer",
+                        task_id=task_id,
+                        workspace=str(self.workspace),
+                        objective=ce_objective,
+                        run_id=run.id,
+                        context=task_context,
+                        timeout_seconds=ce_timeout_seconds,
+                        metadata={
+                            "constraints": task_constraints,
+                            "source": "factory_stage_executor.chief_engineer_review",
+                            "cognitive_runtime_mode": "off",
+                            "cognitive_runtime_enabled": False,
+                            "cognitive_runtime_required": False,
+                            "llm_call_timeout_seconds": ce_timeout_seconds,
+                            "validate_output": True,
+                            "max_retries": 0,
+                            "temperature": 0.2,
+                            "response_format_mode": "json",
+                            "chief_engineer_json_contract_required": True,
+                        },
+                    )
 
-                # Execute via RoleRuntimeService (real LLM call)
-                ce_result = await ce_service.execute_role_task(command)
+                    # Execute via RoleRuntimeService (real LLM call)
+                    ce_result = await ce_service.execute_role_task(command)
                 ce_evidence = self._ce_extract_llm_evidence(ce_result, task_id=task_id, run_id=run.id)
                 ce_provider = str(ce_evidence.get("provider") or "unknown")
                 ce_model = str(ce_evidence.get("model") or "unknown")
@@ -3162,7 +3341,8 @@ class OrchestrationStageExecutor:
                 ce_llm_blueprint: dict[str, Any] = {}
 
                 # Check if CE LLM call succeeded (fail-closed)
-                recovered_review_schema_failure = False
+                llm_call_skipped = bool(ce_result_metadata.get("llm_call_skipped"))
+                recovered_review_schema_failure = llm_call_skipped
                 if not ce_result.ok:
                     recovered_review_schema_failure = self._ce_review_schema_failure_is_recoverable(
                         ce_result,
@@ -3188,7 +3368,10 @@ class OrchestrationStageExecutor:
                         continue
 
                 task_error_count_before = len(stage_signals)
-                if ce_evidence.get("provider_model_unknown"):
+                if llm_call_skipped:
+                    ce_evidence["llm_call_skipped"] = True
+                    ce_evidence["deadline_projection"] = dict(deadline_decision)
+                elif ce_evidence.get("provider_model_unknown"):
                     stage_signals.append(
                         {
                             "code": "chief_engineer.llm_evidence_missing",
@@ -3415,7 +3598,7 @@ class OrchestrationStageExecutor:
             for item in stage_signals
             if isinstance(item, dict)
         )
-        stage_status = "failed" if has_errors else "success"
+        stage_status = "cancelled" if cancelled_by_factory else "failed" if has_errors else "success"
         artifacts = [row["blueprint_path"] for row in blueprint_rows if row.get("blueprint_path")]
         if review_artifact:
             artifacts.append(review_artifact)

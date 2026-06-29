@@ -125,15 +125,19 @@ from .javascript_runtime import (
     JavaScriptRepairRun,
     plan_node_test_script_contract_repair,
     plan_npm_script_contract_repair,
+    plan_typescript_local_js_import_repair,
     run_node_test_script_contract_repair,
     run_npm_script_contract_repair,
+    run_typescript_local_js_import_repair,
 )
 from .javascript_syntax import (
     NODE_TEST_SCRIPT_CONTRACT_SOURCE_TOOL,
     NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
+    TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL,
     build_node_test_script_contract_plan,
     build_npm_script_contract_plan,
     build_substantive_node_test_script,
+    build_typescript_local_js_import_plan,
 )
 from .legacy_bridge import build_legacy_repair_kernel_summary
 from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
@@ -320,6 +324,7 @@ __all__ = [
     "TYPESCRIPT_ENUM_MEMBER_SEPARATOR_SOURCE_TOOL",
     "TYPESCRIPT_HYPHENATED_IDENTIFIER_SOURCE_TOOL",
     "TYPESCRIPT_IMPORT_SPECIFIER_KEYWORD_SOURCE_TOOL",
+    "TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL",
     "TYPESCRIPT_MISSING_CLOSING_BRACE_SOURCE_TOOL",
     "TYPESCRIPT_NULLABLE_CANVAS_CONTEXT_SOURCE_TOOL",
     "TYPESCRIPT_NUMBER_PROPERTY_CALL_SOURCE_TOOL",
@@ -444,6 +449,7 @@ __all__ = [
     "build_typescript_duplicate_object_property_plan",
     "build_typescript_enum_member_separator_plan",
     "build_typescript_hyphenated_identifier_plan",
+    "build_typescript_local_js_import_plan",
     "build_typescript_missing_closing_brace_plan",
     "build_typescript_nullable_canvas_context_plan",
     "build_typescript_number_property_call_plan",
@@ -484,6 +490,7 @@ __all__ = [
     "plan_typescript_canvas_scale_return_type_repair",
     "plan_typescript_duplicate_object_property_repair",
     "plan_typescript_enum_member_separator_repair",
+    "plan_typescript_local_js_import_repair",
     "plan_typescript_missing_closing_brace_repair",
     "plan_typescript_nullable_canvas_context_repair",
     "plan_typescript_number_to_string_argument_repair",
@@ -529,6 +536,7 @@ __all__ = [
     "run_typescript_canvas_scale_return_type_repair",
     "run_typescript_duplicate_object_property_repair",
     "run_typescript_enum_member_separator_repair",
+    "run_typescript_local_js_import_repair",
     "run_typescript_missing_closing_brace_repair",
     "run_typescript_nullable_canvas_context_repair",
     "run_typescript_number_to_string_argument_repair",

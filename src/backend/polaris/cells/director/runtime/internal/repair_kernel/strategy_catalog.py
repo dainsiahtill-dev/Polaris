@@ -88,6 +88,7 @@ KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
         "deterministic_typescript_html_container_selector_repair",
         "deterministic_typescript_import_specifier_keyword_repair",
         "deterministic_typescript_literal_union_value_facade_repair",
+        "deterministic_typescript_local_js_import_repair",
         "deterministic_typescript_member_alias_repair",
         "deterministic_typescript_missing_closing_brace_repair",
         "deterministic_typescript_missing_export_repair",

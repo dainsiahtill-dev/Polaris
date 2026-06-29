@@ -383,6 +383,103 @@ class TestChiefEngineerHandoffGuards:
         assert command.metadata["response_format_mode"] == "json"
         assert command.metadata["chief_engineer_json_contract_required"] is True
 
+    def test_chief_engineer_review_uses_deadline_projection_without_llm_call(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        delivery_plan_document = {
+            "schema_version": "polaris.delivery_plan_document.v1",
+            "product_summary": {
+                "intent": "Deliver a meteor wish queue.",
+                "core_terms": ["meteor", "wish", "queue", "priority"],
+            },
+        }
+        delivery_depth_contract = {
+            "schema_version": "polaris.delivery_depth_contract.v1",
+            "product_intent": {
+                "subject": "meteor wish queue",
+                "primary_entities": ["meteor", "wish", "queue", "priority"],
+            },
+        }
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "title": "Build meteor wish queue",
+                        "goal": "Build a meteor wish queue with prioritization behavior.",
+                        "target_files": ["package.json", "src/index.js", "src/engine/rules.js"],
+                        "scope_paths": ["package.json", "src/index.js", "src/engine/rules.js"],
+                        "acceptance_criteria": ["npm test passes", "npm start prints queue status"],
+                        "execution_checklist": ["Implement queue model", "Implement prioritization rules"],
+                        "delivery_plan_document": delivery_plan_document,
+                        "delivery_depth_contract": delivery_depth_contract,
+                    },
+                    {
+                        "id": "TASK-2",
+                        "title": "Add meteor wish queue tests",
+                        "goal": "Validate meteor wish queue prioritization behavior.",
+                        "target_files": ["tests/product.test.js"],
+                        "scope_paths": ["tests/product.test.js"],
+                        "acceptance_criteria": ["npm test covers normal and boundary queues"],
+                        "execution_checklist": ["Add tests for priority ordering"],
+                        "delivery_plan_document": delivery_plan_document,
+                        "delivery_depth_contract": delivery_depth_contract,
+                    },
+                ]
+            },
+        )
+
+        class _UnexpectedRoleRuntimeService:
+            async def execute_role_task(self, command: Any) -> Any:
+                raise AssertionError(f"CE LLM should not be called under deadline projection: {command!r}")
+
+        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _UnexpectedRoleRuntimeService)
+        run = FactoryRun(
+            id="factory-run-projection",
+            config=FactoryConfig(name="bench-run"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-25T00:00:00+00:00",
+        )
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 165.0
+
+        result = asyncio.run(
+            executor._execute_chief_engineer_review(
+                run,
+                {
+                    "factory_run_deadline_epoch_seconds": deadline_epoch,
+                    "director_first_materialization_min_budget_seconds": 60,
+                    "quality_gate_reserved_budget_seconds": 20,
+                },
+            )
+        )
+
+        assert result.status == "success"
+        review_path = Path(
+            resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run-projection.review.json")
+        )
+        review = json.loads(review_path.read_text(encoding="utf-8"))
+        assert [signal["code"] for signal in review["signals"]] == [
+            "chief_engineer.deadline_projection_used",
+            "chief_engineer.deadline_projection_used",
+        ]
+        assert len(review["blueprints"]) == 2
+        first_row, second_row = review["blueprints"]
+        assert first_row["handoff_ready"] is True
+        assert second_row["handoff_ready"] is True
+        assert first_row["llm_blueprint_consumed"] is False
+        assert first_row["llm_evidence"]["llm_call_skipped"] is True
+        assert first_row["llm_evidence"]["deadline_projection"]["use_deadline_projection"] is True
+        assert first_row["llm_evidence"]["provider"] == "deterministic_projection"
+        assert second_row["llm_evidence"]["llm_call_skipped"] is True
+        assert second_row["llm_evidence"]["deadline_projection"]["projection_lock"] is True
+        first_blueprint = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(first_row["blueprint_id"])
+        assert isinstance(first_blueprint, dict)
+        assert any("meteor, wish, queue, priority" in item for item in first_blueprint["execution_checklist"])
+
     def test_director_handoff_guard_allows_ready_blueprint(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         result = _generate_domain_blueprint(
@@ -1756,6 +1853,62 @@ class TestMirrorHelpers:
 
 
 class TestQualityGateDeadlineHandling:
+    def test_chief_engineer_deadline_projection_not_used_without_factory_deadline(self) -> None:
+        decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
+            {},
+            requested_timeout_seconds=123,
+        )
+
+        assert decision["use_deadline_projection"] is False
+        assert decision["remaining_seconds"] is None
+        assert decision["llm_timeout_seconds"] == 123
+
+    def test_chief_engineer_deadline_projection_caps_llm_timeout_to_available_budget(self) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 150.0
+        decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "director_first_materialization_min_budget_seconds": 60,
+                "quality_gate_reserved_budget_seconds": 30,
+            },
+            requested_timeout_seconds=240,
+        )
+
+        assert decision["use_deadline_projection"] is False
+        assert decision["reserved_downstream_seconds"] == 95.0
+        assert 50 <= decision["llm_timeout_seconds"] <= 55
+
+    def test_chief_engineer_deadline_projection_skips_llm_when_downstream_budget_is_at_risk(self) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 120.0
+        decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "director_first_materialization_min_budget_seconds": 60,
+                "quality_gate_reserved_budget_seconds": 30,
+            },
+            requested_timeout_seconds=240,
+        )
+
+        assert decision["use_deadline_projection"] is True
+        assert decision["reason"] == "insufficient_factory_deadline_for_remaining_ce_tasks"
+        assert decision["llm_timeout_seconds"] == 0
+
+    def test_chief_engineer_deadline_projection_accounts_for_remaining_ce_fanout(self) -> None:
+        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 360.0
+        decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
+            {
+                "factory_run_deadline_epoch_seconds": deadline_epoch,
+                "director_first_materialization_min_budget_seconds": 150,
+                "quality_gate_reserved_budget_seconds": 120,
+            },
+            requested_timeout_seconds=240,
+            remaining_task_count=8,
+        )
+
+        assert decision["use_deadline_projection"] is True
+        assert decision["remaining_task_count"] == 8
+        assert 10 <= decision["available_for_this_task_seconds"] <= 11
+
     def test_director_dispatch_timeout_caps_to_factory_deadline(self) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 12.0
         timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(

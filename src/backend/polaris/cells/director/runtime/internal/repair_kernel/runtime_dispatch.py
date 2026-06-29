@@ -129,6 +129,7 @@ from .javascript_runtime import (
     plan_javascript_test_missing_target_repair,
     plan_node_test_script_contract_repair,
     plan_npm_script_contract_repair,
+    plan_typescript_local_js_import_repair,
     run_javascript_dom_global_runtime_guard_repair,
     run_javascript_esm_commonjs_entrypoint_repair,
     run_javascript_missing_export_repair,
@@ -136,6 +137,7 @@ from .javascript_runtime import (
     run_javascript_test_missing_target_repair,
     run_node_test_script_contract_repair,
     run_npm_script_contract_repair,
+    run_typescript_local_js_import_repair,
 )
 from .javascript_syntax import (
     JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL,
@@ -145,6 +147,7 @@ from .javascript_syntax import (
     JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL,
     NODE_TEST_SCRIPT_CONTRACT_SOURCE_TOOL,
     NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
+    TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL,
 )
 from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
 from .python_runtime import (
@@ -1072,6 +1075,21 @@ def _plan_node_test_script_contract(
     mode: str,
 ) -> RuntimeRepairPlanning:
     planning = plan_node_test_script_contract_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_javascript(planning)
+
+
+def _plan_typescript_local_js_import(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_typescript_local_js_import_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         advisor_notes=advisor_notes,
@@ -2150,6 +2168,31 @@ def _run_node_test_script_contract(
     mode: str,
 ) -> RuntimeRepairRun:
     run = run_node_test_script_contract_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_javascript(run)
+
+
+def _run_typescript_local_js_import(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    del deleter
+    run = run_typescript_local_js_import_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
@@ -4123,6 +4166,13 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="javascript.node_test_script_contract",
         planner=_plan_node_test_script_contract,
         runner=_run_node_test_script_contract,
+    ),
+    TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL,
+        language="javascript",
+        rule_id="typescript.local_js_import_extension",
+        planner=_plan_typescript_local_js_import,
+        runner=_run_typescript_local_js_import,
     ),
     JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL,

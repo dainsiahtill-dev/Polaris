@@ -24,6 +24,7 @@ from .javascript_syntax import (
     JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL,
     NODE_TEST_SCRIPT_CONTRACT_SOURCE_TOOL,
     NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
+    TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL,
     build_javascript_dom_global_runtime_guard_plan,
     build_javascript_esm_commonjs_entrypoint_plan,
     build_javascript_missing_export_plan,
@@ -31,6 +32,7 @@ from .javascript_syntax import (
     build_javascript_test_missing_target_plan,
     build_node_test_script_contract_plan,
     build_npm_script_contract_plan,
+    build_typescript_local_js_import_plan,
 )
 from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
 
@@ -96,6 +98,25 @@ def plan_node_test_script_contract_repair(
         advisor_notes=advisor_notes,
         mode=mode,
         builder=build_node_test_script_contract_plan,
+    )
+
+
+def plan_typescript_local_js_import_repair(
+    *,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> JavaScriptRepairPlanning:
+    """Plan TypeScript local .js import specifier repairs for ts-node/CommonJS runtime."""
+
+    return _plan_javascript_repair(
+        source_tool=TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        builder=build_typescript_local_js_import_plan,
     )
 
 
@@ -247,6 +268,34 @@ def run_node_test_script_contract_repair(
         planner=plan_node_test_script_contract_repair,
         not_planned_message="No matching Node test script contract repair plan.",
         composition_missing_message="Node test script contract repair composition was not produced.",
+    )
+
+
+def run_typescript_local_js_import_repair(
+    *,
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> JavaScriptRepairRun:
+    """Run TypeScript local .js import specifier repair through Plan->Compose->Policy->Execute."""
+
+    return _run_javascript_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        planner=plan_typescript_local_js_import_repair,
+        not_planned_message="No matching TypeScript local .js import repair plan.",
+        composition_missing_message="TypeScript local .js import repair composition was not produced.",
     )
 
 
@@ -520,6 +569,7 @@ __all__ = [
     "plan_javascript_test_missing_target_repair",
     "plan_node_test_script_contract_repair",
     "plan_npm_script_contract_repair",
+    "plan_typescript_local_js_import_repair",
     "run_javascript_dom_global_runtime_guard_repair",
     "run_javascript_esm_commonjs_entrypoint_repair",
     "run_javascript_missing_export_repair",
@@ -527,4 +577,5 @@ __all__ = [
     "run_javascript_test_missing_target_repair",
     "run_node_test_script_contract_repair",
     "run_npm_script_contract_repair",
+    "run_typescript_local_js_import_repair",
 ]

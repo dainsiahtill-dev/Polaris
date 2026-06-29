@@ -7849,6 +7849,24 @@ export function summary() {
             == "npm run test"
         )
 
+    def test_downstream_validation_hygiene_defers_npm_test_step_verify(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.contract_verify import (
+            resolve_contract_step_verify_command,
+        )
+
+        context = {
+            "acceptance": ["`npm test` passes the smoke suite"],
+            "language": "javascript",
+            "metadata": {
+                "validation_contract_hygiene": {
+                    "reason": "test_acceptance_deferred_to_downstream_validation_task",
+                    "downstream_validation_targets": ["tests/smoke.test.js"],
+                }
+            },
+        }
+
+        assert resolve_contract_step_verify_command(context) == ""
+
     def test_substantive_node_test_script_accepts_named_export_blocks(self, tmp_path: Any) -> None:
         script = tmp_path / "scripts" / "test.mjs"
         script.parent.mkdir(parents=True, exist_ok=True)

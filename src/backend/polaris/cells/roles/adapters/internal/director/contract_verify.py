@@ -47,7 +47,11 @@ def resolve_contract_step_verify_command(context: dict[str, Any] | None) -> str:
     records = list(_candidate_records(context))
     language = _infer_language(records)
     candidates = _dedupe_preserve_order(_iter_candidate_commands(records))
-    selected = _select_verify_candidate(candidates, language=language)
+    selected = _select_verify_candidate(
+        candidates,
+        language=language,
+        defer_validation=_records_defer_validation_to_downstream(records),
+    )
     if selected:
         return selected
     if language == "go" and _records_have_go_compile_signal(records):
@@ -140,7 +144,7 @@ def _safe_normalized_command(value: Any) -> str:
     return command
 
 
-def _select_verify_candidate(candidates: list[str], *, language: str) -> str:
+def _select_verify_candidate(candidates: list[str], *, language: str, defer_validation: bool = False) -> str:
     if not candidates:
         return ""
     if language == "go":
@@ -154,6 +158,8 @@ def _select_verify_candidate(candidates: list[str], *, language: str) -> str:
                 return command
         return ""
     if language in {"javascript", "typescript"}:
+        if defer_validation:
+            return ""
         for command in candidates:
             if _command_startswith(command, "npm test", "pnpm test", "yarn test", "npm run test", "pnpm run test"):
                 return command
@@ -218,6 +224,19 @@ def _records_have_go_compile_signal(records: list[Mapping[str, Any]]) -> bool:
             lowered = path.lower()
             if lowered == "go.mod" or lowered.endswith(".go"):
                 return True
+    return False
+
+
+def _records_defer_validation_to_downstream(records: Iterable[Mapping[str, Any]]) -> bool:
+    for record in records:
+        hygiene = _mapping_or_empty(record.get("validation_contract_hygiene"))
+        if not hygiene:
+            continue
+        reason = str(hygiene.get("reason") or "").strip()
+        if reason == "test_acceptance_deferred_to_downstream_validation_task":
+            return True
+        if _string_list(hygiene.get("downstream_validation_targets")):
+            return True
     return False
 
 

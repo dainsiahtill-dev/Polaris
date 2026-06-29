@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import shlex
 from collections.abc import Mapping, Sequence
@@ -18,6 +19,7 @@ JAVASCRIPT_DOM_GLOBAL_RUNTIME_SOURCE_TOOL = "deterministic_javascript_dom_global
 JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL = "deterministic_javascript_test_missing_target_repair"
 NODE_TEST_SCRIPT_CONTRACT_SOURCE_TOOL = "deterministic_node_test_script_contract_repair"
 NPM_SCRIPT_CONTRACT_SOURCE_TOOL = "deterministic_npm_script_contract_repair"
+TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL = "deterministic_typescript_local_js_import_repair"
 
 _MISSING_NPM_SCRIPT_ENTRYPOINT_RE = re.compile(
     r"npm package manifest script '([^']+)' references missing local entrypoint '([^']+)'",
@@ -30,6 +32,13 @@ _MISSING_NPM_SCRIPT_ENTRYPOINT_GATE_RE = re.compile(
 _NODE_CANNOT_FIND_MODULE_DIST_RE = re.compile(
     r"Cannot find module ['\"](?P<path>[^'\"]*/dist/[^'\"]+\.js)['\"]",
     re.IGNORECASE,
+)
+_LOCAL_JS_MODULE_NOT_FOUND_RE = re.compile(
+    r"Cannot find module ['\"](?P<specifier>\.{1,2}/[^'\"]+\.js)['\"]",
+    re.IGNORECASE,
+)
+_LOCAL_JS_IMPORT_SPECIFIER_RE = re.compile(
+    r"(?P<prefix>\b(?:from|import)\s*(?:\(\s*)?['\"])(?P<specifier>\.{1,2}/[^'\"]+\.js)(?P<suffix>['\"])",
 )
 _HTTP_SERVER_FIXED_PORT_RE = re.compile(
     r"(?P<flag>\s(?:-p|--port)\s+)(?P<port>\d{2,5})(?=$|\s)",
@@ -272,6 +281,71 @@ def build_node_test_script_contract_plan(
         metadata={
             "edit_strategy": "whole_file_test_contract_replacement",
             "legacy_transform_migrated": True,
+        },
+    )
+
+
+def build_typescript_local_js_import_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Repair local ``.js`` import specifiers that break ts-node/CommonJS source execution."""
+
+    normalized_base = _normalize_base_files(base_files)
+    matched_diagnostics = tuple(
+        diagnostic for diagnostic in diagnostics if _is_local_js_import_runtime_diagnostic(diagnostic)
+    )
+    if not matched_diagnostics or not _base_files_use_commonjs_ts_source_runtime(normalized_base):
+        return None
+
+    operations: list[RepairOperation] = []
+    matched_ids = [diagnostic.diagnostic_id for diagnostic in matched_diagnostics]
+    for path, text in sorted(normalized_base.items()):
+        if not path.endswith((".ts", ".tsx")) or path.endswith((".d.ts", ".d.tsx")):
+            continue
+        for match in _LOCAL_JS_IMPORT_SPECIFIER_RE.finditer(text):
+            specifier = match.group("specifier")
+            repaired_specifier = specifier[:-3]
+            if not _local_typescript_import_target_exists(
+                importer_path=path,
+                specifier_without_js=repaired_specifier,
+                base_files=normalized_base,
+            ):
+                continue
+            operations.append(
+                RepairOperation(
+                    kind="text_replace",
+                    path=path,
+                    span_start=match.start("specifier"),
+                    span_end=match.end("specifier"),
+                    expected=specifier,
+                    replacement=repaired_specifier,
+                    before_hash=sha256_text(text),
+                    metadata={
+                        "repair_kind": "typescript_local_js_import_extension",
+                        "diagnostic_ids": matched_ids,
+                        "import_specifier_before": specifier,
+                        "import_specifier_after": repaired_specifier,
+                        "edit_file_preferred": True,
+                    },
+                )
+            )
+
+    if not operations:
+        return None
+    return RepairPlan(
+        rule_id="typescript.local_js_import_extension",
+        source_tool=TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL,
+        operations=tuple(operations),
+        diagnostics=matched_diagnostics,
+        mode=mode,
+        risk_level="low",
+        priority=1,
+        metadata={
+            "edit_strategy": "span_import_specifier_rewrite",
+            "runtime_contract": "ts_node_commonjs_source_execution",
         },
     )
 
@@ -845,6 +919,60 @@ def _is_node_test_script_contract_diagnostic(diagnostic: RepairDiagnostic) -> bo
         or "missing validation contract" in raw
         or "over-strict generated node test contract" in raw
     )
+
+
+def _is_local_js_import_runtime_diagnostic(diagnostic: RepairDiagnostic) -> bool:
+    raw = f"{diagnostic.message}\n{diagnostic.raw}"
+    return diagnostic.code == "javascript_module_error" and _LOCAL_JS_MODULE_NOT_FOUND_RE.search(raw) is not None
+
+
+def _base_files_use_commonjs_ts_source_runtime(base_files: Mapping[str, str]) -> bool:
+    package_text = base_files.get("package.json", "")
+    tsconfig_text = base_files.get("tsconfig.json", "")
+    try:
+        package_payload = json.loads(package_text) if package_text else {}
+    except ValueError:
+        package_payload = {}
+    try:
+        tsconfig_payload = json.loads(tsconfig_text) if tsconfig_text else {}
+    except ValueError:
+        tsconfig_payload = {}
+
+    scripts = package_payload.get("scripts") if isinstance(package_payload, dict) else {}
+    script_text = " ".join(str(value or "") for value in scripts.values()) if isinstance(scripts, dict) else ""
+    if not re.search(r"\b(ts-node|tsx)\b", script_text):
+        return False
+
+    package_type = str(package_payload.get("type") or "").strip().lower() if isinstance(package_payload, dict) else ""
+    compiler_options = tsconfig_payload.get("compilerOptions") if isinstance(tsconfig_payload, dict) else {}
+    module = str(compiler_options.get("module") or "").strip().lower() if isinstance(compiler_options, dict) else ""
+    return package_type != "module" and module not in {
+        "nodenext",
+        "node16",
+        "node18",
+        "node20",
+        "esnext",
+        "es2020",
+        "es2022",
+    }
+
+
+def _local_typescript_import_target_exists(
+    *,
+    importer_path: str,
+    specifier_without_js: str,
+    base_files: Mapping[str, str],
+) -> bool:
+    importer_parent = PurePosixPath(importer_path).parent
+    candidate = (importer_parent / specifier_without_js).as_posix()
+    candidate = posixpath.normpath(str(PurePosixPath(candidate))).lstrip("./")
+    possible_paths = (
+        f"{candidate}.ts",
+        f"{candidate}.tsx",
+        f"{candidate}/index.ts",
+        f"{candidate}/index.tsx",
+    )
+    return any(path in base_files for path in possible_paths)
 
 
 def _has_typescript_context(base_files: Mapping[str, str], package_payload: Mapping[str, Any]) -> bool:
@@ -1685,6 +1813,7 @@ __all__ = [
     "JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL",
     "NODE_TEST_SCRIPT_CONTRACT_SOURCE_TOOL",
     "NPM_SCRIPT_CONTRACT_SOURCE_TOOL",
+    "TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL",
     "build_javascript_dom_global_runtime_guard_plan",
     "build_javascript_esm_commonjs_entrypoint_plan",
     "build_javascript_frontend_smoke_test_content",
@@ -1695,4 +1824,5 @@ __all__ = [
     "build_node_test_script_contract_plan",
     "build_npm_script_contract_plan",
     "build_substantive_node_test_script",
+    "build_typescript_local_js_import_plan",
 ]

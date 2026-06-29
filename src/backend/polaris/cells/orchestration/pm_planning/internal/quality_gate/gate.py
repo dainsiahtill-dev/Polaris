@@ -81,6 +81,47 @@ _PM_CONTRACT_PATH_FIELD_RE = re.compile(r"(?:scope_paths|target_files)", re.IGNO
 _PM_CONTRACT_JSON_OUTPUT_RE = re.compile(r"仅输出\s*JSON|JSON\s*对象", re.IGNORECASE)
 _PM_BACKTICK_PATH_RE = re.compile(r"`([^`]+)`")
 _PM_DOCUMENTATION_ONLY_SUFFIXES = (".md", ".markdown", ".mdx", ".txt")
+_MAX_DIRECTOR_TASK_FILE_TARGETS = 6
+_MAX_DIRECTOR_TASK_SOURCE_TARGETS = 4
+_MANIFEST_OR_CONFIG_FILENAMES = frozenset(
+    {
+        "package.json",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "tsconfig.json",
+        "vite.config.ts",
+        "vitest.config.ts",
+        "jest.config.js",
+        "pyproject.toml",
+        "requirements.txt",
+        "cargo.toml",
+        "cargo.lock",
+        "go.mod",
+        "go.sum",
+        "pom.xml",
+        "build.gradle",
+        "settings.gradle",
+        "makefile",
+        "dockerfile",
+    }
+)
+_SOURCE_ENTRYPOINT_FILENAMES = frozenset(
+    {
+        "app.js",
+        "app.ts",
+        "cli.js",
+        "cli.ts",
+        "index.js",
+        "index.ts",
+        "main.js",
+        "main.ts",
+        "server.js",
+        "server.ts",
+        "web.js",
+        "web.ts",
+    }
+)
 
 
 def _contains_pm_contract_governance_task(text: str) -> bool:
@@ -162,6 +203,228 @@ def _is_documentation_only_task_scope(task: dict[str, Any]) -> bool:
             continue
         return False
     return True
+
+
+def _is_director_task(task: dict[str, Any]) -> bool:
+    assigned_to = str(task.get("assigned_to") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return assigned_to in {"", "auto", "director"}
+
+
+def _task_file_targets(task: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    for key in ("target_files", "scope_paths"):
+        for path in _normalize_path_list(task.get(key) or []):
+            normalized = _normalize_path(path)
+            if normalized and _is_file_like_pm_scope_path(normalized) and normalized not in paths:
+                paths.append(normalized)
+    return paths
+
+
+def _is_test_path(path: str) -> bool:
+    normalized = _normalize_path(path)
+    basename = os.path.basename(normalized).lower()
+    return (
+        normalized.startswith(("test/", "tests/", "spec/", "specs/"))
+        or "/test/" in normalized
+        or "/tests/" in normalized
+        or basename.startswith("test_")
+        or basename.endswith(("_test.go", ".test.ts", ".test.tsx", ".test.js", ".test.jsx"))
+        or ".spec." in basename
+    )
+
+
+def _director_task_boundary_bucket(path: str) -> str:
+    normalized = _normalize_path(path)
+    basename = os.path.basename(normalized).lower()
+    if _is_test_path(normalized):
+        return "tests"
+    if basename in _MANIFEST_OR_CONFIG_FILENAMES or basename.endswith((".config.js", ".config.ts", ".config.mjs")):
+        return "foundation"
+    if basename in _SOURCE_ENTRYPOINT_FILENAMES:
+        return "entrypoints"
+    if normalized.startswith(("src/", "lib/", "app/", "cmd/", "pkg/", "internal/")):
+        return "source"
+    if basename.startswith("readme") or basename.endswith(_PM_DOCUMENTATION_ONLY_SUFFIXES):
+        return "docs"
+    return "source"
+
+
+def _is_domain_split_repair_task(task: dict[str, Any]) -> bool:
+    metadata = task.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    return str(metadata.get("autofix_reason") or "").strip() in {
+        "card3d_pm_domain_coverage",
+        "game_pm_domain_coverage",
+    }
+
+
+def _director_task_is_too_broad(task: dict[str, Any]) -> bool:
+    if not _is_director_task(task):
+        return False
+    if _is_documentation_only_task_scope(task):
+        return False
+    if _is_domain_split_repair_task(task):
+        return False
+    paths = _task_file_targets(task)
+    if len(paths) <= _MAX_DIRECTOR_TASK_FILE_TARGETS:
+        return False
+    source_like = [path for path in paths if _director_task_boundary_bucket(path) in {"source", "entrypoints"}]
+    has_foundation = any(_director_task_boundary_bucket(path) == "foundation" for path in paths)
+    has_tests = any(_director_task_boundary_bucket(path) == "tests" for path in paths)
+    return len(paths) > _MAX_DIRECTOR_TASK_FILE_TARGETS or (
+        len(source_like) > _MAX_DIRECTOR_TASK_SOURCE_TARGETS and (has_foundation or has_tests)
+    )
+
+
+def _director_task_split_groups(task: dict[str, Any]) -> list[tuple[str, list[str]]]:
+    grouped: dict[str, list[str]] = {"foundation": [], "source": [], "entrypoints": [], "tests": [], "docs": []}
+    for path in _task_file_targets(task):
+        bucket = _director_task_boundary_bucket(path)
+        grouped.setdefault(bucket, []).append(path)
+    ordered: list[tuple[str, list[str]]] = []
+    for bucket in ("foundation", "source", "entrypoints", "tests", "docs"):
+        files = grouped.get(bucket) or []
+        if files:
+            ordered.append((bucket, files))
+    return ordered
+
+
+def _task_dependency_values(task: dict[str, Any]) -> list[str]:
+    deps = task.get("depends_on")
+    if not isinstance(deps, list):
+        deps = task.get("dependencies")
+    return _normalize_dep_list(deps)
+
+
+def _set_task_dependencies(task: dict[str, Any], deps: list[str]) -> None:
+    if "depends_on" in task or "dependencies" not in task:
+        task["depends_on"] = deps
+    else:
+        task["dependencies"] = deps
+
+
+def _remap_dependency_refs(deps: list[str], replacement_by_task_id: dict[str, str]) -> list[str]:
+    remapped: list[str] = []
+    for dep in deps:
+        mapped = replacement_by_task_id.get(dep, dep)
+        if mapped and mapped not in remapped:
+            remapped.append(mapped)
+    return remapped
+
+
+def _unique_split_task_id(base_id: str, suffix: str, used_ids: set[str]) -> str:
+    base = f"{base_id}-{suffix}".replace("_", "-")
+    candidate = base
+    ordinal = 2
+    while candidate in used_ids:
+        candidate = f"{base}-{ordinal}"
+        ordinal += 1
+    used_ids.add(candidate)
+    return candidate
+
+
+def _split_director_task_boundary_contracts_in_place(
+    tasks: list[dict[str, Any]],
+    *,
+    verify_command: str,
+) -> tuple[int, int]:
+    used_ids = {str(task.get("id") or "").strip() for task in tasks if str(task.get("id") or "").strip()}
+    replacement_by_task_id: dict[str, str] = {}
+    split_task_count = 0
+    added_task_count = 0
+    rewritten: list[dict[str, Any]] = []
+
+    labels = {
+        "foundation": "project manifest and build contract",
+        "source": "domain/source modules",
+        "entrypoints": "runtime entrypoints and exports",
+        "tests": "behavior tests and verifier contract",
+        "docs": "documentation and handoff assets",
+    }
+    phases = {
+        "foundation": "requirements",
+        "source": "implementation",
+        "entrypoints": "implementation",
+        "tests": "verification",
+        "docs": "verification",
+    }
+
+    for index, task in enumerate(tasks, start=1):
+        task_id = str(task.get("id") or f"TASK-{index}").strip() or f"TASK-{index}"
+        deps = _remap_dependency_refs(_task_dependency_values(task), replacement_by_task_id)
+        if not _director_task_is_too_broad(task):
+            task_copy = dict(task)
+            _set_task_dependencies(task_copy, deps)
+            rewritten.append(task_copy)
+            continue
+
+        groups = _director_task_split_groups(task)
+        if len(groups) <= 1:
+            task_copy = dict(task)
+            _set_task_dependencies(task_copy, deps)
+            rewritten.append(task_copy)
+            continue
+
+        split_task_count += 1
+        prev_id = ""
+        title = str(task.get("title") or task_id).strip()
+        goal = str(task.get("goal") or task.get("description") or title).strip()
+        original_acceptance = [str(item) for item in task.get("acceptance_criteria") or task.get("acceptance") or []]
+        for bucket, files in groups:
+            split_id = _unique_split_task_id(task_id, bucket, used_ids)
+            split_task = dict(task)
+            split_task["id"] = split_id
+            split_task["title"] = f"{title} - {labels.get(bucket, bucket)}"
+            split_task["goal"] = f"{goal} Scope this task to {labels.get(bucket, bucket)} only."
+            split_task["description"] = (
+                f"Task-boundary split from {task_id}: implement only {', '.join(files[:6])} "
+                "so verification can converge before dependent files proceed."
+            )
+            split_task["phase"] = phases.get(bucket, str(task.get("phase") or "implementation"))
+            split_task["target_files"] = list(files)
+            split_task["scope_paths"] = list(files)
+            split_task["execution_checklist"] = [
+                "Materialize only the listed target files.",
+                "Keep imports/exports consistent with prior task-boundary receipts.",
+                "Leave file evidence for this boundary before downstream tasks run.",
+            ]
+            acceptance = [f"verify {path} exists" for path in files[:6]]
+            if bucket in {"entrypoints", "tests"}:
+                acceptance.append(f"Run `{verify_command}` passes for this task boundary when available.")
+            elif bucket == "foundation":
+                acceptance.append("package/test/build scripts and module settings are internally consistent.")
+            if bucket == "tests" and original_acceptance:
+                acceptance.extend(original_acceptance[:4])
+            split_task["acceptance_criteria"] = _dedupe_text_items(acceptance)
+            metadata = dict(split_task.get("metadata") or {})
+            metadata.update(
+                {
+                    "task_boundary_split": True,
+                    "task_boundary_split_version": "pm_task_boundary.v1",
+                    "original_task_id": task_id,
+                    "boundary_kind": bucket,
+                }
+            )
+            split_task["metadata"] = metadata
+            split_deps = list(deps)
+            if prev_id and prev_id not in split_deps:
+                split_deps.append(prev_id)
+            _set_task_dependencies(split_task, split_deps)
+            rewritten.append(split_task)
+            prev_id = split_id
+
+        replacement_by_task_id[task_id] = prev_id
+        added_task_count += len(groups) - 1
+
+    for task in rewritten:
+        deps = _task_dependency_values(task)
+        remapped = _remap_dependency_refs(deps, replacement_by_task_id)
+        if remapped != deps:
+            _set_task_dependencies(task, remapped)
+
+    tasks[:] = rewritten
+    return split_task_count, added_task_count
 
 
 def evaluate_pm_task_quality(
@@ -360,6 +623,11 @@ def evaluate_pm_task_quality(
                         f"{task_id}: file-level scope_paths missing from target_files "
                         f"({', '.join(missing_file_scope_targets[:3])})"
                     )
+                if _director_task_is_too_broad(task):
+                    critical_issues.append(
+                        f"{task_id}: Director task boundary is too broad; split manifest/config, source, "
+                        "entrypoint, and test targets into dependent tasks"
+                    )
 
         if docs_enabled:
             metadata_raw = task.get("metadata")
@@ -490,6 +758,8 @@ def autofix_pm_contract_for_quality(
         "seed_residue_cleanup_tasks_added": 0,
         "vendored_targets_stripped": 0,
         "single_file_ui_tasks_steered": 0,
+        "oversized_director_tasks_split": 0,
+        "task_boundary_tasks_added": 0,
     }
     if not tasks:
         return stats
@@ -513,6 +783,7 @@ def autofix_pm_contract_for_quality(
     if _attach_workspace_game_context_if_needed(normalized, normalized_tasks, workspace_full):
         stats["game_context_attached"] += 1
     is_card3d_contract = _is_card3d_pm_contract(normalized, normalized_tasks)
+    is_game_contract = _is_game_pm_contract(normalized, normalized_tasks)
     if is_card3d_contract:
         normalized.setdefault("_quality_gate_card3d_context", "card3d task_or_workspace_hints")
         stats["game_policy_tasks_removed"] += _remove_card3d_policy_incompatible_tasks_in_place(
@@ -523,7 +794,7 @@ def autofix_pm_contract_for_quality(
             stats["deps_normalized"] += _drop_unknown_dependency_refs_in_place(normalized_tasks)
         for task in normalized_tasks:
             stats["game_dependency_policy_sanitized"] += _sanitize_game_dependency_policy_in_place(task, verify_command)
-    elif _is_game_pm_contract(normalized, normalized_tasks):
+    elif is_game_contract:
         stats["game_policy_tasks_removed"] += _remove_game_policy_incompatible_tasks_in_place(
             normalized_tasks,
             workspace_full,
@@ -547,7 +818,14 @@ def autofix_pm_contract_for_quality(
         workspace_full=workspace_full,
         verify_command=verify_command,
     )
-    stats["task_count"] = len(normalized_tasks)
+    if not (is_card3d_contract or is_game_contract):
+        split_task_count, added_task_count = _split_director_task_boundary_contracts_in_place(
+            normalized_tasks,
+            verify_command=verify_command,
+        )
+        stats["oversized_director_tasks_split"] += split_task_count
+        stats["task_boundary_tasks_added"] += added_task_count
+        stats["task_count"] = len(normalized_tasks)
     has_dependency = False
 
     for index, task in enumerate(normalized_tasks, start=1):

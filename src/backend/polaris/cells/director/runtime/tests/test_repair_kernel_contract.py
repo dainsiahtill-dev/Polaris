@@ -413,10 +413,12 @@ def test_repair_rule_registry_matches_existing_multilanguage_legacy_strategy_met
     assert matched_source_tools[3] == [
         "deterministic_node_test_script_contract_repair",
         "deterministic_npm_script_contract_repair",
+        "deterministic_typescript_local_js_import_repair",
     ]
     assert payload["items"][3]["runtime_plan_rule_ids"] == [
         "javascript.cannot_find_module",
         "javascript.npm_script_typescript_source_require_contract",
+        "typescript.local_js_import_extension",
     ]
     assert payload["items"][3]["diagnostic_language"] == "javascript"
     assert matched_source_tools[4] == ["deterministic_javascript_missing_export_repair"]
@@ -3049,7 +3051,7 @@ def test_runtime_dispatcher_exposes_executable_source_tool_bindings() -> None:
     assert "deterministic_rust_post_repair" not in runtime_repair_source_tools()
     assert "deterministic_rust_derive_repair" in runtime_repair_source_tools()
     assert len(runtime_repair_source_tools()) == len(bindings)
-    assert len(runtime_repair_source_tools()) == 106
+    assert len(runtime_repair_source_tools()) == 107
     assert sum(1 for binding in bindings if binding["language"] == "rust") == 20
     assert runtime_repair_source_tools() == tuple(binding["source_tool"] for binding in bindings)
     assert all(set(binding) == {"source_tool", "language", "rule_id"} for binding in bindings)
@@ -3534,6 +3536,72 @@ def test_public_npm_script_contract_uses_tsconfig_rootdir_for_compiled_entrypoin
     content_after = planning["composition_summary"]["patches"][0]["content_after"]
     assert '"test": "npm run build && node dist/src/verify.js"' in content_after
     assert '"start": "npm run build && node dist/src/verify.js"' in content_after
+
+
+def test_public_typescript_local_js_import_repair_plans_ts_node_commonjs_runtime_miss() -> None:
+    diagnostic = (
+        "Runtime entrypoint failed:\n"
+        "Error: Cannot find module './models/Fairy.js'\n"
+        "Require stack:\n"
+        "- /workspace/src/main.ts"
+    )
+
+    base_files = {
+        "package.json": (
+            '{"scripts":{"start":"ts-node --transpile-only src/main.ts",'
+            '"test":"ts-node --transpile-only tests/behavior.test.ts"}}\n'
+        ),
+        "tsconfig.json": '{"compilerOptions":{"module":"CommonJS","moduleResolution":"Node"}}\n',
+        "src/main.ts": (
+            'import { Fairy } from "./models/Fairy.js";\n'
+            'import { Market } from "./models/Market.js";\n'
+            "console.log(Fairy, Market);\n"
+        ),
+        "src/models/Fairy.ts": "export class Fairy {}\n",
+        "src/models/Market.ts": "export class Market {}\n",
+    }
+
+    coverage = query_director_repair_coverage(QueryDirectorRepairCoverageV1(artifact_quality_errors=(diagnostic,)))
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=js_syntax.TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    coverage_payload = coverage.to_dict()
+    assert js_syntax.TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL in coverage_payload["items"][0]["matched_source_tools"]
+    assert planning["ok"] is True
+    assert planning["planned"] is True
+    assert planning["plan_summary"]["rule_id"] == "typescript.local_js_import_extension"
+    assert planning["composition_summary"]["patch_count"] == 1
+    patched_main = planning["composition_summary"]["patches"][0]["content_after"]
+    assert 'from "./models/Fairy"' in patched_main
+    assert 'from "./models/Market"' in patched_main
+    assert ".js" not in patched_main
+
+
+def test_public_typescript_local_js_import_repair_fails_closed_for_node_next_module() -> None:
+    diagnostic = "Error: Cannot find module './models/Fairy.js'\nRequire stack:\n- /workspace/src/main.ts"
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=js_syntax.TYPESCRIPT_LOCAL_JS_IMPORT_SOURCE_TOOL,
+            base_files={
+                "package.json": '{"type":"module","scripts":{"start":"tsx src/main.ts"}}\n',
+                "tsconfig.json": '{"compilerOptions":{"module":"NodeNext","moduleResolution":"NodeNext"}}\n',
+                "src/main.ts": 'import { Fairy } from "./models/Fairy.js";\n',
+                "src/models/Fairy.ts": "export class Fairy {}\n",
+            },
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    ).to_dict()
+
+    assert planning["ok"] is False
+    assert planning["planned"] is False
 
 
 def test_public_npm_script_contract_covers_bench_missing_local_entrypoint_shape() -> None:
@@ -10692,7 +10760,7 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         or source_tool == "deterministic_javascript_typescript_annotation_repair"
     ]
     catalog_failure_message = (
-        "expected public strategy catalog ledger total=107 executable_runtime=106 "
+        "expected public strategy catalog ledger total=108 executable_runtime=107 "
         "metadata_rule_registered=1 legacy_strategy_host=0; "
         f"observed implementation_status_counts={catalog_summary['implementation_status_counts']}; "
         "legacy_strategy_host_source_tools:\n- " + "\n- ".join(legacy_source_tools)
@@ -10702,17 +10770,17 @@ def test_public_strategy_catalog_and_language_slots_keep_status_ledger_counts_ex
         + "\n- ".join(legacy_typescript_source_tools)
     )
 
-    assert catalog_summary["total"] == 107
+    assert catalog_summary["total"] == 108
     assert legacy_typescript_source_tools == [], legacy_typescript_failure_message
     assert legacy_source_tools == [], catalog_failure_message
-    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 106, catalog_failure_message
+    assert catalog_summary["implementation_status_counts"].get("executable_runtime", 0) == 107, catalog_failure_message
     assert catalog_summary["implementation_status_counts"].get("metadata_rule_registered", 0) == 1, (
         catalog_failure_message
     )
     assert catalog_summary["implementation_status_counts"].get("legacy_strategy_host", 0) == 0, catalog_failure_message
-    assert catalog_summary["executable_runtime_binding_count"] == 106, catalog_failure_message
+    assert catalog_summary["executable_runtime_binding_count"] == 107, catalog_failure_message
     assert catalog_summary["legacy_strategy_host_count"] == 0, catalog_failure_message
-    assert len(catalog_summary["executable_runtime_source_tools"]) == 106, catalog_failure_message
+    assert len(catalog_summary["executable_runtime_source_tools"]) == 107, catalog_failure_message
     assert set(catalog_summary["implementation_status_counts"]).issubset(
         {"executable_runtime", "metadata_rule_registered", "legacy_strategy_host"}
     )
