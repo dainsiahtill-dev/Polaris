@@ -994,24 +994,38 @@ class CEConsumer:
                 timeout_seconds=300,
             )
             runtime = RoleRuntimeService()
-            coro = runtime.execute_role_session(command)
             if not has_loop:
-                result = asyncio.run(coro)
-                output = str(getattr(result, "output", "") or "")
-                return {
-                    "success": bool(getattr(result, "ok", False)),
-                    "response": output,
-                    "content": output,
-                    "thinking": getattr(result, "thinking", None),
-                    "role": str(getattr(result, "role", "chief_engineer") or "chief_engineer"),
-                    "metadata": dict(getattr(result, "metadata", {}) or {}),
-                    "execution_stats": dict(getattr(result, "usage", {}) or {}),
-                    "tool_calls": list(getattr(result, "tool_calls", ()) or ()),
-                    "artifacts": list(getattr(result, "artifacts", ()) or ()),
-                    "error": str(getattr(result, "error_message", "") or getattr(result, "error_code", "") or ""),
-                    "raw_response": result,
-                }
-            raise RuntimeError("ce_step_fission_inside_event_loop_unsupported")
+                result = asyncio.run(runtime.execute_role_session(command))
+            else:
+                # Running inside an existing event loop (the factory_bench chain
+                # drives the CE consumer from an async context, so asyncio.run would
+                # raise "cannot be called from a running event loop"). Run the
+                # fission session on a dedicated thread with its own loop instead of
+                # raising: previously this left factory_bench with NO blueprint and
+                # the cross-file / test-impl symbol-contract mechanism
+                # (public_symbols / consumes_symbols / signatures + skeleton fission)
+                # completely inert, so impl and tests inferred symbol names
+                # independently and diverged (root#4 / test-impl signature mismatch).
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _fission_pool:
+                    result = _fission_pool.submit(
+                        lambda: asyncio.run(runtime.execute_role_session(command))
+                    ).result()
+            output = str(getattr(result, "output", "") or "")
+            return {
+                "success": bool(getattr(result, "ok", False)),
+                "response": output,
+                "content": output,
+                "thinking": getattr(result, "thinking", None),
+                "role": str(getattr(result, "role", "chief_engineer") or "chief_engineer"),
+                "metadata": dict(getattr(result, "metadata", {}) or {}),
+                "execution_stats": dict(getattr(result, "usage", {}) or {}),
+                "tool_calls": list(getattr(result, "tool_calls", ()) or ()),
+                "artifacts": list(getattr(result, "artifacts", ()) or ()),
+                "error": str(getattr(result, "error_message", "") or getattr(result, "error_code", "") or ""),
+                "raw_response": result,
+            }
 
         last_raw_head = {"text": ""}
 
