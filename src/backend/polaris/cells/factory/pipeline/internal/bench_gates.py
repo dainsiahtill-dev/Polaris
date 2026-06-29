@@ -1973,6 +1973,7 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
         final_request_evidence = _as_dict(data.get("final_request_evidence"))
     if not final_request_evidence:
         final_request_evidence = _as_dict(data_metadata.get("final_request_evidence"))
+    final_request_evidence_authority = _as_dict(final_request_evidence.get("final_request_evidence_authority"))
     final_request_context_audit = _as_dict(raw.get("final_request_context_audit"))
     if not final_request_context_audit:
         final_request_context_audit = _as_dict(data.get("final_request_context_audit"))
@@ -2113,13 +2114,62 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
             audit_refs.get("final_request_evidence_hash"),
             final_request_evidence.get("final_request_evidence_hash"),
         ),
+        "final_request_evidence_authority_hash": _first_string(
+            raw.get("final_request_evidence_authority_hash"),
+            data.get("final_request_evidence_authority_hash"),
+            audit_refs.get("final_request_evidence_authority_hash"),
+            final_request_evidence.get("final_request_evidence_authority_hash"),
+            final_request_evidence_authority.get("final_request_evidence_authority_hash"),
+        ),
         "final_request_evidence_coverage_pass": final_request_evidence.get("final_request_evidence_coverage_pass"),
+        "role_id": _first_string(
+            final_request_evidence.get("role_id"), final_request_evidence_authority.get("role_id")
+        ),
+        "expected_role_id": _first_string(
+            final_request_evidence.get("expected_role_id"),
+            final_request_evidence_authority.get("expected_role_id"),
+        ),
+        "role_identity_ok": final_request_evidence.get(
+            "role_identity_ok", final_request_evidence_authority.get("role_identity_ok")
+        ),
+        "required_refs": final_request_evidence.get("required_refs")
+        if isinstance(final_request_evidence.get("required_refs"), list)
+        else final_request_evidence_authority.get("required_refs")
+        if isinstance(final_request_evidence_authority.get("required_refs"), list)
+        else [],
+        "included_refs": final_request_evidence.get("included_refs")
+        if isinstance(final_request_evidence.get("included_refs"), list)
+        else final_request_evidence_authority.get("included_refs")
+        if isinstance(final_request_evidence_authority.get("included_refs"), list)
+        else [],
         "missing_required_refs": final_request_evidence.get("missing_required_refs")
         if isinstance(final_request_evidence.get("missing_required_refs"), list)
+        else [],
+        "required_tools": final_request_evidence.get("required_tools")
+        if isinstance(final_request_evidence.get("required_tools"), list)
+        else final_request_evidence_authority.get("required_tools")
+        if isinstance(final_request_evidence_authority.get("required_tools"), list)
+        else [],
+        "available_tools": final_request_evidence.get("available_tools")
+        if isinstance(final_request_evidence.get("available_tools"), list)
+        else final_request_evidence_authority.get("available_tools")
+        if isinstance(final_request_evidence_authority.get("available_tools"), list)
         else [],
         "missing_required_tools": final_request_evidence.get("missing_required_tools")
         if isinstance(final_request_evidence.get("missing_required_tools"), list)
         else [],
+        "unexpected_tool_pruning": final_request_evidence.get("unexpected_tool_pruning")
+        if isinstance(final_request_evidence.get("unexpected_tool_pruning"), list)
+        else final_request_evidence_authority.get("unexpected_tool_pruning")
+        if isinstance(final_request_evidence_authority.get("unexpected_tool_pruning"), list)
+        else [],
+        "tool_schema_registry_coverage": _as_dict(
+            final_request_evidence.get("tool_schema_registry_coverage")
+            or final_request_evidence_authority.get("tool_schema_registry_coverage")
+        ),
+        "workflow_chain": _as_dict(
+            final_request_evidence.get("workflow_chain") or final_request_evidence_authority.get("workflow_chain")
+        ),
         "source_path": source_path,
         "raw": raw,
     }

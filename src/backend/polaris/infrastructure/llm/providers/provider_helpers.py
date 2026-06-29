@@ -870,7 +870,15 @@ def invoke_with_retry(
                     # and every CE / Director LLM call failed on the first 429,
                     # materializing 0 source files (prod=0) — a provider-resilience
                     # gap, not a generation-quality gap.
-                    breaker.on_failure()
+                    #
+                    # Critically, a 429 must NOT trip the circuit breaker: rate
+                    # limiting is upstream back-pressure, not a service outage.
+                    # Counting each retry as a breaker failure opened the SHARED
+                    # circuit after a handful of 429s, after which every subsequent
+                    # call (CE + Director) fast-failed with ``circuit_open`` for the
+                    # whole recovery window — turning transient saturation into a
+                    # total outage (prod=0). Retry/backoff is the correct response
+                    # to 429, so we deliberately do not call breaker.on_failure().
                     rate_limit_attempt += 1
                     if rate_limit_attempt > max(retries, _rate_limit_min_retries()):
                         latency_ms = int((_clock.time() - start) * 1000)

@@ -1989,6 +1989,16 @@ class TestArtifactStore:
             "context_snapshot_ref",
         ]
 
+    def test_chief_engineer_circuit_open_allows_blueprint_projection(self) -> None:
+        ce_result = SimpleNamespace(
+            error_category="provider_backend_failure",
+            error_code="circuit_open",
+            error_message="CircuitOpenError: circuit breaker is open",
+            status="failed",
+        )
+
+        assert OrchestrationStageExecutor._ce_llm_failure_allows_blueprint_projection(ce_result) is True
+
     def test_emit_audit_event_appends(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         executor._emit_audit_event("ce.call", task_id="t1")

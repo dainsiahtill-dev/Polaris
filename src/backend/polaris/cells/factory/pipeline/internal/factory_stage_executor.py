@@ -3405,6 +3405,13 @@ class OrchestrationStageExecutor:
                 "rate_limit",
                 "rate-limited",
                 "too many requests",
+                # A transiently-open circuit breaker (opened by upstream rate
+                # limiting / jitter) is also infrastructure back-pressure, not a CE
+                # design failure — degrade to the deterministic blueprint instead of
+                # aborting while the breaker recovers.
+                "circuit_open",
+                "circuit breaker is open",
+                "circuitopenerror",
             )
         )
 

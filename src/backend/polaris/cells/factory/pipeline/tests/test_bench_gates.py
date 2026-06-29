@@ -1955,9 +1955,25 @@ def test_collect_llm_events_projects_final_request_evidence(tmp_path: Path) -> N
                     "final_request_evidence": {
                         "context_snapshot_ref": f"runtime/contexts/{role}/snapshot.json",
                         "final_request_context_audit_present": True,
+                        "final_request_evidence_authority_hash": f"authority-hash-{role}",
                         "final_request_evidence_coverage_pass": False,
+                        "role_id": role,
+                        "expected_role_id": role,
+                        "role_identity_ok": True,
+                        "required_refs": ["pm_contract", "ce_blueprint"],
+                        "included_refs": ["pm_contract"],
                         "missing_required_refs": ["execution_envelope"],
+                        "required_tools": ["read_file", "write_file"],
+                        "available_tools": ["read_file"],
                         "missing_required_tools": ["write_file"],
+                        "unexpected_tool_pruning": [
+                            {
+                                "tool": "write_file",
+                                "reason": "required_tool_missing_from_final_provider_request",
+                            }
+                        ],
+                        "tool_schema_registry_coverage": {"missing_schema_tools": ["write_file"]},
+                        "workflow_chain": {"pm_contract_hash": f"pm-hash-{role}"},
                     },
                     "data": {"provider": "qwen-local", "model": "qwen3"},
                 },
@@ -1977,9 +1993,20 @@ def test_collect_llm_events_projects_final_request_evidence(tmp_path: Path) -> N
         assert event["final_request_context_audit_present"] is True
         assert event["final_request_context_audit_hash"] == f"audit-hash-{role}"
         assert event["final_request_evidence_hash"] == f"evidence-hash-{role}"
+        assert event["final_request_evidence_authority_hash"] == f"authority-hash-{role}"
         assert event["final_request_evidence_coverage_pass"] is False
+        assert event["role_id"] == role
+        assert event["expected_role_id"] == role
+        assert event["role_identity_ok"] is True
+        assert event["required_refs"] == ["pm_contract", "ce_blueprint"]
+        assert event["included_refs"] == ["pm_contract"]
         assert event["missing_required_refs"] == ["execution_envelope"]
+        assert event["required_tools"] == ["read_file", "write_file"]
+        assert event["available_tools"] == ["read_file"]
         assert event["missing_required_tools"] == ["write_file"]
+        assert event["unexpected_tool_pruning"][0]["tool"] == "write_file"
+        assert event["tool_schema_registry_coverage"] == {"missing_schema_tools": ["write_file"]}
+        assert event["workflow_chain"] == {"pm_contract_hash": f"pm-hash-{role}"}
 
 
 def test_collect_llm_events_reads_multiple_runtime_candidates(tmp_path: Path) -> None:

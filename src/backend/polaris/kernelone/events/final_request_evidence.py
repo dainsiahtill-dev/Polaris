@@ -8,6 +8,7 @@ from collections.abc import Mapping, MutableMapping
 from typing import Any
 
 FINAL_REQUEST_EVIDENCE_SCHEMA = "llm.final_request_evidence.v1"
+FINAL_REQUEST_EVIDENCE_AUTHORITY_SCHEMA = "polaris.final_request_evidence_authority.v1"
 AUDIT_REFS_SCHEMA = "llm.final_request_audit_refs.v1"
 
 
@@ -41,12 +42,83 @@ def _string_list(value: Any) -> list[str]:
     return [token for item in value if (token := _text(item))]
 
 
+def _list_value(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
 def _stable_hash(value: Any) -> str:
     try:
         payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     except (TypeError, ValueError):
         payload = str(value)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _build_final_request_evidence_authority(
+    *,
+    evidence_coverage: Mapping[str, Any],
+    existing_evidence: Mapping[str, Any],
+) -> dict[str, Any]:
+    existing_authority = _as_mapping(existing_evidence.get("final_request_evidence_authority"))
+    if not evidence_coverage and not existing_authority:
+        return {}
+
+    role_identity_ok_source = (
+        existing_authority.get("role_identity_ok")
+        if "role_identity_ok" in existing_authority
+        else evidence_coverage.get("role_identity_ok")
+    )
+    pass_source = existing_authority.get("pass") if "pass" in existing_authority else evidence_coverage.get("pass")
+    authority: dict[str, Any] = {
+        "schema_version": FINAL_REQUEST_EVIDENCE_AUTHORITY_SCHEMA,
+        "request_hash": _first_text(existing_authority.get("request_hash"), evidence_coverage.get("request_hash")),
+        "role_id": _first_text(existing_authority.get("role_id"), evidence_coverage.get("role_id")),
+        "expected_role_id": _first_text(
+            existing_authority.get("expected_role_id"),
+            evidence_coverage.get("expected_role_id"),
+        ),
+        "role_identity_ok": _bool_or_none(role_identity_ok_source),
+        "required_refs": _string_list(
+            existing_authority.get("required_refs") or evidence_coverage.get("required_refs")
+        ),
+        "included_refs": _string_list(
+            existing_authority.get("included_refs") or evidence_coverage.get("included_refs")
+        ),
+        "missing_required_refs": _string_list(
+            existing_authority.get("missing_required_refs") or evidence_coverage.get("missing_required_refs")
+        ),
+        "required_tools": _string_list(
+            existing_authority.get("required_tools") or evidence_coverage.get("required_tools")
+        ),
+        "available_tools": _string_list(
+            existing_authority.get("available_tools") or evidence_coverage.get("available_tools")
+        ),
+        "missing_required_tools": _string_list(
+            existing_authority.get("missing_required_tools") or evidence_coverage.get("missing_required_tools")
+        ),
+        "unexpected_tool_pruning": _list_value(
+            existing_authority.get("unexpected_tool_pruning") or evidence_coverage.get("unexpected_tool_pruning")
+        ),
+        "tool_schema_registry_coverage": dict(
+            _as_mapping(
+                existing_authority.get("tool_schema_registry_coverage")
+                or evidence_coverage.get("tool_schema_registry_coverage")
+            )
+        ),
+        "workflow_chain": dict(
+            _as_mapping(existing_authority.get("workflow_chain") or evidence_coverage.get("workflow_chain"))
+        ),
+        "coverage_ratio": existing_authority.get("coverage_ratio", evidence_coverage.get("coverage_ratio")),
+        "pass": _bool_or_none(pass_source),
+    }
+    authority["final_request_evidence_authority_hash"] = _stable_hash(
+        {key: value for key, value in authority.items() if key != "final_request_evidence_authority_hash"}
+    )
+    return authority
 
 
 def build_final_request_evidence(data: Mapping[str, Any]) -> dict[str, Any]:
@@ -112,6 +184,10 @@ def build_final_request_evidence(data: Mapping[str, Any]) -> dict[str, Any]:
         if evidence_coverage
         else existing_evidence.get("final_request_evidence_coverage_pass")
     )
+    evidence_authority = _build_final_request_evidence_authority(
+        evidence_coverage=evidence_coverage,
+        existing_evidence=existing_evidence,
+    )
 
     payload: dict[str, Any] = {
         "schema_version": FINAL_REQUEST_EVIDENCE_SCHEMA,
@@ -124,6 +200,18 @@ def build_final_request_evidence(data: Mapping[str, Any]) -> dict[str, Any]:
         "final_request_evidence_coverage_pass": coverage_pass,
         "missing_required_refs": missing_required_refs,
         "missing_required_tools": missing_required_tools,
+        "role_id": evidence_authority.get("role_id", ""),
+        "expected_role_id": evidence_authority.get("expected_role_id", ""),
+        "role_identity_ok": evidence_authority.get("role_identity_ok"),
+        "required_refs": evidence_authority.get("required_refs", []),
+        "included_refs": evidence_authority.get("included_refs", []),
+        "required_tools": evidence_authority.get("required_tools", []),
+        "available_tools": evidence_authority.get("available_tools", []),
+        "unexpected_tool_pruning": evidence_authority.get("unexpected_tool_pruning", []),
+        "tool_schema_registry_coverage": evidence_authority.get("tool_schema_registry_coverage", {}),
+        "workflow_chain": evidence_authority.get("workflow_chain", {}),
+        "coverage_ratio": evidence_authority.get("coverage_ratio"),
+        "final_request_evidence_authority_hash": evidence_authority.get("final_request_evidence_authority_hash", ""),
         "coverage": coverage_flags,
         "context_underutilized": final_request_context_audit.get("context_underutilized")
         if final_request_context_audit
@@ -142,6 +230,8 @@ def build_final_request_evidence(data: Mapping[str, Any]) -> dict[str, Any]:
             "missing_required_refs": _string_list(context_quality.get("missing_required_refs")),
             "missing_required_tools": _string_list(context_quality.get("missing_required_tools")),
         }
+    if evidence_authority:
+        payload["final_request_evidence_authority"] = evidence_authority
 
     payload["final_request_evidence_hash"] = _stable_hash(
         {key: value for key, value in payload.items() if key != "final_request_evidence_hash"}
@@ -159,6 +249,7 @@ def attach_final_request_evidence(payload: MutableMapping[str, Any], data: Mappi
     context_snapshot_ref = _text(evidence.get("context_snapshot_ref"))
     audit_hash = _text(evidence.get("final_request_context_audit_hash"))
     evidence_hash = _text(evidence.get("final_request_evidence_hash"))
+    authority_hash = _text(evidence.get("final_request_evidence_authority_hash"))
     if context_snapshot_ref:
         payload["context_snapshot_ref"] = context_snapshot_ref
     if audit_hash:
@@ -184,6 +275,7 @@ def attach_final_request_evidence(payload: MutableMapping[str, Any], data: Mappi
             "context_snapshot_ref": context_snapshot_ref,
             "final_request_context_audit_hash": audit_hash,
             "final_request_evidence_hash": evidence_hash,
+            "final_request_evidence_authority_hash": authority_hash,
             "request_hash": _text(evidence.get("request_hash")),
         }
     )
