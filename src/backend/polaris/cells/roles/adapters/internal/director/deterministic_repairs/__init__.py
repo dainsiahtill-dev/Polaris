@@ -1,21 +1,20 @@
-"""Director deterministic code-repair generators.
+"""Director deterministic repair helper facade.
 
-All ``_apply_deterministic_*`` code-repair generators plus their content
-builders and error-path parse helpers, extracted verbatim from
-``execute_method.py`` during the lossless decomposition of that god-module.
+This package keeps shared constants, content builders, and error-path parse
+helpers extracted from ``execute_method.py`` during the lossless decomposition
+of that god-module.
 
 Cross-module calls that must honor a test ``monkeypatch`` on the
 ``execute_method`` module namespace (``scan_workspace_artifact_quality``) and
 the ``deterministic_repairs`` <-> ``quality_gate`` reference cycle are resolved
 through ``execute_method`` (aliased ``_em``) at call time. The canonical import
-path remains ``execute_method`` (which re-exports every symbol here).
+path remains ``execute_method`` for those helper surfaces.
 
-This module is the package facade for a migration-time legacy host. Concrete
-repair functions remain importable for bridge/test compatibility, but
-production callers should reach deterministic repairs through
-``polaris.cells.director.runtime.public`` or the Director adapter bridge
-modules. ``__all__`` intentionally omits concrete repair helpers so star
-imports do not grow the legacy public surface.
+Concrete file-mutating repair functions intentionally are not imported into
+this package facade. Production callers must reach deterministic repairs
+through ``polaris.cells.director.runtime.public`` or the Director adapter bridge
+modules. Tests that characterize a specific rule should import the explicit
+language submodule instead of the package root.
 """
 
 from __future__ import annotations
@@ -75,10 +74,6 @@ from ._common import (
     _relative_import_suffix_order as _relative_import_suffix_order,
 )
 from .generic_repairs import (
-    _apply_deterministic_declared_target_contract_repairs as _apply_deterministic_declared_target_contract_repairs,
-    _apply_deterministic_missing_declared_target_repair as _apply_deterministic_missing_declared_target_repair,
-    _apply_deterministic_pre_materialization_declared_target_repairs as _apply_deterministic_pre_materialization_declared_target_repairs,
-    _apply_deterministic_scaffold_marker_cleanup as _apply_deterministic_scaffold_marker_cleanup,
     _filter_pre_materialization_declared_target_errors as _filter_pre_materialization_declared_target_errors,
     _pre_materialization_declared_target_repair_allowed as _pre_materialization_declared_target_repair_allowed,
     _remove_patch_residue_lines as _remove_patch_residue_lines,
@@ -86,12 +81,6 @@ from .generic_repairs import (
     _task_allows_scaffold_marker_cleanup as _task_allows_scaffold_marker_cleanup,
 )
 from .javascript_repairs import (
-    _apply_deterministic_javascript_esm_commonjs_entrypoint_repair as _apply_deterministic_javascript_esm_commonjs_entrypoint_repair,
-    _apply_deterministic_javascript_missing_export_repair as _apply_deterministic_javascript_missing_export_repair,
-    _apply_deterministic_javascript_missing_method_runtime_repair as _apply_deterministic_javascript_missing_method_runtime_repair,
-    _apply_deterministic_javascript_test_missing_target_repair as _apply_deterministic_javascript_test_missing_target_repair,
-    _apply_deterministic_javascript_typescript_annotation_repair as _apply_deterministic_javascript_typescript_annotation_repair,
-    _apply_deterministic_node_test_script_contract_repair as _apply_deterministic_node_test_script_contract_repair,
     _build_javascript_frontend_smoke_test_content as _build_javascript_frontend_smoke_test_content,
     _build_substantive_node_test_script as _build_substantive_node_test_script,
     _is_javascript_test_target_path as _is_javascript_test_target_path,
@@ -99,18 +88,9 @@ from .javascript_repairs import (
     _is_plain_frontend_declared_path as _is_plain_frontend_declared_path,
 )
 from .npm_repairs import (
-    _apply_deterministic_npm_test_script_repair as _apply_deterministic_npm_test_script_repair,
-    _apply_deterministic_runtime_dependency_repair as _apply_deterministic_runtime_dependency_repair,
-    _apply_deterministic_typescript_scaffold_repair as _apply_deterministic_typescript_scaffold_repair,
     _is_repairable_npm_test_script_error as _is_repairable_npm_test_script_error,
 )
 from .python_repairs import (
-    _apply_deterministic_python_package_shadow_bridge_repair as _apply_deterministic_python_package_shadow_bridge_repair,
-    _apply_deterministic_python_runtime_smoke as _apply_deterministic_python_runtime_smoke,
-    _apply_deterministic_python_static_smoke as _apply_deterministic_python_static_smoke,
-    _apply_deterministic_python_unittest_missing_target_repair as _apply_deterministic_python_unittest_missing_target_repair,
-    _apply_deterministic_python_unittest_runtime_failure_repair as _apply_deterministic_python_unittest_runtime_failure_repair,
-    _apply_deterministic_unresolved_import_symbol_repair as _apply_deterministic_unresolved_import_symbol_repair,
     _build_python_symbol_stub as _build_python_symbol_stub,
     _build_python_unittest_smoke_content as _build_python_unittest_smoke_content,
     _build_unresolved_import_symbol_repair_block as _build_unresolved_import_symbol_repair_block,
@@ -118,58 +98,22 @@ from .python_repairs import (
     _python_module_name_from_path as _python_module_name_from_path,
     _python_symbol_defined as _python_symbol_defined,
 )
-from .rust_repairs import (
-    _apply_deterministic_rust_crate_import_repair as _apply_deterministic_rust_crate_import_repair,
-    _apply_deterministic_rust_derive_repair as _apply_deterministic_rust_derive_repair,
-    _apply_deterministic_rust_lib_root_facade_repair as _apply_deterministic_rust_lib_root_facade_repair,
-    _apply_deterministic_rust_line_suggestion_repair as _apply_deterministic_rust_line_suggestion_repair,
-    _apply_deterministic_rust_missing_lib_target_repair as _apply_deterministic_rust_missing_lib_target_repair,
-    _apply_deterministic_rust_trait_import_repair as _apply_deterministic_rust_trait_import_repair,
-    _apply_deterministic_rust_unresolved_pub_use_repair as _apply_deterministic_rust_unresolved_pub_use_repair,
-    repair_rust_crate_imports as repair_rust_crate_imports,
-    repair_rust_dependencies as repair_rust_dependencies,
-    repair_rust_derives as repair_rust_derives,
-    repair_rust_lib_root_facade as repair_rust_lib_root_facade,
-    repair_rust_line_suggestions as repair_rust_line_suggestions,
-    repair_rust_missing_lib_targets as repair_rust_missing_lib_targets,
-    repair_rust_trait_imports as repair_rust_trait_imports,
-    repair_rust_unresolved_pub_uses as repair_rust_unresolved_pub_uses,
-)
 from .typeorm_repairs import (
-    _apply_deterministic_typeorm_model_normalization_repair as _apply_deterministic_typeorm_model_normalization_repair,
     _normalize_ts_class_field_initialization as _normalize_ts_class_field_initialization,
     _normalize_undeclared_typeorm_model_source as _normalize_undeclared_typeorm_model_source,
 )
 from .typescript_repairs import (
-    _apply_deterministic_typescript_canvas_scale_return_type_repair as _apply_deterministic_typescript_canvas_scale_return_type_repair,
-    _apply_deterministic_typescript_entrypoint_repair as _apply_deterministic_typescript_entrypoint_repair,
-    _apply_deterministic_typescript_escaped_newline_repair as _apply_deterministic_typescript_escaped_newline_repair,
-    _apply_deterministic_typescript_missing_closing_brace_repair as _apply_deterministic_typescript_missing_closing_brace_repair,
-    _apply_deterministic_typescript_missing_export_repair as _apply_deterministic_typescript_missing_export_repair,
-    _apply_deterministic_typescript_reexport_repair as _apply_deterministic_typescript_reexport_repair,
-    _apply_deterministic_typescript_relative_import_case_repair as _apply_deterministic_typescript_relative_import_case_repair,
-    _apply_deterministic_typescript_unresolved_identifier_repair as _apply_deterministic_typescript_unresolved_identifier_repair,
-    _apply_deterministic_typescript_vitest_globals_repair as _apply_deterministic_typescript_vitest_globals_repair,
     _build_typescript_reexport_line as _build_typescript_reexport_line,
     _extract_relative_import_refs as _extract_relative_import_refs,
     _find_typescript_runtime_symbol_source as _find_typescript_runtime_symbol_source,
     _iter_typescript_files as _iter_typescript_files,
     _looks_like_typescript_reexport_failure as _looks_like_typescript_reexport_failure,
     _relative_import_specifier_for_actual_path as _relative_import_specifier_for_actual_path,
-    _repair_typescript_enum_member_separator_lines as _repair_typescript_enum_member_separator_lines,
-    _repair_typescript_escaped_newline_in_line_comments as _repair_typescript_escaped_newline_in_line_comments,
-    _repair_typescript_missing_closing_braces as _repair_typescript_missing_closing_braces,
-    _repair_typescript_return_object_semicolon_lines as _repair_typescript_return_object_semicolon_lines,
-    _repair_typescript_unresolved_identifier_lines as _repair_typescript_unresolved_identifier_lines,
     _resolve_case_variant_relative_path as _resolve_case_variant_relative_path,
     _resolve_relative_ts_module as _resolve_relative_ts_module,
     _typescript_file_declares_runtime_export as _typescript_file_declares_runtime_export,
     _typescript_module_runtime_exports_symbol as _typescript_module_runtime_exports_symbol,
     _typescript_relative_import_without_suffix as _typescript_relative_import_without_suffix,
-)
-from .zod_repairs import (
-    _apply_deterministic_typescript_zod_type_class_collision_repair as _apply_deterministic_typescript_zod_type_class_collision_repair,
-    _repair_typescript_zod_type_class_collision as _repair_typescript_zod_type_class_collision,
 )
 
 __all__ = [
@@ -203,43 +147,6 @@ __all__ = [
     "_UNDECLARED_RUNTIME_IMPORT_ERROR_RE",
     "_UNRESOLVED_IMPORT_SYMBOL_ERROR_RE",
     "_UNRESOLVED_RELATIVE_IMPORT_ERROR_RE",
-    "_apply_deterministic_declared_target_contract_repairs",
-    "_apply_deterministic_javascript_esm_commonjs_entrypoint_repair",
-    "_apply_deterministic_javascript_missing_export_repair",
-    "_apply_deterministic_javascript_missing_method_runtime_repair",
-    "_apply_deterministic_javascript_test_missing_target_repair",
-    "_apply_deterministic_javascript_typescript_annotation_repair",
-    "_apply_deterministic_missing_declared_target_repair",
-    "_apply_deterministic_node_test_script_contract_repair",
-    "_apply_deterministic_npm_test_script_repair",
-    "_apply_deterministic_pre_materialization_declared_target_repairs",
-    "_apply_deterministic_python_package_shadow_bridge_repair",
-    "_apply_deterministic_python_runtime_smoke",
-    "_apply_deterministic_python_static_smoke",
-    "_apply_deterministic_python_unittest_missing_target_repair",
-    "_apply_deterministic_python_unittest_runtime_failure_repair",
-    "_apply_deterministic_runtime_dependency_repair",
-    "_apply_deterministic_rust_crate_import_repair",
-    "_apply_deterministic_rust_derive_repair",
-    "_apply_deterministic_rust_lib_root_facade_repair",
-    "_apply_deterministic_rust_line_suggestion_repair",
-    "_apply_deterministic_rust_missing_lib_target_repair",
-    "_apply_deterministic_rust_trait_import_repair",
-    "_apply_deterministic_rust_unresolved_pub_use_repair",
-    "_apply_deterministic_scaffold_marker_cleanup",
-    "_apply_deterministic_typeorm_model_normalization_repair",
-    "_apply_deterministic_typescript_canvas_scale_return_type_repair",
-    "_apply_deterministic_typescript_entrypoint_repair",
-    "_apply_deterministic_typescript_escaped_newline_repair",
-    "_apply_deterministic_typescript_missing_closing_brace_repair",
-    "_apply_deterministic_typescript_missing_export_repair",
-    "_apply_deterministic_typescript_reexport_repair",
-    "_apply_deterministic_typescript_relative_import_case_repair",
-    "_apply_deterministic_typescript_scaffold_repair",
-    "_apply_deterministic_typescript_unresolved_identifier_repair",
-    "_apply_deterministic_typescript_vitest_globals_repair",
-    "_apply_deterministic_typescript_zod_type_class_collision_repair",
-    "_apply_deterministic_unresolved_import_symbol_repair",
     "_build_javascript_frontend_smoke_test_content",
     "_build_python_symbol_stub",
     "_build_python_unittest_smoke_content",
@@ -282,12 +189,6 @@ __all__ = [
     "_relative_import_specifier_for_actual_path",
     "_relative_import_suffix_order",
     "_remove_patch_residue_lines",
-    "_repair_typescript_enum_member_separator_lines",
-    "_repair_typescript_escaped_newline_in_line_comments",
-    "_repair_typescript_missing_closing_braces",
-    "_repair_typescript_return_object_semicolon_lines",
-    "_repair_typescript_unresolved_identifier_lines",
-    "_repair_typescript_zod_type_class_collision",
     "_replace_deterministic_scaffold_markers",
     "_resolve_case_variant_relative_path",
     "_resolve_relative_ts_module",
@@ -295,25 +196,5 @@ __all__ = [
     "_typescript_file_declares_runtime_export",
     "_typescript_module_runtime_exports_symbol",
     "_typescript_relative_import_without_suffix",
-    "repair_rust_crate_imports",
-    "repair_rust_dependencies",
-    "repair_rust_derives",
-    "repair_rust_lib_root_facade",
-    "repair_rust_line_suggestions",
-    "repair_rust_missing_lib_targets",
-    "repair_rust_trait_imports",
-    "repair_rust_unresolved_pub_uses",
     "summarize_deterministic_repair_source_tools",
-]
-
-_CONCRETE_LEGACY_REPAIR_EXPORT_PREFIXES = (
-    "_apply_deterministic_",
-    "_repair_",
-    "repair_",
-)
-
-__all__ = [
-    name
-    for name in __all__
-    if not name.startswith(_CONCRETE_LEGACY_REPAIR_EXPORT_PREFIXES)
 ]

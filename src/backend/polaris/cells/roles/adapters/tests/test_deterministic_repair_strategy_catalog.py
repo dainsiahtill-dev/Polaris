@@ -259,6 +259,18 @@ def test_execute_method_legacy_repair_helper_surface_is_removed() -> None:
     assert "__getattr__" not in execute_defined_names
 
 
+def test_deterministic_repairs_package_facade_does_not_export_concrete_mutators() -> None:
+    from polaris.cells.roles.adapters.internal.director import deterministic_repairs
+
+    leaked_names = sorted(
+        name
+        for name in deterministic_repairs.__dict__
+        if name.startswith(("_apply_deterministic_", "_repair_", "repair_"))
+    )
+
+    assert leaked_names == []
+
+
 def test_catalog_registers_all_hardcoded_deterministic_tokens() -> None:
     implementation_tokens = _deterministic_tokens_from_implementation()
     known_source_tools = {str(item.get("source_tool") or "") for item in _catalog_items()}
