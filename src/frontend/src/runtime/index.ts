@@ -13,7 +13,7 @@
  *
  * Architecture Note (Nats-JetStream Runtime Transport):
  * - Runtime domain uses WebSocket ONLY via RuntimeTransportProvider
- * - All runtime components must use useRuntime() or useRuntimeTransport()
+ * - Runtime components must use useRuntime() or focused transport hooks
  * - Direct connectWebSocket() calls are deprecated for runtime domain
  *
  * @example
@@ -57,13 +57,11 @@ export * from './directorWorkspace';
 // Unified transport layer - Use this for all runtime WebSocket needs
 export {
   RuntimeTransportProvider,
-  useRuntimeTransport,
   useConnectionState,
   useTransportActions,
   useMessageHandler,
   useChannelSubscription,
   runtimeSocketManager,
-  type RuntimeTransportContextValue,
   type ConnectionStateContextValue,
   type TransportActionsContextValue,
   type MessageHandlerContextValue,
@@ -74,4 +72,4 @@ export {
 
 // Runtime hooks live in '@/app/hooks/useRuntime' and require RuntimeTransportProvider.
 // Use useRuntime from '@/app/hooks/useRuntime' (requires RuntimeTransportProvider)
-// or useRuntimeTransport for lower-level access.
+// or focused transport hooks for lower-level access.

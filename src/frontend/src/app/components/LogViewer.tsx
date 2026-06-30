@@ -2,7 +2,7 @@ import { RefreshCw, Activity, Trash2, Search, Filter, Clock, ArrowDown } from 'l
 import { Virtuoso } from 'react-virtuoso';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '@/api';
-import { useRuntimeTransport } from '@/runtime/transport';
+import { useConnectionState, useMessageHandler, useTransportActions } from '@/runtime/transport';
 import { LlmEventCard } from '@/app/components/logs/LlmEventCard';
 import { parseLlmEventLine, parseLlmEventLines, type LlmEvent } from '@/app/components/logs/LlmEventTypes';
 import { PolarisTerminalRenderer } from '@/app/components/PolarisTerminalRenderer';
@@ -59,7 +59,9 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
   const [logLevelFilter, setLogLevelFilter] = useState<string>('all');
   const [showTimestamp, setShowTimestamp] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
-  const { connected: transportConnected, subscribeChannels, registerMessageHandler } = useRuntimeTransport();
+  const { connected: transportConnected } = useConnectionState();
+  const { subscribeChannels } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
   const [subscriptionEpoch, setSubscriptionEpoch] = useState(0);
 
   const [isClearing, setIsClearing] = useState(false);

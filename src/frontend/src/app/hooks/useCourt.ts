@@ -5,7 +5,7 @@
  * 使用统一的 RuntimeTransportProvider 进行 WebSocket 通信
  *
  * Architecture Note (Nats-JetStream Runtime Transport):
- * - 使用 useRuntimeTransport 替代直接 connectWebSocket
+ * - 使用 RuntimeTransportProvider split contexts 替代直接 connectWebSocket
  * - 共享全局 WebSocket 连接，避免多连问题
  */
 
@@ -17,7 +17,7 @@ import {
   getSceneConfig,
   getRoleMapping,
 } from '@/services';
-import { useRuntimeTransport } from '@/runtime/transport';
+import { useConnectionState, useMessageHandler, useTransportActions } from '@/runtime/transport';
 import type {
   CourtState,
   CourtTopologyResponse,
@@ -89,12 +89,9 @@ export function useCourtState(options: { enabled?: boolean } = {}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const {
-    connected: transportConnected,
-    subscribeChannels,
-    registerMessageHandler,
-    sendCommand,
-  } = useRuntimeTransport();
+  const { connected: transportConnected } = useConnectionState();
+  const { subscribeChannels, sendCommand } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
 
   const fetchState = useCallback(async () => {
     try {
@@ -316,12 +313,9 @@ export function useRoleMapping() {
 export function useCourtWebSocket() {
   const [state, setState] = useState<CourtState | null>(null);
 
-  const {
-    connected,
-    subscribeChannels,
-    registerMessageHandler,
-    sendCommand,
-  } = useRuntimeTransport();
+  const { connected } = useConnectionState();
+  const { subscribeChannels } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
 
   // Subscribe to status channel
   useEffect(() => {

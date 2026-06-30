@@ -45,7 +45,7 @@ import { useRuntime } from './hooks/useRuntime';
 import { useRuntimeConnectionNotifications } from './hooks/useConnectionNotifications';
 import {
   RuntimeTransportProvider,
-  useConnectionState as useRuntimeTransportConnectionState,
+  useConnectionState as useRuntimeConnectionState,
   useMessageHandler,
   useTransportActions,
 } from '@/runtime/transport';
@@ -307,7 +307,7 @@ function AppContent() {
     connected: live,
     reconnecting,
     attemptCount,
-  } = useRuntimeTransportConnectionState();
+  } = useRuntimeConnectionState();
   const { reconnect: reconnectWebSocket, subscribeChannels } = useTransportActions();
   const { registerMessageHandler } = useMessageHandler();
 

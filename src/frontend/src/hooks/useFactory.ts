@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { useRuntimeTransport } from '@/runtime/transport';
+import { useMessageHandler, useTransportActions } from '@/runtime/transport';
 import {
   getFactoryRun,
   getFactoryRunArtifacts,
@@ -193,7 +193,8 @@ export function useFactory(options: UseFactoryOptions = {}) {
   // JetStream (subject ``hp.runtime.<ws>.event.factory.<run_id>``) via
   // the same RuntimeTransportProvider that carries log.llm /
   // log.process / event.bench through one runtime transport.
-  const transport = useRuntimeTransport();
+  const { subscribeChannels } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
 
   const connectionRef = useRef<{ close: () => void } | null>(null);
   const latestRunIdRef = useRef<string | null>(null);
@@ -497,8 +498,8 @@ export function useFactory(options: UseFactoryOptions = {}) {
     let channelUnsubscribe: (() => void) | null = null;
 
     try {
-      channelUnsubscribe = transport.subscribeChannels([{ channel, tailLines: 0 }]);
-      messageUnregister = transport.registerMessageHandler(handler);
+      channelUnsubscribe = subscribeChannels([{ channel, tailLines: 0 }]);
+      messageUnregister = registerMessageHandler(handler);
       setIsStreaming(true);
       connectionRef.current = {
         close: () => {
@@ -515,7 +516,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
       setIsStreaming(false);
       return false;
     }
-  }, [currentRun, fetchRunArtifacts, queryClient, factoryRunKey, factoryRunsKey, transport]);
+  }, [currentRun, fetchRunArtifacts, queryClient, factoryRunKey, factoryRunsKey, registerMessageHandler, subscribeChannels]);
 
   const startRun = useCallback(async (opts: FactoryStartOptions): Promise<FactoryRunStatus | null> => {
     setEvents([]);

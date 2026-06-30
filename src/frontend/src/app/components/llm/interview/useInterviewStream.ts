@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getBackendInfo } from '@/api';
-import { useRuntimeTransport } from '@/runtime/transport';
+import { useConnectionState, useMessageHandler, useTransportActions } from '@/runtime/transport';
 import type { TestEvent } from '../test/types';
 
 export interface StreamEvent {
@@ -298,7 +298,9 @@ export const createContentTagParser = (options: ContentTagParserOptions = {}) =>
 
 export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
   const { onEvent, onStart, onComplete, onError, onThinkingEvent, onTagEvent } = options;
-  const transport = useRuntimeTransport();
+  const { connected } = useConnectionState();
+  const { reconnect, subscribeChannels } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
   const [isStreaming, setIsStreaming] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
@@ -511,7 +513,7 @@ export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
       const abortHandler = () => finishStream();
       abortController.signal.addEventListener('abort', abortHandler, { once: true });
 
-      unregisterHandlerRef.current = transport.registerMessageHandler((message) => {
+      unregisterHandlerRef.current = registerMessageHandler((message) => {
         const streamEvent = streamEventFromRuntimeMessage(message);
         if (!streamEvent) return;
         handleStreamEvent(streamEvent.type, streamEvent.data);
@@ -519,11 +521,11 @@ export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
           finishStream();
         }
       }, channel);
-      unsubscribeStreamRef.current = transport.subscribeChannels([
+      unsubscribeStreamRef.current = subscribeChannels([
         { channel, tailLines: 0 },
       ]);
-      if (!transport.connected) {
-        transport.reconnect();
+      if (!connected) {
+        reconnect();
       }
 
       const response = await fetch(`${backendInfo.baseUrl}/v2/llm/interview/jetstream`, {
@@ -587,7 +589,10 @@ export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
     onError,
     onThinkingEvent,
     onTagEvent,
-    transport,
+    connected,
+    reconnect,
+    registerMessageHandler,
+    subscribeChannels,
   ]);
 
   const stopStream = useCallback((sessionIdOverride?: string | null) => {

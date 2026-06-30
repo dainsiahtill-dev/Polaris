@@ -62,14 +62,6 @@ const ConnectionStateContext = createContext<ConnectionStateContextValue | null>
 const TransportActionsContext = createContext<TransportActionsContextValue | null>(null);
 const MessageHandlerContext = createContext<MessageHandlerContextValue | null>(null);
 
-/** Legacy combined context (for backward compatibility) */
-export interface RuntimeTransportContextValue
-  extends ConnectionStateContextValue,
-    TransportActionsContextValue,
-    MessageHandlerContextValue {}
-
-const RuntimeTransportContext = createContext<RuntimeTransportContextValue | null>(null);
-
 // ============================================================================
 // Provider Component
 // ============================================================================
@@ -176,23 +168,11 @@ export function RuntimeTransportProvider({
     [registerMessageHandler]
   );
 
-  // Legacy combined value (backward compatibility)
-  const legacyValue = useMemo<RuntimeTransportContextValue>(
-    () => ({
-      ...connectionStateValue,
-      ...actionsValue,
-      ...messageHandlerValue,
-    }),
-    [connectionStateValue, actionsValue, messageHandlerValue]
-  );
-
   return (
     <ConnectionStateContext.Provider value={connectionStateValue}>
       <TransportActionsContext.Provider value={actionsValue}>
         <MessageHandlerContext.Provider value={messageHandlerValue}>
-          <RuntimeTransportContext.Provider value={legacyValue}>
-            {children}
-          </RuntimeTransportContext.Provider>
+          {children}
         </MessageHandlerContext.Provider>
       </TransportActionsContext.Provider>
     </ConnectionStateContext.Provider>
@@ -231,17 +211,6 @@ export function useMessageHandler(): MessageHandlerContextValue {
   if (!context) {
     throw new Error(
       'useMessageHandler must be used within a RuntimeTransportProvider'
-    );
-  }
-  return context;
-}
-
-/** Legacy combined hook (for backward compatibility) */
-export function useRuntimeTransport(): RuntimeTransportContextValue {
-  const context = useContext(RuntimeTransportContext);
-  if (!context) {
-    throw new Error(
-      'useRuntimeTransport must be used within a RuntimeTransportProvider'
     );
   }
   return context;

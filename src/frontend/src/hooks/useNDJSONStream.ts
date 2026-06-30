@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getBackendInfo } from '@/api';
-import { useRuntimeTransport } from '@/runtime/transport';
+import { useConnectionState, useMessageHandler, useTransportActions } from '@/runtime/transport';
 
 export interface NDJSONEvent {
   type: string;
@@ -51,7 +51,9 @@ function eventFromRuntimeMessage(message: unknown, channel: string): NDJSONEvent
  */
 export function useNDJSONStream(options: UseNDJSONStreamOptions = {}) {
   const { onEvent, onComplete, onError } = options;
-  const transport = useRuntimeTransport();
+  const { connected } = useConnectionState();
+  const { subscribeChannels, reconnect } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
   const [isStreaming, setIsStreaming] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
@@ -94,7 +96,7 @@ export function useNDJSONStream(options: UseNDJSONStreamOptions = {}) {
         setIsStreaming(false);
       };
 
-      unregisterHandlerRef.current = transport.registerMessageHandler((message) => {
+      unregisterHandlerRef.current = registerMessageHandler((message) => {
         const event = eventFromRuntimeMessage(message, channel);
         if (!event) return;
         onEvent?.(event);
@@ -106,9 +108,9 @@ export function useNDJSONStream(options: UseNDJSONStreamOptions = {}) {
           finish();
         }
       }, channel);
-      unsubscribeRef.current = transport.subscribeChannels([{ channel, tailLines: 0 }]);
-      if (!transport.connected) {
-        transport.reconnect();
+      unsubscribeRef.current = subscribeChannels([{ channel, tailLines: 0 }]);
+      if (!connected) {
+        reconnect();
       }
 
       try {
@@ -153,7 +155,10 @@ export function useNDJSONStream(options: UseNDJSONStreamOptions = {}) {
       onComplete,
       onError,
       onEvent,
-      transport,
+      connected,
+      reconnect,
+      registerMessageHandler,
+      subscribeChannels,
     ],
   );
 

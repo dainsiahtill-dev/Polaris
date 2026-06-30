@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRuntimeStore } from "./useRuntimeStore";
-import { useRuntimeTransport } from "@/runtime/transport";
+import { useConnectionState, useMessageHandler, useTransportActions } from "@/runtime/transport";
 import { useSettings } from "@/hooks";
 import type { RuntimeRole } from "@/runtime/transport/runtimeSocketManager";
 
@@ -75,7 +75,7 @@ function areRolesEqual(left: RuntimeRole[], right: RuntimeRole[]): boolean {
 /**
  * useRuntimeConnection - 管理运行时连接状态
  *
- * 代理到 useRuntimeTransport，同时同步状态到 store
+ * 代理到 RuntimeTransportProvider split contexts，同时同步状态到 store
  */
 export function useRuntimeConnection(
   options: UseRuntimeConnectionOptions = {},
@@ -117,12 +117,14 @@ export function useRuntimeConnection(
     reconnecting: transportReconnecting,
     error: transportError,
     attemptCount: transportAttemptCount,
+  } = useConnectionState();
+  const {
     subscribeChannels,
     sendCommand,
     getLastCursor,
     reconnect: transportReconnect,
-    registerMessageHandler,
-  } = useRuntimeTransport();
+  } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
 
   // Refs
   const activeRef = useRef(true);

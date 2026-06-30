@@ -8,7 +8,6 @@
 
 import { useCallback, useEffect } from 'react';
 import { useRuntimeStore } from './useRuntimeStore';
-import { useRuntimeTransport } from '@/runtime/transport';
 import type { BackendStatus } from '@/app/types/appContracts';
 import * as Parsing from './runtimeParsing';
 

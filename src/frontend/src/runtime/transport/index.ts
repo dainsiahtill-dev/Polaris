@@ -11,8 +11,9 @@
  *   <App />
  * </RuntimeTransportProvider>
  *
- * // In components, use the hook
- * const { connected, subscribeChannels, sendCommand } = useRuntimeTransport();
+ * // In components, use focused hooks
+ * const { connected } = useConnectionState();
+ * const { subscribeChannels, sendCommand } = useTransportActions();
  *
  * // Or use the convenience hook for channel subscription
  * const { connected } = useChannelSubscription({
@@ -34,12 +35,10 @@ export {
 
 export {
   RuntimeTransportProvider,
-  useRuntimeTransport,
   useConnectionState,
   useTransportActions,
   useMessageHandler,
   useChannelSubscription,
-  type RuntimeTransportContextValue,
   type ConnectionStateContextValue,
   type TransportActionsContextValue,
   type MessageHandlerContextValue,

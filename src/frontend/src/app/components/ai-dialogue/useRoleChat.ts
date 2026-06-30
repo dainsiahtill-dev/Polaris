@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { apiFetch } from '@/api';
-import { useRuntimeTransport } from '@/runtime/transport';
+import { useMessageHandler, useTransportActions } from '@/runtime/transport';
 import { getRoleChatStatus } from '@/services/llmService';
 import type { ChatStatus } from '@/services/llmService';
 import type { RoleChatRole } from '@/services/api.types';
@@ -127,7 +127,8 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
   const abortControllerRef = useRef<AbortController | null>(null);
   const channelUnsubscribeRef = useRef<(() => void) | null>(null);
   const messageHandlerUnregisterRef = useRef<(() => void) | null>(null);
-  const transport = useRuntimeTransport();
+  const { subscribeChannels } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
 
   const cleanupActiveStream = useCallback(() => {
     if (channelUnsubscribeRef.current) {
@@ -249,8 +250,8 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
       ]);
 
       cleanupActiveStream();
-      channelUnsubscribeRef.current = transport.subscribeChannels([{ channel, tailLines: 0 }]);
-      messageHandlerUnregisterRef.current = transport.registerMessageHandler((raw: unknown) => {
+      channelUnsubscribeRef.current = subscribeChannels([{ channel, tailLines: 0 }]);
+      messageHandlerUnregisterRef.current = registerMessageHandler((raw: unknown) => {
         const event = runtimeChatEvent(raw, channel);
         if (!event) return;
         handleStreamEvent(event, messageId, setMessages);
@@ -287,7 +288,8 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
     context,
     workspace,
     cleanupActiveStream,
-    transport,
+    registerMessageHandler,
+    subscribeChannels,
   ]);
 
   // 清空消息

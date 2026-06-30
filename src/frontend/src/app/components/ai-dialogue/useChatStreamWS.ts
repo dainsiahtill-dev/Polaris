@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/api';
-import { useRuntimeTransport } from '@/runtime/transport';
+import { useConnectionState, useMessageHandler, useTransportActions } from '@/runtime/transport';
 
 function appendWorkspaceQuery(path: string, workspace?: string): string {
   if (!workspace) return path;
@@ -40,7 +40,9 @@ export interface UseChatStreamWSReturn {
 
 export function useChatStreamWS(options: UseChatStreamWSOptions): UseChatStreamWSReturn {
   const { role, workspace, onChunk } = options;
-  const transport = useRuntimeTransport();
+  const { connected } = useConnectionState();
+  const { subscribeChannels } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
   const [isStreaming, setIsStreaming] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [chunks, setChunks] = useState<UseChatStreamWSReturn['chunks']>([]);
@@ -66,7 +68,7 @@ export function useChatStreamWS(options: UseChatStreamWSOptions): UseChatStreamW
       if (!message.trim()) return { ok: false, error: 'empty message' };
       // Ensure WS is connected before we POST (otherwise the chunk publish
       // arrives before the SUBSCRIBE and we miss the stream).
-      if (!transport.connected) {
+      if (!connected) {
         return { ok: false, error: 'runtime transport not connected' };
       }
 
@@ -107,7 +109,7 @@ export function useChatStreamWS(options: UseChatStreamWSOptions): UseChatStreamW
       setIsStreaming(true);
 
       // 2) Subscribe to chat:<sid>
-      const unsubscribe = transport.subscribeChannels([{ channel, tailLines: 0 }]);
+      const unsubscribe = subscribeChannels([{ channel, tailLines: 0 }]);
       unsubscribeRef.current = unsubscribe;
 
       // 3) Register a one-shot message handler that filters by channel
@@ -130,11 +132,11 @@ export function useChatStreamWS(options: UseChatStreamWSOptions): UseChatStreamW
           cleanup();
         }
       };
-      messageHandlerUnregisterRef.current = transport.registerMessageHandler(handler);
+      messageHandlerUnregisterRef.current = registerMessageHandler(handler);
 
       return { ok: true, sessionId: sid };
     },
-    [role, workspace, transport, onChunk, cleanup],
+    [role, workspace, connected, subscribeChannels, registerMessageHandler, onChunk, cleanup],
   );
 
   const cancel = useCallback(() => {

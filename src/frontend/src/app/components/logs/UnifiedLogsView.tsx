@@ -17,7 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useRuntimeTransport } from '@/runtime/transport';
+import { useConnectionState, useMessageHandler, useTransportActions } from '@/runtime/transport';
 import { devLogger } from '@/app/utils/devLogger';
 import {
   CHANNEL_METADATA,
@@ -288,7 +288,9 @@ export function UnifiedLogsView({
   // the runtime.v2 backend rejects those with RUNTIME_V2_REQUIRED, so we
   // now route queries through ``sendCommand`` and include the v2 protocol
   // marker explicitly.
-  const { connected: transportConnected, sendCommand, registerMessageHandler } = useRuntimeTransport();
+  const { connected: transportConnected } = useConnectionState();
+  const { sendCommand } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
 
   const queryEvents = useCallback(
     (params: LogQueryParams) => {

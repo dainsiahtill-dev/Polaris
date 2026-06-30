@@ -22,7 +22,7 @@ import {
   type FactoryBenchSessionDetail,
   type FactoryBenchSessionSummary,
 } from '@/services/benchService';
-import { useRuntimeTransport } from '@/runtime/transport';
+import { useMessageHandler, useTransportActions } from '@/runtime/transport';
 
 export interface UseFactoryBenchOptions {
   autoSelect?: 'newest' | 'none';
@@ -246,7 +246,8 @@ export function useFactoryBench(
   const loadingSessionRef = useRef<string | null>(null);
   const manualSelectionRef = useRef(false);
 
-  const { subscribeChannels, registerMessageHandler } = useRuntimeTransport();
+  const { subscribeChannels } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
 
   useEffect(() => {
     currentSessionRef.current = currentSession;

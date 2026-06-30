@@ -6,7 +6,7 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { apiFetch } from '@/api';
-import { useRuntimeTransport } from '@/runtime/transport';
+import { useConnectionState, useMessageHandler, useTransportActions } from '@/runtime/transport';
 import { devLogger } from '@/app/utils/devLogger';
 import {
   getConversation,
@@ -310,7 +310,9 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
   const [isRestoring, setIsRestoring] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const transport = useRuntimeTransport();
+  const { connected: transportConnected } = useConnectionState();
+  const { reconnect, subscribeChannels } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
 
   // 防抖定时器
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -689,8 +691,8 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
       const runtimeContext = { ...context, workspace: dialogueWorkspace || context?.workspace, history, conversation_id: conversationId };
       cleanupActiveStream();
 
-      if (!transport.connected) {
-        transport.reconnect();
+      if (!transportConnected) {
+        reconnect();
         throw new Error('runtime transport not connected');
       }
 
@@ -735,8 +737,8 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
         throw new Error('missing JetStream channel');
       }
 
-      streamUnsubscribeRef.current = transport.subscribeChannels([{ channel, tailLines: 0 }]);
-      streamHandlerUnregisterRef.current = transport.registerMessageHandler((raw: unknown) => {
+      streamUnsubscribeRef.current = subscribeChannels([{ channel, tailLines: 0 }]);
+      streamHandlerUnregisterRef.current = registerMessageHandler((raw: unknown) => {
         const msg = raw as Record<string, unknown>;
         const event = msg?.type === 'EVENT'
           ? msg.event as Record<string, unknown> | undefined
@@ -767,7 +769,7 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
       ]);
       setIsLoading(false);
     }
-  }, [inputValue, isLoading, isChatReady, isExplicitlyUnconfigured, chatStatus?.error, roleName, role, sessionId, context, conversationId, dialogueWorkspace, transport, cleanupActiveStream, handleStreamEvent]);
+  }, [inputValue, isLoading, isChatReady, isExplicitlyUnconfigured, chatStatus?.error, roleName, role, sessionId, context, conversationId, dialogueWorkspace, transportConnected, reconnect, subscribeChannels, registerMessageHandler, cleanupActiveStream, handleStreamEvent]);
 
   // 键盘事件
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {

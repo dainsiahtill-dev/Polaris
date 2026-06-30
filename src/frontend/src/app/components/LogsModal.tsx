@@ -1,7 +1,7 @@
 import { RefreshCw, X, FileText, Activity, AlertTriangle, TerminalSquare, Wrench } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '@/api';
-import { useRuntimeTransport } from '@/runtime/transport';
+import { useConnectionState, useMessageHandler, useTransportActions } from '@/runtime/transport';
 import { CodexCliStreamParser, parseCodexCliLines, stripLlmTags, type LogEvent } from '@/app/components/logs/CodexCliStreamParser';
 import { LlmEventCard } from '@/app/components/logs/LlmEventCard';
 import { parseLlmEventLine, parseLlmEventLines, type LlmEvent } from '@/app/components/logs/LlmEventTypes';
@@ -420,7 +420,9 @@ export function LogsModal({
     }
   }, [isOpen, active]);
 
-  const { connected: transportConnected, subscribeChannels, registerMessageHandler } = useRuntimeTransport();
+  const { connected: transportConnected } = useConnectionState();
+  const { subscribeChannels } = useTransportActions();
+  const { registerMessageHandler } = useMessageHandler();
 
   useEffect(() => {
     if (!isOpen) return;
