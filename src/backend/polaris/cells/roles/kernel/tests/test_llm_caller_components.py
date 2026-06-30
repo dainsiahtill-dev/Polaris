@@ -19,10 +19,6 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from polaris.cells.roles.kernel.internal.llm_caller.caller import (
-    LLMCaller,
-    _ensure_current_user_message_final,
-)
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
     build_final_provider_request_snapshot,
     build_final_request_context_audit,
@@ -51,11 +47,10 @@ from polaris.cells.roles.kernel.internal.llm_caller.provider_formatter import (
     NativeProviderFormatter,
     create_formatter,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
+from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import _ensure_current_user_message_final
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     LLMResponse,
     PreparedLLMRequest,
-    StructuredLLMResponse,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import (
     StreamEngine,
@@ -1233,161 +1228,6 @@ class TestLLMEventEmitterEmitCallRetryEvent:
             )
             custom_emitter._emit_call_retry_event.assert_called_once()
             mock_emit.assert_called_once()
-
-
-@pytest.mark.asyncio
-class TestLLMCallerInvokerDelegation:
-    """LLMCaller facade should not override the invoker's canonical event writer."""
-
-    async def test_prepare_request_delegates_to_request_preparer(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The compatibility facade must not own a second request builder."""
-        sentinel = Mock()
-        captured: dict[str, Any] = {}
-
-        async def fake_prepare(self: LLMRequestPreparer, **kwargs: Any) -> Any:
-            captured["workspace"] = self.workspace
-            captured["kwargs"] = kwargs
-            return sentinel
-
-        monkeypatch.setattr(LLMRequestPreparer, "_prepare_llm_request", fake_prepare)
-        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
-
-        result = await caller._prepare_llm_request(
-            profile=Mock(role_id="director"),
-            system_prompt="sys",
-            context=Mock(),
-            temperature=0.2,
-            max_tokens=1234,
-            stream=False,
-            response_model=None,
-            platform_retry_max=2,
-        )
-
-        assert result is sentinel
-        assert captured["workspace"] == "/ws"
-        assert captured["kwargs"]["system_prompt"] == "sys"
-        assert captured["kwargs"]["max_tokens"] == 1234
-        assert captured["kwargs"]["platform_retry_max"] == 2
-
-    async def test_structured_fallback_delegates_to_request_preparer(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The compatibility facade must not own a second structured fallback builder."""
-        sentinel = Mock()
-        captured: dict[str, Any] = {}
-
-        def fake_build(self: LLMRequestPreparer, **kwargs: Any) -> Any:
-            captured["workspace"] = self.workspace
-            captured["kwargs"] = kwargs
-            return sentinel
-
-        monkeypatch.setattr(LLMRequestPreparer, "_build_structured_fallback_request", fake_build)
-        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
-
-        result = caller._build_structured_fallback_request(
-            prepared=Mock(),
-            profile=Mock(role_id="director"),
-            response_model=dict,
-            mode="chat",
-        )
-
-        assert result is sentinel
-        assert captured["workspace"] == "/ws"
-        assert captured["kwargs"]["response_model"] is dict
-        assert captured["kwargs"]["mode"] == "chat"
-
-    async def test_reasoning_retry_delegates_to_request_preparer(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The compatibility facade must not own a second reasoning retry builder."""
-        sentinel = Mock()
-        captured: dict[str, Any] = {}
-
-        def fake_build(self: LLMRequestPreparer, **kwargs: Any) -> Any:
-            captured["workspace"] = self.workspace
-            captured["kwargs"] = kwargs
-            return sentinel
-
-        monkeypatch.setattr(LLMRequestPreparer, "_build_reasoning_truncation_retry_request", fake_build)
-        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
-        profile = Mock(role_id="director")
-        prepared = Mock()
-
-        result = caller._build_reasoning_truncation_retry_request(prepared=prepared, profile=profile)
-
-        assert result is sentinel
-        assert captured["workspace"] == "/ws"
-        assert captured["kwargs"]["prepared"] is prepared
-        assert captured["kwargs"]["profile"] is profile
-
-    async def test_event_helper_delegates_to_llm_event_emitter(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The compatibility facade must not own a second event writer."""
-        captured: dict[str, Any] = {}
-
-        def fake_emit(self: LLMEventEmitter, **kwargs: Any) -> None:
-            captured["workspace"] = self.workspace
-            captured["kwargs"] = kwargs
-
-        monkeypatch.setattr(LLMEventEmitter, "emit_call_start_event", fake_emit)
-        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
-
-        caller._emit_call_start_event(
-            role="director",
-            run_id="run-1",
-            task_id="task-1",
-            attempt=1,
-            model="gpt-5",
-            provider="openai",
-            prompt_tokens=42,
-            call_id="call-1",
-            context_tokens_before=123,
-            compression_strategy="none",
-            messages=[{"role": "user", "content": "hello"}],
-            metadata={"source": "test"},
-        )
-
-        assert captured["workspace"] == "/ws"
-        assert captured["kwargs"]["event_emitter"] is None
-        assert captured["kwargs"]["role"] == "director"
-        assert captured["kwargs"]["run_id"] == "run-1"
-        assert captured["kwargs"]["prompt_tokens"] == 42
-        assert captured["kwargs"]["context_tokens_before"] == 123
-
-    async def test_call_does_not_pass_itself_as_event_emitter(self) -> None:
-        from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
-
-        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
-        invoker = Mock()
-        invoker.call = AsyncMock(return_value=LLMResponse(content="ok"))
-        caller._invoker = invoker
-
-        await caller.call(profile=Mock(), system_prompt="sys", context=Mock())
-
-        assert "event_emitter" not in invoker.call.call_args.kwargs
-
-    async def test_call_structured_does_not_pass_itself_as_event_emitter(self) -> None:
-        from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
-
-        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
-        invoker = Mock()
-        invoker.call_structured = AsyncMock(return_value=StructuredLLMResponse(data={}))
-        caller._invoker = invoker
-
-        await caller.call_structured(profile=Mock(), system_prompt="sys", context=Mock(), response_model=dict)
-
-        assert "event_emitter" not in invoker.call_structured.call_args.kwargs
-
-    async def test_call_stream_does_not_pass_itself_as_event_emitter(self) -> None:
-        from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
-
-        async def _stream():
-            yield {"type": "chunk", "content": "ok"}
-
-        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
-        invoker = Mock()
-        invoker.call_stream = Mock(return_value=_stream())
-        caller._invoker = invoker
-
-        chunks = [chunk async for chunk in caller.call_stream(profile=Mock(), system_prompt="sys", context=Mock())]
-
-        assert chunks == [{"type": "chunk", "content": "ok"}]
-        assert "event_emitter" not in invoker.call_stream.call_args.kwargs
 
 
 # ============ ProviderFormatter Tests ============
