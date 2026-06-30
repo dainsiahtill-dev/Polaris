@@ -150,18 +150,17 @@ class BudgetPolicy:
                 parsed = default
             return max(minimum, min(parsed, maximum))
 
-        max_calls = metadata.get("max_total_tool_calls") or metadata.get("max_tool_calls")
-        max_stall = metadata.get("max_stall_cycles")
+        def _read_first_int(keys: tuple[str, ...], default: int, minimum: int, maximum: int) -> int:
+            for key in keys:
+                if metadata.get(key) is not None:
+                    return _read_int(key, default, minimum, maximum)
+            return default
 
         return cls(
             BudgetState(
-                max_tool_calls=_read_int("max_total_tool_calls", 64, 1, 1024)
-                if max_calls is None
-                else max(1, min(int(max_calls), 1024)),
+                max_tool_calls=_read_first_int(("max_total_tool_calls", "max_tool_calls"), 64, 1, 1024),
                 max_wall_time_seconds=_read_int("max_wall_time_seconds", 900, 30, 7200),
-                max_stall_cycles=_read_int("max_stall_cycles", 2, 0, 32)
-                if max_stall is None
-                else max(0, min(int(max_stall), 32)),
+                max_stall_cycles=_read_int("max_stall_cycles", 2, 0, 32),
             )
         )
 

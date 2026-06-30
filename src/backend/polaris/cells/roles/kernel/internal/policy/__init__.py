@@ -56,6 +56,8 @@ from polaris.cells.roles.kernel.internal.policy.layer import (
     PolicyLayer,
     PolicyResult,
     PolicyViolation,
+    ToolPolicy,
+    ToolPolicyConfig,
 )
 from polaris.cells.roles.kernel.internal.policy.redaction_policy import (
     RedactionPolicy,
@@ -63,10 +65,6 @@ from polaris.cells.roles.kernel.internal.policy.redaction_policy import (
 from polaris.cells.roles.kernel.internal.policy.sandbox_policy import (
     SandboxDecision,
     SandboxPolicy,
-)
-from polaris.cells.roles.kernel.internal.policy.tool_policy import (
-    ToolPolicy,
-    ToolPolicyDecision,
 )
 
 __all__ = [
@@ -91,5 +89,5 @@ __all__ = [
     "SandboxPolicy",
     # Tool
     "ToolPolicy",
-    "ToolPolicyDecision",
+    "ToolPolicyConfig",
 ]
