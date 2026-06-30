@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts import (
-    CompatibilityMapper,
     OrchestrationMode,
     OrchestrationRunRequest,
     OrchestrationSignal,
@@ -190,24 +189,6 @@ class TestOrchestrationRunRequest:
             role_entries=[RoleEntrySpec(role_id="pm")],
         )
         assert req.validate() == []
-
-
-class TestCompatibilityMapper:
-    def test_pm_mode_mapping(self) -> None:
-        assert CompatibilityMapper.pm_mode_to_orchestration("run_once") == OrchestrationMode.WORKFLOW
-        assert CompatibilityMapper.pm_mode_to_orchestration("chat") == OrchestrationMode.CHAT
-        assert CompatibilityMapper.pm_mode_to_orchestration("unknown") == OrchestrationMode.WORKFLOW
-
-    def test_director_mode_mapping(self) -> None:
-        assert CompatibilityMapper.director_mode_to_orchestration("one_shot") == OrchestrationMode.WORKFLOW
-        assert CompatibilityMapper.director_mode_to_orchestration("chat") == OrchestrationMode.CHAT
-
-    def test_legacy_status_mapping(self) -> None:
-        assert CompatibilityMapper.legacy_status_to_unified("idle") == RunStatus.PENDING
-        assert CompatibilityMapper.legacy_status_to_unified("running") == RunStatus.RUNNING
-        assert CompatibilityMapper.legacy_status_to_unified("success") == RunStatus.COMPLETED
-        assert CompatibilityMapper.legacy_status_to_unified("failure") == RunStatus.FAILED
-        assert CompatibilityMapper.legacy_status_to_unified("unknown") == RunStatus.PENDING
 
 
 class TestTaskSnapshot:

@@ -40,7 +40,6 @@ from .runtime import (
 )
 from .service import (
     SUPPORTED_ORCHESTRATION_RUNTIMES,
-    CompatibilityMapper,
     EventLevel,
     EventStream,
     EventType,
@@ -107,7 +106,6 @@ __all__ = [
     "ActivityRegistry",
     "ActivityRunner",
     "CancelWorkflowCommandV1",
-    "CompatibilityMapper",
     "EmbeddedConfig",
     "EventLevel",
     "EventStream",

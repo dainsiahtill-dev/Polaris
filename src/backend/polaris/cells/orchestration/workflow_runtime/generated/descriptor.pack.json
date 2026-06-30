@@ -1251,26 +1251,6 @@
     },
     {
       "type": "class",
-      "name": "CompatibilityMapper",
-      "description": "兼容层映射器",
-      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_contracts.py",
-      "methods": [
-        {
-          "name": "pm_mode_to_orchestration",
-          "doc": "PM 模式映射"
-        },
-        {
-          "name": "director_mode_to_orchestration",
-          "doc": "Director 模式映射"
-        },
-        {
-          "name": "legacy_status_to_unified",
-          "doc": "旧状态映射到统一状态"
-        }
-      ]
-    },
-    {
-      "type": "class",
       "name": "ActivityExecutionContext",
       "description": "Minimal execution context passed into activity adapters.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/activities/base.py",

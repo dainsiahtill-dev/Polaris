@@ -428,62 +428,10 @@ class SignalRequest:
 
 
 # ============================================================================
-# 兼容层映射（PM/Director 模式映射）
-# ============================================================================
-
-
-class CompatibilityMapper:
-    """兼容层映射器
-
-    将旧版 PM/Director 语义映射到统一编排契约。
-    """
-
-    @staticmethod
-    def pm_mode_to_orchestration(mode: str) -> OrchestrationMode:
-        """PM 模式映射"""
-        mode_map = {
-            "run_once": OrchestrationMode.WORKFLOW,
-            "loop": OrchestrationMode.WORKFLOW,
-            "chat": OrchestrationMode.CHAT,
-        }
-        return mode_map.get(mode, OrchestrationMode.WORKFLOW)
-
-    @staticmethod
-    def director_mode_to_orchestration(mode: str) -> OrchestrationMode:
-        """Director 模式映射"""
-        mode_map = {
-            "one_shot": OrchestrationMode.WORKFLOW,
-            "continuous": OrchestrationMode.WORKFLOW,
-            "chat": OrchestrationMode.CHAT,
-        }
-        return mode_map.get(mode, OrchestrationMode.WORKFLOW)
-
-    @staticmethod
-    def legacy_status_to_unified(status: str) -> RunStatus:
-        """旧状态映射到统一状态"""
-        status_map = {
-            # PM 状态
-            "idle": RunStatus.PENDING,
-            "running": RunStatus.RUNNING,
-            "completed": RunStatus.COMPLETED,
-            "error": RunStatus.FAILED,
-            # Director 状态
-            "pending": RunStatus.PENDING,
-            "in_progress": RunStatus.RUNNING,
-            "success": RunStatus.COMPLETED,
-            "failure": RunStatus.FAILED,
-            "cancelled": RunStatus.CANCELLED,
-        }
-        return status_map.get(status.lower(), RunStatus.PENDING)
-
-
-# ============================================================================
 # 导出
 # ============================================================================
 
 __all__ = [
-    # Utils
-    "CompatibilityMapper",
     # Snapshots
     "FileChangeStats",
     # Enums

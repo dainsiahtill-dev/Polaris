@@ -29,7 +29,6 @@ from ..internal.ports import (
 from ..internal.process_launcher import LauncherError, ProcessLauncher
 from ..internal.runtime_backend_adapter import describe_workflow_sync, get_adapter, query_workflow_sync
 from ..internal.runtime_contracts import (
-    CompatibilityMapper,
     FileChangeStats,
     OrchestrationMode,
     OrchestrationRunRequest,
@@ -78,7 +77,6 @@ from .contracts import (
 __all__ = [
     "SUPPORTED_ORCHESTRATION_RUNTIMES",
     "CancelWorkflowCommandV1",
-    "CompatibilityMapper",
     "EventLevel",
     "EventStream",
     "EventType",
