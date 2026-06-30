@@ -9,6 +9,9 @@ BACKEND_ROOT = Path(__file__).resolve().parents[3]
 POLARIS_ROOT = BACKEND_ROOT / "polaris"
 REMOVED_TURN_ENGINE_COMPAT_MODULE = "polaris.cells.roles.kernel.internal.turn_engine.compat"
 REMOVED_TURN_ENGINE_COMPAT_CLASS = "TurnEngineCompatMixin"
+REMOVED_KERNEL_BRIDGE_PATH = POLARIS_ROOT / "cells/roles/kernel/internal/kernel_bridge.py"
+REMOVED_KERNEL_TURN_ENGINE_PATH = POLARIS_ROOT / "cells/roles/kernel/internal/kernel/turn_engine.py"
+REMOVED_TURN_ENGINE_EXECUTOR = "TurnEngineExecutor"
 
 
 def _production_python_files() -> list[Path]:
@@ -57,6 +60,24 @@ def test_turn_engine_compat_helper_api_is_not_reintroduced() -> None:
     assert violations == [], (
         "TurnEngineCompatMixin is removed. Add execution behavior to TransactionKernel/"
         "RoleExecutionKernel instead of reviving the old TurnEngine helper API:\n" + "\n".join(violations)
+    )
+
+
+def test_retired_kernel_turn_engine_facades_are_not_reintroduced() -> None:
+    """TransactionKernel is the only role-turn execution implementation surface."""
+    assert not REMOVED_KERNEL_BRIDGE_PATH.exists(), "Retired kernel_bridge.py was recreated."
+    assert not REMOVED_KERNEL_TURN_ENGINE_PATH.exists(), "Retired kernel/turn_engine.py was recreated."
+
+    violations: list[str] = []
+    for path in _production_python_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id == REMOVED_TURN_ENGINE_EXECUTOR:
+                violations.append(f"{path.relative_to(BACKEND_ROOT).as_posix()}: {REMOVED_TURN_ENGINE_EXECUTOR}")
+
+    assert violations == [], (
+        "TurnEngineExecutor is retired. Add execution behavior to TransactionKernel/"
+        "RoleExecutionKernel instead of restoring a second role-turn engine:\n" + "\n".join(violations)
     )
 
 

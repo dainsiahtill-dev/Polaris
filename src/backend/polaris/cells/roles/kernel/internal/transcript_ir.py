@@ -12,9 +12,9 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 - [x] public/transcript_ir.py 已创建（完整定义 + 新增类型）
 - [x] public/__init__.py 已更新（导出所有类型）
 - [x] 本文件已替换为重导出 shim
-- [ ] turn_engine.py       -> public.transcript_ir
+- [x] retired duplicate role-turn execution facade; TransactionKernel owns execution
 - [ ] conversation_state.py -> public.transcript_ir
-- [ ] kernel_bridge.py     -> public.transcript_ir
+- [x] retired duplicate projection bridge; public/kernel boundary owns projection
 - [ ] test_transcript_ir.py -> public.transcript_ir
 - [ ] test_transcript_leak_guard.py -> public.transcript_ir
 
