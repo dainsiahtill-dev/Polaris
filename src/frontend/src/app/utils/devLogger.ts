@@ -68,24 +68,6 @@ export const devLogger = {
 };
 
 /**
- * 向后兼容的导出
- */
-export const devLog = {
-  log: (...args: unknown[]) => {
-    if (shouldLog('debug')) console.log(...args);
-  },
-  debug: (...args: unknown[]) => {
-    if (shouldLog('debug')) console.debug(...args);
-  },
-  warn: (...args: unknown[]) => {
-    if (shouldLog('warn')) console.warn(...args);
-  },
-  error: (...args: unknown[]) => {
-    console.error(...args);
-  },
-};
-
-/**
  * 创建带前缀的 logger 实例
  * @param prefix 日志前缀，如组件名
  * @returns Logger instance
