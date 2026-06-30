@@ -1269,6 +1269,53 @@ class TestLLMCallerInvokerDelegation:
         assert captured["kwargs"]["max_tokens"] == 1234
         assert captured["kwargs"]["platform_retry_max"] == 2
 
+    async def test_structured_fallback_delegates_to_request_preparer(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The compatibility facade must not own a second structured fallback builder."""
+        sentinel = Mock()
+        captured: dict[str, Any] = {}
+
+        def fake_build(self: LLMRequestPreparer, **kwargs: Any) -> Any:
+            captured["workspace"] = self.workspace
+            captured["kwargs"] = kwargs
+            return sentinel
+
+        monkeypatch.setattr(LLMRequestPreparer, "_build_structured_fallback_request", fake_build)
+        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
+
+        result = caller._build_structured_fallback_request(
+            prepared=Mock(),
+            profile=Mock(role_id="director"),
+            response_model=dict,
+            mode="chat",
+        )
+
+        assert result is sentinel
+        assert captured["workspace"] == "/ws"
+        assert captured["kwargs"]["response_model"] is dict
+        assert captured["kwargs"]["mode"] == "chat"
+
+    async def test_reasoning_retry_delegates_to_request_preparer(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The compatibility facade must not own a second reasoning retry builder."""
+        sentinel = Mock()
+        captured: dict[str, Any] = {}
+
+        def fake_build(self: LLMRequestPreparer, **kwargs: Any) -> Any:
+            captured["workspace"] = self.workspace
+            captured["kwargs"] = kwargs
+            return sentinel
+
+        monkeypatch.setattr(LLMRequestPreparer, "_build_reasoning_truncation_retry_request", fake_build)
+        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
+        profile = Mock(role_id="director")
+        prepared = Mock()
+
+        result = caller._build_reasoning_truncation_retry_request(prepared=prepared, profile=profile)
+
+        assert result is sentinel
+        assert captured["workspace"] == "/ws"
+        assert captured["kwargs"]["prepared"] is prepared
+        assert captured["kwargs"]["profile"] is profile
+
     async def test_call_does_not_pass_itself_as_event_emitter(self) -> None:
         from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
 

@@ -22,13 +22,9 @@ from polaris.cells.roles.kernel.internal.interaction_contract import (
     ProviderCapabilities,
 )
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
-from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
+from polaris.kernelone.llm.engine.contracts import AIRequest
 from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
 
-from .error_handling import (
-    append_runtime_fallback_instruction,
-    build_text_response_fallback_instruction,
-)
 from .helpers import (
     build_native_tool_schemas,
 )
@@ -71,10 +67,6 @@ _RESIDENT_AGI_PARTICIPATION_FLAGS = (
     "capability_surface",
     "decision_boundary",
 )
-
-
-# 5th floor (2026-06-15): reserved output budget for the reasoning-truncation re-ask.
-_REASONING_TRUNCATION_RETRY_MAX_TOKENS = 8000
 
 
 def is_reasoning_truncation_error(error: str) -> bool:
@@ -468,6 +460,16 @@ class LLMCaller:
         """Set ProviderFormatter for lazy serialization."""
         self._formatter = formatter
 
+    def _make_request_preparer(self) -> Any:
+        """Create the canonical request-preparation service for facade helpers."""
+        from .request_preparer import LLMRequestPreparer
+
+        return LLMRequestPreparer(
+            workspace=self.workspace,
+            formatter=self._formatter,
+            model_catalog=self._model_catalog,
+        )
+
     @staticmethod
     def _build_native_tool_schemas(profile: RoleProfile) -> list[dict[str, Any]]:
         """Build native tool schemas from profile (for test compatibility)."""
@@ -592,14 +594,7 @@ class LLMCaller:
         ``LLMRequestPreparer`` so final provider request evidence cannot drift
         between the facade and ``LLMInvoker``.
         """
-        from .request_preparer import LLMRequestPreparer
-
-        preparer = LLMRequestPreparer(
-            workspace=self.workspace,
-            formatter=self._formatter,
-            model_catalog=self._model_catalog,
-        )
-        return await preparer._prepare_llm_request(
+        return await self._make_request_preparer()._prepare_llm_request(
             profile=profile,
             system_prompt=system_prompt,
             context=context,
@@ -633,25 +628,12 @@ class LLMCaller:
         response_model: type,
         mode: str = "structured",
     ) -> AIRequest:
-        """Reuse prepared request baseline when native structured output is unavailable."""
-        fallback_options = dict(prepared.request_options)
-        fallback_options.pop("response_format", None)
-        fallback_instruction = build_text_response_fallback_instruction(response_model)
-        fallback_input = append_runtime_fallback_instruction(
-            str(prepared.input_text or ""),
-            fallback_instruction,
-        )
-        fallback_context = dict(prepared.ai_request.context if isinstance(prepared.ai_request.context, dict) else {})
-        fallback_context["workspace"] = self.workspace
-        fallback_context["mode"] = str(mode or "structured")
-        fallback_context["response_format_mode"] = "text_json_fallback"
-        self._append_fallback_instruction_to_chat_messages(fallback_context, fallback_instruction)
-        return AIRequest(
-            task_type=TaskType.DIALOGUE,
-            role=profile.role_id,
-            input=fallback_input,
-            options=fallback_options,
-            context=fallback_context,
+        """Delegate fallback request construction to ``LLMRequestPreparer``."""
+        return self._make_request_preparer()._build_structured_fallback_request(
+            prepared=prepared,
+            profile=profile,
+            response_model=response_model,
+            mode=mode,
         )
 
     def _build_reasoning_truncation_retry_request(
@@ -660,68 +642,17 @@ class LLMCaller:
         prepared: PreparedLLMRequest,
         profile: RoleProfile,
     ) -> AIRequest:
-        """Re-ask after a reasoning-model truncated mid-thought (5th floor).
-
-        Live (factory-bench L2-08/11/12, 2026-06-15): on an edit/fill turn whose output
-        budget collapsed, the weak qwen Director spends its tiny budget on
-        ``reasoning_content`` and is truncated (``finish_reason=length``) BEFORE any
-        visible output / tool call → ``Empty visible output`` → ``no_materialized``.
-        This retry RESERVES a larger output budget AND tells the model to stop thinking
-        and emit the tool call directly, so the write actually lands. Native tools and
-        the original task_type are PRESERVED (unlike the native-tool-text fallback).
-        """
-        fallback_options = dict(prepared.request_options)
-        try:
-            current_max = int(fallback_options.get("max_tokens") or 0)
-        except (TypeError, ValueError):
-            current_max = 0
-        fallback_options["max_tokens"] = max(current_max, _REASONING_TRUNCATION_RETRY_MAX_TOKENS)
-        fallback_instruction = (
-            "【推理截断回退】\n"
-            "你上一次在推理(thinking)中途被截断(finish_reason=length),没有产出任何可见输出或工具调用。"
-            "这次请【最小化推理】:不要长篇思考,直接输出工具调用(write_file/edit_blocks 等)。"
-            "把要写的文件正文【完整放进工具参数】,严禁只在思考里描述而不调用工具。"
-        )
-        fallback_input = append_runtime_fallback_instruction(str(prepared.input_text or ""), fallback_instruction)
-        fallback_context = dict(prepared.ai_request.context if isinstance(prepared.ai_request.context, dict) else {})
-        fallback_context["workspace"] = self.workspace
-        fallback_context["reasoning_truncation_retry"] = True
-        self._append_fallback_instruction_to_chat_messages(fallback_context, fallback_instruction)
-        return AIRequest(
-            task_type=prepared.ai_request.task_type,
-            role=profile.role_id,
-            input=fallback_input,
-            options=fallback_options,
-            context=fallback_context,
+        """Delegate reasoning-truncation retry construction to ``LLMRequestPreparer``."""
+        return self._make_request_preparer()._build_reasoning_truncation_retry_request(
+            prepared=prepared,
+            profile=profile,
         )
 
     @staticmethod
     def _append_fallback_instruction_to_chat_messages(context: dict[str, Any], instruction: str) -> None:
-        raw_messages = context.get("chat_messages")
-        if not isinstance(raw_messages, list):
-            return
+        from .request_preparer import LLMRequestPreparer
 
-        messages: list[dict[str, str]] = []
-        for item in raw_messages:
-            if not isinstance(item, dict):
-                continue
-            content = str(item.get("content") or "")
-            if not content.strip():
-                continue
-            role = str(item.get("role") or "").strip().lower() or "user"
-            messages.append({"role": role, "content": content})
-
-        if not messages:
-            return
-
-        target_index = next(
-            (index for index in range(len(messages) - 1, -1, -1) if messages[index]["role"] == "user"),
-            len(messages) - 1,
-        )
-        target = dict(messages[target_index])
-        target["content"] = append_runtime_fallback_instruction(target["content"], instruction)
-        messages[target_index] = target
-        context["chat_messages"] = messages
+        LLMRequestPreparer._append_fallback_instruction_to_chat_messages(context, instruction)
 
     # Event emission methods - delegated to invoker
     def _emit_call_error_event(
