@@ -2236,17 +2236,46 @@ def test_materialization_public_schedule_entrypoint_forwards_bridge(
 ) -> None:
     calls: list[dict[str, Any]] = []
 
-    def fake_bridge(adapter: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    def fake_plan_probe(adapter: Any, **kwargs: Any) -> dict[str, Any]:
+        assert adapter is not None
+        assert kwargs["task"] == {"target_files": ["main.go"]}
+        assert kwargs["artifact_quality_errors"] == ("Go syntax check failed",)
+        return {
+            "schema_version": "director.materialization_quality_plan_probe_preaudit.v1",
+            "status": "already_clean",
+            "read_only": True,
+            "runtime_public_entrypoint": "query_director_repair_materialization_plan_probe",
+        }
+
+    def fake_runner_builder(adapter: Any, **kwargs: Any) -> Any:
         calls.append({"adapter": adapter, **kwargs})
-        return (
-            [{"tool": "write_file", "success": True, "result": {"ok": True}}],
-            {"scheduler_bridge": {"schema_version": "director.materialization_quality_scheduler_bridge.v1"}},
-        )
+
+        def runner(step: Any) -> list[dict[str, Any]]:
+            if step.step_id != "materialization.hygiene_scaffold":
+                return []
+            return [
+                {
+                    "tool": "write_file",
+                    "success": True,
+                    "result": {
+                        "ok": True,
+                        "source_tool": "deterministic_scaffold_marker_cleanup",
+                        "bridge_step_id": step.step_id,
+                    },
+                }
+            ]
+
+        return runner
 
     monkeypatch.setattr(
         materialization_quality_repair_bridge,
-        "run_materialization_quality_repairs",
-        fake_bridge,
+        "build_materialization_quality_step_runner",
+        fake_runner_builder,
+    )
+    monkeypatch.setattr(
+        materialization_quality_repair_bridge,
+        "project_materialization_quality_plan_probe_preaudit",
+        fake_plan_probe,
     )
 
     adapter = _FakeAdapter(tmp_path)
@@ -2267,8 +2296,10 @@ def test_materialization_public_schedule_entrypoint_forwards_bridge(
     assert results[0]["tool"] == "write_file"
     public_boundary = summary["public_boundary"]
     assert public_boundary["mode"] == "runtime_owned_schedule_public_boundary"
+    assert public_boundary["runtime_facade_entrypoint"] == "run_director_materialization_quality_repair_facade"
     assert public_boundary["typed_contract"] == "RunDirectorMaterializationQualityRepairScheduleCommandV1"
     assert public_boundary["typed_result"] == "DirectorMaterializationQualityRepairScheduleResultV1"
+    assert summary["runtime_materialization_facade"]["owner_cell"] == "director.runtime"
 
     legacy_results, legacy_summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
         adapter,

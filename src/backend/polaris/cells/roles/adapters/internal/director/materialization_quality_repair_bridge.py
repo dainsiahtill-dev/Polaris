@@ -173,6 +173,48 @@ def run_materialization_quality_repairs(
     return tool_results, bridged_summary
 
 
+def build_materialization_quality_step_runner(
+    adapter: Any,
+    *,
+    task: Mapping[str, Any] | None,
+    task_id: str,
+    artifact_quality_errors: Sequence[str],
+    convergence_verifier: Callable[[Any], Any] | None = None,
+) -> Callable[[DirectorRepairMaterializationQualityStepV1], list[dict[str, Any]]]:
+    """Return the adapter-owned materialization step runner port."""
+
+    task_payload = dict(task or {})
+    quality_errors = [str(item) for item in artifact_quality_errors]
+
+    def _run_step(step: DirectorRepairMaterializationQualityStepV1) -> list[dict[str, Any]]:
+        return _run_materialization_quality_repair_step(
+            step.step_id,
+            adapter,
+            task=task_payload,
+            task_id=task_id,
+            artifact_quality_errors=quality_errors,
+            convergence_verifier=convergence_verifier,
+        )
+
+    return _run_step
+
+
+def project_materialization_quality_plan_probe_preaudit(
+    adapter: Any,
+    *,
+    task: Mapping[str, Any] | None,
+    artifact_quality_errors: Sequence[str],
+) -> dict[str, Any]:
+    """Project materialization plan-probe evidence for the runtime facade."""
+
+    return _project_materialization_plan_probe_preaudit(
+        adapter,
+        task=task,
+        artifact_quality_errors=[str(item) for item in artifact_quality_errors],
+        coverage_preaudit={},
+    )
+
+
 def run_typescript_semantic_quality_repairs(
     adapter: Any,
     *,
@@ -2638,6 +2680,8 @@ def _source_tools(tool_results: list[dict[str, Any]]) -> list[str]:
 
 
 __all__ = [
+    "build_materialization_quality_step_runner",
+    "project_materialization_quality_plan_probe_preaudit",
     "run_materialization_quality_repairs",
     "run_typescript_semantic_quality_repairs",
 ]

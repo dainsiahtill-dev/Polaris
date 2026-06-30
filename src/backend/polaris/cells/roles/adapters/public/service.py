@@ -119,23 +119,69 @@ def run_director_materialization_quality_repair_schedule_result(
 ) -> DirectorMaterializationQualityRepairScheduleResultV1:
     """Run Director materialization-quality repair schedule through the typed public boundary."""
 
-    from ..internal.director.materialization_quality_repair_bridge import (
-        run_materialization_quality_repairs,
+    from polaris.cells.director.runtime.public import (
+        QueryDirectorRepairMaterializationQualityScheduleV1,
+        query_director_repair_materialization_quality_schedule,
+        run_director_materialization_quality_repair_facade,
     )
 
-    results, summary = run_materialization_quality_repairs(
-        command.adapter_port,
-        task=dict(command.task),
-        task_id=command.task_id,
-        artifact_quality_errors=list(command.artifact_quality_errors),
+    from ..internal.director.materialization_quality_repair_bridge import (
+        build_materialization_quality_step_runner,
+        project_materialization_quality_plan_probe_preaudit,
     )
-    public_summary = dict(summary or {})
+
+    task = dict(command.task)
+    artifact_quality_errors = tuple(command.artifact_quality_errors)
+    schedule = query_director_repair_materialization_quality_schedule(
+        QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
+    )
+    plan_probe_preaudit = project_materialization_quality_plan_probe_preaudit(
+        task=dict(command.task),
+        adapter=command.adapter_port,
+        artifact_quality_errors=artifact_quality_errors,
+    )
+    facade_result = run_director_materialization_quality_repair_facade(
+        artifact_quality_errors=artifact_quality_errors,
+        runner_step_ids=tuple(step.step_id for step in schedule.items),
+        runner=build_materialization_quality_step_runner(
+            command.adapter_port,
+            task=task,
+            task_id=command.task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        ),
+        plan_probe_preaudit=plan_probe_preaudit,
+    )
+    results = [dict(item) for item in facade_result.tool_results]
+    public_summary = dict(facade_result.summary)
+    public_summary["repair_kernel"] = _project_public_materialization_repair_kernel_summary(
+        results,
+        coverage_preaudit=dict(facade_result.coverage_preaudit),
+    )
+    public_summary["coverage_preaudit"] = dict(facade_result.coverage_preaudit)
+    public_summary["plan_probe_preaudit"] = dict(facade_result.plan_probe_preaudit)
+    public_summary["schedule_reconciliation"] = dict(facade_result.schedule_reconciliation)
+    public_summary["dark_launch_comparison"] = {
+        "schema_version": "director.repair_shadow_comparison.v1",
+        "comparison_mode": "receipt_projection_self_check",
+        "cutover_ready": False,
+        "cutover_blockers": ["independent_shadow_required"],
+        "independent_shadow_required": True,
+        "independent_shadow_satisfied": False,
+        "runtime_facade_entrypoint": "run_director_materialization_quality_repair_facade",
+    }
+    public_summary["runtime_materialization_facade"] = {
+        "schema_version": facade_result.schema_version,
+        "source": facade_result.source,
+        "owner_cell": facade_result.owner_cell,
+        "execution_boundary": facade_result.execution_boundary,
+    }
     public_summary["public_boundary"] = {
         "schema_version": "roles.adapters.materialization_quality_repair_boundary.v1",
         "mode": "runtime_owned_schedule_public_boundary",
         "internal_function_exported": False,
         "repair_kernel_owner": "director.runtime",
         "director_runtime_public_summary_required": True,
+        "runtime_facade_entrypoint": "run_director_materialization_quality_repair_facade",
         "typed_contract": "RunDirectorMaterializationQualityRepairScheduleCommandV1",
         "typed_result": "DirectorMaterializationQualityRepairScheduleResultV1",
     }
@@ -143,6 +189,33 @@ def run_director_materialization_quality_repair_schedule_result(
         tool_results=tuple(dict(item) for item in results),
         summary=public_summary,
     )
+
+
+def _project_public_materialization_repair_kernel_summary(
+    tool_results: list[dict[str, Any]],
+    *,
+    coverage_preaudit: dict[str, Any],
+) -> dict[str, Any]:
+    receipt_count = 0
+    for item in tool_results:
+        result = item.get("result")
+        if not isinstance(result, dict):
+            continue
+        repair_kernel = result.get("repair_kernel")
+        if not isinstance(repair_kernel, dict):
+            continue
+        receipts = repair_kernel.get("receipts")
+        if isinstance(receipts, list | tuple):
+            receipt_count += sum(1 for receipt in receipts if isinstance(receipt, dict))
+        elif repair_kernel.get("receipt_id") or repair_kernel.get("plan_id"):
+            receipt_count += 1
+    return {
+        "schema_version": "director.repair_kernel_summary_projection.v1",
+        "stage": "materialization_quality_repairs",
+        "receipt_count": receipt_count,
+        "coverage_report": dict(coverage_preaudit),
+        "source": "director.runtime.repair_kernel.materialization_quality_facade",
+    }
 
 
 class _PublicPostExecutionRepairAdapter:
