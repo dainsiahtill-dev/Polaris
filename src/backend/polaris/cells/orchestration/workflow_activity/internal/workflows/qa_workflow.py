@@ -19,6 +19,7 @@ from polaris.cells.orchestration.workflow_activity.internal.embedded_api import 
 from polaris.cells.orchestration.workflow_activity.internal.models import QAWorkflowInput, QAWorkflowResult
 from polaris.cells.orchestration.workflow_activity.internal.runtime_queries import WorkflowQueryState
 from polaris.cells.orchestration.workflow_activity.internal.workflow_client import get_activity_api
+from polaris.cells.qa.audit_verdict.public import build_qa_failure_classification_v1, normalize_qa_failure_class
 from polaris.kernelone.traceability.internal.safety import safe_register_node
 from polaris.kernelone.traceability.public.service import create_traceability_service
 
@@ -33,6 +34,51 @@ def _result_success(payload: Any) -> tuple[bool, dict[str, Any]]:
     return False, {}
 
 
+def _payload_classification(payload: dict[str, Any]) -> dict[str, Any]:
+    nested = payload.get("payload")
+    nested_map = nested if isinstance(nested, dict) else {}
+    classification = nested_map.get("qa_failure_classification") or payload.get("qa_failure_classification")
+    if not isinstance(classification, dict):
+        return {}
+    if str(classification.get("schema_version") or "").strip() != "polaris.qa_failure_classification.v1":
+        return {}
+    normalized = dict(classification)
+    failure_class = str(normalized.get("failure_class") or "").strip()
+    if not failure_class:
+        return {}
+    normalized["failure_class"] = normalize_qa_failure_class(failure_class)
+    return normalized
+
+
+def _workflow_classification(
+    *,
+    passed: bool,
+    reason: str,
+    director_status: str = "",
+) -> dict[str, Any]:
+    if passed:
+        return build_qa_failure_classification_v1(
+            failure_class="PASSED",
+            route="resolved",
+            reason=reason or "QA workflow passed",
+            repairable_by_director=False,
+            severity="info",
+            owner="qa",
+            responsible_layer="qa",
+        ).to_dict()
+    failure_class = (
+        "INCOMPLETE_MATERIALIZATION" if director_status and director_status != "completed" else "IMPLEMENTATION_DEFECT"
+    )
+    return build_qa_failure_classification_v1(
+        failure_class=failure_class,
+        route="pending_exec",
+        reason=reason or "QA workflow failed",
+        repairable_by_director=True,
+        owner="director",
+        responsible_layer="director",
+    ).to_dict()
+
+
 @register_activity("register_traceability_verdict")
 @activity.defn(name="register_traceability_verdict")
 async def _register_traceability_verdict_activity(payload: dict[str, Any]) -> dict[str, Any]:
@@ -43,6 +89,16 @@ async def _register_traceability_verdict_activity(payload: dict[str, Any]) -> di
     reason = str((payload or {}).get("reason") or "").strip()
     evidence = (payload or {}).get("evidence")
     evidence_dict = evidence if isinstance(evidence, dict) else {}
+    classification = _payload_classification(
+        {"payload": {"qa_failure_classification": evidence_dict.get("qa_failure_classification")}}
+    )
+    trace_metadata = {
+        "run_id": run_id,
+        "workspace": workspace,
+        "reason": reason,
+        "qa_failure_classification": classification,
+        "failure_class": str(classification.get("failure_class") or "").strip(),
+    }
 
     trace_service = create_traceability_service(workspace) if workspace else None
     safe_register_node(
@@ -54,7 +110,7 @@ async def _register_traceability_verdict_activity(payload: dict[str, Any]) -> di
             {"passed": passed, "reason": reason, "evidence": evidence_dict},
             ensure_ascii=False,
         ),
-        metadata={"run_id": run_id, "workspace": workspace, "reason": reason},
+        metadata=trace_metadata,
     )
     return {"success": True}
 
@@ -78,16 +134,21 @@ class QAWorkflow(WorkflowQueryState):
         )
         if workflow_input.director_status != "completed":
             reason = f"director_status_{workflow_input.director_status or 'unknown'}"
+            classification = _workflow_classification(
+                passed=False,
+                reason=reason,
+                director_status=workflow_input.director_status,
+            )
             self._record_event(
                 stage="qa_skipped",
                 message="QA skipped because Director did not complete cleanly",
-                details={"reason": reason},
+                details={"reason": reason, "qa_failure_classification": classification},
             )
             return QAWorkflowResult(
                 run_id=workflow_input.run_id,
                 passed=False,
                 reason=reason,
-                evidence={"skipped": True},
+                evidence={"skipped": True, "qa_failure_classification": classification},
             )
 
         unit_success, unit_payload = _result_success(
@@ -136,10 +197,26 @@ class QAWorkflow(WorkflowQueryState):
 
         passed = bool(unit_success and integration_success)
         reason = "qa_passed" if passed else "qa_failed"
+        classification = _workflow_classification(
+            passed=passed,
+            reason=reason,
+            director_status=workflow_input.director_status,
+        )
+        evidence["qa_failure_classification"] = classification
+        unit_classification = _payload_classification(unit_payload)
+        integration_classification = _payload_classification(integration_payload)
+        if unit_classification:
+            evidence["unit_qa_failure_classification"] = unit_classification
+        if integration_classification:
+            evidence["integration_qa_failure_classification"] = integration_classification
         self._record_event(
             stage="qa_completed",
             message="QA workflow completed",
-            details={"run_id": workflow_input.run_id, "passed": passed},
+            details={
+                "run_id": workflow_input.run_id,
+                "passed": passed,
+                "qa_failure_classification": classification,
+            },
         )
         try:
             await workflow.execute_activity(

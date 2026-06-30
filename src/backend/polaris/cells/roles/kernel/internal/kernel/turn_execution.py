@@ -324,6 +324,83 @@ def _llm_metadata_from_ledger_on_error(
     return metadata
 
 
+def _append_tool_dispatch_dropped_control_plane_events(
+    *,
+    role: str,
+    profile: RoleProfile,
+    request: RoleTurnRequest,
+    workspace: str,
+    turn_id: str,
+    error_metadata: dict[str, Any],
+    reason: str,
+) -> None:
+    """Commit dropped native tool-call facts to the control-plane ledger."""
+
+    from polaris.cells.control_plane.run_ledger.public import (
+        AppendRunLedgerEventCommandV1,
+        append_run_ledger_event,
+        build_tool_call_lifecycle_receipt,
+    )
+
+    native_count = 1
+    provider_response_hash = ""
+    for flag in error_metadata.get("anomaly_flags", []):
+        if isinstance(flag, dict) and str(flag.get("type") or "") == "TOOL_DISPATCH_DROPPED":
+            native_count = max(1, int(flag.get("native_tool_calls_count") or 1))
+            provider_response_hash = str(flag.get("provider_response_hash") or "").strip()
+            break
+    lifecycle = build_tool_call_lifecycle_receipt(
+        run_id=str(request.run_id or turn_id),
+        task_id=str(request.task_id or ""),
+        turn_id=turn_id,
+        role=str(getattr(profile, "role_id", "") or role or ""),
+        provider_response_hash=provider_response_hash,
+        native_tool_calls_count=native_count,
+        decoded_tool_calls_count=0,
+        dispatched_tool_calls_count=0,
+        receipts=[],
+        dispatch_status="dropped",
+        failure_class="TOOL_DISPATCH_DROPPED",
+        reason=reason,
+    )
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=workspace,
+            run_id=str(request.run_id or turn_id),
+            event={
+                "event_type": "tool_call_lifecycle",
+                "stage": "director_tool_dispatch",
+                "task_id": str(request.task_id or ""),
+                "run_id": str(request.run_id or turn_id),
+                "tool_call_lifecycle_receipt": lifecycle.to_dict(),
+                "tool_call_lifecycle": lifecycle.to_dict(),
+                "job_token": {
+                    "run_id": str(request.run_id or turn_id),
+                    "task_id": str(request.task_id or ""),
+                    "project_id": str(request.task_id or "unknown"),
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {},
+                },
+            },
+        )
+    )
+    _append_director_task_boundary_verdict(
+        role=role,
+        workspace=workspace,
+        task_id=str(request.task_id or ""),
+        run_id=str(request.run_id or turn_id),
+        context_override=getattr(request, "context_override", None),
+        tool_results=[],
+        tool_dispatch={
+            "status": "dropped",
+            "dropped": True,
+            "native_tool_calls_count": native_count,
+            "provider_response_hash": provider_response_hash,
+        },
+        evidence_refs=[str(error_metadata.get("context_snapshot_ref") or "").strip()],
+    )
+
+
 async def execute_transaction_kernel_turn(
     kernel: RoleExecutionKernel,
     role: str,
@@ -535,68 +612,14 @@ async def execute_transaction_kernel_turn(
         )
         if bool(error_metadata.get("tool_dispatch_dropped")):
             try:
-                from polaris.cells.control_plane.run_ledger.public import (
-                    AppendRunLedgerEventCommandV1,
-                    append_run_ledger_event,
-                    build_tool_call_lifecycle_receipt,
-                )
-
-                native_count = 1
-                provider_response_hash = ""
-                for flag in error_metadata.get("anomaly_flags", []):
-                    if isinstance(flag, dict) and str(flag.get("type") or "") == "TOOL_DISPATCH_DROPPED":
-                        native_count = max(1, int(flag.get("native_tool_calls_count") or 1))
-                        provider_response_hash = str(flag.get("provider_response_hash") or "").strip()
-                        break
-                lifecycle = build_tool_call_lifecycle_receipt(
-                    run_id=str(request.run_id or turn_id),
-                    task_id=str(request.task_id or ""),
-                    turn_id=turn_id,
-                    role=str(profile.role_id or ""),
-                    provider_response_hash=provider_response_hash,
-                    native_tool_calls_count=native_count,
-                    decoded_tool_calls_count=0,
-                    dispatched_tool_calls_count=0,
-                    receipts=[],
-                    dispatch_status="dropped",
-                    failure_class="TOOL_DISPATCH_DROPPED",
-                    reason=str(exc),
-                )
-                append_run_ledger_event(
-                    AppendRunLedgerEventCommandV1(
-                        workspace=str(request.workspace or kernel.workspace or "."),
-                        run_id=str(request.run_id or turn_id),
-                        event={
-                            "event_type": "tool_call_lifecycle",
-                            "stage": "director_tool_dispatch",
-                            "task_id": str(request.task_id or ""),
-                            "run_id": str(request.run_id or turn_id),
-                            "tool_call_lifecycle_receipt": lifecycle.to_dict(),
-                            "tool_call_lifecycle": lifecycle.to_dict(),
-                            "job_token": {
-                                "run_id": str(request.run_id or turn_id),
-                                "task_id": str(request.task_id or ""),
-                                "project_id": str(request.task_id or "unknown"),
-                                "capability_audit": {"ok": True, "issues": []},
-                                "gate_policy": {},
-                            },
-                        },
-                    )
-                )
-                _append_director_task_boundary_verdict(
+                _append_tool_dispatch_dropped_control_plane_events(
                     role=role,
                     workspace=str(request.workspace or kernel.workspace or "."),
-                    task_id=str(request.task_id or ""),
-                    run_id=str(request.run_id or turn_id),
-                    context_override=getattr(request, "context_override", None),
-                    tool_results=[],
-                    tool_dispatch={
-                        "status": "dropped",
-                        "dropped": True,
-                        "native_tool_calls_count": native_count,
-                        "provider_response_hash": provider_response_hash,
-                    },
-                    evidence_refs=[str(error_metadata.get("context_snapshot_ref") or "").strip()],
+                    profile=profile,
+                    request=request,
+                    turn_id=turn_id,
+                    error_metadata=error_metadata,
+                    reason=str(exc),
                 )
             except (OSError, RuntimeError, TypeError, ValueError):
                 logger.debug("failed to append tool_dispatch_dropped ledger event", exc_info=True)
@@ -983,12 +1006,45 @@ async def execute_transaction_kernel_stream(
     accumulated_thinking: list[str] = []
     stream_tool_calls: list[dict[str, Any]] = []
     stream_tool_results: list[dict[str, Any]] = []
-    async for event in tk.execute_stream(
-        turn_id,
-        messages,
-        tool_definitions,
-        tool_choice_override=_forced_tool_choice_override(getattr(request, "context_override", None)),
-    ):
+
+    async def _iter_transaction_stream_events():
+        try:
+            async for stream_event in tk.execute_stream(
+                turn_id,
+                messages,
+                tool_definitions,
+                tool_choice_override=_forced_tool_choice_override(getattr(request, "context_override", None)),
+            ):
+                yield stream_event
+        except Exception as exc:
+            try:
+                context_gateway.record_projection_outcome(
+                    success=False,
+                    tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                logger.debug("Projection outcome feedback failed after stream TransactionKernel error", exc_info=True)
+            error_metadata = _llm_metadata_from_ledger_on_error(
+                getattr(exc, "turn_ledger", None),
+                messages=messages,
+                tool_definitions=tool_definitions,
+            )
+            if bool(error_metadata.get("tool_dispatch_dropped")):
+                try:
+                    _append_tool_dispatch_dropped_control_plane_events(
+                        role=role,
+                        workspace=str(request.workspace or kernel.workspace or "."),
+                        profile=profile,
+                        request=request,
+                        turn_id=turn_id,
+                        error_metadata=error_metadata,
+                        reason=str(exc),
+                    )
+                except (OSError, RuntimeError, TypeError, ValueError):
+                    logger.debug("failed to append stream tool_dispatch_dropped ledger event", exc_info=True)
+            raise
+
+    async for event in _iter_transaction_stream_events():
         event_dict: dict[str, Any]
         if isinstance(event, TurnPhaseEvent):
             event_dict = {
@@ -1143,6 +1199,18 @@ async def execute_transaction_kernel_stream(
                 turn_events_metadata=turn_events_metadata,
                 metadata=result_metadata,
             )
+            try:
+                _append_director_task_boundary_verdict(
+                    role=role,
+                    workspace=str(request.workspace or kernel.workspace or "."),
+                    task_id=str(request.task_id or ""),
+                    run_id=str(request.run_id or turn_id),
+                    context_override=getattr(request, "context_override", None),
+                    tool_results=completion_tool_results,
+                    evidence_refs=[str(result_metadata.get("context_snapshot_ref") or "").strip()],
+                )
+            except (OSError, RuntimeError, TypeError, ValueError):
+                logger.debug("failed to append stream director task boundary verdict", exc_info=True)
         elif isinstance(event, ErrorEvent):
             try:
                 context_gateway.record_projection_outcome(

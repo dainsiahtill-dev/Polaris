@@ -339,6 +339,25 @@ _QA_FAILURE_CLASS_ALIASES = {
     "progress_stalled": "PROGRESS_STALLED",
 }
 
+QA_ARTIFACT_FAILURE_CLASSES = frozenset(
+    {
+        "INCOMPLETE_MATERIALIZATION",
+        "MISSING_ENTRYPOINT_TARGET",
+    }
+)
+
+QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS = "TASK_BOUNDARY_FAILED"
+QA_DEFAULT_TOOL_LIFECYCLE_FAILURE_CLASS = "TOOL_LIFECYCLE_FAILED"
+
+QA_PLATFORM_FAILURE_CLASSES = frozenset(
+    {
+        "TOOL_DISPATCH_DROPPED",
+        "TASKBOARD_DEADLOCK",
+        "LEDGER_PROJECTION_INCOMPLETE",
+        QA_DEFAULT_TOOL_LIFECYCLE_FAILURE_CLASS,
+    }
+)
+
 
 def _normalize_qa_failure_class(value: str, *, style: str = "canonical") -> str:
     token = _require_non_empty("failure_class", value)
@@ -348,6 +367,12 @@ def _normalize_qa_failure_class(value: str, *, style: str = "canonical") -> str:
             return "scope_mismatch"
         return canonical.lower()
     return canonical
+
+
+def normalize_qa_failure_class(value: str, *, failure_class_style: str = "canonical") -> str:
+    """Normalize legacy or canonical QA failure-class tokens."""
+
+    return _normalize_qa_failure_class(value, style=failure_class_style)
 
 
 def build_qa_failure_classification_v1(
@@ -546,6 +571,8 @@ class QaAuditCompletedEventV1:
 
 
 __all__ = [
+    "QA_ARTIFACT_FAILURE_CLASSES",
+    "QA_PLATFORM_FAILURE_CLASSES",
     # Task Market consumer contracts
     "ClaimQaTaskCommandV1",
     "FailureSignalV1",
@@ -565,4 +592,6 @@ __all__ = [
     "TracebackFrameV1",
     "VisualAuditFindingV1",
     "VisualQaAuditResultV1",
+    "build_qa_failure_classification_v1",
+    "normalize_qa_failure_class",
 ]

@@ -1,0 +1,588 @@
+from __future__ import annotations
+
+from types import MethodType, SimpleNamespace
+from typing import Any
+
+import pytest
+from polaris.cells.control_plane.run_ledger.public import (
+    ReadRunLedgerProjectionQueryV1,
+    read_run_ledger_projection,
+)
+from polaris.cells.qa.audit_verdict.internal.verdict_engine import QAVerdictEngine
+from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
+    execute_transaction_kernel_stream,
+    execute_transaction_kernel_turn,
+)
+from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
+from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
+from polaris.cells.roles.profile.public.service import (
+    RoleExecutionMode,
+    RoleToolPolicy,
+    RoleTurnRequest,
+)
+
+
+class _DroppedToolDispatchKernel:
+    def __init__(self, workspace: str) -> None:
+        self.workspace = workspace
+
+    def _create_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
+        class _TransactionKernel:
+            async def execute(self, *_args: Any, **_kwargs: Any) -> Any:
+                ledger = SimpleNamespace(
+                    llm_calls=[
+                        {
+                            "metadata": {
+                                "context_snapshot_ref": "runtime/contexts/aa/context-snapshot.json",
+                            }
+                        }
+                    ],
+                    anomaly_flags=[
+                        {
+                            "type": "TOOL_DISPATCH_DROPPED",
+                            "native_tool_calls_count": 1,
+                            "provider_response_hash": "provider-response-hash",
+                        }
+                    ],
+                )
+                exc = RuntimeError("tool_dispatch_dropped: provider emitted a tool call but none dispatched")
+                exc.turn_ledger = ledger  # type: ignore[attr-defined]
+                raise exc
+
+        return _TransactionKernel()
+
+    def _tool_contract_requires_no_tools(self, _request: Any) -> bool:
+        return False
+
+    def _request_forces_no_transaction_tools(self, _request: Any) -> bool:
+        return False
+
+    def _build_context_gateway_config(self, _role: str, _profile: Any, _request: Any) -> None:
+        return None
+
+    def _apply_runtime_tool_policy(
+        self,
+        *,
+        request: Any,
+        context_result: Any,
+        tool_definitions: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        return tool_definitions, {}
+
+
+class _SuccessfulNoMaterializationKernel(_DroppedToolDispatchKernel):
+    def _create_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
+        class _TransactionKernel:
+            async def execute(self, *_args: Any, **_kwargs: Any) -> Any:
+                return {
+                    "kind": "final_answer",
+                    "visible_content": "done",
+                    "metrics": {"llm_calls": 1, "tool_calls": 0},
+                    "ledger": SimpleNamespace(llm_calls=[], anomaly_flags=[]),
+                }
+
+        return _TransactionKernel()
+
+    def _get_output_parser(self) -> Any:
+        return SimpleNamespace(
+            parse_thinking=lambda value: SimpleNamespace(clean_content=value, thinking=None),
+            extract_json=lambda _value: None,
+        )
+
+    def _build_turn_history_and_events(self, *_args: Any, **_kwargs: Any) -> tuple[list[Any], list[dict[str, Any]]]:
+        return [], []
+
+    def _commit_turn_to_snapshot(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+class _DroppedToolDispatchStreamKernel(_DroppedToolDispatchKernel):
+    def _create_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
+        controller = TurnTransactionController(
+            llm_provider=lambda *_args, **_kwargs: None,
+            tool_runtime=lambda *_args, **_kwargs: {},
+        )
+
+        async def _raise_stream(
+            self: Any,
+            _turn_id: str,
+            _context: list[dict[str, Any]],
+            _tool_definitions: list[dict[str, Any]],
+            _state_machine: Any,
+            ledger: Any,
+            *,
+            tool_choice_override: Any | None = None,
+        ) -> Any:
+            del self, tool_choice_override
+            if False:  # pragma: no cover - marks this as an async generator
+                yield None
+            ledger.llm_calls = [
+                {
+                    "metadata": {
+                        "context_snapshot_ref": "runtime/contexts/aa/stream-context-snapshot.json",
+                    }
+                }
+            ]
+            ledger.anomaly_flags = [
+                {
+                    "type": "TOOL_DISPATCH_DROPPED",
+                    "native_tool_calls_count": 1,
+                    "provider_response_hash": "stream-provider-response-hash",
+                }
+            ]
+            raise RuntimeError("tool_dispatch_dropped: stream provider emitted a tool call but none dispatched")
+
+        controller._execute_turn_stream = MethodType(_raise_stream, controller)  # type: ignore[method-assign]
+        return controller
+
+
+class _SuccessfulStreamNoMaterializationKernel(_SuccessfulNoMaterializationKernel):
+    def _create_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
+        class _TransactionKernel:
+            async def execute_stream(self, turn_id: str, *_args: Any, **_kwargs: Any) -> Any:
+                yield CompletionEvent(
+                    turn_id=turn_id,
+                    status="success",
+                    llm_calls=1,
+                    tool_calls=0,
+                    monitoring={
+                        "context_snapshot_ref": "runtime/contexts/aa/stream-success-context.json",
+                    },
+                )
+
+        return _TransactionKernel()
+
+
+class _NoopPublisher:
+    async def publish_stream_event(self, *_args: Any, **_kwargs: Any) -> bool:
+        return True
+
+
+@pytest.mark.asyncio
+async def test_role_execution_dropped_tool_dispatch_commits_ledger_and_blocks_qa(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    class _ContextGateway:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        async def build_context(self, *_args: Any, **_kwargs: Any) -> Any:
+            return SimpleNamespace(
+                messages=[{"role": "user", "content": "write src/index.js"}],
+                token_estimate=128,
+            )
+
+        def record_projection_outcome(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+        _ContextGateway,
+    )
+
+    profile = SimpleNamespace(
+        role_id="director",
+        provider_id="test-provider",
+        model="test-model",
+        version="test-profile-v1",
+        tool_policy=RoleToolPolicy(
+            whitelist=["write_file"],
+            allow_code_write=True,
+        ),
+    )
+    request = RoleTurnRequest(
+        mode=RoleExecutionMode.WORKFLOW,
+        workspace=str(tmp_path),
+        message="[mode:materialize]\nCreate src/index.js",
+        task_id="TASK-1",
+        run_id="run-dropped",
+        context_override={
+            "delivery_mode": "materialize_changes",
+            "target_files": ["src/index.js"],
+        },
+    )
+
+    result = await execute_transaction_kernel_turn(
+        _DroppedToolDispatchKernel(str(tmp_path)),  # type: ignore[arg-type]
+        "director",
+        profile,  # type: ignore[arg-type]
+        request,
+        "system prompt",
+        SimpleNamespace(full_hash="fingerprint"),
+        "observer-run",
+        None,
+    )
+
+    assert result.is_complete is False
+    assert result.metadata["tool_dispatch_dropped"] is True
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-dropped")
+    ).projection
+
+    assert projection["ok"] is False
+    assert projection["tool_lifecycle"]["dropped_count"] == 1
+    assert projection["tool_lifecycle"]["events"][0]["provider_response_hash"] == "provider-response-hash"
+    assert projection["task_boundary"]["latest"]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+
+    qa_envelope = QAVerdictEngine(str(tmp_path)).build_envelope(
+        task_id="TASK-1",
+        payload={"run_id": "run-dropped", "job_token": {"run_id": "run-dropped"}},
+        gate_name="legacy-pass",
+        audit_result={"ok": True, "verdict": "PASS"},
+        ledger_projection=projection,
+    )
+
+    assert qa_envelope.ok is False
+    assert qa_envelope.verdict == "BLOCKED"
+    assert qa_envelope.classification.failure_class == "TOOL_DISPATCH_DROPPED"
+    assert qa_envelope.classification.responsible_layer == "execution_control_plane"
+
+
+@pytest.mark.asyncio
+async def test_stream_role_execution_dropped_tool_dispatch_commits_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    class _ContextGateway:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        async def build_context(self, *_args: Any, **_kwargs: Any) -> Any:
+            return SimpleNamespace(
+                messages=[{"role": "user", "content": "write src/index.js"}],
+                token_estimate=128,
+            )
+
+        def record_projection_outcome(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+        _ContextGateway,
+    )
+
+    profile = SimpleNamespace(
+        role_id="director",
+        provider_id="test-provider",
+        model="test-model",
+        version="test-profile-v1",
+        tool_policy=RoleToolPolicy(
+            whitelist=["write_file"],
+            allow_code_write=True,
+        ),
+    )
+    request = RoleTurnRequest(
+        mode=RoleExecutionMode.WORKFLOW,
+        workspace=str(tmp_path),
+        message="[mode:materialize]\nCreate src/index.js",
+        task_id="TASK-1",
+        run_id="run-stream-dropped",
+        context_override={
+            "delivery_mode": "materialize_changes",
+            "target_files": ["src/index.js"],
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="tool_dispatch_dropped"):
+        async for _event in execute_transaction_kernel_stream(
+            _DroppedToolDispatchStreamKernel(str(tmp_path)),  # type: ignore[arg-type]
+            "director",
+            profile,  # type: ignore[arg-type]
+            request,
+            "system prompt",
+            SimpleNamespace(full_hash="fingerprint"),
+            "observer-run",
+            _NoopPublisher(),  # type: ignore[arg-type]
+        ):
+            pass
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-stream-dropped")
+    ).projection
+
+    assert projection["ok"] is False
+    assert projection["tool_lifecycle"]["dropped_count"] == 1
+    assert projection["tool_lifecycle"]["events"][0]["provider_response_hash"] == "stream-provider-response-hash"
+    assert projection["task_boundary"]["latest"]["failure_class"] == "TOOL_DISPATCH_DROPPED"
+
+
+@pytest.mark.asyncio
+async def test_role_execution_successful_turn_with_missing_target_commits_task_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    class _ContextGateway:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        async def build_context(self, *_args: Any, **_kwargs: Any) -> Any:
+            return SimpleNamespace(
+                messages=[{"role": "user", "content": "write src/index.js"}],
+                token_estimate=128,
+            )
+
+        def record_projection_outcome(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+        _ContextGateway,
+    )
+
+    profile = SimpleNamespace(
+        role_id="director",
+        provider_id="test-provider",
+        model="test-model",
+        version="test-profile-v1",
+        tool_policy=RoleToolPolicy(
+            whitelist=["write_file"],
+            allow_code_write=True,
+        ),
+    )
+    request = RoleTurnRequest(
+        mode=RoleExecutionMode.WORKFLOW,
+        workspace=str(tmp_path),
+        message="[mode:materialize]\nCreate src/index.js",
+        task_id="TASK-1",
+        run_id="run-missing-target",
+        context_override={
+            "delivery_mode": "materialize_changes",
+            "target_files": ["src/index.js"],
+        },
+    )
+
+    result = await execute_transaction_kernel_turn(
+        _SuccessfulNoMaterializationKernel(str(tmp_path)),  # type: ignore[arg-type]
+        "director",
+        profile,  # type: ignore[arg-type]
+        request,
+        "system prompt",
+        SimpleNamespace(full_hash="fingerprint"),
+        "observer-run",
+        None,
+    )
+
+    assert result.is_complete is True
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-missing-target")
+    ).projection
+
+    assert projection["ok"] is False
+    assert projection["task_boundary"]["latest"]["failure_class"] == "INCOMPLETE_MATERIALIZATION"
+    assert projection["task_boundary"]["latest"]["missing_target_files"] == ["src/index.js"]
+
+
+@pytest.mark.asyncio
+async def test_role_execution_successful_turn_with_missing_entrypoint_commits_task_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    class _ContextGateway:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        async def build_context(self, *_args: Any, **_kwargs: Any) -> Any:
+            return SimpleNamespace(
+                messages=[{"role": "user", "content": "write package.json"}],
+                token_estimate=128,
+            )
+
+        def record_projection_outcome(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+        _ContextGateway,
+    )
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"start":"node src/index.js"}}',
+        encoding="utf-8",
+    )
+
+    profile = SimpleNamespace(
+        role_id="director",
+        provider_id="test-provider",
+        model="test-model",
+        version="test-profile-v1",
+        tool_policy=RoleToolPolicy(
+            whitelist=["write_file"],
+            allow_code_write=True,
+        ),
+    )
+    request = RoleTurnRequest(
+        mode=RoleExecutionMode.WORKFLOW,
+        workspace=str(tmp_path),
+        message="[mode:materialize]\nCreate package.json",
+        task_id="TASK-1",
+        run_id="run-missing-entrypoint",
+        context_override={
+            "delivery_mode": "materialize_changes",
+            "target_files": ["package.json"],
+        },
+    )
+
+    result = await execute_transaction_kernel_turn(
+        _SuccessfulNoMaterializationKernel(str(tmp_path)),  # type: ignore[arg-type]
+        "director",
+        profile,  # type: ignore[arg-type]
+        request,
+        "system prompt",
+        SimpleNamespace(full_hash="fingerprint"),
+        "observer-run",
+        None,
+    )
+
+    assert result.is_complete is True
+
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-missing-entrypoint")
+    ).projection
+
+    assert projection["ok"] is False
+    assert projection["task_boundary"]["latest"]["failure_class"] == "MISSING_ENTRYPOINT_TARGET"
+    assert projection["task_boundary"]["latest"]["missing_entrypoint_targets"] == ["src/index.js"]
+
+
+@pytest.mark.asyncio
+async def test_stream_role_execution_successful_turn_with_missing_target_commits_task_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    class _ContextGateway:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        async def build_context(self, *_args: Any, **_kwargs: Any) -> Any:
+            return SimpleNamespace(
+                messages=[{"role": "user", "content": "write src/index.js"}],
+                token_estimate=128,
+            )
+
+        def record_projection_outcome(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+        _ContextGateway,
+    )
+
+    profile = SimpleNamespace(
+        role_id="director",
+        provider_id="test-provider",
+        model="test-model",
+        version="test-profile-v1",
+        tool_policy=RoleToolPolicy(
+            whitelist=["write_file"],
+            allow_code_write=True,
+        ),
+    )
+    request = RoleTurnRequest(
+        mode=RoleExecutionMode.WORKFLOW,
+        workspace=str(tmp_path),
+        message="[mode:materialize]\nCreate src/index.js",
+        task_id="TASK-1",
+        run_id="run-stream-missing-target",
+        context_override={
+            "delivery_mode": "materialize_changes",
+            "target_files": ["src/index.js"],
+        },
+    )
+
+    events = [
+        event
+        async for event in execute_transaction_kernel_stream(
+            _SuccessfulStreamNoMaterializationKernel(str(tmp_path)),  # type: ignore[arg-type]
+            "director",
+            profile,  # type: ignore[arg-type]
+            request,
+            "system prompt",
+            SimpleNamespace(full_hash="fingerprint"),
+            "observer-run",
+            _NoopPublisher(),  # type: ignore[arg-type]
+        )
+    ]
+
+    assert any(event.get("type") == "complete" for event in events)
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-stream-missing-target")
+    ).projection
+
+    assert projection["ok"] is False
+    assert projection["task_boundary"]["latest"]["failure_class"] == "INCOMPLETE_MATERIALIZATION"
+    assert projection["task_boundary"]["latest"]["missing_target_files"] == ["src/index.js"]
+
+
+@pytest.mark.asyncio
+async def test_stream_role_execution_successful_turn_with_missing_entrypoint_commits_task_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    class _ContextGateway:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        async def build_context(self, *_args: Any, **_kwargs: Any) -> Any:
+            return SimpleNamespace(
+                messages=[{"role": "user", "content": "write package.json"}],
+                token_estimate=128,
+            )
+
+        def record_projection_outcome(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+        _ContextGateway,
+    )
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"start":"node src/index.js"}}',
+        encoding="utf-8",
+    )
+
+    profile = SimpleNamespace(
+        role_id="director",
+        provider_id="test-provider",
+        model="test-model",
+        version="test-profile-v1",
+        tool_policy=RoleToolPolicy(
+            whitelist=["write_file"],
+            allow_code_write=True,
+        ),
+    )
+    request = RoleTurnRequest(
+        mode=RoleExecutionMode.WORKFLOW,
+        workspace=str(tmp_path),
+        message="[mode:materialize]\nCreate package.json",
+        task_id="TASK-1",
+        run_id="run-stream-missing-entrypoint",
+        context_override={
+            "delivery_mode": "materialize_changes",
+            "target_files": ["package.json"],
+        },
+    )
+
+    events = [
+        event
+        async for event in execute_transaction_kernel_stream(
+            _SuccessfulStreamNoMaterializationKernel(str(tmp_path)),  # type: ignore[arg-type]
+            "director",
+            profile,  # type: ignore[arg-type]
+            request,
+            "system prompt",
+            SimpleNamespace(full_hash="fingerprint"),
+            "observer-run",
+            _NoopPublisher(),  # type: ignore[arg-type]
+        )
+    ]
+
+    assert any(event.get("type") == "complete" for event in events)
+    projection = read_run_ledger_projection(
+        ReadRunLedgerProjectionQueryV1(workspace=str(tmp_path), run_id="run-stream-missing-entrypoint")
+    ).projection
+
+    assert projection["ok"] is False
+    assert projection["task_boundary"]["latest"]["failure_class"] == "MISSING_ENTRYPOINT_TARGET"
+    assert projection["task_boundary"]["latest"]["missing_entrypoint_targets"] == ["src/index.js"]

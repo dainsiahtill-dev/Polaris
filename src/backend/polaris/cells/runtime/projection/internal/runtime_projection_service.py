@@ -36,6 +36,13 @@ from polaris.cells.control_plane.run_ledger.public import (
     read_run_ledger_projection,
 )
 from polaris.cells.docs.court_workflow.public.service import map_engine_to_court_state
+from polaris.cells.qa.audit_verdict.public import (
+    QA_ARTIFACT_FAILURE_CLASSES,
+    QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS,
+    QA_DEFAULT_TOOL_LIFECYCLE_FAILURE_CLASS,
+    QA_PLATFORM_FAILURE_CLASSES,
+    normalize_qa_failure_class,
+)
 from polaris.cells.runtime.projection.internal.constants import DEFAULT_WORKSPACE
 from polaris.cells.runtime.projection.internal.io_helpers import (
     build_cache_root,
@@ -935,7 +942,7 @@ def _apply_run_ledger_director_status_overlay(
         event_rows = events if isinstance(events, list) else []
         failed_events = [item for item in event_rows if isinstance(item, dict) and bool(item.get("failed"))]
         latest_failure = failed_events[-1] if failed_events else {}
-        failure_class = str(latest_failure.get("failure_class") or "TOOL_LIFECYCLE_FAILED").strip()
+        failure_class = str(latest_failure.get("failure_class") or QA_DEFAULT_TOOL_LIFECYCLE_FAILURE_CLASS).strip()
         merged.update(
             {
                 "source": "run_ledger_projection",
@@ -948,10 +955,14 @@ def _apply_run_ledger_director_status_overlay(
             }
         )
     elif latest_boundary_map and not bool(latest_boundary_map.get("ok", True)):
-        failure_class = str(latest_boundary_map.get("failure_class") or "TASK_BOUNDARY_FAILED").strip()
+        failure_class = normalize_qa_failure_class(
+            str(latest_boundary_map.get("failure_class") or QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS).strip()
+        )
         execution_state = "BLOCKED_WITH_REASON"
-        if failure_class in {"INCOMPLETE_MATERIALIZATION", "MISSING_ENTRYPOINT_TARGET"}:
+        if failure_class in QA_ARTIFACT_FAILURE_CLASSES:
             execution_state = "FAILED_ARTIFACT"
+        elif failure_class in QA_PLATFORM_FAILURE_CLASSES:
+            execution_state = "FAILED_PLATFORM"
         merged.update(
             {
                 "source": "run_ledger_projection",
@@ -969,10 +980,10 @@ def _apply_run_ledger_director_status_overlay(
 
 
 def _task_boundary_execution_state(failure_class: str) -> str:
-    normalized = str(failure_class or "").strip().upper()
-    if normalized in {"INCOMPLETE_MATERIALIZATION", "MISSING_ENTRYPOINT_TARGET"}:
+    normalized = normalize_qa_failure_class(str(failure_class or QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS))
+    if normalized in QA_ARTIFACT_FAILURE_CLASSES:
         return "FAILED_ARTIFACT"
-    if normalized in {"TOOL_DISPATCH_DROPPED", "TASKBOARD_DEADLOCK", "LEDGER_PROJECTION_INCOMPLETE"}:
+    if normalized in QA_PLATFORM_FAILURE_CLASSES:
         return "FAILED_PLATFORM"
     if normalized:
         return "BLOCKED_WITH_REASON"
@@ -1025,7 +1036,9 @@ def _apply_run_ledger_task_rows_overlay(
         return rows
 
     boundary_ok = bool(latest_boundary.get("ok", True))
-    failure_class = str(latest_boundary.get("failure_class") or "TASK_BOUNDARY_FAILED").strip().upper()
+    failure_class = normalize_qa_failure_class(
+        str(latest_boundary.get("failure_class") or QA_DEFAULT_TASK_BOUNDARY_FAILURE_CLASS).strip()
+    )
     execution_state = "COMPLETED_VERIFIED" if boundary_ok else _task_boundary_execution_state(failure_class)
     reason = str(latest_boundary.get("reason") or failure_class or execution_state).strip()
     overlay_metadata = {

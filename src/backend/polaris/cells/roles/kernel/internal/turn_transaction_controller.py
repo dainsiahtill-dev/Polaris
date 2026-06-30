@@ -875,6 +875,8 @@ class TurnTransactionController:
             except Exception as e:
                 logger.exception("execute_stream failed: turn_id=%s", turn_id)
                 ledger.finalize()
+                with contextlib.suppress(TypeError):
+                    vars(e)["turn_ledger"] = ledger
                 error_event = self._attach_event_correlation(
                     ErrorEvent(
                         turn_id=turn_id,
@@ -1052,6 +1054,7 @@ class TurnTransactionController:
         tool_choice_override: Any | None = None,
     ) -> AsyncIterator[TurnEvent]:
         """Proxy to StreamOrchestrator.execute_turn_stream."""
+
         async def _call_llm_for_decision_stream(
             call_context: list[dict],
             call_tool_definitions: list[dict],

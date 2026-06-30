@@ -15,6 +15,7 @@ from polaris.cells.orchestration.pm_planning.public.service import (
     run_integration_verify_runner,
 )
 from polaris.cells.orchestration.workflow_activity.internal.workflow_client import get_activity_api
+from polaris.cells.qa.audit_verdict.public import build_qa_failure_classification_v1
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.process.command_executor import CommandExecutionService
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
@@ -27,6 +28,32 @@ activity = get_activity_api()
 def _normalize_metadata(payload: dict[str, Any]) -> dict[str, Any]:
     metadata = (payload or {}).get("metadata")
     return metadata if isinstance(metadata, dict) else {}
+
+
+def _qa_activity_classification(
+    *,
+    passed: bool,
+    reason: str,
+    failure_class: str = "IMPLEMENTATION_DEFECT",
+) -> dict[str, Any]:
+    if passed:
+        return build_qa_failure_classification_v1(
+            failure_class="PASSED",
+            route="resolved",
+            reason=reason or "Workflow QA activity passed",
+            repairable_by_director=False,
+            severity="info",
+            owner="qa",
+            responsible_layer="qa",
+        ).to_dict()
+    return build_qa_failure_classification_v1(
+        failure_class=failure_class,
+        route="pending_qa" if failure_class == "TEST_ENVIRONMENT_FAILURE" else "pending_exec",
+        reason=reason or "Workflow QA activity failed",
+        repairable_by_director=failure_class != "TEST_ENVIRONMENT_FAILURE",
+        owner="qa_infra" if failure_class == "TEST_ENVIRONMENT_FAILURE" else "director",
+        responsible_layer="qa_infra" if failure_class == "TEST_ENVIRONMENT_FAILURE" else "director",
+    ).to_dict()
 
 
 def _write_runtime_result(
@@ -105,27 +132,41 @@ async def run_integration_qa(payload: dict[str, Any]) -> dict[str, Any]:
     workspace = str((payload or {}).get("workspace") or "").strip()
     metadata = _normalize_metadata(payload)
     if not workspace:
+        classification = _qa_activity_classification(
+            passed=False,
+            reason="Integration QA payload is missing workspace",
+            failure_class="EXECUTION_EVIDENCE_MISSING",
+        )
         return ActivityExecutionResult(
             success=False,
             summary="Integration QA payload is missing workspace",
-            payload={"run_id": run_id},
+            payload={"run_id": run_id, "qa_failure_classification": classification},
             errors=["missing_workspace"],
         ).to_dict()
     try:
         success, summary, errors = run_integration_verify_runner(workspace)
     except (RuntimeError, ValueError) as exc:
         error_type = type(exc).__name__
+        classification = _qa_activity_classification(
+            passed=False,
+            reason=f"Integration QA runtime error: {exc}",
+            failure_class="TEST_ENVIRONMENT_FAILURE",
+        )
         return ActivityExecutionResult(
             success=False,
             summary=f"Integration QA runtime error: {exc}",
-            payload={"run_id": run_id},
+            payload={"run_id": run_id, "qa_failure_classification": classification},
             errors=[str(exc)],
             error_code=error_type,
         ).to_dict()
+    classification = _qa_activity_classification(
+        passed=bool(success),
+        reason=str(summary or "").strip(),
+    )
     result = ActivityExecutionResult(
         success=bool(success),
         summary=str(summary or "").strip(),
-        payload={"run_id": run_id, "workspace": workspace},
+        payload={"run_id": run_id, "workspace": workspace, "qa_failure_classification": classification},
         errors=[str(item).strip() for item in errors if str(item).strip()],
     ).to_dict()
     artifact_payload = {
@@ -136,6 +177,7 @@ async def run_integration_qa(payload: dict[str, Any]) -> dict[str, Any]:
         "reason": "integration_qa_passed" if success else "integration_qa_failed",
         "summary": str(summary or "").strip(),
         "errors": [str(item).strip() for item in errors if str(item).strip()],
+        "qa_failure_classification": classification,
         "run_id": run_id,
         "workspace": workspace,
         "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
@@ -161,18 +203,32 @@ async def run_unit_qa(payload: dict[str, Any]) -> dict[str, Any]:
     workspace = str((payload or {}).get("workspace") or "").strip()
     metadata = _normalize_metadata(payload)
     if not workspace:
+        classification = _qa_activity_classification(
+            passed=False,
+            reason="Unit QA payload is missing workspace",
+            failure_class="EXECUTION_EVIDENCE_MISSING",
+        )
         return ActivityExecutionResult(
             success=False,
             summary="Unit QA payload is missing workspace",
-            payload={"run_id": run_id},
+            payload={"run_id": run_id, "qa_failure_classification": classification},
             errors=["missing_workspace"],
         ).to_dict()
     command = _detect_unit_command(workspace)
     success, summary, errors = _run_command(command, workspace, timeout_seconds=120)
+    classification = _qa_activity_classification(
+        passed=bool(success),
+        reason=str(summary or "").strip(),
+    )
     result = ActivityExecutionResult(
         success=bool(success),
         summary=str(summary or "").strip(),
-        payload={"run_id": run_id, "workspace": workspace, "command": command},
+        payload={
+            "run_id": run_id,
+            "workspace": workspace,
+            "command": command,
+            "qa_failure_classification": classification,
+        },
         errors=errors,
     ).to_dict()
     artifact_payload = {
@@ -182,6 +238,7 @@ async def run_unit_qa(payload: dict[str, Any]) -> dict[str, Any]:
         "reason": "unit_qa_passed" if success else "unit_qa_failed",
         "summary": str(summary or "").strip(),
         "errors": [str(item).strip() for item in errors if str(item).strip()],
+        "qa_failure_classification": classification,
         "run_id": run_id,
         "workspace": workspace,
         "command": command,

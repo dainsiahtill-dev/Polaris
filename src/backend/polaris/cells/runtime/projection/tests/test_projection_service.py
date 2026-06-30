@@ -6,6 +6,11 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
+from polaris.cells.control_plane.run_ledger.public import (
+    AppendRunLedgerEventCommandV1,
+    append_run_ledger_event,
+    build_tool_call_lifecycle_receipt,
+)
 from polaris.cells.orchestration.workflow_runtime.public.service import (
     OrchestrationMode,
     OrchestrationSnapshot,
@@ -24,6 +29,7 @@ from polaris.cells.runtime.projection.internal.runtime_projection_service import
     _read_run_ledger_projection_for_run,
     _safe_int,
     _state_token,
+    _task_boundary_execution_state,
     _task_totals,
     _workflow_has_live_rows,
     build_snapshot_payload_from_projection,
@@ -283,6 +289,32 @@ class TestMergeDirectorStatus:
         assert result["error_code"] == "incomplete_materialization"
         assert result["last_error"] == "target files were not written"
 
+    def test_run_ledger_task_boundary_platform_failure_overrides_status(self) -> None:
+        local = {"running": False, "state": "IDLE"}
+        workflow = {"running": False, "state": "IDLE"}
+        projection = {
+            "available": True,
+            "ok": False,
+            "status": "failed",
+            "detail": "task boundary failed",
+            "tool_lifecycle": {"ok": True, "dropped_count": 0},
+            "task_boundary": {
+                "ok": False,
+                "latest": {
+                    "ok": False,
+                    "failure_class": "TOOL_DISPATCH_DROPPED",
+                    "reason": "tool call lifecycle dropped",
+                },
+            },
+        }
+
+        result = merge_director_status(local, workflow, run_ledger_projection=projection)
+
+        assert result["source"] == "run_ledger_projection"
+        assert result["state"] == "FAILED_PLATFORM"
+        assert result["execution_state"] == "FAILED_PLATFORM"
+        assert result["error_code"] == "tool_dispatch_dropped"
+
     def test_run_ledger_ok_projection_keeps_existing_status_source(self) -> None:
         local = {"running": False, "state": "IDLE", "source": "v2_service"}
         workflow = {"running": False, "state": "IDLE"}
@@ -357,6 +389,52 @@ def test_snapshot_task_rows_apply_run_ledger_task_boundary_overlay(
     assert snapshot["tasks"][0]["failure_class"] == "INCOMPLETE_MATERIALIZATION"
     assert snapshot["tasks"][0]["error_message"] == "target files were not written"
     assert snapshot["tasks"][0]["metadata"]["status_source"] == "run_ledger_projection"
+
+
+def test_snapshot_task_rows_normalize_run_ledger_task_boundary_failure_class(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        projection_service,
+        "load_runtime_task_rows",
+        lambda workspace: [
+            {
+                "id": "TASK-1",
+                "task_id": "TASK-1",
+                "status": "RUNNING",
+                "running": True,
+                "metadata": {"source": "runtime_task_file"},
+            }
+        ],
+    )
+    projection = RuntimeProjection(
+        director_merged={
+            "run_ledger_projection": {
+                "task_boundary": {
+                    "latest": {
+                        "task_id": "TASK-1",
+                        "ok": False,
+                        "failure_class": "scope_mismatch",
+                        "responsible_layer": "chief_engineer",
+                        "reason": "scope mismatch",
+                    }
+                }
+            }
+        }
+    )
+
+    snapshot = build_snapshot_payload_from_projection(projection, workspace=str(tmp_path))
+
+    assert snapshot["tasks"][0]["status"] == "BLOCKED_WITH_REASON"
+    assert snapshot["tasks"][0]["failure_class"] == "BLUEPRINT_SCOPE_MISMATCH"
+    assert snapshot["tasks"][0]["metadata"]["run_ledger_task_boundary"]["failure_class"] == "scope_mismatch"
+
+
+def test_task_boundary_execution_state_uses_shared_qa_failure_taxonomy() -> None:
+    assert _task_boundary_execution_state("incomplete_materialization") == "FAILED_ARTIFACT"
+    assert _task_boundary_execution_state("missing_entrypoint_target") == "FAILED_ARTIFACT"
+    assert _task_boundary_execution_state("tool_dispatch_dropped") == "FAILED_PLATFORM"
 
 
 # =============================================================================
@@ -840,3 +918,99 @@ class TestRuntimeProjectionServiceBuildAsync:
         payload = await get_active_director_orchestration_status(str(tmp_path))
 
         assert payload is None
+
+    async def test_build_async_run_ledger_dropped_dispatch_overrides_local_idle(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        lifecycle = build_tool_call_lifecycle_receipt(
+            run_id="director-run-1",
+            task_id="TASK-1",
+            turn_id="turn-1",
+            role="director",
+            provider_response_hash="provider-response-hash",
+            native_tool_calls_count=1,
+            decoded_tool_calls_count=0,
+            dispatched_tool_calls_count=0,
+            receipts=[],
+            dispatch_status="dropped",
+            failure_class="TOOL_DISPATCH_DROPPED",
+        ).to_dict()
+        append_run_ledger_event(
+            AppendRunLedgerEventCommandV1(
+                workspace=str(tmp_path),
+                run_id="director-run-1",
+                event={
+                    "event_type": "gate_evaluated",
+                    "stage": "director",
+                    "gate": {"name": "director", "ok": True, "summary": "director started"},
+                    "job_token": {
+                        "token_id": "token-1",
+                        "run_id": "director-run-1",
+                        "task_id": "TASK-1",
+                        "project_id": "TASK-1",
+                        "capability_audit": {"ok": True, "issues": []},
+                        "gate_policy": {},
+                    },
+                    "physical_evidence": {},
+                },
+            )
+        )
+        append_run_ledger_event(
+            AppendRunLedgerEventCommandV1(
+                workspace=str(tmp_path),
+                run_id="director-run-1",
+                event={
+                    "event_type": "tool_call_lifecycle",
+                    "stage": "director_tool_dispatch",
+                    "task_id": "TASK-1",
+                    "run_id": "director-run-1",
+                    "job_token": {
+                        "token_id": "token-1",
+                        "run_id": "director-run-1",
+                        "task_id": "TASK-1",
+                        "project_id": "TASK-1",
+                        "capability_audit": {"ok": True, "issues": []},
+                        "gate_policy": {},
+                    },
+                    "tool_call_lifecycle_receipt": lifecycle,
+                    "tool_call_lifecycle": lifecycle,
+                },
+            )
+        )
+        monkeypatch.setattr(
+            "polaris.cells.runtime.projection.internal.runtime_projection_service.get_pm_local_status",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            "polaris.cells.runtime.projection.internal.runtime_projection_service.get_director_local_status",
+            AsyncMock(return_value={"running": False, "state": "IDLE", "source": "v2_service"}),
+        )
+        monkeypatch.setattr(
+            "polaris.cells.runtime.projection.internal.runtime_projection_service.get_workflow_director_status",
+            AsyncMock(
+                return_value={
+                    "running": False,
+                    "state": "IDLE",
+                    "workflow_id": "director-run-1",
+                    "status": {"run_id": "director-run-1", "state": "IDLE"},
+                }
+            ),
+        )
+        monkeypatch.setattr(
+            "polaris.cells.runtime.projection.internal.runtime_projection_service._list_recent_orchestration_runs",
+            AsyncMock(return_value=[]),
+        )
+
+        projection = await RuntimeProjectionService.build_async(
+            workspace=str(tmp_path),
+            cache_root=tmp_path,
+            use_cache=False,
+        )
+
+        assert projection.director_merged["source"] == "run_ledger_projection"
+        assert projection.director_merged["state"] == "FAILED_PLATFORM"
+        assert projection.director_merged["execution_state"] == "FAILED_PLATFORM"
+        assert projection.director_merged["error_code"] == "tool_dispatch_dropped"
+        assert projection.director_merged["run_ledger_projection"]["tool_lifecycle"]["dropped_count"] == 1
