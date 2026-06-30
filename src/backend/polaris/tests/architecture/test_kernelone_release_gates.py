@@ -565,11 +565,11 @@ def execute() -> object:
     tree = ast.parse(source)
     violations = gate._find_roles_kernel_adapter_dependency_violations(
         tree,
-        "polaris/cells/roles/kernel/internal/kernel/turn_runner.py",
+        "polaris/cells/roles/kernel/internal/kernel/core.py",
     )
 
     assert violations == (
-        "polaris/cells/roles/kernel/internal/kernel/turn_runner.py:2: "
+        "polaris/cells/roles/kernel/internal/kernel/core.py:2: "
         "roles.kernel production code must not import roles.adapters; "
         "runtime/profile contracts must provide role-specific schema decisions",
     )
