@@ -19,7 +19,10 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from polaris.cells.roles.kernel.internal.llm_caller.caller import _ensure_current_user_message_final
+from polaris.cells.roles.kernel.internal.llm_caller.caller import (
+    LLMCaller,
+    _ensure_current_user_message_final,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
     build_final_provider_request_snapshot,
     build_final_request_context_audit,
@@ -48,6 +51,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.provider_formatter import (
     NativeProviderFormatter,
     create_formatter,
 )
+from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     LLMResponse,
     PreparedLLMRequest,
@@ -1234,6 +1238,36 @@ class TestLLMEventEmitterEmitCallRetryEvent:
 @pytest.mark.asyncio
 class TestLLMCallerInvokerDelegation:
     """LLMCaller facade should not override the invoker's canonical event writer."""
+
+    async def test_prepare_request_delegates_to_request_preparer(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The compatibility facade must not own a second request builder."""
+        sentinel = Mock()
+        captured: dict[str, Any] = {}
+
+        async def fake_prepare(self: LLMRequestPreparer, **kwargs: Any) -> Any:
+            captured["workspace"] = self.workspace
+            captured["kwargs"] = kwargs
+            return sentinel
+
+        monkeypatch.setattr(LLMRequestPreparer, "_prepare_llm_request", fake_prepare)
+        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
+
+        result = await caller._prepare_llm_request(
+            profile=Mock(role_id="director"),
+            system_prompt="sys",
+            context=Mock(),
+            temperature=0.2,
+            max_tokens=1234,
+            stream=False,
+            response_model=None,
+            platform_retry_max=2,
+        )
+
+        assert result is sentinel
+        assert captured["workspace"] == "/ws"
+        assert captured["kwargs"]["system_prompt"] == "sys"
+        assert captured["kwargs"]["max_tokens"] == 1234
+        assert captured["kwargs"]["platform_retry_max"] == 2
 
     async def test_call_does_not_pass_itself_as_event_emitter(self) -> None:
         from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller

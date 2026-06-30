@@ -18,30 +18,19 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.events import LLMEventType, emit_llm_event
-from polaris.cells.roles.kernel.internal.forced_tool_scope import augment_forced_transaction_tool_definitions
 from polaris.cells.roles.kernel.internal.interaction_contract import (
     ProviderCapabilities,
-    build_interaction_contract,
 )
-from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_messages
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
 from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
 from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
 
-from .capability_profile import resolve_actor_capability_profile
 from .error_handling import (
     append_runtime_fallback_instruction,
     build_text_response_fallback_instruction,
 )
 from .helpers import (
-    build_native_response_format,
     build_native_tool_schemas,
-    compute_context_summary,
-    messages_to_input,
-    resolve_max_tokens,
-    resolve_platform_retry_max,
-    resolve_temperature,
-    resolve_timeout_seconds,
 )
 from .invoker import LLMInvoker
 from .response_types import LLMResponse, PreparedLLMRequest, StructuredLLMResponse
@@ -597,311 +586,28 @@ class LLMCaller:
         response_model: type | None = None,
         platform_retry_max: int = 1,
     ) -> PreparedLLMRequest:
-        """Build canonical LLM request bundle."""
-        from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
-        from polaris.kernelone.context.contracts import TurnEngineContextResult
+        """Build the canonical request bundle through ``LLMRequestPreparer``.
 
-        override = getattr(context, "context_override", None)
-        prebuilt_messages = self._extract_prebuilt_projection_messages(context)
-        forced_tool_definitions: list[dict[str, Any]] | None = None
-        forced_tool_choice: Any | None = None
-        forced_tools_disabled = False
-        if isinstance(override, dict):
-            raw_forced_tool_definitions = override.get(_TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY)
-            if isinstance(raw_forced_tool_definitions, list):
-                forced_tool_definitions = [dict(item) for item in raw_forced_tool_definitions if isinstance(item, dict)]
-            raw_forced_tool_choice = override.get(_TRANSACTION_KERNEL_FORCED_TOOL_CHOICE_KEY)
-            if raw_forced_tool_choice is not None:
-                if isinstance(raw_forced_tool_choice, str):
-                    normalized_tool_choice = raw_forced_tool_choice.strip()
-                    forced_tool_choice = normalized_tool_choice or None
-                else:
-                    forced_tool_choice = raw_forced_tool_choice
-            forced_tools_disabled = (
-                isinstance(raw_forced_tool_definitions, list)
-                and not forced_tool_definitions
-                and str(forced_tool_choice or "").strip().lower() == "none"
-            )
+        ``LLMCaller`` is a compatibility facade. Request construction is owned by
+        ``LLMRequestPreparer`` so final provider request evidence cannot drift
+        between the facade and ``LLMInvoker``.
+        """
+        from .request_preparer import LLMRequestPreparer
 
-        request_timeout_seconds = resolve_timeout_seconds(
-            profile,
-            override if isinstance(override, dict) else None,
+        preparer = LLMRequestPreparer(
+            workspace=self.workspace,
+            formatter=self._formatter,
+            model_catalog=self._model_catalog,
         )
-        request_max_tokens = resolve_max_tokens(
-            max_tokens,
-            override if isinstance(override, dict) else None,
-        )
-        request_options: dict[str, Any] = {
-            # ADR-0090 W2.6: escalated mutation retries override temperature via
-            # the transaction-kernel channel (deterministic transcription phase).
-            "temperature": resolve_temperature(temperature, override if isinstance(override, dict) else None),
-            "max_tokens": request_max_tokens,
-            "timeout": request_timeout_seconds,
-        }
-        _copy_provider_policy_options(
-            override=override if isinstance(override, dict) else None,
-            request_options=request_options,
-        )
-        capabilities = self._resolve_provider_capabilities(profile)
-        context_override_for_domain = getattr(context, "context_override", None)
-        contract = build_interaction_contract(
+        return await preparer._prepare_llm_request(
             profile=profile,
-            message=str(getattr(context, "message", "") or ""),
-            domain=str(
-                getattr(context, "domain", "")
-                or (context_override_for_domain.get("domain") if isinstance(context_override_for_domain, dict) else "")
-                or "code"
-            ),
+            system_prompt=system_prompt,
+            context=context,
+            temperature=temperature,
+            max_tokens=max_tokens,
             stream=stream,
             response_model=response_model,
-            capabilities=capabilities,
-        )
-        native_tool_schemas: list[dict[str, Any]] = []
-        native_tool_mode = "disabled"
-        native_response_format: dict[str, Any] | None = None
-        response_format_mode = "plain_text"
-        provider_id = str(getattr(profile, "provider_id", "") or "")
-        role_native_tool_schemas: list[dict[str, Any]] | None = None
-
-        def _role_native_tools() -> list[dict[str, Any]]:
-            nonlocal role_native_tool_schemas
-            if role_native_tool_schemas is None:
-                role_native_tool_schemas = self._build_native_tool_schemas(profile)
-            return role_native_tool_schemas
-
-        def _forced_or_role_tool_schemas() -> list[dict[str, Any]]:
-            if forced_tool_definitions is not None:
-                return augment_forced_transaction_tool_definitions(
-                    tool_definitions=_role_native_tools(),
-                    forced_definitions=forced_tool_definitions,
-                    context_override=override,
-                )
-            return _role_native_tools() if contract.native_tools_enabled else []
-
-        if stream:
-            raw_tool_schemas = _forced_or_role_tool_schemas()
-            if raw_tool_schemas:
-                native_tool_schemas = [dict(item) for item in raw_tool_schemas]
-                if self._formatter is not None:
-                    request_options["tools"] = self._formatter.format_tools(raw_tool_schemas, provider_id)
-                else:
-                    request_options["tools"] = raw_tool_schemas
-                request_options["tool_choice"] = forced_tool_choice if forced_tool_choice is not None else "auto"
-                native_tool_mode = "native_tools_streaming"
-            elif contract.tool_whitelist and not forced_tools_disabled:
-                native_tool_schemas = _role_native_tools()
-                native_tool_mode = "native_tools_unavailable"
-        else:
-            effective_platform_retry_max = resolve_platform_retry_max(profile, platform_retry_max)
-            request_options["max_retries"] = effective_platform_retry_max
-            request_options["platform_transport_only"] = True
-            raw_tool_schemas = _forced_or_role_tool_schemas()
-            if raw_tool_schemas:
-                native_tool_schemas = [dict(item) for item in raw_tool_schemas]
-                if self._formatter is not None:
-                    request_options["tools"] = self._formatter.format_tools(raw_tool_schemas, provider_id)
-                else:
-                    request_options["tools"] = raw_tool_schemas
-                request_options["tool_choice"] = forced_tool_choice if forced_tool_choice is not None else "auto"
-                native_tool_mode = "native_tools"
-            elif contract.tool_whitelist and not forced_tools_disabled:
-                native_tool_schemas = _role_native_tools()
-                native_tool_mode = "native_tools_unavailable"
-            if contract.structured_output_enabled and response_model is not None:
-                native_response_format = build_native_response_format(response_model)
-                if native_response_format:
-                    request_options["response_format"] = native_response_format
-                    response_format_mode = "native_json_schema"
-                else:
-                    response_format_mode = "text_json_fallback"
-
-        capability_profile = resolve_actor_capability_profile(
-            profile=profile,
-            model_catalog=self._model_catalog,
-            provider_capabilities=capabilities,
-            request_options=request_options,
-            native_tool_mode=native_tool_mode,
-            response_format_mode=response_format_mode,
-        ).to_dict()
-        projection_context = _with_projection_capability_profile(context, capability_profile)
-
-        if prebuilt_messages is not None:
-            messages = list(prebuilt_messages)
-            if not messages or str(messages[0].get("role", "")).strip().lower() != "system":
-                messages = [{"role": "system", "content": str(system_prompt or "")}, *messages]
-            input_text = messages_to_input(
-                messages,
-                format_type="auto",
-                provider_id=str(getattr(profile, "provider_id", "")),
-            )
-            default_token_estimate = max(0, len(input_text) // 4)
-            token_estimate = default_token_estimate
-            compression_applied = False
-            compression_strategy: str | None = None
-            if isinstance(override, dict):
-                raw_token_estimate = override.get(_TRANSACTION_KERNEL_PREBUILT_TOKEN_ESTIMATE_KEY)
-                if isinstance(raw_token_estimate, (int, float, str)):
-                    try:
-                        token_estimate = max(0, int(raw_token_estimate))
-                    except ValueError:
-                        token_estimate = default_token_estimate
-                compression_applied = bool(override.get(_TRANSACTION_KERNEL_PREBUILT_COMPRESSION_APPLIED_KEY))
-                raw_compression_strategy = override.get(_TRANSACTION_KERNEL_PREBUILT_COMPRESSION_STRATEGY_KEY)
-                if raw_compression_strategy is not None:
-                    normalized_strategy = str(raw_compression_strategy).strip()
-                    compression_strategy = normalized_strategy or None
-            context_result = TurnEngineContextResult(
-                messages=tuple(
-                    {
-                        "role": str(message.get("role", "")),
-                        "content": str(message.get("content", "")),
-                    }
-                    for message in messages
-                ),
-                token_estimate=token_estimate,
-                compression_applied=compression_applied,
-                compression_strategy=compression_strategy,
-                metadata={
-                    "prebuilt_projection_messages": True,
-                    "source": "transaction_kernel",
-                    "capability_profile": capability_profile,
-                },
-            )
-        else:
-            context_gateway = RoleContextGateway(profile, self.workspace)
-            # ADR-0090 I4.3: gateway budgets AND prepends the role system prompt —
-            # no second projection pass.
-            context_result = await context_gateway.build_context(projection_context, system_prompt=system_prompt)
-            messages = list(context_result.messages)
-
-        messages = _ensure_current_user_message_final(messages, getattr(context, "message", ""))
-        context_result = replace(
-            context_result,
-            messages=tuple(
-                {
-                    "role": str(message.get("role", "")),
-                    "content": str(message.get("content", "")),
-                }
-                for message in messages
-            ),
-        )
-        input_text = messages_to_input(
-            messages,
-            format_type="auto",
-            provider_id=str(getattr(profile, "provider_id", "")),
-        )
-        context_summary = compute_context_summary(input_text)
-        context_metadata = (
-            dict(getattr(context_result, "metadata", {}) or {})
-            if getattr(context_result, "metadata", None) is not None
-            else {}
-        )
-        context_sources = tuple(str(item) for item in (getattr(context_result, "context_sources", ()) or ()))
-        context_os_audit = audit_context_os_prompt_messages(
-            messages=messages,
-            context_sources=context_sources,
-            metadata=context_metadata,
-            current_user_instruction=str(getattr(context, "message", "") or ""),
-            expected=True,
-        )
-        capability_profile_ref = context_metadata.get("capability_profile_ref")
-        context_projection_id = str(
-            context_metadata.get("projection_id") or context_os_audit.get("prompt_digest") or ""
-        ).strip()
-        context_result_id = str(context_metadata.get("context_result_id") or "").strip()
-        prompt_profile_audit: dict[str, Any] = {}
-        selected_prompt_profile_ids: list[str] = []
-        director_execution_profile: dict[str, Any] = {}
-        director_execution_strategy: dict[str, Any] = {}
-        director_execution_envelope: dict[str, Any] = {}
-        execution_envelope_hash = ""
-        resident_agi_audit_context: dict[str, Any] = {}
-        prompt_profile_context_override = getattr(context, "context_override", None)
-        if isinstance(prompt_profile_context_override, dict):
-            resident_agi_audit_context = _resident_agi_audit_context_from_override(prompt_profile_context_override)
-            raw_director_execution_profile = prompt_profile_context_override.get("director_execution_profile")
-            if isinstance(raw_director_execution_profile, dict):
-                director_execution_profile = dict(raw_director_execution_profile)
-            raw_director_execution_strategy = prompt_profile_context_override.get(
-                "director_execution_strategy"
-            ) or prompt_profile_context_override.get("task_execution_strategy")
-            if isinstance(raw_director_execution_strategy, dict):
-                director_execution_strategy = dict(raw_director_execution_strategy)
-            raw_director_execution_envelope = (
-                prompt_profile_context_override.get("director_execution_envelope")
-                or prompt_profile_context_override.get("task_execution_envelope")
-                or prompt_profile_context_override.get("execution_envelope")
-            )
-            if isinstance(raw_director_execution_envelope, dict):
-                director_execution_envelope = dict(raw_director_execution_envelope)
-            execution_envelope_hash = str(
-                prompt_profile_context_override.get("execution_envelope_hash")
-                or prompt_profile_context_override.get("director_execution_envelope_hash")
-                or prompt_profile_context_override.get("task_execution_envelope_hash")
-                or director_execution_envelope.get("envelope_hash")
-                or ""
-            ).strip()
-            raw_prompt_profile_audit = prompt_profile_context_override.get("prompt_profile_audit")
-            if isinstance(raw_prompt_profile_audit, dict):
-                prompt_profile_audit = dict(raw_prompt_profile_audit)
-            raw_selected_prompt_profile_ids = prompt_profile_context_override.get("selected_prompt_profile_ids")
-            if isinstance(raw_selected_prompt_profile_ids, (list, tuple, set)):
-                selected_prompt_profile_ids = [
-                    str(item).strip() for item in raw_selected_prompt_profile_ids if str(item or "").strip()
-                ]
-        if not selected_prompt_profile_ids and prompt_profile_audit:
-            raw_selected_prompt_profile_ids = prompt_profile_audit.get("selected_prompt_profile_ids")
-            if isinstance(raw_selected_prompt_profile_ids, (list, tuple, set)):
-                selected_prompt_profile_ids = [
-                    str(item).strip() for item in raw_selected_prompt_profile_ids if str(item or "").strip()
-                ]
-        ai_request = AIRequest(
-            task_type=TaskType.DIALOGUE,
-            role=profile.role_id,
-            input=input_text,
-            options=request_options,
-            context={
-                "workspace": self.workspace,
-                "mode": "chat",
-                "native_tool_mode": native_tool_mode,
-                "response_format_mode": response_format_mode,
-                "interaction_contract": contract.to_metadata(),
-                "context_os_audit": context_os_audit,
-                "capability_profile": capability_profile,
-                "capability_profile_ref": capability_profile_ref if isinstance(capability_profile_ref, dict) else {},
-                "context_projection_id": context_projection_id,
-                "context_result_id": context_result_id,
-                "director_execution_profile": director_execution_profile,
-                "director_execution_strategy": director_execution_strategy,
-                "director_execution_envelope": director_execution_envelope,
-                "task_execution_envelope": director_execution_envelope,
-                "execution_envelope_hash": execution_envelope_hash,
-                "resident_agi_audit_context": resident_agi_audit_context,
-                "prompt_profile_audit": prompt_profile_audit,
-                "selected_prompt_profile_ids": selected_prompt_profile_ids,
-                # ADR-0090 W1.5: carry the STRUCTURED message array alongside the
-                # flattened input so OpenAI-compatible providers can preserve real
-                # chat-template role anchoring (weak local models lose system/user
-                # structure when the whole transcript rides in one user message).
-                "chat_messages": [
-                    {"role": str(m.get("role", "")), "content": str(m.get("content", ""))} for m in messages
-                ],
-            },
-        )
-        return PreparedLLMRequest(
-            messages=messages,
-            input_text=input_text,
-            context_result=context_result,
-            context_summary=context_summary,
-            request_options=request_options,
-            ai_request=ai_request,
-            native_tool_schemas=native_tool_schemas,
-            native_tool_mode=native_tool_mode,
-            response_model=response_model,
-            native_response_format=native_response_format,
-            response_format_mode=response_format_mode,
-            context_os_audit=context_os_audit,
-            capability_profile=capability_profile,
+            platform_retry_max=platform_retry_max,
         )
 
     @staticmethod
