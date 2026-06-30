@@ -38,7 +38,8 @@ def build_receipt(
     authoritative = (
         mode == "commit" and status == "applied" and revalidation_evidence is not None and not revalidation_failed
     )
-    receipt_metadata = dict(metadata or {})
+    receipt_metadata = dict(plan.metadata)
+    receipt_metadata.update(dict(metadata or {}))
     receipt_metadata.update(
         {
             key: value

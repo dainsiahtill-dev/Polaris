@@ -1795,12 +1795,8 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
         (generic_repairs, "_apply_deterministic_scaffold_marker_cleanup"),
         (generic_repairs, "_apply_deterministic_scaffold_marker_error_cleanup"),
         (generic_repairs, "_apply_deterministic_missing_declared_target_repair"),
-        (npm_repairs, "_apply_deterministic_npm_test_script_repair"),
-        (npm_repairs, "_apply_deterministic_runtime_dependency_repair"),
         (npm_repairs, "_apply_deterministic_typescript_scaffold_repair"),
         (typeorm_repairs, "_apply_deterministic_typeorm_model_normalization_repair"),
-        (javascript_repairs, "_apply_deterministic_javascript_test_missing_target_repair"),
-        (javascript_repairs, "_apply_deterministic_javascript_typescript_annotation_repair"),
         (javascript_repairs, "_apply_deterministic_javascript_missing_export_repair"),
         (javascript_repairs, "_apply_deterministic_javascript_esm_commonjs_entrypoint_repair"),
         (javascript_repairs, "_apply_deterministic_javascript_missing_method_runtime_repair"),
@@ -1809,8 +1805,13 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
     def fail_if_legacy_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
         raise AssertionError("materialization migrated step called a legacy direct helper")
 
+    assert not hasattr(npm_repairs, "_apply_deterministic_npm_test_script_repair")
+    assert not hasattr(npm_repairs, "_apply_deterministic_runtime_dependency_repair")
+    assert not hasattr(javascript_repairs, "_apply_deterministic_javascript_test_missing_target_repair")
+    assert not hasattr(javascript_repairs, "_apply_deterministic_javascript_typescript_annotation_repair")
     for module, helper_name in legacy_helpers:
-        monkeypatch.setattr(module, helper_name, fail_if_legacy_called)
+        if hasattr(module, helper_name):
+            monkeypatch.setattr(module, helper_name, fail_if_legacy_called)
 
     runtime_calls: list[dict[str, Any]] = []
     sentinel_verifier = object()

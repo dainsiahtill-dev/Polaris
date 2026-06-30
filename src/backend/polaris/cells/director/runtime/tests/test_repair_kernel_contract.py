@@ -3615,6 +3615,58 @@ def test_public_javascript_missing_test_target_covers_npm_module_not_found() -> 
     assert "assert.ok(packageJson.name" in smoke_content
 
 
+def test_public_javascript_typescript_annotation_repair_updates_placeholder_contracts() -> None:
+    source_tool = ts_syntax.JAVASCRIPT_TYPESCRIPT_ANNOTATION_SOURCE_TOOL
+    diagnostic = (
+        "Artifact quality scan failed: workspace validation command failed: file:///tmp/demo/src/index.js:1\n"
+        "export function refineDreamNotes(..._args: unknown[]): any {\n"
+        "                                         ^\n\n"
+        "SyntaxError: Unexpected token ':'"
+    )
+    base_files = {
+        "src/index.js": (
+            "export function refineDreamNotes(..._args: unknown[]): any {\n"
+            "  return undefined;\n"
+            "}\n\n"
+            "export function run(..._args: unknown[]): any {\n"
+            "  return undefined;\n"
+            "}\n"
+        ),
+        "tests/test_basic.js": (
+            'import { run, refineDreamNotes } from "../src/index.js";\n'
+            "const result = refineDreamNotes({ notes: ['有效便签'] });\n"
+            "assert.equal(result.count, 1);\n"
+            "assert.equal(result.distilled[0], '[提炼] 有效便签');\n"
+            "const output = run();\n"
+            "assert.equal(output.ok, true);\n"
+            "assert.match(output.entrypoint, /src[\\\\/]+index\\.js$/);\n"
+        ),
+    }
+
+    planning_result = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    )
+    planning_payload = planning_result.to_dict()
+
+    assert planning_payload["ok"] is True
+    assert planning_payload["planned"] is True
+    assert planning_payload["plan_summary"]["rule_id"] == "typescript.javascript_annotation_cleanup"
+    assert planning_payload["plan_summary"]["operation_count"] >= 1
+    assert planning_payload["composition_summary"]["changed_paths"] == ["src/index.js"]
+    repaired = planning_payload["composition_summary"]["patches"][0]["content_after"]
+    assert "export function refineDreamNotes(...args)" in repaired
+    assert "export function run(..._args)" in repaired
+    assert ": unknown" not in repaired
+    assert "): any" not in repaired
+    assert "return undefined" not in repaired
+    assert '"[提炼] " + note.trim()' in repaired
+
+
 def test_public_javascript_missing_test_directory_target_covers_node_test_import_tsx() -> None:
     source_tool = js_syntax.JAVASCRIPT_TEST_MISSING_TARGET_SOURCE_TOOL
     diagnostic = "step verify failed (exit 1): npm run test :: node --test --import tsx tests Could not find 'tests'"

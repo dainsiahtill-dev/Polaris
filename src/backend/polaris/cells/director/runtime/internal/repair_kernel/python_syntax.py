@@ -563,7 +563,10 @@ def _python_import_name_from_init_targets(
 
 
 def _path_from_error_suffix(raw_path: str, expected: str, base_files: Mapping[str, str]) -> str:
-    normalized = str(raw_path or "").replace("\\", "/")
+    raw_normalized = str(raw_path or "").strip().replace("\\", "/")
+    if raw_normalized.endswith("/" + expected) or raw_normalized == expected:
+        return expected
+    normalized = raw_normalized
     normalized = _normalize_repair_path(normalized)
     if normalized in base_files:
         return normalized

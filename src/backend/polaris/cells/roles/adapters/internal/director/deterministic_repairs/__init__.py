@@ -81,22 +81,14 @@ from .generic_repairs import (
     _task_allows_scaffold_marker_cleanup as _task_allows_scaffold_marker_cleanup,
 )
 from .javascript_repairs import (
-    _build_javascript_frontend_smoke_test_content as _build_javascript_frontend_smoke_test_content,
     _build_substantive_node_test_script as _build_substantive_node_test_script,
-    _is_javascript_test_target_path as _is_javascript_test_target_path,
     _is_overstrict_node_test_script_contract as _is_overstrict_node_test_script_contract,
-    _is_plain_frontend_declared_path as _is_plain_frontend_declared_path,
 )
 from .npm_repairs import (
     _is_repairable_npm_test_script_error as _is_repairable_npm_test_script_error,
 )
 from .python_repairs import (
-    _build_python_symbol_stub as _build_python_symbol_stub,
-    _build_python_unittest_smoke_content as _build_python_unittest_smoke_content,
     _build_unresolved_import_symbol_repair_block as _build_unresolved_import_symbol_repair_block,
-    _declared_existing_python_module_names as _declared_existing_python_module_names,
-    _python_module_name_from_path as _python_module_name_from_path,
-    _python_symbol_defined as _python_symbol_defined,
 )
 from .typeorm_repairs import (
     _normalize_ts_class_field_initialization as _normalize_ts_class_field_initialization,
@@ -147,13 +139,9 @@ __all__ = [
     "_UNDECLARED_RUNTIME_IMPORT_ERROR_RE",
     "_UNRESOLVED_IMPORT_SYMBOL_ERROR_RE",
     "_UNRESOLVED_RELATIVE_IMPORT_ERROR_RE",
-    "_build_javascript_frontend_smoke_test_content",
-    "_build_python_symbol_stub",
-    "_build_python_unittest_smoke_content",
     "_build_substantive_node_test_script",
     "_build_typescript_reexport_line",
     "_build_unresolved_import_symbol_repair_block",
-    "_declared_existing_python_module_names",
     "_dedupe_paths",
     "_dependency_root_name",
     "_extract_relative_import_refs",
@@ -161,9 +149,7 @@ __all__ = [
     "_filter_satisfied_declared_target_missing_errors",
     "_find_nearby_declared_target_source",
     "_find_typescript_runtime_symbol_source",
-    "_is_javascript_test_target_path",
     "_is_overstrict_node_test_script_contract",
-    "_is_plain_frontend_declared_path",
     "_is_repairable_npm_test_script_error",
     "_iter_typescript_files",
     "_looks_like_typescript_reexport_failure",
@@ -183,8 +169,6 @@ __all__ = [
     "_parse_undeclared_runtime_import_paths",
     "_path_inside_workspace",
     "_pre_materialization_declared_target_repair_allowed",
-    "_python_module_name_from_path",
-    "_python_symbol_defined",
     "_relative_import_repair_target_candidates",
     "_relative_import_specifier_for_actual_path",
     "_relative_import_suffix_order",

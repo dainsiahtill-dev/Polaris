@@ -2819,6 +2819,7 @@ cells:
         - AttachDirectorRepairRevalidationEvidenceV1
         - CompareDirectorRepairShadowRunV1
         - EvaluateDirectorRepairCutoverReadinessV1
+        - ProjectDirectorRepairMaterializationBridgeMetadataV1
         - ProjectDirectorRepairKernelSummaryV1
         - ProjectDirectorRepairMetricsV1
         - PlanDirectorRepairCommandV1
@@ -2831,6 +2832,8 @@ cells:
         - QueryDirectorRepairEnvironmentPrepCatalogV1
         - QueryDirectorRepairEnvironmentRefreshRequirementsV1
         - QueryDirectorRepairLanguageSlotsV1
+        - QueryDirectorRepairMaterializationAllowedPathsV1
+        - QueryDirectorRepairMaterializationPlanProbeV1
         - QueryDirectorRepairMaterializationQualityScheduleV1
         - QueryDirectorRepairPlanProbeV1
         - QueryDirectorRepairPostExecutionScheduleV1
@@ -2870,6 +2873,10 @@ cells:
         - DirectorRepairDiagnosticCoverageV1
         - DirectorRepairLanguageSlotV1
         - DirectorRepairLanguageSlotsResultV1
+        - DirectorRepairMaterializationAllowedPathsResultV1
+        - DirectorRepairMaterializationBridgeMetadataResultV1
+        - DirectorRepairMaterializationPlanProbeResultV1
+        - DirectorRepairMaterializationQualityFacadeResultV1
         - DirectorRepairPostExecutionScheduleResultV1
         - DirectorRepairPostExecutionScheduleRunResultV1
         - DirectorRepairPostExecutionStepV1

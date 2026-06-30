@@ -86,6 +86,7 @@ FORBIDDEN_IMPORT_PREFIXES = (
     "polaris.cells.roles.adapters.internal.director.deterministic_repairs.strategy_catalog",
 )
 ALLOWED_EXECUTE_METHOD_DIRECTOR_RUNTIME_IMPORTS = {
+    "polaris.cells.director.runtime.public.contracts",
     "polaris.cells.director.runtime.public.service",
 }
 CONCRETE_LEGACY_REPAIR_NAME_PREFIXES = ("_apply_deterministic_",)
@@ -97,7 +98,7 @@ CONCRETE_LEGACY_REPAIR_EXPORT_PREFIXES = (
 LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST_REASONS: dict[Path, str] = {}
 LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST = set(LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST_REASONS)
 SCHEDULE_RUNNER_BINDING_BRIDGES = {
-    MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH,
+    MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH,
     POST_EXECUTION_BRIDGE_PATH,
 }
 DIRECTOR_RUNTIME_INTERNAL_REPAIR_KERNEL_IMPORT_ALLOWLIST = {
@@ -139,10 +140,13 @@ MIGRATED_TYPESCRIPT_SOURCE_TOOL_NAMES = {
 EXPECTED_EXECUTE_METHOD_REPAIR_BRIDGE_COMPAT_ALLOWLIST: set[str] = set()
 MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
     "_apply_deterministic_javascript_test_missing_target_repair",
+    "_apply_deterministic_javascript_typescript_annotation_repair",
+    "_apply_deterministic_npm_test_script_repair",
     "_apply_deterministic_python_package_shadow_bridge_repair",
     "_apply_deterministic_python_runtime_smoke",
     "_apply_deterministic_python_static_smoke",
     "_apply_deterministic_python_unittest_runtime_failure_repair",
+    "_apply_deterministic_runtime_dependency_repair",
     "_apply_deterministic_unresolved_import_symbol_repair",
 }
 ALLOWED_EXECUTE_METHOD_LEGACY_DETERMINISTIC_REPAIR_CALLS: set[str] = set()
@@ -726,13 +730,12 @@ def test_legacy_repair_bridge_allowlist_is_explicit_and_schedule_limited() -> No
     assert expected_bridge_import_allowlist == LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST
     assert len(LEGACY_REPAIR_BRIDGE_IMPORT_ALLOWLIST) == 0
     assert {
-        MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH,
+        MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH,
         POST_EXECUTION_BRIDGE_PATH,
     } == SCHEDULE_RUNNER_BINDING_BRIDGES
     for path in SCHEDULE_RUNNER_BINDING_BRIDGES:
         source = _read_text(path)
         assert "query_director_repair_" in source
-        assert "run_director_" in source
         assert "_REPAIR_RUNNERS" in source
         assert "_REPAIR_STEPS" not in source
         assert "deterministic_repairs" not in source
@@ -740,6 +743,10 @@ def test_legacy_repair_bridge_allowlist_is_explicit_and_schedule_limited() -> No
         assert "_ordered_materialization_quality_steps" not in source
         assert "class PostExecutionRepairStep" not in source
         assert "class MaterializationQualityRepairStep" not in source
+    assert "run_director_" in _read_text(POST_EXECUTION_BRIDGE_PATH)
+    assert "run_director_materialization_quality_repair_schedule_result" not in _read_text(
+        MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH
+    )
 
 
 def test_execute_method_repair_bridge_is_migration_only_and_not_a_public_fact_source() -> None:
@@ -769,27 +776,21 @@ def test_execute_method_repair_bridge_is_migration_only_and_not_a_public_fact_so
 
 
 def test_execute_method_repair_bridge_compat_allowlist_is_narrow_and_blocks_runtime_tools() -> None:
-    compat_allowlist = set(
-        _module_literal_string_frozenset(
-            EXECUTE_METHOD_REPAIR_BRIDGE_PATH,
-            "_LEGACY_EXECUTE_METHOD_REPAIR_HELPER_ALLOWLIST",
-        )
-    )
+    bridge_source = _read_text(EXECUTE_METHOD_REPAIR_BRIDGE_PATH)
     runtime_source_tools = {
         str(binding.get("source_tool") or "").strip()
         for binding in runtime_repair_bindings()
         if str(binding.get("source_tool") or "").strip()
     }
-    runtime_execute_method_compat_names = {
-        name for source_tool in runtime_source_tools for name in (source_tool, f"_apply_{source_tool}")
-    }
+    runtime_execute_method_compat_names = {f"_apply_{source_tool}" for source_tool in runtime_source_tools}
 
-    assert compat_allowlist == EXPECTED_EXECUTE_METHOD_REPAIR_BRIDGE_COMPAT_ALLOWLIST
-    assert compat_allowlist.isdisjoint(MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN)
-    assert compat_allowlist.isdisjoint(runtime_execute_method_compat_names), (
+    assert "_LEGACY_EXECUTE_METHOD_REPAIR_HELPER_ALLOWLIST" not in bridge_source
+    assert "__getattr__" not in bridge_source
+    assert not EXPECTED_EXECUTE_METHOD_REPAIR_BRIDGE_COMPAT_ALLOWLIST
+    assert not any(name in bridge_source for name in MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN)
+    assert not any(name in bridge_source for name in runtime_execute_method_compat_names), (
         f"{REPAIR_BOUNDARY_FAILURE_HINT} migrated runtime source_tools must not be exposed through "
-        f"execute_method.__getattr__ compat. Violations: "
-        f"{sorted(compat_allowlist & runtime_execute_method_compat_names)}"
+        "execute_method.__getattr__ compat."
     )
 
 
@@ -972,7 +973,8 @@ def test_execute_method_legacy_repairs_delegate_to_controlled_bridge() -> None:
     assert "run_typescript_reexport_repair" in execute_calls
     assert bridge_calls == set()
     assert "deterministic_repairs" not in bridge_source
-    assert "is owned by director.runtime; use director.runtime.public" in bridge_source
+    assert "File-mutating deterministic repairs must execute through" in bridge_source
+    assert "run_runtime_repair_with_director_tools" in bridge_source
 
 
 def test_roles_adapter_public_boundary_blocks_internal_kernel_and_direct_legacy_helpers() -> None:
@@ -1419,7 +1421,7 @@ def test_roles_adapter_repair_summaries_use_runtime_typed_projection_contract() 
     facade_source = _read_text(facade_path)
     adapter_projection_callers = [
         POST_EXECUTION_BRIDGE_PATH,
-        MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH,
+        MATERIALIZATION_QUALITY_EVIDENCE_PORTS_PATH,
         GENERIC_REPAIRS_PATH,
         QUALITY_GATE_PATH,
     ]
