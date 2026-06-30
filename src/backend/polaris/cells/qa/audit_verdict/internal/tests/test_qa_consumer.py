@@ -172,6 +172,89 @@ class TestQAFindingsRequeue:
         assert fail_call.metadata["qa_verdict_engine_shadow"]["authoritative"] is True
         assert results[0]["reason"] == "qa_requeue"
 
+    @pytest.mark.parametrize(
+        ("ledger_projection", "expected_stage", "expected_failure_class"),
+        [
+            (
+                {
+                    "task_boundary": {
+                        "latest": {
+                            "ok": False,
+                            "failure_class": "INCOMPLETE_MATERIALIZATION",
+                            "reason": "missing target files",
+                            "responsible_layer": "director",
+                        }
+                    }
+                },
+                "pending_exec",
+                "INCOMPLETE_MATERIALIZATION",
+            ),
+            (
+                {"tool_lifecycle": {"dropped_count": 1}},
+                "waiting_human",
+                "TOOL_DISPATCH_DROPPED",
+            ),
+        ],
+    )
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_authoritative_verdict_engine_blocks_legacy_pass_when_ledger_failed(
+        self,
+        mock_get_svc: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        ledger_projection: dict[str, Any],
+        expected_stage: str,
+        expected_failure_class: str,
+    ) -> None:
+        monkeypatch.setenv("KERNELONE_QA_VERDICT_ENGINE_MODE", "engine")
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-qa-ledger"
+        claim_result.lease_token = "lease-ledger"
+        claim_result.payload = {
+            "title": "QA task",
+            "job_token": _qa_job_token(run_id="run-qa-ledger", token_id="token-qa-ledger"),
+        }
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status=expected_stage)
+        mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status=expected_stage)
+
+        def _fake_projection(_query: Any) -> Any:
+            return SimpleNamespace(projection=ledger_projection)
+
+        consumer = QAConsumer(workspace="/test", worker_id="qa-ledger")
+        with (
+            patch.object(
+                consumer,
+                "_run_qa_audit",
+                return_value={"verdict": "PASS", "audit_id": "a-ledger", "findings": []},
+            ),
+            patch(
+                "polaris.cells.qa.audit_verdict.internal.verdict_engine.read_run_ledger_projection",
+                _fake_projection,
+            ),
+            patch.object(qa_consumer_module, "append_run_ledger_event"),
+        ):
+            results = consumer.poll_once()
+
+        if expected_stage == "waiting_human":
+            mock_svc.fail_task_stage.assert_not_called()
+            ack_call = mock_svc.acknowledge_task_stage.call_args[0][0]
+            assert getattr(ack_call, "next_stage", "") == "waiting_human"
+            assert getattr(ack_call, "terminal_status", None) in {None, ""}
+            engine = ack_call.metadata["qa_verdict_engine_shadow"]
+        else:
+            mock_svc.acknowledge_task_stage.assert_not_called()
+            fail_call = mock_svc.fail_task_stage.call_args[0][0]
+            assert fail_call.requeue_stage == expected_stage
+            engine = fail_call.metadata["qa_verdict_engine_shadow"]
+        assert engine["authoritative"] is True
+        assert engine["failure_class"] == expected_failure_class
+        assert results[0]["status"] == expected_stage
+
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_env_off_keeps_terminal_reject(self, mock_get_svc: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("KERNELONE_QA_FINDINGS_REQUEUE", "off")

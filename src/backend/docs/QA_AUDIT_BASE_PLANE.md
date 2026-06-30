@@ -21,8 +21,9 @@ the right stage, and leave a replayable verdict trail.
    rather than judging stale evidence.
 6. The Verdict Engine is side-effect free. Consumers apply returned transitions
    through task-market contracts and ledger writers.
-7. Shadow mode is non-authoritative. It records a diff against legacy routing
-   without changing production task movement until explicitly promoted.
+7. `qa.verdict_envelope.v1` is the authoritative QA decision contract. Legacy
+   `QaAuditResultV1` remains only as a compatibility projection for older
+   callers and must not override envelope routing.
 
 ## Evidence Policy Compiler
 
@@ -55,6 +56,11 @@ same token instead of maintaining separate evidence assumptions.
 - lineage: previous verdict refs and repeat-failure counters;
 - content hash: stable hash of the verdict evidence.
 
+Consumers that still return `QaAuditResultV1` must embed the envelope metadata
+and project `failure_class`, `responsible_layer`, `repairable_by_director`, and
+the envelope content hash. Task movement must be driven by the envelope route,
+not by legacy PASS/FAIL strings when ledger evidence contradicts them.
+
 ## Failure Routing
 
 | Failure class | Owner | Next stage | Director repairable |
@@ -71,16 +77,13 @@ same token instead of maintaining separate evidence assumptions.
 `repairable_by_director=false` is a hard routing signal: Task Market must not
 send that verdict back to Director repair.
 
-## Promotion Plan
+## Migration Plan
 
-1. Phase 0: keep legacy QA authoritative; add contracts, compiler, barrier, and
-   focused tests.
-2. Phase 1: run Verdict Engine in shadow mode from `QAConsumer`, persist
-   `qa_verdict_engine_shadow`, and alert on mismatch.
-3. Phase 2: promote Verdict Engine to authoritative routing behind an explicit
-   environment flag after shadow mismatches are understood.
-4. Phase 3: remove duplicated legacy routing branches and make
-   `qa.verdict_envelope.v1` the only Task Market transition source.
+1. Keep `qa.verdict_envelope.v1` authoritative for Task Market routing.
+2. Continue emitting compatibility metadata for legacy consumers while they
+   migrate to envelope fields.
+3. Remove duplicated workflow/runtime QA taxonomy strings after consumers read
+   the shared `QaFailureClassificationV1` projection.
 
 ## Negative Test Matrix
 
