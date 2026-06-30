@@ -1869,6 +1869,76 @@ def test_typescript_number_to_string_argument_runtime_uses_editor_without_write_
     assert result.execution_result.receipt.metadata["write_file_reasons_by_path"] == {}
 
 
+def test_typescript_too_few_arguments_rule_adds_trailing_declaration_defaults() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL
+    base_files = {
+        "src/firefly.ts": (
+            "export class Firefly {\n"
+            "  update(deltaTime: number, moonPhase: number, temperature: number): void {}\n"
+            "}\n"
+        ),
+        "src/garden.ts": (
+            "import { Firefly } from './firefly.js';\n"
+            "const firefly = new Firefly();\n"
+            "firefly.update(0.5, 0.8);\n"
+        ),
+    }
+    diagnostic = (
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/garden.ts(3,9): error TS2554: Expected 3 arguments, but got 2."
+    )
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    )
+    payload = planning.to_dict()
+
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    assert payload["plan_summary"]["rule_id"] == "typescript.too_few_arguments"
+    assert payload["composition_summary"]["changed_paths"] == ["src/firefly.ts"]
+    repaired = payload["composition_summary"]["patches"][0]["content_after"]
+    assert "temperature: number = 0" in repaired
+
+
+def test_typescript_too_few_arguments_rule_repairs_two_arg_clamp_callsite() -> None:
+    source_tool = ts_syntax.TYPESCRIPT_TOO_FEW_ARGUMENTS_SOURCE_TOOL
+    base_files = {
+        "src/engine.ts": (
+            "function clamp(value: number, min: number, max: number): number {\n"
+            "  return Math.max(min, Math.min(max, value));\n"
+            "}\n"
+            "let y = clamp(42, 600);\n"
+        )
+    }
+    diagnostic = (
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/engine.ts(4,9): error TS2554: Expected 3 arguments, but got 2."
+    )
+
+    planning = plan_director_repair(
+        PlanDirectorRepairCommandV1(
+            source_tool=source_tool,
+            base_files=base_files,
+            artifact_quality_errors=(diagnostic,),
+            mode="shadow",
+        )
+    )
+    payload = planning.to_dict()
+
+    assert payload["ok"] is True
+    assert payload["planned"] is True
+    assert payload["plan_summary"]["rule_id"] == "typescript.too_few_arguments"
+    assert payload["composition_summary"]["changed_paths"] == ["src/engine.ts"]
+    repaired = payload["composition_summary"]["patches"][0]["content_after"]
+    assert "let y = clamp(42, 0, 600);" in repaired
+
+
 def test_typescript_readonly_assignment_rule_covers_ts2540_and_removes_single_modifier() -> None:
     content = (
         "export interface InventoryItem {\n"

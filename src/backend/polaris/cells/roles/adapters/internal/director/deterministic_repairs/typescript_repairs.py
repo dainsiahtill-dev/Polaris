@@ -1069,80 +1069,6 @@ def _typescript_import_insertion_index(text: str) -> int:
     return 0
 
 
-def _apply_deterministic_typescript_too_few_arguments_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    arity_errors = _parse_typescript_too_few_arguments_errors(artifact_quality_errors)
-    if not arity_errors:
-        return []
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    updated_by_path: dict[Path, str] = {}
-    repaired: list[dict[str, str]] = []
-    for item in arity_errors:
-        usage_line = _typescript_error_usage_line(workspace_path, item)
-        method_name = _typescript_call_name_from_usage_line(usage_line, int(item["col"]))
-        if not method_name:
-            continue
-        callsite_repair = _repair_typescript_too_few_arguments_callsite(
-            workspace_path=workspace_path,
-            item=item,
-            method_name=method_name,
-            updated_by_path=updated_by_path,
-        )
-        if callsite_repair is not None:
-            repaired.append(callsite_repair)
-            continue
-        declaration = _find_unique_typescript_method_declaration(
-            workspace_path=workspace_path,
-            method_name=method_name,
-            expected_count=int(item["expected"]),
-            updated_by_path=updated_by_path,
-        )
-        if declaration is None:
-            continue
-        declaration_path, line_index, line_text = declaration
-        repaired_line = _add_defaults_to_typescript_method_params(
-            line_text,
-            got_count=int(item["got"]),
-            expected_count=int(item["expected"]),
-        )
-        if repaired_line == line_text:
-            continue
-        try:
-            text = updated_by_path.get(declaration_path) or declaration_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        lines = text.splitlines()
-        if line_index < 0 or line_index >= len(lines):
-            continue
-        lines[line_index] = repaired_line
-        updated_by_path[declaration_path] = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
-        repaired.append(
-            {
-                "file": declaration_path.relative_to(workspace_path).as_posix(),
-                "method": method_name,
-                "expected": item["expected"],
-                "got": item["got"],
-            }
-        )
-
-    return _write_typescript_repair_results(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        updated_by_path=updated_by_path,
-        source_tool="deterministic_typescript_too_few_arguments_repair",
-        metadata_key="methods",
-        metadata_value=repaired,
-    )
-
-
 def _apply_deterministic_typescript_uninitialized_property_repair(
     adapter: Any,
     *,
@@ -3742,54 +3668,6 @@ def _repair_typescript_missing_closing_braces(source: str) -> str:
     repaired = source.rstrip() + "\n"
     repaired += "\n".join("}" for _ in range(missing_count))
     return repaired + "\n"
-
-
-def _apply_deterministic_typescript_missing_closing_brace_repair(
-    adapter: Any,
-    *,
-    task_id: str,
-    artifact_quality_errors: list[str],
-) -> list[dict[str, Any]]:
-    syntax_errors = _parse_typescript_missing_closing_brace_errors(artifact_quality_errors)
-    if not syntax_errors:
-        return []
-
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return []
-
-    updated_by_path: dict[Path, str] = {}
-    repaired_items: list[dict[str, str]] = []
-    for item in syntax_errors:
-        relative_path = item["file"]
-        full_path = (workspace_path / relative_path).resolve()
-        if not _path_inside_workspace(full_path, workspace_path) or not full_path.is_file():
-            continue
-        try:
-            original = updated_by_path.get(full_path) or full_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        repaired = _repair_typescript_missing_closing_braces(original)
-        if repaired == original:
-            continue
-        updated_by_path[full_path] = repaired
-        repaired_items.append(
-            {
-                "file": relative_path,
-                "line": item["line"],
-                "col": item["col"],
-            }
-        )
-
-    return _write_typescript_repair_results(
-        adapter,
-        workspace_path=workspace_path,
-        task_id=task_id,
-        updated_by_path=updated_by_path,
-        source_tool="deterministic_typescript_missing_closing_brace_repair",
-        metadata_key="syntax_errors",
-        metadata_value=repaired_items,
-    )
 
 
 def _apply_deterministic_typescript_unresolved_identifier_repair(

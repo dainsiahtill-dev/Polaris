@@ -148,7 +148,9 @@ MIGRATED_EXECUTE_METHOD_COMPAT_HELPERS_FORBIDDEN = {
     "_apply_deterministic_python_unittest_runtime_failure_repair",
     "_apply_deterministic_runtime_dependency_repair",
     "_apply_deterministic_typescript_canvas_scale_return_type_repair",
+    "_apply_deterministic_typescript_missing_closing_brace_repair",
     "_apply_deterministic_typescript_number_to_string_argument_repair",
+    "_apply_deterministic_typescript_too_few_arguments_repair",
     "_apply_deterministic_unresolved_import_symbol_repair",
 }
 ALLOWED_EXECUTE_METHOD_LEGACY_DETERMINISTIC_REPAIR_CALLS: set[str] = set()

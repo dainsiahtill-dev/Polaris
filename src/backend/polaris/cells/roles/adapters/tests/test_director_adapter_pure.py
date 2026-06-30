@@ -1577,69 +1577,6 @@ def test_deterministic_materialization_repair_routes_typescript_missing_export(
     assert "export class GardenSimulator" not in repaired
 
 
-def test_deterministic_typescript_too_few_arguments_repair_adds_trailing_defaults(
-    tmp_path: Any,
-) -> None:
-    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
-        _apply_deterministic_typescript_too_few_arguments_repair,
-    )
-
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "firefly.ts").write_text(
-        "export class Firefly {\n  update(deltaTime: number, moonPhase: number, temperature: number): void {}\n}\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "src" / "garden.ts").write_text(
-        "import { Firefly } from './firefly.js';\nconst firefly = new Firefly();\nfirefly.update(0.5, 0.8);\n",
-        encoding="utf-8",
-    )
-    errors = [
-        "Artifact quality scan failed: TypeScript project typecheck failed: "
-        "src/garden.ts(3,9): error TS2554: Expected 3 arguments, but got 2."
-    ]
-
-    results = _apply_deterministic_typescript_too_few_arguments_repair(
-        _make_adapter(tmp_path),
-        task_id="task-1",
-        artifact_quality_errors=errors,
-    )
-
-    assert results
-    repaired = (tmp_path / "src" / "firefly.ts").read_text(encoding="utf-8")
-    assert "temperature: number = 0" in repaired
-
-
-def test_deterministic_typescript_too_few_arguments_repair_fixes_two_arg_clamp_calls(
-    tmp_path: Any,
-) -> None:
-    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
-        _apply_deterministic_typescript_too_few_arguments_repair,
-    )
-
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "engine.ts").write_text(
-        "function clamp(value: number, min: number, max: number): number {\n"
-        "  return Math.max(min, Math.min(max, value));\n"
-        "}\n"
-        "let y = clamp(42, 600);\n",
-        encoding="utf-8",
-    )
-    errors = [
-        "Artifact quality scan failed: TypeScript project typecheck failed: "
-        "src/engine.ts(4,9): error TS2554: Expected 3 arguments, but got 2."
-    ]
-
-    results = _apply_deterministic_typescript_too_few_arguments_repair(
-        _make_adapter(tmp_path),
-        task_id="task-1",
-        artifact_quality_errors=errors,
-    )
-
-    assert results
-    repaired = (tmp_path / "src" / "engine.ts").read_text(encoding="utf-8")
-    assert "let y = clamp(42, 0, 600);" in repaired
-
-
 def test_deterministic_typescript_missing_member_repair_does_not_confuse_parameters_with_fields(
     tmp_path: Any,
 ) -> None:
