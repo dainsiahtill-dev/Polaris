@@ -56,6 +56,8 @@ DETERMINISTIC_REPAIRS_ROOT = ROLES_DIRECTOR_ROOT / "deterministic_repairs"
 GENERIC_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "generic_repairs.py"
 RUNTIME_REPAIR_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "runtime_repair_tool_adapter.py"
 RUST_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "rust_repairs.py"
+GO_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "go_repairs.py"
+CPP_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "cpp_repairs.py"
 JAVA_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "java_repairs.py"
 QUALITY_GATE_PATH = ROLES_DIRECTOR_ROOT / "quality_gate.py"
 DIRECTOR_RUNTIME_PUBLIC_SERVICE_PATH = (
@@ -1159,7 +1161,11 @@ def test_execute_method_delegates_post_execution_language_repairs_to_bridge() ->
     assert public_runtime_step_ids == expected_runtime_step_ids
     assert runner_step_ids == expected_runtime_step_ids
     assert runner_step_ids == public_runtime_step_ids
+    assert not GO_REPAIRS_PATH.exists()
+    assert not CPP_REPAIRS_PATH.exists()
     assert "run_all_cpp_post_repairs" not in bridge_source
+    assert "cpp_repairs" not in bridge_source
+    assert "go_repairs" not in bridge_source
     assert "repair_cpp_failing_smoke_translation_units" not in bridge_source
     assert "repair_cpp_invalid_placeholder_declarations" not in bridge_source
     assert "repair_cpp_missing_private_members" not in bridge_source
