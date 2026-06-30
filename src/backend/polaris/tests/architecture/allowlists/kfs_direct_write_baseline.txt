@@ -65,7 +65,6 @@ polaris/infrastructure/audit/stores/audit_store.py=4
 polaris/infrastructure/audit/stores/evidence_store.py=3
 polaris/infrastructure/audit/stores/log_store.py=4
 polaris/infrastructure/compat/io_utils.py=1
-polaris/infrastructure/log_pipeline/adapters.py=1
 polaris/infrastructure/log_pipeline/enrichment.py=1
 polaris/infrastructure/log_pipeline/writer.py=1
 polaris/infrastructure/persistence/state_store.py=2

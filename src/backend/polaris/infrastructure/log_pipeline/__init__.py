@@ -17,14 +17,6 @@ Usage:
 
 from __future__ import annotations
 
-# Re-export adapters
-from .adapters import (
-    adapt_emit_dialogue,
-    adapt_emit_event,
-    adapt_emit_llm_event,
-    get_legacy_channel_path,
-)
-
 # Re-export key types
 from .canonical_event import (
     LEGACY_CHANNEL_MAPPING,
@@ -84,13 +76,8 @@ __all__ = [
     "LogQueryService",
     "LogSeverity",
     "RunContextManager",
-    # Legacy adapters
-    "adapt_emit_dialogue",
-    "adapt_emit_event",
-    "adapt_emit_llm_event",
     "get_active_run_context",
     "get_enrichment_pool",
-    "get_legacy_channel_path",
     "get_query_service",
     "get_writer",
     "normalize_legacy_event",

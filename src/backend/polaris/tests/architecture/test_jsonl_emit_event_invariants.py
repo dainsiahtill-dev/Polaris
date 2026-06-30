@@ -25,7 +25,6 @@ CANONICAL_JSONL_MODULES: set[str] = {
     "polaris.kernelone.process.background_manager",
     "polaris.kernelone.audit.runtime",
     "polaris.infrastructure.log_pipeline.writer",
-    "polaris.infrastructure.log_pipeline.adapters",
     "polaris.infrastructure.accel.verify.verify.report_generator",
 }
 
@@ -135,53 +134,25 @@ def test_no_duplicate_emit_event_with_payload_construction() -> None:
     )
 
 
-# ─── Test 3: Dead adapt_emit_event detection ─────────────────────────────────
+# ─── Test 3: retired dual-write adapter guard ────────────────────────────────
 
 
-def test_adapt_emit_event_has_callers_or_is_in_compat() -> None:
-    """adapt_emit_event must have at least one caller or be in a compat/deprecated module.
-
-    Dead code with duplicated payload logic is a maintenance risk.
-    """
+def test_log_pipeline_dual_write_adapters_are_removed() -> None:
+    """Log pipeline writes must be canonical-only, not legacy+canonical dual writes."""
     adapters_path = POLARIS_ROOT / "infrastructure" / "log_pipeline" / "adapters.py"
-    if not adapters_path.exists():
-        pytest.skip("adapters.py not found")
+    assert not adapters_path.exists(), "Retired log_pipeline/adapters.py dual-write module was restored."
 
-    content = _read_text(adapters_path)
-    tree = ast.parse(content)
-
-    has_adapt = any(
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "adapt_emit_event"
-        for node in ast.walk(tree)
-    )
-    if not has_adapt:
-        return  # function doesn't exist, nothing to guard
-
-    # Search for callers across the codebase
-    callers: list[str] = []
-    for path in _iter_python_files(POLARIS_ROOT):
-        if path == adapters_path:
-            continue
-        try:
-            text = _read_text(path)
-        except (UnicodeDecodeError, OSError):
-            continue
-        if "adapt_emit_event" in text:
-            callers.append(str(path.relative_to(BACKEND_ROOT)))
-
-    # Also check test files
-    for path in sorted(POLARIS_ROOT.rglob("test_*.py")):
-        try:
-            text = _read_text(path)
-        except (UnicodeDecodeError, OSError):
-            continue
-        if "adapt_emit_event" in text:
-            callers.append(str(path.relative_to(BACKEND_ROOT)))
-
-    assert len(callers) > 0, (
-        "adapt_emit_event in infrastructure/log_pipeline/adapters.py has ZERO callers "
-        "and contains duplicated payload construction logic. "
-        "Remove it or wire it up."
+    package_init = POLARIS_ROOT / "infrastructure" / "log_pipeline" / "__init__.py"
+    exported = _read_text(package_init)
+    forbidden_exports = {
+        "adapt_emit_event",
+        "adapt_emit_llm_event",
+        "adapt_emit_dialogue",
+        "get_legacy_channel_path",
+    }
+    assert not any(name in exported for name in forbidden_exports), (
+        "log_pipeline package must expose canonical writer/query APIs only; "
+        "legacy write adapters belong to historical archive readers/projections."
     )
 
 

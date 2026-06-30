@@ -22,6 +22,7 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     RegisterADRCommandV1,
     UpdateADRStatusCommandV1,
 )
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.storage import resolve_logical_path
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -75,6 +76,7 @@ class ADRDecisionLog:
 
     def __init__(self, workspace: str, *, ensure_directory: bool = True) -> None:
         self._dir = Path(resolve_logical_path(workspace, "runtime/adr_log"))
+        self._fs = KernelFileSystem(workspace, get_default_adapter())
         if ensure_directory:
             self._dir.mkdir(parents=True, exist_ok=True)
 
@@ -218,11 +220,12 @@ class ADRDecisionLog:
 
     def _save(self, record: ADRRecordV1) -> None:
         safe_id = _validate_record_id(record.adr_id)
-        path = self._dir / f"{safe_id}.json"
-        tmp = path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as handle:
-            json.dump(record.to_dict(), handle, ensure_ascii=False, indent=2)
-        tmp.replace(path)
+        self._fs.write_json_atomic(
+            f"runtime/adr_log/{safe_id}.json",
+            record.to_dict(),
+            ensure_ascii=False,
+            indent=2,
+        )
 
     def _load_path(self, path: Path) -> ADRRecordV1 | None:
         try:
