@@ -15,7 +15,7 @@ business wording, React `Suspense fallback`, and accepted config migration code.
 | --- | ---: | --- |
 | Closed in this convergence pass | 1 | Removed and verified. |
 | P1 open | 7 | Still close to execution, LLM/tool, QA, or state projection paths. |
-| P2 open | 5 | Exposed API/UI/CLI compatibility surfaces that should be retired after callers move. |
+| P2 open | 4 | Exposed API/UI/CLI compatibility surfaces that should be retired after callers move. |
 | P3 accepted with sunset | 2 | Kept for user config or historical data migration; requires an expiry policy, not immediate deletion. |
 
 ## Ledger
