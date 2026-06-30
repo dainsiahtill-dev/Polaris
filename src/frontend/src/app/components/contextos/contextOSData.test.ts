@@ -5,7 +5,6 @@ import {
   decisionMatchesRole,
   contextOSFormat,
   safeText,
-  NOMINAL_CONTEXT_WINDOW,
 } from './contextOSData';
 import { buildTelemetryFromStream } from './contextOSTelemetry';
 import type { UsageStats } from '@/app/components/UsageHUD';
@@ -943,7 +942,7 @@ describe('decisionMatchesRole', () => {
 });
 
 describe('ContextOS window/token/provider real-view verification', () => {
-  it('shows null window (not 128k) when no role bindings exist — "窗口未知" not NOMINAL_CONTEXT_WINDOW', () => {
+  it('shows null window instead of the old 128k fallback when no role bindings exist', () => {
     // READY_LLM has no roleDetails at all → every role should get tokens=null, source='unknown'
     const model = buildContextOSModel(baseInput({ llmRuntimeState: READY_LLM }));
     const pm = model.roles.find((r) => r.id === 'pm')!;
@@ -963,8 +962,8 @@ describe('ContextOS window/token/provider real-view verification', () => {
     // Provider/model are null when no roleDetails
     expect(pm.contextWindowProvider).toBeNull();
     expect(pm.contextWindowModel).toBeNull();
-    // Verify NOMINAL_CONTEXT_WINDOW (128k) is NOT used as fallback
-    expect(model.contextWindowTokens).not.toBe(NOMINAL_CONTEXT_WINDOW);
+    // Verify the old 128k nominal window is not used as a fallback.
+    expect(model.contextWindowTokens).not.toBe(128_000);
   });
 
   it('shows null window when roleDetails exist but have empty bindings and no maxContextTokens', () => {
@@ -1089,9 +1088,6 @@ describe('contextOSFormat', () => {
     expect(contextOSFormat.tokens(999)).toBe('999');
     expect(contextOSFormat.tokens(1500)).toBe('1.5k');
     expect(contextOSFormat.tokens(12000)).toBe('12k');
-  });
-  it('exposes a nominal context window constant', () => {
-    expect(NOMINAL_CONTEXT_WINDOW).toBe(128_000);
   });
   it('formats model context windows with useful precision', () => {
     expect(contextOSFormat.windowTokens(32_768)).toBe('32.8k');

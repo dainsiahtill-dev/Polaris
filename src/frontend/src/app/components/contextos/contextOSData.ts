@@ -26,12 +26,6 @@ import {
   type WorkerAggregate,
 } from './contextOSTelemetry';
 
-/**
- * @deprecated 仅用于测试断言。生产代码绝不使用此值作为兜底窗口——
- * 真实窗口来自 /v2/llm/status 的角色绑定 maxContextTokens；无绑定时显示 null（"未知"）。
- */
-export const NOMINAL_CONTEXT_WINDOW = 128_000;
-
 export type PipelineState = 'active' | 'idle' | 'blocked';
 
 export interface PipelineStage {
