@@ -10,13 +10,13 @@ Covers:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.delivery.cli.__main__ import (
     _bind_workspace_env,
     _bootstrap_runtime,
@@ -42,7 +42,6 @@ from polaris.delivery.cli.polaris_cli import (
     _serialize_workflow_submission,
     create_parser as polaris_create_parser,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -125,7 +124,7 @@ class TestMainParserConstruction:
         """session list/show/switch/clear must all parse."""
         for sub in ("list", "show", "switch", "clear"):
             extra = ["--session-id", "s-1"] if sub in ("show", "switch") else []
-            args = parser.parse_args(["session", sub] + extra)
+            args = parser.parse_args(["session", sub, *extra])
             assert args.command == "session"
             assert args.session_command == sub
 
@@ -156,7 +155,7 @@ class TestMainParserConstruction:
         """workflow must accept run/status/events/cancel."""
         for action in ("run", "status", "events", "cancel"):
             extra = ["--workflow-id", "wf-1"] if action != "run" else ["pm"]
-            args = parser.parse_args(["workflow", action] + extra)
+            args = parser.parse_args(["workflow", action, *extra])
             assert args.command == "workflow"
             assert args.workflow_action == action
 
@@ -253,10 +252,8 @@ class TestMainHelpers:
     def test_bootstrap_runtime_runs_without_error(self) -> None:
         """_bootstrap_runtime must not raise (best-effort)."""
         # It may fail in test env without full backend, but should not crash
-        try:
+        with contextlib.suppress(RuntimeError, ValueError):
             _bootstrap_runtime()
-        except (RuntimeError, ValueError):
-            pass  # acceptable in test environment
 
 
 # ---------------------------------------------------------------------------
@@ -341,10 +338,8 @@ class TestPolarisCliParser:
 
     def test_ensure_cli_runtime_bindings(self) -> None:
         """_ensure_cli_runtime_bindings must be callable without raising."""
-        try:
+        with contextlib.suppress(RuntimeError, ValueError):
             _ensure_cli_runtime_bindings()
-        except (RuntimeError, ValueError):
-            pass  # acceptable in test environment
 
     def test_bind_workspace_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_bind_workspace_environment must set env vars."""
@@ -602,25 +597,27 @@ class TestRouterDispatch:
             captured.update(kwargs)
             return 0
 
-        with patch.object(cli_router_module.WorkspaceGuard, "ensure_workspace", return_value=Path("/tmp/ws")):
-            with patch("polaris.delivery.cli.terminal_console.run_role_console", _fake_run_role_console):
-                args = argparse.Namespace(
-                    workspace="/tmp/ws",
-                    role="director",
-                    backend="plain",
-                    session_id="",
-                    session_title="",
-                    prompt_style="plain",
-                    omp_config="",
-                    json_render="raw",
-                    debug=False,
-                    dry_run=True,
-                    batch=False,
-                    super=False,
-                )
-                exit_code = cli_router_module._route_console(args)
-                assert exit_code == 0
-                assert captured.get("dry_run") is True
+        with (
+            patch.object(cli_router_module.WorkspaceGuard, "ensure_workspace", return_value=Path("/tmp/ws")),
+            patch("polaris.delivery.cli.terminal.run_role_console", _fake_run_role_console),
+        ):
+            args = argparse.Namespace(
+                workspace="/tmp/ws",
+                role="director",
+                backend="plain",
+                session_id="",
+                session_title="",
+                prompt_style="plain",
+                omp_config="",
+                json_render="raw",
+                debug=False,
+                dry_run=True,
+                batch=False,
+                super=False,
+            )
+            exit_code = cli_router_module._route_console(args)
+            assert exit_code == 0
+            assert captured.get("dry_run") is True
 
     def test_route_task_create_missing_subject(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_route_task create without subject must return 1."""

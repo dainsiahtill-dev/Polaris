@@ -29,7 +29,7 @@ from polaris.delivery.cli.super_pipeline_config import (
 )
 
 if TYPE_CHECKING:
-    from polaris.delivery.cli.terminal_console import _TurnExecutionResult
+    from polaris.delivery.cli.terminal import _TurnExecutionResult
 
 logger = logging.getLogger(__name__)
 

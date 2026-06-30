@@ -1,6 +1,6 @@
-"""Director compatibility shim for unified terminal console host."""
+"""Director terminal console re-export for the unified terminal host."""
 
-from polaris.delivery.cli.terminal_console import (
+from polaris.delivery.cli.terminal import (
     PolarisLazyClaude,
     PolarisRoleConsole,
     run_director_console,

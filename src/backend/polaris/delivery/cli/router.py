@@ -157,7 +157,7 @@ def _route_console(args: argparse.Namespace) -> int:
     batch = explicit_batch or auto_batch
 
     try:
-        from polaris.delivery.cli.terminal_console import run_role_console
+        from polaris.delivery.cli.terminal import run_role_console
     except (RuntimeError, ValueError) as exc:  # pragma: no cover — import guard
         logger.warning("Failed to import director console host: %s", exc)
         print(f"Error: console backend unavailable ({exc})", file=sys.stderr)

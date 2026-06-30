@@ -18,7 +18,7 @@ def _bootstrap_backend_import_path():
         if backend_root_str not in sys.path:
             sys.path.insert(0, backend_root_str)
 
-    from polaris.delivery.cli.terminal_console import PolarisRoleConsole, run_role_console
+    from polaris.delivery.cli.terminal import PolarisRoleConsole, run_role_console
 
     return PolarisRoleConsole, run_role_console
 

@@ -210,13 +210,13 @@ def main() -> int:
         return 0
 
     if parsed.task_command == "console":
-        from polaris.delivery.cli import terminal_console
+        from polaris.delivery.cli import terminal
 
         # The console subparser's --backend is opt-in (dest="console_backend");
         # fall back to the top-level --backend when it is not given explicitly.
         resolved_backend = parsed.console_backend if parsed.console_backend is not None else parsed.backend
         return int(
-            terminal_console.run_director_console(
+            terminal.run_director_console(
                 workspace=str(Path(workspace).resolve()),
                 role=str(parsed.role or "director"),
                 backend=str(resolved_backend or "auto"),

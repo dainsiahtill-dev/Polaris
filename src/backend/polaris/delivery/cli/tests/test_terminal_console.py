@@ -130,7 +130,7 @@ def test_capability_profile_contains_governance_scope() -> None:
     assert profile["host_kind"] == "cli"
     assert profile["role"] == "pm"
     assert profile["metadata"]["governance_scope"] == "role:pm"
-    assert profile["metadata"]["source"] == "polaris.delivery.cli.terminal_console"
+    assert profile["metadata"]["source"] == "polaris.delivery.cli.terminal"
 
 
 def test_run_role_console_switches_role_with_role_bound_session_and_profile(
@@ -890,7 +890,7 @@ def test_persist_super_tasks_to_board_publishes_pending_design(monkeypatch) -> N
             terminal_console.SuperTaskItem(
                 subject="ContextOS",
                 description="完善 ContextOS pipeline",
-                target_files=("polaris/delivery/cli/terminal_console.py",),
+                target_files=("polaris/delivery/cli/terminal/console.py",),
                 estimated_hours=1.5,
             )
         ],
@@ -903,7 +903,7 @@ def test_persist_super_tasks_to_board_publishes_pending_design(monkeypatch) -> N
     assert task_ids == [1]
     assert len(published) == 1
     assert published[0].stage == "pending_design"
-    assert published[0].payload["scope_paths"] == ["polaris/delivery/cli/terminal_console.py"]
+    assert published[0].payload["scope_paths"] == ["polaris/delivery/cli/terminal/console.py"]
     assert published[0].payload["workspace"] == "."
 
 

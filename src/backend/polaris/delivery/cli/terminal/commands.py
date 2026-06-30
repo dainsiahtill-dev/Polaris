@@ -292,7 +292,7 @@ def _build_role_capability_profile(*, role: str, host_kind: str) -> dict[str, An
         {
             "role": role,
             "governance_scope": f"role:{role}",
-            "source": "polaris.delivery.cli.terminal_console",
+            "source": "polaris.delivery.cli.terminal",
         }
     )
     profile["metadata"] = metadata

@@ -17,7 +17,7 @@ def run_director_agent_console(
 ) -> None:
     """Launch the Director console using the unified terminal host."""
     try:
-        from polaris.delivery.cli.terminal_console import run_director_console
+        from polaris.delivery.cli.terminal import run_director_console
     except (RuntimeError, ValueError) as e:
         logger.error("Failed to import Director components: %s", e)
         sys.exit(1)

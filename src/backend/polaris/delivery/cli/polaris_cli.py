@@ -34,7 +34,7 @@ from polaris.delivery.cli.logging_policy import (
     CLI_LOG_LEVEL_CHOICES,
     configure_cli_logging,
 )
-from polaris.delivery.cli.terminal_console import run_role_console
+from polaris.delivery.cli.terminal import run_role_console
 from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
 from polaris.kernelone.fs.encoding import enforce_utf8
@@ -462,8 +462,10 @@ def _run_workflow(args: argparse.Namespace) -> int:
         }
         exit_code = 0 if payload.get("ok") else 1
         if payload.get("ok") and bool(getattr(args, "wait", False)):
-            submission_data: dict[str, Any] | None = payload.get("submission")
-            workflow_id_val = str(submission_data.get("workflow_id") or "") if isinstance(submission_data, dict) else ""
+            submission_data_raw = payload.get("submission")
+            workflow_id_val = (
+                str(submission_data_raw.get("workflow_id") or "") if isinstance(submission_data_raw, dict) else ""
+            )
             wait_payload = wait_for_workflow_completion_sync(
                 workflow_id_val,
                 timeout_seconds=float(getattr(args, "timeout_seconds", 300.0) or 300.0),

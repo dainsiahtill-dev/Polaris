@@ -118,13 +118,13 @@ def test_build_director_task_handoff_message_contains_blueprint_context() -> Non
             payload={
                 "subject": "修复 ContextOS",
                 "description": "调整 super mode pipeline",
-                "target_files": ["polaris/delivery/cli/terminal_console.py"],
+                "target_files": ["polaris/delivery/cli/terminal/console.py"],
             },
         )
     ]
     blueprints = extract_blueprint_items_from_ce_output(
         """```json
-{"blueprints":[{"task_id":"t-1","blueprint_id":"bp-t-1","summary":"按 task_market 阶段推进","scope_paths":["polaris/delivery/cli/terminal_console.py"]}]}
+{"blueprints":[{"task_id":"t-1","blueprint_id":"bp-t-1","summary":"按 task_market 阶段推进","scope_paths":["polaris/delivery/cli/terminal/console.py"]}]}
 ```""",
         claimed_tasks=claimed,
     )
@@ -138,7 +138,7 @@ def test_build_director_task_handoff_message_contains_blueprint_context() -> Non
     assert "[SUPER_MODE_DIRECTOR_TASK_HANDOFF]" in handoff
     assert "bp-t-1" in handoff
     assert "claimed_exec_tasks" in handoff
-    assert "terminal_console.py" in handoff
+    assert "terminal/console.py" in handoff
 
 
 def test_route_console_passes_super_flag(monkeypatch) -> None:
@@ -153,7 +153,7 @@ def test_route_console_passes_super_flag(monkeypatch) -> None:
     with tempfile.TemporaryDirectory(dir=runtime_tmp_root) as tmpdir:
         tmp_path = Path(tmpdir)
         monkeypatch.setattr(cli_router.WorkspaceGuard, "ensure_workspace", lambda _path: tmp_path)
-        monkeypatch.setattr("polaris.delivery.cli.terminal_console.run_role_console", _fake_run_role_console)
+        monkeypatch.setattr("polaris.delivery.cli.terminal.run_role_console", _fake_run_role_console)
 
         args = argparse.Namespace(
             workspace=str(tmp_path),

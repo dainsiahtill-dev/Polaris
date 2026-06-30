@@ -1,11 +1,9 @@
-"""Director CLI compatibility exports."""
+"""Director CLI exports backed by the canonical terminal host."""
 
 from .console_host import DirectorConsoleHost
 
-# Import from polaris.delivery.cli.terminal_console using __import__ to bypass
-# that module's own import of this package (avoids circular import).
 _console_module = __import__(
-    "polaris.delivery.cli.terminal_console",
+    "polaris.delivery.cli.terminal",
     fromlist=["PolarisLazyClaude", "run_director_console"],
 )
 PolarisLazyClaude = _console_module.PolarisLazyClaude
