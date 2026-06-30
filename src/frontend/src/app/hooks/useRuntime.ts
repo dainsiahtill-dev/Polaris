@@ -2085,15 +2085,3 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
     updateSubscription: connection.updateSubscription,
   };
 }
-
-// Re-exports for backward compatibility
-export const useV2WebSocket = useRuntime;
-export const useHybridDataProvider = useRuntime;
-
-export function refreshRuntime(): void {
-  // hook-scoped runtime has no global singleton
-}
-
-export function resetRuntime(): void {
-  useRuntimeStore.getState().resetAll();
-}
