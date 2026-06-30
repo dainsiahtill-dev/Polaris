@@ -30,14 +30,7 @@ from dataclasses import dataclass  # noqa: F401 - backward-compat re-export (mov
 from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.internal.context_gateway import ContextGatewayConfig, ContextRequest
-from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
-    ValidationReport,
-    _build_turn_history_and_events,
-    _commit_turn_to_snapshot,
-    _execute_commit_protocol,
-    _post_commit_seal,
-    _pre_commit_validate,
-)
+from polaris.cells.roles.kernel.internal.kernel.commit_protocol import ValidationReport
 from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
     _MATERIALIZE_DELIVERY_MODE_MARKERS,
     _MATERIALIZE_DELIVERY_MODE_VALUES,
@@ -81,10 +74,8 @@ from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser, ToolCallResult
 from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder
 from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker, QualityResult
-from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
 from polaris.cells.roles.kernel.public.config import KernelConfig, get_default_config
-from polaris.cells.roles.kernel.public.turn_contracts import CommitReceipt, SealedTurn
 from polaris.cells.roles.profile.public.service import (
     RoleProfile,
     RoleProfileRegistry,
@@ -449,103 +440,6 @@ class RoleExecutionKernel:
             decision_log=(recoverable_context,),
             receipt_refs=tuple(receipt_refs),
             turn_envelope=turn_envelope,
-        )
-
-    @staticmethod
-    def _pre_commit_validate(
-        ledger: TurnLedger | None,
-        snapshot: dict[str, Any],
-        turn_id: str,
-    ) -> ValidationReport:
-        """Pre-commit validation: verify turn invariants before durable write.
-
-        Delegates to
-        :mod:`polaris.cells.roles.kernel.internal.kernel.commit_protocol`.
-        """
-        return _pre_commit_validate(ledger, snapshot, turn_id)
-
-    @staticmethod
-    def _execute_commit_protocol(
-        request: RoleTurnRequest,
-        turn_id: str,
-        turn_history: list[tuple[str, str]],
-        turn_events_metadata: list[dict[str, Any]],
-        tool_results: list[dict[str, Any]],
-        ledger: TurnLedger | None,
-        snapshot: dict[str, Any],
-    ) -> CommitReceipt:
-        """Execute the durable commit protocol (critical section).
-
-        Delegates to
-        :mod:`polaris.cells.roles.kernel.internal.kernel.commit_protocol`.
-        """
-        return _execute_commit_protocol(
-            request,
-            turn_id,
-            turn_history,
-            turn_events_metadata,
-            tool_results,
-            ledger,
-            snapshot,
-        )
-
-    @staticmethod
-    def _post_commit_seal(
-        commit_receipt: CommitReceipt,
-        outcome_status: str,
-        resolution_code: str,
-        parent_snapshot_id: str | None = None,
-    ) -> SealedTurn:
-        """Post-commit seal: generate immutable turn seal.
-
-        Delegates to
-        :mod:`polaris.cells.roles.kernel.internal.kernel.commit_protocol`.
-        """
-        return _post_commit_seal(commit_receipt, outcome_status, resolution_code, parent_snapshot_id)
-
-    @staticmethod
-    def _commit_turn_to_snapshot(
-        request: RoleTurnRequest,
-        turn_id: str,
-        turn_history: list[tuple[str, str]],
-        turn_events_metadata: list[dict[str, Any]],
-        tool_results: list[dict[str, Any]],
-        ledger: TurnLedger | None = None,
-    ) -> CommitReceipt | None:
-        """Merge turn history, events, and ledger data into the ContextOS snapshot.
-
-        Phase 1 hardened version: three-stage durable commit protocol. Delegates
-        to :mod:`polaris.cells.roles.kernel.internal.kernel.commit_protocol`.
-        """
-        return _commit_turn_to_snapshot(
-            request,
-            turn_id,
-            turn_history,
-            turn_events_metadata,
-            tool_results,
-            ledger,
-        )
-
-    @staticmethod
-    def _build_turn_history_and_events(
-        *,
-        turn_id: str,
-        request: RoleTurnRequest,
-        visible_content: str,
-        thinking: str | None,
-        tool_results: list[dict[str, Any]],
-    ) -> tuple[list[tuple[str, str]], list[dict[str, Any]]]:
-        """Build turn_history and turn_events_metadata for ContextOS persistence.
-
-        Delegates to
-        :mod:`polaris.cells.roles.kernel.internal.kernel.commit_protocol`.
-        """
-        return _build_turn_history_and_events(
-            turn_id=turn_id,
-            request=request,
-            visible_content=visible_content,
-            thinking=thinking,
-            tool_results=tool_results,
         )
 
     async def _execute_transaction_kernel_turn(

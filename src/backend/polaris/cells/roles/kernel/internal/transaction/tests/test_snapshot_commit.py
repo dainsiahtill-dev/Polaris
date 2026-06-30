@@ -1,4 +1,4 @@
-"""Tests for RoleExecutionKernel._commit_turn_to_snapshot().
+"""Tests for the ContextOS commit protocol snapshot writer.
 
 验证：
 1. Happy Path：事件正确追加到 snapshot
@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.commit_protocol import _commit_turn_to_snapshot
 from polaris.cells.roles.profile.public.service import RoleTurnRequest
 
 
@@ -43,7 +43,7 @@ class TestCommitTurnToSnapshot:
             {"event_id": "e2", "role": "tool", "kind": "tool_result", "content": "done"},
         ]
 
-        RoleExecutionKernel._commit_turn_to_snapshot(
+        _commit_turn_to_snapshot(
             request=request,  # type: ignore[arg-type]
             turn_id="t42",
             turn_history=[("user", "hello")],
@@ -81,7 +81,7 @@ class TestCommitTurnToSnapshot:
             }
         }
 
-        RoleExecutionKernel._commit_turn_to_snapshot(
+        _commit_turn_to_snapshot(
             request=request,  # type: ignore[arg-type]
             turn_id="t99",
             turn_history=[],
@@ -104,7 +104,7 @@ class TestCommitTurnToSnapshot:
         request.context_override = None
 
         # Must not raise
-        RoleExecutionKernel._commit_turn_to_snapshot(
+        _commit_turn_to_snapshot(
             request=request,  # type: ignore[arg-type]
             turn_id="t1",
             turn_history=[],
@@ -118,7 +118,7 @@ class TestCommitTurnToSnapshot:
         request.context_override = {"context_os_snapshot": "not_a_dict"}
 
         # Must not raise
-        RoleExecutionKernel._commit_turn_to_snapshot(
+        _commit_turn_to_snapshot(
             request=request,  # type: ignore[arg-type]
             turn_id="t1",
             turn_history=[],
@@ -138,7 +138,7 @@ class TestCommitTurnToSnapshot:
 
         tool_results = [{"tool": "read_file", "result": "content"}]
 
-        RoleExecutionKernel._commit_turn_to_snapshot(
+        _commit_turn_to_snapshot(
             request=request,  # type: ignore[arg-type]
             turn_id="t7",
             turn_history=[],

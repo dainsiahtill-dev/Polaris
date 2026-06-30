@@ -27,6 +27,10 @@ import os
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
+    _build_turn_history_and_events,
+    _commit_turn_to_snapshot,
+)
 from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
     _context_requests_materialize_delivery,
     _ensure_context_delivery_mode_marker,
@@ -663,7 +667,7 @@ async def execute_transaction_kernel_turn(
         logger.debug("Projection outcome feedback failed", exc_info=True)
 
     # Build turn history and events metadata for ContextOS persistence
-    turn_history, turn_events_metadata = kernel._build_turn_history_and_events(
+    turn_history, turn_events_metadata = _build_turn_history_and_events(
         turn_id=turn_id,
         request=request,
         visible_content=visible_content,
@@ -671,7 +675,7 @@ async def execute_transaction_kernel_turn(
         tool_results=tool_results,
     )
 
-    kernel._commit_turn_to_snapshot(
+    _commit_turn_to_snapshot(
         request=request,
         turn_id=turn_id,
         turn_history=turn_history,
@@ -992,7 +996,7 @@ async def execute_transaction_kernel_stream(
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 logger.debug("Projection outcome feedback failed after stream completion", exc_info=True)
             # Include RoleTurnResult so that stream consumers can persist turn state
-            turn_history, turn_events_metadata = kernel._build_turn_history_and_events(
+            turn_history, turn_events_metadata = _build_turn_history_and_events(
                 turn_id=turn_id,
                 request=request,
                 visible_content=final_content,

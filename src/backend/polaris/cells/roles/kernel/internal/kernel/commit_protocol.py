@@ -1,10 +1,9 @@
-"""Durable commit protocol for RoleExecutionKernel (stateless).
+"""Durable commit protocol for role-turn ContextOS persistence.
 
 The three-stage durable-commit protocol — pre-commit validation, durable commit
 critical section, and post-commit seal — extracted verbatim from ``core.py`` as
-module-level functions. ``core.py`` binds these onto ``RoleExecutionKernel`` as
-``@staticmethod`` shims so callers (``RoleExecutionKernel._commit_turn_to_snapshot``
-etc.) and sibling modules keep working unchanged.
+module-level functions. Callers should import this module directly; the
+``RoleExecutionKernel`` class no longer exposes commit-protocol static shims.
 
 This module must not import ``core.py`` at module top-level (circular-import
 guard): it only depends on public turn contracts and transaction ledger types.

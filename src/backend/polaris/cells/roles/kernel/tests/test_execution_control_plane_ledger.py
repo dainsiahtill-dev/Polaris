@@ -13,7 +13,14 @@ from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
     execute_transaction_kernel_stream,
     execute_transaction_kernel_turn,
 )
+from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import TurnTransactionController
+from polaris.cells.roles.kernel.public.turn_contracts import (
+    FinalizeMode,
+    TurnDecision,
+    TurnDecisionKind,
+    TurnId,
+)
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
 from polaris.cells.roles.profile.public.service import (
     RoleExecutionMode,
@@ -74,11 +81,21 @@ class _SuccessfulNoMaterializationKernel(_DroppedToolDispatchKernel):
     def _create_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:
         class _TransactionKernel:
             async def execute(self, *_args: Any, **_kwargs: Any) -> Any:
+                ledger = TurnLedger(turn_id="turn-success")
+                ledger.record_decision(
+                    TurnDecision(
+                        turn_id=TurnId("turn-success"),
+                        kind=TurnDecisionKind.FINAL_ANSWER,
+                        visible_message="done",
+                        finalize_mode=FinalizeMode.NONE,
+                        domain="code",
+                    )
+                )
                 return {
                     "kind": "final_answer",
                     "visible_content": "done",
                     "metrics": {"llm_calls": 1, "tool_calls": 0},
-                    "ledger": SimpleNamespace(llm_calls=[], anomaly_flags=[]),
+                    "ledger": ledger,
                 }
 
         return _TransactionKernel()
@@ -88,13 +105,6 @@ class _SuccessfulNoMaterializationKernel(_DroppedToolDispatchKernel):
             parse_thinking=lambda value: SimpleNamespace(clean_content=value, thinking=None),
             extract_json=lambda _value: None,
         )
-
-    def _build_turn_history_and_events(self, *_args: Any, **_kwargs: Any) -> tuple[list[Any], list[dict[str, Any]]]:
-        return [], []
-
-    def _commit_turn_to_snapshot(self, *_args: Any, **_kwargs: Any) -> None:
-        return None
-
 
 class _DroppedToolDispatchStreamKernel(_DroppedToolDispatchKernel):
     def _create_transaction_kernel(self, _role: str, _profile: Any, _request: Any) -> Any:

@@ -13,7 +13,11 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
+    _commit_turn_to_snapshot,
+    _post_commit_seal,
+    _pre_commit_validate,
+)
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.public.turn_contracts import (
     CommitReceipt,
@@ -42,7 +46,7 @@ class TestPreCommitValidation:
         )
         ledger.record_decision(decision)
         snapshot: dict[str, Any] = {"version": 1}
-        report = RoleExecutionKernel._pre_commit_validate(ledger, snapshot, "t1")
+        report = _pre_commit_validate(ledger, snapshot, "t1")
         assert report.passed is True
         assert report.checks["single_decision"] is True
 
@@ -66,7 +70,7 @@ class TestPreCommitValidation:
         ledger.record_decision(decision1)
         ledger.record_decision(decision2)
         snapshot: dict[str, Any] = {"version": 1}
-        report = RoleExecutionKernel._pre_commit_validate(ledger, snapshot, "t1")
+        report = _pre_commit_validate(ledger, snapshot, "t1")
         assert report.passed is False
         assert report.checks["single_decision"] is False
         assert "expected 1 decision" in report.errors[0]
@@ -75,7 +79,7 @@ class TestPreCommitValidation:
         """0 个 tool batch 通过验证。"""
         ledger = TurnLedger(turn_id="t1")
         snapshot: dict[str, Any] = {"version": 1}
-        report = RoleExecutionKernel._pre_commit_validate(ledger, snapshot, "t1")
+        report = _pre_commit_validate(ledger, snapshot, "t1")
         assert report.checks["single_tool_batch"] is True
 
     def test_single_tool_batch_fail(self) -> None:
@@ -83,7 +87,7 @@ class TestPreCommitValidation:
         ledger = TurnLedger(turn_id="t1")
         ledger.tool_batch_count = 2
         snapshot: dict[str, Any] = {"version": 1}
-        report = RoleExecutionKernel._pre_commit_validate(ledger, snapshot, "t1")
+        report = _pre_commit_validate(ledger, snapshot, "t1")
         assert report.checks["single_tool_batch"] is False
 
     def test_no_hidden_continuation_pass(self) -> None:
@@ -91,7 +95,7 @@ class TestPreCommitValidation:
         ledger = TurnLedger(turn_id="t1")
         ledger.state_history.append(("DECISION_REQUESTED", 1000))
         snapshot: dict[str, Any] = {"version": 1}
-        report = RoleExecutionKernel._pre_commit_validate(ledger, snapshot, "t1")
+        report = _pre_commit_validate(ledger, snapshot, "t1")
         assert report.checks["no_hidden_continuation"] is True
 
     def test_no_hidden_continuation_fail(self) -> None:
@@ -100,7 +104,7 @@ class TestPreCommitValidation:
         ledger.state_history.append(("DECISION_REQUESTED", 1000))
         ledger.state_history.append(("DECISION_REQUESTED", 2000))
         snapshot: dict[str, Any] = {"version": 1}
-        report = RoleExecutionKernel._pre_commit_validate(ledger, snapshot, "t1")
+        report = _pre_commit_validate(ledger, snapshot, "t1")
         assert report.checks["no_hidden_continuation"] is False
 
     def test_receipts_integrity_with_tools(self) -> None:
@@ -108,21 +112,21 @@ class TestPreCommitValidation:
         ledger = TurnLedger(turn_id="t1")
         ledger.record_tool_execution("read_file", "c1", "success", 100)
         snapshot: dict[str, Any] = {"version": 1}
-        report = RoleExecutionKernel._pre_commit_validate(ledger, snapshot, "t1")
+        report = _pre_commit_validate(ledger, snapshot, "t1")
         assert report.checks["receipts_integrity"] is True
 
     def test_outcome_status_legal(self) -> None:
         """合法的 outcome status 通过验证。"""
         ledger = TurnLedger(turn_id="t1")
         snapshot: dict[str, Any] = {"version": 1}
-        report = RoleExecutionKernel._pre_commit_validate(ledger, snapshot, "t1")
+        report = _pre_commit_validate(ledger, snapshot, "t1")
         assert report.checks["outcome_status_legal"] is True
 
     def test_outcome_status_illegal(self) -> None:
         """非法的 outcome status 失败验证。"""
         ledger = TurnLedger(turn_id="t1")
         snapshot: dict[str, Any] = {"version": "invalid"}  # type: ignore[dict-item]
-        report = RoleExecutionKernel._pre_commit_validate(ledger, snapshot, "t1")
+        report = _pre_commit_validate(ledger, snapshot, "t1")
         assert report.checks["outcome_status_legal"] is False
 
     def test_all_checks_pass(self) -> None:
@@ -137,7 +141,7 @@ class TestPreCommitValidation:
         )
         ledger.record_decision(decision)
         snapshot: dict[str, Any] = {"version": 1}
-        report = RoleExecutionKernel._pre_commit_validate(ledger, snapshot, "t1")
+        report = _pre_commit_validate(ledger, snapshot, "t1")
         assert report.passed is True
         assert len(report.errors) == 0
         assert set(report.checks.keys()) == {
@@ -173,7 +177,7 @@ class TestCommitProtocol:
             domain="document",
         )
         ledger.record_decision(decision)
-        receipt = RoleExecutionKernel._commit_turn_to_snapshot(
+        receipt = _commit_turn_to_snapshot(
             request=request,
             turn_id="t1",
             turn_history=[("user", "hello")],
@@ -198,7 +202,7 @@ class TestCommitProtocol:
             }
         }
         ledger = TurnLedger(turn_id="t1")
-        receipt = RoleExecutionKernel._commit_turn_to_snapshot(
+        receipt = _commit_turn_to_snapshot(
             request=request,
             turn_id="t1",
             turn_history=[],
@@ -220,7 +224,7 @@ class TestCommitProtocol:
         }
         ledger = TurnLedger(turn_id="t1")
         ledger.tool_batch_count = 2  # 违反 single_tool_batch
-        receipt = RoleExecutionKernel._commit_turn_to_snapshot(
+        receipt = _commit_turn_to_snapshot(
             request=request,
             turn_id="t1",
             turn_history=[],
@@ -248,7 +252,7 @@ class TestCommitProtocol:
             domain="document",
         )
         ledger.record_decision(decision)
-        RoleExecutionKernel._commit_turn_to_snapshot(
+        _commit_turn_to_snapshot(
             request=request,
             turn_id="t1",
             turn_history=[("user", "hello")],
@@ -266,7 +270,7 @@ class TestCommitProtocol:
         """缺少 context_override 返回 None。"""
         request = MagicMock()
         request.context_override = None
-        receipt = RoleExecutionKernel._commit_turn_to_snapshot(
+        receipt = _commit_turn_to_snapshot(
             request=request,
             turn_id="t1",
             turn_history=[],
@@ -288,7 +292,7 @@ class TestPostCommitSeal:
             sealed_at="2026-04-21T10:00:00Z",
             validation_passed=True,
         )
-        sealed = RoleExecutionKernel._post_commit_seal(
+        sealed = _post_commit_seal(
             commit_receipt=commit,
             outcome_status="completed",
             resolution_code="completed",
@@ -309,7 +313,7 @@ class TestPostCommitSeal:
             sealed_at="2026-04-21T10:00:00Z",
             validation_passed=True,
         )
-        sealed = RoleExecutionKernel._post_commit_seal(
+        sealed = _post_commit_seal(
             commit_receipt=commit,
             outcome_status="failed",
             resolution_code="fail_closed",
