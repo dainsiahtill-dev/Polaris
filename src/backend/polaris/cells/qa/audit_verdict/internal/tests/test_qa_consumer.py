@@ -106,7 +106,7 @@ class TestQAFindingsRequeue:
         assert "missing Ball class" in fail_call.error_message
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
-    def test_content_fail_without_findings_stays_terminal_reject(self, mock_get_svc: MagicMock) -> None:
+    def test_default_verdict_engine_requeues_content_fail_without_findings(self, mock_get_svc: MagicMock) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
         claim_result = MagicMock()
@@ -120,7 +120,7 @@ class TestQAFindingsRequeue:
         no_claim = MagicMock()
         no_claim.ok = False
         mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
-        mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="rejected")
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
 
         consumer = QAConsumer(workspace="/test", worker_id="qa-fail2")
         with (
@@ -130,9 +130,14 @@ class TestQAFindingsRequeue:
             results = consumer.poll_once()
 
         # No actionable findings -> unchanged terminal-reject behavior.
-        ack_call = mock_svc.acknowledge_task_stage.call_args[0][0]
-        assert ack_call.terminal_status == "rejected"
-        assert results[0]["verdict"] == "FAIL"
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        engine = fail_call.metadata["qa_verdict_engine_shadow"]
+        assert fail_call.requeue_stage == "pending_exec"
+        assert engine["authoritative"] is True
+        assert engine["failure_class"] == "IMPLEMENTATION_DEFECT"
+        assert engine["responsible_layer"] == "director"
+        assert results[0]["reason"] == "qa_requeue"
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_authoritative_verdict_engine_requeues_implementation_defect(
@@ -170,6 +175,7 @@ class TestQAFindingsRequeue:
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_env_off_keeps_terminal_reject(self, mock_get_svc: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("KERNELONE_QA_FINDINGS_REQUEUE", "off")
+        monkeypatch.setenv("KERNELONE_QA_VERDICT_ENGINE_MODE", "off")
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
         claim_result = MagicMock()

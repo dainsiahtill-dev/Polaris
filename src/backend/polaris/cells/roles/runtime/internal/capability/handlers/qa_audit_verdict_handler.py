@@ -163,6 +163,7 @@ class QaAuditVerdictHandler:
 
         result_ref = f"qa.audit_verdict:verdict:{audit_result.task_id}"
         audit_evidence_refs = _audit_evidence_refs(evidence_paths)
+        qa_metadata = dict(getattr(audit_result, "metadata", {}) or {})
         metadata: dict[str, Any] = _capability_available_metadata(
             capability.capability_id,
             {
@@ -172,8 +173,15 @@ class QaAuditVerdictHandler:
                 "suggestions": tuple(audit_result.suggestions),
                 "evidence_paths": evidence_paths,
                 "audit_evidence_refs": audit_evidence_refs,
+                "failure_class": str(qa_metadata.get("failure_class") or ""),
+                "responsible_layer": str(qa_metadata.get("responsible_layer") or ""),
+                "repairable_by_director": bool(qa_metadata.get("repairable_by_director")),
+                "qa_verdict_content_hash": str(qa_metadata.get("qa_verdict_content_hash") or ""),
             },
         )
+        envelope = qa_metadata.get("qa_verdict_envelope")
+        if isinstance(envelope, dict):
+            metadata["qa_verdict_envelope"] = dict(envelope)
         if not audit_result.ok:
             return RoleCapabilityInvocationResultV1(
                 ok=False,

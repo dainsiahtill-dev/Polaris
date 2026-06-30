@@ -316,6 +316,63 @@ def _route_classification(
         )
         return "BLOCKED", False, "waiting_human", "", classification
     verdict = str(audit_result.get("verdict") or "").strip().upper()
+    if bool(audit_result.get("qa_findings_bounce_limit_reached")):
+        classification = QaFailureClassificationV1(
+            failure_class="IMPLEMENTATION_DEFECT_BOUNCE_LIMIT",
+            route="rejected",
+            reason="QA findings already exhausted the bounded Director feedback loop",
+            repairable_by_director=False,
+            severity="high",
+            owner="director",
+            responsible_layer="director",
+            evidence_refs=evidence_refs,
+        )
+        return "FAIL", False, "", "rejected", classification
+    if verdict in {"REQUEUE_EXEC", "RETRY_EXEC"}:
+        classification = QaFailureClassificationV1(
+            failure_class="IMPLEMENTATION_DEFECT",
+            route="pending_exec",
+            reason=gate_summary or "QA requested Director execution repair",
+            repairable_by_director=True,
+            owner="director",
+            responsible_layer="director",
+            evidence_refs=evidence_refs,
+        )
+        return "FAIL", False, "pending_exec", "", classification
+    if verdict in {"REQUEUE_DESIGN", "RETRY_DESIGN"}:
+        classification = QaFailureClassificationV1(
+            failure_class="BLUEPRINT_SCOPE_MISMATCH",
+            route="pending_design",
+            reason=gate_summary or "QA requested Chief Engineer design repair",
+            repairable_by_director=False,
+            requires_ce_replan=True,
+            owner="chief_engineer",
+            responsible_layer="chief_engineer",
+            evidence_refs=evidence_refs,
+        )
+        return "FAIL", False, "pending_design", "", classification
+    if verdict in {"REQUEUE_QA", "RETRY_QA"}:
+        classification = QaFailureClassificationV1(
+            failure_class="TEST_ENVIRONMENT_FAILURE",
+            route="pending_qa",
+            reason=gate_summary or "QA requested verification retry",
+            repairable_by_director=False,
+            owner="qa_infra",
+            responsible_layer="qa_infra",
+            evidence_refs=evidence_refs,
+        )
+        return "BLOCKED", False, "pending_qa", "", classification
+    if audit_result.get("ok") is False and verdict not in {"FAIL", "REJECT", "REJECTED", "NEEDS_REVIEW"}:
+        classification = QaFailureClassificationV1(
+            failure_class="EXECUTION_EVIDENCE_MISSING",
+            route="pending_exec",
+            reason=gate_summary or f"QA audit result was not ok: {verdict or 'unknown'}",
+            repairable_by_director=True,
+            owner="director",
+            responsible_layer="director",
+            evidence_refs=evidence_refs,
+        )
+        return "FAIL", False, "pending_exec", "", classification
     if gate_name or artifact_quality.get("errors") or verdict in {"FAIL", "REJECT", "REJECTED"}:
         if "step verify command rejected" in text:
             classification = QaFailureClassificationV1(

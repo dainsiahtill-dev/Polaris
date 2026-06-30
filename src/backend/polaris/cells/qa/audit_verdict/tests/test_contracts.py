@@ -16,6 +16,7 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     ParseTracebackFramesResultV1,
     QaAuditError,
     QaAuditResultV1,
+    QaVerdictEnvelopeV1,
     QaVerdictIssuedEventV1,
     RunQaAuditCommandV1,
     RunVisualQaAuditCommandV1,
@@ -23,7 +24,12 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     VisualAuditFindingV1,
     VisualQaAuditResultV1,
 )
-from polaris.cells.qa.audit_verdict.public.service import parse_traceback_frames, run_qa_audit, run_visual_qa_audit
+from polaris.cells.qa.audit_verdict.public.service import (
+    get_qa_verdict_envelope,
+    parse_traceback_frames,
+    run_qa_audit,
+    run_visual_qa_audit,
+)
 
 
 class TestRunQaAuditCommandV1:
@@ -316,6 +322,17 @@ def test_run_qa_audit_public_service_executes_typed_command(tmp_path: Path) -> N
     assert result.verdict == "PASS"
     assert result.score == 1.0
     assert result.findings == ()
+    envelope_payload = result.metadata["qa_verdict_envelope"]
+    assert envelope_payload["schema_version"] == "qa.verdict_envelope.v1"
+    assert envelope_payload["classification"]["failure_class"] == "PASSED"
+    assert result.metadata["responsible_layer"] == "qa"
+
+    envelope = get_qa_verdict_envelope(
+        GetQaVerdictQueryV1(task_id="qa-task-1", workspace=str(workspace), run_id="run-1")
+    )
+    assert isinstance(envelope, QaVerdictEnvelopeV1)
+    assert envelope.task_id == "qa-task-1"
+    assert envelope.classification.failure_class == "PASSED"
 
 
 def test_run_qa_audit_public_service_reports_missing_director_evidence(tmp_path: Path) -> None:
@@ -337,6 +354,8 @@ def test_run_qa_audit_public_service_reports_missing_director_evidence(tmp_path:
     assert result.verdict == "FAIL"
     assert result.score == 0.0
     assert any("Director changed_files evidence is required" in finding for finding in result.findings)
+    assert result.metadata["failure_class"] == "IMPLEMENTATION_DEFECT"
+    assert result.metadata["responsible_layer"] == "director"
 
 
 def test_run_visual_qa_audit_public_service_records_image_evidence_refs(tmp_path: Path) -> None:

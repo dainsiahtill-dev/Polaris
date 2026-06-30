@@ -269,6 +269,7 @@ class QaAuditResultV1:
     score: float = 0.0
     findings: tuple[str, ...] = field(default_factory=tuple)
     suggestions: tuple[str, ...] = field(default_factory=tuple)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
@@ -276,6 +277,7 @@ class QaAuditResultV1:
         object.__setattr__(self, "verdict", _require_non_empty("verdict", self.verdict))
         object.__setattr__(self, "findings", tuple(str(v) for v in self.findings))
         object.__setattr__(self, "suggestions", tuple(str(v) for v in self.suggestions))
+        object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
         if self.score < 0:
             raise ValueError("score must be >= 0")
 

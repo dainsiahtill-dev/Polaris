@@ -23,6 +23,7 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     ParseTracebackFramesCommandV1,
     ParseTracebackFramesResultV1,
     QaAuditResultV1,
+    QaVerdictEnvelopeV1,
     RunQaAuditCommandV1,
     RunVisualQaAuditCommandV1,
     TracebackFrameV1,
@@ -79,6 +80,63 @@ def _finding_from_issue(issue: Mapping[str, Any]) -> str:
         return f"{file_path}: {message}"
     return message
 
+def _qa_result_to_audit_dict(result: QaAuditResultV1) -> dict[str, Any]:
+    return {
+        "verdict": result.verdict,
+        "ok": bool(result.ok),
+        "score": float(result.score),
+        "findings": list(result.findings),
+        "suggestions": list(result.suggestions),
+        "metrics": dict(result.metadata.get("metrics", {})) if isinstance(result.metadata, dict) else {},
+    }
+
+def _build_qa_verdict_envelope(
+    *,
+    command: RunQaAuditCommandV1,
+    audit_result: dict[str, Any],
+) -> QaVerdictEnvelopeV1:
+    from polaris.cells.qa.audit_verdict.internal.verdict_engine import QAVerdictEngine
+
+    payload = {
+        "task_id": command.task_id,
+        "workspace": command.workspace,
+        "run_id": command.run_id or "",
+        "criteria": dict(command.criteria),
+        "evidence_paths": list(command.evidence_paths),
+        "target_files": list(_string_tuple(command.criteria.get("target_files"))),
+        "changed_files": list(_string_tuple(command.criteria.get("changed_files"))),
+    }
+    return QAVerdictEngine(command.workspace).build_envelope(
+        task_id=command.task_id,
+        payload=payload,
+        audit_result=audit_result,
+    )
+
+def _result_with_envelope(
+    result: QaAuditResultV1,
+    envelope: QaVerdictEnvelopeV1,
+) -> QaAuditResultV1:
+    envelope_payload = envelope.to_dict()
+    classification = envelope_payload.get("classification")
+    classification_map = classification if isinstance(classification, dict) else {}
+    return QaAuditResultV1(
+        ok=result.ok,
+        task_id=result.task_id,
+        workspace=result.workspace,
+        verdict=result.verdict,
+        score=result.score,
+        findings=result.findings,
+        suggestions=result.suggestions,
+        metadata={
+            **dict(result.metadata),
+            "qa_verdict_envelope": envelope_payload,
+            "failure_class": str(classification_map.get("failure_class") or ""),
+            "responsible_layer": str(classification_map.get("responsible_layer") or ""),
+            "repairable_by_director": bool(classification_map.get("repairable_by_director")),
+            "qa_verdict_content_hash": envelope.content_hash,
+        },
+    )
+
 
 def run_qa_audit(command: RunQaAuditCommandV1) -> QaAuditResultV1:
     """Run QA audit through the qa.audit_verdict public contract."""
@@ -99,7 +157,7 @@ def run_qa_audit(command: RunQaAuditCommandV1) -> QaAuditResultV1:
         raise TypeError("QAService.audit_task must return AuditResult")
 
     findings = tuple(_finding_from_issue(issue) for issue in audit.issues)
-    result = QaAuditResultV1(
+    base_result = QaAuditResultV1(
         ok=audit.verdict == "PASS",
         task_id=command.task_id,
         workspace=command.workspace,
@@ -108,8 +166,10 @@ def run_qa_audit(command: RunQaAuditCommandV1) -> QaAuditResultV1:
         findings=findings,
         suggestions=(),
     )
+    envelope = _build_qa_verdict_envelope(command=command, audit_result=_qa_result_to_audit_dict(base_result))
+    result = _result_with_envelope(base_result, envelope)
     # 持久化最新判定，供后续只读上下文信号（verdict_history）回读。失败不得影响审计本身。
-    _persist_qa_verdict(command.task_id, command.workspace, result, run_id=str(criteria.get("run_id") or "") or None)
+    _persist_qa_verdict(command.task_id, command.workspace, result, run_id=command.run_id or str(criteria.get("run_id") or "") or None)
     return result
 
 
@@ -141,6 +201,10 @@ def _persist_qa_verdict(
                 "score": float(result.score),
                 "findings": list(result.findings),
                 "suggestions": list(result.suggestions),
+                "metadata": dict(result.metadata),
+                "qa_verdict_envelope": result.metadata.get("qa_verdict_envelope"),
+                "failure_class": str(result.metadata.get("failure_class") or ""),
+                "responsible_layer": str(result.metadata.get("responsible_layer") or ""),
                 "created_at": now,
                 "updated_at": now,
             },
@@ -201,7 +265,79 @@ def get_qa_verdict(query: GetQaVerdictQueryV1) -> QaAuditResultV1:
         score=float(payload.get("score") or 0.0),
         findings=_string_tuple(payload.get("findings")),
         suggestions=_string_tuple(payload.get("suggestions")),
+        metadata=_mapping_metadata_from_payload(payload),
     )
+
+def _mapping_metadata_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    metadata = dict(payload.get("metadata")) if isinstance(payload.get("metadata"), dict) else {}
+    for key in ("qa_verdict_envelope", "failure_class", "responsible_layer"):
+        value = payload.get(key)
+        if value not in (None, ""):
+            metadata[key] = value
+    return metadata
+
+def get_qa_verdict_envelope(query: GetQaVerdictQueryV1) -> QaVerdictEnvelopeV1:
+    """Read the latest canonical QA verdict envelope for a task."""
+    result = get_qa_verdict(query)
+    envelope = result.metadata.get("qa_verdict_envelope")
+    if isinstance(envelope, dict):
+        classification_payload = envelope.get("classification")
+        lineage_payload = envelope.get("lineage")
+        from polaris.cells.qa.audit_verdict.public.contracts import (
+            QaFailureClassificationV1,
+            QaVerdictLineageV1,
+        )
+
+        classification_map = dict(classification_payload) if isinstance(classification_payload, dict) else {}
+        lineage_map = dict(lineage_payload) if isinstance(lineage_payload, dict) else {}
+        return QaVerdictEnvelopeV1(
+            workspace=str(envelope.get("workspace") or query.workspace),
+            run_id=str(envelope.get("run_id") or query.run_id or ""),
+            task_id=str(envelope.get("task_id") or query.task_id),
+            stage=str(envelope.get("stage") or "qa"),
+            verdict=str(envelope.get("verdict") or result.verdict),
+            ok=bool(envelope.get("ok", result.ok)),
+            next_stage=str(envelope.get("next_stage") or ""),
+            terminal_status=str(envelope.get("terminal_status") or ""),
+            authority=dict(envelope.get("authority")) if isinstance(envelope.get("authority"), dict) else {},
+            ledger=dict(envelope.get("ledger")) if isinstance(envelope.get("ledger"), dict) else {},
+            evidence=dict(envelope.get("evidence")) if isinstance(envelope.get("evidence"), dict) else {},
+            receipts=dict(envelope.get("receipts")) if isinstance(envelope.get("receipts"), dict) else {},
+            artifact_quality=dict(envelope.get("artifact_quality"))
+            if isinstance(envelope.get("artifact_quality"), dict)
+            else {},
+            classification=QaFailureClassificationV1(
+                failure_class=str(classification_map.get("failure_class") or "UNKNOWN"),
+                route=str(classification_map.get("route") or "waiting_human"),
+                reason=str(classification_map.get("reason") or "Persisted QA envelope had no classification reason"),
+                repairable_by_director=bool(classification_map.get("repairable_by_director")),
+                severity=str(classification_map.get("severity") or "medium"),
+                requires_ce_replan=bool(classification_map.get("requires_ce_replan")),
+                requires_pm_revision=bool(classification_map.get("requires_pm_revision")),
+                owner=str(classification_map.get("owner") or ""),
+                responsible_layer=str(classification_map.get("responsible_layer") or ""),
+                evidence_refs=_string_tuple(classification_map.get("evidence_refs")),
+            ),
+            lineage=QaVerdictLineageV1(
+                previous_verdict_refs=_string_tuple(lineage_map.get("previous_verdict_refs")),
+                latest_blocking_verdict_ref=str(lineage_map.get("latest_blocking_verdict_ref") or ""),
+                latest_blocking_verdict_hash=str(lineage_map.get("latest_blocking_verdict_hash") or ""),
+                failure_class_history=_string_tuple(lineage_map.get("failure_class_history")),
+                repeat_failure_count=int(lineage_map.get("repeat_failure_count") or 0),
+                lineage_hash=str(lineage_map.get("lineage_hash") or ""),
+            ),
+            findings=_string_tuple(envelope.get("findings")),
+            metrics=dict(envelope.get("metrics")) if isinstance(envelope.get("metrics"), dict) else {},
+            evidence_refs=_string_tuple(envelope.get("evidence_refs")),
+            content_hash=str(envelope.get("content_hash") or ""),
+        )
+    command = RunQaAuditCommandV1(
+        task_id=query.task_id,
+        workspace=query.workspace,
+        run_id=query.run_id,
+        criteria={"task_subject": query.task_id},
+    )
+    return _build_qa_verdict_envelope(command=command, audit_result=_qa_result_to_audit_dict(result))
 
 
 def _visual_evidence_failure(command: RunVisualQaAuditCommandV1, exc: Exception) -> VisualQaAuditResultV1:

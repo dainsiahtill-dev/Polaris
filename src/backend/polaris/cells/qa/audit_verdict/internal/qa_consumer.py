@@ -222,7 +222,7 @@ def _read_bool_env(name: str, *, default: bool = False) -> bool:
 
 
 def _qa_verdict_engine_mode() -> str:
-    raw = os.environ.get(_QA_VERDICT_ENGINE_MODE_ENV, "shadow").strip().lower()
+    raw = os.environ.get(_QA_VERDICT_ENGINE_MODE_ENV, "engine").strip().lower()
     if raw in {"off", "disabled", "false", "0", "legacy"}:
         return "off"
     if raw in {"engine", "authoritative"}:
@@ -245,6 +245,13 @@ def _qa_verdict_engine_shadow_payload(envelope: dict[str, Any], diff: dict[str, 
         "failure_class": str(classification_map.get("failure_class") or ""),
         "route": str(classification_map.get("route") or ""),
         "repairable_by_director": bool(classification_map.get("repairable_by_director")),
+        "responsible_layer": str(classification_map.get("responsible_layer") or ""),
+        "owner": str(classification_map.get("owner") or ""),
+        "severity": str(classification_map.get("severity") or ""),
+        "requires_ce_replan": bool(classification_map.get("requires_ce_replan")),
+        "requires_pm_revision": bool(classification_map.get("requires_pm_revision")),
+        "classification": dict(classification_map),
+        "envelope": dict(envelope),
         "diff": diff,
     }
 
@@ -1245,25 +1252,6 @@ class QAConsumer:
             audit_result = self._run_qa_audit(task_id, payload)
 
             verdict, next_stage, terminal_status = _resolve_qa_route(audit_result)
-            shadow = self._build_verdict_engine_shadow(
-                task_id=task_id,
-                payload=payload,
-                audit_result=audit_result,
-                legacy_verdict=verdict,
-                legacy_next_stage=next_stage,
-                legacy_terminal_status=terminal_status,
-            )
-            if shadow:
-                audit_result["qa_verdict_engine_shadow"] = shadow
-                verdict, next_stage, terminal_status = _apply_authoritative_verdict_engine_route(
-                    legacy_verdict=verdict,
-                    legacy_next_stage=next_stage,
-                    legacy_terminal_status=terminal_status,
-                    engine_payload=shadow,
-                )
-                if shadow.get("authoritative"):
-                    audit_result["qa_verdict_engine_authoritative"] = shadow
-
             # RANK 1 (Reflexion/Actor-Critic): a content FAIL with actionable findings
             # must hand them to the Director, not die in a terminal reject. acknowledge_
             # task_stage pops last_failure and the Director only reads payload["last_failure"],
@@ -1275,16 +1263,29 @@ class QAConsumer:
             persisted_bounce_count = feedback_counters.get(_QA_FINDINGS_COUNTER_KEY, 0)
             local_bounce_count = self._qa_findings_bounce_counts.get(task_id, 0)
             qa_findings_bounce_count = max(persisted_bounce_count, local_bounce_count)
-            if (
+            findings_bounce_eligible = (
                 terminal_status == "rejected"
                 and not next_stage
                 and _qa_findings_requeue_enabled()
                 and _qa_findings_are_actionable(audit_findings)
+            )
+            if (
+                findings_bounce_eligible
                 and qa_findings_bounce_count < _qa_findings_max_bounces()
             ):
                 next_bounce_count = qa_findings_bounce_count + 1
                 self._qa_findings_bounce_counts[task_id] = next_bounce_count
                 feedback_counters[_QA_FINDINGS_COUNTER_KEY] = next_bounce_count
+                shadow = self._build_verdict_engine_shadow(
+                    task_id=task_id,
+                    payload=payload,
+                    audit_result=audit_result,
+                    legacy_verdict=verdict,
+                    legacy_next_stage="pending_exec",
+                    legacy_terminal_status="",
+                )
+                if shadow:
+                    audit_result["qa_verdict_engine_shadow"] = shadow
                 self._append_qa_gate_to_run_ledger(
                     task_id=task_id,
                     payload=payload,
@@ -1321,6 +1322,27 @@ class QAConsumer:
                     "verdict": verdict,
                     "reason": "qa_findings_requeued",
                 }
+            if findings_bounce_eligible:
+                audit_result["qa_findings_bounce_limit_reached"] = True
+
+            shadow = self._build_verdict_engine_shadow(
+                task_id=task_id,
+                payload=payload,
+                audit_result=audit_result,
+                legacy_verdict=verdict,
+                legacy_next_stage=next_stage,
+                legacy_terminal_status=terminal_status,
+            )
+            if shadow:
+                audit_result["qa_verdict_engine_shadow"] = shadow
+                verdict, next_stage, terminal_status = _apply_authoritative_verdict_engine_route(
+                    legacy_verdict=verdict,
+                    legacy_next_stage=next_stage,
+                    legacy_terminal_status=terminal_status,
+                    engine_payload=shadow,
+                )
+                if shadow.get("authoritative"):
+                    audit_result["qa_verdict_engine_authoritative"] = shadow
 
             # Reaching here means this task is terminating or advancing (not a RANK 1
             # requeue): drop its bounce counter so a future task_id reuse starts clean.
