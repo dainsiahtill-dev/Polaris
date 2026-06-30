@@ -95,13 +95,12 @@ class WidgetUpdate:
 
 
 # --------------------------------------------------------------------------
-# Stub renderers (B1 wave — tasks #11-#15 will implement these properly)
-# These are minimal stubs so the import chain in app.py resolves at load time.
+# Event renderers
 # --------------------------------------------------------------------------
 
 
-class _StubRenderer:
-    """Minimal stub base — replace with real ProjectionRenderer implementations."""
+class _BaseEventRenderer:
+    """Shared renderer base for simple event-to-widget projections."""
 
     def __init__(self, widget_id: str = "detail_pane", **kwargs: Any) -> None:
         self.widget_id = widget_id
@@ -113,17 +112,14 @@ class _StubRenderer:
         return self.project(event)
 
     def project(self, event: dict[str, Any]) -> WidgetUpdate | None:
-        return None  # pragma: no cover — stub
+        return None
 
     def flush(self) -> list[WidgetUpdate]:
-        return []  # pragma: no cover — stub
+        return []
 
 
-class ContentChunkRenderer(_StubRenderer):
-    """Stub: renders content_chunk events to the detail pane.
-
-    TODO (B1-②): implement with console_render markup pipeline
-    """
+class ContentChunkRenderer(_BaseEventRenderer):
+    """Render content_chunk events to the detail pane."""
 
     def project(self, event: dict[str, Any]) -> WidgetUpdate | None:
         return WidgetUpdate(
@@ -133,11 +129,8 @@ class ContentChunkRenderer(_StubRenderer):
         )
 
 
-class ThinkingChunkRenderer(_StubRenderer):
-    """Stub: renders thinking_chunk events (collapsible thinking block).
-
-    TODO (B1-②): implement collapsible thinking section
-    """
+class ThinkingChunkRenderer(_BaseEventRenderer):
+    """Render thinking_chunk events to the detail pane."""
 
     def project(self, event: dict[str, Any]) -> WidgetUpdate | None:
         return WidgetUpdate(
@@ -147,11 +140,8 @@ class ThinkingChunkRenderer(_StubRenderer):
         )
 
 
-class ToolCallRenderer(_StubRenderer):
-    """Stub: renders tool_call events.
-
-    TODO (B1-②): implement with ToolProgressIndicator integration
-    """
+class ToolCallRenderer(_BaseEventRenderer):
+    """Render tool_call events as append-only widget updates."""
 
     def project(self, event: dict[str, Any]) -> WidgetUpdate | None:
         return WidgetUpdate(
@@ -161,11 +151,8 @@ class ToolCallRenderer(_StubRenderer):
         )
 
 
-class ToolResultRenderer(_StubRenderer):
-    """Stub: renders tool_result events.
-
-    TODO (B1-②): implement patch/summary overlay
-    """
+class ToolResultRenderer(_BaseEventRenderer):
+    """Render tool_result events as append-only widget updates."""
 
     def project(self, event: dict[str, Any]) -> WidgetUpdate | None:
         return WidgetUpdate(
@@ -175,11 +162,8 @@ class ToolResultRenderer(_StubRenderer):
         )
 
 
-class MessageCompleteRenderer(_StubRenderer):
-    """Stub: renders message complete events.
-
-    TODO (B1-②): implement final message commit
-    """
+class MessageCompleteRenderer(_BaseEventRenderer):
+    """Render message completion events as flush updates."""
 
     def project(self, event: dict[str, Any]) -> WidgetUpdate | None:
         return WidgetUpdate(
@@ -189,11 +173,8 @@ class MessageCompleteRenderer(_StubRenderer):
         )
 
 
-class ErrorRenderer(_StubRenderer):
-    """Stub: renders error events.
-
-    TODO (B1-②): implement error display
-    """
+class ErrorRenderer(_BaseEventRenderer):
+    """Render error events as append-only widget updates."""
 
     def project(self, event: dict[str, Any]) -> WidgetUpdate | None:
         return WidgetUpdate(
@@ -470,7 +451,7 @@ class RendererRegistry:
 
         Returns None if no renderer is registered or the renderer returns None.
         Tries both ``render()`` (ProjectionRenderer protocol) and ``project()``
-        (legacy stub renderer interface) to maintain compatibility.
+        (simple renderer interface) to support lightweight renderers.
         Catches renderer exceptions and logs them rather than propagating.
         """
         event_type = event.get("type", "")
@@ -478,7 +459,7 @@ class RendererRegistry:
         if renderer is None:
             return None
         try:
-            # Try render() first (ProjectionRenderer protocol), fall back to project()
+            # Try render() first (ProjectionRenderer protocol), then project().
             if hasattr(renderer, "render"):
                 return renderer.render(event)
             if hasattr(renderer, "project"):
