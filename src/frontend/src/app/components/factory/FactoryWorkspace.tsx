@@ -27,7 +27,7 @@ import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
 import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityPanel';
 import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
-import type { FileEditEvent } from '@/app/hooks/useRuntime';
+import type { FileEditEvent } from '@/app/hooks/useRuntimeStore';
 import type { ControlPlaneProjection } from '@/services/controlPlane';
 import type { FactoryAuditEvent, FactoryRunArtifact, FactoryRunStatus } from '@/hooks/useFactory';
 import type { UseFactoryBenchResult } from '@/hooks/useFactoryBench';

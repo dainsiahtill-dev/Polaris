@@ -8,7 +8,7 @@ import type { LogEntry } from '@/types/log';
 import type { PmTask } from '@/types/task';
 import { TaskStatus } from '@/types/task';
 import type { BackendStatus, EngineStatus } from '@/app/types/appContracts';
-import type { FileEditEvent } from '@/app/hooks/useRuntime';
+import type { FileEditEvent } from '@/app/hooks/useRuntimeStore';
 import type { TaskTraceEvent } from '../types/taskTrace';
 
 // ============================================================

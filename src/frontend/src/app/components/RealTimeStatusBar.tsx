@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { UI_TERMS } from '@/app/constants/uiTerminology';
 import { AnimateCountUp } from '@/app/components/ui/animate-count-up';
 import { StatusBadge } from '@/app/components/ui/badge';
-import type { FileEditEvent } from '@/app/hooks/useRuntime';
+import type { FileEditEvent } from '@/app/hooks/useRuntimeStore';
 import { normalizeStartedAtSeconds } from '@/app/utils/runtimeDisplay';
 
 interface RealTimeStatusBarProps {

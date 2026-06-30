@@ -54,7 +54,7 @@ import type {
   ChiefEngineerTaskBlueprintResultResponse,
 } from '@/services/chiefEngineerService';
 import type { EngineStatus } from '@/app/types/appContracts';
-import type { RuntimeWorkerState } from '@/app/hooks/useRuntime';
+import type { RuntimeWorkerState } from '@/app/hooks/useRuntimeStore';
 import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
 import type {

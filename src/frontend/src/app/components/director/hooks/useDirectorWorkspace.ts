@@ -5,7 +5,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
-import type { FileEditEvent, RuntimeWorkerState } from '@/app/hooks/useRuntime';
+import type { FileEditEvent, RuntimeWorkerState } from '@/app/hooks/useRuntimeStore';
 
 export type DirectorActiveView = 'tasks' | 'code' | 'activity' | 'terminal' | 'debug';
 

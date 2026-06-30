@@ -50,12 +50,6 @@ import {
 } from '@/runtime/projection';
 import { normalizeRuntimeProjection } from '@/runtime/projectionAdapter';
 
-// ============================================================================
-// Types (re-exported for backward compatibility)
-// ============================================================================
-
-export type { FileEditEvent, RuntimeWorkerState, SequentialTraceEvent };
-
 export interface WebSocketMessage {
   type: string;
   action?: string;

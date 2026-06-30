@@ -8,7 +8,7 @@ import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { useRuntime } from '@/app/hooks/useRuntime';
 import type { PmTask, TaskStatus } from '@/types/task';
 import type { LogEntry } from '@/types/log';
-import type { FileEditEvent, RuntimeWorkerState } from '@/app/hooks/useRuntime';
+import type { FileEditEvent, RuntimeWorkerState } from '@/app/hooks/useRuntimeStore';
 import type { TaskTraceMap } from '@/app/types/taskTrace';
 
 // ============================================================

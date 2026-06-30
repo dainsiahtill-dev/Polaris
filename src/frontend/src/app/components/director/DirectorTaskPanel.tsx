@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
-import type { RuntimeWorkerState } from '@/app/hooks/useRuntime';
+import type { RuntimeWorkerState } from '@/app/hooks/useRuntimeStore';
 import type { TaskTraceMap } from '@/app/types/taskTrace';
 import { TaskTraceTimeline } from '../common/TaskTraceTimeline';
 import type { ExecutionTask } from './hooks/useDirectorWorkspace';

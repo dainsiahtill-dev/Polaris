@@ -19,7 +19,7 @@ import { StatusBadge } from '@/app/components/ui/badge';
 import { cn } from '@/app/components/ui/utils';
 import { filterExecutionActivityLogs } from '@/app/utils/appRuntime';
 import type { LogEntry, QualityGateData } from '@/app/components/pm';
-import type { FileEditEvent } from '@/app/hooks/useRuntime';
+import type { FileEditEvent } from '@/app/hooks/useRuntimeStore';
 import type { ControlPlaneProjection } from '@/services/controlPlane';
 
 type ActiveView = 'main' | 'pm' | 'chief_engineer' | 'director' | 'factory' | 'agi' | 'diagnostics';

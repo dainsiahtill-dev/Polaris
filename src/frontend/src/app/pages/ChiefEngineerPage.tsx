@@ -11,7 +11,7 @@ import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
 import { Toaster } from '@/app/components/ui/sonner';
 import { getRoleLlmBlockedReason } from '@/app/hooks/useLlmRuntimeGate';
 import type { EngineStatus } from '@/app/types/appContracts';
-import type { RuntimeWorkerState } from '@/app/hooks/useRuntime';
+import type { RuntimeWorkerState } from '@/app/hooks/useRuntimeStore';
 import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
 

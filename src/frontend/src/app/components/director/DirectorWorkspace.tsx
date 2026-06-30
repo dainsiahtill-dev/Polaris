@@ -101,9 +101,9 @@ import {
   type RoleKernelTokenBudgetStats,
 } from '@/services';
 import { TaskStatus, type PmTask } from '@/types/task';
-import type { FileEditEvent } from '@/app/hooks/useRuntime';
+import type { FileEditEvent } from '@/app/hooks/useRuntimeStore';
 import type { LogEntry } from '@/types/log';
-import type { RuntimeWorkerState } from '@/app/hooks/useRuntime';
+import type { RuntimeWorkerState } from '@/app/hooks/useRuntimeStore';
 import type { TaskTraceMap } from '@/app/types/taskTrace';
 
 interface DirectorWorkspaceProps {

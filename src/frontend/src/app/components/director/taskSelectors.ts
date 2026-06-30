@@ -5,7 +5,7 @@
  */
 
 import type { PmTask } from '@/types/task';
-import type { FileEditEvent } from '@/app/hooks/useRuntime';
+import type { FileEditEvent } from '@/app/hooks/useRuntimeStore';
 
 export interface TaskLineStats {
   added: number;

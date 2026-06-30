@@ -13,7 +13,7 @@ import {
   selectDefaultCodePanelEvent,
 } from './directorCodeEvents';
 import { resolveDirectorOpenTarget } from './directorFileActions';
-import type { FileEditEvent } from '@/app/hooks/useRuntime';
+import type { FileEditEvent } from '@/app/hooks/useRuntimeStore';
 
 interface DirectorCodePanelProps {
   workspace: string;

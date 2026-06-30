@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { DirectorTaskPanel, buildTaskBoardGroups, type TaskBoardFilter } from '../DirectorTaskPanel';
 import type { ExecutionTask } from '../hooks/useDirectorWorkspace';
-import type { RuntimeWorkerState } from '@/app/hooks/useRuntime';
+import type { RuntimeWorkerState } from '@/app/hooks/useRuntimeStore';
 
 function makeTask(overrides: Partial<ExecutionTask>): ExecutionTask {
   return {

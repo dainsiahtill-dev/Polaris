@@ -12,7 +12,7 @@ import { Toaster } from '@/app/components/ui/sonner';
 import { getRoleLlmBlockedReason } from '@/app/hooks/useLlmRuntimeGate';
 import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
-import type { RuntimeWorkerState } from '@/app/hooks/useRuntime';
+import type { RuntimeWorkerState } from '@/app/hooks/useRuntimeStore';
 
 export interface DirectorPageProps {
   /** 工作区路径 */

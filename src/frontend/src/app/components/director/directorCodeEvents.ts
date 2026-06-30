@@ -1,4 +1,4 @@
-import type { FileEditEvent } from '@/app/hooks/useRuntime';
+import type { FileEditEvent } from '@/app/hooks/useRuntimeStore';
 
 export function hasRenderablePatch(event: FileEditEvent): boolean {
   return typeof event.patch === 'string' && event.patch.trim().length > 0;
