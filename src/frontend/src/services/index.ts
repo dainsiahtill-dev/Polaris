@@ -308,7 +308,7 @@ export {
 } from './fileService';
 
 // ============================================================================
-// Legacy Services (保持向后兼容)
+// Service object exports
 // ============================================================================
 
 export {
@@ -324,10 +324,6 @@ export {
   residentService,
   // LanceDB
   lancedbService,
-  // LLM (legacy)
-  llmService as legacyLlmService,
-  // File (legacy)
-  fileService as legacyFileService,
   // Memo
   memoService,
   // Runtime
