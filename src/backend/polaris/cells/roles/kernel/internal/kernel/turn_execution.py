@@ -31,6 +31,7 @@ from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
     _build_turn_history_and_events,
     _commit_turn_to_snapshot,
 )
+from polaris.cells.roles.kernel.internal.kernel.context_assembly import build_context_handoff_pack
 from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
     _context_requests_materialize_delivery,
     _ensure_context_delivery_mode_marker,
@@ -625,7 +626,7 @@ async def execute_transaction_kernel_turn(
                 dict(raw_context_os_audit) if isinstance(raw_context_os_audit, dict) else raw_context_os_audit
             )
     if kind == "handoff_workflow" and workflow_context is not None:
-        handoff_pack = kernel._build_context_handoff_pack(tk_result, role, request)
+        handoff_pack = build_context_handoff_pack(kernel, tk_result, role, request)
         metadata["handoff_pack"] = handoff_pack.to_dict()
         metadata["transaction_kind"] = "handoff_workflow"
 

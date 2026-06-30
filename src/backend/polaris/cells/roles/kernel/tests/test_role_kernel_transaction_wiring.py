@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from polaris.cells.roles.kernel.internal.kernel import core as kernel_core
+from polaris.cells.roles.kernel.internal.kernel.context_assembly import build_context_handoff_pack
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import request_forces_no_transaction_tools
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import _apply_forced_transaction_tool_definitions
@@ -351,7 +352,7 @@ class TestContextHandoffPackMapping:
             },
         }
 
-        pack = kernel._build_context_handoff_pack(turn_result, "director", request)
+        pack = build_context_handoff_pack(kernel, turn_result, "director", request)
 
         assert isinstance(pack, ContextHandoffPack)
         assert pack.workspace == "."

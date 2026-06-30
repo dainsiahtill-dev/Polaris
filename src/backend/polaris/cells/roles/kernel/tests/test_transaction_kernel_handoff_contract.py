@@ -17,6 +17,7 @@ from polaris.cells.factory.cognitive_runtime.public.contracts import (
     ExportHandoffPackCommandV1,
     RehydrateHandoffPackCommandV1,
 )
+from polaris.cells.roles.kernel.internal.kernel.context_assembly import build_context_handoff_pack
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.public import turn_contracts
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
@@ -98,7 +99,7 @@ class TestCanonicalHandoffPackType:
             },
         }
 
-        pack = kernel._build_context_handoff_pack(turn_result, "director", cast(Any, request))
+        pack = build_context_handoff_pack(kernel, turn_result, "director", cast(Any, request))
 
         assert isinstance(pack, ContextHandoffPack)
         assert pack.reason == "complex_exploration"

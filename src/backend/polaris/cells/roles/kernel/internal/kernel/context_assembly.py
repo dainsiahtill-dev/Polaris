@@ -1,9 +1,8 @@
 """Context / handoff assembly helpers for RoleExecutionKernel.
 
-Holds the bodies of ``RoleExecutionKernel._build_context_handoff_pack`` and
-``RoleExecutionKernel._build_context_request_for_stream`` extracted verbatim
-(behavior-preserving) into free functions. The class methods become thin
-delegating shims.
+Holds behavior-preserving free functions for context assembly that used to live
+inside ``RoleExecutionKernel``. Callers should use these functions directly
+instead of reintroducing class-level helper shims.
 
 FROZEN behavior notes (do NOT change):
 - ``build_context_handoff_pack`` maps a TransactionKernel ``handoff_workflow``

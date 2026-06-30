@@ -23,7 +23,6 @@ import json
 import logging
 import os
 import time
-import uuid
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass  # noqa: F401 - backward-compat re-export (moved to commit_protocol)
@@ -74,7 +73,6 @@ from polaris.cells.roles.profile.public.service import (
     RoleTurnRequest,
     RoleTurnResult,
 )
-from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
 from polaris.infrastructure.log_pipeline.writer import LogEventWriter, get_writer
 from polaris.kernelone.context.context_os.models_v2 import (  # noqa: F401 - backward-compat re-export (moved to commit_protocol)
     TranscriptEventV2 as TranscriptEvent,
@@ -319,49 +317,6 @@ class RoleExecutionKernel:
         :mod:`polaris.cells.roles.kernel.internal.kernel.transaction_factory`.
         """
         return create_transaction_kernel(self, role, profile, request)
-
-    def _build_context_handoff_pack(
-        self,
-        turn_result: dict[str, Any],
-        role: str,
-        request: RoleTurnRequest,
-    ) -> ContextHandoffPack:
-        """Map TransactionKernel handoff_workflow result to canonical ContextHandoffPack."""
-        workflow_context = turn_result.get("workflow_context") or {}
-        recoverable_context = workflow_context.get("recoverable_context") or {}
-        decision = recoverable_context.get("decision") or {}
-        batch_receipts = recoverable_context.get("batch_receipts") or []
-        turn_id = str(turn_result.get("turn_id", ""))
-        run_id = str(request.run_id or "").strip() or turn_id
-
-        receipt_refs: list[str] = []
-        for receipt in batch_receipts:
-            batch_id = str(receipt.get("batch_id", ""))
-            if batch_id:
-                receipt_refs.append(batch_id)
-
-        turn_envelope = TurnEnvelope(
-            turn_id=turn_id,
-            session_id=str(request.task_id or "").strip() or None,
-            run_id=run_id if run_id else None,
-            role=role,
-            receipt_ids=tuple(receipt_refs),
-        )
-
-        return ContextHandoffPack(
-            handoff_id=f"handoff_{turn_id}_{uuid.uuid4().hex[:8]}",
-            workspace=str(request.workspace or self.workspace or "."),
-            created_at=str(int(time.time())),
-            session_id=str(request.task_id or "").strip() or turn_id,
-            run_id=run_id if run_id else None,
-            reason=str(workflow_context.get("handoff_reason", "transaction_kernel_handoff")),
-            current_goal=str(decision.get("metadata", {}).get("current_goal", "")),
-            run_card=dict(decision.get("metadata", {}).get("run_card", {})),
-            context_slice_plan={"workflow_context": workflow_context},
-            decision_log=(recoverable_context,),
-            receipt_refs=tuple(receipt_refs),
-            turn_envelope=turn_envelope,
-        )
 
     async def _execute_transaction_kernel_turn(
         self,
