@@ -8,14 +8,11 @@ import { afterEach, vi } from 'vitest';
 
 type TestGlobals = {
     vi?: unknown;
-    jest?: unknown;
 };
 
 const globals = globalThis as TestGlobals;
 
-// Compatibility shim for legacy tests still using jest.fn().
 globals.vi = globals.vi ?? vi;
-globals.jest = globals.vi;
 
 if (!Element.prototype.scrollIntoView) {
     Element.prototype.scrollIntoView = vi.fn();
