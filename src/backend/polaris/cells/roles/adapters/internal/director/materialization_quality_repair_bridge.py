@@ -28,7 +28,7 @@ from polaris.cells.director.runtime.public.service import (
     query_director_repair_materialization_plan_probe,
     query_director_repair_materialization_quality_schedule,
     query_director_repair_strategy_catalog,
-    run_director_materialization_quality_repair_schedule_result,
+    run_director_materialization_quality_repair_facade,
 )
 
 from .execution_tools import DirectorToolExecutor
@@ -124,20 +124,14 @@ def run_materialization_quality_repairs(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Run materialization-quality repairs through the migration bridge."""
 
-    coverage_preaudit = _project_coverage_preaudit(artifact_quality_errors)
     plan_probe_preaudit = _project_materialization_plan_probe_preaudit(
         adapter,
         task=task,
         artifact_quality_errors=artifact_quality_errors,
-        coverage_preaudit=coverage_preaudit,
+        coverage_preaudit={},
     )
     convergence_verifier_present = convergence_verifier is not None
-    runtime_schedule_steps = _runtime_materialization_quality_schedule_steps()
     runner_step_ids = tuple(_MATERIALIZATION_QUALITY_REPAIR_RUNNERS)
-    _require_materialization_schedule_reconciliation(
-        runtime_steps=runtime_schedule_steps,
-        runner_step_ids=runner_step_ids,
-    )
 
     def _run_step(step: DirectorRepairMaterializationQualityStepV1) -> list[dict[str, Any]]:
         tool_results = _run_materialization_quality_repair_step(
@@ -150,23 +144,16 @@ def run_materialization_quality_repairs(
         )
         return tool_results
 
-    schedule_result = run_director_materialization_quality_repair_schedule_result(
+    facade_result = run_director_materialization_quality_repair_facade(
+        artifact_quality_errors=artifact_quality_errors,
         runner_step_ids=runner_step_ids,
         runner=_run_step,
+        plan_probe_preaudit=plan_probe_preaudit,
+        convergence_verifier_present=convergence_verifier_present,
     )
-    ordered_steps = schedule_result.ordered_steps
-    schedule_reconciliation = _require_materialization_schedule_reconciliation(
-        runtime_steps=runtime_schedule_steps,
-        runner_step_ids=runner_step_ids,
-        result_steps=ordered_steps,
-    )
-    receipt_projections = [
-        _materialization_callback_receipt_projection_to_dict(item) for item in schedule_result.receipt_projections
-    ]
-    tool_results = _project_materialization_tool_results_with_runtime_metadata(
-        [dict(item) for item in schedule_result.tool_results],
-        ordered_steps=ordered_steps,
-    )
+    ordered_steps = facade_result.ordered_steps
+    receipt_projections = [dict(item) for item in facade_result.receipt_projections]
+    tool_results = [dict(item) for item in facade_result.tool_results]
     step_summaries = _summarize_materialization_schedule_steps(
         ordered_steps=ordered_steps,
         tool_results=tool_results,
@@ -176,11 +163,11 @@ def run_materialization_quality_repairs(
         tool_results=tool_results,
         artifact_quality_errors=artifact_quality_errors,
         ordered_steps=ordered_steps,
-        coverage_preaudit=coverage_preaudit,
+        coverage_preaudit=dict(facade_result.coverage_preaudit),
         plan_probe_preaudit=plan_probe_preaudit,
-        schedule_summary=dict(schedule_result.summary),
+        schedule_summary=dict(facade_result.schedule_summary),
         receipt_projections=receipt_projections,
-        schedule_reconciliation=schedule_reconciliation,
+        schedule_reconciliation=dict(facade_result.schedule_reconciliation),
         convergence_verifier_present=convergence_verifier_present,
     )
     return tool_results, bridged_summary
@@ -1073,119 +1060,6 @@ def _collect_materialization_go_base_files(workspace_path: Path) -> dict[str, st
             with suppress(OSError, UnicodeDecodeError):
                 base_files[relative_path] = go_file.read_text(encoding="utf-8")
     return base_files
-
-
-def _runtime_materialization_quality_schedule_steps() -> tuple[DirectorRepairMaterializationQualityStepV1, ...]:
-    schedule = query_director_repair_materialization_quality_schedule(
-        QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
-    )
-    return tuple(schedule.items)
-
-
-def _require_materialization_schedule_reconciliation(
-    *,
-    runtime_steps: tuple[DirectorRepairMaterializationQualityStepV1, ...],
-    runner_step_ids: tuple[str, ...],
-    result_steps: tuple[DirectorRepairMaterializationQualityStepV1, ...] | None = None,
-) -> dict[str, Any]:
-    reconciliation = _materialization_schedule_reconciliation(
-        runtime_steps=runtime_steps,
-        runner_step_ids=runner_step_ids,
-        result_steps=result_steps,
-    )
-    if reconciliation["exact_match"]:
-        return reconciliation
-    raise RuntimeError(f"materialization quality repair runner bindings drift from runtime schedule: {reconciliation}")
-
-
-def _materialization_schedule_reconciliation(
-    *,
-    runtime_steps: tuple[DirectorRepairMaterializationQualityStepV1, ...],
-    runner_step_ids: tuple[str, ...],
-    result_steps: tuple[DirectorRepairMaterializationQualityStepV1, ...] | None = None,
-) -> dict[str, Any]:
-    runtime_step_ids = [step.step_id for step in runtime_steps]
-    runner_ids = [str(step_id or "").strip() for step_id in runner_step_ids if str(step_id or "").strip()]
-    result_step_ids = [step.step_id for step in result_steps] if result_steps is not None else []
-    runtime_id_set = set(runtime_step_ids)
-    runner_id_set = set(runner_ids)
-    result_id_set = set(result_step_ids)
-    runtime_has_unique_steps = len(runtime_step_ids) == len(runtime_id_set)
-    runner_has_unique_steps = len(runner_ids) == len(runner_id_set)
-    result_matches_runtime = result_steps is None or result_step_ids == runtime_step_ids
-    return {
-        "schema_version": "director.materialization_quality_schedule_reconciliation.v1",
-        "runtime_schedule_owner": "director.runtime",
-        "runner_binding_owner": "roles.adapters",
-        "runtime_step_ids": runtime_step_ids,
-        "runner_step_ids": runner_ids,
-        "schedule_result_step_ids": result_step_ids,
-        "runtime_step_count": len(runtime_step_ids),
-        "runner_step_count": len(runner_ids),
-        "schedule_result_step_count": len(result_step_ids) if result_steps is not None else None,
-        "runtime_has_unique_steps": runtime_has_unique_steps,
-        "runner_has_unique_steps": runner_has_unique_steps,
-        "runner_key_set_matches_runtime": runner_id_set == runtime_id_set,
-        "runner_order_matches_runtime": runner_ids == runtime_step_ids,
-        "schedule_result_matches_runtime": result_matches_runtime,
-        "missing_runner_step_ids": sorted(runtime_id_set - runner_id_set),
-        "extra_runner_step_ids": sorted(runner_id_set - runtime_id_set),
-        "missing_schedule_result_step_ids": sorted(runtime_id_set - result_id_set) if result_steps is not None else [],
-        "extra_schedule_result_step_ids": sorted(result_id_set - runtime_id_set) if result_steps is not None else [],
-        "exact_match": (
-            runtime_has_unique_steps
-            and runner_has_unique_steps
-            and runner_ids == runtime_step_ids
-            and result_matches_runtime
-        ),
-    }
-
-
-def _project_materialization_tool_results_with_runtime_metadata(
-    tool_results: list[dict[str, Any]],
-    *,
-    ordered_steps: tuple[DirectorRepairMaterializationQualityStepV1, ...],
-) -> list[dict[str, Any]]:
-    steps_by_id = {step.step_id: step for step in ordered_steps}
-    projected: list[dict[str, Any]] = []
-    for item in tool_results:
-        copied = dict(item)
-        result = copied.get("result")
-        payload = dict(result) if isinstance(result, dict) else None
-        step = None
-        if payload is not None:
-            step = steps_by_id.get(_payload_step_id(payload))
-            if step is None and len(ordered_steps) == 1:
-                step = ordered_steps[0]
-            if step is not None:
-                _apply_runtime_step_metadata(payload, step)
-                copied["result"] = payload
-        if step is not None:
-            copied.setdefault("runtime_step_id", step.step_id)
-            copied.setdefault("scheduler_step_id", step.step_id)
-            copied.setdefault("bridge_step_id", step.step_id)
-            copied.setdefault("phase", step.phase)
-            copied.setdefault("priority", step.priority)
-            copied.setdefault("depends_on", list(step.depends_on))
-            copied["evidence_status"] = _tool_result_evidence_status(copied)
-        else:
-            copied.setdefault("evidence_status", "missing_evidence")
-        projected.append(copied)
-    return projected
-
-
-def _apply_runtime_step_metadata(
-    payload: dict[str, Any],
-    step: DirectorRepairMaterializationQualityStepV1,
-) -> None:
-    payload["runtime_step_id"] = step.step_id
-    payload["scheduler_step_id"] = step.step_id
-    payload["bridge_step_id"] = step.step_id
-    payload["language"] = step.language
-    payload["phase"] = step.phase
-    payload["priority"] = step.priority
-    payload["depends_on"] = list(step.depends_on)
-    payload["evidence_status"] = _payload_evidence_status(payload)
 
 
 def _annotate_materialization_quality_summary(

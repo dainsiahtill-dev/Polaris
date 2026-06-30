@@ -29,7 +29,11 @@ from polaris.cells.roles.adapters.internal.director.execution_tools import Direc
 from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
     run_runtime_repair_with_director_tools,
 )
-from polaris.cells.roles.adapters.public import service as roles_adapters_public_service
+from polaris.cells.roles.adapters.public import (
+    DirectorMaterializationQualityRepairScheduleResultV1,
+    RunDirectorMaterializationQualityRepairScheduleCommandV1,
+    service as roles_adapters_public_service,
+)
 
 _RELATIVE_PATH = "src/models/Flight.ts"
 _SOURCE_TOOL = "deterministic_typescript_return_object_semicolon_repair"
@@ -2246,19 +2250,36 @@ def test_materialization_public_schedule_entrypoint_forwards_bridge(
     )
 
     adapter = _FakeAdapter(tmp_path)
-    results, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
-        adapter,
-        task={"target_files": ["main.go"]},
-        task_id="task-materialization-schedule",
-        artifact_quality_errors=["Go syntax check failed"],
+    typed_result = roles_adapters_public_service.run_director_materialization_quality_repair_schedule_result(
+        RunDirectorMaterializationQualityRepairScheduleCommandV1(
+            adapter_port=adapter,
+            task={"target_files": ["main.go"]},
+            task_id="task-materialization-schedule",
+            artifact_quality_errors=("Go syntax check failed",),
+        )
     )
+    results, summary = typed_result.to_legacy_tuple()
 
+    assert isinstance(typed_result, DirectorMaterializationQualityRepairScheduleResultV1)
     assert len(calls) == 1
     assert calls[0]["adapter"] is adapter
     assert calls[0]["task_id"] == "task-materialization-schedule"
     assert results[0]["tool"] == "write_file"
     public_boundary = summary["public_boundary"]
     assert public_boundary["mode"] == "runtime_owned_schedule_public_boundary"
+    assert public_boundary["typed_contract"] == "RunDirectorMaterializationQualityRepairScheduleCommandV1"
+    assert public_boundary["typed_result"] == "DirectorMaterializationQualityRepairScheduleResultV1"
+
+    legacy_results, legacy_summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
+        adapter,
+        task={"target_files": ["main.go"]},
+        task_id="task-materialization-schedule",
+        artifact_quality_errors=["Go syntax check failed"],
+    )
+
+    assert len(calls) == 2
+    assert legacy_results == results
+    assert legacy_summary["public_boundary"] == public_boundary
     assert "migration_only_compatibility_shim" not in public_boundary
     assert not hasattr(roles_adapters_public_service, "apply_deterministic_materialization_quality_repairs")
 

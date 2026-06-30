@@ -2070,6 +2070,87 @@ class DirectorRepairMaterializationQualityScheduleRunResultV1:
 
 
 @dataclass(frozen=True)
+class DirectorRepairMaterializationQualityFacadeResultV1:
+    """Runtime-owned facade result for materialization-quality repair execution."""
+
+    schema_version: str
+    source: str
+    ordered_steps: tuple[DirectorRepairMaterializationQualityStepV1, ...] = ()
+    tool_results: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    receipt_projections: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    coverage_preaudit: Mapping[str, Any] = field(default_factory=dict)
+    plan_probe_preaudit: Mapping[str, Any] = field(default_factory=dict)
+    schedule_summary: Mapping[str, Any] = field(default_factory=dict)
+    schedule_reconciliation: Mapping[str, Any] = field(default_factory=dict)
+    summary: Mapping[str, Any] = field(default_factory=dict)
+    max_rounds: int = 1
+    rounds_run: int = 0
+    convergence_status: str = "not_run"
+    stopped_reason: str = "not_run"
+    owner_cell: str = "director.runtime"
+    runner_binding_owner: str = "roles.adapters"
+    execution_boundary: str = "runtime_materialization_quality_facade_no_direct_writes"
+    director_tool_execution_required: bool = True
+    writes_allowed: bool = False
+    registration_allowed: bool = False
+    agi_execution_authority: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "source", _require_non_empty("source", self.source))
+        object.__setattr__(self, "ordered_steps", tuple(self.ordered_steps or ()))
+        object.__setattr__(self, "tool_results", tuple(dict(item) for item in (self.tool_results or ())))
+        object.__setattr__(self, "receipt_projections", tuple(dict(item) for item in (self.receipt_projections or ())))
+        object.__setattr__(self, "coverage_preaudit", _to_dict_copy(self.coverage_preaudit))
+        object.__setattr__(self, "plan_probe_preaudit", _to_dict_copy(self.plan_probe_preaudit))
+        object.__setattr__(self, "schedule_summary", _to_dict_copy(self.schedule_summary))
+        object.__setattr__(self, "schedule_reconciliation", _to_dict_copy(self.schedule_reconciliation))
+        object.__setattr__(self, "summary", _to_dict_copy(self.summary))
+        object.__setattr__(self, "max_rounds", max(0, int(self.max_rounds)))
+        object.__setattr__(self, "rounds_run", max(0, int(self.rounds_run)))
+        object.__setattr__(self, "convergence_status", _require_non_empty("convergence_status", self.convergence_status))
+        object.__setattr__(self, "stopped_reason", _require_non_empty("stopped_reason", self.stopped_reason))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self, "runner_binding_owner", _require_non_empty("runner_binding_owner", self.runner_binding_owner)
+        )
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+        object.__setattr__(self, "director_tool_execution_required", True)
+        object.__setattr__(self, "writes_allowed", False)
+        object.__setattr__(self, "registration_allowed", False)
+        object.__setattr__(self, "agi_execution_authority", False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "owner_cell": self.owner_cell,
+            "runner_binding_owner": self.runner_binding_owner,
+            "execution_boundary": self.execution_boundary,
+            "director_tool_execution_required": True,
+            "writes_allowed": False,
+            "registration_allowed": False,
+            "agi_execution_authority": False,
+            "ordered_steps": [item.to_dict() for item in self.ordered_steps],
+            "tool_results": [dict(item) for item in self.tool_results],
+            "receipt_projections": [dict(item) for item in self.receipt_projections],
+            "coverage_preaudit": dict(self.coverage_preaudit),
+            "plan_probe_preaudit": dict(self.plan_probe_preaudit),
+            "schedule_summary": dict(self.schedule_summary),
+            "schedule_reconciliation": dict(self.schedule_reconciliation),
+            "summary": dict(self.summary),
+            "max_rounds": self.max_rounds,
+            "rounds_run": self.rounds_run,
+            "convergence_status": self.convergence_status,
+            "stopped_reason": self.stopped_reason,
+        }
+
+
+@dataclass(frozen=True)
 class QueryDirectorRepairAdvisoryPolicyV1:
     """Query shape for the non-authoritative AGI repair advisory policy."""
 

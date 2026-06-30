@@ -20,6 +20,19 @@ def _to_dict_copy(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(payload or {})
 
 
+def _to_tuple_dict(payload: object) -> tuple[dict[str, Any], ...]:
+    if payload is None:
+        return ()
+    if not isinstance(payload, (list, tuple)):
+        raise TypeError("payload must be a list or tuple of mappings")
+    items: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            raise TypeError("payload items must be mappings")
+        items.append(dict(item))
+    return tuple(items)
+
+
 @dataclass(frozen=True)
 class CreateRoleAdapterCommandV1:
     role_id: str
@@ -72,6 +85,50 @@ class RoleAdapterResultV1:
             raise ValueError("failed result must include error_code or error_message")
 
 
+@dataclass(frozen=True)
+class RunDirectorMaterializationQualityRepairScheduleCommandV1:
+    """Command for the roles adapter materialization-quality repair boundary."""
+
+    adapter_port: Any
+    task: Mapping[str, Any]
+    task_id: str
+    artifact_quality_errors: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task", _to_dict_copy(self.task))
+        object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
+        object.__setattr__(
+            self,
+            "artifact_quality_errors",
+            tuple(str(item) for item in self.artifact_quality_errors if str(item or "").strip()),
+        )
+
+
+@dataclass(frozen=True)
+class DirectorMaterializationQualityRepairScheduleResultV1:
+    """Result for the roles adapter materialization-quality repair boundary."""
+
+    tool_results: tuple[dict[str, Any], ...]
+    summary: Mapping[str, Any]
+    schema_version: str = "roles.adapters.materialization_quality_repair_schedule_result.v1"
+    owner_cell: str = "roles.adapters"
+    execution_boundary: str = "adapter_callback_ports_runtime_schedule"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "tool_results", _to_tuple_dict(self.tool_results))
+        object.__setattr__(self, "summary", _to_dict_copy(self.summary))
+        object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
+        object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
+        object.__setattr__(
+            self,
+            "execution_boundary",
+            _require_non_empty("execution_boundary", self.execution_boundary),
+        )
+
+    def to_legacy_tuple(self) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        return [dict(item) for item in self.tool_results], dict(self.summary)
+
+
 class RoleAdaptersError(RuntimeError):
     """Structured contract error for `roles.adapters`."""
 
@@ -116,10 +173,12 @@ class IRoleAdapter(Protocol):
 
 __all__ = [
     "CreateRoleAdapterCommandV1",
+    "DirectorMaterializationQualityRepairScheduleResultV1",
     "IRoleAdapter",
     "IRoleAdaptersService",
     "ListSupportedRoleAdaptersQueryV1",
     "RoleAdapterRegisteredEventV1",
     "RoleAdapterResultV1",
     "RoleAdaptersError",
+    "RunDirectorMaterializationQualityRepairScheduleCommandV1",
 ]

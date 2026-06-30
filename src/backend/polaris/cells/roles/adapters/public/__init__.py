@@ -2,12 +2,14 @@
 
 from polaris.cells.roles.adapters.public.contracts import (
     CreateRoleAdapterCommandV1,
+    DirectorMaterializationQualityRepairScheduleResultV1,
     IRoleAdapter,
     IRoleAdaptersService,
     ListSupportedRoleAdaptersQueryV1,
     RoleAdapterRegisteredEventV1,
     RoleAdapterResultV1,
     RoleAdaptersError,
+    RunDirectorMaterializationQualityRepairScheduleCommandV1,
 )
 from polaris.cells.roles.adapters.public.service import (
     ROLE_OUTPUT_SCHEMAS,
@@ -35,6 +37,10 @@ from polaris.cells.roles.adapters.public.service import (
     get_schema_for_role,
     get_supported_roles,
     register_all_adapters,
+    run_director_materialization_quality_repair,
+    run_director_materialization_quality_repair_schedule,
+    run_director_materialization_quality_repair_schedule_result,
+    run_director_post_execution_repair_schedule,
 )
 
 __all__ = [
@@ -46,6 +52,7 @@ __all__ = [
     "ChiefEngineerAdapter",
     "ConstructionPlan",
     "CreateRoleAdapterCommandV1",
+    "DirectorMaterializationQualityRepairScheduleResultV1",
     "DirectorOutput",
     "IRoleAdapter",
     "IRoleAdaptersService",
@@ -59,6 +66,7 @@ __all__ = [
     "RoleAdapterRegisteredEventV1",
     "RoleAdapterResultV1",
     "RoleAdaptersError",
+    "RunDirectorMaterializationQualityRepairScheduleCommandV1",
     "Task",
     "TaskListOutput",
     "ToolCall",
@@ -70,4 +78,8 @@ __all__ = [
     "get_schema_for_role",
     "get_supported_roles",
     "register_all_adapters",
+    "run_director_materialization_quality_repair",
+    "run_director_materialization_quality_repair_schedule",
+    "run_director_materialization_quality_repair_schedule_result",
+    "run_director_post_execution_repair_schedule",
 ]

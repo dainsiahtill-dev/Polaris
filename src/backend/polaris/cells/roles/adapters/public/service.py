@@ -9,6 +9,10 @@ from typing import TYPE_CHECKING, Any, cast
 from polaris.cells.orchestration.workflow_runtime.public.service import (
     configure_orchestration_role_adapter_factory,
 )
+from polaris.cells.roles.adapters.public.contracts import (
+    DirectorMaterializationQualityRepairScheduleResultV1,
+    RunDirectorMaterializationQualityRepairScheduleCommandV1,
+)
 
 # ---------------------------------------------------------------------------
 # NOTE on import order
@@ -97,17 +101,33 @@ def run_director_materialization_quality_repair_schedule(
     task_id: str,
     artifact_quality_errors: list[str],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Run Director materialization-quality repair schedule through the public boundary."""
+    """Run Director materialization-quality repair schedule through the legacy tuple boundary."""
+
+    result = run_director_materialization_quality_repair_schedule_result(
+        RunDirectorMaterializationQualityRepairScheduleCommandV1(
+            adapter_port=adapter,
+            task=task,
+            task_id=task_id,
+            artifact_quality_errors=tuple(artifact_quality_errors),
+        )
+    )
+    return result.to_legacy_tuple()
+
+
+def run_director_materialization_quality_repair_schedule_result(
+    command: RunDirectorMaterializationQualityRepairScheduleCommandV1,
+) -> DirectorMaterializationQualityRepairScheduleResultV1:
+    """Run Director materialization-quality repair schedule through the typed public boundary."""
 
     from ..internal.director.materialization_quality_repair_bridge import (
         run_materialization_quality_repairs,
     )
 
     results, summary = run_materialization_quality_repairs(
-        adapter,
-        task=task,
-        task_id=task_id,
-        artifact_quality_errors=artifact_quality_errors,
+        command.adapter_port,
+        task=dict(command.task),
+        task_id=command.task_id,
+        artifact_quality_errors=list(command.artifact_quality_errors),
     )
     public_summary = dict(summary or {})
     public_summary["public_boundary"] = {
@@ -116,8 +136,13 @@ def run_director_materialization_quality_repair_schedule(
         "internal_function_exported": False,
         "repair_kernel_owner": "director.runtime",
         "director_runtime_public_summary_required": True,
+        "typed_contract": "RunDirectorMaterializationQualityRepairScheduleCommandV1",
+        "typed_result": "DirectorMaterializationQualityRepairScheduleResultV1",
     }
-    return results, public_summary
+    return DirectorMaterializationQualityRepairScheduleResultV1(
+        tool_results=tuple(dict(item) for item in results),
+        summary=public_summary,
+    )
 
 
 class _PublicPostExecutionRepairAdapter:
@@ -242,5 +267,6 @@ __all__ = [
     "register_all_adapters",
     "run_director_materialization_quality_repair",
     "run_director_materialization_quality_repair_schedule",
+    "run_director_materialization_quality_repair_schedule_result",
     "run_director_post_execution_repair_schedule",
 ]

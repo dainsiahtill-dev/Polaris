@@ -83,6 +83,7 @@ from polaris.cells.director.runtime.public.contracts import (
     DirectorRepairMaterializationAllowedPathsResultV1,
     DirectorRepairMaterializationBridgeMetadataResultV1,
     DirectorRepairMaterializationPlanProbeResultV1,
+    DirectorRepairMaterializationQualityFacadeResultV1,
     DirectorRepairMaterializationQualityScheduleResultV1,
     DirectorRepairMaterializationQualityScheduleRunResultV1,
     DirectorRepairMaterializationQualityStepV1,
@@ -1171,11 +1172,7 @@ def query_director_repair_materialization_plan_probe(
         coverage,
         requested_source_tools=requested_source_tools,
     )
-    if (
-        not candidate_source_tools
-        and query.fallback_to_step_source_tools
-        and coverage.total_diagnostics > 0
-    ):
+    if not candidate_source_tools and query.fallback_to_step_source_tools and coverage.total_diagnostics > 0:
         candidate_source_tools = requested_source_tools
     if not candidate_source_tools:
         status = (
@@ -1599,7 +1596,9 @@ def query_director_repair_post_execution_schedule(
     languages = sorted({step.language for step in ordered_steps})
     phases = sorted({step.phase for step in ordered_steps})
     priorities = sorted({step.priority for step in ordered_steps})
-    executable_runtime_source_tools = [step.source_tool for step in ordered_steps if step.executable_runtime_source_tool]
+    executable_runtime_source_tools = [
+        step.source_tool for step in ordered_steps if step.executable_runtime_source_tool
+    ]
     callback_schedule_label_source_tools = [
         step.source_tool for step in ordered_steps if not step.executable_runtime_source_tool
     ]
@@ -1689,7 +1688,9 @@ def query_director_repair_materialization_quality_schedule(
     languages = sorted({step.language for step in ordered_steps})
     phases = sorted({step.phase for step in ordered_steps})
     priorities = sorted({step.priority for step in ordered_steps})
-    executable_runtime_source_tools = [step.source_tool for step in ordered_steps if step.executable_runtime_source_tool]
+    executable_runtime_source_tools = [
+        step.source_tool for step in ordered_steps if step.executable_runtime_source_tool
+    ]
     callback_schedule_label_source_tools = [
         step.source_tool for step in ordered_steps if not step.executable_runtime_source_tool
     ]
@@ -1771,6 +1772,337 @@ def run_director_materialization_quality_repair_schedule_result(
         convergence_status=str(run_payload["convergence_status"]),
         stopped_reason=str(run_payload["stopped_reason"]),
     )
+
+
+def run_director_materialization_quality_repair_facade(
+    *,
+    artifact_quality_errors: Sequence[str],
+    runner_step_ids: Sequence[str],
+    runner: MaterializationQualityStepRunnerV1,
+    plan_probe_preaudit: Mapping[str, Any] | None = None,
+    convergence_verifier_present: bool = False,
+    max_rounds: int = DEFAULT_REPAIR_SCHEDULE_MAX_ROUNDS,
+) -> DirectorRepairMaterializationQualityFacadeResultV1:
+    """Run materialization-quality repairs through the runtime-owned facade."""
+
+    coverage_preaudit = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(tuple(str(item) for item in artifact_quality_errors))
+    ).to_dict()
+    runtime_schedule = query_director_repair_materialization_quality_schedule(
+        QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
+    )
+    pre_run_reconciliation = _materialization_quality_schedule_reconciliation(
+        runtime_steps=runtime_schedule.items,
+        runner_step_ids=runner_step_ids,
+    )
+    if not pre_run_reconciliation["exact_match"]:
+        raise RuntimeError(
+            f"materialization quality repair runner bindings drift from runtime schedule: {pre_run_reconciliation}"
+        )
+    schedule_result = run_director_materialization_quality_repair_schedule_result(
+        runner_step_ids=runner_step_ids,
+        runner=runner,
+        max_rounds=max_rounds,
+    )
+    ordered_steps = schedule_result.ordered_steps
+    schedule_reconciliation = _materialization_quality_schedule_reconciliation(
+        runtime_steps=runtime_schedule.items,
+        runner_step_ids=runner_step_ids,
+        result_steps=ordered_steps,
+    )
+    if not schedule_reconciliation["exact_match"]:
+        raise RuntimeError(
+            f"materialization quality repair schedule result drifted from runtime schedule: {schedule_reconciliation}"
+        )
+    schedule_payload = schedule_result.to_dict()
+    tool_results = _project_materialization_facade_tool_results_with_runtime_metadata(
+        [dict(item) for item in schedule_payload["tool_results"]],
+        ordered_steps=ordered_steps,
+    )
+    receipt_projections = tuple(dict(item) for item in schedule_payload["receipt_projections"])
+    source_tools = _ordered_unique(
+        tuple(
+            str(_materialization_result_payload(item).get("source_tool") or "")
+            for item in tool_results
+            if isinstance(item, dict)
+        )
+    )
+    summary = {
+        "schema_version": "director.materialization_quality_repair_facade_summary.v1",
+        "stage": "deterministic_quality_repair",
+        "attempted": bool(tool_results),
+        "success": False,
+        "revalidated": False,
+        "success_reason": "repair_actions_require_quality_gate_rerun",
+        "tool_results": len(tool_results),
+        "write_tool_evidence": _materialization_facade_has_successful_write_tool(tool_results),
+        "source_tools": list(source_tools),
+        "coverage_preaudit": coverage_preaudit,
+        "plan_probe_preaudit": dict(plan_probe_preaudit or {}),
+        "schedule_summary": dict(schedule_payload["summary"]),
+        "schedule_reconciliation": schedule_reconciliation,
+        "runtime_facade_owner": "director.runtime",
+        "runner_binding_owner": "roles.adapters",
+        "convergence_verifier_present": bool(convergence_verifier_present),
+    }
+    return DirectorRepairMaterializationQualityFacadeResultV1(
+        schema_version="director.materialization_quality_repair_facade_result.v1",
+        source="director.runtime.repair_kernel.materialization_quality_facade",
+        ordered_steps=ordered_steps,
+        tool_results=tuple(tool_results),
+        receipt_projections=receipt_projections,
+        coverage_preaudit=coverage_preaudit,
+        plan_probe_preaudit=dict(plan_probe_preaudit or {}),
+        schedule_summary=dict(schedule_payload["summary"]),
+        schedule_reconciliation=schedule_reconciliation,
+        summary=summary,
+        max_rounds=schedule_result.max_rounds,
+        rounds_run=schedule_result.rounds_run,
+        convergence_status=schedule_result.convergence_status,
+        stopped_reason=schedule_result.stopped_reason,
+    )
+
+
+def _materialization_quality_schedule_reconciliation(
+    *,
+    runtime_steps: Sequence[DirectorRepairMaterializationQualityStepV1],
+    runner_step_ids: Sequence[str],
+    result_steps: Sequence[DirectorRepairMaterializationQualityStepV1] | None = None,
+) -> dict[str, Any]:
+    runtime_step_ids = [step.step_id for step in runtime_steps]
+    runner_ids = [str(step_id or "").strip() for step_id in runner_step_ids if str(step_id or "").strip()]
+    result_step_ids = [step.step_id for step in result_steps] if result_steps is not None else []
+    runtime_id_set = set(runtime_step_ids)
+    runner_id_set = set(runner_ids)
+    result_id_set = set(result_step_ids)
+    runtime_has_unique_steps = len(runtime_step_ids) == len(runtime_id_set)
+    runner_has_unique_steps = len(runner_ids) == len(runner_id_set)
+    result_matches_runtime = result_steps is None or result_step_ids == runtime_step_ids
+    return {
+        "schema_version": "director.materialization_quality_schedule_reconciliation.v1",
+        "runtime_schedule_owner": "director.runtime",
+        "runner_binding_owner": "roles.adapters",
+        "runtime_step_ids": runtime_step_ids,
+        "runner_step_ids": runner_ids,
+        "schedule_result_step_ids": result_step_ids,
+        "runtime_step_count": len(runtime_step_ids),
+        "runner_step_count": len(runner_ids),
+        "schedule_result_step_count": len(result_step_ids) if result_steps is not None else None,
+        "runtime_has_unique_steps": runtime_has_unique_steps,
+        "runner_has_unique_steps": runner_has_unique_steps,
+        "runner_key_set_matches_runtime": runner_id_set == runtime_id_set,
+        "runner_order_matches_runtime": runner_ids == runtime_step_ids,
+        "schedule_result_matches_runtime": result_matches_runtime,
+        "missing_runner_step_ids": sorted(runtime_id_set - runner_id_set),
+        "extra_runner_step_ids": sorted(runner_id_set - runtime_id_set),
+        "missing_schedule_result_step_ids": sorted(runtime_id_set - result_id_set) if result_steps is not None else [],
+        "extra_schedule_result_step_ids": sorted(result_id_set - runtime_id_set) if result_steps is not None else [],
+        "exact_match": (
+            runtime_has_unique_steps
+            and runner_has_unique_steps
+            and runner_ids == runtime_step_ids
+            and result_matches_runtime
+        ),
+    }
+
+
+def _project_materialization_facade_tool_results_with_runtime_metadata(
+    tool_results: Sequence[Mapping[str, Any]],
+    *,
+    ordered_steps: Sequence[DirectorRepairMaterializationQualityStepV1],
+) -> list[dict[str, Any]]:
+    steps_by_id = {step.step_id: step for step in ordered_steps}
+    projected: list[dict[str, Any]] = []
+    for item in tool_results:
+        copied = dict(item)
+        result = copied.get("result")
+        payload = dict(result) if isinstance(result, Mapping) else None
+        step: DirectorRepairMaterializationQualityStepV1 | None = None
+        if payload is not None:
+            step = steps_by_id.get(_materialization_payload_step_id(payload))
+            if step is None and len(tuple(ordered_steps)) == 1:
+                step = next(iter(ordered_steps))
+            if step is not None:
+                _apply_materialization_runtime_step_metadata(payload, step)
+                copied["result"] = payload
+        if step is not None:
+            copied.setdefault("runtime_step_id", step.step_id)
+            copied.setdefault("scheduler_step_id", step.step_id)
+            copied.setdefault("bridge_step_id", step.step_id)
+            copied.setdefault("phase", step.phase)
+            copied.setdefault("priority", step.priority)
+            copied.setdefault("depends_on", list(step.depends_on))
+            copied["evidence_status"] = _materialization_tool_result_evidence_status(copied)
+        else:
+            copied.setdefault("evidence_status", "missing_evidence")
+        projected.append(copied)
+    return projected
+
+
+def _apply_materialization_runtime_step_metadata(
+    payload: dict[str, Any],
+    step: DirectorRepairMaterializationQualityStepV1,
+) -> None:
+    payload["runtime_step_id"] = step.step_id
+    payload["scheduler_step_id"] = step.step_id
+    payload["bridge_step_id"] = step.step_id
+    payload["language"] = step.language
+    payload["phase"] = step.phase
+    payload["priority"] = step.priority
+    payload["depends_on"] = list(step.depends_on)
+    payload["evidence_status"] = _materialization_payload_evidence_status(payload)
+
+
+def _materialization_payload_step_id(payload: Mapping[str, Any]) -> str:
+    for key in ("bridge_step_id", "step_id", "scheduler_step_id"):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _materialization_result_payload(tool_result: Mapping[str, Any]) -> dict[str, Any]:
+    result = tool_result.get("result")
+    return dict(result) if isinstance(result, Mapping) else {}
+
+
+def _materialization_tool_result_evidence_status(tool_result: Mapping[str, Any]) -> str:
+    result = tool_result.get("result")
+    if isinstance(result, Mapping):
+        status = _materialization_payload_evidence_status(result)
+        if status != "missing_evidence":
+            return status
+    claimed = _materialization_claimed_evidence_status(tool_result)
+    return claimed if claimed in {"missing_evidence", "failed_evidence"} else "missing_evidence"
+
+
+def _materialization_payload_evidence_status(payload: Mapping[str, Any]) -> str:
+    claimed = _materialization_claimed_evidence_status(payload)
+    if claimed in {"missing_evidence", "failed_evidence", "resolved_evidence"}:
+        return claimed
+    repair_kernel = payload.get("repair_kernel")
+    if isinstance(repair_kernel, Mapping):
+        claimed = _materialization_claimed_evidence_status(repair_kernel)
+        if claimed in {"missing_evidence", "failed_evidence", "resolved_evidence"}:
+            return claimed
+    status = _materialization_evidence_mapping_status(_materialization_payload_revalidation_evidence(payload))
+    if status != "missing_evidence":
+        return status
+    if isinstance(repair_kernel, Mapping):
+        receipts = repair_kernel.get("receipts")
+        if isinstance(receipts, list | tuple):
+            receipt_statuses = [
+                _materialization_payload_evidence_status(receipt)
+                for receipt in receipts
+                if isinstance(receipt, Mapping)
+            ]
+            return _materialization_aggregate_evidence_status(receipt_statuses)
+    return "missing_evidence"
+
+
+def _materialization_payload_revalidation_evidence(payload: Mapping[str, Any]) -> dict[str, Any]:
+    for key in ("revalidation_evidence", "revalidation"):
+        evidence = payload.get(key)
+        if isinstance(evidence, Mapping) and evidence:
+            return dict(evidence)
+    repair_kernel = payload.get("repair_kernel")
+    if isinstance(repair_kernel, Mapping):
+        kernel_evidence = repair_kernel.get("revalidation_evidence")
+        if isinstance(kernel_evidence, Mapping) and kernel_evidence:
+            return dict(kernel_evidence)
+        receipts = repair_kernel.get("receipts")
+        if isinstance(receipts, list | tuple):
+            for receipt in receipts:
+                if not isinstance(receipt, Mapping):
+                    continue
+                receipt_evidence = receipt.get("revalidation_evidence")
+                if isinstance(receipt_evidence, Mapping) and receipt_evidence:
+                    return dict(receipt_evidence)
+    return {}
+
+
+def _materialization_evidence_mapping_status(evidence: Any) -> str:
+    if not isinstance(evidence, Mapping) or not evidence:
+        return "missing_evidence"
+    command = evidence.get("command") or evidence.get("verifier_command")
+    exit_code = _materialization_optional_int(evidence.get("exit_code"))
+    if exit_code is None:
+        exit_code = _materialization_optional_int(evidence.get("revalidation_exit_code"))
+    if not command or exit_code is None:
+        return "missing_evidence"
+    residual_count = _materialization_evidence_residual_count(evidence)
+    errors_after = _materialization_optional_int(evidence.get("errors_after"))
+    if errors_after is None:
+        errors_after = _materialization_optional_int(evidence.get("errors_after_count"))
+    if exit_code != 0:
+        return "failed_evidence"
+    if residual_count is not None and residual_count > 0:
+        return "failed_evidence"
+    if errors_after is not None and errors_after > 0:
+        return "failed_evidence"
+    return "resolved_evidence"
+
+
+def _materialization_evidence_residual_count(evidence: Mapping[str, Any]) -> int | None:
+    residual_count = _materialization_optional_int(evidence.get("revalidation_residual_count"))
+    if residual_count is None:
+        residual_count = _materialization_optional_int(evidence.get("residual_count"))
+    if residual_count is None:
+        residual_count = _materialization_optional_int(evidence.get("residual_diagnostic_count"))
+    if residual_count is not None:
+        return residual_count
+    residual_ids = evidence.get("residual_diagnostic_ids")
+    if isinstance(residual_ids, list | tuple | set):
+        return len(residual_ids)
+    return None
+
+
+def _materialization_claimed_evidence_status(payload: Mapping[str, Any]) -> str:
+    value = str(payload.get("evidence_status") or "").strip()
+    if value in {"missing_evidence", "failed_evidence", "resolved_evidence"}:
+        return value
+    return ""
+
+
+def _materialization_optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _materialization_aggregate_evidence_status(statuses: Sequence[str]) -> str:
+    normalized = [str(status or "").strip() for status in statuses if str(status or "").strip()]
+    if not normalized:
+        return "missing_evidence"
+    if "failed_evidence" in normalized:
+        return "failed_evidence"
+    if "missing_evidence" in normalized:
+        return "missing_evidence"
+    if all(status == "resolved_evidence" for status in normalized):
+        return "resolved_evidence"
+    return "missing_evidence"
+
+
+def _materialization_facade_has_successful_write_tool(tool_results: Sequence[Mapping[str, Any]]) -> bool:
+    write_tools = {
+        "append_to_file",
+        "delete_file",
+        "edit_blocks",
+        "edit_file",
+        "precision_edit",
+        "repo_apply_diff",
+        "search_replace",
+        "write_file",
+    }
+    for item in tool_results:
+        tool = str(item.get("tool") or item.get("tool_name") or "").strip()
+        if tool not in write_tools:
+            continue
+        if item.get("ok") is False or item.get("success") is False:
+            continue
+        return True
+    return False
 
 
 def _public_post_execution_step(step: PostExecutionRepairScheduleStep) -> DirectorRepairPostExecutionStepV1:
@@ -2326,11 +2658,9 @@ def _interface_delta_from_task_boundary(
     diagnostic_paths = _diagnostic_paths(diagnostics)
     requested_symbols = _diagnostic_symbols(diagnostics)
     actual_exports, planned_exports, consumed_symbols = _interface_contract_symbol_maps(contract)
-    interface_conflicts = [
-        dict(item)
-        for item in contract.get("interface_conflicts", ())
-        if isinstance(item, Mapping)
-    ][:20]
+    interface_conflicts = [dict(item) for item in contract.get("interface_conflicts", ()) if isinstance(item, Mapping)][
+        :20
+    ]
     return {
         "schema_version": "director.interface_delta.v1",
         "task_id": command.task_id,
@@ -2465,10 +2795,7 @@ _DIAGNOSTIC_SYMBOL_PATTERNS = (
 def _diagnostic_symbols(diagnostics: Sequence[Mapping[str, Any]]) -> list[str]:
     symbols: list[str] = []
     for diagnostic in diagnostics:
-        text = " ".join(
-            str(diagnostic.get(key) or "")
-            for key in ("message", "raw", "detail", "stderr", "diagnostic")
-        )
+        text = " ".join(str(diagnostic.get(key) or "") for key in ("message", "raw", "detail", "stderr", "diagnostic"))
         for pattern in _DIAGNOSTIC_SYMBOL_PATTERNS:
             for match in pattern.finditer(text):
                 symbol = str(match.group("symbol") or "").strip()

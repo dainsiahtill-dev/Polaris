@@ -123,6 +123,7 @@ from polaris.cells.director.runtime.public import (
     DirectorRepairLanguageSlotV1,
     DirectorRepairMaterializationAllowedPathsResultV1,
     DirectorRepairMaterializationPlanProbeResultV1,
+    DirectorRepairMaterializationQualityFacadeResultV1,
     DirectorRepairMaterializationQualityScheduleResultV1,
     DirectorRepairMetricsResultV1,
     DirectorRepairPlanningResultV1,
@@ -165,6 +166,7 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_plan_probe,
     query_director_repair_post_execution_schedule,
     query_director_repair_strategy_catalog,
+    run_director_materialization_quality_repair_facade,
     run_director_repair,
     validate_director_repair_advisory,
 )
@@ -10929,6 +10931,57 @@ def test_public_materialization_bridge_metadata_projection_is_runtime_owned() ->
         "receipt_lifecycle_evidence_status"
     ] == "missing_evidence"
     assert summary["dark_launch_cutover_blockers"] == ["adapter_projection_bridge"]
+
+
+def test_runtime_materialization_quality_facade_runs_schedule_and_projects_evidence() -> None:
+    schedule = query_director_repair_materialization_quality_schedule(
+        QueryDirectorRepairMaterializationQualityScheduleV1()
+    )
+    runner_step_ids = tuple(item.step_id for item in schedule.items)
+
+    def runner(step) -> list[dict[str, object]]:
+        if step.step_id != "materialization.hygiene_scaffold":
+            return []
+        return [
+            {
+                "tool": "write_file",
+                "ok": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_scaffold_marker_cleanup",
+                    "bridge_step_id": step.step_id,
+                    "revalidation_evidence": {
+                        "command": ["rtk", "pytest", "tests/test_hygiene.py"],
+                        "exit_code": 0,
+                        "errors_after": 0,
+                    },
+                },
+            }
+        ]
+
+    result = run_director_materialization_quality_repair_facade(
+        artifact_quality_errors=("Artifact quality scan failed: placeholder marker found",),
+        runner_step_ids=runner_step_ids,
+        runner=runner,
+        plan_probe_preaudit={"status": "covered_plannable"},
+        convergence_verifier_present=True,
+    )
+    payload = result.to_dict()
+
+    assert isinstance(result, DirectorRepairMaterializationQualityFacadeResultV1)
+    assert payload["schema_version"] == "director.materialization_quality_repair_facade_result.v1"
+    assert payload["owner_cell"] == "director.runtime"
+    assert payload["runner_binding_owner"] == "roles.adapters"
+    assert payload["writes_allowed"] is False
+    assert payload["director_tool_execution_required"] is True
+    assert payload["schedule_reconciliation"]["exact_match"] is True
+    assert payload["schedule_reconciliation"]["runner_order_matches_runtime"] is True
+    assert payload["tool_results"][0]["runtime_step_id"] == "materialization.hygiene_scaffold"
+    assert payload["tool_results"][0]["evidence_status"] == "resolved_evidence"
+    assert payload["summary"]["runtime_facade_owner"] == "director.runtime"
+    assert payload["summary"]["write_tool_evidence"] is True
+    assert payload["summary"]["convergence_verifier_present"] is True
+    assert payload["coverage_preaudit"]["schema_version"] == "director.repair_coverage_report.v1"
 
 
 def test_runtime_materialization_quality_schedule_runs_callbacks_and_injects_step_metadata() -> None:
