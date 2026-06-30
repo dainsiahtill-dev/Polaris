@@ -1,19 +1,13 @@
 import os
-import sys
 
 import pytest
-
-MODULE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "core", "polaris_loop"))
-if MODULE_DIR not in sys.path:
-    sys.path.insert(0, MODULE_DIR)
-
 from polaris.cells.docs.court_workflow.internal import plan_template
-from polaris.infrastructure.compat import io_utils  # noqa: E402
+from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
 
 def _build_plan_path(workspace: str) -> str:
-    cache_root = io_utils.build_cache_root("", workspace)
-    return io_utils.resolve_artifact_path(
+    cache_root = build_cache_root("", workspace)
+    return resolve_artifact_path(
         workspace,
         cache_root,
         "runtime/contracts/plan.md",

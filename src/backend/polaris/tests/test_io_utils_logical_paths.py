@@ -1,15 +1,9 @@
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 
-MODULE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "core", "polaris_loop"))
-if MODULE_DIR not in sys.path:
-    sys.path.insert(0, MODULE_DIR)
-
-from polaris.infrastructure.compat import io_utils  # noqa: E402
-from polaris.kernelone.storage import resolve_storage_roots  # noqa: E402
+from polaris.kernelone.storage import resolve_storage_roots
+from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
 
 def test_resolve_artifact_path_workspace_prefix_maps_to_persistent_root(tmp_path: Path, monkeypatch) -> None:
@@ -25,8 +19,8 @@ def test_resolve_artifact_path_workspace_prefix_maps_to_persistent_root(tmp_path
     monkeypatch.delenv("KERNELONE_RAMDISK_ROOT", raising=False)
 
     workspace_str = str(workspace)
-    cache_root = io_utils.build_cache_root("", workspace_str)
-    resolved = io_utils.resolve_artifact_path(
+    cache_root = build_cache_root("", workspace_str)
+    resolved = resolve_artifact_path(
         workspace_str,
         cache_root,
         "workspace/docs/product/requirements.md",

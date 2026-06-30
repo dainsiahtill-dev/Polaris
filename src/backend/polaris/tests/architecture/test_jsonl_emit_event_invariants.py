@@ -24,7 +24,6 @@ CANONICAL_JSONL_MODULES: set[str] = {
     "polaris.kernelone.fs.jsonl.ops",
     "polaris.kernelone.process.background_manager",
     "polaris.kernelone.audit.runtime",
-    "polaris.infrastructure.compat.io_utils",
     "polaris.infrastructure.log_pipeline.writer",
     "polaris.infrastructure.log_pipeline.adapters",
     "polaris.infrastructure.accel.verify.verify.report_generator",
@@ -244,32 +243,9 @@ def test_canonical_emit_event_signature_stable() -> None:
     assert "actor" in kw_only, "actor must be keyword-only"
 
 
-# ─── Test 6: io_utils.emit_event delegates (not duplicates) ──────────────────
+# ─── Test 6: removed io_utils facade cannot reappear ─────────────────────────
 
 
-def test_io_utils_emit_event_delegates_to_io_events() -> None:
-    """infrastructure/compat/io_utils.emit_event must delegate to kernelone.events.io_events."""
-    io_utils_path = POLARIS_ROOT / "infrastructure" / "compat" / "io_utils.py"
-    if not io_utils_path.exists():
-        pytest.skip("io_utils.py not found")
-
-    content = _read_text(io_utils_path)
-    tree = ast.parse(content)
-
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if node.name != "emit_event":
-            continue
-        body_src = ast.get_source_segment(content, node) or ""
-        # Must delegate to io_events, not reimplement
-        assert "io_events.emit_event" in body_src or "io_events" in body_src, (
-            "io_utils.emit_event must delegate to io_events.emit_event, not reimplement payload construction."
-        )
-        # Must NOT contain payload construction indicators
-        duplicate_indicators = ["schema_version", "event_id", "ts_epoch"]
-        hits = [ind for ind in duplicate_indicators if ind in body_src]
-        assert hits == [], (
-            f"io_utils.emit_event contains payload construction indicators {hits}; "
-            "it should be a thin delegation wrapper."
-        )
+def test_infrastructure_compat_io_utils_facade_removed() -> None:
+    """The retired infrastructure.compat.io_utils facade must not be restored."""
+    assert not (POLARIS_ROOT / "infrastructure" / "compat" / "io_utils.py").exists()

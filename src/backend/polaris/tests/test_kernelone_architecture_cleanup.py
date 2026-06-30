@@ -34,10 +34,7 @@ def test_kernelone_internal_modules_do_not_import_io_utils_directly() -> None:
     offenders: list[str] = []
     for path in _python_sources(KERNELONE_ROOT):
         text = path.read_text(encoding="utf-8")
-        if (
-            "from polaris.infrastructure.compat.io_utils import" in text
-            or "import polaris.kernelone.tools.io_utils" in text
-        ):
+        if "polaris.infrastructure.compat" in text or "import polaris.kernelone.tools.io_utils" in text:
             offenders.append(str(path.relative_to(BACKEND_ROOT)).replace("\\", "/"))
 
     assert offenders == []

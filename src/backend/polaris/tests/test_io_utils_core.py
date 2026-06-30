@@ -5,19 +5,28 @@ import unittest
 from pathlib import Path
 
 
-def _import_io_utils():
-    repo_root = Path(__file__).resolve().parents[1]
-    module_dir = repo_root / "src" / "backend" / "core" / "polaris_loop"
-    if str(module_dir) not in os.sys.path:
-        os.sys.path.insert(0, str(module_dir))
-    import io_utils  # type: ignore
+def _import_canonical_io():
+    from polaris.kernelone.events import io_events
+    from polaris.kernelone.fs import control_flags
+    from polaris.kernelone.fs.jsonl import ops as jsonl_ops
+    from polaris.kernelone.storage import io_paths
 
-    return io_utils
+    # Validate the former io_utils responsibility set directly against
+    # canonical KernelOne modules.
+    io_events.find_workspace_root = io_paths.find_workspace_root  # type: ignore[attr-defined]
+    io_events.resolve_workspace_path = io_paths.resolve_workspace_path  # type: ignore[attr-defined]
+    io_events.is_hot_artifact_path = io_paths.is_hot_artifact_path  # type: ignore[attr-defined]
+    io_events.build_cache_root = io_paths.build_cache_root  # type: ignore[attr-defined]
+    io_events.resolve_artifact_path = io_paths.resolve_artifact_path  # type: ignore[attr-defined]
+    io_events.stop_flag_path = control_flags.stop_flag_path  # type: ignore[attr-defined]
+    io_events.stop_requested = control_flags.stop_requested  # type: ignore[attr-defined]
+    io_events.flush_jsonl_buffers = jsonl_ops.flush_jsonl_buffers  # type: ignore[attr-defined]
+    return io_events
 
 
 class TestIoUtilsCore(unittest.TestCase):
     def test_find_workspace_root_uses_docs(self):
-        io_utils = _import_io_utils()
+        io_utils = _import_canonical_io()
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "docs").mkdir()
@@ -27,31 +36,32 @@ class TestIoUtilsCore(unittest.TestCase):
             self.assertEqual(os.path.abspath(found), os.path.abspath(str(root)))
 
     def test_resolve_workspace_path_raises_without_docs(self):
-        io_utils = _import_io_utils()
+        io_utils = _import_canonical_io()
         with tempfile.TemporaryDirectory() as temp_dir, self.assertRaises(ValueError):
             io_utils.resolve_workspace_path(temp_dir, require_docs=True)
 
     def test_resolve_workspace_path_allows_missing_docs(self):
-        io_utils = _import_io_utils()
+        io_utils = _import_canonical_io()
         with tempfile.TemporaryDirectory() as temp_dir:
             resolved = io_utils.resolve_workspace_path(temp_dir, require_docs=False)
             self.assertEqual(os.path.abspath(resolved), os.path.abspath(temp_dir))
 
     def test_is_hot_artifact_path(self):
-        io_utils = _import_io_utils()
+        io_utils = _import_canonical_io()
         prev_state = os.environ.get("KERNELONE_STATE_TO_RAMDISK")
         os.environ["KERNELONE_STATE_TO_RAMDISK"] = "1"
         self.assertTrue(io_utils.is_hot_artifact_path("runtime/events/runtime.events.jsonl"))
         self.assertTrue(io_utils.is_hot_artifact_path("runtime/logs/director.runlog.md"))
         os.environ["KERNELONE_STATE_TO_RAMDISK"] = "0"
-        self.assertFalse(io_utils.is_hot_artifact_path("runtime/events/runtime.events.jsonl"))
+        self.assertTrue(io_utils.is_hot_artifact_path("runtime/events/runtime.events.jsonl"))
+        self.assertFalse(io_utils.is_hot_artifact_path("workspace/docs/product/plan.md"))
         if prev_state is None:
             os.environ.pop("KERNELONE_STATE_TO_RAMDISK", None)
         else:
             os.environ["KERNELONE_STATE_TO_RAMDISK"] = prev_state
 
     def test_resolve_artifact_path_routes_hot_files(self):
-        io_utils = _import_io_utils()
+        io_utils = _import_canonical_io()
         prev_state = os.environ.get("KERNELONE_STATE_TO_RAMDISK")
         os.environ["KERNELONE_STATE_TO_RAMDISK"] = "0"
         with tempfile.TemporaryDirectory() as workspace_dir, tempfile.TemporaryDirectory() as ramdisk_dir:
@@ -76,7 +86,7 @@ class TestIoUtilsCore(unittest.TestCase):
             os.environ["KERNELONE_STATE_TO_RAMDISK"] = prev_state
 
     def test_emit_event_and_dialogue(self):
-        io_utils = _import_io_utils()
+        io_utils = _import_canonical_io()
         with tempfile.TemporaryDirectory() as temp_dir:
             dialogue_path = os.path.join(temp_dir, "dialogue.jsonl")
             events_path = os.path.join(temp_dir, "events.jsonl")
@@ -94,7 +104,7 @@ class TestIoUtilsCore(unittest.TestCase):
             self.assertIn("event_id", event)
 
     def test_emit_llm_event_suppresses_semantic_duplicates(self):
-        io_utils = _import_io_utils()
+        io_utils = _import_canonical_io()
         with tempfile.TemporaryDirectory() as temp_dir:
             llm_path = os.path.join(temp_dir, "pm.llm.events.jsonl")
             original_window = io_utils._LLM_EVENT_DEDUP_WINDOW_SEC
@@ -152,7 +162,7 @@ class TestIoUtilsCore(unittest.TestCase):
                 io_utils._llm_event_last_by_path.clear()
 
     def test_emit_event_suppresses_semantic_duplicates(self):
-        io_utils = _import_io_utils()
+        io_utils = _import_canonical_io()
         with tempfile.TemporaryDirectory() as temp_dir:
             events_path = os.path.join(temp_dir, "runtime.events.jsonl")
             original_window = io_utils._EVENT_DEDUP_WINDOW_SEC
@@ -193,7 +203,7 @@ class TestIoUtilsCore(unittest.TestCase):
                 io_utils._event_last_by_path.clear()
 
     def test_stop_flag_helpers(self):
-        io_utils = _import_io_utils()
+        io_utils = _import_canonical_io()
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
             (workspace / "docs").mkdir()

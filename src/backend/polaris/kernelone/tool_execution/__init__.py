@@ -21,7 +21,8 @@ Consumers
 ---------
 - ``polaris.cells.director.execution`` : imports tool chain execution
 - ``polaris.kernelone.tool_execution.runtime_executor`` : uses build_tool_cli_args
-- ``polaris.infrastructure.compat.io_utils`` : uses io_tools sub-module
+- ``polaris.kernelone.events.io_events`` and ``polaris.kernelone.fs.jsonl.ops`` :
+  own event and JSONL persistence concerns
 """
 
 from __future__ import annotations

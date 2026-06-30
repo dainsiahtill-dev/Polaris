@@ -90,40 +90,30 @@ def test_handle_invoke_error_logs_on_append_meta_prompt_hint_failure(caplog, tmp
         fromlist=["iteration_state"],
     )
 
-    # Patch write_json_atomic to avoid KFS bootstrap requirement
-    with patch.object(iteration_state, "write_json_atomic", lambda *a, **kw: None):
-        # Patch emit_dialogue to avoid KFS path validation
-        with patch(
-            "polaris.infrastructure.compat.io_utils.emit_dialogue",
-            lambda *a, **kw: None,
-        ):
-            # Patch emit_llm_event to avoid file I/O
-            with patch(
-                "polaris.infrastructure.compat.io_utils.emit_llm_event",
-                lambda *a, **kw: None,
-            ):
-                # Patch emit_event (iteration_state's binding) to avoid I/O
-                with patch.object(iteration_state, "emit_event", lambda *a, **kw: None):
-                    # Patch append_meta_prompt_hint to raise - this exercises the
-                    # inner try-except in _handle_invoke_error.
-                    with patch(
-                        "polaris.kernelone.prompts.meta_prompting.append_meta_prompt_hint",
-                        side_effect=RuntimeError("disk full"),
-                    ):
-                        # Must NOT raise
-                        iteration_state._handle_invoke_error(
-                            error="some error",
-                            run_events=str(tmp_path / "events.jsonl"),
-                            dialogue_full=str(tmp_path / "dialogue.jsonl"),
-                            run_id="run-1",
-                            iteration=1,
-                            workspace_full=str(tmp_path / "workspace"),
-                            pm_state={},
-                            pm_state_full=str(tmp_path / "state.json"),
-                            backend_label="test",
-                            start_timestamp="2026-01-01T00:00:00",
-                            pm_llm_events_full=str(tmp_path / "llm_events.jsonl"),
-                        )
+    with (
+        patch.object(iteration_state, "write_json_atomic", lambda *a, **kw: None),
+        patch.object(iteration_state, "emit_dialogue", lambda *a, **kw: None),
+        patch.object(iteration_state, "emit_llm_event", lambda *a, **kw: None),
+        patch.object(iteration_state, "emit_event", lambda *a, **kw: None),
+        patch(
+            "polaris.kernelone.prompts.meta_prompting.append_meta_prompt_hint",
+            side_effect=RuntimeError("disk full"),
+        ),
+    ):
+        # Must NOT raise
+        iteration_state._handle_invoke_error(
+            error="some error",
+            run_events=str(tmp_path / "events.jsonl"),
+            dialogue_full=str(tmp_path / "dialogue.jsonl"),
+            run_id="run-1",
+            iteration=1,
+            workspace_full=str(tmp_path / "workspace"),
+            pm_state={},
+            pm_state_full=str(tmp_path / "state.json"),
+            backend_label="test",
+            start_timestamp="2026-01-01T00:00:00",
+            pm_llm_events_full=str(tmp_path / "llm_events.jsonl"),
+        )
 
     # The inner except for append_meta_prompt_hint logs at debug level
     assert any("append_meta_prompt_hint" in r.message for r in caplog.records), (
@@ -141,14 +131,8 @@ def test_handle_invoke_error_does_not_raise_on_any_failure(tmp_path: Path) -> No
     # Patch all I/O functions to avoid actual file operations
     with (
         patch.object(iteration_state, "write_json_atomic", lambda *a, **kw: None),
-        patch(
-            "polaris.infrastructure.compat.io_utils.emit_dialogue",
-            lambda *a, **kw: None,
-        ),
-        patch(
-            "polaris.infrastructure.compat.io_utils.emit_llm_event",
-            lambda *a, **kw: None,
-        ),
+        patch.object(iteration_state, "emit_dialogue", lambda *a, **kw: None),
+        patch.object(iteration_state, "emit_llm_event", lambda *a, **kw: None),
         patch.object(iteration_state, "emit_event", lambda *a, **kw: None),
         patch(
             "polaris.kernelone.prompts.meta_prompting.append_meta_prompt_hint",
@@ -205,18 +189,20 @@ def test_clear_manual_intervention_logs_on_pause_flag_failure(caplog, tmp_path: 
     # _clear_manual_intervention uses the mock (not the real io_utils wrapper).
     # Patch pause_flag_path so it returns our predictable temp path
     # (bypass the build_cache_root / resolve_artifact_path remapping).
-    with patch.object(iteration_state, "write_json_atomic", lambda *a, **kw: None):
-        with patch.object(iteration_state, "emit_dialogue", lambda *a, **kw: None):
-            with patch.object(iteration_state, "pause_flag_path", return_value=str(pause_file)):
-                with patch.object(iteration_state.os, "remove", fail_on_pause_remove):
-                    iteration_state._clear_manual_intervention(
-                        pm_state={},
-                        pm_state_full=str(tmp_path / "state.json"),
-                        workspace_full=str(empty_dir),
-                        dialogue_full=str(tmp_path / "dialogue.jsonl"),
-                        run_id="run-1",
-                        iteration=1,
-                    )
+    with (
+        patch.object(iteration_state, "write_json_atomic", lambda *a, **kw: None),
+        patch.object(iteration_state, "emit_dialogue", lambda *a, **kw: None),
+        patch.object(iteration_state, "pause_flag_path", return_value=str(pause_file)),
+        patch.object(iteration_state.os, "remove", fail_on_pause_remove),
+    ):
+        iteration_state._clear_manual_intervention(
+            pm_state={},
+            pm_state_full=str(tmp_path / "state.json"),
+            workspace_full=str(empty_dir),
+            dialogue_full=str(tmp_path / "dialogue.jsonl"),
+            run_id="run-1",
+            iteration=1,
+        )
 
     # Must have logged a warning about pause flag removal failure
     assert any("pause flag" in r.message.lower() for r in caplog.records), (
@@ -285,19 +271,21 @@ def test_emit_event_logs_on_stdout_failure(monkeypatch, tmp_path: Path) -> None:
 
     # The emit_event method uses print() which writes to sys.stdout.
     # We patch the built-in print to raise, simulating stdout write failure.
-    with patch("builtins.print", side_effect=OSError("pipe broken")):
-        with patch.object(debug_trace, "logger") as mock_logger:
-            tracer.emit_event(
-                "test_event",
-                kind="status",
-                actor="Test",
-                summary="test",
-            )
+    with (
+        patch("builtins.print", side_effect=OSError("pipe broken")),
+        patch.object(debug_trace, "logger") as mock_logger,
+    ):
+        tracer.emit_event(
+            "test_event",
+            kind="status",
+            actor="Test",
+            summary="test",
+        )
 
-            # Must have logged at warning level for stdout failure
-            mock_logger.warning.assert_called()
-            call_args = mock_logger.warning.call_args
-            assert "stdout" in call_args[0][0].lower()
+        # Must have logged at warning level for stdout failure
+        mock_logger.warning.assert_called()
+        call_args = mock_logger.warning.call_args
+        assert "stdout" in call_args[0][0].lower()
 
 
 # ---------------------------------------------------------------------------
