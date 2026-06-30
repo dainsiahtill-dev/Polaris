@@ -38,7 +38,7 @@ _CPP_REPAIR_FILE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", "
 _POST_EXECUTION_REPAIR_MAX_ROUNDS = 3
 _CALLBACK_RECEIPT_MIGRATION_BLOCKER = "adapter schedule runners still return tool_results instead of RepairReceipt"
 _RUST_BASE_FILE_IGNORES = frozenset({".git", ".venv", "__pycache__", "node_modules", "target"})
-_RUST_LEGACY_AGGREGATE_REMAINING_SOURCE_TOOLS = frozenset(
+_RUST_TYPED_RECEIPT_CUTOVER_SOURCE_TOOLS = frozenset(
     {
         "deterministic_rust_missing_fields_repair",
         "deterministic_rust_lib_root_facade_repair",
@@ -51,7 +51,7 @@ _RUST_LIB_ROOT_FACADE_PATH_REWRITE_SUBCASE = f"{_RUST_LIB_ROOT_FACADE_SOURCE_TOO
 _RUST_LIB_ROOT_FACADE_EXPORT_OR_MODULE_DECLARATION_SUBCASE = (
     f"{_RUST_LIB_ROOT_FACADE_SOURCE_TOOL}:export_or_module_declaration"
 )
-_RUST_LEGACY_AGGREGATE_SUBCASES_BY_SOURCE_TOOL: Mapping[str, frozenset[str]] = {
+_RUST_TYPED_RECEIPT_CUTOVER_SUBCASES_BY_SOURCE_TOOL: Mapping[str, frozenset[str]] = {
     _RUST_MISSING_FIELDS_SOURCE_TOOL: frozenset({_RUST_MISSING_FIELDS_FIELD_DECLARATION_SUBCASE}),
     _RUST_LIB_ROOT_FACADE_SOURCE_TOOL: frozenset(
         {
@@ -60,7 +60,7 @@ _RUST_LEGACY_AGGREGATE_SUBCASES_BY_SOURCE_TOOL: Mapping[str, frozenset[str]] = {
         }
     ),
 }
-_RUST_LEGACY_AGGREGATE_SOURCE_TOOL_BLOCKER = "legacy_aggregate_source_tool_not_runtime_executable"
+_RUST_TYPED_RECEIPT_SOURCE_TOOL_BLOCKER = "rust_typed_receipt_source_tool_not_runtime_executable"
 _GO_POST_EXECUTION_RUNTIME_SOURCE_TOOLS = (
     "deterministic_go_bare_import_string_repair",
     "deterministic_go_nested_import_repair",
@@ -186,10 +186,8 @@ def run_post_execution_language_repairs(
         convergence_verifier_present=convergence_verifier is not None,
     )
     repair_kernel["repair_kernel_migration_debt"] = migration_debt
-    rust_legacy_aggregate_cutover_evidence = dict(
-        migration_debt.get("legacy_aggregate_cutover_readiness_evidence") or {}
-    )
-    repair_kernel.update(_legacy_aggregate_cutover_projection_fields(rust_legacy_aggregate_cutover_evidence))
+    rust_typed_receipt_cutover_evidence = dict(migration_debt.get("rust_typed_receipt_cutover_evidence") or {})
+    repair_kernel.update(_rust_typed_receipt_cutover_projection_fields(rust_typed_receipt_cutover_evidence))
     scheduler_bridge = _build_scheduler_bridge_summary(
         tool_results,
         repair_kernel=repair_kernel,
@@ -205,7 +203,7 @@ def run_post_execution_language_repairs(
         "repair_kernel": repair_kernel,
         "scheduler_bridge": scheduler_bridge,
         "repair_kernel_migration_debt": migration_debt,
-        "legacy_aggregate_cutover_readiness_evidence": rust_legacy_aggregate_cutover_evidence,
+        "rust_typed_receipt_cutover_evidence": rust_typed_receipt_cutover_evidence,
         "resident_agi_repair_advisory_overlay": agi_advisory_overlay,
     }
 
@@ -1575,37 +1573,37 @@ def _is_generated_build_path(path: Path) -> bool:
     return "build" in path.parts or "cmake-build" in path.parts
 
 
-def _rust_legacy_aggregate_allowed_source_tools(
+def _rust_typed_receipt_unbound_source_tools(
     runtime_executable_source_tools: frozenset[str],
 ) -> frozenset[str]:
     return frozenset(
         source_tool
-        for source_tool in _RUST_LEGACY_AGGREGATE_REMAINING_SOURCE_TOOLS
+        for source_tool in _RUST_TYPED_RECEIPT_CUTOVER_SOURCE_TOOLS
         if source_tool not in runtime_executable_source_tools
     )
 
 
-def _rust_legacy_aggregate_remaining_source_tools(
+def _rust_typed_receipt_remaining_source_tools(
     runtime_executable_source_tools: frozenset[str],
 ) -> list[str]:
-    return sorted(_rust_legacy_aggregate_allowed_source_tools(runtime_executable_source_tools))
+    return sorted(_rust_typed_receipt_unbound_source_tools(runtime_executable_source_tools))
 
 
-def _rust_legacy_aggregate_runtime_migrated_subcases(
+def _rust_typed_receipt_runtime_migrated_subcases(
     runtime_executable_source_tools: frozenset[str],
 ) -> list[str]:
     subcases: set[str] = set()
-    for source_tool, source_tool_subcases in _RUST_LEGACY_AGGREGATE_SUBCASES_BY_SOURCE_TOOL.items():
+    for source_tool, source_tool_subcases in _RUST_TYPED_RECEIPT_CUTOVER_SUBCASES_BY_SOURCE_TOOL.items():
         if source_tool in runtime_executable_source_tools:
             subcases.update(source_tool_subcases)
     return sorted(subcases)
 
 
-def _rust_legacy_aggregate_remaining_subcases(
+def _rust_typed_receipt_remaining_subcases(
     runtime_executable_source_tools: frozenset[str],
 ) -> list[str]:
     subcases: set[str] = set()
-    for source_tool, source_tool_subcases in _RUST_LEGACY_AGGREGATE_SUBCASES_BY_SOURCE_TOOL.items():
+    for source_tool, source_tool_subcases in _RUST_TYPED_RECEIPT_CUTOVER_SUBCASES_BY_SOURCE_TOOL.items():
         if source_tool not in runtime_executable_source_tools:
             subcases.update(source_tool_subcases)
     return sorted(subcases)
@@ -1765,7 +1763,7 @@ def _build_scheduler_bridge_summary(
     active_step_ids = _sorted_unique(str(payload.get("bridge_step_id") or "") for payload in payloads)
     agi_overlay = resident_agi_repair_advisory_overlay or {}
     migration_debt = dict(repair_kernel.get("repair_kernel_migration_debt") or {})
-    legacy_aggregate_cutover_evidence = dict(migration_debt.get("legacy_aggregate_cutover_readiness_evidence") or {})
+    rust_typed_receipt_cutover_evidence = dict(migration_debt.get("rust_typed_receipt_cutover_evidence") or {})
     schedule_receipt_projections = _callback_receipt_projections_from_schedule_result(receipt_projections or [])
     callback_receipt_projections = schedule_receipt_projections or _callback_receipt_projections_from_payloads(payloads)
     return {
@@ -1828,7 +1826,7 @@ def _build_scheduler_bridge_summary(
         "resident_agi_suggested_rule_count": int(agi_overlay.get("suggested_rule_count") or 0),
         "repair_kernel_migration_debt": migration_debt,
         "adapter_projection_debt": dict(migration_debt.get("adapter_projection_debt") or {}),
-        **_legacy_aggregate_cutover_projection_fields(legacy_aggregate_cutover_evidence),
+        **_rust_typed_receipt_cutover_projection_fields(rust_typed_receipt_cutover_evidence),
     }
 
 
@@ -2055,7 +2053,7 @@ def _source_tool_counts(source_tools: list[str]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def _build_rust_legacy_aggregate_cutover_evidence(
+def _build_rust_typed_receipt_cutover_evidence(
     *,
     remaining_source_tools: list[str],
     allowed_source_tools: list[str],
@@ -2088,9 +2086,20 @@ def _build_rust_legacy_aggregate_cutover_evidence(
     blocked_migrated_legacy_subcase_blockers = _sorted_unique(
         f"blocked_migrated_subcase:{subcase}" for subcase in blocked_migrated_legacy_subcases
     )
+    cutover_ready = not any(
+        (
+            remaining,
+            blocked,
+            blocked_migrated,
+            remaining_subcases,
+            blocked_legacy_subcases,
+            blocked_migrated_legacy_subcases,
+        )
+    )
+    authority_blockers = [] if cutover_ready else ["typed_receipt_cutover_not_authoritative"]
     blockers = _sorted_unique(
         [
-            "typed_receipt_cutover_not_authoritative",
+            *authority_blockers,
             *remaining_source_tool_blockers,
             *remaining_legacy_subcase_blockers,
             *blocked_source_tool_blockers,
@@ -2100,12 +2109,16 @@ def _build_rust_legacy_aggregate_cutover_evidence(
         ]
     )
     return {
-        "schema_version": "director.rust_legacy_aggregate_cutover_readiness_evidence.v1",
-        "typed_receipt_cutover_authoritative": False,
-        "typed_receipt_cutover_writes_authoritative": False,
-        "receipt_authority": "migration_debt_projection",
-        "authority_boundary": "adapter_projection_only_not_runtime_repair_receipt",
-        "cutover_ready": False,
+        "schema_version": "director.rust_typed_receipt_cutover_evidence.v1",
+        "typed_receipt_cutover_authoritative": cutover_ready,
+        "typed_receipt_cutover_writes_authoritative": cutover_ready,
+        "receipt_authority": "director.runtime.repair_kernel" if cutover_ready else "migration_debt_projection",
+        "authority_boundary": (
+            "runtime_typed_receipt_authoritative"
+            if cutover_ready
+            else "adapter_projection_only_not_runtime_repair_receipt"
+        ),
+        "cutover_ready": cutover_ready,
         "cutover_blockers": blockers,
         "remaining_source_tool_blockers": remaining_source_tool_blockers,
         "remaining_legacy_subcase_blockers": remaining_legacy_subcase_blockers,
@@ -2140,50 +2153,55 @@ def _build_rust_legacy_aggregate_cutover_evidence(
     }
 
 
-def _legacy_aggregate_cutover_projection_fields(cutover_evidence: dict[str, Any]) -> dict[str, Any]:
+def _rust_typed_receipt_cutover_projection_fields(cutover_evidence: dict[str, Any]) -> dict[str, Any]:
     evidence = dict(cutover_evidence or {})
+    cutover_authoritative = bool(evidence.get("typed_receipt_cutover_authoritative"))
+    cutover_writes_authoritative = bool(evidence.get("typed_receipt_cutover_writes_authoritative"))
+    cutover_ready = bool(evidence.get("cutover_ready"))
     return {
-        "legacy_aggregate_cutover_readiness_evidence": evidence,
-        "legacy_aggregate_typed_receipt_cutover_authoritative": False,
-        "legacy_aggregate_typed_receipt_cutover_writes_authoritative": False,
-        "legacy_aggregate_cutover_ready": False,
-        "legacy_aggregate_cutover_blockers": list(evidence.get("cutover_blockers") or []),
-        "legacy_aggregate_typed_receipt_cutover_not_authoritative": True,
-        "legacy_aggregate_authority_boundary": str(evidence.get("authority_boundary") or ""),
-        "legacy_aggregate_remaining_source_tool_blockers": list(evidence.get("remaining_source_tool_blockers") or []),
-        "legacy_aggregate_remaining_legacy_subcase_blockers": list(
+        "rust_typed_receipt_cutover_evidence": evidence,
+        "rust_typed_receipt_cutover_authoritative": cutover_authoritative,
+        "rust_typed_receipt_cutover_writes_authoritative": cutover_writes_authoritative,
+        "rust_typed_receipt_cutover_ready": cutover_ready,
+        "rust_typed_receipt_cutover_blockers": list(evidence.get("cutover_blockers") or []),
+        "rust_typed_receipt_cutover_not_authoritative": not cutover_authoritative,
+        "rust_typed_receipt_authority_boundary": str(evidence.get("authority_boundary") or ""),
+        "rust_typed_receipt_remaining_source_tool_blockers": list(evidence.get("remaining_source_tool_blockers") or []),
+        "rust_typed_receipt_remaining_subcase_blockers": list(
             evidence.get("remaining_legacy_subcase_blockers") or []
         ),
-        "legacy_aggregate_blocked_source_tool_blockers": list(evidence.get("blocked_source_tool_blockers") or []),
-        "legacy_aggregate_blocked_migrated_source_tool_blockers": list(
+        "rust_typed_receipt_blocked_source_tool_blockers": list(evidence.get("blocked_source_tool_blockers") or []),
+        "rust_typed_receipt_blocked_migrated_source_tool_blockers": list(
             evidence.get("blocked_migrated_source_tool_blockers") or []
         ),
-        "legacy_aggregate_blocked_legacy_subcase_blockers": list(evidence.get("blocked_legacy_subcase_blockers") or []),
-        "legacy_aggregate_blocked_migrated_subcase_blockers": list(
+        "rust_typed_receipt_blocked_subcase_blockers": list(evidence.get("blocked_legacy_subcase_blockers") or []),
+        "rust_typed_receipt_blocked_migrated_subcase_blockers": list(
             evidence.get("blocked_migrated_subcase_blockers") or []
         ),
-        "legacy_aggregate_remaining_source_tool_count": int(evidence.get("remaining_source_tool_count") or 0),
-        "legacy_aggregate_remaining_source_tool_counts": dict(evidence.get("remaining_source_tool_counts") or {}),
-        "legacy_aggregate_blocked_source_tool_count": int(evidence.get("blocked_source_tool_count") or 0),
-        "legacy_aggregate_blocked_source_tool_counts": dict(evidence.get("blocked_source_tool_counts") or {}),
-        "legacy_aggregate_blocked_migrated_source_tool_count": int(
+        "rust_typed_receipt_remaining_source_tool_count": int(evidence.get("remaining_source_tool_count") or 0),
+        "rust_typed_receipt_remaining_source_tool_counts": dict(evidence.get("remaining_source_tool_counts") or {}),
+        "rust_typed_receipt_blocked_source_tool_count": int(evidence.get("blocked_source_tool_count") or 0),
+        "rust_typed_receipt_blocked_source_tool_counts": dict(evidence.get("blocked_source_tool_counts") or {}),
+        "rust_typed_receipt_blocked_migrated_source_tool_count": int(
             evidence.get("blocked_migrated_source_tool_count") or 0
         ),
-        "legacy_aggregate_blocked_migrated_source_tool_counts": dict(
+        "rust_typed_receipt_blocked_migrated_source_tool_counts": dict(
             evidence.get("blocked_migrated_source_tool_counts") or {}
         ),
-        "legacy_aggregate_remaining_legacy_subcases": list(evidence.get("remaining_legacy_subcases") or []),
-        "legacy_aggregate_remaining_legacy_subcase_count": int(evidence.get("remaining_legacy_subcase_count") or 0),
-        "legacy_aggregate_remaining_legacy_subcase_counts": dict(evidence.get("remaining_legacy_subcase_counts") or {}),
-        "legacy_aggregate_runtime_migrated_subcases": list(evidence.get("runtime_migrated_subcases") or []),
-        "legacy_aggregate_runtime_migrated_subcase_count": int(evidence.get("runtime_migrated_subcase_count") or 0),
-        "legacy_aggregate_runtime_migrated_subcase_counts": dict(evidence.get("runtime_migrated_subcase_counts") or {}),
-        "legacy_aggregate_blocked_subcases": list(evidence.get("blocked_subcases") or []),
-        "legacy_aggregate_blocked_subcase_count": int(evidence.get("blocked_subcase_count") or 0),
-        "legacy_aggregate_blocked_subcase_counts": dict(evidence.get("blocked_subcase_counts") or {}),
-        "legacy_aggregate_blocked_migrated_subcases": list(evidence.get("blocked_migrated_subcases") or []),
-        "legacy_aggregate_blocked_migrated_subcase_count": int(evidence.get("blocked_migrated_subcase_count") or 0),
-        "legacy_aggregate_blocked_migrated_subcase_counts": dict(evidence.get("blocked_migrated_subcase_counts") or {}),
+        "rust_typed_receipt_remaining_subcases": list(evidence.get("remaining_legacy_subcases") or []),
+        "rust_typed_receipt_remaining_subcase_count": int(evidence.get("remaining_legacy_subcase_count") or 0),
+        "rust_typed_receipt_remaining_subcase_counts": dict(evidence.get("remaining_legacy_subcase_counts") or {}),
+        "rust_typed_receipt_runtime_migrated_subcases": list(evidence.get("runtime_migrated_subcases") or []),
+        "rust_typed_receipt_runtime_migrated_subcase_count": int(evidence.get("runtime_migrated_subcase_count") or 0),
+        "rust_typed_receipt_runtime_migrated_subcase_counts": dict(evidence.get("runtime_migrated_subcase_counts") or {}),
+        "rust_typed_receipt_blocked_subcases": list(evidence.get("blocked_subcases") or []),
+        "rust_typed_receipt_blocked_subcase_count": int(evidence.get("blocked_subcase_count") or 0),
+        "rust_typed_receipt_blocked_subcase_counts": dict(evidence.get("blocked_subcase_counts") or {}),
+        "rust_typed_receipt_blocked_migrated_subcases": list(evidence.get("blocked_migrated_subcases") or []),
+        "rust_typed_receipt_blocked_migrated_subcase_count": int(evidence.get("blocked_migrated_subcase_count") or 0),
+        "rust_typed_receipt_blocked_migrated_subcase_counts": dict(
+            evidence.get("blocked_migrated_subcase_counts") or {}
+        ),
     }
 
 
@@ -2203,39 +2221,39 @@ def _build_repair_kernel_migration_debt(
 ) -> dict[str, Any]:
     payloads = [_result_payload(item) for item in tool_results]
     executable_source_tools = _runtime_executable_source_tools()
-    remaining_source_tools = _rust_legacy_aggregate_remaining_source_tools(executable_source_tools)
-    allowed_legacy_aggregate_source_tools = sorted(_rust_legacy_aggregate_allowed_source_tools(executable_source_tools))
-    remaining_legacy_subcases = _rust_legacy_aggregate_remaining_subcases(executable_source_tools)
-    runtime_migrated_subcases = _rust_legacy_aggregate_runtime_migrated_subcases(executable_source_tools)
-    blocked_legacy_aggregate_source_tools = _sorted_unique(
+    remaining_source_tools = _rust_typed_receipt_remaining_source_tools(executable_source_tools)
+    source_tools_without_runtime_receipt = sorted(_rust_typed_receipt_unbound_source_tools(executable_source_tools))
+    remaining_subcases = _rust_typed_receipt_remaining_subcases(executable_source_tools)
+    runtime_migrated_subcases = _rust_typed_receipt_runtime_migrated_subcases(executable_source_tools)
+    rust_typed_receipt_blocked_source_tools = _sorted_unique(
         source_tool
         for payload in payloads
-        for source_tool in _payload_list_values(payload, "legacy_aggregate_blocked_source_tools")
+        for source_tool in _payload_list_values(payload, "rust_typed_receipt_blocked_source_tools")
     )
-    blocked_migrated_legacy_aggregate_source_tools = _sorted_unique(
+    rust_typed_receipt_blocked_migrated_source_tools = _sorted_unique(
         source_tool
         for payload in payloads
-        for source_tool in _payload_list_values(payload, "legacy_aggregate_blocked_migrated_source_tools")
+        for source_tool in _payload_list_values(payload, "rust_typed_receipt_blocked_migrated_source_tools")
     )
-    blocked_legacy_aggregate_subcases = _sorted_unique(
+    rust_typed_receipt_blocked_subcases = _sorted_unique(
         subcase
         for payload in payloads
-        for subcase in _payload_list_values(payload, "legacy_aggregate_blocked_subcases")
+        for subcase in _payload_list_values(payload, "rust_typed_receipt_blocked_subcases")
     )
-    blocked_migrated_legacy_aggregate_subcases = _sorted_unique(
+    rust_typed_receipt_blocked_migrated_subcases = _sorted_unique(
         subcase
         for payload in payloads
-        for subcase in _payload_list_values(payload, "legacy_aggregate_blocked_migrated_subcases")
+        for subcase in _payload_list_values(payload, "rust_typed_receipt_blocked_migrated_subcases")
     )
-    legacy_aggregate_cutover_evidence = _build_rust_legacy_aggregate_cutover_evidence(
+    rust_typed_receipt_cutover_evidence = _build_rust_typed_receipt_cutover_evidence(
         remaining_source_tools=remaining_source_tools,
-        allowed_source_tools=allowed_legacy_aggregate_source_tools,
-        blocked_source_tools=blocked_legacy_aggregate_source_tools,
-        blocked_migrated_source_tools=blocked_migrated_legacy_aggregate_source_tools,
-        remaining_legacy_subcases=remaining_legacy_subcases,
+        allowed_source_tools=source_tools_without_runtime_receipt,
+        blocked_source_tools=rust_typed_receipt_blocked_source_tools,
+        blocked_migrated_source_tools=rust_typed_receipt_blocked_migrated_source_tools,
+        remaining_legacy_subcases=remaining_subcases,
         runtime_migrated_subcases=runtime_migrated_subcases,
-        blocked_subcases=blocked_legacy_aggregate_subcases,
-        blocked_migrated_subcases=blocked_migrated_legacy_aggregate_subcases,
+        blocked_subcases=rust_typed_receipt_blocked_subcases,
+        blocked_migrated_subcases=rust_typed_receipt_blocked_migrated_subcases,
     )
     payloads_by_step: dict[str, list[dict[str, Any]]] = {}
     for payload in payloads:
@@ -2264,21 +2282,19 @@ def _build_repair_kernel_migration_debt(
         "runtime_ordered_step_ids": runtime_ordered_step_ids,
         "runner_binding_owner": public_schedule.runner_binding_owner,
         "convergence_verifier_present": convergence_verifier_present,
-        "legacy_aggregate_remaining_source_tools": remaining_source_tools,
-        "legacy_aggregate_remaining_source_tools_without_runtime_receipt": allowed_legacy_aggregate_source_tools,
-        "remaining_legacy_subcases": remaining_legacy_subcases,
-        "runtime_migrated_subcases": runtime_migrated_subcases,
-        "legacy_aggregate_remaining_legacy_subcases": remaining_legacy_subcases,
-        "legacy_aggregate_runtime_migrated_subcases": runtime_migrated_subcases,
-        "legacy_aggregate_blocked_source_tools": blocked_legacy_aggregate_source_tools,
-        "legacy_aggregate_blocked_migrated_source_tools": blocked_migrated_legacy_aggregate_source_tools,
-        "legacy_aggregate_blocked_subcases": blocked_legacy_aggregate_subcases,
-        "legacy_aggregate_blocked_migrated_subcases": blocked_migrated_legacy_aggregate_subcases,
-        **_legacy_aggregate_cutover_projection_fields(legacy_aggregate_cutover_evidence),
+        "rust_typed_receipt_remaining_source_tools": remaining_source_tools,
+        "rust_typed_receipt_source_tools_without_runtime_receipt": source_tools_without_runtime_receipt,
+        "rust_typed_receipt_remaining_subcases": remaining_subcases,
+        "rust_typed_receipt_runtime_migrated_subcases": runtime_migrated_subcases,
+        "rust_typed_receipt_blocked_source_tools": rust_typed_receipt_blocked_source_tools,
+        "rust_typed_receipt_blocked_migrated_source_tools": rust_typed_receipt_blocked_migrated_source_tools,
+        "rust_typed_receipt_blocked_subcases": rust_typed_receipt_blocked_subcases,
+        "rust_typed_receipt_blocked_migrated_subcases": rust_typed_receipt_blocked_migrated_subcases,
+        **_rust_typed_receipt_cutover_projection_fields(rust_typed_receipt_cutover_evidence),
         "step_count": len(step_entries),
         "steps": step_entries,
-        "legacy_callback_debt": {
-            "schema_version": "director.post_execution_legacy_callback_debt.v1",
+        "adapter_projection_debt": {
+            "schema_version": "director.post_execution_adapter_projection_debt.v1",
             "adapter_projection_bridge": True,
             "adapter_callback_bridge": False,
             "produces_tool_results_only": True,
@@ -2288,17 +2304,15 @@ def _build_repair_kernel_migration_debt(
             "missing_verifier_evidence_step_count": missing_evidence_step_count,
             "cutover_ready_step_count": cutover_ready_step_count,
             "cutover_ready": cutover_ready_step_count == len(step_entries) and bool(step_entries),
-            "legacy_aggregate_remaining_source_tools": remaining_source_tools,
-            "legacy_aggregate_remaining_source_tools_without_runtime_receipt": allowed_legacy_aggregate_source_tools,
-            "remaining_legacy_subcases": remaining_legacy_subcases,
-            "runtime_migrated_subcases": runtime_migrated_subcases,
-            "legacy_aggregate_remaining_legacy_subcases": remaining_legacy_subcases,
-            "legacy_aggregate_runtime_migrated_subcases": runtime_migrated_subcases,
-            "legacy_aggregate_blocked_source_tools": blocked_legacy_aggregate_source_tools,
-            "legacy_aggregate_blocked_migrated_source_tools": blocked_migrated_legacy_aggregate_source_tools,
-            "legacy_aggregate_blocked_subcases": blocked_legacy_aggregate_subcases,
-            "legacy_aggregate_blocked_migrated_subcases": blocked_migrated_legacy_aggregate_subcases,
-            **_legacy_aggregate_cutover_projection_fields(legacy_aggregate_cutover_evidence),
+            "rust_typed_receipt_remaining_source_tools": remaining_source_tools,
+            "rust_typed_receipt_source_tools_without_runtime_receipt": source_tools_without_runtime_receipt,
+            "rust_typed_receipt_remaining_subcases": remaining_subcases,
+            "rust_typed_receipt_runtime_migrated_subcases": runtime_migrated_subcases,
+            "rust_typed_receipt_blocked_source_tools": rust_typed_receipt_blocked_source_tools,
+            "rust_typed_receipt_blocked_migrated_source_tools": rust_typed_receipt_blocked_migrated_source_tools,
+            "rust_typed_receipt_blocked_subcases": rust_typed_receipt_blocked_subcases,
+            "rust_typed_receipt_blocked_migrated_subcases": rust_typed_receipt_blocked_migrated_subcases,
+            **_rust_typed_receipt_cutover_projection_fields(rust_typed_receipt_cutover_evidence),
         },
     }
 
@@ -2321,39 +2335,39 @@ def _build_step_migration_debt(
     verifier_evidence_required = bool(actual_source_tools and write_tool_evidence)
     verifier_evidence_present = any(_payload_has_verifier_evidence(payload) for payload in payloads)
     convergence_path_available = bool(runtime_executable_source_tools)
-    legacy_aggregate_blocked_source_tools = _sorted_unique(
+    rust_typed_receipt_blocked_source_tools = _sorted_unique(
         source_tool
         for payload in payloads
-        for source_tool in _payload_list_values(payload, "legacy_aggregate_blocked_source_tools")
+        for source_tool in _payload_list_values(payload, "rust_typed_receipt_blocked_source_tools")
     )
-    legacy_aggregate_blocked_migrated_source_tools = _sorted_unique(
+    rust_typed_receipt_blocked_migrated_source_tools = _sorted_unique(
         source_tool
         for payload in payloads
-        for source_tool in _payload_list_values(payload, "legacy_aggregate_blocked_migrated_source_tools")
+        for source_tool in _payload_list_values(payload, "rust_typed_receipt_blocked_migrated_source_tools")
     )
-    legacy_aggregate_blocked_subcases = _sorted_unique(
+    rust_typed_receipt_blocked_subcases = _sorted_unique(
         subcase
         for payload in payloads
-        for subcase in _payload_list_values(payload, "legacy_aggregate_blocked_subcases")
+        for subcase in _payload_list_values(payload, "rust_typed_receipt_blocked_subcases")
     )
-    legacy_aggregate_blocked_migrated_subcases = _sorted_unique(
+    rust_typed_receipt_blocked_migrated_subcases = _sorted_unique(
         subcase
         for payload in payloads
-        for subcase in _payload_list_values(payload, "legacy_aggregate_blocked_migrated_subcases")
+        for subcase in _payload_list_values(payload, "rust_typed_receipt_blocked_migrated_subcases")
     )
-    remaining_source_tools = _rust_legacy_aggregate_remaining_source_tools(executable_source_tools)
-    allowed_legacy_aggregate_source_tools = sorted(_rust_legacy_aggregate_allowed_source_tools(executable_source_tools))
-    remaining_legacy_subcases = _rust_legacy_aggregate_remaining_subcases(executable_source_tools)
-    runtime_migrated_subcases = _rust_legacy_aggregate_runtime_migrated_subcases(executable_source_tools)
-    legacy_aggregate_cutover_evidence = _build_rust_legacy_aggregate_cutover_evidence(
+    remaining_source_tools = _rust_typed_receipt_remaining_source_tools(executable_source_tools)
+    source_tools_without_runtime_receipt = sorted(_rust_typed_receipt_unbound_source_tools(executable_source_tools))
+    remaining_subcases = _rust_typed_receipt_remaining_subcases(executable_source_tools)
+    runtime_migrated_subcases = _rust_typed_receipt_runtime_migrated_subcases(executable_source_tools)
+    rust_typed_receipt_cutover_evidence = _build_rust_typed_receipt_cutover_evidence(
         remaining_source_tools=remaining_source_tools,
-        allowed_source_tools=allowed_legacy_aggregate_source_tools,
-        blocked_source_tools=legacy_aggregate_blocked_source_tools,
-        blocked_migrated_source_tools=legacy_aggregate_blocked_migrated_source_tools,
-        remaining_legacy_subcases=remaining_legacy_subcases,
+        allowed_source_tools=source_tools_without_runtime_receipt,
+        blocked_source_tools=rust_typed_receipt_blocked_source_tools,
+        blocked_migrated_source_tools=rust_typed_receipt_blocked_migrated_source_tools,
+        remaining_legacy_subcases=remaining_subcases,
         runtime_migrated_subcases=runtime_migrated_subcases,
-        blocked_subcases=legacy_aggregate_blocked_subcases,
-        blocked_migrated_subcases=legacy_aggregate_blocked_migrated_subcases,
+        blocked_subcases=rust_typed_receipt_blocked_subcases,
+        blocked_migrated_subcases=rust_typed_receipt_blocked_migrated_subcases,
     )
     blockers: list[str] = []
     if not payloads:
@@ -2363,7 +2377,7 @@ def _build_step_migration_debt(
     if legacy_only_source_tools:
         blockers.append("legacy_only_source_tools_present")
     if step.source_tool not in executable_source_tools and runtime_executable_source_tools:
-        blockers.append("declared_step_source_tool_is_legacy_aggregate")
+        blockers.append("declared_step_source_tool_uses_aggregate_runner")
     if actual_source_tools and not write_tool_evidence:
         blockers.append("missing_write_tool_evidence")
     if verifier_evidence_required and not verifier_evidence_present:
@@ -2374,8 +2388,8 @@ def _build_step_migration_debt(
         blockers.append("non_authoritative_runtime_receipt_requires_revalidation")
     if any(_payload_is_legacy_callback_record(payload) for payload in payloads):
         blockers.append("legacy_callback_record_projection")
-    if legacy_aggregate_blocked_source_tools:
-        blockers.append(_RUST_LEGACY_AGGREGATE_SOURCE_TOOL_BLOCKER)
+    if rust_typed_receipt_blocked_source_tools:
+        blockers.append(_RUST_TYPED_RECEIPT_SOURCE_TOOL_BLOCKER)
     blockers = _sorted_unique(blockers)
     return {
         "step_id": step.step_id,
@@ -2386,17 +2400,15 @@ def _build_step_migration_debt(
         "actual_source_tools": actual_source_tools,
         "runtime_executable_source_tools": runtime_executable_source_tools,
         "legacy_only_source_tools": legacy_only_source_tools,
-        "legacy_aggregate_remaining_source_tools": remaining_source_tools,
-        "legacy_aggregate_remaining_source_tools_without_runtime_receipt": allowed_legacy_aggregate_source_tools,
-        "remaining_legacy_subcases": remaining_legacy_subcases,
-        "runtime_migrated_subcases": runtime_migrated_subcases,
-        "legacy_aggregate_remaining_legacy_subcases": remaining_legacy_subcases,
-        "legacy_aggregate_runtime_migrated_subcases": runtime_migrated_subcases,
-        "legacy_aggregate_blocked_source_tools": legacy_aggregate_blocked_source_tools,
-        "legacy_aggregate_blocked_migrated_source_tools": legacy_aggregate_blocked_migrated_source_tools,
-        "legacy_aggregate_blocked_subcases": legacy_aggregate_blocked_subcases,
-        "legacy_aggregate_blocked_migrated_subcases": legacy_aggregate_blocked_migrated_subcases,
-        **_legacy_aggregate_cutover_projection_fields(legacy_aggregate_cutover_evidence),
+        "rust_typed_receipt_remaining_source_tools": remaining_source_tools,
+        "rust_typed_receipt_source_tools_without_runtime_receipt": source_tools_without_runtime_receipt,
+        "rust_typed_receipt_remaining_subcases": remaining_subcases,
+        "rust_typed_receipt_runtime_migrated_subcases": runtime_migrated_subcases,
+        "rust_typed_receipt_blocked_source_tools": rust_typed_receipt_blocked_source_tools,
+        "rust_typed_receipt_blocked_migrated_source_tools": rust_typed_receipt_blocked_migrated_source_tools,
+        "rust_typed_receipt_blocked_subcases": rust_typed_receipt_blocked_subcases,
+        "rust_typed_receipt_blocked_migrated_subcases": rust_typed_receipt_blocked_migrated_subcases,
+        **_rust_typed_receipt_cutover_projection_fields(rust_typed_receipt_cutover_evidence),
         "write_tool_evidence": write_tool_evidence,
         "convergence_path_available": convergence_path_available,
         "convergence_verifier_present": convergence_verifier_present,

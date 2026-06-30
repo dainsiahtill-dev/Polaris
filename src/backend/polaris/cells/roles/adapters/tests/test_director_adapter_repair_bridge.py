@@ -1277,7 +1277,7 @@ def test_rust_post_execution_bridge_runs_missing_module_runtime_binding_with_wri
     assert "pub struct" not in created
 
 
-def test_rust_post_execution_bridge_runs_runtime_source_tool_sequence_without_legacy_aggregate(
+def test_rust_post_execution_bridge_runs_runtime_source_tool_sequence_without_adapter_aggregate(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -1316,7 +1316,7 @@ def test_rust_post_execution_bridge_runs_runtime_source_tool_sequence_without_le
 
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs import rust_repairs
 
-    def fail_if_legacy_aggregate_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+    def fail_if_adapter_aggregate_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
         raise AssertionError("Rust post-execution must not call legacy aggregate helpers")
 
     def fake_runtime_repair_with_director_tools(
@@ -1361,7 +1361,7 @@ def test_rust_post_execution_bridge_runs_runtime_source_tool_sequence_without_le
         "run_runtime_repair_with_director_tools",
         fake_runtime_repair_with_director_tools,
     )
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fail_if_legacy_aggregate_called)
+    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fail_if_adapter_aggregate_called)
 
     results = post_execution_repair_bridge._run_rust_post_repairs(
         adapter,
@@ -2429,29 +2429,28 @@ def test_post_execution_migration_debt_ledger_distinguishes_runtime_and_legacy(
     assert summary is not None
     assert len(tool_results) == 2
     migration_debt = summary["repair_kernel"]["repair_kernel_migration_debt"]
-    assert "legacy_callback_debt" not in summary
-    assert "legacy_callback_debt" not in summary["repair_kernel"]
-    assert "legacy_callback_debt" not in summary["scheduler_bridge"]
-    assert migration_debt["legacy_aggregate_remaining_source_tools"] == []
-    assert migration_debt["legacy_callback_debt"]["legacy_aggregate_remaining_source_tools"] == []
-    assert migration_debt["remaining_legacy_subcases"] == []
-    assert migration_debt["runtime_migrated_subcases"] == [
+    assert "legacy_callback_debt" not in repr(summary)
+    assert "legacy_aggregate" not in repr(summary)
+    assert "adapter_projection_debt" not in summary
+    assert "adapter_projection_debt" not in summary["repair_kernel"]
+    assert "adapter_projection_debt" in summary["scheduler_bridge"]
+    assert migration_debt["rust_typed_receipt_remaining_source_tools"] == []
+    assert migration_debt["adapter_projection_debt"]["rust_typed_receipt_remaining_source_tools"] == []
+    assert migration_debt["rust_typed_receipt_remaining_subcases"] == []
+    assert migration_debt["rust_typed_receipt_runtime_migrated_subcases"] == [
         "deterministic_rust_lib_root_facade_repair:export_or_module_declaration",
         "deterministic_rust_lib_root_facade_repair:path_rewrite",
         "deterministic_rust_missing_fields_repair:field_declaration",
     ]
-    assert migration_debt["legacy_aggregate_blocked_source_tools"] == []
-    assert migration_debt["legacy_aggregate_blocked_migrated_source_tools"] == []
-    assert migration_debt["legacy_aggregate_remaining_source_tool_count"] == 0
-    assert migration_debt["legacy_aggregate_remaining_legacy_subcase_count"] == 0
-    assert migration_debt["legacy_aggregate_runtime_migrated_subcase_count"] == 3
-    assert migration_debt["legacy_aggregate_blocked_migrated_source_tool_count"] == 0
-    assert migration_debt["legacy_aggregate_typed_receipt_cutover_authoritative"] is False
-    assert migration_debt["legacy_aggregate_cutover_ready"] is False
-    assert not any(
-        str(blocker).startswith(("remaining_legacy_subcase:", "remaining_source_tool:"))
-        for blocker in migration_debt["legacy_aggregate_cutover_blockers"]
-    )
+    assert migration_debt["rust_typed_receipt_blocked_source_tools"] == []
+    assert migration_debt["rust_typed_receipt_blocked_migrated_source_tools"] == []
+    assert migration_debt["rust_typed_receipt_remaining_source_tool_count"] == 0
+    assert migration_debt["rust_typed_receipt_remaining_subcase_count"] == 0
+    assert migration_debt["rust_typed_receipt_runtime_migrated_subcase_count"] == 3
+    assert migration_debt["rust_typed_receipt_blocked_migrated_source_tool_count"] == 0
+    assert migration_debt["rust_typed_receipt_cutover_authoritative"] is True
+    assert migration_debt["rust_typed_receipt_cutover_ready"] is True
+    assert migration_debt["rust_typed_receipt_cutover_blockers"] == []
     steps = {step["step_id"]: step for step in migration_debt["steps"]}
     cpp_step = steps["cpp.post_execution"]
     assert cpp_step["runtime_executable_source_tools"] == ["deterministic_cpp_include_path_repair"]
@@ -2472,10 +2471,10 @@ def test_post_execution_migration_debt_ledger_distinguishes_runtime_and_legacy(
     assert legacy_payload["repair_kernel"]["owner_cell"] == "roles.adapters.strategy_host"
     assert legacy_payload["repair_kernel"]["authoritative"] is False
     assert legacy_payload["repair_kernel"]["requires_revalidation"] is True
-    assert migration_debt["legacy_callback_debt"]["legacy_only_step_count"] == 0
+    assert migration_debt["adapter_projection_debt"]["legacy_only_step_count"] == 0
 
 
-def test_go_post_execution_uses_runtime_source_tool_sequence_without_legacy_aggregate(
+def test_go_post_execution_uses_runtime_source_tool_sequence_without_adapter_aggregate(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -2585,7 +2584,7 @@ def test_post_execution_rust_migration_debt_uses_typed_receipt_gap_names(
     assert "shadow_replay" not in summary_text
     assert "legacy_shadow" not in summary_text
 
-    evidence = summary["legacy_aggregate_cutover_readiness_evidence"]
+    evidence = summary["rust_typed_receipt_cutover_evidence"]
     assert evidence["typed_receipt_cutover_authoritative"] is False
     assert evidence["cutover_ready"] is False
     assert evidence["remaining_source_tool_count"] == 1
@@ -2597,38 +2596,38 @@ def test_post_execution_rust_migration_debt_uses_typed_receipt_gap_names(
     assert "typed_receipt_cutover_not_authoritative" in evidence["cutover_blockers"]
 
     repair_kernel = summary["repair_kernel"]
-    assert repair_kernel["legacy_aggregate_typed_receipt_cutover_authoritative"] is False
-    assert repair_kernel["legacy_aggregate_cutover_ready"] is False
-    assert repair_kernel["legacy_aggregate_remaining_source_tool_count"] == 1
-    assert repair_kernel["legacy_aggregate_remaining_legacy_subcase_count"] == 1
-    assert repair_kernel["legacy_aggregate_runtime_migrated_subcase_count"] == 2
-    assert repair_kernel["legacy_aggregate_blocked_migrated_source_tool_count"] == 0
-    assert repair_kernel["legacy_aggregate_cutover_blockers"] == evidence["cutover_blockers"]
+    assert repair_kernel["rust_typed_receipt_cutover_authoritative"] is False
+    assert repair_kernel["rust_typed_receipt_cutover_ready"] is False
+    assert repair_kernel["rust_typed_receipt_remaining_source_tool_count"] == 1
+    assert repair_kernel["rust_typed_receipt_remaining_subcase_count"] == 1
+    assert repair_kernel["rust_typed_receipt_runtime_migrated_subcase_count"] == 2
+    assert repair_kernel["rust_typed_receipt_blocked_migrated_source_tool_count"] == 0
+    assert repair_kernel["rust_typed_receipt_cutover_blockers"] == evidence["cutover_blockers"]
 
     migration_debt = summary["repair_kernel_migration_debt"]
-    assert migration_debt["legacy_aggregate_cutover_ready"] is False
-    assert migration_debt["legacy_aggregate_remaining_source_tool_count"] == 1
-    assert migration_debt["legacy_aggregate_remaining_source_tools_without_runtime_receipt"] == [
+    assert migration_debt["rust_typed_receipt_cutover_ready"] is False
+    assert migration_debt["rust_typed_receipt_remaining_source_tool_count"] == 1
+    assert migration_debt["rust_typed_receipt_source_tools_without_runtime_receipt"] == [
         "deterministic_rust_missing_fields_repair"
     ]
-    assert migration_debt["legacy_aggregate_remaining_legacy_subcase_count"] == 1
-    assert migration_debt["legacy_aggregate_runtime_migrated_subcase_count"] == 2
-    assert migration_debt["legacy_aggregate_blocked_migrated_source_tool_count"] == 0
-    assert migration_debt["legacy_callback_debt"]["legacy_aggregate_cutover_ready"] is False
+    assert migration_debt["rust_typed_receipt_remaining_subcase_count"] == 1
+    assert migration_debt["rust_typed_receipt_runtime_migrated_subcase_count"] == 2
+    assert migration_debt["rust_typed_receipt_blocked_migrated_source_tool_count"] == 0
+    assert migration_debt["adapter_projection_debt"]["rust_typed_receipt_cutover_ready"] is False
     rust_step = {item["step_id"]: item for item in migration_debt["steps"]}["rust.post_execution_convergence"]
-    assert rust_step["legacy_aggregate_cutover_ready"] is False
-    assert rust_step["legacy_aggregate_remaining_source_tool_count"] == 1
-    assert rust_step["legacy_aggregate_remaining_legacy_subcase_count"] == 1
-    assert rust_step["legacy_aggregate_runtime_migrated_subcase_count"] == 2
-    assert rust_step["legacy_aggregate_blocked_migrated_source_tool_count"] == 0
+    assert rust_step["rust_typed_receipt_cutover_ready"] is False
+    assert rust_step["rust_typed_receipt_remaining_source_tool_count"] == 1
+    assert rust_step["rust_typed_receipt_remaining_subcase_count"] == 1
+    assert rust_step["rust_typed_receipt_runtime_migrated_subcase_count"] == 2
+    assert rust_step["rust_typed_receipt_blocked_migrated_source_tool_count"] == 0
 
     scheduler_bridge = summary["scheduler_bridge"]
-    assert scheduler_bridge["legacy_aggregate_typed_receipt_cutover_authoritative"] is False
-    assert scheduler_bridge["legacy_aggregate_cutover_ready"] is False
-    assert scheduler_bridge["legacy_aggregate_cutover_blockers"] == evidence["cutover_blockers"]
+    assert scheduler_bridge["rust_typed_receipt_cutover_authoritative"] is False
+    assert scheduler_bridge["rust_typed_receipt_cutover_ready"] is False
+    assert scheduler_bridge["rust_typed_receipt_cutover_blockers"] == evidence["cutover_blockers"]
 
 
-def test_post_execution_migration_debt_marks_runtime_verifier_evidence_without_legacy_cutover(
+def test_post_execution_migration_debt_marks_runtime_verifier_evidence_without_adapter_cutover(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:

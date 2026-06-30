@@ -74,15 +74,13 @@ _KNOWN_RUST_DEPENDENCIES: dict[str, str] = {
     "serde": 'serde = { version = "1.0", features = ["derive"] }',
     "serde_json": 'serde_json = "1.0"',
 }
-_RUST_LEGACY_POST_AGGREGATE_REMAINING_SOURCE_TOOLS = frozenset(
+_RUST_POST_AGGREGATE_RUNTIME_SOURCE_TOOLS = frozenset(
     {
         "deterministic_rust_missing_fields_repair",
         "deterministic_rust_lib_root_facade_repair",
     }
 )
-_RUST_LEGACY_POST_AGGREGATE_SOURCE_TOOL_BLOCKER = (
-    "legacy_aggregate_source_tool_not_runtime_executable"
-)
+_RUST_POST_AGGREGATE_SOURCE_TOOL_BLOCKER = "rust_typed_receipt_source_tool_not_runtime_executable"
 
 
 def _apply_deterministic_rust_crate_import_repair(
@@ -1796,13 +1794,11 @@ def _annotate_rust_post_repair_records(
         payload = dict(record)
         payload.setdefault("source_tool", source_tool)
         record_source_tool = str(payload.get("source_tool") or "").strip()
-        if record_source_tool not in _RUST_LEGACY_POST_AGGREGATE_REMAINING_SOURCE_TOOLS:
-            payload["legacy_aggregate_blocked"] = True
-            payload["legacy_aggregate_blocker"] = _RUST_LEGACY_POST_AGGREGATE_SOURCE_TOOL_BLOCKER
-            payload["legacy_aggregate_remaining_source_tools"] = sorted(
-                _RUST_LEGACY_POST_AGGREGATE_REMAINING_SOURCE_TOOLS
-            )
-            payload["legacy_aggregate_blocked_source_tool"] = record_source_tool
+        if record_source_tool not in _RUST_POST_AGGREGATE_RUNTIME_SOURCE_TOOLS:
+            payload["rust_typed_receipt_blocked"] = True
+            payload["rust_typed_receipt_blocker"] = _RUST_POST_AGGREGATE_SOURCE_TOOL_BLOCKER
+            payload["rust_typed_receipt_expected_source_tools"] = sorted(_RUST_POST_AGGREGATE_RUNTIME_SOURCE_TOOLS)
+            payload["rust_typed_receipt_blocked_source_tool"] = record_source_tool
         payload["phase"] = phase
         payload["priority"] = priority
         payload["revalidation"] = {

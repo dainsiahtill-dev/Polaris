@@ -3373,7 +3373,7 @@ def test_rust_post_repairs_run_remaining_rules_through_runtime_bridge(
     src.write_text("pub struct Demo;\n", encoding="utf-8")
     raw_error = "error[E0609]: no field `name` on type `Demo`\nerror[E0432]: unresolved import `demo::external`"
 
-    def fail_if_legacy_aggregate_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+    def fail_if_adapter_aggregate_called(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
         raise AssertionError("Rust post repairs must not run legacy aggregate repair")
 
     class FakeAdapter:
@@ -3406,7 +3406,7 @@ def test_rust_post_repairs_run_remaining_rules_through_runtime_bridge(
         called.append((source_tool, use_editor))
         return []
 
-    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fail_if_legacy_aggregate_called)
+    monkeypatch.setattr(rust_repairs, "run_all_rust_post_repairs", fail_if_adapter_aggregate_called)
     monkeypatch.setattr(post_execution_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
 
     results = post_execution_repair_bridge._run_rust_post_repairs(FakeAdapter(), tmp_path, task_id="task-rust-runtime")
