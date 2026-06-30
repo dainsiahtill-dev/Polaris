@@ -13,8 +13,7 @@
 
 export type RuntimeProjectionSource =
   | "canonical"
-  | "legacy_flat"
-  | "legacy_nested"
+  | "runtime_status_event"
   | "empty"
   | "partial"
   | "merged";
@@ -22,16 +21,16 @@ export type RuntimeProjectionSource =
 export interface RuntimeProjectionProvenance {
   /** Projection source category used by the frontend runtime bridge */
   source: RuntimeProjectionSource;
-  /** True when the frontend compatibility layer transformed a non-canonical payload */
+  /** True when the frontend adapter transformed a runtime event into a projection */
   transformed: boolean;
   /** ISO timestamp when the frontend received or generated this projection */
   received_at: string;
   /** Optional schema/protocol hint from the producer */
   source_schema?: string;
-  /** Human-readable reason for compatibility conversion */
-  compatibility_reason?: string;
-  /** Legacy fields that caused compatibility conversion */
-  legacy_fields?: string[];
+  /** Human-readable reason for projection adaptation */
+  adaptation_reason?: string;
+  /** Runtime event fields used to build this projection */
+  source_fields?: string[];
 }
 
 /**
@@ -46,13 +45,13 @@ export interface RuntimeProjectionPayload {
   director: DirectorLocalStatus | null;
   /** Workflow archive status */
   workflow: WorkflowStatus | null;
-  /** Engine fallback status (for backward compatibility) */
+  /** Engine status projected from the runtime status event */
   engine: EngineStatus | null;
-  /** Backward compatibility fields for legacy consumers */
+  /** Transition fields retained until every runtime consumer reads canonical projection fields */
   snapshot_compat: SnapshotCompatFields;
   /** ISO timestamp when this projection was generated */
   generated_at: string;
-  /** Explicit source of this projection, so legacy compatibility cannot masquerade as canonical runtime state */
+  /** Explicit source of this projection, so adapted runtime events cannot masquerade as backend canonical state */
   projection_source?: RuntimeProjectionSource;
   /** Runtime projection provenance for observability and migration audits */
   provenance?: RuntimeProjectionProvenance;
@@ -215,8 +214,7 @@ export interface WorkflowMetadata {
 // ============================================================================
 
 /**
- * Engine fallback status
- * Used for backward compatibility with legacy engine-based status reporting
+ * Engine status projected from runtime events.
  */
 export interface EngineStatus {
   /** Whether engine is available */
@@ -236,42 +234,41 @@ export interface EngineStatus {
 // ============================================================================
 
 /**
- * Snapshot compatibility fields
- * These fields support legacy consumers during migration period.
- * @deprecated Use canonical fields (pm, director, workflow) instead
+ * Snapshot transition fields.
+ * Prefer canonical fields (pm, director, workflow) for new consumers.
  */
 export interface SnapshotCompatFields {
-  /** Frontend compatibility provenance; canonical consumers should use top-level `provenance` */
+  /** Frontend adapter provenance; canonical consumers should use top-level `provenance` */
   projection_source?: RuntimeProjectionSource;
-  /** Frontend compatibility provenance; canonical consumers should use top-level `provenance` */
+  /** Frontend adapter provenance; canonical consumers should use top-level `provenance` */
   projection_provenance?: RuntimeProjectionProvenance;
-  /** Legacy PM status string */
+  /** PM status string mirrored for transition consumers */
   pm_status?: string;
-  /** Legacy PM current task */
+  /** PM current task mirrored for transition consumers */
   pm_current_task?: string | null;
-  /** Legacy Director status string */
+  /** Director status string mirrored for transition consumers */
   director_status?: string;
-  /** Legacy Director active task count */
+  /** Director active task count mirrored for transition consumers */
   director_active?: number;
-  /** Legacy workflow loaded flag */
+  /** Workflow loaded flag mirrored for transition consumers */
   workflow_loaded?: boolean;
-  /** Legacy workflow task count */
+  /** Workflow task count mirrored for transition consumers */
   workflow_tasks?: number;
-  /** Legacy engine roles status */
+  /** Engine roles status mirrored for transition consumers */
   engine_roles?: Record<string, EngineRoleStatus>;
-  /** Legacy engine error message */
+  /** Engine error message mirrored for transition consumers */
   engine_error?: string;
-  /** Legacy engine summary data */
+  /** Engine summary data mirrored for transition consumers */
   engine_summary?: Record<string, unknown>;
-  /** Legacy engine run id */
+  /** Engine run id mirrored for transition consumers */
   engine_run_id?: string;
-  /** Allow additional legacy fields */
+  /** Allow transition fields from runtime status payloads */
   [key: string]: unknown;
 }
 
 /**
- * Legacy engine role status (for backward compatibility)
- * @deprecated Use canonical fields in PMLocalStatus/DirectorLocalStatus instead
+ * Engine role status carried by runtime events.
+ * Prefer canonical fields in PMLocalStatus/DirectorLocalStatus for new consumers.
  */
 export interface EngineRoleStatus {
   status?: string;

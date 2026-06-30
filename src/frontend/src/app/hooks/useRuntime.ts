@@ -48,7 +48,7 @@ import {
   selectPrimaryStatus,
   isSystemActive,
 } from '@/runtime/projection';
-import { toCanonicalProjection } from '@/runtime/projectionCompat';
+import { normalizeRuntimeProjection } from '@/runtime/projectionAdapter';
 
 // ============================================================================
 // Types (re-exported for backward compatibility)
@@ -1741,7 +1741,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
           if ('lancedb' in payload) setLancedbStatus(payload.lancedb ?? null);
           if ('anthro_state' in payload) setAnthroState(payload.anthro_state ?? null);
 
-          const projection = toCanonicalProjection(payload);
+          const projection = normalizeRuntimeProjection(payload);
           const directorState = Parsing.parseDirectorStateToken(payload.director_status ?? null);
           directorRunningRef.current = directorState.running;
 

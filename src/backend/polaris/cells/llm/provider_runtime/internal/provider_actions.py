@@ -51,17 +51,17 @@ def run_provider_action(
         return ollama_list_models(provider_cfg).to_dict()
 
     if provider_type == "openai_compat":
-        from polaris.infrastructure.llm.providers.openai_compat import openai_health, openai_list_models
+        from polaris.infrastructure.llm.providers.openai_provider import health, list_models
 
         if action == "health":
-            return openai_health(provider_cfg, api_key).to_dict()
-        return openai_list_models(provider_cfg, api_key).to_dict()
+            return health(provider_cfg, api_key).to_dict()
+        return list_models(provider_cfg, api_key).to_dict()
 
     if provider_type == "anthropic_compat":
-        from polaris.infrastructure.llm.providers.anthropic_compat import anthropic_health, anthropic_list_models
+        from polaris.infrastructure.llm.providers.anthropic_provider import health, list_models
 
         if action == "health":
-            return anthropic_health(provider_cfg, api_key).to_dict()
-        return anthropic_list_models(provider_cfg, api_key).to_dict()
+            return health(provider_cfg, api_key).to_dict()
+        return list_models(provider_cfg, api_key).to_dict()
 
     raise UnsupportedProviderTypeError(provider_type)

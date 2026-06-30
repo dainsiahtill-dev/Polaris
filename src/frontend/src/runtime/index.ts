@@ -4,7 +4,7 @@
  * This module provides:
  * - v2: Runtime V2 types (snapshot, events, phases)
  * - projection: Canonical RuntimeProjection contract types
- * - projectionCompat: Compatibility layer for legacy formats
+ * - projectionAdapter: Runtime event to projection adapter
  * - selectors: React hooks for selecting runtime state
  * - guards: Type guards for runtime types
  * - dashboard: Dashboard-specific runtime utilities
@@ -36,11 +36,11 @@
 // Core V2 runtime types
 export * from './v2';
 
-// Canonical projection contract (Phase 8)
+// Canonical projection contract
 export * from './projection';
 
-// Compatibility layer for legacy formats (Phase 8)
-export * from './projectionCompat';
+// Runtime.v2 status-event adapter
+export * from './projectionAdapter';
 
 // React selectors
 export * from './selectors';
@@ -72,6 +72,6 @@ export {
   type ConnectionState,
 } from './transport';
 
-// Note: Legacy hook references removed as part of Nats-JetStream alignment.
+// Runtime hooks live in '@/app/hooks/useRuntime' and require RuntimeTransportProvider.
 // Use useRuntime from '@/app/hooks/useRuntime' (requires RuntimeTransportProvider)
 // or useRuntimeTransport for lower-level access.

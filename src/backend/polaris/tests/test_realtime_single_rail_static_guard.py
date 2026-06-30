@@ -145,7 +145,7 @@ JETSTREAM_BRIDGE_EVENT_DRAIN_FILES = (
 
 RUNTIME_PROJECTION_FILES = (
     FRONTEND_SRC / "runtime" / "projection.ts",
-    FRONTEND_SRC / "runtime" / "projectionCompat.ts",
+    FRONTEND_SRC / "runtime" / "projectionAdapter.ts",
     FRONTEND_SRC / "runtime" / "guards.ts",
     FRONTEND_SRC / "runtime" / "selectors.ts",
     FRONTEND_SRC / "runtime" / "v2.ts",
@@ -937,10 +937,10 @@ def test_runtime_projection_files_have_no_polling_for_health_or_metrics() -> Non
     assert findings == []
 
 
-def test_runtime_projection_compat_derives_director_metrics_from_ws_push() -> None:
-    """projectionCompat.ts must derive director metrics from WS message, not HTTP fetch."""
+def test_runtime_projection_adapter_derives_director_metrics_from_ws_push() -> None:
+    """projectionAdapter.ts must derive director metrics from WS message, not HTTP fetch."""
 
-    text = FRONTEND_SRC / "runtime" / "projectionCompat.ts"
+    text = FRONTEND_SRC / "runtime" / "projectionAdapter.ts"
     if not text.exists():
         return
     content = text.read_text(encoding="utf-8")
@@ -950,15 +950,15 @@ def test_runtime_projection_compat_derives_director_metrics_from_ws_push() -> No
         "DirectorServiceMetrics",
         "metricValue",
         "normalizeHealthStatus",
-        "engine_health",
+        "engine_status",
         "health",
     ):
         if marker not in content:
-            findings.append(f"projectionCompat.ts missing WS-derived {marker!r}")
+            findings.append(f"projectionAdapter.ts missing WS-derived {marker!r}")
 
     for forbidden in ("apiFetch(", "fetch(", "setInterval(", "pollInterval"):
         if forbidden in content:
-            findings.append(f"projectionCompat.ts contains polling pattern {forbidden!r}")
+            findings.append(f"projectionAdapter.ts contains polling pattern {forbidden!r}")
 
     assert findings == []
 

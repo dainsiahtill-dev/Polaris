@@ -1,10 +1,10 @@
 /**
- * Runtime Projection Compatibility Layer
- * Normalizes various response formats to canonical RuntimeProjectionPayload
+ * Runtime Projection Adapter
+ * Converts runtime.v2 status events into the canonical RuntimeProjectionPayload.
  *
- * This module provides compatibility functions to convert legacy response formats
- * into the canonical RuntimeProjectionPayload shape. It supports gradual migration
- * of backend services to the canonical contract.
+ * Backend services should eventually emit RuntimeProjectionPayload directly.
+ * Until then, the frontend accepts only canonical projections and runtime.v2
+ * status events from the unified WebSocket transport.
  */
 
 import {
@@ -24,82 +24,9 @@ import {
 } from "./projection";
 
 // ============================================================================
-// Legacy Response Types
+// Runtime Status Event Types
 // ============================================================================
 
-/**
- * Legacy PM response format
- */
-interface LegacyPMResponse {
-  pm_status?: string;
-  pm_current_task?: string | null;
-  pm_running?: boolean;
-  pm_phase?: string;
-  pm_progress?: number;
-  pm_message?: string;
-}
-
-/**
- * Legacy Director response format
- */
-interface LegacyDirectorResponse {
-  director_status?: string;
-  director_active?: number;
-  director_running?: boolean;
-  director_phase?: string;
-  director_completed?: number;
-  director_failed?: number;
-  director_run_id?: string;
-  director_queue_depth?: number;
-}
-
-/**
- * Legacy Workflow response format
- */
-interface LegacyWorkflowResponse {
-  workflow_loaded?: boolean;
-  workflow_tasks?: number;
-  workflow_run_id?: string;
-  workflow_completed_at?: string;
-  tasks?: Array<{
-    id?: string;
-    title?: string;
-    name?: string;
-    subject?: string;
-    status?: string;
-    assignee?: string;
-    priority?: string;
-    started_at?: string;
-    completed_at?: string;
-    metadata?: Record<string, unknown>;
-    blueprint_id?: string | null;
-    blueprint_path?: string | null;
-    runtime_blueprint_path?: string | null;
-    acceptance?: unknown[];
-    acceptance_criteria?: string[];
-    execution_checklist?: string[];
-    target_files?: string[];
-    scope_paths?: string[];
-    files?: string[];
-    dependencies?: string[];
-    blocked_by?: string[];
-  }>;
-}
-
-/**
- * Legacy Engine response format
- */
-interface LegacyEngineResponse {
-  engine_available?: boolean;
-  engine_version?: string;
-  engine_mode?: string;
-  engine_health?: string;
-  engine_last_check?: string;
-}
-
-/**
- * Nested status format (from WebSocket message)
- */
 interface DirectorServiceMetrics {
   tasks_submitted?: number | string;
   tasks_completed?: number | string;
@@ -123,7 +50,9 @@ interface DirectorServiceStatus {
   metrics?: DirectorServiceMetrics | null;
 }
 
-interface NestedStatusResponse {
+interface RuntimeStatusEvent {
+  type?: string;
+  protocol?: string;
   pm_status?: {
     running?: boolean;
     phase?: string;
@@ -185,43 +114,15 @@ interface NestedStatusResponse {
   } | null;
 }
 
-/**
- * Combined legacy response type
- */
-type LegacyResponse = LegacyPMResponse &
-  LegacyDirectorResponse &
-  LegacyWorkflowResponse &
-  LegacyEngineResponse;
-
 // ============================================================================
-// Compatibility Functions
+// Projection Adapter Functions
 // ============================================================================
 
-const LEGACY_FIELD_NAMES = [
+const RUNTIME_STATUS_EVENT_FIELDS = [
   "pm_status",
-  "pm_current_task",
-  "pm_running",
-  "pm_phase",
-  "pm_progress",
-  "pm_message",
   "director_status",
-  "director_active",
-  "director_running",
-  "director_phase",
-  "director_completed",
-  "director_failed",
-  "director_run_id",
-  "director_queue_depth",
-  "workflow_loaded",
-  "workflow_tasks",
-  "workflow_run_id",
-  "workflow_completed_at",
-  "tasks",
-  "engine_available",
-  "engine_version",
-  "engine_mode",
-  "engine_health",
-  "engine_last_check",
+  "snapshot",
+  "engine_status",
 ] as const;
 
 function toFiniteNumber(value: unknown): number | undefined {
@@ -311,7 +212,7 @@ function createProjectionProvenance(params: {
   transformed: boolean;
   receivedAt: string;
   reason?: string;
-  legacyFields?: string[];
+  sourceFields?: string[];
   sourceSchema?: string;
 }): RuntimeProjectionProvenance {
   return {
@@ -319,23 +220,15 @@ function createProjectionProvenance(params: {
     transformed: params.transformed,
     received_at: params.receivedAt,
     source_schema: params.sourceSchema,
-    compatibility_reason: params.reason,
-    legacy_fields: params.legacyFields && params.legacyFields.length > 0 ? params.legacyFields : undefined,
+    adaptation_reason: params.reason,
+    source_fields: params.sourceFields && params.sourceFields.length > 0 ? params.sourceFields : undefined,
   };
 }
 
-function collectLegacyFields(response: unknown, hasNestedFormat: boolean): string[] {
+function collectRuntimeStatusFields(response: unknown): string[] {
   if (!response || typeof response !== "object") return [];
   const obj = response as Record<string, unknown>;
-  const fields = LEGACY_FIELD_NAMES.filter((field) => field in obj);
-  if (hasNestedFormat) {
-    for (const field of ["pm_status", "director_status", "snapshot", "engine_status"]) {
-      if (field in obj && !fields.includes(field as (typeof LEGACY_FIELD_NAMES)[number])) {
-        fields.push(field as (typeof LEGACY_FIELD_NAMES)[number]);
-      }
-    }
-  }
-  return Array.from(new Set(fields));
+  return RUNTIME_STATUS_EVENT_FIELDS.filter((field) => field in obj);
 }
 
 function attachProjectionProvenance(
@@ -356,12 +249,12 @@ function attachProjectionProvenance(
 }
 
 /**
- * Convert any response format to canonical RuntimeProjectionPayload
+ * Normalize canonical runtime projection or runtime.v2 status event input.
  *
- * @param response - Response object from backend (any format)
- * @returns Canonical RuntimeProjectionPayload
+ * @param response - Runtime projection or runtime.v2 status event.
+ * @returns Canonical RuntimeProjectionPayload.
  */
-export function toCanonicalProjection(response: unknown): RuntimeProjectionPayload {
+export function normalizeRuntimeProjection(response: unknown): RuntimeProjectionPayload {
   // Handle null/undefined
   if (!response) {
     return createEmptyProjection();
@@ -385,32 +278,27 @@ export function toCanonicalProjection(response: unknown): RuntimeProjectionPaylo
     );
   }
 
-  // Check for nested WebSocket format (pm_status, director_status, snapshot as objects)
-  const nested = response as NestedStatusResponse;
-  const hasNestedFormat =
-    (nested.pm_status && typeof nested.pm_status === 'object') ||
-    (nested.director_status && typeof nested.director_status === 'object') ||
-    (nested.snapshot && typeof nested.snapshot === 'object') ||
-    (nested.engine_status && typeof nested.engine_status === 'object');
+  if (!isRuntimeStatusEvent(response)) {
+    return createEmptyProjection("non_projection_runtime_payload");
+  }
 
-  // Legacy format conversion
-  const legacy = response as LegacyResponse;
+  const event = response as RuntimeStatusEvent;
   const generatedAt = new Date().toISOString();
-  const source: RuntimeProjectionSource = hasNestedFormat ? "legacy_nested" : "legacy_flat";
   const provenance = createProjectionProvenance({
-    source,
+    source: "runtime_status_event",
     transformed: true,
     receivedAt: generatedAt,
-    reason: hasNestedFormat ? "nested_status_compat" : "legacy_flat_compat",
-    legacyFields: collectLegacyFields(response, Boolean(hasNestedFormat)),
+    reason: "runtime_v2_status_event",
+    sourceFields: collectRuntimeStatusFields(response),
+    sourceSchema: typeof event.protocol === "string" ? event.protocol : "runtime.v2",
   });
 
   return attachProjectionProvenance({
-    pm: normalizePMStatus(legacy, hasNestedFormat ? nested : undefined),
-    director: normalizeDirectorStatus(legacy, hasNestedFormat ? nested : undefined),
-    workflow: normalizeWorkflowStatus(legacy, hasNestedFormat ? nested : undefined),
-    engine: normalizeEngineStatus(legacy, hasNestedFormat ? nested : undefined),
-    snapshot_compat: extractCompatFields(legacy, hasNestedFormat ? nested : undefined),
+    pm: normalizePMStatus(event),
+    director: normalizeDirectorStatus(event),
+    workflow: normalizeWorkflowStatus(event),
+    engine: normalizeEngineStatus(event),
+    snapshot_compat: extractTransitionFields(event),
     generated_at: generatedAt,
   }, provenance);
 }
@@ -428,11 +316,25 @@ function isCanonicalProjection(response: unknown): boolean {
 }
 
 /**
- * Normalize PM status from legacy format
+ * Check whether input is a runtime.v2 status event shape.
  */
-function normalizePMStatus(legacy: LegacyResponse, nested?: NestedStatusResponse): PMLocalStatus | null {
-  // Check nested format first (WebSocket message)
-  const pmNested = nested?.pm_status;
+function isRuntimeStatusEvent(response: unknown): boolean {
+  if (!response || typeof response !== "object") return false;
+  const event = response as RuntimeStatusEvent;
+  return (
+    (event.pm_status !== undefined && (event.pm_status === null || typeof event.pm_status === "object")) ||
+    (event.director_status !== undefined &&
+      (event.director_status === null || typeof event.director_status === "object")) ||
+    (event.snapshot !== undefined && (event.snapshot === null || typeof event.snapshot === "object")) ||
+    (event.engine_status !== undefined && (event.engine_status === null || typeof event.engine_status === "object"))
+  );
+}
+
+/**
+ * Normalize PM status from runtime status event.
+ */
+function normalizePMStatus(event: RuntimeStatusEvent): PMLocalStatus | null {
+  const pmNested = event.pm_status;
   if (pmNested && typeof pmNested === 'object') {
     return {
       running: Boolean(pmNested.running),
@@ -443,28 +345,14 @@ function normalizePMStatus(legacy: LegacyResponse, nested?: NestedStatusResponse
       last_updated: new Date().toISOString(),
     };
   }
-
-  // Fall back to flat format
-  if (!legacy.pm_status && !legacy.pm_running && !legacy.pm_phase) {
-    return null;
-  }
-
-  return {
-    running: legacy.pm_running || legacy.pm_status === "running",
-    current_task_id: legacy.pm_current_task || null,
-    phase: normalizePMPhase(legacy.pm_phase || legacy.pm_status),
-    progress: legacy.pm_progress,
-    message: legacy.pm_message,
-    last_updated: new Date().toISOString(),
-  };
+  return null;
 }
 
 /**
- * Normalize Director status from legacy format
+ * Normalize Director status from runtime status event.
  */
-function normalizeDirectorStatus(legacy: LegacyResponse, nested?: NestedStatusResponse): DirectorLocalStatus | null {
-  // Check nested format first (WebSocket message)
-  const directorNested = nested?.director_status;
+function normalizeDirectorStatus(event: RuntimeStatusEvent): DirectorLocalStatus | null {
+  const directorNested = event.director_status;
   if (directorNested && typeof directorNested === 'object') {
     const serviceStatus = directorNested.status && typeof directorNested.status === "object" ? directorNested.status : null;
     const metrics = serviceStatus?.metrics || null;
@@ -495,29 +383,14 @@ function normalizeDirectorStatus(legacy: LegacyResponse, nested?: NestedStatusRe
     };
   }
 
-  // Fall back to flat format
-  if (!legacy.director_status && !legacy.director_running) {
-    return null;
-  }
-
-  return {
-    running: legacy.director_running || legacy.director_status === "running",
-    active_tasks: legacy.director_active || 0,
-    completed_tasks: legacy.director_completed || 0,
-    failed_tasks: legacy.director_failed || 0,
-    phase: normalizeDirectorPhase(legacy.director_phase || legacy.director_status),
-    current_run_id: legacy.director_run_id || null,
-    queue_depth: legacy.director_queue_depth || 0,
-    last_updated: new Date().toISOString(),
-  };
+  return null;
 }
 
 /**
- * Normalize Workflow status from legacy format
+ * Normalize workflow status from runtime status event.
  */
-function normalizeWorkflowStatus(legacy: LegacyResponse, nested?: NestedStatusResponse): WorkflowStatus | null {
-  // Check nested format first (WebSocket message)
-  const snapshot = nested?.snapshot;
+function normalizeWorkflowStatus(event: RuntimeStatusEvent): WorkflowStatus | null {
+  const snapshot = event.snapshot;
   if (snapshot && typeof snapshot === 'object') {
     const rawTasks = snapshot.tasks || [];
     const tasks: WorkflowTask[] = rawTasks.map((t, index) => {
@@ -563,55 +436,14 @@ function normalizeWorkflowStatus(legacy: LegacyResponse, nested?: NestedStatusRe
       },
     };
   }
-
-  // Fall back to flat format
-  if (!legacy.workflow_loaded && !legacy.tasks) {
-    return null;
-  }
-
-  const tasks: WorkflowTask[] =
-    legacy.tasks?.map((t, index) => ({
-      id: t.id || `task-${index}`,
-      title: t.title || t.name || t.subject || t.id || '未命名任务',
-      status: normalizeTaskStatus(t.status),
-      assignee: t.assignee,
-      priority: normalizePriority(t.priority),
-      started_at: t.started_at,
-      completed_at: t.completed_at,
-      metadata: t.metadata,
-      blueprint_id: t.blueprint_id,
-      blueprint_path: t.blueprint_path,
-      runtime_blueprint_path: t.runtime_blueprint_path,
-      acceptance: t.acceptance,
-      acceptance_criteria: t.acceptance_criteria,
-      execution_checklist: t.execution_checklist,
-      target_files: t.target_files,
-      scope_paths: t.scope_paths,
-      files: t.files,
-      dependencies: t.dependencies,
-      blocked_by: t.blocked_by,
-    })) || [];
-
-  return {
-    loaded: legacy.workflow_loaded || tasks.length > 0,
-    run_id: legacy.workflow_run_id || null,
-    tasks,
-    completed_at: legacy.workflow_completed_at || null,
-    metadata: {
-      total_tasks: tasks.length,
-      completed_tasks: tasks.filter((t) => t.status === "completed" || t.status === "success").length,
-      failed_tasks: tasks.filter((t) => t.status === "failed").length,
-      progress_percentage: calculateProgress(tasks),
-    },
-  };
+  return null;
 }
 
 /**
- * Normalize Engine status from legacy format
+ * Normalize engine status from runtime status event.
  */
-function normalizeEngineStatus(legacy: LegacyResponse, nested?: NestedStatusResponse): EngineStatus | null {
-  // Check nested format first (WebSocket message)
-  const engineNested = nested?.engine_status;
+function normalizeEngineStatus(event: RuntimeStatusEvent): EngineStatus | null {
+  const engineNested = event.engine_status;
   if (engineNested && typeof engineNested === 'object') {
     return {
       available: true,
@@ -621,53 +453,32 @@ function normalizeEngineStatus(legacy: LegacyResponse, nested?: NestedStatusResp
       last_check: new Date().toISOString(),
     };
   }
-
-  // Fall back to flat format
-  if (!legacy.engine_available && !legacy.engine_version) {
-    return null;
-  }
-
-  return {
-    available: legacy.engine_available || false,
-    version: legacy.engine_version,
-    mode: normalizeEngineMode(legacy.engine_mode),
-    health: normalizeHealthStatus(legacy.engine_health),
-    last_check: legacy.engine_last_check || new Date().toISOString(),
-  };
+  return null;
 }
 
 /**
- * Extract compatibility fields from legacy response
+ * Extract transition fields from runtime status event.
  */
-function extractCompatFields(legacy: LegacyResponse, nested?: NestedStatusResponse): SnapshotCompatFields {
+function extractTransitionFields(event: RuntimeStatusEvent): SnapshotCompatFields {
   const compat: SnapshotCompatFields = {};
 
-  // Flat format
-  if (legacy.pm_status !== undefined) compat.pm_status = legacy.pm_status;
-  if (legacy.pm_current_task !== undefined) compat.pm_current_task = legacy.pm_current_task;
-  if (legacy.director_status !== undefined) compat.director_status = legacy.director_status;
-  if (legacy.director_active !== undefined) compat.director_active = legacy.director_active;
-  if (legacy.workflow_loaded !== undefined) compat.workflow_loaded = legacy.workflow_loaded;
-  if (legacy.workflow_tasks !== undefined) compat.workflow_tasks = legacy.workflow_tasks;
-
-  // Nested format (WebSocket)
-  if (nested?.pm_status) {
-    compat.pm_status = nested.pm_status.phase || 'idle';
+  if (event.pm_status) {
+    compat.pm_status = event.pm_status.phase || 'idle';
   }
-  if (nested?.director_status) {
-    const director = normalizeDirectorStatus(legacy, nested);
+  if (event.director_status) {
+    const director = normalizeDirectorStatus(event);
     compat.director_status = director?.phase || 'idle';
     compat.director_active = director?.active_tasks ?? 0;
   }
-  if (nested?.snapshot) {
-    compat.workflow_loaded = Boolean(nested.snapshot.run_id);
-    compat.workflow_tasks = nested.snapshot.tasks?.length;
+  if (event.snapshot) {
+    compat.workflow_loaded = Boolean(event.snapshot.run_id);
+    compat.workflow_tasks = event.snapshot.tasks?.length;
   }
-  if (nested?.engine_status) {
-    compat.engine_roles = nested.engine_status.roles as Record<string, EngineRoleStatus> | undefined;
-    compat.engine_error = nested.engine_status.error;
-    compat.engine_summary = nested.engine_status.summary;
-    compat.engine_run_id = nested.engine_status.run_id;
+  if (event.engine_status) {
+    compat.engine_roles = event.engine_status.roles as Record<string, EngineRoleStatus> | undefined;
+    compat.engine_error = event.engine_status.error;
+    compat.engine_summary = event.engine_status.summary;
+    compat.engine_run_id = event.engine_status.run_id;
   }
 
   return compat;
@@ -767,13 +578,13 @@ function calculateProgress(tasks: WorkflowTask[]): number {
 }
 
 // ============================================================================
-// Migration Helpers
+// Projection Helpers
 // ============================================================================
 
 /**
  * Create an empty projection for initialization
  */
-export function createEmptyProjection(): RuntimeProjectionPayload {
+export function createEmptyProjection(reason = "empty_runtime_projection"): RuntimeProjectionPayload {
   const generatedAt = new Date().toISOString();
   return attachProjectionProvenance({
     pm: null,
@@ -786,7 +597,7 @@ export function createEmptyProjection(): RuntimeProjectionPayload {
     source: "empty",
     transformed: false,
     receivedAt: generatedAt,
-    reason: "empty_runtime_projection",
+    reason,
   }));
 }
 
@@ -845,35 +656,4 @@ export function createPartialProjection(
     generated_at: generatedAt,
     ...partial,
   });
-}
-
-// ============================================================================
-// Legacy Format Detectors
-// ============================================================================
-
-/**
- * Detect if response is in legacy PM format
- */
-export function isLegacyPMFormat(response: unknown): boolean {
-  if (!response || typeof response !== "object") return false;
-  const obj = response as Record<string, unknown>;
-  return "pm_status" in obj || "pm_running" in obj || "pm_phase" in obj;
-}
-
-/**
- * Detect if response is in legacy Director format
- */
-export function isLegacyDirectorFormat(response: unknown): boolean {
-  if (!response || typeof response !== "object") return false;
-  const obj = response as Record<string, unknown>;
-  return "director_status" in obj || "director_active" in obj || "director_running" in obj;
-}
-
-/**
- * Detect if response is in legacy Workflow format
- */
-export function isLegacyWorkflowFormat(response: unknown): boolean {
-  if (!response || typeof response !== "object") return false;
-  const obj = response as Record<string, unknown>;
-  return "workflow_loaded" in obj || "workflow_tasks" in obj;
 }
