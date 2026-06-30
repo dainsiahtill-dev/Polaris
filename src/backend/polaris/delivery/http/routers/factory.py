@@ -63,6 +63,7 @@ from polaris.delivery.http.schemas import (
     FactoryRunEventsResponse,
 )
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
+from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
 from polaris.kernelone.trace import create_task_with_context
 from pydantic import BaseModel, Field
@@ -650,10 +651,7 @@ def _rehydrate_director_resume_taskboard(workspace: str) -> str:
             if not payload:
                 continue
             normalized_payload = _director_resume_reset_task_payload(payload)
-            (target_dir / task_file.name).write_text(
-                json.dumps(normalized_payload, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            _write_json_text_atomic(target_dir / task_file.name, normalized_payload, trailing_newline=False)
             copied.append(task_file.name)
         max_id = source_dir / ".max_id"
         if max_id.is_file():
@@ -668,10 +666,7 @@ def _rehydrate_director_resume_taskboard(workspace: str) -> str:
             "reset_statuses": "all_task_records",
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
-        (target_dir / "director_resume_rehydration.json").write_text(
-            json.dumps(evidence, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        _write_json_text_atomic(target_dir / "director_resume_rehydration.json", evidence, trailing_newline=False)
         return str(source_dir)
     return ""
 
@@ -696,10 +691,7 @@ def _reset_current_director_resume_taskboard(
             skipped_files.append(task_file.name)
             continue
         normalized_payload = _director_resume_reset_task_payload(payload)
-        task_file.write_text(
-            json.dumps(normalized_payload, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        _write_json_text_atomic(task_file, normalized_payload)
         reset_files.append(task_file.name)
 
     with contextlib.suppress(OSError):
@@ -721,10 +713,7 @@ def _reset_current_director_resume_taskboard(
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
     task_dir.mkdir(parents=True, exist_ok=True)
-    (task_dir / "director_resume_reset.json").write_text(
-        json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    _write_json_text_atomic(task_dir / "director_resume_reset.json", evidence)
     return evidence
 
 
@@ -923,6 +912,13 @@ def _build_stage_context(
 def _json_payload(data: Any) -> str:
     payload = data.model_dump(mode="json") if hasattr(data, "model_dump") else data
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _write_json_text_atomic(path: Path, payload: Any, *, trailing_newline: bool = True) -> None:
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    if trailing_newline:
+        text += "\n"
+    write_text_atomic(str(path), text)
 
 
 def _resolve_runtime_path(workspace: str, relative_path: str) -> Path:
@@ -1748,7 +1744,9 @@ def _factory_run_identity(*, run: FactoryRun, workspace: str) -> dict[str, Any]:
             or start_metadata_map.get("factory_bench_project_id")
             or ""
         ),
-        "instance_id": str(start_metadata_map.get("instance_id") or start_metadata_map.get("launcher_instance_id") or ""),
+        "instance_id": str(
+            start_metadata_map.get("instance_id") or start_metadata_map.get("launcher_instance_id") or ""
+        ),
         "backend_port": start_metadata_map.get("backend_port"),
         "frontend_port": start_metadata_map.get("frontend_port"),
     }
