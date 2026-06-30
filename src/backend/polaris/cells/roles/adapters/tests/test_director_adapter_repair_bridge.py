@@ -21,7 +21,7 @@ from polaris.cells.director.runtime.public.contracts import (
     RepairReceiptV1,
 )
 from polaris.cells.roles.adapters.internal.director import (
-    materialization_quality_repair_bridge,
+    materialization_quality_runtime_ports,
     post_execution_repair_bridge,
     runtime_repair_tool_adapter as runtime_bridge_module,
 )
@@ -50,6 +50,13 @@ _QUALITY_ERROR = "TypeScript syntax check failed: src/models/Flight.ts(6,47): er
 _RESIDUAL_ERROR = "TypeScript syntax check failed: src/models/Flight.ts(6,47): error TS2304: Cannot find name 'Widget'."
 _UNCOVERED_ERROR = "declared target file missing app/models/widget.rb is missing"
 _DELETE_SOURCE_TOOL = "deterministic_test_delete_file_repair"
+
+
+def _runtime_ports_diagnostics(summary: dict[str, Any]) -> dict[str, Any]:
+    diagnostics = summary.get("runtime_ports_diagnostics")
+    if isinstance(diagnostics, dict):
+        return diagnostics
+    return summary
 
 
 def _patch_post_execution_schedule_result_as_dicts(monkeypatch: Any) -> None:
@@ -210,7 +217,7 @@ def _patch_materialization_schedule_result_as_dicts(monkeypatch: Any) -> None:
         max_rounds: int = 1,
     ) -> SimpleNamespace:
         ordered_steps = tuple(
-            materialization_quality_repair_bridge.DirectorRepairMaterializationQualityStepV1(
+            materialization_quality_runtime_ports.DirectorRepairMaterializationQualityStepV1(
                 step_id=step_id,
                 language=step_id.split(".", 1)[-1],
                 phase="materialization_quality",
@@ -257,7 +264,7 @@ def _materialization_runtime_schedule_steps() -> tuple[Any, ...]:
         "materialization.go_import": ("materialization.target_runtime",),
     }
     return tuple(
-        materialization_quality_repair_bridge.DirectorRepairMaterializationQualityStepV1(
+        materialization_quality_runtime_ports.DirectorRepairMaterializationQualityStepV1(
             step_id=step_id,
             language=step_id.rsplit(".", 1)[-1],
             phase="materialization_quality",
@@ -266,7 +273,7 @@ def _materialization_runtime_schedule_steps() -> tuple[Any, ...]:
             depends_on=dependencies_by_step_id.get(step_id, ()),
         )
         for index, step_id in enumerate(
-            materialization_quality_repair_bridge._MATERIALIZATION_QUALITY_REPAIR_RUNNERS,
+            materialization_quality_runtime_ports._MATERIALIZATION_QUALITY_REPAIR_RUNNERS,
             start=1,
         )
     )
@@ -287,7 +294,7 @@ def _patch_materialization_runtime_schedule_query(
         )
 
     monkeypatch.setattr(
-        materialization_quality_repair_bridge,
+        materialization_quality_runtime_ports,
         "query_director_repair_materialization_quality_schedule",
         fake_query,
     )
@@ -1630,13 +1637,13 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
         "_run_materialization_target_runtime",
         "_run_materialization_python_import",
     ):
-        monkeypatch.setattr(materialization_quality_repair_bridge, runner_name, lambda *args, **kwargs: [])
+        monkeypatch.setattr(materialization_quality_runtime_ports, runner_name, lambda *args, **kwargs: [])
     monkeypatch.setattr(
-        materialization_quality_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge
+        materialization_quality_runtime_ports, "run_runtime_repair_with_director_tools", fake_runtime_bridge
     )
-    assert not hasattr(materialization_quality_repair_bridge, "repair_go_nested_import_keyword")
-    assert not hasattr(materialization_quality_repair_bridge, "repair_go_import_subpaths")
-    assert not hasattr(materialization_quality_repair_bridge, "repair_go_duplicate_declarations")
+    assert not hasattr(materialization_quality_runtime_ports, "repair_go_nested_import_keyword")
+    assert not hasattr(materialization_quality_runtime_ports, "repair_go_import_subpaths")
+    assert not hasattr(materialization_quality_runtime_ports, "repair_go_duplicate_declarations")
     _patch_materialization_schedule_result_as_dicts(monkeypatch)
 
     results, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
@@ -1656,8 +1663,11 @@ def test_materialization_bridge_passes_verifier_to_runtime_bound_go_bare_import(
     ]
     assert captured["verifier_request"].round_number == 1
     assert summary["convergence_verifier_present"] is True
-    assert summary["materialization_quality_bridge"]["convergence_verifier_present"] is True
-    migration_debt = summary["repair_kernel_migration_debt"]
+    assert (
+        _runtime_ports_diagnostics(summary)["materialization_quality_runtime_ports"]["convergence_verifier_present"]
+        is True
+    )
+    migration_debt = _runtime_ports_diagnostics(summary)["repair_kernel_migration_debt"]
     assert migration_debt["convergence_verifier_present"] is True
     assert migration_debt["cutover_ready"] is False
     go_debt = {item["step_id"]: item for item in migration_debt["adapter_projection_debt"]}["materialization.go_import"]
@@ -1737,10 +1747,10 @@ def test_materialization_python_import_runs_through_runtime_bridge(
         ]
 
     monkeypatch.setattr(
-        materialization_quality_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge
+        materialization_quality_runtime_ports, "run_runtime_repair_with_director_tools", fake_runtime_bridge
     )
 
-    results = materialization_quality_repair_bridge._run_materialization_python_import(
+    results = materialization_quality_runtime_ports._run_materialization_python_import(
         _FakeAdapter(tmp_path),
         task={"target_files": ["shared/__init__.py", "shared/registry.py"]},
         task_id="task-python-materialization",
@@ -1833,7 +1843,7 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
         return []
 
     monkeypatch.setattr(
-        materialization_quality_repair_bridge, "run_runtime_repair_with_director_tools", fake_runtime_bridge
+        materialization_quality_runtime_ports, "run_runtime_repair_with_director_tools", fake_runtime_bridge
     )
     task = {
         "target_files": ["src/app.ts"],
@@ -1849,28 +1859,28 @@ def test_materialization_remaining_steps_run_through_runtime_bridge_not_legacy(
     ]
 
     adapter = _FakeAdapter(tmp_path)
-    materialization_quality_repair_bridge._run_materialization_hygiene_scaffold(
+    materialization_quality_runtime_ports._run_materialization_hygiene_scaffold(
         adapter,
         task=task,
         task_id="task-materialization-hard-cut",
         artifact_quality_errors=artifact_quality_errors,
         convergence_verifier=sentinel_verifier,
     )
-    materialization_quality_repair_bridge._run_materialization_typescript_scaffold(
+    materialization_quality_runtime_ports._run_materialization_typescript_scaffold(
         adapter,
         task=task,
         task_id="task-materialization-hard-cut",
         artifact_quality_errors=artifact_quality_errors,
         convergence_verifier=sentinel_verifier,
     )
-    materialization_quality_repair_bridge._run_materialization_node_manifest(
+    materialization_quality_runtime_ports._run_materialization_node_manifest(
         adapter,
         task=task,
         task_id="task-materialization-hard-cut",
         artifact_quality_errors=artifact_quality_errors,
         convergence_verifier=sentinel_verifier,
     )
-    materialization_quality_repair_bridge._run_materialization_target_runtime(
+    materialization_quality_runtime_ports._run_materialization_target_runtime(
         adapter,
         task=task,
         task_id="task-materialization-hard-cut",
@@ -2034,7 +2044,7 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     ]
     monkeypatch.setattr(runtime_repair_tool_adapter, "run_runtime_repair_with_director_tools", fake_runtime_bridge)
     monkeypatch.setattr(
-        materialization_quality_repair_bridge,
+        materialization_quality_runtime_ports,
         "_materialization_plannable_runtime_source_tools_from_base_files",
         lambda **_kwargs: tuple(expected_source_tools),
     )
@@ -2048,7 +2058,7 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
         "_run_materialization_python_import",
         "_run_materialization_go_import",
     ):
-        monkeypatch.setattr(materialization_quality_repair_bridge, runner_name, lambda *args, **kwargs: [])
+        monkeypatch.setattr(materialization_quality_runtime_ports, runner_name, lambda *args, **kwargs: [])
     _patch_materialization_schedule_result_as_dicts(monkeypatch)
 
     results, summary = roles_adapters_public_service.run_director_materialization_quality_repair_schedule(
@@ -2066,9 +2076,10 @@ def test_materialization_rust_migrated_bindings_run_through_runtime_bridge(
     assert all(item["base_files"]["src/lib.rs"] == source.read_text(encoding="utf-8") for item in runtime_calls)
     assert all(set(item["allowed_paths"]) == {"Cargo.toml", "src/lib.rs"} for item in runtime_calls)
     assert [item["result"]["source_tool"] for item in results] == expected_source_tools
-    rust_debt = {item["step_id"]: item for item in summary["repair_kernel_migration_debt"]["adapter_projection_debt"]}[
-        "materialization.rust_compiler"
-    ]
+    rust_debt = {
+        item["step_id"]: item
+        for item in _runtime_ports_diagnostics(summary)["repair_kernel_migration_debt"]["adapter_projection_debt"]
+    }["materialization.rust_compiler"]
     assert "deterministic_rust_missing_lib_target_repair" in rust_debt["runtime_executable_source_tools"]
     assert "deterministic_rust_lib_root_facade_repair" in rust_debt["runtime_executable_source_tools"]
     assert rust_debt["adapter_only_source_tools"] == []
@@ -2106,17 +2117,17 @@ def test_materialization_rust_compiler_executes_only_plan_probe_plannable_tools(
         ]
 
     monkeypatch.setattr(
-        materialization_quality_repair_bridge,
+        materialization_quality_runtime_ports,
         "_materialization_plannable_runtime_source_tools_from_base_files",
         fake_plannable_tools,
     )
     monkeypatch.setattr(
-        materialization_quality_repair_bridge,
+        materialization_quality_runtime_ports,
         "_run_materialization_rust_runtime_repair",
         fake_runtime_repair,
     )
 
-    results = materialization_quality_repair_bridge._run_materialization_rust_compiler(
+    results = materialization_quality_runtime_ports._run_materialization_rust_compiler(
         _FakeAdapter(tmp_path),
         task={"target_files": ["src/lib.rs"]},
         task_id="task-rust-materialization",
@@ -2171,15 +2182,15 @@ def test_materialization_runtime_coverage_detects_rust_line_suggestion() -> None
         "17 | pub enum FlavorKind {\n"
     ]
 
-    assert materialization_quality_repair_bridge.has_materialization_quality_runtime_repair_coverage(errors) is True
+    assert materialization_quality_runtime_ports.has_materialization_quality_runtime_repair_coverage(errors) is True
     assert (
-        materialization_quality_repair_bridge.has_materialization_quality_runtime_repair_coverage(
+        materialization_quality_runtime_ports.has_materialization_quality_runtime_repair_coverage(
             ["Artifact quality scan failed: python runtime smoke crashed for 'tests/test_product.py'"]
         )
         is True
     )
     assert (
-        materialization_quality_repair_bridge.has_materialization_quality_runtime_repair_coverage(
+        materialization_quality_runtime_ports.has_materialization_quality_runtime_repair_coverage(
             ["Artifact quality scan failed: future verifier error without a runtime repair"]
         )
         is False
@@ -2192,10 +2203,10 @@ def test_materialization_public_boundary_ignores_bridge_runner_map_drift(
 ) -> None:
     runtime_steps = _materialization_runtime_schedule_steps()
     _patch_materialization_runtime_schedule_query(monkeypatch, runtime_steps)
-    drifted_runners = dict(materialization_quality_repair_bridge._MATERIALIZATION_QUALITY_REPAIR_RUNNERS)
+    drifted_runners = dict(materialization_quality_runtime_ports._MATERIALIZATION_QUALITY_REPAIR_RUNNERS)
     drifted_runners.pop("materialization.go_import")
     monkeypatch.setattr(
-        materialization_quality_repair_bridge,
+        materialization_quality_runtime_ports,
         "_MATERIALIZATION_QUALITY_REPAIR_RUNNERS",
         drifted_runners,
     )
@@ -2341,12 +2352,12 @@ def test_materialization_public_schedule_entrypoint_forwards_bridge(
         return runner
 
     monkeypatch.setattr(
-        materialization_quality_repair_bridge,
+        materialization_quality_runtime_ports,
         "build_materialization_quality_step_runner",
         fake_runner_builder,
     )
     monkeypatch.setattr(
-        materialization_quality_repair_bridge,
+        materialization_quality_runtime_ports,
         "project_materialization_quality_plan_probe_preaudit",
         fake_plan_probe,
     )
@@ -2727,7 +2738,7 @@ def test_post_execution_rust_migration_debt_uses_typed_receipt_gap_names(
     assert repair_kernel["rust_typed_receipt_blocked_migrated_source_tool_count"] == 0
     assert repair_kernel["rust_typed_receipt_cutover_blockers"] == evidence["cutover_blockers"]
 
-    migration_debt = summary["repair_kernel_migration_debt"]
+    migration_debt = _runtime_ports_diagnostics(summary)["repair_kernel_migration_debt"]
     assert migration_debt["rust_typed_receipt_cutover_ready"] is False
     assert migration_debt["rust_typed_receipt_remaining_source_tool_count"] == 1
     assert migration_debt["rust_typed_receipt_source_tools_without_runtime_receipt"] == [
@@ -3270,7 +3281,7 @@ def test_materialization_scheduler_bridge_keeps_callback_projection_non_authorit
         def __init__(self) -> None:
             self.workspace = str(tmp_path)
 
-    step = materialization_quality_repair_bridge.DirectorRepairMaterializationQualityStepV1(
+    step = materialization_quality_runtime_ports.DirectorRepairMaterializationQualityStepV1(
         step_id="materialization.go_import",
         language="go",
         phase="materialization_quality",
@@ -3328,7 +3339,7 @@ def test_materialization_scheduler_bridge_keeps_callback_projection_non_authorit
         ordered_steps = tuple(
             step
             if step_id == "materialization.go_import"
-            else materialization_quality_repair_bridge.DirectorRepairMaterializationQualityStepV1(
+            else materialization_quality_runtime_ports.DirectorRepairMaterializationQualityStepV1(
                 step_id=step_id,
                 language=step_id.split(".", 1)[-1],
                 phase="materialization_quality",
@@ -3401,7 +3412,7 @@ def test_materialization_scheduler_bridge_keeps_callback_projection_non_authorit
     assert go_lifecycle["receipt_lifecycle_evidence_status"] == "missing_evidence"
     assert "adapter_projection_only" in go_lifecycle["cutover_blockers"]
     assert "missing_native_repair_receipt" in go_lifecycle["cutover_blockers"]
-    migration_debt = summary["repair_kernel_migration_debt"]
+    migration_debt = _runtime_ports_diagnostics(summary)["repair_kernel_migration_debt"]
     assert migration_debt["remaining_adapter_projection_only_step_ids"] == ["materialization.go_import"]
     assert migration_debt["remaining_callback_only_step_ids"] == ["materialization.go_import"]
     assert migration_debt["adapter_projection_only_step_count"] == 1
@@ -3498,7 +3509,7 @@ def test_materialization_scheduler_bridge_separates_native_receipts_from_callbac
     ) -> SimpleNamespace:
         del runner
         ordered_steps = tuple(
-            materialization_quality_repair_bridge.DirectorRepairMaterializationQualityStepV1(
+            materialization_quality_runtime_ports.DirectorRepairMaterializationQualityStepV1(
                 step_id=step_id,
                 language=step_id.split(".", 1)[-1],
                 phase="materialization_quality",
@@ -3591,7 +3602,7 @@ def test_materialization_scheduler_bridge_separates_native_receipts_from_callbac
     assert step_summary["callback_receipt_projection_count"] == 1
     assert step_summary["receipt_lifecycle_evidence_status"] == "missing_evidence"
 
-    migration_debt = summary["repair_kernel_migration_debt"]
+    migration_debt = _runtime_ports_diagnostics(summary)["repair_kernel_migration_debt"]
     assert migration_debt["native_receipt_step_ids"] == ["materialization.go_import"]
     assert migration_debt["adapter_projection_step_ids"] == ["materialization.go_import"]
     assert migration_debt["callback_projection_step_ids"] == ["materialization.go_import"]
@@ -3662,7 +3673,7 @@ def test_materialization_hygiene_native_receipt_cutover_evidence_projects_ready_
         del runner
         assert selected_step_id in runner_step_ids
         ordered_steps = tuple(
-            materialization_quality_repair_bridge.DirectorRepairMaterializationQualityStepV1(
+            materialization_quality_runtime_ports.DirectorRepairMaterializationQualityStepV1(
                 step_id=step_id,
                 language="multi" if step_id == selected_step_id else step_id.split(".", 1)[-1],
                 phase="hygiene" if step_id == selected_step_id else "materialization_quality",
@@ -3721,4 +3732,4 @@ def test_materialization_hygiene_native_receipt_cutover_evidence_projects_ready_
     step_summary = summary["materialization_quality_step_summaries"][selected_step_id]
     assert step_summary["native_cutover_ready"] is True
     assert step_summary["native_cutover_evidence"]["cutover_ready"] is True
-    assert summary["repair_kernel_migration_debt"]["cutover_ready"] is False
+    assert _runtime_ports_diagnostics(summary)["repair_kernel_migration_debt"]["cutover_ready"] is False

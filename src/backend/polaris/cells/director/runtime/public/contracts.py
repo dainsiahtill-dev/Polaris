@@ -2108,7 +2108,9 @@ class DirectorRepairMaterializationQualityFacadeResultV1:
         object.__setattr__(self, "summary", _to_dict_copy(self.summary))
         object.__setattr__(self, "max_rounds", max(0, int(self.max_rounds)))
         object.__setattr__(self, "rounds_run", max(0, int(self.rounds_run)))
-        object.__setattr__(self, "convergence_status", _require_non_empty("convergence_status", self.convergence_status))
+        object.__setattr__(
+            self, "convergence_status", _require_non_empty("convergence_status", self.convergence_status)
+        )
         object.__setattr__(self, "stopped_reason", _require_non_empty("stopped_reason", self.stopped_reason))
         object.__setattr__(self, "owner_cell", _require_non_empty("owner_cell", self.owner_cell))
         object.__setattr__(
@@ -2967,14 +2969,14 @@ class ProjectDirectorRepairMaterializationBridgeMetadataV1:
 
 @dataclass(frozen=True)
 class DirectorRepairMaterializationBridgeMetadataResultV1:
-    """Runtime-owned materialization bridge metadata projection."""
+    """Runtime-owned materialization runtime-port metadata projection."""
 
     summary: Mapping[str, Any]
-    schema_version: str = "director.materialization_quality_bridge_metadata_projection.v1"
+    schema_version: str = "director.materialization_quality_runtime_ports_metadata_projection.v1"
     source: str = "director.runtime.repair_kernel.materialization_projection"
     access: str = "read_only"
     owner_cell: str = "director.runtime"
-    execution_boundary: str = "read_only_materialization_bridge_metadata_no_writes"
+    execution_boundary: str = "read_only_materialization_runtime_ports_metadata_no_writes"
     agi_execution_authority: bool = False
     director_tool_execution_required: bool = False
 
@@ -3200,11 +3202,7 @@ class DirectorInterfaceDiscrepancyReceiptV1:
             diagnostics=tuple(item for item in diagnostics if isinstance(item, Mapping))
             if isinstance(diagnostics, (list, tuple))
             else (),
-            source_tools=(
-                _to_tuple_str(list(source_tools))
-                if isinstance(source_tools, (list, tuple))
-                else ()
-            ),
+            source_tools=(_to_tuple_str(list(source_tools)) if isinstance(source_tools, (list, tuple)) else ()),
             recommended_owner=str(value.get("recommended_owner") or "chief_engineer"),
             recommended_route=str(value.get("recommended_route") or "pending_design_interface_contract"),
             triage_policy=str(value.get("triage_policy") or "ce_contract_if_missing_else_director_local_repair"),

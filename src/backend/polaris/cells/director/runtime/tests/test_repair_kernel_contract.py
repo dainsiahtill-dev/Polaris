@@ -637,8 +637,7 @@ def test_javascript_missing_export_without_declaration_is_covered_unplannable() 
 
 def test_javascript_missing_run_export_with_entrypoint_contract_is_plannable() -> None:
     diagnostics = (
-        "Artifact quality scan failed: unresolved import symbol 'run' "
-        "from '../src/index.js' in tests/test_basic.js",
+        "Artifact quality scan failed: unresolved import symbol 'run' from '../src/index.js' in tests/test_basic.js",
     )
     base_files = {
         "src/index.js": "console.log('dream note app');\n",
@@ -10906,12 +10905,12 @@ def test_public_materialization_bridge_metadata_projection_is_runtime_owned() ->
     payload = result.to_dict()
     summary = payload["summary"]
 
-    assert payload["schema_version"] == "director.materialization_quality_bridge_metadata_projection.v1"
+    assert payload["schema_version"] == "director.materialization_quality_runtime_ports_metadata_projection.v1"
     assert payload["owner_cell"] == "director.runtime"
-    assert payload["execution_boundary"] == "read_only_materialization_bridge_metadata_no_writes"
+    assert payload["execution_boundary"] == "read_only_materialization_runtime_ports_metadata_no_writes"
     assert payload["agi_execution_authority"] is False
     assert payload["director_tool_execution_required"] is False
-    assert summary["schema_version"] == "director.materialization_quality_repair_bridge.v1"
+    assert summary["schema_version"] == "director.materialization_quality_runtime_ports.v1"
     assert summary["runtime_schedule_owner"] == "director.runtime"
     assert summary["runner_binding_owner"] == "roles.adapters"
     assert summary["director_runtime_public_summary_entrypoint"] == (
@@ -10927,9 +10926,10 @@ def test_public_materialization_bridge_metadata_projection_is_runtime_owned() ->
         "director.materialization_quality_repair_migration_debt.v1"
     )
     assert summary["adapter_projection_debt"] == [{"step_id": "materialization.hygiene_scaffold"}]
-    assert summary["receipt_lifecycle_by_step"]["materialization.hygiene_scaffold"][
-        "receipt_lifecycle_evidence_status"
-    ] == "missing_evidence"
+    assert (
+        summary["receipt_lifecycle_by_step"]["materialization.hygiene_scaffold"]["receipt_lifecycle_evidence_status"]
+        == "missing_evidence"
+    )
     assert summary["dark_launch_cutover_blockers"] == ["adapter_projection_bridge"]
 
 

@@ -127,7 +127,7 @@ def run_director_materialization_quality_repair_schedule_result(
         run_director_materialization_quality_repair_facade,
     )
 
-    from ..internal.director.materialization_quality_repair_bridge import (
+    from ..internal.director.materialization_quality_runtime_ports import (
         build_materialization_quality_step_runner,
         project_materialization_quality_facade_summary,
         project_materialization_quality_plan_probe_preaudit,
@@ -168,12 +168,24 @@ def run_director_materialization_quality_repair_schedule_result(
         schedule_reconciliation=dict(facade_result.schedule_reconciliation),
         convergence_verifier_present=command.convergence_verifier is not None,
     )
-    for legacy_key in (
+    runtime_ports_diagnostics = {
+        key: dict(value) if isinstance(value, dict) else list(value) if isinstance(value, list) else value
+        for key, value in (
+            ("materialization_quality_runtime_ports", public_summary.get("materialization_quality_runtime_ports")),
+            ("repair_kernel_migration_debt", public_summary.get("repair_kernel_migration_debt")),
+            ("adapter_projection_debt", public_summary.get("adapter_projection_debt")),
+        )
+        if value is not None
+    }
+    for internal_key in (
         "materialization_quality_bridge",
+        "materialization_quality_runtime_ports",
         "repair_kernel_migration_debt",
         "adapter_projection_debt",
     ):
-        public_summary.pop(legacy_key, None)
+        public_summary.pop(internal_key, None)
+    if runtime_ports_diagnostics:
+        public_summary["runtime_ports_diagnostics"] = runtime_ports_diagnostics
     public_summary["runtime_facade_summary"] = dict(facade_result.summary)
     public_summary["coverage_preaudit"] = dict(facade_result.coverage_preaudit)
     public_summary["plan_probe_preaudit"] = dict(facade_result.plan_probe_preaudit)

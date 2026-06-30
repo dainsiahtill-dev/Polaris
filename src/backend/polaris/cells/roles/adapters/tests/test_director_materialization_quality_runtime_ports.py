@@ -1,4 +1,4 @@
-"""Focused tests for materialization-quality repair bridge cutover evidence."""
+"""Focused tests for materialization-quality runtime port cutover evidence."""
 
 from __future__ import annotations
 
@@ -10,15 +10,15 @@ from polaris.cells.director.runtime.public import (
     QueryDirectorRepairMaterializationPlanProbeV1,
     query_director_repair_materialization_plan_probe,
 )
-from polaris.cells.roles.adapters.internal.director import materialization_quality_repair_bridge
+from polaris.cells.roles.adapters.internal.director import materialization_quality_runtime_ports
 from polaris.cells.roles.adapters.public import service as roles_adapters_public_service
 
 _STEP_ID = "materialization.hygiene_scaffold"
 _SOURCE_TOOL = "deterministic_materialization_hygiene_repair"
 
 
-def _selected_step() -> materialization_quality_repair_bridge.DirectorRepairMaterializationQualityStepV1:
-    return materialization_quality_repair_bridge.DirectorRepairMaterializationQualityStepV1(
+def _selected_step() -> materialization_quality_runtime_ports.DirectorRepairMaterializationQualityStepV1:
+    return materialization_quality_runtime_ports.DirectorRepairMaterializationQualityStepV1(
         step_id=_STEP_ID,
         language="multi",
         phase="hygiene",
@@ -76,7 +76,7 @@ def _scheduler_bridge(
         "native_receipt_step_ids": [_STEP_ID] if native_receipts else [],
         "callback_projection_step_ids": [_STEP_ID] if callback_projections else [],
     }
-    return materialization_quality_repair_bridge._collect_materialization_scheduler_bridge_evidence(
+    return materialization_quality_runtime_ports._collect_materialization_scheduler_bridge_evidence(
         tool_results=tool_results,
         repair_kernel={"receipts": native_receipts},
         ordered_steps=(step,),
@@ -213,7 +213,9 @@ def test_materialization_summary_reports_coverage_matched_but_unplannable_plan_p
         "deterministic_typescript_return_object_semicolon_repair"
         in repair_plan_probe["covered_unplannable_source_tools"]
     )
-    assert "materialization_quality_bridge" not in summary
+    runtime_ports_metadata = summary["runtime_ports_diagnostics"]["materialization_quality_runtime_ports"]
+    assert runtime_ports_metadata["mode"] == "runtime_schedule_step_runner_adapter"
+    assert runtime_ports_metadata["internal_function_exported"] is False
     assert (
         summary["public_boundary"]["runtime_facade_entrypoint"] == "run_director_materialization_quality_repair_facade"
     )

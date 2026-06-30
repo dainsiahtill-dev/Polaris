@@ -1,7 +1,9 @@
-"""Materialization-quality deterministic repair bridge for Director adapter.
+"""Materialization-quality runtime port bindings for the Director adapter.
 
-This module is the adapter boundary between materialization quality hooks and
-the Director runtime repair kernel receipt model.
+This module binds adapter-owned callback runners and read-only evidence ports
+to the Director runtime repair kernel facade. Runtime public contracts own
+repair scheduling and receipt semantics; this module does not authorize repair
+decisions by itself.
 """
 
 from __future__ import annotations
@@ -708,7 +710,7 @@ def _materialization_allowed_paths_from_runtime_public_plan(
             base_files=base_files,
             artifact_quality_errors=tuple(artifact_quality_errors),
             mode="shadow",
-            metadata={"adapter_bridge": "materialization_quality_repair_bridge"},
+            metadata={"adapter_bridge": "materialization_quality_runtime_ports"},
         )
     )
     return result.allowed_paths
@@ -1128,7 +1130,7 @@ def _annotate_materialization_quality_summary(
         )
     )
     bridge_summary = dict(bridge_metadata.summary)
-    bridged_summary["materialization_quality_bridge"] = bridge_summary
+    bridged_summary["materialization_quality_runtime_ports"] = bridge_summary
     bridged_summary["scheduler_bridge"] = dict(bridge_summary.get("scheduler_bridge") or {})
     bridged_summary["repair_kernel_migration_debt"] = dict(bridge_summary.get("repair_kernel_migration_debt") or {})
     bridged_summary["adapter_projection_debt"] = list(bridge_summary.get("adapter_projection_debt") or [])
@@ -2443,14 +2445,14 @@ def _project_materialization_plan_probe_preaudit(
     artifact_quality_errors: list[str],
     coverage_preaudit: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Project read-only coverage-vs-planning evidence for the materialization bridge."""
+    """Project read-only coverage-vs-planning evidence for runtime ports."""
 
     del coverage_preaudit
     if not artifact_quality_errors:
         return {
             "schema_version": "director.materialization_quality_plan_probe_preaudit.v1",
             "status": "already_clean",
-            "source": "roles.adapters.materialization_quality_repair_bridge",
+            "source": "roles.adapters.materialization_quality_runtime_ports",
             "runtime_public_entrypoint": "query_director_repair_materialization_plan_probe",
             "read_only": True,
             "candidate_source_tools": [],
@@ -2494,7 +2496,7 @@ def _project_materialization_plan_probe_preaudit(
             source_tools=materialization_source_tools,
             mode="shadow",
             metadata={
-                "caller": "materialization_quality_repair_bridge",
+                "caller": "materialization_quality_runtime_ports",
                 "read_only_plan_probe": True,
             },
         )
@@ -2519,7 +2521,7 @@ def _project_materialization_plan_probe_preaudit(
     return {
         **plan_probe,
         "schema_version": "director.materialization_quality_plan_probe_preaudit.v1",
-        "source": "roles.adapters.materialization_quality_repair_bridge",
+        "source": "roles.adapters.materialization_quality_runtime_ports",
         "runtime_public_entrypoint": "query_director_repair_materialization_plan_probe",
         "read_only": True,
         "candidate_source_tools": list(plan_probe.get("candidate_source_tools") or ()),

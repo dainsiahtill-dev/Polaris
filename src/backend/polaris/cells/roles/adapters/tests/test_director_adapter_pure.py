@@ -1215,7 +1215,7 @@ def test_deterministic_materialization_repair_cleans_scaffold_marker_from_report
     tmp_path: Any,
 ) -> None:
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     (tmp_path / "src").mkdir()
@@ -1227,7 +1227,7 @@ def test_deterministic_materialization_repair_cleans_scaffold_marker_from_report
         "Artifact quality scan failed: deterministic scaffold marker 'Polaris TypeScript scaffold' in src/main.ts"
     ]
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         _make_adapter(tmp_path),
         task={"metadata": {"target_files": ["src/main.ts"]}},
         task_id="task-1",
@@ -1245,7 +1245,7 @@ def test_deterministic_materialization_repair_cleans_scaffold_marker_from_go_sou
     tmp_path: Any,
 ) -> None:
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     (tmp_path / "go.mod").write_text("module example\n\ngo 1.21\n", encoding="utf-8")
@@ -1258,7 +1258,7 @@ def test_deterministic_materialization_repair_cleans_scaffold_marker_from_go_sou
         "main.go:(?<![.:'\"-])\\bplaceholder\\b(?!\\s*[=:])(?![-'\"])"
     ]
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         _make_adapter(tmp_path),
         task={"metadata": {"target_files": ["main.go"]}},
         task_id="task-1",
@@ -2135,7 +2135,7 @@ def test_deterministic_materialization_repair_routes_typescript_missing_export(
     tmp_path: Any,
 ) -> None:
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     (tmp_path / "src").mkdir()
@@ -2152,7 +2152,7 @@ def test_deterministic_materialization_repair_routes_typescript_missing_export(
         "src/main.ts(1,10): error TS2305: Module '\"./product\"' has no exported member 'GardenSimulator'."
     ]
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         _make_adapter(tmp_path),
         task={"metadata": {"target_files": ["src/main.ts", "src/product.ts"]}},
         task_id="task-1",
@@ -2752,7 +2752,7 @@ def test_deterministic_typescript_missing_export_repair_handles_quality_unresolv
 
 def test_deterministic_materialization_repair_routes_vitest_globals(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     tests_dir = tmp_path / "tests"
@@ -2781,7 +2781,7 @@ def test_deterministic_materialization_repair_routes_vitest_globals(tmp_path: An
         "tests/index.test.ts(3,5): error TS2304: Cannot find name 'expect'."
     ]
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         _make_adapter(tmp_path),
         task={"target_files": ["tests/index.test.ts"]},
         task_id="task-1",
@@ -3070,7 +3070,7 @@ def test_go_bare_import_string_repair_uses_director_runtime_kernel(
     tmp_path: Any,
 ) -> None:
     from polaris.cells.director.runtime.public import RepairAdvisoryV1
-    from polaris.cells.roles.adapters.internal.director.materialization_quality_repair_bridge import (
+    from polaris.cells.roles.adapters.internal.director.materialization_quality_runtime_ports import (
         _run_materialization_go_import_repairs,
     )
 
@@ -3886,7 +3886,7 @@ def test_rust_dependency_repair_runs_through_director_runtime_bridge(tmp_path: A
 
 def test_materialization_quality_summary_projects_dark_launch_cutover_blocker() -> None:
     from polaris.cells.director.runtime.public import DirectorRepairMaterializationQualityStepV1
-    from polaris.cells.roles.adapters.internal.director import materialization_quality_repair_bridge
+    from polaris.cells.roles.adapters.internal.director import materialization_quality_runtime_ports
 
     tool_results = [
         {
@@ -3902,11 +3902,11 @@ def test_materialization_quality_summary_projects_dark_launch_cutover_blocker() 
         }
     ]
 
-    summary = materialization_quality_repair_bridge._annotate_materialization_quality_summary(
+    summary = materialization_quality_runtime_ports._annotate_materialization_quality_summary(
         step_summaries={},
         tool_results=tool_results,
         artifact_quality_errors=["error[E0432]: unresolved import `serde`"],
-        coverage_preaudit=materialization_quality_repair_bridge._project_coverage_preaudit(
+        coverage_preaudit=materialization_quality_runtime_ports._project_coverage_preaudit(
             ["error[E0432]: unresolved import `serde`"]
         ),
         ordered_steps=(
@@ -3923,19 +3923,22 @@ def test_materialization_quality_summary_projects_dark_launch_cutover_blocker() 
 
     assert shadow["comparison_mode"] == "receipt_projection_self_check"
     assert summary["coverage_preaudit"]["total_diagnostics"] == 1
-    assert summary["materialization_quality_bridge"]["coverage_preaudit_uncovered_diagnostic_count"] == 0
+    assert summary["materialization_quality_runtime_ports"]["coverage_preaudit_uncovered_diagnostic_count"] == 0
     assert shadow["cutover_ready"] is False
     assert "independent_shadow_required" in shadow["cutover_blockers"]
     assert shadow["independent_shadow_required"] is True
     assert shadow["independent_shadow_satisfied"] is False
     assert shadow["writes_allowed"] is False
-    assert summary["materialization_quality_bridge"]["dark_launch_cutover_ready"] is False
-    assert "independent_shadow_required" in summary["materialization_quality_bridge"]["dark_launch_cutover_blockers"]
+    assert summary["materialization_quality_runtime_ports"]["dark_launch_cutover_ready"] is False
+    assert (
+        "independent_shadow_required"
+        in summary["materialization_quality_runtime_ports"]["dark_launch_cutover_blockers"]
+    )
 
 
 def test_materialization_quality_scheduler_bridge_projects_callback_receipts_without_inflating_kernel() -> None:
     from polaris.cells.director.runtime.public import DirectorRepairMaterializationQualityStepV1
-    from polaris.cells.roles.adapters.internal.director import materialization_quality_repair_bridge
+    from polaris.cells.roles.adapters.internal.director import materialization_quality_runtime_ports
 
     tool_results = [
         {
@@ -4067,7 +4070,7 @@ def test_materialization_quality_scheduler_bridge_projects_callback_receipts_wit
         ),
     )
 
-    summary = materialization_quality_repair_bridge._annotate_materialization_quality_summary(
+    summary = materialization_quality_runtime_ports._annotate_materialization_quality_summary(
         step_summaries={},
         tool_results=tool_results,
         artifact_quality_errors=["src/main.ts(1,1): error TS2304: Cannot find name 'Demo'."],
@@ -4152,7 +4155,7 @@ def test_materialization_quality_scheduler_bridge_prefers_public_result_callback
     from polaris.cells.director.runtime.public.service import (
         query_director_repair_materialization_quality_schedule,
     )
-    from polaris.cells.roles.adapters.internal.director import materialization_quality_repair_bridge
+    from polaris.cells.roles.adapters.internal.director import materialization_quality_runtime_ports
 
     runtime_schedule = query_director_repair_materialization_quality_schedule(
         QueryDirectorRepairMaterializationQualityScheduleV1(include_items=True)
@@ -4264,7 +4267,7 @@ def test_materialization_quality_scheduler_bridge_prefers_public_result_callback
         fake_facade_result,
     )
     monkeypatch.setattr(
-        materialization_quality_repair_bridge,
+        materialization_quality_runtime_ports,
         "_project_coverage_preaudit",
         lambda _errors: {
             "total_diagnostics": 1,
@@ -10275,7 +10278,7 @@ def test_scaffold_synthesis_default_off(monkeypatch, tmp_path: Any) -> None:
     be fabricated — and the historical opt-in env vars are now permanently inert,
     so setting them re-arms nothing (the re-activation footgun is gone)."""
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     adapter = SimpleNamespace(
@@ -10293,7 +10296,7 @@ def test_scaffold_synthesis_default_off(monkeypatch, tmp_path: Any) -> None:
     ]
 
     def _run() -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        return run_materialization_quality_repairs(
+        return run_materialization_quality_repair_schedule(
             adapter,
             task=task,
             task_id="task-1",
@@ -10322,7 +10325,7 @@ def test_business_contract_synthesis_default_off(monkeypatch, tmp_path: Any) -> 
     unless a legacy benchmark explicitly opts into the synthesizer."""
     monkeypatch.delenv("KERNELONE_DIRECTOR_BUSINESS_CONTRACT_SYNTHESIS", raising=False)
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     task = {
@@ -10343,7 +10346,7 @@ def test_business_contract_synthesis_default_off(monkeypatch, tmp_path: Any) -> 
         "unresolved relative import './audit.entity' in src/services/audit.service.ts",
     ]
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task=task,
         task_id="task-1",
@@ -10357,7 +10360,7 @@ def test_business_contract_synthesis_default_off(monkeypatch, tmp_path: Any) -> 
 
     # The opt-in env var is now permanently inert: setting it fabricates nothing.
     monkeypatch.setenv("KERNELONE_DIRECTOR_BUSINESS_CONTRACT_SYNTHESIS", "1")
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task=task,
         task_id="task-1",
@@ -10371,7 +10374,7 @@ def test_business_contract_synthesis_default_off(monkeypatch, tmp_path: Any) -> 
 
 def test_typescript_relative_import_case_repair_rewrites_importer_only(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     src = tmp_path / "src"
@@ -10389,7 +10392,7 @@ def test_typescript_relative_import_case_repair_rewrites_importer_only(tmp_path:
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/Garden.ts", "src/moon.ts"]},
         task_id="task-2",
@@ -10408,7 +10411,7 @@ def test_typescript_relative_import_case_repair_rewrites_importer_only(tmp_path:
 
 def test_typescript_unresolved_unused_import_repair_removes_import(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     src = tmp_path / "src"
@@ -10424,7 +10427,7 @@ def test_typescript_unresolved_unused_import_repair_removes_import(tmp_path: Any
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": []},
         task_id="task-unused-import",
@@ -10444,7 +10447,7 @@ def test_typescript_unresolved_unused_import_repair_removes_import(tmp_path: Any
 
 def test_npm_test_script_repair_handles_ts_source_require_module_not_found(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     (tmp_path / "src" / "models").mkdir(parents=True)
@@ -10471,7 +10474,7 @@ def test_npm_test_script_repair_handles_ts_source_require_module_not_found(tmp_p
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": []},
         task_id="task-npm-test",
@@ -10493,7 +10496,7 @@ def test_npm_test_script_repair_handles_ts_source_require_module_not_found(tmp_p
 
 def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     model_dir = tmp_path / "src" / "models"
@@ -10540,7 +10543,7 @@ def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_pa
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/models/flower.ts"]},
         task_id="task-1",
@@ -10571,7 +10574,7 @@ def test_typescript_return_object_comma_repair_fixes_inline_missing_property_com
         typescript_repairs as typescript_repairs_module,
     )
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     def _forbid_legacy_fallback(*args: object, **kwargs: object) -> str:
@@ -10617,7 +10620,7 @@ def test_typescript_return_object_comma_repair_fixes_inline_missing_property_com
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/models/Flight.ts"]},
         task_id="task-1",
@@ -10646,7 +10649,7 @@ def test_typescript_return_object_comma_repair_fixes_inline_missing_property_com
 
 def test_typescript_return_object_comma_repair_fixes_previous_line_missing_comma(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     model_dir = tmp_path / "src" / "models"
@@ -10674,7 +10677,7 @@ def test_typescript_return_object_comma_repair_fixes_previous_line_missing_comma
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/models/Flight.ts"]},
         task_id="task-1",
@@ -10692,7 +10695,7 @@ def test_typescript_return_object_comma_repair_fixes_previous_line_missing_comma
 
 def test_typescript_enum_member_separator_repair_fixes_enum_semicolon_only(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     model_dir = tmp_path / "src" / "models"
@@ -10721,7 +10724,7 @@ def test_typescript_enum_member_separator_repair_fixes_enum_semicolon_only(tmp_p
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/models/moonphase.ts"]},
         task_id="task-1",
@@ -10753,7 +10756,7 @@ def test_typescript_enum_member_separator_repair_fixes_enum_semicolon_only(tmp_p
 
 def test_typescript_missing_closing_brace_repair_fixes_ts1005_brace_expected(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     engine_dir = tmp_path / "src" / "engine"
@@ -10777,7 +10780,7 @@ def test_typescript_missing_closing_brace_repair_fixes_ts1005_brace_expected(tmp
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/engine/renderer.ts"]},
         task_id="task-1",
@@ -10799,7 +10802,7 @@ def test_typescript_missing_closing_brace_repair_fixes_ts1005_brace_expected(tmp
 
 def test_typescript_unresolved_identifier_repair_uses_function_parameter_alias(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     engine_dir = tmp_path / "src" / "engine"
@@ -10833,7 +10836,7 @@ def test_typescript_unresolved_identifier_repair_uses_function_parameter_alias(t
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/engine/simulation.ts"]},
         task_id="task-1",
@@ -10861,7 +10864,7 @@ def test_typescript_unresolved_identifier_repair_uses_function_parameter_alias(t
 
 def test_typescript_comma_expected_repair_accepts_plain_tsc_error_format(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     model_dir = tmp_path / "src" / "models"
@@ -10893,7 +10896,7 @@ def test_typescript_comma_expected_repair_accepts_plain_tsc_error_format(tmp_pat
         _update_task_progress=lambda *args, **kwargs: None,
     )
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["src/models/Flower.ts"]},
         task_id="task-1",
@@ -11488,7 +11491,7 @@ def test_placeholder_node_test_synthesis_default_off(monkeypatch, tmp_path: Any)
     placeholder tests in production/director hot paths."""
     monkeypatch.delenv("KERNELONE_DIRECTOR_SCAFFOLD_SYNTHESIS", raising=False)
     from polaris.cells.roles.adapters.public.service import (
-        run_director_materialization_quality_repair_schedule as run_materialization_quality_repairs,
+        run_director_materialization_quality_repair_schedule as run_materialization_quality_repair_schedule,
     )
 
     (tmp_path / "package.json").write_text(
@@ -11505,7 +11508,7 @@ def test_placeholder_node_test_synthesis_default_off(monkeypatch, tmp_path: Any)
         "npm package manifest has test runner script but no test/spec files exist in package.json",
     ]
 
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["package.json"]},
         task_id="task-1",
@@ -11518,7 +11521,7 @@ def test_placeholder_node_test_synthesis_default_off(monkeypatch, tmp_path: Any)
 
     # The opt-in env var is now permanently inert: setting it fabricates nothing.
     monkeypatch.setenv("KERNELONE_DIRECTOR_SCAFFOLD_SYNTHESIS", "1")
-    results, summary = run_materialization_quality_repairs(
+    results, summary = run_materialization_quality_repair_schedule(
         adapter,
         task={"target_files": ["package.json"]},
         task_id="task-1",
@@ -14288,7 +14291,7 @@ class TestQualityRepairMissingTargetContract:
     def test_go_module_import_repair_runs_through_runtime_bridge(self, tmp_path) -> None:
         from types import SimpleNamespace
 
-        from polaris.cells.roles.adapters.internal.director.materialization_quality_repair_bridge import (
+        from polaris.cells.roles.adapters.internal.director.materialization_quality_runtime_ports import (
             _run_materialization_go_import_repairs,
         )
 
@@ -14330,7 +14333,7 @@ class TestQualityRepairMissingTargetContract:
     def test_go_unused_import_repair_runs_through_runtime_bridge(self, tmp_path) -> None:
         from types import SimpleNamespace
 
-        from polaris.cells.roles.adapters.internal.director.materialization_quality_repair_bridge import (
+        from polaris.cells.roles.adapters.internal.director.materialization_quality_runtime_ports import (
             _run_materialization_go_import_repairs,
         )
 
@@ -14380,7 +14383,7 @@ class TestQualityRepairMissingTargetContract:
     def test_go_error_string_helper_repair_runs_through_runtime_bridge(self, tmp_path) -> None:
         from types import SimpleNamespace
 
-        from polaris.cells.roles.adapters.internal.director.materialization_quality_repair_bridge import (
+        from polaris.cells.roles.adapters.internal.director.materialization_quality_runtime_ports import (
             _run_materialization_go_import_repairs,
         )
 

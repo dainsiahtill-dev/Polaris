@@ -13,7 +13,7 @@ from polaris.cells.director.runtime.public import (
     query_director_repair_strategy_catalog,
 )
 from polaris.cells.roles.adapters.internal.director import (
-    materialization_quality_repair_bridge,
+    materialization_quality_runtime_ports,
     post_execution_repair_bridge,
 )
 from polaris.cells.roles.adapters.internal.director.deterministic_repairs import (
@@ -203,7 +203,7 @@ def test_execute_method_file_mutating_repair_wrappers_are_runtime_hard_cut() -> 
 
 
 def test_materialization_python_import_uses_runtime_bridge_not_legacy_python_repairs() -> None:
-    bridge_path = _director_internal_root() / "materialization_quality_repair_bridge.py"
+    bridge_path = _director_internal_root() / "materialization_quality_runtime_ports.py"
     definitions = _function_definitions(bridge_path)
 
     python_step = definitions["_run_materialization_python_import"]
@@ -578,7 +578,7 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         return []
 
     monkeypatch.setattr(
-        materialization_quality_repair_bridge,
+        materialization_quality_runtime_ports,
         "_run_materialization_quality_repair_step",
         fake_materialization_repair_step,
     )
@@ -650,9 +650,21 @@ def test_materialization_quality_public_wrapper_is_not_internal_function_alias(
         "owner_cell": "director.runtime",
         "execution_boundary": "runtime_materialization_quality_facade_no_direct_writes",
     }
+    runtime_ports_diagnostics = summary["runtime_ports_diagnostics"]
+    runtime_ports = runtime_ports_diagnostics["materialization_quality_runtime_ports"]
+    assert runtime_ports["schema_version"] == "director.materialization_quality_runtime_ports.v1"
+    assert runtime_ports["mode"] == "runtime_schedule_step_runner_adapter"
+    assert runtime_ports["internal_function_exported"] is False
+    assert runtime_ports["repair_kernel_owner"] == "director.runtime"
+    assert runtime_ports["runtime_schedule_owner"] == "director.runtime"
+    assert runtime_ports["runner_binding_owner"] == "roles.adapters"
+    assert runtime_ports["runner_binding_reconciliation"] == expected_reconciliation
     assert "materialization_quality_bridge" not in summary
+    assert "materialization_quality_runtime_ports" not in summary
     assert "repair_kernel_migration_debt" not in summary
     assert "adapter_projection_debt" not in summary
+    assert runtime_ports_diagnostics["repair_kernel_migration_debt"]["cutover_ready"] is False
+    assert isinstance(runtime_ports_diagnostics["adapter_projection_debt"], list)
     assert summary["public_boundary"] == {
         "schema_version": "roles.adapters.materialization_quality_repair_boundary.v1",
         "mode": "runtime_owned_schedule_public_boundary",
@@ -714,7 +726,7 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
         ]
 
     monkeypatch.setattr(
-        materialization_quality_repair_bridge,
+        materialization_quality_runtime_ports,
         "_run_materialization_quality_repair_step",
         fake_materialization_repair_step,
     )
@@ -759,7 +771,7 @@ def test_materialization_quality_migration_debt_marks_legacy_only_step_blocked(
 
 
 def test_materialization_quality_migration_debt_lists_remaining_callback_only_steps() -> None:
-    step = materialization_quality_repair_bridge.DirectorRepairMaterializationQualityStepV1(
+    step = materialization_quality_runtime_ports.DirectorRepairMaterializationQualityStepV1(
         step_id="materialization.go_import",
         language="go",
         phase="materialization_quality",
@@ -792,12 +804,12 @@ def test_materialization_quality_migration_debt_lists_remaining_callback_only_st
         },
     }
     normalized_projection = (
-        materialization_quality_repair_bridge._materialization_callback_receipt_projections_from_schedule_result(
+        materialization_quality_runtime_ports._materialization_callback_receipt_projections_from_schedule_result(
             [callback_projection]
         )
     )[0]
 
-    debt = materialization_quality_repair_bridge._project_materialization_quality_migration_debt(
+    debt = materialization_quality_runtime_ports._project_materialization_quality_migration_debt(
         ordered_steps=(step,),
         tool_results=tool_results,
         callback_receipt_projections=[normalized_projection],
@@ -832,7 +844,7 @@ def test_materialization_quality_migration_debt_lists_remaining_callback_only_st
 
 
 def test_materialization_hygiene_native_cutover_evidence_requires_all_selected_step_evidence() -> None:
-    step = materialization_quality_repair_bridge.DirectorRepairMaterializationQualityStepV1(
+    step = materialization_quality_runtime_ports.DirectorRepairMaterializationQualityStepV1(
         step_id="materialization.hygiene_scaffold",
         language="multi",
         phase="hygiene",
@@ -855,7 +867,7 @@ def test_materialization_hygiene_native_cutover_evidence_requires_all_selected_s
         "evidence_status": "resolved_evidence",
     }
 
-    missing_native_lifecycle = materialization_quality_repair_bridge._materialization_receipt_lifecycle_by_step(
+    missing_native_lifecycle = materialization_quality_runtime_ports._materialization_receipt_lifecycle_by_step(
         ordered_steps=(step,),
         tool_results=[],
         callback_receipt_projections=[],
@@ -868,7 +880,7 @@ def test_materialization_hygiene_native_cutover_evidence_requires_all_selected_s
     assert "native_repair_kernel.receipts" in missing_native_evidence["missing_required_evidence"]
     assert "missing_native_repair_receipt" in missing_native_evidence["cutover_blockers"]
 
-    callback_blocked_lifecycle = materialization_quality_repair_bridge._materialization_receipt_lifecycle_by_step(
+    callback_blocked_lifecycle = materialization_quality_runtime_ports._materialization_receipt_lifecycle_by_step(
         ordered_steps=(step,),
         tool_results=[],
         callback_receipt_projections=[callback_projection],
@@ -883,7 +895,7 @@ def test_materialization_hygiene_native_cutover_evidence_requires_all_selected_s
     assert "adapter_projection_absent" in callback_blocked_evidence["missing_required_evidence"]
     assert "adapter_projection_still_present" in callback_blocked_evidence["cutover_blockers"]
 
-    ready_lifecycle = materialization_quality_repair_bridge._materialization_receipt_lifecycle_by_step(
+    ready_lifecycle = materialization_quality_runtime_ports._materialization_receipt_lifecycle_by_step(
         ordered_steps=(step,),
         tool_results=[],
         callback_receipt_projections=[],

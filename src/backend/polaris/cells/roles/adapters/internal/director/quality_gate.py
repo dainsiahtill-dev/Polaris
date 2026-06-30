@@ -40,7 +40,7 @@ from .artifact_quality_diagnostics import (
 from .contract_verify import resolve_contract_step_verify_command
 from .execution_tools import DirectorToolExecutor
 from .helpers import has_successful_write_tool
-from .materialization_quality_repair_bridge import has_materialization_quality_runtime_repair_coverage
+from .materialization_quality_runtime_ports import has_materialization_quality_runtime_repair_coverage
 from .repair_profile_projection import project_repair_kernel_summary
 from .task_scope_paths import (
     _dedupe_preserve_order,

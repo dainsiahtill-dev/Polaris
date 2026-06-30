@@ -208,12 +208,14 @@ Remaining code still lives elsewhere:
   the runtime-owned schedule; it must not add, remove, or reorder schedule
   entries in adapter code. `execute_method.py`, Factory, QA, and bench harnesses
   must not import language-specific repair functions directly.
-- The materialization-quality path must stay behind
-  `roles.adapters/internal/director/materialization_quality_repair_bridge.py`.
-  The bridge must consume `run_director_materialization_quality_repair_schedule`
-  and only provide runner bindings for runtime-declared step ids. Its runner key
-  set must exactly match the runtime-owned schedule; it must not add, remove, or
-  reorder schedule entries in adapter code. The current runtime-owned steps are
+- The materialization-quality path must stay behind explicit adapter runtime
+  ports in
+  `roles.adapters/internal/director/materialization_quality_runtime_ports.py`.
+  Those ports must consume
+  `run_director_materialization_quality_repair_schedule` and only provide
+  runner bindings for runtime-declared step ids. Their runner key set must
+  exactly match the runtime-owned schedule; they must not add, remove, or reorder
+  schedule entries in adapter code. The current runtime-owned steps are
   `materialization.hygiene_scaffold`,
   `materialization.typescript_scaffold`, `materialization.typescript_compiler`,
   `materialization.html_entrypoint`, `materialization.node_manifest`,

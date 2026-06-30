@@ -1264,7 +1264,7 @@ def _materialization_plan_probe_source_tools(*, step_id: str | None = None) -> t
 def project_director_repair_materialization_bridge_metadata(
     command: ProjectDirectorRepairMaterializationBridgeMetadataV1,
 ) -> DirectorRepairMaterializationBridgeMetadataResultV1:
-    """Project materialization bridge metadata through the Director Runtime public boundary."""
+    """Project materialization runtime-port metadata through the Director Runtime public boundary."""
 
     repair_kernel = dict(command.repair_kernel)
     coverage_preaudit = dict(command.coverage_preaudit)
@@ -1287,9 +1287,9 @@ def project_director_repair_materialization_bridge_metadata(
         default=[],
     )
     summary = {
-        "schema_version": "director.materialization_quality_repair_bridge.v1",
+        "schema_version": "director.materialization_quality_runtime_ports.v1",
         "mode": "runtime_schedule_step_runner_adapter",
-        "bridge_file": "roles.adapters.internal.director.materialization_quality_repair_bridge",
+        "runtime_ports_module": "roles.adapters.internal.director.materialization_quality_runtime_ports",
         "retired_strategy_host_removed": True,
         "runtime_schedule_owner": "director.runtime",
         "runner_binding_owner": "roles.adapters",
