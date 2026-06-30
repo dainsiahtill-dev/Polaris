@@ -471,9 +471,9 @@ class TestTurnEnginePolicyIntegration:
                 metadata={},
             )
 
-        mock_llm_caller = SimpleNamespace(call=_fake_llm_call)
+        mock_llm_invoker = SimpleNamespace(call=_fake_llm_call)
         kernel = _build_kernel(prompt_builder=mock_prompt_builder)
-        kernel._injected_llm_caller = mock_llm_caller
+        kernel._injected_llm_invoker = mock_llm_invoker
 
         async def _fake_execute_single_tool(
             self: Any,
@@ -545,9 +545,9 @@ class TestTurnEnginePolicyIntegration:
                 metadata={},
             )
 
-        mock_llm_caller = SimpleNamespace(call_stream=_fake_call_stream, call=_fake_call)
+        mock_llm_invoker = SimpleNamespace(call_stream=_fake_call_stream, call=_fake_call)
         kernel = _build_kernel(prompt_builder=mock_prompt_builder)
-        kernel._injected_llm_caller = mock_llm_caller
+        kernel._injected_llm_invoker = mock_llm_invoker
 
         async def _fake_execute_single_tool(
             self: Any,

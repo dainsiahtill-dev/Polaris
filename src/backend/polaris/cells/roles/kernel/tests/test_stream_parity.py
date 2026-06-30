@@ -291,7 +291,7 @@ def _make_kernel_mock(
     kernel.workspace = "."
     kernel.registry = _StubRegistry(profile)
     # Wire up the LLM invoker - CRITICAL: must be the actual mock, not MagicMock
-    kernel._llm_caller = llm_invoker if llm_invoker is not None else MockLLMInvoker()
+    kernel._llm_invoker = llm_invoker if llm_invoker is not None else MockLLMInvoker()
     kernel._tool_executor = tool_executor if tool_executor is not None else MockToolExecutor()
 
     # Mock prompt builder with proper interface
@@ -1079,7 +1079,7 @@ class TestRealKernelIntegration:
             )
         )
         kernel_any: Any = kernel
-        kernel_any._injected_llm_caller = mock_llm
+        kernel_any._injected_llm_invoker = mock_llm
 
         engine = TurnEngine(kernel=kernel, llm_caller=mock_llm)
         request = _make_turn_request("Test real kernel")

@@ -771,14 +771,14 @@ class TestTurnEngineServiceIntegration:
         kernel.registry = MagicMock()
         kernel.registry.get_profile_or_raise.return_value = profile
 
-        # Mock LLM caller - 适配修复后的 _get_llm_caller() 访问方式
+        # Mock LLM caller - 适配修复后的 _get_llm_invoker() 访问方式
         mock_response = MagicMock()
         mock_response.content = "Test response"
         mock_response.tool_calls = []
         mock_response.error = None
         mock_caller = MagicMock()
         mock_caller.call = AsyncMock(return_value=mock_response)
-        kernel._get_llm_caller = MagicMock(return_value=mock_caller)
+        kernel._get_llm_invoker = MagicMock(return_value=mock_caller)
 
         # Mock split tool calls - must return tuple of 3 values
         kernel._split_tool_calls_by_write_budget = MagicMock(return_value=([], [], 0))
@@ -806,7 +806,7 @@ class TestTurnEngineServiceIntegration:
 
         # Assert
         assert result.error is None
-        assert kernel._get_llm_caller.called
+        assert kernel._get_llm_invoker.called
 
     @pytest.mark.asyncio
     async def test_turn_engine_handles_parser_errors(self) -> None:
@@ -827,14 +827,14 @@ class TestTurnEngineServiceIntegration:
         kernel.registry = MagicMock()
         kernel.registry.get_profile_or_raise.return_value = profile
 
-        # Mock LLM caller - 适配修复后的 _get_llm_caller() 访问方式
+        # Mock LLM caller - 适配修复后的 _get_llm_invoker() 访问方式
         mock_response = MagicMock()
         mock_response.content = "Response with invalid tool call"
         mock_response.tool_calls = [{"invalid": "structure"}]
         mock_response.error = None
         mock_caller = MagicMock()
         mock_caller.call = AsyncMock(return_value=mock_response)
-        kernel._get_llm_caller = MagicMock(return_value=mock_caller)
+        kernel._get_llm_invoker = MagicMock(return_value=mock_caller)
 
         # Mock output parser to raise error - 适配修复后的 _get_output_parser() 访问方式
         mock_parser = MagicMock()
@@ -1123,7 +1123,7 @@ class TestIntegrationScenarios:
 
         mock_caller = MagicMock()
         mock_caller.call = AsyncMock(side_effect=[first_response, second_response])
-        kernel._get_llm_caller = MagicMock(return_value=mock_caller)
+        kernel._get_llm_invoker = MagicMock(return_value=mock_caller)
 
         # Tool execution - signature matches kernel._execute_single_tool(tool_name, args, context)
         async def mock_execute_tool(
@@ -1219,7 +1219,7 @@ class TestIntegrationScenarios:
 
         mock_caller = MagicMock()
         mock_caller.call = AsyncMock(return_value=error_response)
-        kernel._get_llm_caller = MagicMock(return_value=mock_caller)
+        kernel._get_llm_invoker = MagicMock(return_value=mock_caller)
 
         engine = TurnEngine(kernel=kernel)
 

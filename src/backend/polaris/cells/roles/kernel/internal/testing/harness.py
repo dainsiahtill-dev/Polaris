@@ -390,8 +390,8 @@ class KernelTestHarness:
 
         # Inject fake LLM caller if configured
         if self._fake_llm is not None:
-            # The kernel uses inject_llm_caller to replace the LLM
-            kernel.inject_llm_caller(self._fake_llm)  # type: ignore[arg-type]
+            # The kernel uses inject_llm_invoker to replace the LLM
+            kernel.inject_llm_invoker(self._fake_llm)  # type: ignore[arg-type]
 
         # Inject fake context assembler if configured
         if self._fake_context is not None:

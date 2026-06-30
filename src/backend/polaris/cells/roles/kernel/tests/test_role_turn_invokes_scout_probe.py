@@ -129,7 +129,7 @@ def _build_kernel(*, workspace: str, role: str, real_profile: Any, fake_call: An
         build_system_prompt=lambda _p, _a: "system-prompt",
         build_retry_prompt=lambda _base, _q, _attempt: "system-prompt",
     )
-    kernel_any._injected_llm_caller = SimpleNamespace(
+    kernel_any._injected_llm_invoker = SimpleNamespace(
         call=fake_call or _noop_call,
         call_stream=_noop_call_stream,
     )

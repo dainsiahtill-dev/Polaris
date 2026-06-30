@@ -82,7 +82,7 @@ class TurnEngine:
     ) -> None:
         """Initialize facade (compatibility collaborators ignored)."""
         self._kernel = kernel
-        self._llm_caller = llm_caller if llm_caller is not None else kernel._get_llm_caller()
+        self._llm_invoker = llm_caller if llm_caller is not None else kernel._get_llm_invoker()
         self._prompt_builder = prompt_builder if prompt_builder is not None else kernel._get_prompt_builder()
         self._output_parser = output_parser if output_parser is not None else getattr(kernel, "_output_parser", None)
         self._materializer = TurnMaterializer(output_parser=self._output_parser)
@@ -373,12 +373,12 @@ class TurnEngine:
         """Create a TransactionKernel with kernel-backed LLM and tool adapters."""
         import inspect
 
-        # Prefer the caller wrapper so context_override-based forced tool scope
+        # Prefer the canonical invoker so context_override-based forced tool scope
         # is honored during contract-retry paths.
-        llm_invoker = self._llm_caller
+        llm_invoker = self._llm_invoker
         if not inspect.iscoroutinefunction(getattr(llm_invoker, "call", None)):
             llm_invoker = (
-                self._llm_caller._get_invoker() if hasattr(self._llm_caller, "_get_invoker") else self._llm_caller
+                self._llm_invoker._get_invoker() if hasattr(self._llm_invoker, "_get_invoker") else self._llm_invoker
             )
 
         def _preserve_existing_forced_tool_scope(context_override: dict[str, Any], tool_choice: Any) -> bool:

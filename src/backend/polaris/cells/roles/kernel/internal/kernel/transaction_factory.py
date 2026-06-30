@@ -170,13 +170,11 @@ def create_transaction_kernel(
     Uses explicit parameter passing instead of closures to avoid circular
     reference issues between nested classes and the kernel instance.
     """
-    caller = kernel._get_llm_caller()
-    # Keep the higher-level caller wrapper as the default entrypoint so
-    # TransactionKernel context overrides (forced tool definitions/tool_choice)
-    # are preserved end-to-end.
-    llm_invoker: Any = caller
+    llm_invoker = kernel._get_llm_invoker()
+    # Keep the canonical invoker entrypoint so TransactionKernel context
+    # overrides (forced tool definitions/tool_choice) are preserved end-to-end.
     if not inspect.iscoroutinefunction(getattr(llm_invoker, "call", None)):
-        llm_invoker = caller._get_invoker() if hasattr(caller, "_get_invoker") else caller
+        llm_invoker = llm_invoker._get_invoker() if hasattr(llm_invoker, "_get_invoker") else llm_invoker
 
     def _normalize_user_text(value: Any) -> str:
         return str(value or "").replace("\ufeff", "").strip()

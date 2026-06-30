@@ -362,7 +362,7 @@ class TestTransactionKernelTemperatureChannel:
             captured_contexts.append(context)
             return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
 
-        kernel.inject_llm_caller(SimpleNamespace(call=_fake_call))
+        kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
         tk = kernel._create_transaction_kernel("director", profile, request)
 
         await tk.llm_provider(
@@ -397,7 +397,7 @@ class TestTransactionKernelTemperatureChannel:
             captured_contexts.append(context)
             return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
 
-        kernel.inject_llm_caller(SimpleNamespace(call=_fake_call))
+        kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
         tk = kernel._create_transaction_kernel("director", profile, request)
 
         await tk.llm_provider(
@@ -437,7 +437,7 @@ class TestTransactionKernelTemperatureChannel:
             captured_contexts.append(context)
             return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
 
-        kernel.inject_llm_caller(SimpleNamespace(call=_fake_call))
+        kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
         tk = kernel._create_transaction_kernel("director", profile, request)
 
         await tk.llm_provider(
@@ -478,7 +478,7 @@ class TestTransactionKernelTemperatureChannel:
             captured_contexts.append(context)
             return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
 
-        kernel.inject_llm_caller(SimpleNamespace(call=_fake_call))
+        kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
         tk = kernel._create_transaction_kernel("director", profile, request)
 
         await tk.llm_provider(

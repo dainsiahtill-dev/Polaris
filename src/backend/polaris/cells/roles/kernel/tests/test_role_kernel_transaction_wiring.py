@@ -381,7 +381,7 @@ class TestTransactionKernelPrebuiltContextPassThrough:
             if False:
                 yield {}  # pragma: no cover
 
-        kernel.inject_llm_caller(
+        kernel.inject_llm_invoker(
             SimpleNamespace(
                 call=_fake_call,
                 call_stream=_fake_call_stream,
@@ -421,7 +421,7 @@ class TestTransactionKernelPrebuiltContextPassThrough:
             captured_models.append(str(getattr(profile, "model", "") or ""))
             return SimpleNamespace(content="ok", tool_calls=[], error=None, metadata={})
 
-        kernel.inject_llm_caller(SimpleNamespace(call=_fake_call))
+        kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
         tk = kernel._create_transaction_kernel("director", profile, request)
 
         response = await tk.llm_provider(
@@ -484,7 +484,7 @@ class TestTransactionKernelPrebuiltContextPassThrough:
             captured_contexts.append(context)
             return {"content": "```file: README.md\nok\n```", "tool_calls": []}
 
-        kernel.inject_llm_caller(SimpleNamespace(call_decision=_fake_call_decision))
+        kernel.inject_llm_invoker(SimpleNamespace(call_decision=_fake_call_decision))
         tk = kernel._create_transaction_kernel("director", profile, request)
 
         response = await tk.llm_provider(
@@ -532,7 +532,7 @@ class TestTransactionKernelPrebuiltContextPassThrough:
                 model="base-model",
             )
 
-        kernel.inject_llm_caller(SimpleNamespace(call=_fake_call))
+        kernel.inject_llm_invoker(SimpleNamespace(call=_fake_call))
         tk = kernel._create_transaction_kernel("pm", profile, request)
 
         response = await tk.llm_provider(
@@ -587,7 +587,7 @@ class TestTransactionKernelPrebuiltContextPassThrough:
             captured_contexts.append(context)
             return {"content": "", "tool_calls": []}
 
-        kernel.inject_llm_caller(SimpleNamespace(call_decision=_fake_call_decision))
+        kernel.inject_llm_invoker(SimpleNamespace(call_decision=_fake_call_decision))
         tk = kernel._create_transaction_kernel("director", profile, request)
 
         response = await tk.llm_provider(

@@ -78,8 +78,8 @@ def _build_kernel() -> RoleExecutionKernel:
         build_retry_prompt=lambda _base, _quality_dict, _attempt: "system-prompt",
     )
 
-    # FIX: Initialize _injected_llm_caller for proper dependency injection
-    # The kernel uses _injected_llm_caller first if available, falling back to _llm_caller
+    # FIX: Initialize _injected_llm_invoker for proper dependency injection
+    # The kernel uses _injected_llm_invoker first if available, falling back to _llm_invoker
     async def _noop_call(**kw):
         return SimpleNamespace(content="", tool_calls=[], error=None)
 
@@ -87,7 +87,7 @@ def _build_kernel() -> RoleExecutionKernel:
         return
         yield  # make it an async generator
 
-    kernel_any._injected_llm_caller = SimpleNamespace(call=_noop_call, call_stream=_noop_call_stream)
+    kernel_any._injected_llm_invoker = SimpleNamespace(call=_noop_call, call_stream=_noop_call_stream)
     return kernel
 
 
@@ -151,8 +151,8 @@ def test_stream_continues_after_tool_results_with_transcript_context(monkeypatch
         )
         return SimpleNamespace(content="这是最终总结", tool_calls=[], error=None, metadata={})
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
-    monkeypatch.setattr(kernel._injected_llm_caller, "call", _fake_call)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
     async def _fake_execute_single_tool(tool_name, args, context):
         return {
@@ -254,8 +254,8 @@ def test_stream_executes_native_tool_calls_without_text_wrapper(monkeypatch) -> 
         )
         return SimpleNamespace(content="这是原生工具调用后的总结", tool_calls=[], error=None, metadata={})
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
-    monkeypatch.setattr(kernel._injected_llm_caller, "call", _fake_call)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
     async def _fake_execute_single_tool(tool_name, args, context):
         return {
@@ -350,8 +350,8 @@ def test_stream_executes_normalized_tool_calls_even_with_anthropic_provider_meta
         )
         return SimpleNamespace(content="这是兼容 Anthropic 流后的总结", tool_calls=[], error=None, metadata={})
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
-    monkeypatch.setattr(kernel._injected_llm_caller, "call", _fake_call)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
     executed_calls: list[tuple[str, dict[str, object]]] = []
 
@@ -444,8 +444,8 @@ def test_stream_repeated_identical_tool_cycle_emits_safety_error(monkeypatch) ->
             metadata={},
         )
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
-    monkeypatch.setattr(kernel._injected_llm_caller, "call", _fake_call)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
     async def _fake_execute_single_tool(tool_name, args, context):
         return {
@@ -531,8 +531,8 @@ def test_stream_compacts_large_tool_receipts_in_transcript(monkeypatch) -> None:
         )
         return SimpleNamespace(content="分析完成", tool_calls=[], error=None, metadata={})
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
-    monkeypatch.setattr(kernel._injected_llm_caller, "call", _fake_call)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
     huge_content = "A" * 50000
 
@@ -629,8 +629,8 @@ def test_stream_keeps_read_file_receipt_when_context_budget_allows(monkeypatch) 
             return SimpleNamespace(content="总结完成", tool_calls=[], error=None, metadata={})
         return SimpleNamespace(content="未找到标记", tool_calls=[], error=None, metadata={})
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
-    monkeypatch.setattr(kernel._injected_llm_caller, "call", _fake_call)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
     #  marker 放在内容开头，避免被 finalization context 的 3000 字截断截掉
     medium_content = marker + ("A" * 5000)
@@ -704,7 +704,7 @@ def test_stream_examples_inside_code_blocks_do_not_execute(monkeypatch) -> None:
             ),
         }
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,
@@ -754,7 +754,7 @@ def test_stream_thinking_only_response_emits_explicit_error(monkeypatch) -> None
             "content": "<thinking>先分析一下</thinking",
         }
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,
@@ -802,7 +802,7 @@ def test_stream_blank_response_emits_explicit_error(monkeypatch) -> None:
         if False:
             yield {}
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,
@@ -886,7 +886,7 @@ def test_run_continues_after_tool_results_with_transcript_context(monkeypatch) -
             metadata={},
         )
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call", _fake_call)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
     async def _fake_execute_single_tool(tool_name, args, context):
         """Mock _execute_single_tool (used by TurnEngine) - returns tool results without I/O."""
@@ -980,7 +980,7 @@ def test_run_repeated_identical_tool_cycle_does_not_trigger_stall(monkeypatch) -
             metadata={},
         )
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call", _fake_call)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
     async def _fake_execute_single_tool(tool_name, args, context):
         return {
@@ -1059,7 +1059,7 @@ def test_run_examples_inside_code_blocks_do_not_execute(monkeypatch) -> None:
             metadata={},
         )
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call", _fake_call)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
     async def _fake_execute_single_tool(tool_name, args, context):
         nonlocal tool_executed
@@ -1127,7 +1127,7 @@ def test_run_thinking_only_response_returns_explicit_error(monkeypatch) -> None:
             metadata={},
         )
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call", _fake_call)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,
@@ -1180,7 +1180,7 @@ def test_run_blank_response_returns_explicit_error(monkeypatch) -> None:
             metadata={},
         )
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call", _fake_call)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call", _fake_call)
 
     request = RoleTurnRequest(
         mode=RoleExecutionMode.CHAT,

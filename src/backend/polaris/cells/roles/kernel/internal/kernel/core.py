@@ -193,7 +193,6 @@ class RoleExecutionKernel:
 
         # 保存注入的服务（可能为 None，由 _get_* 方法处理）
         self._injected_llm_invoker = llm_invoker
-        self._injected_llm_caller: Any | None = None  # Compatibility accessor DI
         self._injected_tool_executor = tool_executor
         self._injected_prompt_builder = prompt_builder
         self._injected_output_parser = output_parser
@@ -225,7 +224,7 @@ class RoleExecutionKernel:
         self._prompt_builder: PromptBuilder | None = None
         self._output_parser: OutputParser | None = None
         self._quality_checker: QualityChecker | None = None
-        self._llm_caller: Any | None = None
+        self._llm_invoker: Any | None = None
         self._event_emitter: KernelEventEmitter | None = None
 
         # 状态管理
@@ -681,13 +680,13 @@ class RoleExecutionKernel:
     # 公共 DI 注入方法（用于测试和扩展）
     # ─────────────────────────────────────────────────────────────────────────────
 
-    def inject_llm_caller(self, caller: Any | None) -> None:
-        """注入 LLM 调用器（兼容旧方法名，支持测试和扩展）
+    def inject_llm_invoker(self, invoker: ILLMInvoker | Any | None) -> None:
+        """注入 LLMInvoker（支持测试和扩展）
 
         Args:
-            caller: LLM 调用器实例，传入 None 可清除注入
+            invoker: LLM 调用服务实例，传入 None 可清除注入
         """
-        self._injected_llm_caller = caller
+        self._injected_llm_invoker = invoker
 
     def inject_tool_executor(self, executor: CellToolExecutorPort | None) -> None:
         """注入工具执行器（支持测试和扩展）
@@ -721,15 +720,15 @@ class RoleExecutionKernel:
         """
         self._injected_event_emitter = emitter
 
-    def _get_llm_caller(self) -> Any:
-        """获取 canonical LLM 调用器（兼容旧方法名）"""
-        # 1. 优先使用注入的兼容调用器
-        if self._injected_llm_caller is not None:
-            return self._injected_llm_caller
+    def _get_llm_invoker(self) -> Any:
+        """获取 canonical LLMInvoker。"""
+        # 1. 优先使用注入的调用服务
+        if self._injected_llm_invoker is not None:
+            return self._injected_llm_invoker
         # 2. 默认懒加载创建 canonical LLMInvoker
-        if self._llm_caller is None:
-            self._llm_caller = LLMInvoker(self.workspace)
-        return self._llm_caller
+        if self._llm_invoker is None:
+            self._llm_invoker = LLMInvoker(self.workspace)
+        return self._llm_invoker
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 主要公开 API
@@ -1211,13 +1210,23 @@ class RoleExecutionKernel:
     @staticmethod
     def _resolve_tool_gateway_turn_key(request_obj: Any) -> str:
         """Resolve a stable per-turn cache key for gateway counters."""
-        run_id = str(getattr(request_obj, "run_id", "") or "").strip()
-        task_id = str(getattr(request_obj, "task_id", "") or "").strip()
+
+        def _normalize_id(value: Any) -> str:
+            if value is None or isinstance(value, bool):
+                return ""
+            if isinstance(value, str):
+                return value.strip()
+            if isinstance(value, int):
+                return str(value)
+            return ""
+
+        run_id = _normalize_id(getattr(request_obj, "run_id", None))
+        task_id = _normalize_id(getattr(request_obj, "task_id", None))
         if run_id and task_id:
             return f"{run_id}:task:{task_id}"
         if run_id:
             return run_id
-        turn_id = str(getattr(request_obj, "turn_id", "") or "").strip()
+        turn_id = _normalize_id(getattr(request_obj, "turn_id", None))
         if turn_id and task_id:
             return f"turn_id:{turn_id}:task:{task_id}"
         if turn_id:
@@ -1291,6 +1300,13 @@ class RoleExecutionKernel:
                 ):
                     gateway = self._cached_tool_gateway
                 else:
+                    reset_cached = getattr(self._cached_tool_gateway, "reset_execution_count", None)
+                    if callable(reset_cached):
+                        reset_cached()
+                    cached_failure_budget = getattr(self._cached_tool_gateway, "_failure_budget", None)
+                    reset_failure_budget = getattr(cached_failure_budget, "reset", None)
+                    if callable(reset_failure_budget):
+                        reset_failure_budget()
                     close_cached = getattr(self._cached_tool_gateway, "close", None)
                     if callable(close_cached):
                         close_cached()
@@ -1364,6 +1380,13 @@ class RoleExecutionKernel:
         else:
             # Create a new gateway at task/turn boundary so capability scope and
             # FailureBudget cannot leak across independent tasks.
+            reset_cached = getattr(self._cached_tool_gateway, "reset_execution_count", None)
+            if callable(reset_cached):
+                reset_cached()
+            cached_failure_budget = getattr(self._cached_tool_gateway, "_failure_budget", None)
+            reset_failure_budget = getattr(cached_failure_budget, "reset", None)
+            if callable(reset_failure_budget):
+                reset_failure_budget()
             close_cached = getattr(self._cached_tool_gateway, "close", None)
             if callable(close_cached):
                 close_cached()

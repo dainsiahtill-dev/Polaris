@@ -129,7 +129,7 @@ class TestDependencyInjection:
         assert kernel._injected_quality_checker is not None
         assert kernel._injected_event_emitter is not None
 
-    def test_internal_llm_caller_accessor_returns_invoker_without_deprecation(self) -> None:
+    def test_internal_llm_invoker_accessor_returns_invoker_without_deprecation(self) -> None:
         """Kernel compatibility accessor returns canonical LLMInvoker."""
         from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
 
@@ -137,7 +137,7 @@ class TestDependencyInjection:
 
         with warnings.catch_warnings(record=True) as captured:
             warnings.simplefilter("always")
-            caller = kernel._get_llm_caller()
+            caller = kernel._get_llm_invoker()
 
         assert isinstance(caller, LLMInvoker)
         assert not any("LLMCaller is deprecated" in str(item.message) for item in captured)
@@ -169,14 +169,16 @@ class TestDependencyInjection:
             if "tests" in rel.parts:
                 continue
             text = path.read_text(encoding="utf-8")
-            imports_llm_caller = (
-                "llm_caller.caller import LLMCaller" in text
-                or "from .caller import LLMCaller" in text
-            )
+            imports_llm_caller = "llm_caller.caller import LLMCaller" in text or "from .caller import LLMCaller" in text
             if imports_llm_caller and path not in allowed:
                 offenders.append(rel.as_posix())
 
         assert offenders == []
+
+    def test_kernel_no_longer_exposes_llm_caller_injection_names(self) -> None:
+        """Kernel DI names must stay aligned with LLMInvoker, not LLMCaller."""
+        assert not hasattr(RoleExecutionKernel, "inject_llm_caller")
+        assert not hasattr(RoleExecutionKernel, "_get_llm_caller")
 
 
 class TestFacadeMethods:

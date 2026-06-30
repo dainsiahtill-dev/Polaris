@@ -51,7 +51,7 @@ def _build_kernel() -> RoleExecutionKernel:
             yield {"type": "chunk", "content": "mock stream"}
 
     kernel = RoleExecutionKernel(workspace=".", registry=_StubRegistry(profile))  # type: ignore[arg-type]
-    kernel._injected_llm_caller = _MockLLMCaller()  # type: ignore[assignment]
+    kernel._injected_llm_invoker = _MockLLMCaller()  # type: ignore[assignment]
     return kernel
 
 
@@ -87,7 +87,7 @@ def test_stream_emits_only_sanitized_visible_content(monkeypatch) -> None:
                 "content": "<thinking>先规划读取步骤</thinking>\n先读取 README。\n",
             }
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
 
     async def _collect() -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
@@ -119,7 +119,7 @@ def test_stream_preserves_provider_reasoning_without_content_leak(monkeypatch) -
         yield {"type": "reasoning_chunk", "content": "先分析目录结构。"}
         yield {"type": "chunk", "content": "这是最终回答。"}
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
 
     async def _collect() -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
@@ -152,7 +152,7 @@ def test_stream_emits_incremental_visible_deltas(monkeypatch) -> None:
         yield {"type": "chunk", "content": "实时"}
         yield {"type": "chunk", "content": "推送。"}
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
 
     async def _collect() -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
@@ -187,7 +187,7 @@ def test_stream_avoids_per_chunk_full_rematerialization(monkeypatch) -> None:
         for _ in range(40):
             yield {"type": "chunk", "content": "x"}
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
 
     # New architecture: stream is handled directly in RoleExecutionKernel._execute_transaction_kernel_stream
     # via StreamEventHandler.process_stream, not through TurnEngine._materialize_stream_visible_turn.
@@ -228,7 +228,7 @@ def test_stream_strips_split_bracket_tool_wrappers(monkeypatch) -> None:
         }
         yield {"type": "chunk", "content": "CALL] 后缀"}
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
     monkeypatch.setattr(kernel, "_parse_content_and_thinking_tool_calls", lambda *_a, **_k: [])
 
     async def _collect() -> list[dict[str, Any]]:
@@ -258,7 +258,7 @@ def test_stream_strips_output_wrappers_from_visible_content(monkeypatch) -> None
         yield {"type": "chunk", "content": "最终"}
         yield {"type": "chunk", "content": "回答。</output>"}
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
     monkeypatch.setattr(kernel, "_parse_content_and_thinking_tool_calls", lambda *_a, **_k: [])
 
     async def _collect() -> list[dict[str, Any]]:
@@ -297,7 +297,7 @@ def test_stream_handles_bracket_tool_wrappers_in_stream(monkeypatch) -> None:
         }
         yield {"type": "chunk", "content": " 后缀"}
 
-    monkeypatch.setattr(kernel._injected_llm_caller, "call_stream", _fake_call_stream)
+    monkeypatch.setattr(kernel._injected_llm_invoker, "call_stream", _fake_call_stream)
     monkeypatch.setattr(kernel, "_parse_content_and_thinking_tool_calls", lambda *_a, **_k: [])
 
     async def _collect() -> list[dict[str, Any]]:
