@@ -371,15 +371,16 @@ async def test_call_start_event_persists_context_snapshot_before_emit(monkeypatc
     profile = _profile()
     prepared = _prepared(profile)
     captured_hash = "a1b2c3d4e5f6a7b8c9d0e1f2"
-    store_calls: list[tuple[str | None, list[Any], str, str | None]] = []
+    store_calls: list[tuple[str | None, list[Any], str, str | None, dict[str, Any] | None]] = []
 
     async def _fake_store(
         workspace: str | None,
         messages: list[Any],
         trace_id: str,
         call_id: str | None = None,
+        provider_request_snapshot: dict[str, Any] | None = None,
     ) -> str:
-        store_calls.append((workspace, list(messages), trace_id, call_id))
+        store_calls.append((workspace, list(messages), trace_id, call_id, provider_request_snapshot))
         return captured_hash
 
     monkeypatch.setattr(AIExecutor, "_store_context_messages", _fake_store)
@@ -396,7 +397,12 @@ async def test_call_start_event_persists_context_snapshot_before_emit(monkeypatc
 
     assert resp.error is None
     assert len(rec.start) == 1
-    assert store_calls == [("ws", prepared.messages, "run-context-start", rec.start[0]["call_id"])]
+    assert store_calls[0][:4] == ("ws", prepared.messages, "run-context-start", rec.start[0]["call_id"])
+    assert store_calls[0][4]
+    assert store_calls[0][4]["schema_version"] == "llm.provider_request_snapshot.v1"
+    assert store_calls[0][4]["message_count"] == len(prepared.messages)
+    assert store_calls[0][4]["final_request_evidence_coverage"]["included_refs"] == ["final_provider_request"]
+    assert store_calls[0][4]["final_request_evidence_coverage"]["redaction_safety"]["message_content_embedded"] is False
     assert executor.requests[0].context["context_snapshot_ref"] == captured_hash
     assert rec.start[0]["metadata"]["context_snapshot_ref"] == captured_hash
     assert rec.end[0]["metadata"]["context_snapshot_ref"] == captured_hash
@@ -419,6 +425,7 @@ async def test_call_start_context_snapshot_store_failure_clears_stale_ref(
         _messages: list[Any],
         _trace_id: str,
         _call_id: str | None = None,
+        _provider_request_snapshot: dict[str, Any] | None = None,
     ) -> str:
         raise OSError("disk full")
 
@@ -460,6 +467,7 @@ async def test_call_end_event_surfaces_context_snapshot_degraded(monkeypatch: py
         _messages: list[Any],
         _trace_id: str,
         _call_id: str | None = None,
+        _provider_request_snapshot: dict[str, Any] | None = None,
     ) -> str:
         raise OSError("disk full")
 
@@ -812,6 +820,56 @@ async def test_structured_native_response_format_success(monkeypatch: pytest.Mon
     assert resp.metadata["native_response_format"] is True
     assert len(rec.end) == 1
     assert rec.end[0]["metadata"]["native_response_format"] is True
+
+
+@pytest.mark.asyncio
+async def test_structured_call_start_persists_context_snapshot_before_emit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rec = _EventRecorder()
+    rec.install(monkeypatch)
+    profile = _profile(role_id="architect")
+    prepared = _prepared(profile, response_model=_Model)
+    captured_hash = "abcdef123456abcdef123456"
+    store_calls: list[tuple[str | None, list[Any], str, str | None, dict[str, Any] | None]] = []
+
+    async def _fake_store(
+        workspace: str | None,
+        messages: list[Any],
+        trace_id: str,
+        call_id: str | None = None,
+        provider_request_snapshot: dict[str, Any] | None = None,
+    ) -> str:
+        store_calls.append((workspace, list(messages), trace_id, call_id, provider_request_snapshot))
+        return captured_hash
+
+    monkeypatch.setattr(AIExecutor, "_store_context_messages", _fake_store)
+    _patch_prepare(monkeypatch, prepared)
+    monkeypatch.setattr(
+        "polaris.cells.roles.kernel.internal.llm_caller.invoker.INSTRUCTOR_AVAILABLE",
+        False,
+    )
+    executor = _ScriptedExecutor([AIResponse(ok=True, output='{"a": 1}', raw={"model": "m"})])
+    invoker = LLMInvoker(workspace="ws", enable_cache=False, executor=executor)
+
+    resp = await invoker.call_structured(
+        profile=profile,
+        system_prompt="sys",
+        context=_ctx(None),
+        response_model=_Model,
+        run_id="rs-structured-context",
+    )
+
+    assert resp.error is None
+    assert store_calls[0][:4] == ("ws", prepared.messages, "rs-structured-context", rec.start[0]["call_id"])
+    assert store_calls[0][4]
+    assert store_calls[0][4]["schema_version"] == "llm.provider_request_snapshot.v1"
+    assert store_calls[0][4]["message_count"] == len(prepared.messages)
+    assert store_calls[0][4]["final_request_evidence_coverage"]["included_refs"] == ["final_provider_request"]
+    assert store_calls[0][4]["final_request_evidence_coverage"]["redaction_safety"]["message_content_embedded"] is False
+    assert prepared.ai_request.context["context_snapshot_ref"] == captured_hash
+    assert rec.start[0]["metadata"]["context_snapshot_ref"] == captured_hash
+    assert rec.end[0]["metadata"]["context_snapshot_ref"] == captured_hash
 
 
 @pytest.mark.asyncio

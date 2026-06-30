@@ -2242,6 +2242,13 @@ class LLMInvoker:
                 response_model=response_model,
                 platform_retry_max=max_retries,
             )
+            await _store_call_start_context_snapshot(
+                workspace=self.workspace,
+                prepared=prepared,
+                profile=profile,
+                run_id=run_id,
+                call_id=call_id,
+            )
             messages = prepared.messages
             context_result = prepared.context_result
             prompt_tokens = context_result.token_estimate if context_result else len(system_prompt) // 4
