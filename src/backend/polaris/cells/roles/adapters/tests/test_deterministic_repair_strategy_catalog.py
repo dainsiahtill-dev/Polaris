@@ -273,12 +273,47 @@ def test_deterministic_repairs_package_facade_does_not_export_concrete_mutators(
     assert leaked_names == []
 
 
+def test_production_code_does_not_import_legacy_deterministic_repair_modules() -> None:
+    legacy_prefix = "polaris.cells.roles.adapters.internal.director.deterministic_repairs"
+    violations: list[str] = []
+    for path in _python_source_files(_director_internal_root()):
+        if "deterministic_repairs" in path.parts:
+            continue
+        for module in _imported_modules(path):
+            if module == legacy_prefix or module.startswith(legacy_prefix + "."):
+                rel_path = path.relative_to(_backend_root())
+                violations.append(f"{rel_path}: {module}")
+
+    assert violations == []
+
+
 def test_catalog_registers_all_hardcoded_deterministic_tokens() -> None:
     implementation_tokens = _deterministic_tokens_from_implementation()
     known_source_tools = {str(item.get("source_tool") or "") for item in _catalog_items()}
 
     assert implementation_tokens
     assert implementation_tokens <= known_source_tools
+
+
+def test_legacy_deterministic_mutator_tokens_have_runtime_migration_status() -> None:
+    implementation_tokens = sorted(_deterministic_tokens_from_implementation())
+    allowed_statuses = {"executable_runtime", "metadata_rule_registered", "reserved_only", "retired"}
+    profiles = summarize_deterministic_repair_source_tools(implementation_tokens)
+
+    violations: list[str] = []
+    for profile in profiles:
+        source_tool = str(profile.get("source_tool") or "")
+        status = str(profile.get("implementation_status") or "")
+        owner = str(profile.get("execution_owner") or "")
+        if profile.get("registered") is not True:
+            violations.append(f"{source_tool}: unregistered")
+            continue
+        if status not in allowed_statuses:
+            violations.append(f"{source_tool}: invalid implementation_status={status!r}")
+        if status == "executable_runtime" and owner != "director.runtime":
+            violations.append(f"{source_tool}: executable owner must be director.runtime, got {owner!r}")
+
+    assert violations == []
 
 
 def test_catalog_describes_language_phase_and_concern() -> None:

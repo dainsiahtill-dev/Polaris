@@ -16,8 +16,11 @@ from polaris.cells.audit.verdict.internal.artifact_service import (
     create_artifact_service,
     get_artifact_key,
     get_artifact_path,
+    get_artifact_path_for_write,
     get_artifact_policy_metadata,
     list_artifact_keys,
+    migrate_legacy_artifact_aliases,
+    resolve_artifact_path,
     should_archive_artifact,
     should_compress_artifact,
 )
@@ -50,6 +53,10 @@ class TestArtifactRegistry:
     def test_get_artifact_path_legacy_key(self) -> None:
         path = get_artifact_path("PLAN")
         assert path == "runtime/contracts/plan.md"
+
+    def test_get_artifact_path_for_write_rejects_legacy_key(self) -> None:
+        with pytest.raises(KeyError, match="Legacy artifact key is read-only"):
+            get_artifact_path_for_write("PLAN")
 
     def test_get_artifact_path_invalid_key_raises(self) -> None:
         with pytest.raises(KeyError, match="Unknown artifact key"):
@@ -137,6 +144,46 @@ class TestArtifactService:
         service.write_plan(content)
         read_content = service.read_plan()
         assert read_content == content
+
+    def test_generic_write_text_rejects_legacy_key(self, workspace: Path) -> None:
+        service = ArtifactService(str(workspace))
+
+        with pytest.raises(KeyError, match="Legacy artifact key is read-only"):
+            service.write_text("PLAN", "# Old alias")
+
+        assert service.read_plan() == ""
+
+    def test_generic_write_json_rejects_legacy_key(self, workspace: Path) -> None:
+        service = ArtifactService(str(workspace))
+
+        with pytest.raises(KeyError, match="Legacy artifact key is read-only"):
+            service.write_json("PM_TASKS_CONTRACT", {"tasks": []})
+
+        assert service.read_task_contract() is None
+
+    def test_migrate_legacy_artifact_aliases_dry_run_does_not_write(self, workspace: Path) -> None:
+        legacy_path = Path(resolve_artifact_path(str(workspace), "", "runtime/contracts/pm_tasks.json"))
+        legacy_path.parent.mkdir(parents=True)
+        legacy_path.write_text('{"tasks": []}\n', encoding="utf-8")
+
+        summary = migrate_legacy_artifact_aliases(str(workspace), dry_run=True)
+
+        canonical_path = Path(resolve_artifact_path(str(workspace), "", "runtime/contracts/pm_tasks.contract.json"))
+        assert summary["planned"] == 1
+        assert summary["copied"] == 0
+        assert not canonical_path.exists()
+
+    def test_migrate_legacy_artifact_aliases_apply_copies_canonical_utf8(self, workspace: Path) -> None:
+        legacy_path = Path(resolve_artifact_path(str(workspace), "", "runtime/contracts/pm_tasks.json"))
+        legacy_path.parent.mkdir(parents=True)
+        legacy_path.write_text('{"tasks": [{"id": "t1"}]}\n', encoding="utf-8")
+
+        summary = migrate_legacy_artifact_aliases(str(workspace), dry_run=False)
+
+        canonical_path = Path(resolve_artifact_path(str(workspace), "", "runtime/contracts/pm_tasks.contract.json"))
+        assert summary["planned"] == 1
+        assert summary["copied"] == 1
+        assert canonical_path.read_text(encoding="utf-8") == '{"tasks": [{"id": "t1"}]}\n'
 
     def test_read_nonexistent_plan_returns_empty(self, workspace: Path) -> None:
         service = ArtifactService(str(workspace))

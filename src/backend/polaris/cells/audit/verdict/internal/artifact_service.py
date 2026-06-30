@@ -537,6 +537,16 @@ def _resolve_key(key: str) -> str:
     return LEGACY_KEY_MAPPING.get(key, key)
 
 
+def _resolve_key_for_write(key: str) -> str:
+    """Resolve a key for new writes, rejecting historical aliases."""
+    if key in LEGACY_KEY_MAPPING:
+        canonical_key = LEGACY_KEY_MAPPING[key]
+        raise KeyError(
+            f"Legacy artifact key is read-only: {key}. Use canonical key {canonical_key!r} for writes."
+        )
+    return key
+
+
 def get_artifact_path(key: str) -> str:
     """Get canonical path for artifact key.
 
@@ -550,6 +560,20 @@ def get_artifact_path(key: str) -> str:
         KeyError: If key not found in registry
     """
     canonical_key = _resolve_key(key)
+    if canonical_key not in ARTIFACT_REGISTRY:
+        raise KeyError(
+            f"Unknown artifact key: {key} (canonical: {canonical_key}). Available: {list(ARTIFACT_REGISTRY.keys())}"
+        )
+    return ARTIFACT_REGISTRY[canonical_key]
+
+
+def get_artifact_path_for_write(key: str) -> str:
+    """Get canonical path for artifact writes.
+
+    Legacy artifact keys remain readable for historical workspaces, but all new
+    writes must use canonical registry keys.
+    """
+    canonical_key = _resolve_key_for_write(key)
     if canonical_key not in ARTIFACT_REGISTRY:
         raise KeyError(
             f"Unknown artifact key: {key} (canonical: {canonical_key}). Available: {list(ARTIFACT_REGISTRY.keys())}"
@@ -573,6 +597,74 @@ def get_artifact_key(path: str) -> str | None:
 def list_artifact_keys() -> list[str]:
     """List all available artifact keys."""
     return sorted(ARTIFACT_REGISTRY.keys())
+
+
+def migrate_legacy_artifact_aliases(
+    workspace: str,
+    cache_root: str = "",
+    *,
+    dry_run: bool = True,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Migrate historical artifact path aliases to canonical paths.
+
+    This is an explicit maintenance operation, not a runtime read fallback.
+    Legacy aliases are copied only when their source exists and the canonical
+    target is absent, unless ``overwrite`` is explicitly enabled.
+    """
+    workspace_abs = os.path.abspath(workspace)
+    cache_root_abs = os.path.abspath(cache_root) if cache_root else ""
+    items: list[dict[str, Any]] = []
+    copied = 0
+    planned = 0
+    skipped = 0
+    for legacy_rel, canonical_key in sorted(LEGACY_PATH_ALIASES.items()):
+        canonical_rel = get_artifact_path_for_write(canonical_key)
+        legacy_path = resolve_artifact_path(workspace_abs, cache_root_abs, legacy_rel)
+        canonical_path = resolve_artifact_path(workspace_abs, cache_root_abs, canonical_rel)
+        legacy_exists = os.path.isfile(legacy_path)
+        canonical_exists = os.path.isfile(canonical_path)
+        item = {
+            "legacy_path": legacy_path,
+            "legacy_rel_path": legacy_rel,
+            "canonical_key": canonical_key,
+            "canonical_path": canonical_path,
+            "canonical_rel_path": canonical_rel,
+            "legacy_exists": legacy_exists,
+            "canonical_exists": canonical_exists,
+            "action": "skip",
+            "reason": "",
+        }
+        if not legacy_exists:
+            item["reason"] = "legacy_missing"
+            skipped += 1
+        elif canonical_exists and not overwrite:
+            item["reason"] = "canonical_exists"
+            skipped += 1
+        else:
+            planned += 1
+            item["action"] = "copy"
+            item["reason"] = "dry_run" if dry_run else "copied"
+            if not dry_run:
+                text = _read_file_safe(legacy_path, workspace=workspace_abs)
+                parent = os.path.dirname(canonical_path)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                _write_text_atomic(canonical_path, text, workspace=workspace_abs)
+                copied += 1
+                item["canonical_exists"] = True
+        items.append(item)
+    return {
+        "schema_version": "polaris.artifact_alias_migration.v1",
+        "workspace": workspace_abs,
+        "cache_root": cache_root_abs,
+        "dry_run": dry_run,
+        "overwrite": overwrite,
+        "planned": planned,
+        "copied": copied,
+        "skipped": skipped,
+        "items": items,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -660,7 +752,8 @@ class ArtifactService:
 
         Creates parent directories if needed.
         """
-        path = self._resolve(key)
+        rel_path = get_artifact_path_for_write(key)
+        path = resolve_artifact_path(self.workspace, self.cache_root, rel_path)
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
@@ -1215,8 +1308,10 @@ __all__ = [
     "create_artifact_service",
     "get_artifact_key",
     "get_artifact_path",
+    "get_artifact_path_for_write",
     "get_artifact_policy_metadata",
     "list_artifact_keys",
+    "migrate_legacy_artifact_aliases",
     "should_archive_artifact",
     "should_compress_artifact",
 ]
