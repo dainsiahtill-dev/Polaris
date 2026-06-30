@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from polaris.cells.qa.audit_verdict.public.contracts import (
     QaFailureClassificationV1,
@@ -27,11 +27,11 @@ if TYPE_CHECKING:
     from polaris.domain.verification import ProgressDelta, SoftCheckResult
     from polaris.domain.verification.evidence_collector import EvidenceCollector, EvidencePackage
 
-QAFailureClassification = QaFailureClassificationV1
+QAFailureClassification: TypeAlias = QaFailureClassificationV1
 
 
 def _build_repair_qa_failure_classification(**kwargs: Any) -> QaFailureClassificationV1:
-    return build_qa_failure_classification_v1(**kwargs, failure_class_style="legacy_lower")
+    return build_qa_failure_classification_v1(**kwargs)
 
 
 @dataclass

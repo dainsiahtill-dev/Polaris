@@ -359,20 +359,15 @@ QA_PLATFORM_FAILURE_CLASSES = frozenset(
 )
 
 
-def _normalize_qa_failure_class(value: str, *, style: str = "canonical") -> str:
+def _normalize_qa_failure_class(value: str) -> str:
     token = _require_non_empty("failure_class", value)
-    canonical = _QA_FAILURE_CLASS_ALIASES.get(token.lower(), token.upper())
-    if style == "legacy_lower":
-        if canonical == "BLUEPRINT_SCOPE_MISMATCH":
-            return "scope_mismatch"
-        return canonical.lower()
-    return canonical
+    return _QA_FAILURE_CLASS_ALIASES.get(token.lower(), token.upper())
 
 
-def normalize_qa_failure_class(value: str, *, failure_class_style: str = "canonical") -> str:
-    """Normalize legacy or canonical QA failure-class tokens."""
+def normalize_qa_failure_class(value: str) -> str:
+    """Normalize QA failure-class tokens to the canonical contract form."""
 
-    return _normalize_qa_failure_class(value, style=failure_class_style)
+    return _normalize_qa_failure_class(value)
 
 
 def build_qa_failure_classification_v1(
@@ -387,17 +382,11 @@ def build_qa_failure_classification_v1(
     owner: str = "",
     responsible_layer: str = "",
     evidence_refs: tuple[str, ...] | list[str] | set[str] | None = None,
-    failure_class_style: str = "canonical",
 ) -> QaFailureClassificationV1:
-    """Build the canonical QA failure classification contract.
-
-    `failure_class_style="legacy_lower"` exists only for compatibility
-    projections that still expose historical lowercase values while consuming
-    the shared contract builder.
-    """
+    """Build the canonical QA failure classification contract."""
 
     return QaFailureClassificationV1(
-        failure_class=_normalize_qa_failure_class(failure_class, style=failure_class_style),
+        failure_class=_normalize_qa_failure_class(failure_class),
         route=_require_non_empty("route", route),
         reason=_require_non_empty("reason", reason),
         repairable_by_director=bool(repairable_by_director),

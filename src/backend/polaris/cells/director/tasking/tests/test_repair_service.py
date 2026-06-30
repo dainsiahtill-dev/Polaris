@@ -129,7 +129,7 @@ class TestRepairService:
         from polaris.cells.director.tasking.internal.repair_service import QAFailureClassification
 
         classification = QAFailureClassification(
-            failure_class="scope_mismatch",
+            failure_class="BLUEPRINT_SCOPE_MISMATCH",
             route="ce_replan_required",
             reason="scope changed",
             repairable_by_director=False,
@@ -140,7 +140,7 @@ class TestRepairService:
 
         payload = classification.to_dict()
         assert payload["schema_version"] == "polaris.qa_failure_classification.v1"
-        assert payload["failure_class"] == "scope_mismatch"
+        assert payload["failure_class"] == "BLUEPRINT_SCOPE_MISMATCH"
         assert payload["route"] == "ce_replan_required"
         assert payload["repairable_by_director"] is False
         assert payload["requires_ce_replan"] is True
@@ -151,7 +151,7 @@ class TestRepairService:
         [
             (
                 "scope mismatch: target file not declared by PM contract",
-                "scope_mismatch",
+                "BLUEPRINT_SCOPE_MISMATCH",
                 "ce_replan_required",
                 False,
                 True,
@@ -159,7 +159,7 @@ class TestRepairService:
             ),
             (
                 "contract ambiguous: missing acceptance for login flow",
-                "contract_ambiguous",
+                "CONTRACT_AMBIGUOUS",
                 "pm_revision_required",
                 False,
                 False,
@@ -167,7 +167,7 @@ class TestRepairService:
             ),
             (
                 "test environment failure: network timeout while installing dependencies",
-                "test_environment_failure",
+                "TEST_ENVIRONMENT_FAILURE",
                 "infra_retry",
                 False,
                 False,
@@ -175,7 +175,7 @@ class TestRepairService:
             ),
             (
                 "acceptance invalid: verifier expects undeclared acceptance behavior",
-                "acceptance_invalid",
+                "ACCEPTANCE_INVALID",
                 "pm_revision_required",
                 False,
                 False,
@@ -183,7 +183,7 @@ class TestRepairService:
             ),
             (
                 "security policy violation: unauthorized path traversal attempt",
-                "security_policy_violation",
+                "SECURITY_POLICY_VIOLATION",
                 "hard_stop",
                 False,
                 False,
@@ -230,7 +230,7 @@ class TestRepairService:
             qa_feedback="ordinary unit test assertion failed",
         )
 
-        assert classification.failure_class == "implementation_defect"
+        assert classification.failure_class == "IMPLEMENTATION_DEFECT"
         assert classification.route == "director_repair"
         assert classification.repairable_by_director is True
 
@@ -248,7 +248,7 @@ class TestRepairService:
             qa_feedback="ordinary unit test assertion failed",
         )
 
-        assert classification.failure_class == "incomplete_materialization"
+        assert classification.failure_class == "INCOMPLETE_MATERIALIZATION"
         assert classification.route == "execution_boundary_retry"
         assert classification.repairable_by_director is False
 

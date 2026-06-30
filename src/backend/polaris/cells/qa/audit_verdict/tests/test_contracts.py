@@ -110,17 +110,16 @@ class TestQaFailureClassificationBuilder:
         assert classification.requires_ce_replan is True
         assert classification.evidence_refs == ("qa/latest.json",)
 
-    def test_builds_legacy_lower_projection(self) -> None:
+    def test_aliases_normalize_to_canonical_classification(self) -> None:
         classification = build_qa_failure_classification_v1(
             failure_class="TOOL_DISPATCH_DROPPED",
             route="hard_stop",
             reason="tool calls dropped",
             repairable_by_director=False,
             severity="critical",
-            failure_class_style="legacy_lower",
         )
 
-        assert classification.failure_class == "tool_dispatch_dropped"
+        assert classification.failure_class == "TOOL_DISPATCH_DROPPED"
         assert classification.severity == "critical"
 
 
