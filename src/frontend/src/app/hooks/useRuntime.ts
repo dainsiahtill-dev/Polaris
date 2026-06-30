@@ -116,18 +116,8 @@ export interface UseRuntimeResult {
     maxRetries?: number;
     currentFile?: string;
   }>;
-  setTaskProgressMap: (map: Map<string, {
-    phase?: string;
-    phaseIndex?: number;
-    phaseTotal?: number;
-    retryCount?: number;
-    maxRetries?: number;
-    currentFile?: string;
-  }>) => void;
   taskTraceMap: Map<string, TaskTraceEvent[]>;
-  setTaskTraceMap: (map: Map<string, TaskTraceEvent[]>) => void;
   sequentialTraceMap: Map<string, SequentialTraceEvent[]>;
-  setSequentialTraceMap: (map: Map<string, SequentialTraceEvent[]>) => void;
   connect: () => void;
   disconnect: () => void;
   reconnect: () => void;
@@ -2019,28 +2009,6 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
     resetForWorkspace();
   }, [workspace]);
 
-  // Setters for mutable maps (backward compatibility)
-  const setTaskProgressMap = useCallback(
-    (map: Map<string, { phase?: string; phaseIndex?: number; phaseTotal?: number; retryCount?: number; maxRetries?: number; currentFile?: string }>) => {
-      useRuntimeStore.setState({ taskProgressMap: map });
-    },
-    []
-  );
-
-  const setTaskTraceMap = useCallback(
-    (map: Map<string, TaskTraceEvent[]>) => {
-      useRuntimeStore.setState({ taskTraceMap: map });
-    },
-    []
-  );
-
-  const setSequentialTraceMap = useCallback(
-    (map: Map<string, SequentialTraceEvent[]>) => {
-      useRuntimeStore.setState({ sequentialTraceMap: map });
-    },
-    []
-  );
-
   return {
     live: connection.live,
     connected: connection.connected,
@@ -2067,11 +2035,8 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
     workers,
     runId,
     taskProgressMap,
-    setTaskProgressMap,
     taskTraceMap,
-    setTaskTraceMap,
     sequentialTraceMap,
-    setSequentialTraceMap,
     connect: connection.connect,
     disconnect: connection.disconnect,
     reconnect: connection.reconnect,
